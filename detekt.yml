@@ -1,0 +1,10 @@
+config:
+  validation: true
+
+comments:
+  active: true
+  UndocumentedPublicClass:
+    active: true
+    ignoreDefaultCompanionObject: true
+  UndocumentedPublicFunction:
+    active: true
