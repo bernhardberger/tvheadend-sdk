@@ -37,6 +37,7 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.konsist)
+    testImplementation(libs.kotlinx.coroutines.test)
     testRuntimeOnly(libs.junit.platform.launcher)
 }
 
