@@ -158,6 +158,11 @@ internal class HtspProtocolGateway internal constructor(
         connection.close()
     }
 
+    override fun <T> commitIfLive(
+        generation: GatewayGeneration,
+        block: () -> T,
+    ): T? = connection.commitIfLive(htspGenerationFor(generation)) { block() }
+
     override suspend fun enableInitialMetadata(
         generation: GatewayGeneration,
     ): GatewayResult<Unit> = connection.enableAsyncMetadataAwaitingInitialSync(

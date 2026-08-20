@@ -14,6 +14,11 @@ internal interface ProtocolGateway {
 
     public suspend fun shutdown()
 
+    public fun <T> commitIfLive(
+        generation: GatewayGeneration,
+        block: () -> T,
+    ): T?
+
     public suspend fun enableInitialMetadata(
         generation: GatewayGeneration,
     ): GatewayResult<Unit>

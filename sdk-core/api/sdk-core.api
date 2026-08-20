@@ -1,0 +1,194 @@
+public final class at/bernhardberger/tvheadend/sdk/core/CapabilityAccess : java/lang/Enum {
+	public static final field ALLOWED Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
+	public static final field DENIED Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
+	public static final field UNKNOWN Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
+	public static fun values ()[Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
+}
+
+public abstract interface class at/bernhardberger/tvheadend/sdk/core/ServerAuthentication {
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ServerAuthentication$Anonymous : at/bernhardberger/tvheadend/sdk/core/ServerAuthentication {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/ServerAuthentication$Anonymous;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ServerAuthentication$Password : at/bernhardberger/tvheadend/sdk/core/ServerAuthentication {
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;)V
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ServerCapabilities {
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;)V
+	public final fun component1 ()Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
+	public final fun component2 ()Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
+	public final fun copy (Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;)Lat/bernhardberger/tvheadend/sdk/core/ServerCapabilities;
+	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/ServerCapabilities;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/ServerCapabilities;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getDvrWrite ()Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
+	public final fun getStreaming ()Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ServerProfile {
+	public fun <init> (Ljava/lang/String;ILat/bernhardberger/tvheadend/sdk/core/ServerAuthentication;)V
+	public synthetic fun <init> (Ljava/lang/String;ILat/bernhardberger/tvheadend/sdk/core/ServerAuthentication;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/SessionCommandResult : java/lang/Enum {
+	public static final field NO_ACTIVE_PROFILE Lat/bernhardberger/tvheadend/sdk/core/SessionCommandResult;
+	public static final field NO_CHANGE Lat/bernhardberger/tvheadend/sdk/core/SessionCommandResult;
+	public static final field RETRY_NOT_ALLOWED Lat/bernhardberger/tvheadend/sdk/core/SessionCommandResult;
+	public static final field SHUT_DOWN Lat/bernhardberger/tvheadend/sdk/core/SessionCommandResult;
+	public static final field STARTED Lat/bernhardberger/tvheadend/sdk/core/SessionCommandResult;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/SessionCommandResult;
+	public static fun values ()[Lat/bernhardberger/tvheadend/sdk/core/SessionCommandResult;
+}
+
+public abstract interface class at/bernhardberger/tvheadend/sdk/core/SessionFailure {
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/SessionFailure$AuthenticationRejected : at/bernhardberger/tvheadend/sdk/core/SessionFailure {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/SessionFailure$AuthenticationRejected;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/SessionFailure$IncompatibleServer : at/bernhardberger/tvheadend/sdk/core/SessionFailure {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/SessionFailure$IncompatibleServer;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/SessionFailure$NetworkUnavailable : at/bernhardberger/tvheadend/sdk/core/SessionFailure {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/SessionFailure$NetworkUnavailable;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/SessionFailure$NoChannels : at/bernhardberger/tvheadend/sdk/core/SessionFailure {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/SessionFailure$NoChannels;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/SessionFailure$PermissionDenied : at/bernhardberger/tvheadend/sdk/core/SessionFailure {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/SessionFailure$PermissionDenied;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/SessionFailure$ServerUnreachable : at/bernhardberger/tvheadend/sdk/core/SessionFailure {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/SessionFailure$ServerUnreachable;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/SessionFailure$SynchronizationFailed : at/bernhardberger/tvheadend/sdk/core/SessionFailure {
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/SessionOperationFailure;)V
+	public final fun component1 ()Lat/bernhardberger/tvheadend/sdk/core/SessionOperationFailure;
+	public final fun copy (Lat/bernhardberger/tvheadend/sdk/core/SessionOperationFailure;)Lat/bernhardberger/tvheadend/sdk/core/SessionFailure$SynchronizationFailed;
+	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/SessionFailure$SynchronizationFailed;Lat/bernhardberger/tvheadend/sdk/core/SessionOperationFailure;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/SessionFailure$SynchronizationFailed;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getFailure ()Lat/bernhardberger/tvheadend/sdk/core/SessionOperationFailure;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/SessionFailure$TransportUnavailable : at/bernhardberger/tvheadend/sdk/core/SessionFailure {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/SessionFailure$TransportUnavailable;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/SessionFailure$UnexpectedFailure : at/bernhardberger/tvheadend/sdk/core/SessionFailure {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/SessionFailure$UnexpectedFailure;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/SessionOperationFailure : java/lang/Enum {
+	public static final field ACCESS_DENIED Lat/bernhardberger/tvheadend/sdk/core/SessionOperationFailure;
+	public static final field CONNECTION_LIMIT Lat/bernhardberger/tvheadend/sdk/core/SessionOperationFailure;
+	public static final field NOT_SUPPORTED Lat/bernhardberger/tvheadend/sdk/core/SessionOperationFailure;
+	public static final field SERVER_REJECTED Lat/bernhardberger/tvheadend/sdk/core/SessionOperationFailure;
+	public static final field TIMEOUT Lat/bernhardberger/tvheadend/sdk/core/SessionOperationFailure;
+	public static final field TRANSPORT_UNAVAILABLE Lat/bernhardberger/tvheadend/sdk/core/SessionOperationFailure;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/SessionOperationFailure;
+	public static fun values ()[Lat/bernhardberger/tvheadend/sdk/core/SessionOperationFailure;
+}
+
+public abstract interface class at/bernhardberger/tvheadend/sdk/core/SessionState {
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/SessionState$Connecting : at/bernhardberger/tvheadend/sdk/core/SessionState {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/SessionState$Connecting;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/SessionState$Disconnected : at/bernhardberger/tvheadend/sdk/core/SessionState {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/SessionState$Disconnected;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/SessionState$Ready : at/bernhardberger/tvheadend/sdk/core/SessionState {
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/ServerCapabilities;)V
+	public final fun component1 ()Lat/bernhardberger/tvheadend/sdk/core/ServerCapabilities;
+	public final fun copy (Lat/bernhardberger/tvheadend/sdk/core/ServerCapabilities;)Lat/bernhardberger/tvheadend/sdk/core/SessionState$Ready;
+	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/SessionState$Ready;Lat/bernhardberger/tvheadend/sdk/core/ServerCapabilities;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/SessionState$Ready;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCapabilities ()Lat/bernhardberger/tvheadend/sdk/core/ServerCapabilities;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/SessionState$Synchronizing : at/bernhardberger/tvheadend/sdk/core/SessionState {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/SessionState$Synchronizing;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/SessionState$Unavailable : at/bernhardberger/tvheadend/sdk/core/SessionState {
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/SessionFailure;)V
+	public final fun component1 ()Lat/bernhardberger/tvheadend/sdk/core/SessionFailure;
+	public final fun copy (Lat/bernhardberger/tvheadend/sdk/core/SessionFailure;)Lat/bernhardberger/tvheadend/sdk/core/SessionState$Unavailable;
+	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/SessionState$Unavailable;Lat/bernhardberger/tvheadend/sdk/core/SessionFailure;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/SessionState$Unavailable;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getReason ()Lat/bernhardberger/tvheadend/sdk/core/SessionFailure;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class at/bernhardberger/tvheadend/sdk/core/TvheadendSession {
+	public abstract fun connect (Lat/bernhardberger/tvheadend/sdk/core/ServerProfile;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun disconnect (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun getState ()Lkotlinx/coroutines/flow/StateFlow;
+	public abstract fun retry (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun shutdown (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/TvheadendSessionKt {
+	public static final fun createTvheadendSession ()Lat/bernhardberger/tvheadend/sdk/core/TvheadendSession;
+}
+

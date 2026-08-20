@@ -177,6 +177,10 @@ internal class HtspProtocolGatewayTest {
         assertEquals("GatewayConnectResult.Connected(<redacted>)", result.toString())
         assertEquals("GatewayConnection(<redacted>)", result.connection.toString())
         assertEquals("GatewayServerFacts(<redacted>)", result.connection.serverFacts.toString())
+        fake.liveConnectionValue.value = liveConnection
+        assertEquals("committed", gateway.commitIfLive(result.connection.generation) { "committed" })
+        fake.liveConnectionValue.value = null
+        assertEquals(null, gateway.commitIfLive(result.connection.generation) { "not committed" })
 
         fake.connectionStateValue.value = HtspConnectionState.Connecting("private host", 9_982)
         yield()

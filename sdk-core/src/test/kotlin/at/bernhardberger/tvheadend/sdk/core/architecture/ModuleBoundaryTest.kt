@@ -4,6 +4,7 @@ import com.lemonappdev.konsist.api.Konsist
 import com.lemonappdev.konsist.api.verify.assertTrue
 import java.io.File
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 
 internal class ModuleBoundaryTest {
@@ -53,6 +54,82 @@ internal class ModuleBoundaryTest {
                 val gatewayPackage = "at.bernhardberger.tvheadend.sdk.core.gateway.htsp"
                 !referencesHtsp || packageName == gatewayPackage || packageName.startsWith("$gatewayPackage.")
             }
+        }
+    }
+
+    @Test
+    fun `HTSP implementation contains no public top level SDK declarations`() {
+        val publicDeclaration = Regex(
+            pattern = "^public\\s+(?:(?:data|sealed)\\s+)*(?:class|interface|object|fun|val|var|typealias)\\b",
+            option = RegexOption.MULTILINE,
+        )
+        productionScope("sdk-core").files
+            .filter { file ->
+                val packageName = file.packagee?.name.orEmpty()
+                packageName == "at.bernhardberger.tvheadend.sdk.core.gateway.htsp" ||
+                    packageName.startsWith("at.bernhardberger.tvheadend.sdk.core.gateway.htsp.")
+            }
+            .assertTrue { file -> !publicDeclaration.containsMatchIn(file.text) }
+    }
+
+    @Test
+    fun `public SDK type set remains deliberate and reachable from the session API`() {
+        val publicType = Regex(
+            "public\\s+(?:(?:data|sealed)\\s+)*(?:class|interface|enum\\s+class|object)\\s+(\\w+)",
+        )
+        val sessionApi = File(
+            "src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/TvheadendSession.kt",
+        ).readText()
+        val actual = publicType.findAll(sessionApi).map { match -> match.groupValues[1] }.toSet()
+        val expected = setOf(
+            "TvheadendSession",
+            "ServerProfile",
+            "ServerAuthentication",
+            "Anonymous",
+            "Password",
+            "SessionCommandResult",
+            "SessionState",
+            "Disconnected",
+            "Connecting",
+            "Synchronizing",
+            "Ready",
+            "Unavailable",
+            "SessionFailure",
+            "AuthenticationRejected",
+            "PermissionDenied",
+            "ServerUnreachable",
+            "NetworkUnavailable",
+            "IncompatibleServer",
+            "NoChannels",
+            "TransportUnavailable",
+            "SynchronizationFailed",
+            "UnexpectedFailure",
+            "SessionOperationFailure",
+            "ServerCapabilities",
+            "CapabilityAccess",
+        )
+
+        assertEquals(expected, actual)
+    }
+
+    @Test
+    fun `public suspending SDK calls use typed outcomes or lifecycle Unit`() {
+        val sessionApi = File(
+            "src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/TvheadendSession.kt",
+        ).readText().replace(Regex("\\s+"), " ")
+        val expectedSignatures = setOf(
+            "public suspend fun connect(profile: ServerProfile): SessionCommandResult",
+            "public suspend fun retry(): SessionCommandResult",
+            "public suspend fun disconnect()",
+            "public suspend fun shutdown()",
+        )
+
+        assertEquals(4, Regex("public suspend fun ").findAll(sessionApi).count())
+        expectedSignatures.forEach { signature ->
+            org.junit.jupiter.api.Assertions.assertTrue(
+                sessionApi.contains(signature),
+                "Missing typed public lifecycle signature",
+            )
         }
     }
 
