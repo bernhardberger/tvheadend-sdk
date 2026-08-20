@@ -202,6 +202,7 @@ internal class ConnectionOwner(
         synchronized(stateLock) {
             activeToken = null
             retryDisposition = null
+            metadata.resetWorkingStateRetainingPublishedSnapshot()
             mutableState.value = SessionState.Disconnected
         }
         return activeWorker
@@ -417,6 +418,7 @@ internal class ConnectionOwner(
             false
         } else {
             retryDisposition = disposition
+            metadata.resetWorkingStateRetainingPublishedSnapshot()
             mutableState.value = SessionState.Unavailable(failure)
             true
         }

@@ -1,22 +1,34 @@
 package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
+import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
+import at.bernhardberger.tvheadend.sdk.core.gateway.DeferredMetadataKind
+import at.bernhardberger.tvheadend.sdk.core.gateway.EventId
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelMetadata
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelService
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayServerFacts
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayTagMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
+import at.bernhardberger.tvheadend.sdk.core.gateway.TagId
+import at.bernhardberger.tvheadend.sdk.core.metadata.ChannelTagCatalogState
+import at.bernhardberger.tvheadend.sdk.core.metadata.ReducedChannel
+import at.bernhardberger.tvheadend.sdk.core.metadata.ReducedChannelService
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertSame
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 internal class PhaseOneSessionMetadataTest {
     @Test
-    fun `only the bound generation completes the sync fence and publishes capabilities`() = runTest {
+    fun `matching fence publishes the complete working catalog before readiness`() = runTest {
         val metadata = PhaseOneSessionMetadata()
         val stale = GatewayGeneration()
         val current = GatewayGeneration()
@@ -26,19 +38,393 @@ internal class PhaseOneSessionMetadataTest {
         metadata.applyDvrAccess(current, false)
         metadata.publishServerFacts(stale, serverFacts(streaming = false))
         metadata.publishServerFacts(current, serverFacts(streaming = true))
-        val awaiting = async { metadata.awaitChannelsAndTagsCurrent(current) }
+        val awaiting = async {
+            metadata.awaitChannelsAndTagsCurrent(current)
+            assertTrue(
+                metadata.channelsAndTags.value is ChannelTagCatalogState.Current,
+                "The metadata fence completed before catalog publication",
+            )
+        }
         runCurrent()
 
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(stale, channel(id = 99)))
         metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(stale))
         runCurrent()
         assertFalse(awaiting.isCompleted)
+        assertEquals(
+            ChannelTagCatalogState.Synchronizing(staleSnapshot = null),
+            metadata.channelsAndTags.value,
+        )
+
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(current, channel(id = 1, name = "one")))
+        metadata.acceptMetadata(MetadataEvent.TagAdded(current, tag(id = 2, channelIds = listOf(1))))
+        assertTrue(metadata.channelsAndTags.value is ChannelTagCatalogState.Synchronizing)
 
         metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(current))
         runCurrent()
         assertTrue(awaiting.isCompleted)
+        val snapshot = metadata.currentSnapshot()
+        assertEquals(listOf(1L), snapshot.channels.map { it.id.value })
+        assertEquals(listOf(2L), snapshot.tags.map { it.id.value })
         assertEquals(CapabilityAccess.ALLOWED, metadata.capabilities(current).streaming)
         assertEquals(CapabilityAccess.DENIED, metadata.capabilities(current).dvrWrite)
     }
+
+    @Test
+    fun `partial updates preserve omissions and empty collections replace prior values`() {
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(
+            MetadataEvent.ChannelAdded(
+                generation,
+                channel(
+                    id = 1,
+                    name = "name",
+                    uuid = "uuid",
+                    number = 7,
+                    numberMinor = 8,
+                    icon = "icon",
+                    currentEventId = 4,
+                    nextEventId = 5,
+                    services = listOf(service("service")),
+                    tagIds = listOf(2),
+                ),
+            ),
+        )
+        metadata.acceptMetadata(
+            MetadataEvent.TagAdded(
+                generation,
+                tag(
+                    id = 2,
+                    name = "tag",
+                    uuid = "tag-uuid",
+                    index = 9,
+                    icon = "tag-icon",
+                    titledIcon = 1,
+                    channelIds = listOf(1),
+                ),
+            ),
+        )
+        metadata.acceptMetadata(
+            MetadataEvent.ChannelUpdated(
+                generation,
+                channel(id = 1, name = "", number = 0),
+            ),
+        )
+        metadata.acceptMetadata(
+            MetadataEvent.TagUpdated(
+                generation,
+                tag(id = 2, name = "", index = 0),
+            ),
+        )
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+
+        var snapshot = metadata.currentSnapshot()
+        var channel = snapshot.channels.single()
+        var tag = snapshot.tags.single()
+        assertEquals("", channel.name)
+        assertEquals("uuid", channel.uuid)
+        assertEquals(0L, channel.number)
+        assertEquals(8L, channel.numberMinor)
+        assertEquals("icon", channel.icon)
+        assertEquals(4L, channel.currentEventId?.value)
+        assertEquals(5L, channel.nextEventId?.value)
+        assertEquals("service", channel.services?.single()?.name)
+        assertEquals(listOf(2L), channel.tagIds?.map { it.value })
+        assertEquals("", tag.name)
+        assertEquals("tag-uuid", tag.uuid)
+        assertEquals(0L, tag.index)
+        assertEquals(listOf(1L), tag.channelIds?.map { it.value })
+
+        metadata.acceptMetadata(
+            MetadataEvent.ChannelUpdated(
+                generation,
+                channel(id = 1, services = emptyList(), tagIds = emptyList()),
+            ),
+        )
+        metadata.acceptMetadata(
+            MetadataEvent.TagUpdated(generation, tag(id = 2, channelIds = emptyList())),
+        )
+        snapshot = metadata.currentSnapshot()
+        channel = snapshot.channels.single()
+        tag = snapshot.tags.single()
+        assertEquals(emptyList<Any>(), channel.services)
+        assertEquals(emptyList<Any>(), channel.tagIds)
+        assertEquals(emptyList<Any>(), tag.channelIds)
+        assertEquals(4L, channel.currentEventId?.value)
+        assertEquals(5L, channel.nextEventId?.value)
+
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(id = 1)))
+        metadata.acceptMetadata(MetadataEvent.TagAdded(generation, tag(id = 2)))
+        snapshot = metadata.currentSnapshot()
+        channel = snapshot.channels.single()
+        tag = snapshot.tags.single()
+        assertEquals(null, channel.currentEventId)
+        assertEquals(null, channel.nextEventId)
+        assertEquals("", channel.name)
+        assertEquals(0L, channel.number)
+        assertEquals(emptyList<Any>(), channel.services)
+        assertEquals(emptyList<Any>(), channel.tagIds)
+        assertEquals("", tag.name)
+        assertEquals(0L, tag.index)
+        assertEquals(emptyList<Any>(), tag.channelIds)
+    }
+
+    @Test
+    fun `entity deletes clean opposite references and event delete clears every channel link`() {
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(
+            MetadataEvent.ChannelAdded(
+                generation,
+                channel(
+                    id = 1,
+                    currentEventId = 4,
+                    nextEventId = 4,
+                    tagIds = listOf(10, 20, 20),
+                ),
+            ),
+        )
+        metadata.acceptMetadata(
+            MetadataEvent.ChannelAdded(
+                generation,
+                channel(id = 2, currentEventId = 4, nextEventId = 5, tagIds = listOf(20)),
+            ),
+        )
+        metadata.acceptMetadata(
+            MetadataEvent.TagAdded(generation, tag(id = 10, channelIds = listOf(1, 2))),
+        )
+        metadata.acceptMetadata(
+            MetadataEvent.TagAdded(generation, tag(id = 20, channelIds = listOf(1, 2))),
+        )
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+
+        metadata.acceptMetadata(
+            MetadataEvent.TagUpdated(generation, tag(id = 10, channelIds = listOf(99, 1, 1, 2))),
+        )
+        metadata.acceptMetadata(MetadataEvent.ChannelDeleted(generation, ChannelId(99)))
+        metadata.acceptMetadata(MetadataEvent.ChannelDeleted(generation, ChannelId(2)))
+        metadata.acceptMetadata(MetadataEvent.TagDeleted(generation, TagId(20)))
+        metadata.acceptMetadata(MetadataEvent.EventDeleted(generation, EventId(4)))
+
+        val snapshot = metadata.currentSnapshot()
+        val channel = snapshot.channels.single()
+        val tag = snapshot.tags.single()
+        assertEquals(1L, channel.id.value)
+        assertEquals(listOf(10L), channel.tagIds?.map { it.value })
+        assertEquals(null, channel.currentEventId)
+        assertEquals(null, channel.nextEventId)
+        assertEquals(10L, tag.id.value)
+        assertEquals(listOf(1L, 1L), tag.channelIds?.map { it.value })
+    }
+
+    @Test
+    fun `reconnect exposes stale data and replaces it with only the new synchronization set`() {
+        val metadata = PhaseOneSessionMetadata()
+        val first = GatewayGeneration()
+        val second = GatewayGeneration()
+        metadata.bindGeneration(first)
+        metadata.acceptMetadata(
+            MetadataEvent.ChannelAdded(
+                first,
+                channel(id = 1, name = "old", icon = "old-icon", tagIds = listOf(10)),
+            ),
+        )
+        metadata.acceptMetadata(
+            MetadataEvent.ChannelAdded(first, channel(id = 2, name = "evicted", tagIds = listOf(10))),
+        )
+        metadata.acceptMetadata(
+            MetadataEvent.TagAdded(first, tag(id = 10, channelIds = listOf(1, 2))),
+        )
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(first))
+        val staleSnapshot = metadata.currentSnapshot()
+
+        metadata.resetWorkingStateRetainingPublishedSnapshot()
+        val staleState = metadata.channelsAndTags.value as ChannelTagCatalogState.Stale
+        assertSame(staleSnapshot, staleState.snapshot)
+        metadata.bindGeneration(second)
+        val synchronizing = metadata.channelsAndTags.value as ChannelTagCatalogState.Synchronizing
+        assertSame(staleSnapshot, synchronizing.staleSnapshot)
+
+        metadata.acceptMetadata(
+            MetadataEvent.ChannelUpdated(
+                second,
+                channel(id = 1, name = "new", tagIds = listOf(10, 11)),
+            ),
+        )
+        metadata.acceptMetadata(
+            MetadataEvent.TagAdded(second, tag(id = 11, channelIds = listOf(1, 2))),
+        )
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(first, channel(id = 3, name = "stale")))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(first))
+        assertSame(staleSnapshot, synchronizing.staleSnapshot)
+        assertEquals(listOf(1L, 2L), staleSnapshot.channels.map { it.id.value })
+
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(second))
+        val current = metadata.currentSnapshot()
+        val channel = current.channels.single()
+        val tag = current.tags.single()
+        assertEquals(1L, channel.id.value)
+        assertEquals("new", channel.name)
+        assertEquals(null, channel.icon)
+        assertEquals(listOf(11L), channel.tagIds?.map { it.value })
+        assertEquals(11L, tag.id.value)
+        assertEquals(listOf(1L), tag.channelIds?.map { it.value })
+        assertEquals(listOf(1L, 2L), staleSnapshot.channels.map { it.id.value })
+    }
+
+    @Test
+    fun `published snapshots retain insertion order are immutable conflated and redacted`() {
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        val mutableServices = mutableListOf(service("private-service"), service("private-service"))
+        val mutableTags = mutableListOf(7L, 7L)
+        val firstChannel = channel(
+            id = 2,
+            name = "private-channel",
+            services = mutableServices,
+            tagIds = mutableTags,
+        )
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, firstChannel))
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(id = 1)))
+        metadata.acceptMetadata(MetadataEvent.ChannelUpdated(generation, channel(id = 2)))
+        metadata.acceptMetadata(MetadataEvent.ChannelDeleted(generation, ChannelId(1)))
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(id = 1)))
+        metadata.acceptMetadata(
+            MetadataEvent.TagAdded(generation, tag(id = 7, name = "private-tag", channelIds = listOf(2, 2))),
+        )
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        mutableServices.clear()
+        mutableTags.clear()
+
+        val state = metadata.channelsAndTags.value as ChannelTagCatalogState.Current
+        val snapshot = state.snapshot
+        assertEquals(listOf(2L, 1L), snapshot.channels.map { it.id.value })
+        assertEquals(2, snapshot.channels.first().services?.size)
+        assertEquals(listOf(7L, 7L), snapshot.channels.first().tagIds?.map { it.value })
+        assertEquals(listOf(2L, 2L), snapshot.tags.single().channelIds?.map { it.value })
+        assertThrows(UnsupportedOperationException::class.java) {
+            (snapshot.channels as MutableList<ReducedChannel>).add(snapshot.channels.first())
+        }
+        assertThrows(UnsupportedOperationException::class.java) {
+            (snapshot.channels.first().services as MutableList<ReducedChannelService>).clear()
+        }
+        assertThrows(UnsupportedOperationException::class.java) {
+            (snapshot.channels.first().tagIds as MutableList<TagId>).clear()
+        }
+        assertThrows(UnsupportedOperationException::class.java) {
+            (snapshot.tags.single().channelIds as MutableList<ChannelId>).clear()
+        }
+
+        metadata.acceptMetadata(MetadataEvent.ChannelUpdated(generation, channel(id = 2)))
+        metadata.acceptMetadata(
+            MetadataEvent.Deferred(generation, DeferredMetadataKind.EPG_UPDATED),
+        )
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        metadata.acceptMetadata(MetadataEvent.ChannelDeleted(GatewayGeneration(), ChannelId(2)))
+        assertSame(state, metadata.channelsAndTags.value)
+        metadata.resetWorkingStateRetainingPublishedSnapshot()
+        val stale = metadata.channelsAndTags.value as ChannelTagCatalogState.Stale
+        assertSame(snapshot, stale.snapshot)
+
+        val rendering = listOf(
+            state,
+            snapshot,
+            snapshot.channels.first(),
+            snapshot.channels.first().services?.first(),
+            snapshot.tags.first(),
+        ).joinToString()
+        assertFalse(rendering.contains("private"), "Catalog rendering exposed metadata")
+    }
+
+    @Test
+    fun `reset invalidates old waiters and empty synchronization is current`() = runTest {
+        val metadata = PhaseOneSessionMetadata()
+        val first = GatewayGeneration()
+        metadata.bindGeneration(first)
+        val retired = async { metadata.awaitChannelsAndTagsCurrent(first) }
+        runCurrent()
+
+        metadata.resetWorkingStateRetainingPublishedSnapshot()
+        runCurrent()
+        assertTrue(retired.isCancelled, "Reset did not invalidate the retired generation fence")
+
+        val second = GatewayGeneration()
+        metadata.bindGeneration(second)
+        val raced = async {
+            runCatching { metadata.awaitChannelsAndTagsCurrent(second) }
+        }
+        runCurrent()
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(second))
+        metadata.resetWorkingStateRetainingPublishedSnapshot()
+        runCurrent()
+        assertTrue(raced.await().isFailure, "A retired generation passed its post-fence check")
+
+        val third = GatewayGeneration()
+        metadata.bindGeneration(third)
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(third))
+        metadata.awaitChannelsAndTagsCurrent(third)
+        val snapshot = metadata.currentSnapshot()
+        assertTrue(snapshot.channels.isEmpty(), "Empty synchronized channels were not current")
+        assertTrue(snapshot.tags.isEmpty(), "Empty synchronized tags were not current")
+    }
+
+    private fun PhaseOneSessionMetadata.currentSnapshot() =
+        (channelsAndTags.value as ChannelTagCatalogState.Current).snapshot
+
+    private fun channel(
+        id: Long,
+        name: String? = null,
+        uuid: String? = null,
+        number: Long? = null,
+        numberMinor: Long? = null,
+        icon: String? = null,
+        currentEventId: Long? = null,
+        nextEventId: Long? = null,
+        services: List<GatewayChannelService>? = null,
+        tagIds: List<Long>? = null,
+    ): GatewayChannelMetadata = GatewayChannelMetadata(
+        id = ChannelId(id),
+        name = name,
+        uuid = uuid,
+        number = number,
+        numberMinor = numberMinor,
+        icon = icon,
+        currentEventId = currentEventId?.let(::EventId),
+        nextEventId = nextEventId?.let(::EventId),
+        services = services,
+        tagIds = tagIds?.map(::TagId),
+    )
+
+    private fun tag(
+        id: Long,
+        name: String? = null,
+        uuid: String? = null,
+        index: Long? = null,
+        icon: String? = null,
+        titledIcon: Long? = null,
+        channelIds: List<Long>? = null,
+    ): GatewayTagMetadata = GatewayTagMetadata(
+        id = TagId(id),
+        name = name,
+        uuid = uuid,
+        index = index,
+        icon = icon,
+        titledIcon = titledIcon,
+        channelIds = channelIds?.map(::ChannelId),
+    )
+
+    private fun service(name: String): GatewayChannelService = GatewayChannelService(
+        name = name,
+        type = "type",
+        content = 1,
+        conditionalAccessId = 2,
+        conditionalAccessName = "private-ca",
+        providerName = "private-provider",
+    )
 
     private fun serverFacts(streaming: Boolean): GatewayServerFacts = GatewayServerFacts(
         serverName = null,

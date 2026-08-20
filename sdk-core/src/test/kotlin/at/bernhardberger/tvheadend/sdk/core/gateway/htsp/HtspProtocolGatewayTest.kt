@@ -18,6 +18,7 @@ import at.bernhardberger.tvheadend.htsp.messages.HtspChannelAddMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspChannelDeleteMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspChannelUpdateMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspDescrambleInfoMessage
+import at.bernhardberger.tvheadend.htsp.messages.HtspEventDeleteMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspInitialSyncCompletedMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspMuxPacketMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspQueueStatusMessage
@@ -275,6 +276,7 @@ internal class HtspProtocolGatewayTest {
             ),
             HtspTagUpdateMessage(tagId = 8, tagName = null, channelIds = emptyList()),
             HtspTagDeleteMessage(tagId = 8),
+            HtspEventDeleteMessage(eventId = 4),
             HtspInitialSyncCompletedMessage,
         )
         val fake = FakeHtspConnection().apply {
@@ -298,6 +300,7 @@ internal class HtspProtocolGatewayTest {
                 MetadataEvent.TagAdded::class,
                 MetadataEvent.TagUpdated::class,
                 MetadataEvent.TagDeleted::class,
+                MetadataEvent.EventDeleted::class,
                 MetadataEvent.InitialSyncCompleted::class,
             ),
             events.map { it::class },
@@ -319,6 +322,8 @@ internal class HtspProtocolGatewayTest {
         val tagUpdated = events[4] as MetadataEvent.TagUpdated
         assertEquals(null, tagUpdated.tag.name)
         assertEquals(emptyList<ChannelId>(), tagUpdated.tag.channelIds)
+        val eventDeleted = events[6] as MetadataEvent.EventDeleted
+        assertEquals(4L, eventDeleted.eventId.value)
         assertEquals(
             listOf(
                 "MetadataEvent.ChannelAdded(<redacted>)",
@@ -327,6 +332,7 @@ internal class HtspProtocolGatewayTest {
                 "MetadataEvent.TagAdded(<redacted>)",
                 "MetadataEvent.TagUpdated(<redacted>)",
                 "MetadataEvent.TagDeleted(<redacted>)",
+                "MetadataEvent.EventDeleted(<redacted>)",
                 "MetadataEvent.InitialSyncCompleted(<redacted>)",
             ),
             events.map(Any::toString),

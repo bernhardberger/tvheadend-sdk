@@ -74,6 +74,13 @@ internal sealed interface MetadataEvent {
         override fun toString(): String = "MetadataEvent.TagDeleted(<redacted>)"
     }
 
+    public class EventDeleted(
+        override val generation: GatewayGeneration,
+        internal val eventId: EventId,
+    ) : MetadataEvent {
+        override fun toString(): String = "MetadataEvent.EventDeleted(<redacted>)"
+    }
+
     public class InitialSyncCompleted(
         override val generation: GatewayGeneration,
     ) : MetadataEvent {
@@ -91,7 +98,6 @@ internal sealed interface MetadataEvent {
 internal enum class DeferredMetadataKind {
     EPG_ADDED,
     EPG_UPDATED,
-    EPG_DELETED,
     DVR_ADDED,
     DVR_UPDATED,
     DVR_DELETED,

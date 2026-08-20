@@ -9,6 +9,7 @@ import at.bernhardberger.tvheadend.sdk.core.SessionOperationFailure
 import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectResult
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnection
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailureEvent
@@ -22,6 +23,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.ServerConfiguration
 import at.bernhardberger.tvheadend.sdk.core.gateway.SubscriptionConfirmation
 import at.bernhardberger.tvheadend.sdk.core.gateway.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.SubscriptionId
+import at.bernhardberger.tvheadend.sdk.core.metadata.ChannelTagCatalogState
 import java.util.Collections
 import java.util.IdentityHashMap
 import kotlin.time.Duration.Companion.seconds
@@ -42,6 +44,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -53,9 +56,15 @@ internal class ConnectionOwnerTest {
         val gateway = FakeProtocolGateway(order)
         val generation = GatewayGeneration()
         gateway.connectResults += connected(generation, streaming = true, dvrAccess = false)
-        val owner = owner(gateway, RecordingSessionChildren(order))
+        val metadata = PhaseOneSessionMetadata()
+        val owner = owner(
+            gateway = gateway,
+            children = RecordingSessionChildren(order),
+            metadata = metadata,
+        )
 
         assertEquals(SessionState.Disconnected, owner.state.value)
+        assertEquals(ChannelTagCatalogState.Empty, metadata.channelsAndTags.value)
         assertTrue(order.isEmpty(), "Construction must not launch lifecycle work")
 
         assertEquals(SessionCommandResult.STARTED, owner.connect(ServerProfile(" server ")))
@@ -66,6 +75,12 @@ internal class ConnectionOwnerTest {
             listOf("failures.collect", "connect", "metadata.collect", "enable"),
             order,
         )
+        assertTrue(metadata.channelsAndTags.value is ChannelTagCatalogState.Synchronizing)
+
+        gateway.emitMetadata(
+            MetadataEvent.ChannelAdded(generation, channelMetadata(id = 1)),
+        )
+        assertTrue(metadata.channelsAndTags.value is ChannelTagCatalogState.Synchronizing)
 
         gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
         runCurrent()
@@ -79,6 +94,7 @@ internal class ConnectionOwnerTest {
             ),
             owner.state.value,
         )
+        assertTrue(metadata.channelsAndTags.value is ChannelTagCatalogState.Current)
         owner.shutdown()
     }
 
@@ -89,13 +105,19 @@ internal class ConnectionOwnerTest {
         val secondGeneration = GatewayGeneration()
         gateway.connectResults += connected(firstGeneration)
         gateway.connectResults += connected(secondGeneration)
-        val owner = owner(gateway)
+        val metadata = PhaseOneSessionMetadata()
+        val owner = owner(gateway, metadata = metadata)
 
         owner.connect(ServerProfile("server"))
         runCurrent()
+        gateway.emitMetadata(
+            MetadataEvent.ChannelAdded(firstGeneration, channelMetadata(id = 1)),
+        )
         gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(firstGeneration))
         runCurrent()
         assertTrue(owner.state.value is SessionState.Ready)
+        val firstSnapshot =
+            (metadata.channelsAndTags.value as ChannelTagCatalogState.Current).snapshot
 
         gateway.emitFailure(
             GatewayConnectionFailureEvent(
@@ -108,12 +130,23 @@ internal class ConnectionOwnerTest {
             SessionState.Unavailable(SessionFailure.TransportUnavailable),
             owner.state.value,
         )
+        assertSame(
+            firstSnapshot,
+            (metadata.channelsAndTags.value as ChannelTagCatalogState.Stale).snapshot,
+        )
 
         advanceTimeBy(1.seconds)
         runCurrent()
         assertEquals(SessionState.Synchronizing, owner.state.value)
         assertEquals(2, gateway.connectCalls)
+        assertSame(
+            firstSnapshot,
+            (metadata.channelsAndTags.value as ChannelTagCatalogState.Synchronizing).staleSnapshot,
+        )
 
+        gateway.emitMetadata(
+            MetadataEvent.ChannelAdded(firstGeneration, channelMetadata(id = 99)),
+        )
         gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(firstGeneration))
         gateway.emitFailure(
             GatewayConnectionFailureEvent(
@@ -124,9 +157,17 @@ internal class ConnectionOwnerTest {
         runCurrent()
         assertEquals(SessionState.Synchronizing, owner.state.value)
 
+        gateway.emitMetadata(
+            MetadataEvent.ChannelAdded(secondGeneration, channelMetadata(id = 2)),
+        )
         gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(secondGeneration))
         runCurrent()
         assertTrue(owner.state.value is SessionState.Ready)
+        assertEquals(
+            listOf(2L),
+            (metadata.channelsAndTags.value as ChannelTagCatalogState.Current)
+                .snapshot.channels.map { it.id.value },
+        )
         owner.shutdown()
     }
 
@@ -168,7 +209,8 @@ internal class ConnectionOwnerTest {
         val generation = GatewayGeneration()
         gateway.connectResults += connected(generation)
         gateway.invalidateOnReadyCommit = true
-        val owner = owner(gateway)
+        val metadata = PhaseOneSessionMetadata()
+        val owner = owner(gateway, metadata = metadata)
 
         owner.connect(ServerProfile("server"))
         runCurrent()
@@ -179,6 +221,48 @@ internal class ConnectionOwnerTest {
             SessionState.Unavailable(SessionFailure.TransportUnavailable),
             owner.state.value,
         )
+        assertTrue(metadata.channelsAndTags.value is ChannelTagCatalogState.Stale)
+        owner.shutdown()
+    }
+
+    @Test
+    fun `runtime loss marks the published catalog stale before cleanup can suspend`() = runTest {
+        val order = mutableListOf<String>()
+        val cleanupStarted = CompletableDeferred<Unit>()
+        val releaseCleanup = CompletableDeferred<Unit>()
+        val children = BlockingSessionChildren(order, cleanupStarted, releaseCleanup)
+        val gateway = FakeProtocolGateway(order)
+        val generation = GatewayGeneration()
+        gateway.connectResults += connected(generation)
+        val metadata = PhaseOneSessionMetadata()
+        val owner = owner(gateway, children, metadata)
+
+        owner.connect(ServerProfile("server"))
+        runCurrent()
+        gateway.emitMetadata(
+            MetadataEvent.ChannelAdded(generation, channelMetadata(id = 1)),
+        )
+        gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        runCurrent()
+        assertTrue(metadata.channelsAndTags.value is ChannelTagCatalogState.Current)
+
+        gateway.emitFailure(
+            GatewayConnectionFailureEvent(
+                failure = GatewayConnectionFailure.TRANSPORT_UNAVAILABLE,
+                generation = generation,
+            ),
+        )
+        runCurrent()
+        cleanupStarted.await()
+
+        assertEquals(
+            SessionState.Unavailable(SessionFailure.TransportUnavailable),
+            owner.state.value,
+        )
+        assertTrue(metadata.channelsAndTags.value is ChannelTagCatalogState.Stale)
+
+        releaseCleanup.complete(Unit)
+        runCurrent()
         owner.shutdown()
     }
 
@@ -484,14 +568,28 @@ internal class ConnectionOwnerTest {
     private fun TestScope.owner(
         gateway: FakeProtocolGateway,
         children: SessionChildren = SessionChildren.None,
+        metadata: PhaseOneSessionMetadata = PhaseOneSessionMetadata(),
     ): ConnectionOwner = ConnectionOwner(
         gateway = gateway,
-        metadata = PhaseOneSessionMetadata(),
+        metadata = metadata,
         children = children,
         defaultDispatcher = StandardTestDispatcher(testScheduler),
         backoff = ExponentialReconnectBackoff(nextJitter = { 0.5 }),
     )
 }
+
+private fun channelMetadata(id: Long): GatewayChannelMetadata = GatewayChannelMetadata(
+    id = ChannelId(id),
+    name = null,
+    uuid = null,
+    number = null,
+    numberMinor = null,
+    icon = null,
+    currentEventId = null,
+    nextEventId = null,
+    services = null,
+    tagIds = null,
+)
 
 private class ConnectionFailureCase(
     internal val gatewayFailure: GatewayConnectionFailure,

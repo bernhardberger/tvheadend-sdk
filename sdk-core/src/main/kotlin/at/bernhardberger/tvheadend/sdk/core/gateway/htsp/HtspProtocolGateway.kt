@@ -317,7 +317,7 @@ private fun HtspServerMessage.toGatewayMetadata(
     HtspInitialSyncCompletedMessage -> MetadataEvent.InitialSyncCompleted(generation)
     is HtspEventAddMessage -> MetadataEvent.Deferred(generation, DeferredMetadataKind.EPG_ADDED)
     is HtspEventUpdateMessage -> MetadataEvent.Deferred(generation, DeferredMetadataKind.EPG_UPDATED)
-    is HtspEventDeleteMessage -> MetadataEvent.Deferred(generation, DeferredMetadataKind.EPG_DELETED)
+    is HtspEventDeleteMessage -> MetadataEvent.EventDeleted(generation, EventId(eventId))
     is HtspDvrEntryAddMessage -> MetadataEvent.Deferred(generation, DeferredMetadataKind.DVR_ADDED)
     is HtspDvrEntryUpdateMessage -> MetadataEvent.Deferred(generation, DeferredMetadataKind.DVR_UPDATED)
     is HtspDvrEntryDeleteMessage -> MetadataEvent.Deferred(generation, DeferredMetadataKind.DVR_DELETED)
