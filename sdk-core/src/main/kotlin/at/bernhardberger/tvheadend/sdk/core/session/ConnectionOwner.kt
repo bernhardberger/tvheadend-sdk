@@ -1,3 +1,5 @@
+@file:OptIn(SubscriptionInfrastructureApi::class)
+
 package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.ServerProfile
@@ -11,6 +13,8 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.ProtocolGateway
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
@@ -59,6 +63,7 @@ internal class ConnectionOwner(
     private var shutdownCompletion: CompletableDeferred<Unit>? = null
 
     override val state: StateFlow<SessionState> = mutableState.asStateFlow()
+    override val subscriptions: SubscriptionOpener = children
 
     override suspend fun connect(profile: ServerProfile): SessionCommandResult {
         currentCoroutineContext().ensureActive()
@@ -133,10 +138,9 @@ internal class ConnectionOwner(
             val completion = CompletableDeferred<Unit>()
             shutdownCompletion = completion
             closed = true
-            val activeWorker = invalidateSession()
+            val invalidated = invalidateSession()
             selectedProfile = null
-            val admissionFailure = captureFailure { children.stopAdmission() }
-            ShutdownPlan.Run(completion, activeWorker, admissionFailure)
+            ShutdownPlan.Run(completion, invalidated.worker, invalidated.admissionFailure)
         }
 
         when (plan) {
@@ -179,13 +183,12 @@ internal class ConnectionOwner(
     }
 
     private suspend fun tearDownReusableSession() {
-        val activeWorker = invalidateSession()
-        val admissionFailure = captureFailure { children.stopAdmission() }
+        val invalidated = invalidateSession()
         runOrderedCleanup(
-            initialFailure = admissionFailure,
+            initialFailure = invalidated.admissionFailure,
             steps = listOf(
                 {
-                    activeWorker?.cancelAndJoin()
+                    invalidated.worker?.cancelAndJoin()
                     Unit
                 },
                 children::cancelAndJoinEpgWorker,
@@ -196,16 +199,18 @@ internal class ConnectionOwner(
         )
     }
 
-    private fun invalidateSession(): Job? {
+    private fun invalidateSession(): InvalidatedSession {
         val activeWorker = worker
         worker = null
-        synchronized(stateLock) {
+        val admissionFailure = synchronized(stateLock) {
             activeToken = null
             retryDisposition = null
+            val failure = captureFailure { children.stopAdmission() }
             metadata.resetWorkingStateRetainingPublishedSnapshot()
             mutableState.value = SessionState.Disconnected
+            failure
         }
-        return activeWorker
+        return InvalidatedSession(activeWorker, admissionFailure)
     }
 
     private fun startWorker(profile: ServerProfile) {
@@ -253,20 +258,25 @@ internal class ConnectionOwner(
             if (outcome.reachedReady) {
                 failureIndex = 0
             }
-            if (!commitUnavailable(token, outcome.failure, outcome.disposition)) {
+            val unavailable = commitUnavailable(token, outcome.failure, outcome.disposition)
+            if (!unavailable.committed) {
                 return
             }
             if (outcome.connected) {
-                val admissionFailure = captureFailure { children.stopAdmission() }
-                runOrderedCleanup(
-                    initialFailure = admissionFailure,
-                    steps = listOf(
-                        children::cancelAndJoinEpgWorker,
-                        children::closeAndJoinSubscriptions,
-                        gateway::disconnect,
-                        { metadata.resetWorkingStateRetainingPublishedSnapshot() },
-                    ),
-                )
+                withContext(NonCancellable) {
+                    runOrderedCleanup(
+                        initialFailure = unavailable.admissionFailure,
+                        steps = listOf(
+                            children::cancelAndJoinEpgWorker,
+                            children::closeAndJoinSubscriptions,
+                            gateway::disconnect,
+                            { metadata.resetWorkingStateRetainingPublishedSnapshot() },
+                        ),
+                    )
+                }
+                currentCoroutineContext().ensureActive()
+            } else if (unavailable.admissionFailure != null) {
+                throw unavailable.admissionFailure
             }
             if (outcome.disposition != RetryDisposition.BACKOFF) {
                 return
@@ -300,6 +310,7 @@ internal class ConnectionOwner(
             }
             generation.complete(connection.generation)
             requireCurrent(token)
+            children.bindGeneration(connection.generation)
             metadata.bindGeneration(connection.generation)
             metadata.applyDvrAccess(connection.generation, connection.dvrAccess)
             metadata.publishServerFacts(connection.generation, connection.serverFacts)
@@ -330,7 +341,7 @@ internal class ConnectionOwner(
             requireCurrent(token)
             val capabilities = metadata.capabilities(connection.generation)
             val committed = gateway.commitIfLive(connection.generation) {
-                commitReady(token, capabilities)
+                commitReady(token, connection.generation, capabilities)
             } == true
             if (!committed) {
                 requireCurrent(token)
@@ -380,9 +391,12 @@ internal class ConnectionOwner(
 
     private fun commitReady(
         token: SessionToken,
+        generation: GatewayGeneration,
         capabilities: at.bernhardberger.tvheadend.sdk.core.ServerCapabilities,
     ): Boolean = synchronized(stateLock) {
         if (activeToken !== token || closed) {
+            false
+        } else if (!children.startAdmission(generation)) {
             false
         } else {
             retryDisposition = null
@@ -413,14 +427,15 @@ internal class ConnectionOwner(
         token: SessionToken,
         failure: SessionFailure,
         disposition: RetryDisposition,
-    ): Boolean = synchronized(stateLock) {
+    ): UnavailableCommit = synchronized(stateLock) {
         if (activeToken !== token || closed) {
-            false
+            UnavailableCommit(committed = false, admissionFailure = null)
         } else {
             retryDisposition = disposition
+            val admissionFailure = captureFailure { children.stopAdmission() }
             metadata.resetWorkingStateRetainingPublishedSnapshot()
             mutableState.value = SessionState.Unavailable(failure)
-            true
+            UnavailableCommit(committed = true, admissionFailure = admissionFailure)
         }
     }
 
@@ -466,6 +481,16 @@ private class AttemptOutcome(
     internal val disposition: RetryDisposition,
     internal val connected: Boolean,
     internal val reachedReady: Boolean,
+)
+
+private class InvalidatedSession(
+    internal val worker: Job?,
+    internal val admissionFailure: Throwable?,
+)
+
+private class UnavailableCommit(
+    internal val committed: Boolean,
+    internal val admissionFailure: Throwable?,
 )
 
 private sealed interface SynchronizationOutcome {

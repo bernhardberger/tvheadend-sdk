@@ -16,7 +16,7 @@ the normal build. `./gradlew clean build check stageLocalPublication` verifies
 the repository and stages all five modules under `build/local-maven`.
 
 The default build resolves
-`at.bernhardberger.tvheadend:htsp:0.3.0` from Maven Central. Maintainers working
+`at.bernhardberger.tvheadend:htsp:0.4.0` from Maven Central. Maintainers working
 across adjacent checkouts may explicitly opt into source substitution with
 `-Ptvheadend.htsp.composite=true`; CI and release builds do not use that
 property.

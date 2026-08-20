@@ -1,3 +1,7 @@
+@file:OptIn(
+    at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class,
+)
+
 package at.bernhardberger.tvheadend.sdk.core.gateway.htsp
 
 import at.bernhardberger.tvheadend.htsp.connection.HtspConnectOutcome
@@ -54,7 +58,6 @@ import at.bernhardberger.tvheadend.htsp.wire.HtspBinary
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.gateway.DeferredMetadataKind
 import at.bernhardberger.tvheadend.sdk.core.gateway.EventId
-import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayBinary
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelService
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectResult
@@ -67,20 +70,23 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayServerFacts
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayState
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayTagMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
-import at.bernhardberger.tvheadend.sdk.core.gateway.MuxFrameType
 import at.bernhardberger.tvheadend.sdk.core.gateway.ProtocolGateway
 import at.bernhardberger.tvheadend.sdk.core.gateway.ServerAuthentication
 import at.bernhardberger.tvheadend.sdk.core.gateway.ServerConfiguration
-import at.bernhardberger.tvheadend.sdk.core.gateway.SkipOutcome
-import at.bernhardberger.tvheadend.sdk.core.gateway.StreamIndex
-import at.bernhardberger.tvheadend.sdk.core.gateway.SubscriptionCondition
-import at.bernhardberger.tvheadend.sdk.core.gateway.SubscriptionConfirmation
-import at.bernhardberger.tvheadend.sdk.core.gateway.SubscriptionEvent
-import at.bernhardberger.tvheadend.sdk.core.gateway.SubscriptionId
-import at.bernhardberger.tvheadend.sdk.core.gateway.SubscriptionStream
-import at.bernhardberger.tvheadend.sdk.core.gateway.SubscriptionStreamType
-import at.bernhardberger.tvheadend.sdk.core.gateway.SubscriptionTermination
 import at.bernhardberger.tvheadend.sdk.core.gateway.TagId
+import at.bernhardberger.tvheadend.sdk.playback.MuxFrameType
+import at.bernhardberger.tvheadend.sdk.playback.SkipOutcome
+import at.bernhardberger.tvheadend.sdk.playback.StreamIndex
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionBinary
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionCondition
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionConfirmation
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionId
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStream
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTermination
 import java.lang.ref.WeakReference
 import java.util.WeakHashMap
 import kotlinx.coroutines.CoroutineDispatcher
@@ -92,6 +98,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.transform
 
+@OptIn(SubscriptionInfrastructureApi::class)
 internal class HtspProtocolGateway internal constructor(
     private val connection: HtspConnection,
 ) : ProtocolGateway {
@@ -169,26 +176,31 @@ internal class HtspProtocolGateway internal constructor(
         expectedGeneration = htspGenerationFor(generation),
     ).toGatewayResult {}
 
-    override fun subscription(id: SubscriptionId): Flow<SubscriptionEvent> =
-        connection.subscriptionEvents(id.value).map(HtspSubscriptionEvent::toGatewayEvent)
+    override fun subscription(
+        generation: GatewayGeneration,
+        id: SubscriptionId,
+    ): Flow<SubscriptionEvent> = connection.subscriptionEvents(
+        subscriptionId = id.value,
+        expectedGeneration = htspGenerationFor(generation),
+    ).map(HtspSubscriptionEvent::toGatewayEvent)
 
     override suspend fun subscribe(
         generation: GatewayGeneration,
         id: SubscriptionId,
         channelId: ChannelId,
-    ): GatewayResult<SubscriptionConfirmation> = connection.subscribe(
+    ): SubscriptionOperationResult<SubscriptionConfirmation> = connection.subscribe(
         subscriptionId = id.value,
         channelId = channelId.value,
         expectedGeneration = htspGenerationFor(generation),
-    ).toGatewayResult(SubscribeResponse::toGatewayConfirmation)
+    ).toSubscriptionResult(SubscribeResponse::toGatewayConfirmation)
 
     override suspend fun unsubscribe(
         generation: GatewayGeneration,
         id: SubscriptionId,
-    ): GatewayResult<Unit> = connection.unsubscribe(
+    ): SubscriptionOperationResult<Unit> = connection.unsubscribe(
         subscriptionId = id.value,
         expectedGeneration = htspGenerationFor(generation),
-    ).toGatewayResult {}
+    ).toSubscriptionResult {}
 
     private fun HtspLiveConnection.toGatewayConnection(): GatewayConnection = GatewayConnection(
         generation = generationFor(generation),
@@ -285,6 +297,19 @@ private inline fun <T, R> HtspResult<T>.toGatewayResult(
     HtspResult.Timeout -> GatewayResult.Timeout
     HtspResult.TransportUnavailable -> GatewayResult.TransportUnavailable
     HtspResult.NotSupported -> GatewayResult.NotSupported
+}
+
+@OptIn(SubscriptionInfrastructureApi::class)
+private inline fun <T, R> HtspResult<T>.toSubscriptionResult(
+    transform: (T) -> R,
+): SubscriptionOperationResult<R> = when (this) {
+    is HtspResult.Ok -> SubscriptionOperationResult.Ok(transform(value))
+    HtspResult.ServerError -> SubscriptionOperationResult.ServerRejected
+    HtspResult.AccessDenied -> SubscriptionOperationResult.AccessDenied
+    HtspResult.ConnectionLimit -> SubscriptionOperationResult.ConnectionLimit
+    HtspResult.Timeout -> SubscriptionOperationResult.Timeout
+    HtspResult.TransportUnavailable -> SubscriptionOperationResult.TransportUnavailable
+    HtspResult.NotSupported -> SubscriptionOperationResult.NotSupported
 }
 
 private fun HtspServerMessage.toGatewayMetadata(
@@ -549,12 +574,12 @@ private fun SubscribeResponse.toGatewayConfirmation(): SubscriptionConfirmation 
 
 private class HtspGatewayBinary(
     private val binary: HtspBinary,
-) : GatewayBinary {
+) : SubscriptionBinary {
     override val size: Int
         get() = binary.size
 
     override fun copyInto(destination: ByteArray, destinationOffset: Int): Int =
         binary.copyInto(destination, destinationOffset)
 
-    override fun toString(): String = "GatewayBinary(<redacted>)"
+    override fun toString(): String = "SubscriptionBinary(<redacted>)"
 }

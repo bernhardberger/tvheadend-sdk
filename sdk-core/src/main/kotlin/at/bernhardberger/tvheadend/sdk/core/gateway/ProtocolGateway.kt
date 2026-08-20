@@ -1,8 +1,14 @@
 package at.bernhardberger.tvheadend.sdk.core.gateway
 
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionConfirmation
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionId
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 
+@OptIn(SubscriptionInfrastructureApi::class)
 internal interface ProtocolGateway {
     public val connectionState: StateFlow<GatewayState>
     public val metadata: Flow<MetadataEvent>
@@ -23,18 +29,21 @@ internal interface ProtocolGateway {
         generation: GatewayGeneration,
     ): GatewayResult<Unit>
 
-    public fun subscription(id: SubscriptionId): Flow<SubscriptionEvent>
+    public fun subscription(
+        generation: GatewayGeneration,
+        id: SubscriptionId,
+    ): Flow<SubscriptionEvent>
 
     public suspend fun subscribe(
         generation: GatewayGeneration,
         id: SubscriptionId,
         channelId: ChannelId,
-    ): GatewayResult<SubscriptionConfirmation>
+    ): SubscriptionOperationResult<SubscriptionConfirmation>
 
     public suspend fun unsubscribe(
         generation: GatewayGeneration,
         id: SubscriptionId,
-    ): GatewayResult<Unit>
+    ): SubscriptionOperationResult<Unit>
 }
 
 internal class ServerConfiguration(
@@ -158,13 +167,4 @@ internal sealed interface GatewayResult<out T> {
     public data object Timeout : GatewayResult<Nothing>
     public data object TransportUnavailable : GatewayResult<Nothing>
     public data object NotSupported : GatewayResult<Nothing>
-}
-
-internal class SubscriptionConfirmation(
-    internal val ninetyKhz: Boolean?,
-    internal val normalizedTimestamps: Boolean?,
-    internal val weight: Long?,
-    internal val timeshiftPeriodSeconds: Long?,
-) {
-    override fun toString(): String = "SubscriptionConfirmation(<redacted>)"
 }

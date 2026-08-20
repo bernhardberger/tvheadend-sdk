@@ -33,6 +33,7 @@ java {
 
 dependencies {
     api(libs.kotlinx.coroutines.core)
+    api(project(":sdk-playback"))
     implementation(libs.htsp)
 
     testImplementation(libs.junit)

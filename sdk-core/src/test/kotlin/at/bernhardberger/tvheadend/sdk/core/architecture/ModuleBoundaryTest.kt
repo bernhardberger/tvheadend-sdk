@@ -1,6 +1,19 @@
 package at.bernhardberger.tvheadend.sdk.core.architecture
 
 import com.lemonappdev.konsist.api.Konsist
+import com.lemonappdev.konsist.api.container.KoScope
+import com.lemonappdev.konsist.api.declaration.KoBaseDeclaration
+import com.lemonappdev.konsist.api.declaration.KoConstructorDeclaration
+import com.lemonappdev.konsist.api.declaration.KoFunctionDeclaration
+import com.lemonappdev.konsist.api.declaration.KoParameterDeclaration
+import com.lemonappdev.konsist.api.declaration.KoPropertyDeclaration
+import com.lemonappdev.konsist.api.declaration.KoTypeArgumentDeclaration
+import com.lemonappdev.konsist.api.declaration.combined.KoClassAndInterfaceAndObjectDeclaration
+import com.lemonappdev.konsist.api.declaration.type.KoTypeDeclaration
+import com.lemonappdev.konsist.api.provider.KoContainingDeclarationProvider
+import com.lemonappdev.konsist.api.provider.KoDeclarationCastProvider
+import com.lemonappdev.konsist.api.provider.KoSourceDeclarationProvider
+import com.lemonappdev.konsist.api.provider.modifier.KoVisibilityModifierProvider
 import com.lemonappdev.konsist.api.verify.assertTrue
 import java.io.File
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -53,6 +66,17 @@ internal class ModuleBoundaryTest {
                 val packageName = file.packagee?.name.orEmpty()
                 val gatewayPackage = "at.bernhardberger.tvheadend.sdk.core.gateway.htsp"
                 !referencesHtsp || packageName == gatewayPackage || packageName.startsWith("$gatewayPackage.")
+            }
+        }
+    }
+
+    @Test
+    fun `playback and testing never depend on core gateway internals`() {
+        listOf("sdk-playback", "sdk-testing").forEach { module ->
+            productionScope(module).files.assertTrue { file ->
+                val forbiddenPrefix = "at.bernhardberger.tvheadend.sdk.core.gateway"
+                !file.text.contains(forbiddenPrefix) &&
+                    file.imports.none { declaration -> declaration.name.startsWith(forbiddenPrefix) }
             }
         }
     }
@@ -133,6 +157,178 @@ internal class ModuleBoundaryTest {
         }
     }
 
+    @Test
+    fun `playback and testing infrastructure APIs remain deliberate and opt in`() {
+        val expectedPlayback = setOf(
+            "SubscriptionInfrastructureApi",
+            "SubscriptionId",
+            "SubscriptionChannelId",
+            "StreamIndex",
+            "SubscriptionBinary",
+            "SubscriptionEvent",
+            "SubscriptionStream",
+            "SubscriptionStreamType",
+            "SubscriptionCondition",
+            "MuxFrameType",
+            "SkipOutcome",
+            "SubscriptionTermination",
+            "SubscriptionOperationResult",
+            "SubscriptionConfirmation",
+            "SubscriptionConnection",
+            "SubscriptionEventConsumer",
+            "SubscriptionTracks",
+            "SubscriptionState",
+            "SubscriptionTerminalReason",
+            "SubscriptionOperationFailure",
+            "SubscriptionDiagnostics",
+            "SubscriptionOpenResult",
+            "SubscriptionCloseResult",
+            "ActiveSubscription",
+            "SubscriptionOpener",
+            "SubscriptionManager",
+            "createSubscriptionManager",
+        )
+        val expectedTesting = setOf(
+            "ScriptedSubscriptionCall",
+            "ScriptedSubscriptionConnection",
+            "ScriptedSubscriptionRegistration",
+            "SubscriptionBinaryFixture",
+        )
+
+        assertPublicInfrastructure("sdk-playback", expectedPlayback, unannotatedCount = 1)
+        assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 0)
+
+        val sessionApi = java.io.File(
+            "src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/TvheadendSession.kt",
+        ).readText()
+        org.junit.jupiter.api.Assertions.assertTrue(
+            Regex(
+                "@SubscriptionInfrastructureApi\\s+public val subscriptions: SubscriptionOpener",
+            ).containsMatchIn(sessionApi),
+            "Missing opted-in subscription opener on the public session",
+        )
+    }
+
+    @Test
+    fun `every hand written public SDK type is reachable from a public entry point`() {
+        val scope = listOf("sdk-core", "sdk-playback", "sdk-testing")
+            .map(::productionScope)
+            .reduce(KoScope::plus)
+        val publicTypes = scope.classesAndInterfacesAndObjects(includeNested = true, includeLocal = false)
+            .filter(::isEffectivelyPublic)
+            .mapNotNull { declaration ->
+                declaration.fullyQualifiedName?.let { name -> name to declaration }
+            }
+            .toMap()
+        val reachable = LinkedHashSet<String>()
+        val pending = ArrayDeque<KoClassAndInterfaceAndObjectDeclaration>()
+
+        fun enqueue(declaration: KoClassAndInterfaceAndObjectDeclaration?) {
+            declaration ?: return
+            val name = declaration.fullyQualifiedName ?: return
+            if (name in publicTypes && reachable.add(name)) pending.addLast(declaration)
+        }
+
+        scope.functions(includeLocal = false, includeNested = false)
+            .filter { function ->
+                function.hasPublicOrDefaultModifier &&
+                    function.name in setOf("createTvheadendSession", "createSubscriptionManager")
+            }
+            .forEach { function -> function.referencedPublicTypes().forEach(::enqueue) }
+        setOf(
+            "at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi",
+            "at.bernhardberger.tvheadend.sdk.testing.ScriptedSubscriptionConnection",
+            "at.bernhardberger.tvheadend.sdk.testing.SubscriptionBinaryFixture",
+        ).forEach { name -> enqueue(publicTypes[name]) }
+
+        while (pending.isNotEmpty()) {
+            val declaration = pending.removeFirst()
+            declaration.parents(false)
+                .flatMap { parent -> parent.referencedPublicTypes() }
+                .forEach(::enqueue)
+            declaration.classesAndInterfacesAndObjects(includeNested = false, includeLocal = false)
+                .filter(::isEffectivelyPublic)
+                .forEach(::enqueue)
+            declaration.functions(includeNested = false, includeLocal = false)
+                .filter { function -> function.hasPublicOrDefaultModifier }
+                .flatMap { function -> function.referencedPublicTypes() }
+                .forEach(::enqueue)
+            declaration.properties(includeNested = false)
+                .filter { property -> property.hasPublicOrDefaultModifier }
+                .flatMap { property -> property.referencedPublicTypes() }
+                .forEach(::enqueue)
+            if (declaration is com.lemonappdev.konsist.api.declaration.KoClassDeclaration) {
+                declaration.constructors
+                    .filter { constructor -> constructor.hasPublicOrDefaultModifier }
+                    .flatMap { constructor -> constructor.referencedPublicTypes() }
+                    .forEach(::enqueue)
+            }
+        }
+
+        assertEquals(emptySet<String>(), publicTypes.keys - reachable)
+    }
+
+    private fun assertPublicInfrastructure(
+        module: String,
+        expected: Set<String>,
+        unannotatedCount: Int,
+    ) {
+        val source = productionScope(module).files.joinToString("\n") { file -> file.text }
+        val declaration = Regex(
+            pattern = "^public\\s+(?:(?:data|sealed|value|fun)\\s+)*(?:annotation\\s+class|enum\\s+class|class|interface|object|fun)\\s+(\\w+)",
+            option = RegexOption.MULTILINE,
+        )
+        val actual = declaration.findAll(source).map { match -> match.groupValues[1] }.toSet()
+        val annotatedCount = Regex(
+            "@SubscriptionInfrastructureApi(?:\\s+@[^\\n]+)*\\s+public",
+        )
+            .findAll(source)
+            .count()
+
+        assertEquals(expected, actual)
+        assertEquals(expected.size - unannotatedCount, annotatedCount)
+    }
+
     private fun productionScope(module: String) =
         Konsist.scopeFromDirectory("$module/src/main/kotlin")
+
+    private fun isEffectivelyPublic(
+        declaration: KoClassAndInterfaceAndObjectDeclaration,
+    ): Boolean {
+        if (!declaration.hasPublicOrDefaultModifier) return false
+        var containing: KoBaseDeclaration? =
+            (declaration as KoContainingDeclarationProvider).containingDeclaration
+        while (containing is KoVisibilityModifierProvider) {
+            if (!containing.hasPublicOrDefaultModifier) return false
+            containing = (containing as? KoContainingDeclarationProvider)?.containingDeclaration
+        }
+        return true
+    }
+
+    private fun KoFunctionDeclaration.referencedPublicTypes(): List<KoClassAndInterfaceAndObjectDeclaration> =
+        returnType?.referencedPublicTypes().orEmpty() +
+            parameters.flatMap { parameter -> parameter.referencedPublicTypes() }
+
+    private fun KoPropertyDeclaration.referencedPublicTypes(): List<KoClassAndInterfaceAndObjectDeclaration> =
+        type?.referencedPublicTypes().orEmpty()
+
+    private fun KoConstructorDeclaration.referencedPublicTypes(): List<KoClassAndInterfaceAndObjectDeclaration> =
+        parameters.flatMap { parameter -> parameter.referencedPublicTypes() }
+
+    private fun KoParameterDeclaration.referencedPublicTypes(): List<KoClassAndInterfaceAndObjectDeclaration> =
+        type.referencedPublicTypes()
+
+    private fun KoSourceDeclarationProvider.referencedPublicTypes(): List<KoClassAndInterfaceAndObjectDeclaration> {
+        val sourceType = sourceDeclaration?.toPublicTypeOrNull()?.let(::listOf).orEmpty()
+        val typeArguments = (this as? KoTypeArgumentDeclaration)?.typeArguments.orEmpty()
+            .flatMap { argument -> argument.referencedPublicTypes() }
+        return sourceType + typeArguments
+    }
+
+    private fun KoTypeDeclaration.referencedPublicTypes(): List<KoClassAndInterfaceAndObjectDeclaration> =
+        (this as KoSourceDeclarationProvider).referencedPublicTypes() +
+            typeArguments.orEmpty().flatMap { argument -> argument.referencedPublicTypes() }
+
+    private fun KoDeclarationCastProvider.toPublicTypeOrNull(): KoClassAndInterfaceAndObjectDeclaration? =
+        if (isClassOrInterfaceOrObject) asClassOrInterfaceOrObjectDeclaration() else null
 }

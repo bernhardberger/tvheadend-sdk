@@ -32,7 +32,10 @@ java {
 }
 
 dependencies {
+    api(project(":sdk-playback"))
+
     testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
     testRuntimeOnly(libs.junit.platform.launcher)
 }
 

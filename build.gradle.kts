@@ -66,7 +66,7 @@ val requiredVersions = mapOf(
     "detekt" to "2.0.0-alpha.6",
     "dokka" to "2.2.0",
     "foojay" to "1.0.0",
-    "htsp" to "0.3.0",
+    "htsp" to "0.4.0",
     "jdk" to "21",
     "junit" to "6.1.3",
     "jvmTarget" to "17",
@@ -155,12 +155,13 @@ val commonResolved = setOf(
     "org.jetbrains.kotlin:kotlin-stdlib:2.4.10",
 )
 val coreResolved = (commonResolved - "org.jetbrains:annotations:13.0") + setOf(
-    "at.bernhardberger.tvheadend:htsp:0.3.0",
+    "at.bernhardberger.tvheadend:htsp:0.4.0",
     "org.jetbrains:annotations:23.0.0",
     "org.jetbrains.kotlinx:kotlinx-coroutines-bom:1.10.2",
     "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
     "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.10.2",
 )
+val coroutineResolved = (coreResolved - "at.bernhardberger.tvheadend:htsp:0.4.0")
 val useHtspComposite = providers.gradleProperty("tvheadend.htsp.composite")
     .map(String::toBooleanStrict)
     .getOrElse(false)
@@ -175,11 +176,35 @@ val productionGraphs = sdkModules.associateWith {
     }
     this["sdk-core"] = ProductionGraph(
         direct = commonDirect + setOf(
-            "at.bernhardberger.tvheadend:htsp:0.3.0",
+            "project::sdk-playback",
+            "at.bernhardberger.tvheadend:htsp:0.4.0",
             "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
         ),
-        resolved = if (useHtspComposite) coreResolved - "at.bernhardberger.tvheadend:htsp:0.3.0" else coreResolved,
+        resolved = (if (useHtspComposite) {
+            (coreResolved - "at.bernhardberger.tvheadend:htsp:0.4.0") + "project::tvheadend-htsp"
+        } else {
+            coreResolved
+        }) + "project::sdk-playback",
     )
+    this["sdk-playback"] = ProductionGraph(
+        direct = setOf("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2"),
+        resolved = coroutineResolved,
+    )
+    this["sdk-testing"] = ProductionGraph(
+        direct = setOf("project::sdk-playback"),
+        resolved = coroutineResolved + "project::sdk-playback",
+    )
+}
+val scopedDirectDependencies = sdkModules.associateWith { emptySet<String>() }.toMutableMap().apply {
+    this["sdk-core"] = setOf(
+        "api=project::sdk-playback",
+        "api=org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
+        "implementation=at.bernhardberger.tvheadend:htsp:0.4.0",
+    )
+    this["sdk-playback"] = setOf(
+        "api=org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
+    )
+    this["sdk-testing"] = setOf("api=project::sdk-playback")
 }
 
 fun Project.registerProductionDependencyVerification(
@@ -187,6 +212,7 @@ fun Project.registerProductionDependencyVerification(
     resolvedConfigurationNames: Set<String>,
 ) {
     val expected = productionGraphs.getValue(name)
+    val expectedScopedDirect = scopedDirectDependencies.getValue(name)
     val directDependencies = providers.provider {
         directConfigurationNames
             .flatMap { configurationName -> configurations.getByName(configurationName).dependencies }
@@ -203,6 +229,22 @@ fun Project.registerProductionDependencyVerification(
             .toSortedSet()
             .toList()
     }
+    val scopedDirect = providers.provider {
+        directConfigurationNames.flatMap { configurationName ->
+            configurations.getByName(configurationName).dependencies
+                .filterNot { dependency ->
+                    dependency.group == "org.jetbrains.kotlin" && dependency.name == "kotlin-stdlib"
+                }
+                .map { dependency ->
+                    val coordinate = if (dependency is ProjectDependency) {
+                        "project:${dependency.path}"
+                    } else {
+                        "${dependency.group}:${dependency.name}:${dependency.version}"
+                    }
+                    "$configurationName=$coordinate"
+                }
+        }.toSortedSet().toList()
+    }
     val resolvedDependencies = providers.provider {
         resolvedConfigurationNames
             .flatMap { configurationName ->
@@ -213,11 +255,9 @@ fun Project.registerProductionDependencyVerification(
                     is ModuleComponentIdentifier ->
                         "${identifier.group}:${identifier.module}:${identifier.version}"
                     is ProjectComponentIdentifier ->
-                        if (identifier.build.buildPath == ":" && identifier.projectPath != path) {
-                            "project:${identifier.projectPath}"
-                        } else {
-                            null
-                        }
+                        identifier.buildTreePath
+                            .takeUnless { buildTreePath -> buildTreePath == path }
+                            ?.let { buildTreePath -> "project:$buildTreePath" }
                     else -> null
                 }
             }
@@ -228,16 +268,27 @@ fun Project.registerProductionDependencyVerification(
         group = "verification"
         description = "Checks $name's fail-closed production dependency allowlist."
         inputs.property("directDependencies", directDependencies)
+        inputs.property("scopedDirectDependencies", scopedDirect)
         inputs.property("resolvedDependencies", resolvedDependencies)
         inputs.property("expectedDirectDependencies", expected.direct.toSortedSet().toList())
+        inputs.property(
+            "expectedScopedDirectDependencies",
+            expectedScopedDirect.toSortedSet().toList(),
+        )
         inputs.property("expectedResolvedDependencies", expected.resolved.toSortedSet().toList())
         doLast {
             val direct = (inputs.properties.getValue("directDependencies") as List<*>).filterIsInstance<String>().toSet()
             val resolved = (inputs.properties.getValue("resolvedDependencies") as List<*>).filterIsInstance<String>().toSet()
+            val scoped = (inputs.properties.getValue("scopedDirectDependencies") as List<*>)
+                .filterIsInstance<String>()
+                .toSet()
             val expectedDirect = (inputs.properties.getValue("expectedDirectDependencies") as List<*>)
                 .filterIsInstance<String>()
                 .toSet()
             val expectedResolved = (inputs.properties.getValue("expectedResolvedDependencies") as List<*>)
+                .filterIsInstance<String>()
+                .toSet()
+            val expectedScoped = (inputs.properties.getValue("expectedScopedDirectDependencies") as List<*>)
                 .filterIsInstance<String>()
                 .toSet()
             check(direct == expectedDirect) {
@@ -245,6 +296,9 @@ fun Project.registerProductionDependencyVerification(
             }
             check(resolved == expectedResolved) {
                 "Unexpected resolved production dependencies: $resolved"
+            }
+            check(scoped == expectedScoped) {
+                "Unexpected scoped production dependencies: $scoped"
             }
         }
     }

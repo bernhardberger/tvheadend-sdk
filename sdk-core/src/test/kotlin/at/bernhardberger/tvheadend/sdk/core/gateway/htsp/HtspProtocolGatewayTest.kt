@@ -1,3 +1,5 @@
+@file:OptIn(SubscriptionInfrastructureApi::class)
+
 package at.bernhardberger.tvheadend.sdk.core.gateway.htsp
 
 import at.bernhardberger.tvheadend.htsp.connection.HtspConnectOptions
@@ -49,15 +51,17 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayState
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
-import at.bernhardberger.tvheadend.sdk.core.gateway.MuxFrameType
 import at.bernhardberger.tvheadend.sdk.core.gateway.ServerAuthentication
 import at.bernhardberger.tvheadend.sdk.core.gateway.ServerConfiguration
-import at.bernhardberger.tvheadend.sdk.core.gateway.SkipOutcome
-import at.bernhardberger.tvheadend.sdk.core.gateway.SubscriptionCondition
-import at.bernhardberger.tvheadend.sdk.core.gateway.SubscriptionEvent
-import at.bernhardberger.tvheadend.sdk.core.gateway.SubscriptionId
-import at.bernhardberger.tvheadend.sdk.core.gateway.SubscriptionStreamType
-import at.bernhardberger.tvheadend.sdk.core.gateway.SubscriptionTermination
+import at.bernhardberger.tvheadend.sdk.playback.MuxFrameType
+import at.bernhardberger.tvheadend.sdk.playback.SkipOutcome
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionCondition
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionId
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTermination
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.flow.Flow
@@ -365,12 +369,12 @@ internal class HtspProtocolGatewayTest {
             as GatewayConnectResult.Connected).connection.generation
 
         val operationFailures = listOf(
-            HtspResult.ServerError to GatewayResult.ServerRejected,
-            HtspResult.AccessDenied to GatewayResult.AccessDenied,
-            HtspResult.ConnectionLimit to GatewayResult.ConnectionLimit,
-            HtspResult.Timeout to GatewayResult.Timeout,
-            HtspResult.TransportUnavailable to GatewayResult.TransportUnavailable,
-            HtspResult.NotSupported to GatewayResult.NotSupported,
+            HtspResult.ServerError to SubscriptionOperationResult.ServerRejected,
+            HtspResult.AccessDenied to SubscriptionOperationResult.AccessDenied,
+            HtspResult.ConnectionLimit to SubscriptionOperationResult.ConnectionLimit,
+            HtspResult.Timeout to SubscriptionOperationResult.Timeout,
+            HtspResult.TransportUnavailable to SubscriptionOperationResult.TransportUnavailable,
+            HtspResult.NotSupported to SubscriptionOperationResult.NotSupported,
         )
         operationFailures.forEach { (source, expected) ->
             fake.executeResult = source
@@ -396,14 +400,16 @@ internal class HtspProtocolGatewayTest {
             ),
         )
         val subscribed = gateway.subscribe(generation, SubscriptionId(10), ChannelId(20))
-            as GatewayResult.Ok
+            as SubscriptionOperationResult.Ok
         assertEquals(true, subscribed.value.ninetyKhz)
         assertEquals(false, subscribed.value.normalizedTimestamps)
         assertEquals(30L, subscribed.value.weight)
         assertEquals(40L, subscribed.value.timeshiftPeriodSeconds)
 
         fake.executeResult = HtspResult.Ok(HtspEmptyResponse)
-        assertTrue(gateway.unsubscribe(generation, SubscriptionId(10)) is GatewayResult.Ok)
+        assertTrue(
+            gateway.unsubscribe(generation, SubscriptionId(10)) is SubscriptionOperationResult.Ok,
+        )
         assertTrue(fake.lastRequest is UnsubscribeRequest)
         assertSame(sourceGeneration, fake.lastExpectedGeneration)
 
@@ -438,6 +444,7 @@ internal class HtspProtocolGatewayTest {
 
     @Test
     fun `subscription mapping retains complete event order and delegates bounded payload copies`() = runTest {
+        val sourceGeneration = HtspConnectionGeneration()
         val payloadBytes = byteArrayOf(1, 2, 3, 4)
         val codecBytes = byteArrayOf(5, 6)
         val sourceEvents = listOf(
@@ -532,10 +539,16 @@ internal class HtspProtocolGatewayTest {
         )
         val fake = FakeHtspConnection().apply {
             subscriptionFlow = flowOf(*sourceEvents.toTypedArray())
+            liveConnectionValue.value = liveConnection(sourceGeneration)
+            connectOutcome = HtspConnectOutcome.Connected(requireNotNull(liveConnectionValue.value))
         }
-        val events = HtspProtocolGateway(fake).subscription(SubscriptionId(77)).toList()
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+        val events = gateway.subscription(generation, SubscriptionId(77)).toList()
 
         assertTrue(fake.lastSubscriptionId == 77L, "Subscription id routing failed")
+        assertSame(sourceGeneration, fake.lastSubscriptionExpectedGeneration)
         assertEquals(
             listOf(
                 SubscriptionEvent.Started::class,
@@ -597,6 +610,7 @@ internal class HtspProtocolGatewayTest {
 
     @Test
     fun `packet before start remains first at the SDK boundary`() = runTest {
+        val sourceGeneration = HtspConnectionGeneration()
         val packet = HtspSubscriptionEvent.Packet(
             HtspMuxPacketMessage(
                 subscriptionId = 77,
@@ -613,9 +627,14 @@ internal class HtspProtocolGatewayTest {
         )
         val fake = FakeHtspConnection().apply {
             subscriptionFlow = flowOf(packet, started)
+            liveConnectionValue.value = liveConnection(sourceGeneration)
+            connectOutcome = HtspConnectOutcome.Connected(requireNotNull(liveConnectionValue.value))
         }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
 
-        val events = HtspProtocolGateway(fake).subscription(SubscriptionId(77)).toList()
+        val events = gateway.subscription(generation, SubscriptionId(77)).toList()
 
         assertTrue(events[0] is SubscriptionEvent.Packet, "Packet order changed at gateway")
         assertTrue(events[1] is SubscriptionEvent.Started, "Start order changed at gateway")
@@ -647,6 +666,7 @@ private class FakeHtspConnection : HtspConnection {
     internal var lastExpectedGeneration: HtspConnectionGeneration? = null
     internal var lastRequest: HtspRequest<*>? = null
     internal var lastSubscriptionId: Long? = null
+    internal var lastSubscriptionExpectedGeneration: HtspConnectionGeneration? = null
     internal var disconnectCalls: Int = 0
     internal var closeCalls: Int = 0
 
@@ -657,6 +677,15 @@ private class FakeHtspConnection : HtspConnection {
 
     override fun subscriptionEvents(subscriptionId: Long): Flow<HtspSubscriptionEvent> {
         lastSubscriptionId = subscriptionId
+        return subscriptionFlow
+    }
+
+    override fun subscriptionEvents(
+        subscriptionId: Long,
+        expectedGeneration: HtspConnectionGeneration,
+    ): Flow<HtspSubscriptionEvent> {
+        lastSubscriptionId = subscriptionId
+        lastSubscriptionExpectedGeneration = expectedGeneration
         return subscriptionFlow
     }
 

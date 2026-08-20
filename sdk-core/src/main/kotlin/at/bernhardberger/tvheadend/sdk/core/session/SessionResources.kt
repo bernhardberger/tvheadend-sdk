@@ -1,3 +1,5 @@
+@file:OptIn(SubscriptionInfrastructureApi::class)
+
 package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
@@ -6,6 +8,11 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayServerFacts
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.metadata.ChannelTagCatalogState
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener
 import at.bernhardberger.tvheadend.sdk.core.metadata.ChannelTagReducer
 import at.bernhardberger.tvheadend.sdk.core.metadata.ChannelTagSnapshot
 import java.util.concurrent.CancellationException
@@ -171,7 +178,11 @@ private fun Boolean?.toCapabilityAccess(): CapabilityAccess = when (this) {
     false -> CapabilityAccess.DENIED
 }
 
-internal interface SessionChildren {
+internal interface SessionChildren : SubscriptionOpener {
+    public fun bindGeneration(generation: GatewayGeneration)
+
+    public fun startAdmission(generation: GatewayGeneration): Boolean
+
     public fun stopAdmission()
 
     public suspend fun cancelAndJoinEpgWorker()
@@ -179,6 +190,15 @@ internal interface SessionChildren {
     public suspend fun closeAndJoinSubscriptions()
 
     public data object None : SessionChildren {
+        override suspend fun open(
+            channelId: SubscriptionChannelId,
+            consumer: SubscriptionEventConsumer,
+        ): SubscriptionOpenResult = SubscriptionOpenResult.NotReady
+
+        override fun bindGeneration(generation: GatewayGeneration) = Unit
+
+        override fun startAdmission(generation: GatewayGeneration): Boolean = true
+
         override fun stopAdmission() = Unit
 
         override suspend fun cancelAndJoinEpgWorker() = Unit

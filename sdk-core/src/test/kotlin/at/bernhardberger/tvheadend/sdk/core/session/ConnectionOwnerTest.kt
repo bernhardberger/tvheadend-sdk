@@ -1,3 +1,5 @@
+@file:OptIn(SubscriptionInfrastructureApi::class)
+
 package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
@@ -20,10 +22,15 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayState
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.ProtocolGateway
 import at.bernhardberger.tvheadend.sdk.core.gateway.ServerConfiguration
-import at.bernhardberger.tvheadend.sdk.core.gateway.SubscriptionConfirmation
-import at.bernhardberger.tvheadend.sdk.core.gateway.SubscriptionEvent
-import at.bernhardberger.tvheadend.sdk.core.gateway.SubscriptionId
 import at.bernhardberger.tvheadend.sdk.core.metadata.ChannelTagCatalogState
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionConfirmation
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionId
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
 import java.util.Collections
 import java.util.IdentityHashMap
 import kotlin.time.Duration.Companion.seconds
@@ -72,9 +79,10 @@ internal class ConnectionOwnerTest {
 
         assertEquals(SessionState.Synchronizing, owner.state.value)
         assertEquals(
-            listOf("failures.collect", "connect", "metadata.collect", "enable"),
+            listOf("failures.collect", "connect", "generation.bind", "metadata.collect", "enable"),
             order,
         )
+        assertFalse("admission.start" in order, "Admission started before metadata synchronization")
         assertTrue(metadata.channelsAndTags.value is ChannelTagCatalogState.Synchronizing)
 
         gateway.emitMetadata(
@@ -95,6 +103,7 @@ internal class ConnectionOwnerTest {
             owner.state.value,
         )
         assertTrue(metadata.channelsAndTags.value is ChannelTagCatalogState.Current)
+        assertEquals("admission.start", order.last())
         owner.shutdown()
     }
 
@@ -713,18 +722,22 @@ private class FakeProtocolGateway(
         return enableResult
     }
 
-    override fun subscription(id: SubscriptionId): Flow<SubscriptionEvent> = emptyFlow()
+    override fun subscription(
+        generation: GatewayGeneration,
+        id: SubscriptionId,
+    ): Flow<SubscriptionEvent> = emptyFlow()
 
     override suspend fun subscribe(
         generation: GatewayGeneration,
         id: SubscriptionId,
         channelId: ChannelId,
-    ): GatewayResult<SubscriptionConfirmation> = GatewayResult.TransportUnavailable
+    ): SubscriptionOperationResult<SubscriptionConfirmation> =
+        SubscriptionOperationResult.TransportUnavailable
 
     override suspend fun unsubscribe(
         generation: GatewayGeneration,
         id: SubscriptionId,
-    ): GatewayResult<Unit> = GatewayResult.TransportUnavailable
+    ): SubscriptionOperationResult<Unit> = SubscriptionOperationResult.TransportUnavailable
 
     internal suspend fun emitMetadata(event: MetadataEvent) {
         metadataEvents.emit(event)
@@ -739,6 +752,20 @@ private class FakeProtocolGateway(
 private class RecordingSessionChildren(
     private val order: MutableList<String>,
 ) : SessionChildren {
+    override suspend fun open(
+        channelId: SubscriptionChannelId,
+        consumer: SubscriptionEventConsumer,
+    ): SubscriptionOpenResult = SubscriptionOpenResult.NotReady
+
+    override fun bindGeneration(generation: GatewayGeneration) {
+        order += "generation.bind"
+    }
+
+    override fun startAdmission(generation: GatewayGeneration): Boolean {
+        order += "admission.start"
+        return true
+    }
+
     override fun stopAdmission() {
         order += "admission.stop"
     }
@@ -757,6 +784,15 @@ private class BlockingSessionChildren(
     private val cleanupStarted: CompletableDeferred<Unit>,
     private val releaseCleanup: CompletableDeferred<Unit>,
 ) : SessionChildren {
+    override suspend fun open(
+        channelId: SubscriptionChannelId,
+        consumer: SubscriptionEventConsumer,
+    ): SubscriptionOpenResult = SubscriptionOpenResult.NotReady
+
+    override fun bindGeneration(generation: GatewayGeneration) = Unit
+
+    override fun startAdmission(generation: GatewayGeneration): Boolean = true
+
     override fun stopAdmission() {
         order += "admission.stop"
     }
@@ -775,6 +811,15 @@ private class BlockingSessionChildren(
 private class ThrowingSessionChildren(
     private val order: MutableList<String>,
 ) : SessionChildren {
+    override suspend fun open(
+        channelId: SubscriptionChannelId,
+        consumer: SubscriptionEventConsumer,
+    ): SubscriptionOpenResult = SubscriptionOpenResult.NotReady
+
+    override fun bindGeneration(generation: GatewayGeneration) = Unit
+
+    override fun startAdmission(generation: GatewayGeneration): Boolean = true
+
     override fun stopAdmission() {
         order += "admission.stop"
     }

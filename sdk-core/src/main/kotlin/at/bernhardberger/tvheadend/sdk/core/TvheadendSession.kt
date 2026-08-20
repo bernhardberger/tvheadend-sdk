@@ -6,7 +6,9 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.htsp.HtspProtocolGateway
 import at.bernhardberger.tvheadend.sdk.core.session.ConnectionOwner
 import at.bernhardberger.tvheadend.sdk.core.session.ExponentialReconnectBackoff
 import at.bernhardberger.tvheadend.sdk.core.session.PhaseOneSessionMetadata
-import at.bernhardberger.tvheadend.sdk.core.session.SessionChildren
+import at.bernhardberger.tvheadend.sdk.core.session.PlaybackSessionChildren
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.StateFlow
 import kotlin.random.Random
@@ -15,6 +17,10 @@ import kotlin.random.Random
 public interface TvheadendSession {
     /** Current durable connection and synchronization state. */
     public val state: StateFlow<SessionState>
+
+    /** Generation-bound subscription entry point used by SDK playback adapters. */
+    @SubscriptionInfrastructureApi
+    public val subscriptions: SubscriptionOpener
 
     /**
      * Selects [profile] and starts connection work.
@@ -50,11 +56,12 @@ private object SessionRegistry {
     }
 
     private fun createOwner(): ConnectionOwner {
+        val gateway = HtspProtocolGateway(Dispatchers.IO)
         lateinit var owner: ConnectionOwner
         owner = ConnectionOwner(
-            gateway = HtspProtocolGateway(Dispatchers.IO),
+            gateway = gateway,
             metadata = PhaseOneSessionMetadata(),
-            children = SessionChildren.None,
+            children = PlaybackSessionChildren(gateway, Dispatchers.Default),
             defaultDispatcher = Dispatchers.Default,
             backoff = ExponentialReconnectBackoff(
                 nextJitter = { Random.Default.nextDouble() },
