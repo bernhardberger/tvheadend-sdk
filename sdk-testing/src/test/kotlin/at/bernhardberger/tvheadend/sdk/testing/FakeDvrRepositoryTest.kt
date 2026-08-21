@@ -2,6 +2,11 @@ package at.bernhardberger.tvheadend.sdk.testing
 
 import at.bernhardberger.tvheadend.sdk.core.AutorecRule
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleId
+import at.bernhardberger.tvheadend.sdk.core.DvrConfigId
+import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
+import at.bernhardberger.tvheadend.sdk.core.DvrConfigurationsState
+import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
+import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpaceState
 import at.bernhardberger.tvheadend.sdk.core.DvrEntry
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
@@ -34,5 +39,25 @@ internal class FakeDvrRepositoryTest {
         assertEquals(null, repository.entry(DvrEntryId(8)).first())
         assertEquals(null, repository.autorecRule(AutorecRuleId("auto")).first())
         assertEquals(DvrRepositoryState.Current(DvrSnapshot.create()), repository.state.value)
+    }
+
+    @Test
+    fun `fake scripts configuration and disk freshness independently`() = runTest {
+        val configuration = DvrConfiguration(DvrConfigId("config"), "Default", "")
+        val diskSpace = DvrDiskSpace(4, 1, 5)
+        val repository = FakeDvrRepository(
+            initialConfigurationsState = DvrConfigurationsState.Synchronizing.create(listOf(configuration)),
+            initialDiskSpaceState = DvrDiskSpaceState.Synchronizing(diskSpace),
+        )
+
+        assertSame(configuration, repository.configuration(DvrConfigId("config")).first())
+        assertEquals(diskSpace, repository.diskSpace.value)
+
+        repository.setConfigurationsState(DvrConfigurationsState.Denied)
+        repository.setDiskSpaceState(DvrDiskSpaceState.Unknown)
+        assertEquals(emptyList<DvrConfiguration>(), repository.configurations.value)
+        assertEquals(null, repository.configuration(DvrConfigId("config")).first())
+        assertEquals(null, repository.diskSpace.value)
+        assertEquals(DvrConfigurationsState.Denied, repository.configurationsState.value)
     }
 }

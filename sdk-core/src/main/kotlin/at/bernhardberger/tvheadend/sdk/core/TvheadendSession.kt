@@ -26,7 +26,7 @@ public interface TvheadendSession {
     /** Programme-guide metadata and retained coverage for the selected server profile. */
     public val epgRepository: EpgRepository
 
-    /** Recording entries and recording-rule metadata for the selected server profile. */
+    /** Recording entries, rules, configurations, and disk space for the selected server profile. */
     public val dvrRepository: DvrRepository
 
     /** Generation-bound subscription entry point used by SDK playback adapters. */

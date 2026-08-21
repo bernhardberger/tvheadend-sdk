@@ -1,5 +1,7 @@
 package at.bernhardberger.tvheadend.sdk.core.gateway
 
+import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
+import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionConfirmation
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionId
@@ -35,6 +37,14 @@ internal interface ProtocolGateway {
         channelId: ChannelId,
         maxTime: Instant,
     ): GatewayResult<List<GatewayEpgQueryEvent>>
+
+    public suspend fun getDvrConfigs(
+        generation: GatewayGeneration,
+    ): GatewayResult<List<DvrConfiguration>>
+
+    public suspend fun getDiskSpace(
+        generation: GatewayGeneration,
+    ): GatewayResult<DvrDiskSpace>
 
     public fun subscription(
         generation: GatewayGeneration,

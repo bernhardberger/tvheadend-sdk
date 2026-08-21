@@ -2,6 +2,8 @@
 
 package at.bernhardberger.tvheadend.sdk.core.session
 
+import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
+import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailureEvent
@@ -278,6 +280,14 @@ private class SubscriptionGateway : ProtocolGateway {
         channelId: ChannelId,
         maxTime: Instant,
     ): GatewayResult<List<GatewayEpgQueryEvent>> = GatewayResult.Ok(emptyList())
+
+    override suspend fun getDvrConfigs(
+        generation: GatewayGeneration,
+    ): GatewayResult<List<DvrConfiguration>> = GatewayResult.Ok(emptyList())
+
+    override suspend fun getDiskSpace(
+        generation: GatewayGeneration,
+    ): GatewayResult<DvrDiskSpace> = GatewayResult.Ok(DvrDiskSpace(0, 0, 0))
 
     override fun subscription(
         generation: GatewayGeneration,

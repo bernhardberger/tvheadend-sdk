@@ -31,6 +31,25 @@ public value class DvrConfigId(public val value: String) {
     override fun toString(): String = "DvrConfigId(<redacted>)"
 }
 
+/** One visible DVR configuration. */
+public data class DvrConfiguration(
+    public val id: DvrConfigId,
+    public val name: String,
+    public val comment: String,
+) {
+    override fun toString(): String = "DvrConfiguration(<redacted>)"
+}
+
+/** Recording-storage counters for the selected server. */
+public data class DvrDiskSpace(
+    public val freeBytes: Long,
+    public val usedBytes: Long?,
+    public val totalBytes: Long,
+) {
+    override fun toString(): String =
+        "DvrDiskSpace(freeBytes=$freeBytes, usedBytes=$usedBytes, totalBytes=$totalBytes)"
+}
+
 /** Safe recording lifecycle observation. */
 public enum class DvrEntryState {
     SCHEDULED,
@@ -454,6 +473,85 @@ public sealed interface DvrRepositoryState {
     }
 }
 
+/** Freshness of retrieved DVR configurations. */
+public sealed interface DvrConfigurationsState {
+    /** No configuration snapshot has been proven. */
+    public data object Unknown : DvrConfigurationsState
+
+    /** Configurations are refreshing, optionally retaining prior data. */
+    @ConsistentCopyVisibility
+    public data class Synchronizing private constructor(
+        public val staleConfigurations: List<DvrConfiguration>?,
+    ) : DvrConfigurationsState {
+        override fun toString(): String = "DvrConfigurationsState.Synchronizing(<redacted>)"
+
+        public companion object {
+            /** Creates a synchronizing state while defensively copying retained configurations. */
+            public fun create(
+                staleConfigurations: List<DvrConfiguration>?,
+            ): Synchronizing = Synchronizing(staleConfigurations?.toDvrImmutableList())
+        }
+    }
+
+    /** Configurations are current for the active connection generation. */
+    @ConsistentCopyVisibility
+    public data class Current private constructor(
+        public val configurations: List<DvrConfiguration>,
+    ) : DvrConfigurationsState {
+        override fun toString(): String = "DvrConfigurationsState.Current(<redacted>)"
+
+        public companion object {
+            /** Creates a current state while defensively copying configurations. */
+            public fun create(configurations: List<DvrConfiguration>): Current =
+                Current(configurations.toDvrImmutableList())
+        }
+    }
+
+    /** Retained configurations are available but not current for this generation. */
+    @ConsistentCopyVisibility
+    public data class Stale private constructor(
+        public val configurations: List<DvrConfiguration>,
+    ) : DvrConfigurationsState {
+        override fun toString(): String = "DvrConfigurationsState.Stale(<redacted>)"
+
+        public companion object {
+            /** Creates a stale state while defensively copying configurations. */
+            public fun create(configurations: List<DvrConfiguration>): Stale =
+                Stale(configurations.toDvrImmutableList())
+        }
+    }
+
+    /** Configuration retrieval proved recorder access is denied. */
+    public data object Denied : DvrConfigurationsState
+}
+
+/** Freshness of retrieved recording-storage counters. */
+public sealed interface DvrDiskSpaceState {
+    /** No disk-space snapshot has been proven. */
+    public data object Unknown : DvrDiskSpaceState
+
+    /** Disk space is refreshing, optionally retaining prior data. */
+    public data class Synchronizing(
+        public val staleDiskSpace: DvrDiskSpace?,
+    ) : DvrDiskSpaceState {
+        override fun toString(): String = "DvrDiskSpaceState.Synchronizing(<redacted>)"
+    }
+
+    /** Disk space is current for the active connection generation. */
+    public data class Current(
+        public val diskSpace: DvrDiskSpace,
+    ) : DvrDiskSpaceState {
+        override fun toString(): String = "DvrDiskSpaceState.Current(<redacted>)"
+    }
+
+    /** Retained disk space is available but not current for this generation. */
+    public data class Stale(
+        public val diskSpace: DvrDiskSpace,
+    ) : DvrDiskSpaceState {
+        override fun toString(): String = "DvrDiskSpaceState.Stale(<redacted>)"
+    }
+}
+
 /** Observable DVR entries and recording rules for the selected server profile. */
 public interface DvrRepository {
     /** Authoritative DVR freshness and content. */
@@ -468,6 +566,18 @@ public interface DvrRepository {
     /** Time-based recording rules from the current or retained stale snapshot. */
     public val timerecRules: StateFlow<List<TimerecRule>>
 
+    /** Authoritative DVR configuration freshness. */
+    public val configurationsState: StateFlow<DvrConfigurationsState>
+
+    /** Configurations from the current or retained stale snapshot. */
+    public val configurations: StateFlow<List<DvrConfiguration>>
+
+    /** Authoritative recording-storage freshness. */
+    public val diskSpaceState: StateFlow<DvrDiskSpaceState>
+
+    /** Disk space from the current or retained stale snapshot. */
+    public val diskSpace: StateFlow<DvrDiskSpace?>
+
     /** Observes one entry from the current or retained stale snapshot. */
     public fun entry(id: DvrEntryId): Flow<DvrEntry?>
 
@@ -476,6 +586,9 @@ public interface DvrRepository {
 
     /** Observes one time-based recording rule from the current or retained stale snapshot. */
     public fun timerecRule(id: TimerecRuleId): Flow<TimerecRule?>
+
+    /** Observes one configuration from the current or retained stale snapshot. */
+    public fun configuration(id: DvrConfigId): Flow<DvrConfiguration?>
 }
 
 internal abstract class StateBackedDvrRepository : DvrRepository {
@@ -487,6 +600,12 @@ internal abstract class StateBackedDvrRepository : DvrRepository {
     }
     final override val timerecRules: StateFlow<List<TimerecRule>> by lazy {
         MappedDvrStateFlow(state, DvrRepositoryState::timerecRules)
+    }
+    final override val configurations: StateFlow<List<DvrConfiguration>> by lazy {
+        MappedDvrStateFlow(configurationsState, DvrConfigurationsState::configurations)
+    }
+    final override val diskSpace: StateFlow<DvrDiskSpace?> by lazy {
+        MappedDvrStateFlow(diskSpaceState, DvrDiskSpaceState::diskSpace)
     }
 
     final override fun entry(id: DvrEntryId): Flow<DvrEntry?> =
@@ -500,6 +619,11 @@ internal abstract class StateBackedDvrRepository : DvrRepository {
     final override fun timerecRule(id: TimerecRuleId): Flow<TimerecRule?> =
         timerecRules.map { rules -> rules.firstOrNull { rule -> rule.id == id } }
             .distinctUntilChanged()
+
+    final override fun configuration(id: DvrConfigId): Flow<DvrConfiguration?> =
+        configurations.map { configurations ->
+            configurations.firstOrNull { configuration -> configuration.id == id }
+        }.distinctUntilChanged()
 }
 
 @OptIn(ExperimentalForInheritanceCoroutinesApi::class, InternalCoroutinesApi::class)
@@ -541,6 +665,22 @@ private fun DvrRepositoryState.autorecRules(): List<AutorecRule> =
 
 private fun DvrRepositoryState.timerecRules(): List<TimerecRule> =
     snapshotOrNull()?.timerecRules.orEmpty()
+
+private fun DvrConfigurationsState.configurations(): List<DvrConfiguration> = when (this) {
+    DvrConfigurationsState.Unknown,
+    DvrConfigurationsState.Denied,
+    -> emptyList()
+    is DvrConfigurationsState.Synchronizing -> staleConfigurations.orEmpty()
+    is DvrConfigurationsState.Current -> configurations
+    is DvrConfigurationsState.Stale -> configurations
+}
+
+private fun DvrDiskSpaceState.diskSpace(): DvrDiskSpace? = when (this) {
+    DvrDiskSpaceState.Unknown -> null
+    is DvrDiskSpaceState.Synchronizing -> staleDiskSpace
+    is DvrDiskSpaceState.Current -> diskSpace
+    is DvrDiskSpaceState.Stale -> diskSpace
+}
 
 private fun requireDvrU32(name: String, value: Long) {
     require(value in 0L..DVR_U32_MAX) { "$name must be an unsigned 32-bit value" }

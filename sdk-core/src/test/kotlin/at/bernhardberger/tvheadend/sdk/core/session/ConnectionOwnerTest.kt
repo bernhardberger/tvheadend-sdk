@@ -4,6 +4,10 @@ package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
+import at.bernhardberger.tvheadend.sdk.core.DvrConfigurationsState
+import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
+import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpaceState
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.ServerAuthentication
@@ -118,7 +122,7 @@ internal class ConnectionOwnerTest {
             SessionState.Ready(
                 ServerCapabilities.create(
                     streaming = CapabilityAccess.ALLOWED,
-                    dvrWrite = CapabilityAccess.DENIED,
+                    dvrWrite = CapabilityAccess.ALLOWED,
                 ),
             ),
             owner.state.value,
@@ -126,9 +130,101 @@ internal class ConnectionOwnerTest {
         assertTrue(metadata.channelsAndTags.value is ChannelRepositoryState.Current)
         assertTrue(owner.epgRepository.state.value is EpgRepositoryState.Current)
         assertTrue(owner.dvrRepository.state.value is DvrRepositoryState.Current)
+        assertEquals(
+            DvrConfigurationsState.Current.create(emptyList()),
+            owner.dvrRepository.configurationsState.value,
+        )
+        assertEquals(
+            DvrDiskSpaceState.Current(DvrDiskSpace(1, 2, 3)),
+            owner.dvrRepository.diskSpaceState.value,
+        )
         assertEquals(listOf(1L), owner.channelRepository.channels.value.map { it.id.value })
         assertEquals(listOf(8L), owner.dvrRepository.entries.value.map { it.id.value })
-        assertEquals("admission.start", order.last())
+        assertEquals(
+            listOf(
+                "failures.collect",
+                "connect",
+                "generation.bind",
+                "metadata.collect",
+                "enable",
+                "dvr.configs",
+                "dvr.disk",
+                "admission.start",
+            ),
+            order,
+        )
+        owner.shutdown()
+    }
+
+    @Test
+    fun `readiness waits for configuration and disk refresh after the metadata fence`() = runTest {
+        val holdConfigs = CompletableDeferred<Unit>()
+        val gateway = FakeProtocolGateway()
+        val generation = GatewayGeneration()
+        gateway.connectResults += connected(generation, streaming = true, dvrAccess = true)
+        gateway.dvrConfigsBehavior = {
+            holdConfigs.await()
+            GatewayResult.Ok(emptyList())
+        }
+        val metadata = PhaseOneSessionMetadata()
+        val owner = owner(gateway, RecordingSessionChildren(mutableListOf()), metadata)
+
+        owner.connect(ServerProfile("server"))
+        runCurrent()
+        gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        runCurrent()
+
+        assertEquals(SessionState.Synchronizing, owner.state.value)
+        assertTrue(
+            owner.dvrRepository.configurationsState.value is DvrConfigurationsState.Synchronizing,
+        )
+        assertTrue(owner.dvrRepository.diskSpaceState.value is DvrDiskSpaceState.Synchronizing)
+
+        holdConfigs.complete(Unit)
+        runCurrent()
+
+        assertTrue(owner.state.value is SessionState.Ready)
+        assertEquals(
+            CapabilityAccess.ALLOWED,
+            (owner.state.value as SessionState.Ready).capabilities.dvrWrite,
+        )
+        assertEquals(
+            DvrConfigurationsState.Current.create(emptyList()),
+            owner.dvrRepository.configurationsState.value,
+        )
+        assertEquals(
+            DvrDiskSpaceState.Current(DvrDiskSpace(1, 2, 3)),
+            owner.dvrRepository.diskSpaceState.value,
+        )
+        owner.shutdown()
+    }
+
+    @Test
+    fun `configuration access denial latches denied writes without blocking ready`() = runTest {
+        val gateway = FakeProtocolGateway()
+        val generation = GatewayGeneration()
+        gateway.connectResults += connected(generation, streaming = true, dvrAccess = true)
+        gateway.dvrConfigsBehavior = { GatewayResult.AccessDenied }
+        gateway.diskSpaceBehavior = { GatewayResult.Timeout }
+        val metadata = PhaseOneSessionMetadata()
+        val owner = owner(gateway, RecordingSessionChildren(mutableListOf()), metadata)
+
+        owner.connect(ServerProfile("server"))
+        runCurrent()
+        gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        runCurrent()
+
+        assertEquals(
+            SessionState.Ready(
+                ServerCapabilities.create(
+                    streaming = CapabilityAccess.ALLOWED,
+                    dvrWrite = CapabilityAccess.DENIED,
+                ),
+            ),
+            owner.state.value,
+        )
+        assertEquals(DvrConfigurationsState.Denied, owner.dvrRepository.configurationsState.value)
+        assertEquals(DvrDiskSpaceState.Unknown, owner.dvrRepository.diskSpaceState.value)
         owner.shutdown()
     }
 
@@ -622,6 +718,8 @@ internal class ConnectionOwnerTest {
         assertEquals(ChannelRepositoryState.Empty, owner.channelRepository.state.value)
         assertEquals(EpgRepositoryState.Empty, owner.epgRepository.state.value)
         assertEquals(DvrRepositoryState.Empty, owner.dvrRepository.state.value)
+        assertEquals(DvrConfigurationsState.Unknown, owner.dvrRepository.configurationsState.value)
+        assertEquals(DvrDiskSpaceState.Unknown, owner.dvrRepository.diskSpaceState.value)
 
         owner.connect(ServerProfile("first"))
         runCurrent()
@@ -875,6 +973,12 @@ private class FakeProtocolGateway(
         ChannelId,
         Instant,
     ) -> GatewayResult<List<GatewayEpgQueryEvent>> = { _, _, _ -> GatewayResult.Ok(emptyList()) }
+    internal var dvrConfigsBehavior: suspend (
+        GatewayGeneration,
+    ) -> GatewayResult<List<DvrConfiguration>> = { GatewayResult.Ok(emptyList()) }
+    internal var diskSpaceBehavior: suspend (
+        GatewayGeneration,
+    ) -> GatewayResult<DvrDiskSpace> = { GatewayResult.Ok(DvrDiskSpace(1, 2, 3)) }
     internal var connectCalls: Int = 0
     internal var maximumConcurrentConnects: Int = 0
     internal var invalidateOnReadyCommit: Boolean = false
@@ -943,6 +1047,20 @@ private class FakeProtocolGateway(
     ): GatewayResult<List<GatewayEpgQueryEvent>> {
         order += "epg.query"
         return queryBehavior(generation, channelId, maxTime)
+    }
+
+    override suspend fun getDvrConfigs(
+        generation: GatewayGeneration,
+    ): GatewayResult<List<DvrConfiguration>> {
+        order += "dvr.configs"
+        return dvrConfigsBehavior(generation)
+    }
+
+    override suspend fun getDiskSpace(
+        generation: GatewayGeneration,
+    ): GatewayResult<DvrDiskSpace> {
+        order += "dvr.disk"
+        return diskSpaceBehavior(generation)
     }
 
     override fun subscription(

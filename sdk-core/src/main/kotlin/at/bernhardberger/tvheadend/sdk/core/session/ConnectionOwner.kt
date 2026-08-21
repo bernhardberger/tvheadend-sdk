@@ -384,6 +384,7 @@ internal class ConnectionOwner(
         return when (val result = gateway.enableInitialMetadata(generation)) {
             is GatewayResult.Ok -> {
                 metadata.awaitMetadataCurrent(generation)
+                refreshDvrResources(generation)
                 if (!children.startEpgWorker(generation)) {
                     SynchronizationOutcome.ConnectionFailed(
                         GatewayConnectionFailure.TRANSPORT_UNAVAILABLE,
@@ -408,6 +409,11 @@ internal class ConnectionOwner(
                 GatewayResult.TransportUnavailable.toSynchronizationFailure()
             GatewayResult.NotSupported -> GatewayResult.NotSupported.toSynchronizationFailure()
         }
+    }
+
+    private suspend fun refreshDvrResources(generation: GatewayGeneration) {
+        metadata.applyDvrConfigurations(generation, gateway.getDvrConfigs(generation))
+        metadata.applyDvrDiskSpace(generation, gateway.getDiskSpace(generation))
     }
 
     private fun commitState(token: SessionToken, state: SessionState) {

@@ -54,10 +54,14 @@ import at.bernhardberger.tvheadend.htsp.requests.HtspChannelService
 import at.bernhardberger.tvheadend.htsp.requests.HtspEvent
 import at.bernhardberger.tvheadend.htsp.requests.SubscribeResponse
 import at.bernhardberger.tvheadend.htsp.requests.enableAsyncMetadataAwaitingInitialSync
+import at.bernhardberger.tvheadend.htsp.requests.getDiskSpace
+import at.bernhardberger.tvheadend.htsp.requests.getDvrConfigs
 import at.bernhardberger.tvheadend.htsp.requests.getEvents
 import at.bernhardberger.tvheadend.htsp.requests.subscribe
 import at.bernhardberger.tvheadend.htsp.requests.unsubscribe
 import at.bernhardberger.tvheadend.htsp.wire.HtspBinary
+import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
+import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.gateway.AutorecRuleId
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.gateway.DvrConfigId
@@ -208,6 +212,34 @@ internal class HtspProtocolGateway internal constructor(
     ).toGatewayResult { response ->
         Collections.unmodifiableList(
             response.events.mapTo(ArrayList(), HtspEvent::toGatewayEpgQueryEvent),
+        )
+    }
+
+    override suspend fun getDvrConfigs(
+        generation: GatewayGeneration,
+    ): GatewayResult<List<DvrConfiguration>> = connection.getDvrConfigs(
+        expectedGeneration = htspGenerationFor(generation),
+    ).toGatewayResult { response ->
+        Collections.unmodifiableList(
+            (response.configurations ?: emptyList()).mapTo(ArrayList()) { configuration ->
+                DvrConfiguration(
+                    id = DvrConfigId(configuration.dvrConfigUuid),
+                    name = configuration.name,
+                    comment = configuration.comment,
+                )
+            },
+        )
+    }
+
+    override suspend fun getDiskSpace(
+        generation: GatewayGeneration,
+    ): GatewayResult<DvrDiskSpace> = connection.getDiskSpace(
+        expectedGeneration = htspGenerationFor(generation),
+    ).toGatewayResult { response ->
+        DvrDiskSpace(
+            freeBytes = response.freeBytes,
+            usedBytes = response.usedBytes,
+            totalBytes = response.totalBytes,
         )
     }
 

@@ -7,6 +7,10 @@ import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepository
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
+import at.bernhardberger.tvheadend.sdk.core.DvrConfigurationsState
+import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
+import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpaceState
 import at.bernhardberger.tvheadend.sdk.core.DvrRepository
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
@@ -19,6 +23,7 @@ import at.bernhardberger.tvheadend.sdk.core.StateBackedDvrRepository
 import at.bernhardberger.tvheadend.sdk.core.StateBackedEpgRepository
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayServerFacts
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.metadata.ChannelTagReducer
@@ -51,6 +56,16 @@ internal interface SessionMetadata : ChannelRepository {
     public fun bindGeneration(generation: GatewayGeneration)
 
     public fun applyDvrAccess(generation: GatewayGeneration, access: Boolean?)
+
+    public fun applyDvrConfigurations(
+        generation: GatewayGeneration,
+        result: GatewayResult<List<DvrConfiguration>>,
+    )
+
+    public fun applyDvrDiskSpace(
+        generation: GatewayGeneration,
+        result: GatewayResult<DvrDiskSpace>,
+    )
 
     public fun publishServerFacts(generation: GatewayGeneration, facts: GatewayServerFacts)
 
@@ -88,20 +103,29 @@ internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), Session
     )
     private val mutableEpg = MutableStateFlow<EpgRepositoryState>(EpgRepositoryState.Empty)
     private val mutableDvr = MutableStateFlow<DvrRepositoryState>(DvrRepositoryState.Empty)
+    private val mutableConfigurations = MutableStateFlow<DvrConfigurationsState>(
+        DvrConfigurationsState.Unknown,
+    )
+    private val mutableDiskSpace = MutableStateFlow<DvrDiskSpaceState>(DvrDiskSpaceState.Unknown)
     private val stateBackedEpgRepository = object : StateBackedEpgRepository() {
         override val state: StateFlow<EpgRepositoryState> = mutableEpg.asStateFlow()
     }
     private val stateBackedDvrRepository = object : StateBackedDvrRepository() {
         override val state: StateFlow<DvrRepositoryState> = mutableDvr.asStateFlow()
+        override val configurationsState: StateFlow<DvrConfigurationsState> =
+            mutableConfigurations.asStateFlow()
+        override val diskSpaceState: StateFlow<DvrDiskSpaceState> = mutableDiskSpace.asStateFlow()
     }
     private var generation: GatewayGeneration? = null
     private var initialSync = CompletableDeferred<Unit>()
     private var publishedCatalog: ChannelCatalog? = null
     private var publishedEpgSnapshot: EpgSnapshot? = null
     private var publishedDvrSnapshot: DvrSnapshot? = null
+    private var publishedConfigurations: List<DvrConfiguration>? = null
+    private var publishedDiskSpace: DvrDiskSpace? = null
     private var synchronizedCurrent = false
     private var serverFacts: GatewayServerFacts? = null
-    private var dvrAccess: Boolean? = null
+    private var dvrAccess: CapabilityAccess = CapabilityAccess.UNKNOWN
 
     override val state: StateFlow<ChannelRepositoryState> =
         mutableChannelsAndTags.asStateFlow()
@@ -123,7 +147,7 @@ internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), Session
             initialSync = CompletableDeferred()
             synchronizedCurrent = false
             serverFacts = null
-            dvrAccess = null
+            dvrAccess = CapabilityAccess.UNKNOWN
             reducer.clear()
             epgReducer.clear()
             dvrReducer.clear()
@@ -131,6 +155,8 @@ internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), Session
                 publishedCatalog = null
                 publishedEpgSnapshot = null
                 publishedDvrSnapshot = null
+                publishedConfigurations = null
+                publishedDiskSpace = null
             }
             mutableChannelsAndTags.value = publishedCatalog?.let { catalog ->
                 ChannelRepositoryState.Stale(catalog)
@@ -139,6 +165,9 @@ internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), Session
                 ?: EpgRepositoryState.Empty
             mutableDvr.value = publishedDvrSnapshot?.let(DvrRepositoryState::Stale)
                 ?: DvrRepositoryState.Empty
+            mutableConfigurations.value = publishedConfigurationsState()
+            mutableDiskSpace.value = publishedDiskSpace?.let(DvrDiskSpaceState::Stale)
+                ?: DvrDiskSpaceState.Unknown
             previousFence
         }
         retiredFence.cancel(CancellationException("Session generation is no longer current"))
@@ -151,13 +180,15 @@ internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), Session
             initialSync = CompletableDeferred()
             synchronizedCurrent = false
             serverFacts = null
-            dvrAccess = null
+            dvrAccess = CapabilityAccess.UNKNOWN
             reducer.clear()
             epgReducer.clear()
             dvrReducer.clear()
             mutableChannelsAndTags.value = ChannelRepositoryState.Synchronizing(publishedCatalog)
             mutableEpg.value = EpgRepositoryState.Synchronizing(publishedEpgSnapshot)
             mutableDvr.value = DvrRepositoryState.Synchronizing(publishedDvrSnapshot)
+            mutableConfigurations.value = DvrConfigurationsState.Synchronizing.create(publishedConfigurations)
+            mutableDiskSpace.value = DvrDiskSpaceState.Synchronizing(publishedDiskSpace)
             previousFence
         }
         retiredFence.cancel(CancellationException("Session generation is no longer current"))
@@ -166,7 +197,66 @@ internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), Session
     override fun applyDvrAccess(generation: GatewayGeneration, access: Boolean?) {
         synchronized(lock) {
             if (this.generation === generation) {
-                dvrAccess = access
+                when (access) {
+                    true -> dvrAccess = CapabilityAccess.ALLOWED
+                    false -> dvrAccess = CapabilityAccess.DENIED
+                    null -> Unit
+                }
+            }
+        }
+    }
+
+    override fun applyDvrConfigurations(
+        generation: GatewayGeneration,
+        result: GatewayResult<List<DvrConfiguration>>,
+    ) {
+        synchronized(lock) {
+            if (this.generation !== generation) {
+                return
+            }
+            when (result) {
+                is GatewayResult.Ok -> {
+                    dvrAccess = CapabilityAccess.ALLOWED
+                    val configurations = DvrConfigurationsState.Current.create(result.value)
+                    publishedConfigurations = configurations.configurations
+                    mutableConfigurations.value = configurations
+                }
+                GatewayResult.AccessDenied -> {
+                    dvrAccess = CapabilityAccess.DENIED
+                    publishedConfigurations = null
+                    mutableConfigurations.value = DvrConfigurationsState.Denied
+                }
+                GatewayResult.ServerRejected,
+                GatewayResult.ConnectionLimit,
+                GatewayResult.Timeout,
+                GatewayResult.TransportUnavailable,
+                GatewayResult.NotSupported,
+                -> mutableConfigurations.value = publishedConfigurationsState()
+            }
+        }
+    }
+
+    override fun applyDvrDiskSpace(
+        generation: GatewayGeneration,
+        result: GatewayResult<DvrDiskSpace>,
+    ) {
+        synchronized(lock) {
+            if (this.generation !== generation) {
+                return
+            }
+            when (result) {
+                is GatewayResult.Ok -> {
+                    publishedDiskSpace = result.value
+                    mutableDiskSpace.value = DvrDiskSpaceState.Current(result.value)
+                }
+                GatewayResult.AccessDenied,
+                GatewayResult.ServerRejected,
+                GatewayResult.ConnectionLimit,
+                GatewayResult.Timeout,
+                GatewayResult.TransportUnavailable,
+                GatewayResult.NotSupported,
+                -> mutableDiskSpace.value = publishedDiskSpace?.let(DvrDiskSpaceState::Stale)
+                    ?: DvrDiskSpaceState.Unknown
             }
         }
     }
@@ -299,7 +389,7 @@ internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), Session
         val facts = serverFacts
         ServerCapabilities.create(
             streaming = facts?.streaming.toCapabilityAccess(),
-            dvrWrite = dvrAccess.toCapabilityAccess(),
+            dvrWrite = dvrAccess,
             protocolDvr = facts?.dvr.toCapabilityAccess(),
             failedDvr = facts?.failedDvr.toCapabilityAccess(),
             admin = facts?.admin.toCapabilityAccess(),
@@ -338,6 +428,10 @@ internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), Session
         mutableEpg.value = EpgRepositoryState.Current(snapshot)
         publishedEpgSnapshot = (mutableEpg.value as EpgRepositoryState.Current).snapshot
     }
+
+    private fun publishedConfigurationsState(): DvrConfigurationsState =
+        publishedConfigurations?.let(DvrConfigurationsState.Stale::create)
+            ?: DvrConfigurationsState.Unknown
 }
 
 private fun Boolean?.toCapabilityAccess(): CapabilityAccess = when (this) {

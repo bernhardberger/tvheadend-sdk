@@ -4,6 +4,11 @@ import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.Channel
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.ChannelService
+import at.bernhardberger.tvheadend.sdk.core.DvrConfigId
+import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
+import at.bernhardberger.tvheadend.sdk.core.DvrConfigurationsState
+import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
+import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpaceState
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.ServerCapabilities
@@ -16,6 +21,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayServerFacts
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayTagMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
@@ -164,6 +170,112 @@ internal class PhaseOneSessionMetadataTest {
             capabilities.toString().contains("/secret"),
             "Capability rendering exposed a path",
         )
+    }
+
+    @Test
+    fun `dvr write latch uses later proof and ignores non proof failures`() {
+        val metadata = PhaseOneSessionMetadata()
+        val stale = GatewayGeneration()
+        val current = GatewayGeneration()
+        val configuration = DvrConfiguration(DvrConfigId("private-config"), "Default", "comment")
+        metadata.bindGeneration(current)
+        metadata.applyDvrAccess(current, null)
+        metadata.publishServerFacts(current, serverFacts(streaming = true))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(current))
+
+        assertEquals(CapabilityAccess.UNKNOWN, metadata.capabilities(current).dvrWrite)
+        assertTrue(
+            metadata.dvrRepository.configurationsState.value is DvrConfigurationsState.Synchronizing,
+        )
+
+        metadata.applyDvrConfigurations(current, GatewayResult.Timeout)
+        metadata.applyDvrConfigurations(current, GatewayResult.ServerRejected)
+        metadata.applyDvrConfigurations(current, GatewayResult.ConnectionLimit)
+        metadata.applyDvrConfigurations(current, GatewayResult.TransportUnavailable)
+        metadata.applyDvrConfigurations(current, GatewayResult.NotSupported)
+        metadata.applyDvrConfigurations(stale, GatewayResult.Ok(listOf(configuration)))
+        assertEquals(CapabilityAccess.UNKNOWN, metadata.capabilities(current).dvrWrite)
+        assertEquals(DvrConfigurationsState.Unknown, metadata.dvrRepository.configurationsState.value)
+
+        metadata.applyDvrAccess(current, false)
+        assertEquals(CapabilityAccess.DENIED, metadata.capabilities(current).dvrWrite)
+        metadata.applyDvrConfigurations(current, GatewayResult.Ok(listOf(configuration)))
+        assertEquals(CapabilityAccess.ALLOWED, metadata.capabilities(current).dvrWrite)
+        val currentConfigs =
+            metadata.dvrRepository.configurationsState.value as DvrConfigurationsState.Current
+        assertEquals(listOf(configuration), currentConfigs.configurations)
+        assertThrows(UnsupportedOperationException::class.java) {
+            (currentConfigs.configurations as MutableList<DvrConfiguration>).clear()
+        }
+        assertFalse(
+            currentConfigs.toString().contains("private"),
+            "Configuration rendering exposed a configuration identifier",
+        )
+
+        metadata.applyDvrConfigurations(current, GatewayResult.AccessDenied)
+        assertEquals(CapabilityAccess.DENIED, metadata.capabilities(current).dvrWrite)
+        assertEquals(DvrConfigurationsState.Denied, metadata.dvrRepository.configurationsState.value)
+        assertEquals(emptyList<DvrConfiguration>(), metadata.dvrRepository.configurations.value)
+    }
+
+    @Test
+    fun `disk space and configurations retain stale snapshots across reconnect`() {
+        val metadata = PhaseOneSessionMetadata()
+        val first = GatewayGeneration()
+        val second = GatewayGeneration()
+        val configuration = DvrConfiguration(DvrConfigId("config"), "Default", "")
+        val diskSpace = DvrDiskSpace(freeBytes = 8, usedBytes = null, totalBytes = 16)
+        metadata.bindGeneration(first)
+        metadata.applyDvrAccess(first, true)
+        metadata.publishServerFacts(first, serverFacts(streaming = true))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(first))
+        metadata.applyDvrConfigurations(first, GatewayResult.Ok(listOf(configuration)))
+        metadata.applyDvrDiskSpace(first, GatewayResult.Ok(diskSpace))
+
+        metadata.resetWorkingStateRetainingPublishedSnapshot()
+        assertEquals(
+            listOf(configuration),
+            (metadata.dvrRepository.configurationsState.value as DvrConfigurationsState.Stale)
+                .configurations,
+        )
+        assertEquals(
+            diskSpace,
+            (metadata.dvrRepository.diskSpaceState.value as DvrDiskSpaceState.Stale).diskSpace,
+        )
+
+        metadata.bindGeneration(second)
+        assertEquals(
+            listOf(configuration),
+            (metadata.dvrRepository.configurationsState.value as DvrConfigurationsState.Synchronizing)
+                .staleConfigurations,
+        )
+        assertEquals(
+            diskSpace,
+            (metadata.dvrRepository.diskSpaceState.value as DvrDiskSpaceState.Synchronizing)
+                .staleDiskSpace,
+        )
+
+        metadata.applyDvrDiskSpace(first, GatewayResult.Ok(DvrDiskSpace(1, 1, 2)))
+        assertEquals(
+            diskSpace,
+            (metadata.dvrRepository.diskSpaceState.value as DvrDiskSpaceState.Synchronizing)
+                .staleDiskSpace,
+        )
+        metadata.applyDvrDiskSpace(second, GatewayResult.Timeout)
+        assertEquals(
+            DvrDiskSpaceState.Stale(diskSpace),
+            metadata.dvrRepository.diskSpaceState.value,
+        )
+        assertEquals(diskSpace, metadata.dvrRepository.diskSpace.value)
+        metadata.applyDvrDiskSpace(second, GatewayResult.Ok(DvrDiskSpace(3, 1, 4)))
+        assertEquals(
+            DvrDiskSpace(3, 1, 4),
+            (metadata.dvrRepository.diskSpaceState.value as DvrDiskSpaceState.Current).diskSpace,
+        )
+
+        metadata.clearAllState()
+        assertEquals(DvrConfigurationsState.Unknown, metadata.dvrRepository.configurationsState.value)
+        assertEquals(DvrDiskSpaceState.Unknown, metadata.dvrRepository.diskSpaceState.value)
     }
 
     @Test

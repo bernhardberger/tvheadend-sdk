@@ -13,13 +13,22 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeChannelRepository
 public final class at/bernhardberger/tvheadend/sdk/testing/FakeDvrRepository : at/bernhardberger/tvheadend/sdk/core/DvrRepository {
 	public fun <init> ()V
 	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState;)V
-	public synthetic fun <init> (Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState;Lat/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState;)V
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState;Lat/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState;Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpaceState;)V
+	public synthetic fun <init> (Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState;Lat/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState;Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpaceState;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun autorecRule-K-0Ra0w (Ljava/lang/String;)Lkotlinx/coroutines/flow/Flow;
+	public fun configuration-5XLS7Ck (Ljava/lang/String;)Lkotlinx/coroutines/flow/Flow;
 	public fun entry-lyT0IZA (J)Lkotlinx/coroutines/flow/Flow;
 	public fun getAutorecRules ()Lkotlinx/coroutines/flow/StateFlow;
+	public fun getConfigurations ()Lkotlinx/coroutines/flow/StateFlow;
+	public fun getConfigurationsState ()Lkotlinx/coroutines/flow/StateFlow;
+	public fun getDiskSpace ()Lkotlinx/coroutines/flow/StateFlow;
+	public fun getDiskSpaceState ()Lkotlinx/coroutines/flow/StateFlow;
 	public fun getEntries ()Lkotlinx/coroutines/flow/StateFlow;
 	public fun getState ()Lkotlinx/coroutines/flow/StateFlow;
 	public fun getTimerecRules ()Lkotlinx/coroutines/flow/StateFlow;
+	public final fun setConfigurationsState (Lat/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState;)V
+	public final fun setDiskSpaceState (Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpaceState;)V
 	public final fun setState (Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState;)V
 	public fun timerecRule-OXQAzx4 (Ljava/lang/String;)Lkotlinx/coroutines/flow/Flow;
 }

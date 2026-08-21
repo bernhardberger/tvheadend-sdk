@@ -50,8 +50,13 @@ import at.bernhardberger.tvheadend.htsp.messages.HtspTimerecEntryDeleteMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspTimerecEntryUpdateMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspTimeshiftStatusMessage
 import at.bernhardberger.tvheadend.htsp.requests.EnableAsyncMetadataRequest
+import at.bernhardberger.tvheadend.htsp.requests.GetDiskSpaceRequest
+import at.bernhardberger.tvheadend.htsp.requests.GetDiskSpaceResponse
+import at.bernhardberger.tvheadend.htsp.requests.GetDvrConfigsRequest
+import at.bernhardberger.tvheadend.htsp.requests.GetDvrConfigsResponse
 import at.bernhardberger.tvheadend.htsp.requests.GetEventsRequest
 import at.bernhardberger.tvheadend.htsp.requests.GetEventsResponse
+import at.bernhardberger.tvheadend.htsp.requests.HtspDvrConfig
 import at.bernhardberger.tvheadend.htsp.requests.HtspChannelService
 import at.bernhardberger.tvheadend.htsp.requests.HtspEmptyResponse
 import at.bernhardberger.tvheadend.htsp.requests.HtspEvent
@@ -60,6 +65,9 @@ import at.bernhardberger.tvheadend.htsp.requests.SubscribeRequest
 import at.bernhardberger.tvheadend.htsp.requests.SubscribeResponse
 import at.bernhardberger.tvheadend.htsp.requests.UnsubscribeRequest
 import at.bernhardberger.tvheadend.htsp.wire.HtspBinary
+import at.bernhardberger.tvheadend.sdk.core.DvrConfigId
+import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
+import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
 import at.bernhardberger.tvheadend.sdk.core.DvrSubscriptionError
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
@@ -771,6 +779,82 @@ internal class HtspProtocolGatewayTest {
         var caught: CancellationException? = null
         try {
             gateway.queryEpg(generation, ChannelId(2), maxTime)
+        } catch (failure: CancellationException) {
+            caught = failure
+        }
+        assertSame(cancellation, caught)
+    }
+
+    @Test
+    fun `DVR configs and disk space map generation results failures and redaction`() = runTest {
+        val sourceGeneration = HtspConnectionGeneration()
+        val fake = FakeHtspConnection().apply {
+            liveConnectionValue.value = liveConnection(sourceGeneration)
+            connectOutcome = HtspConnectOutcome.Connected(requireNotNull(liveConnectionValue.value))
+            executeResult = HtspResult.Ok(
+                GetDvrConfigsResponse(
+                    listOf(
+                        HtspDvrConfig(
+                            dvrConfigUuid = "private-config",
+                            name = "Default",
+                            comment = "private-comment",
+                        ),
+                    ),
+                ),
+            )
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+
+        val configs = gateway.getDvrConfigs(generation) as GatewayResult.Ok
+        assertSame(sourceGeneration, fake.lastExpectedGeneration)
+        assertTrue(fake.lastRequest is GetDvrConfigsRequest)
+        assertEquals(
+            listOf(DvrConfiguration(DvrConfigId("private-config"), "Default", "private-comment")),
+            configs.value,
+        )
+        assertEquals("DvrConfiguration(<redacted>)", configs.value.single().toString())
+        assertFalse(configs.value.toString().contains("private"))
+        assertThrows(UnsupportedOperationException::class.java) {
+            (configs.value as MutableList<*>).clear()
+        }
+
+        fake.executeResult = HtspResult.Ok(GetDvrConfigsResponse(null))
+        val empty = gateway.getDvrConfigs(generation) as GatewayResult.Ok
+        assertEquals(emptyList<DvrConfiguration>(), empty.value)
+
+        fake.executeResult = HtspResult.Ok(GetDiskSpaceResponse(8, null, 16))
+        val disk = gateway.getDiskSpace(generation) as GatewayResult.Ok
+        assertTrue(fake.lastRequest is GetDiskSpaceRequest)
+        assertEquals(DvrDiskSpace(8, null, 16), disk.value)
+        assertEquals("DvrDiskSpace(freeBytes=8, usedBytes=null, totalBytes=16)", disk.value.toString())
+
+        val failures = listOf(
+            HtspResult.ServerError to GatewayResult.ServerRejected,
+            HtspResult.AccessDenied to GatewayResult.AccessDenied,
+            HtspResult.ConnectionLimit to GatewayResult.ConnectionLimit,
+            HtspResult.Timeout to GatewayResult.Timeout,
+            HtspResult.TransportUnavailable to GatewayResult.TransportUnavailable,
+            HtspResult.NotSupported to GatewayResult.NotSupported,
+        )
+        failures.forEach { (source, expected) ->
+            fake.executeResult = source
+            assertSame(expected, gateway.getDvrConfigs(generation))
+            assertSame(expected, gateway.getDiskSpace(generation))
+        }
+
+        val cancellation = CancellationException("private cancellation")
+        fake.executeException = cancellation
+        var caught: CancellationException? = null
+        try {
+            gateway.getDvrConfigs(generation)
+        } catch (failure: CancellationException) {
+            caught = failure
+        }
+        assertSame(cancellation, caught)
+        try {
+            gateway.getDiskSpace(generation)
         } catch (failure: CancellationException) {
             caught = failure
         }

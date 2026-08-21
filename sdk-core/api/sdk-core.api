@@ -275,6 +275,135 @@ public final class at/bernhardberger/tvheadend/sdk/core/DvrConfigId {
 	public final synthetic fun unbox-impl ()Ljava/lang/String;
 }
 
+public final class at/bernhardberger/tvheadend/sdk/core/DvrConfiguration {
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1-3-nAbS0 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun copy-y4-JKms (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/DvrConfiguration;
+	public static synthetic fun copy-y4-JKms$default (Lat/bernhardberger/tvheadend/sdk/core/DvrConfiguration;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/DvrConfiguration;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getComment ()Ljava/lang/String;
+	public final fun getId-3-nAbS0 ()Ljava/lang/String;
+	public final fun getName ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class at/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState {
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState$Current : at/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState {
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState$Current$Companion;
+	public final fun component1 ()Ljava/util/List;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getConfigurations ()Ljava/util/List;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState$Current$Companion {
+	public final fun create (Ljava/util/List;)Lat/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState$Current;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState$Denied : at/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState$Denied;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState$Stale : at/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState {
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState$Stale$Companion;
+	public final fun component1 ()Ljava/util/List;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getConfigurations ()Ljava/util/List;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState$Stale$Companion {
+	public final fun create (Ljava/util/List;)Lat/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState$Stale;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState$Synchronizing : at/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState {
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState$Synchronizing$Companion;
+	public final fun component1 ()Ljava/util/List;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getStaleConfigurations ()Ljava/util/List;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState$Synchronizing$Companion {
+	public final fun create (Ljava/util/List;)Lat/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState$Synchronizing;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState$Unknown : at/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState$Unknown;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrDiskSpace {
+	public fun <init> (JLjava/lang/Long;J)V
+	public final fun component1 ()J
+	public final fun component2 ()Ljava/lang/Long;
+	public final fun component3 ()J
+	public final fun copy (JLjava/lang/Long;J)Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpace;
+	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpace;JLjava/lang/Long;JILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpace;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getFreeBytes ()J
+	public final fun getTotalBytes ()J
+	public final fun getUsedBytes ()Ljava/lang/Long;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class at/bernhardberger/tvheadend/sdk/core/DvrDiskSpaceState {
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrDiskSpaceState$Current : at/bernhardberger/tvheadend/sdk/core/DvrDiskSpaceState {
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpace;)V
+	public final fun component1 ()Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpace;
+	public final fun copy (Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpace;)Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpaceState$Current;
+	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpaceState$Current;Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpace;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpaceState$Current;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getDiskSpace ()Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpace;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrDiskSpaceState$Stale : at/bernhardberger/tvheadend/sdk/core/DvrDiskSpaceState {
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpace;)V
+	public final fun component1 ()Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpace;
+	public final fun copy (Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpace;)Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpaceState$Stale;
+	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpaceState$Stale;Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpace;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpaceState$Stale;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getDiskSpace ()Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpace;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrDiskSpaceState$Synchronizing : at/bernhardberger/tvheadend/sdk/core/DvrDiskSpaceState {
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpace;)V
+	public final fun component1 ()Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpace;
+	public final fun copy (Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpace;)Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpaceState$Synchronizing;
+	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpaceState$Synchronizing;Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpace;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpaceState$Synchronizing;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getStaleDiskSpace ()Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpace;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrDiskSpaceState$Unknown : at/bernhardberger/tvheadend/sdk/core/DvrDiskSpaceState {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpaceState$Unknown;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class at/bernhardberger/tvheadend/sdk/core/DvrEntry {
 	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/DvrEntry$Companion;
 	public final fun component1-YcJ-2to ()J
@@ -415,8 +544,13 @@ public final class at/bernhardberger/tvheadend/sdk/core/DvrRecordingFile {
 
 public abstract interface class at/bernhardberger/tvheadend/sdk/core/DvrRepository {
 	public abstract fun autorecRule-K-0Ra0w (Ljava/lang/String;)Lkotlinx/coroutines/flow/Flow;
+	public abstract fun configuration-5XLS7Ck (Ljava/lang/String;)Lkotlinx/coroutines/flow/Flow;
 	public abstract fun entry-lyT0IZA (J)Lkotlinx/coroutines/flow/Flow;
 	public abstract fun getAutorecRules ()Lkotlinx/coroutines/flow/StateFlow;
+	public abstract fun getConfigurations ()Lkotlinx/coroutines/flow/StateFlow;
+	public abstract fun getConfigurationsState ()Lkotlinx/coroutines/flow/StateFlow;
+	public abstract fun getDiskSpace ()Lkotlinx/coroutines/flow/StateFlow;
+	public abstract fun getDiskSpaceState ()Lkotlinx/coroutines/flow/StateFlow;
 	public abstract fun getEntries ()Lkotlinx/coroutines/flow/StateFlow;
 	public abstract fun getState ()Lkotlinx/coroutines/flow/StateFlow;
 	public abstract fun getTimerecRules ()Lkotlinx/coroutines/flow/StateFlow;
