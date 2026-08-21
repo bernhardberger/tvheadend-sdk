@@ -50,6 +50,21 @@ import at.bernhardberger.tvheadend.htsp.messages.HtspTimerecEntryDeleteMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspTimerecEntryUpdateMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspTimeshiftStatusMessage
 import at.bernhardberger.tvheadend.htsp.requests.EnableAsyncMetadataRequest
+import at.bernhardberger.tvheadend.htsp.requests.AddAutorecEntryRequest
+import at.bernhardberger.tvheadend.htsp.requests.AddAutorecEntryResponse
+import at.bernhardberger.tvheadend.htsp.requests.AddDvrEntryRequest
+import at.bernhardberger.tvheadend.htsp.requests.AddDvrEntryResponse
+import at.bernhardberger.tvheadend.htsp.requests.AddDvrEntrySelector
+import at.bernhardberger.tvheadend.htsp.requests.AddTimerecEntryRequest
+import at.bernhardberger.tvheadend.htsp.requests.AddTimerecEntryResponse
+import at.bernhardberger.tvheadend.htsp.requests.CancelDvrEntryRequest
+import at.bernhardberger.tvheadend.htsp.requests.CancelDvrEntryResponse
+import at.bernhardberger.tvheadend.htsp.requests.DeleteAutorecEntryRequest
+import at.bernhardberger.tvheadend.htsp.requests.DeleteAutorecEntryResponse
+import at.bernhardberger.tvheadend.htsp.requests.DeleteDvrEntryRequest
+import at.bernhardberger.tvheadend.htsp.requests.DeleteDvrEntryResponse
+import at.bernhardberger.tvheadend.htsp.requests.DeleteTimerecEntryRequest
+import at.bernhardberger.tvheadend.htsp.requests.DeleteTimerecEntryResponse
 import at.bernhardberger.tvheadend.htsp.requests.GetDiskSpaceRequest
 import at.bernhardberger.tvheadend.htsp.requests.GetDiskSpaceResponse
 import at.bernhardberger.tvheadend.htsp.requests.GetDvrConfigsRequest
@@ -61,15 +76,36 @@ import at.bernhardberger.tvheadend.htsp.requests.HtspChannelService
 import at.bernhardberger.tvheadend.htsp.requests.HtspEmptyResponse
 import at.bernhardberger.tvheadend.htsp.requests.HtspEvent
 import at.bernhardberger.tvheadend.htsp.requests.HtspRequest
+import at.bernhardberger.tvheadend.htsp.requests.HtspRecordingRuleChannel
+import at.bernhardberger.tvheadend.htsp.requests.StopDvrEntryRequest
+import at.bernhardberger.tvheadend.htsp.requests.StopDvrEntryResponse
 import at.bernhardberger.tvheadend.htsp.requests.SubscribeRequest
 import at.bernhardberger.tvheadend.htsp.requests.SubscribeResponse
 import at.bernhardberger.tvheadend.htsp.requests.UnsubscribeRequest
+import at.bernhardberger.tvheadend.htsp.requests.UpdateAutorecEntryRequest
+import at.bernhardberger.tvheadend.htsp.requests.UpdateAutorecEntryResponse
+import at.bernhardberger.tvheadend.htsp.requests.UpdateDvrEntryRequest
+import at.bernhardberger.tvheadend.htsp.requests.UpdateDvrEntryResponse
+import at.bernhardberger.tvheadend.htsp.requests.UpdateTimerecEntryRequest
+import at.bernhardberger.tvheadend.htsp.requests.UpdateTimerecEntryResponse
 import at.bernhardberger.tvheadend.htsp.wire.HtspBinary
 import at.bernhardberger.tvheadend.sdk.core.DvrConfigId
 import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
+import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
+import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
+import at.bernhardberger.tvheadend.sdk.core.DvrSchedule
+import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
 import at.bernhardberger.tvheadend.sdk.core.DvrSubscriptionError
+import at.bernhardberger.tvheadend.sdk.core.EventId
+import at.bernhardberger.tvheadend.sdk.core.AutorecRuleCreate
+import at.bernhardberger.tvheadend.sdk.core.AutorecRuleId
+import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
+import at.bernhardberger.tvheadend.sdk.core.RecordingRuleChannel
+import at.bernhardberger.tvheadend.sdk.core.TimerecRuleCreate
+import at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
+import at.bernhardberger.tvheadend.sdk.core.TimerecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectResult
@@ -859,6 +895,280 @@ internal class HtspProtocolGatewayTest {
             caught = failure
         }
         assertSame(cancellation, caught)
+    }
+
+    @Test
+    fun `DVR entry mutations map complete requests and require semantic acceptance`() = runTest {
+        val sourceGeneration = HtspConnectionGeneration()
+        val fake = FakeHtspConnection().apply {
+            liveConnectionValue.value = liveConnection(sourceGeneration)
+            connectOutcome = HtspConnectOutcome.Connected(requireNotNull(liveConnectionValue.value))
+            executeResult = HtspResult.Ok(AddDvrEntryResponse(1, 7, "private raw error"))
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+        val schedule = DvrScheduleRequest(
+            schedule = DvrSchedule.ExplicitTime(
+                channelId = at.bernhardberger.tvheadend.sdk.core.ChannelId(2),
+                start = Instant.fromEpochSeconds(-3),
+                stop = Instant.fromEpochSeconds(4),
+            ),
+            configId = DvrConfigId("private-config"),
+            language = "eng",
+            title = "private-title",
+            subtitle = "private-subtitle",
+            summary = "private-summary",
+            description = "private-description",
+            ageRating = 12,
+        )
+
+        val scheduled = gateway.scheduleDvrEntry(generation, schedule) as GatewayResult.Ok
+        val addRequest = fake.lastRequest as AddDvrEntryRequest
+        val selector = addRequest.selector as AddDvrEntrySelector.ExplicitChannelTime
+        assertEquals(DvrEntryId(7), scheduled.value)
+        assertSame(sourceGeneration, fake.lastExpectedGeneration)
+        assertEquals(2L, selector.channelId)
+        assertEquals(-3L, selector.start)
+        assertEquals(4L, selector.stop)
+        assertEquals("private-config", addRequest.configName)
+        assertEquals("eng", addRequest.language)
+        assertEquals("private-title", addRequest.title)
+        assertEquals("private-subtitle", addRequest.subtitle)
+        assertEquals("private-summary", addRequest.summary)
+        assertEquals("private-description", addRequest.description)
+        assertEquals(12L, addRequest.ageRating)
+        assertFalse(scheduled.toString().contains("private"))
+
+        listOf(
+            AddDvrEntryResponse(null, null, "private rejected"),
+            AddDvrEntryResponse(0, 7, "private rejected"),
+            AddDvrEntryResponse(1, null, null),
+        ).forEach { response ->
+            fake.executeResult = HtspResult.Ok(response)
+            assertSame(GatewayResult.ServerRejected, gateway.scheduleDvrEntry(generation, schedule))
+        }
+
+        fake.executeResult = HtspResult.Ok(UpdateDvrEntryResponse(1, "private ignored"))
+        val update = DvrEntryUpdate(
+            channelId = at.bernhardberger.tvheadend.sdk.core.ChannelId(3),
+            configId = DvrConfigId("private-next-config"),
+            title = "private-next-title",
+            subtitle = "private-next-subtitle",
+            summary = "private-next-summary",
+            description = "private-next-description",
+            language = "deu",
+            comment = "private-comment",
+            enabled = true,
+            start = Instant.fromEpochSeconds(-5),
+            stop = Instant.fromEpochSeconds(6),
+            startExtraMinutes = -7,
+            stopExtraMinutes = 8,
+            retentionDays = 9,
+            removalDays = 10,
+            priority = 11,
+            ageRating = 13,
+        )
+        assertTrue(gateway.updateDvrEntry(generation, DvrEntryId(7), update) is GatewayResult.Ok)
+        val updateRequest = fake.lastRequest as UpdateDvrEntryRequest
+        assertEquals(7L, updateRequest.entryId)
+        assertEquals(3L, updateRequest.channelId)
+        assertEquals("private-next-config", updateRequest.configName)
+        assertEquals("private-next-title", updateRequest.title)
+        assertEquals("private-next-subtitle", updateRequest.subtitle)
+        assertEquals("private-next-summary", updateRequest.summary)
+        assertEquals("private-next-description", updateRequest.description)
+        assertEquals("deu", updateRequest.language)
+        assertEquals("private-comment", updateRequest.comment)
+        assertEquals(1L, updateRequest.enabled)
+        assertEquals(-5L, updateRequest.start)
+        assertEquals(6L, updateRequest.stop)
+        assertEquals(-7L, updateRequest.startExtra)
+        assertEquals(8L, updateRequest.stopExtra)
+        assertEquals(9L, updateRequest.retention)
+        assertEquals(10L, updateRequest.removal)
+        assertEquals(11L, updateRequest.priority)
+        assertEquals(13L, updateRequest.ageRating)
+        assertEquals(null, updateRequest.playCount)
+        assertEquals(null, updateRequest.playPosition)
+
+        fake.executeResult = HtspResult.Ok(StopDvrEntryResponse(1, null))
+        assertTrue(gateway.stopDvrEntry(generation, DvrEntryId(7)) is GatewayResult.Ok)
+        assertTrue(fake.lastRequest is StopDvrEntryRequest)
+        fake.executeResult = HtspResult.Ok(CancelDvrEntryResponse(1, null))
+        assertTrue(gateway.cancelDvrEntry(generation, DvrEntryId(7)) is GatewayResult.Ok)
+        assertTrue(fake.lastRequest is CancelDvrEntryRequest)
+        fake.executeResult = HtspResult.Ok(DeleteDvrEntryResponse(1, null))
+        assertTrue(gateway.deleteDvrEntry(generation, DvrEntryId(7)) is GatewayResult.Ok)
+        assertTrue(fake.lastRequest is DeleteDvrEntryRequest)
+        fake.executeResult = HtspResult.Ok(UpdateDvrEntryResponse(null, "private rejected"))
+        assertSame(
+            GatewayResult.ServerRejected,
+            gateway.updateDvrEntry(generation, DvrEntryId(7), DvrEntryUpdate()),
+        )
+
+        val failures = listOf(
+            HtspResult.ServerError to GatewayResult.ServerRejected,
+            HtspResult.AccessDenied to GatewayResult.AccessDenied,
+            HtspResult.ConnectionLimit to GatewayResult.ConnectionLimit,
+            HtspResult.Timeout to GatewayResult.Timeout,
+            HtspResult.TransportUnavailable to GatewayResult.TransportUnavailable,
+            HtspResult.NotSupported to GatewayResult.NotSupported,
+        )
+        failures.forEach { (source, expected) ->
+            fake.executeResult = source
+            assertSame(expected, gateway.scheduleDvrEntry(generation, schedule))
+        }
+
+        val cancellation = CancellationException("private cancellation")
+        fake.executeException = cancellation
+        var caught: CancellationException? = null
+        try {
+            gateway.scheduleDvrEntry(generation, schedule)
+        } catch (failure: CancellationException) {
+            caught = failure
+        }
+        assertSame(cancellation, caught)
+    }
+
+    @Test
+    fun `recording rule mutations map SDK fields identifiers and any-channel selection`() = runTest {
+        val sourceGeneration = HtspConnectionGeneration()
+        val fake = FakeHtspConnection().apply {
+            liveConnectionValue.value = liveConnection(sourceGeneration)
+            connectOutcome = HtspConnectOutcome.Connected(requireNotNull(liveConnectionValue.value))
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+        val autorec = AutorecRuleCreate(
+            title = "private-title",
+            channel = RecordingRuleChannel.SpecificChannel(
+                at.bernhardberger.tvheadend.sdk.core.ChannelId(2),
+            ),
+            minDuration = 60.seconds,
+            maxDuration = 120.seconds,
+            fullText = true,
+            mergeText = false,
+            duplicateDetection = 3,
+            maximumRecordingCount = 4,
+            broadcastType = 5,
+            startExtraMinutes = -6,
+            stopExtraMinutes = 7,
+            seriesLinkUri = "private-series",
+            approximateStartMinutesSinceMidnight = 8,
+            startMinutesSinceMidnight = 9,
+            startWindowEndMinutesSinceMidnight = 10,
+            enabled = true,
+            retentionDays = 11,
+            removalDays = 12,
+            priority = 13,
+            name = "private-name",
+            comment = "private-comment",
+            directory = "private-directory",
+            configId = DvrConfigId("private-config"),
+            daysOfWeekMask = 127,
+        )
+        fake.executeResult = HtspResult.Ok(AddAutorecEntryResponse("private-autorec-id"))
+
+        val createdAutorec = gateway.createAutorecRule(generation, autorec) as GatewayResult.Ok
+        val addAutorec = fake.lastRequest as AddAutorecEntryRequest
+        assertEquals(AutorecRuleId("private-autorec-id"), createdAutorec.value)
+        assertEquals(2L, (addAutorec.channel as HtspRecordingRuleChannel.Id).channelId)
+        assertEquals(60L, addAutorec.minDurationSeconds)
+        assertEquals(120L, addAutorec.maxDurationSeconds)
+        assertEquals(1L, addAutorec.fullText)
+        assertEquals(0L, addAutorec.mergeText)
+        assertEquals(3L, addAutorec.duplicateDetection)
+        assertEquals(4L, addAutorec.maximumRecordingCount)
+        assertEquals(5L, addAutorec.broadcastType)
+        assertEquals(-6L, addAutorec.startExtraMinutes)
+        assertEquals(7L, addAutorec.stopExtraMinutes)
+        assertEquals("private-series", addAutorec.seriesLinkUri)
+        assertEquals(8, addAutorec.approximateStartMinutesSinceMidnight)
+        assertEquals(9, addAutorec.startMinutesSinceMidnight)
+        assertEquals(10, addAutorec.startWindowEndMinutesSinceMidnight)
+        assertEquals(true, addAutorec.enabled)
+        assertEquals(11L, addAutorec.retentionDays)
+        assertEquals(12L, addAutorec.removalDays)
+        assertEquals(13L, addAutorec.priority)
+        assertEquals("private-name", addAutorec.name)
+        assertEquals("private-comment", addAutorec.comment)
+        assertEquals("private-directory", addAutorec.directory)
+        assertEquals("private-config", addAutorec.configName)
+        assertEquals(127L, addAutorec.daysOfWeekMask)
+        assertSame(sourceGeneration, fake.lastExpectedGeneration)
+
+        fake.executeResult = HtspResult.Ok(UpdateAutorecEntryResponse)
+        assertTrue(
+            gateway.updateAutorecRule(
+                generation,
+                AutorecRuleId("private-autorec-id"),
+                AutorecRuleUpdate(
+                    channel = RecordingRuleChannel.AllChannels,
+                    title = "private-next-title",
+                    enabled = false,
+                ),
+            ) is GatewayResult.Ok,
+        )
+        val updateAutorec = fake.lastRequest as UpdateAutorecEntryRequest
+        assertEquals("private-autorec-id", updateAutorec.id)
+        assertSame(HtspRecordingRuleChannel.Any, updateAutorec.channel)
+        assertEquals("private-next-title", updateAutorec.title)
+        assertEquals(false, updateAutorec.enabled)
+
+        fake.executeResult = HtspResult.Ok(DeleteAutorecEntryResponse)
+        assertTrue(
+            gateway.deleteAutorecRule(generation, AutorecRuleId("private-autorec-id"))
+                is GatewayResult.Ok,
+        )
+        assertEquals("private-autorec-id", (fake.lastRequest as DeleteAutorecEntryRequest).id)
+
+        fake.executeResult = HtspResult.Ok(AddTimerecEntryResponse("private-timerec-id"))
+        val createdTimerec = gateway.createTimerecRule(
+            generation,
+            TimerecRuleCreate(
+                title = "private-time-title",
+                channel = RecordingRuleChannel.AllChannels,
+                startMinutesSinceMidnight = 60,
+                stopMinutesSinceMidnight = 120,
+                enabled = true,
+                retentionDays = 1,
+                removalDays = 2,
+                priority = 3,
+                name = "private-time-name",
+                comment = "private-time-comment",
+                directory = "private-time-directory",
+                configId = DvrConfigId("private-time-config"),
+                daysOfWeekMask = 31,
+            ),
+        ) as GatewayResult.Ok
+        val addTimerec = fake.lastRequest as AddTimerecEntryRequest
+        assertEquals(TimerecRuleId("private-timerec-id"), createdTimerec.value)
+        assertSame(HtspRecordingRuleChannel.Any, addTimerec.channel)
+        assertEquals(60L, addTimerec.startMinutesSinceMidnight)
+        assertEquals(120L, addTimerec.stopMinutesSinceMidnight)
+        assertEquals("private-time-config", addTimerec.configName)
+
+        fake.executeResult = HtspResult.Ok(UpdateTimerecEntryResponse)
+        assertTrue(
+            gateway.updateTimerecRule(
+                generation,
+                TimerecRuleId("private-timerec-id"),
+                TimerecRuleUpdate(title = "private-next-time", stopMinutesSinceMidnight = 180),
+            ) is GatewayResult.Ok,
+        )
+        val updateTimerec = fake.lastRequest as UpdateTimerecEntryRequest
+        assertEquals("private-timerec-id", updateTimerec.id)
+        assertEquals("private-next-time", updateTimerec.title)
+        assertEquals(180L, updateTimerec.stopMinutesSinceMidnight)
+
+        fake.executeResult = HtspResult.Ok(DeleteTimerecEntryResponse)
+        assertTrue(
+            gateway.deleteTimerecRule(generation, TimerecRuleId("private-timerec-id"))
+                is GatewayResult.Ok,
+        )
+        assertEquals("private-timerec-id", (fake.lastRequest as DeleteTimerecEntryRequest).id)
     }
 
     @Test

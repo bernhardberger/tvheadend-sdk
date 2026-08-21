@@ -4,6 +4,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.ServerAuthentication as Gate
 import at.bernhardberger.tvheadend.sdk.core.gateway.ServerConfiguration
 import at.bernhardberger.tvheadend.sdk.core.gateway.htsp.HtspProtocolGateway
 import at.bernhardberger.tvheadend.sdk.core.session.ConnectionOwner
+import at.bernhardberger.tvheadend.sdk.core.session.DvrMutationCoordinator
 import at.bernhardberger.tvheadend.sdk.core.session.ExponentialReconnectBackoff
 import at.bernhardberger.tvheadend.sdk.core.session.PhaseOneSessionMetadata
 import at.bernhardberger.tvheadend.sdk.core.session.PlaybackSessionChildren
@@ -68,8 +69,21 @@ private object SessionRegistry {
 
     private fun createOwner(): ConnectionOwner {
         val gateway = HtspProtocolGateway(Dispatchers.IO)
-        val metadata = PhaseOneSessionMetadata()
         lateinit var owner: ConnectionOwner
+        lateinit var metadata: PhaseOneSessionMetadata
+        val dvrMutations = DvrMutationCoordinator(
+            gateway = gateway,
+            isSessionReady = { generation -> owner.isDvrMutationReady(generation) },
+            onDvrAccessProof = { generation, allowed ->
+                if (metadata.applyDvrMutationProof(generation, allowed)) {
+                    owner.refreshDvrCapabilities(generation)
+                }
+            },
+        )
+        metadata = PhaseOneSessionMetadata(
+            mutationCommands = dvrMutations,
+            onDvrMetadataAccepted = dvrMutations::acceptMetadata,
+        )
         owner = ConnectionOwner(
             gateway = gateway,
             metadata = metadata,
@@ -79,6 +93,7 @@ private object SessionRegistry {
                 dispatcher = Dispatchers.Default,
                 clock = Clock.System,
             ),
+            dvrMutations = dvrMutations,
             defaultDispatcher = Dispatchers.Default,
             backoff = ExponentialReconnectBackoff(
                 nextJitter = { Random.Default.nextDouble() },

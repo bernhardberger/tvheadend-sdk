@@ -2,13 +2,20 @@
 
 package at.bernhardberger.tvheadend.sdk.core.session
 
+import at.bernhardberger.tvheadend.sdk.core.AutorecRuleCreate
+import at.bernhardberger.tvheadend.sdk.core.AutorecRuleId
+import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
 import at.bernhardberger.tvheadend.sdk.core.DvrConfigurationsState
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpaceState
+import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
+import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.DvrSchedule
+import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.ServerAuthentication
 import at.bernhardberger.tvheadend.sdk.core.ServerCapabilities
@@ -17,6 +24,9 @@ import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
 import at.bernhardberger.tvheadend.sdk.core.SessionFailure
 import at.bernhardberger.tvheadend.sdk.core.SessionOperationFailure
 import at.bernhardberger.tvheadend.sdk.core.SessionState
+import at.bernhardberger.tvheadend.sdk.core.TimerecRuleCreate
+import at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
+import at.bernhardberger.tvheadend.sdk.core.TimerecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.gateway.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.gateway.EventId
@@ -225,6 +235,73 @@ internal class ConnectionOwnerTest {
         )
         assertEquals(DvrConfigurationsState.Denied, owner.dvrRepository.configurationsState.value)
         assertEquals(DvrDiskSpaceState.Unknown, owner.dvrRepository.diskSpaceState.value)
+        owner.shutdown()
+    }
+
+    @Test
+    fun `mutation admission and proof republish capabilities for only the ready generation`() = runTest {
+        val gateway = FakeProtocolGateway()
+        val generation = GatewayGeneration()
+        gateway.connectResults += connected(generation, dvrAccess = null)
+        gateway.dvrConfigsBehavior = { GatewayResult.Timeout }
+        lateinit var owner: ConnectionOwner
+        lateinit var metadata: PhaseOneSessionMetadata
+        val coordinator = DvrMutationCoordinator(
+            gateway = gateway,
+            isSessionReady = { commandGeneration ->
+                owner.isDvrMutationReady(commandGeneration)
+            },
+            onDvrAccessProof = { proofGeneration, allowed ->
+                if (metadata.applyDvrMutationProof(proofGeneration, allowed)) {
+                    owner.refreshDvrCapabilities(proofGeneration)
+                }
+            },
+        )
+        metadata = PhaseOneSessionMetadata(
+            mutationCommands = coordinator,
+            onDvrMetadataAccepted = coordinator::acceptMetadata,
+        )
+        owner = owner(
+            gateway = gateway,
+            metadata = metadata,
+            dvrMutations = coordinator,
+        )
+        val request = DvrScheduleRequest(DvrSchedule.Programme(EventId(1)))
+
+        assertSame(DvrMutationResult.NotReady, owner.dvrRepository.scheduleEntry(request))
+        owner.connect(ServerProfile("server"))
+        runCurrent()
+        assertSame(DvrMutationResult.NotReady, owner.dvrRepository.scheduleEntry(request))
+        gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        runCurrent()
+        assertEquals(
+            CapabilityAccess.UNKNOWN,
+            (owner.state.value as SessionState.Ready).capabilities.dvrWrite,
+        )
+
+        gateway.scheduleDvrBehavior = { _, _ -> GatewayResult.AccessDenied }
+        assertSame(DvrMutationResult.AccessDenied, owner.dvrRepository.scheduleEntry(request))
+        assertEquals(
+            CapabilityAccess.DENIED,
+            (owner.state.value as SessionState.Ready).capabilities.dvrWrite,
+        )
+
+        gateway.scheduleDvrBehavior = { commandGeneration, _ ->
+            gateway.emitMetadata(
+                MetadataEvent.DvrEntryAdded(commandGeneration, dvrMetadata(7)),
+            )
+            GatewayResult.Ok(DvrEntryId(7))
+        }
+        val confirmed = owner.dvrRepository.scheduleEntry(request)
+        assertTrue(confirmed is DvrMutationResult.Confirmed)
+        assertEquals(listOf(7L), owner.dvrRepository.entries.value.map { entry -> entry.id.value })
+        assertEquals(
+            CapabilityAccess.ALLOWED,
+            (owner.state.value as SessionState.Ready).capabilities.dvrWrite,
+        )
+
+        owner.disconnect()
+        assertSame(DvrMutationResult.NotReady, owner.dvrRepository.scheduleEntry(request))
         owner.shutdown()
     }
 
@@ -873,10 +950,12 @@ internal class ConnectionOwnerTest {
         gateway: FakeProtocolGateway,
         children: SessionChildren = SessionChildren.None,
         metadata: PhaseOneSessionMetadata = PhaseOneSessionMetadata(),
+        dvrMutations: DvrMutationLifecycle = DvrMutationLifecycle.None,
     ): ConnectionOwner = ConnectionOwner(
         gateway = gateway,
         metadata = metadata,
         children = children,
+        dvrMutations = dvrMutations,
         defaultDispatcher = StandardTestDispatcher(testScheduler),
         backoff = ExponentialReconnectBackoff(nextJitter = { 0.5 }),
     )
@@ -979,6 +1058,10 @@ private class FakeProtocolGateway(
     internal var diskSpaceBehavior: suspend (
         GatewayGeneration,
     ) -> GatewayResult<DvrDiskSpace> = { GatewayResult.Ok(DvrDiskSpace(1, 2, 3)) }
+    internal var scheduleDvrBehavior: suspend (
+        GatewayGeneration,
+        DvrScheduleRequest,
+    ) -> GatewayResult<DvrEntryId> = { _, _ -> GatewayResult.NotSupported }
     internal var connectCalls: Int = 0
     internal var maximumConcurrentConnects: Int = 0
     internal var invalidateOnReadyCommit: Boolean = false
@@ -1062,6 +1145,67 @@ private class FakeProtocolGateway(
         order += "dvr.disk"
         return diskSpaceBehavior(generation)
     }
+
+    override suspend fun scheduleDvrEntry(
+        generation: GatewayGeneration,
+        request: DvrScheduleRequest,
+    ): GatewayResult<DvrEntryId> {
+        order += "dvr.schedule"
+        return scheduleDvrBehavior(generation, request)
+    }
+
+    override suspend fun updateDvrEntry(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+        update: DvrEntryUpdate,
+    ): GatewayResult<Unit> = GatewayResult.NotSupported
+
+    override suspend fun stopDvrEntry(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+    ): GatewayResult<Unit> = GatewayResult.NotSupported
+
+    override suspend fun cancelDvrEntry(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+    ): GatewayResult<Unit> = GatewayResult.NotSupported
+
+    override suspend fun deleteDvrEntry(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+    ): GatewayResult<Unit> = GatewayResult.NotSupported
+
+    override suspend fun createAutorecRule(
+        generation: GatewayGeneration,
+        request: AutorecRuleCreate,
+    ): GatewayResult<AutorecRuleId> = GatewayResult.NotSupported
+
+    override suspend fun updateAutorecRule(
+        generation: GatewayGeneration,
+        id: AutorecRuleId,
+        update: AutorecRuleUpdate,
+    ): GatewayResult<Unit> = GatewayResult.NotSupported
+
+    override suspend fun deleteAutorecRule(
+        generation: GatewayGeneration,
+        id: AutorecRuleId,
+    ): GatewayResult<Unit> = GatewayResult.NotSupported
+
+    override suspend fun createTimerecRule(
+        generation: GatewayGeneration,
+        request: TimerecRuleCreate,
+    ): GatewayResult<TimerecRuleId> = GatewayResult.NotSupported
+
+    override suspend fun updateTimerecRule(
+        generation: GatewayGeneration,
+        id: TimerecRuleId,
+        update: TimerecRuleUpdate,
+    ): GatewayResult<Unit> = GatewayResult.NotSupported
+
+    override suspend fun deleteTimerecRule(
+        generation: GatewayGeneration,
+        id: TimerecRuleId,
+    ): GatewayResult<Unit> = GatewayResult.NotSupported
 
     override fun subscription(
         generation: GatewayGeneration,

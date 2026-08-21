@@ -1,7 +1,13 @@
 package at.bernhardberger.tvheadend.sdk.core.gateway
 
+import at.bernhardberger.tvheadend.sdk.core.AutorecRuleCreate
+import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
+import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
+import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
+import at.bernhardberger.tvheadend.sdk.core.TimerecRuleCreate
+import at.bernhardberger.tvheadend.sdk.core.TimerecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionConfirmation
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionId
@@ -45,6 +51,64 @@ internal interface ProtocolGateway {
     public suspend fun getDiskSpace(
         generation: GatewayGeneration,
     ): GatewayResult<DvrDiskSpace>
+
+    public suspend fun scheduleDvrEntry(
+        generation: GatewayGeneration,
+        request: DvrScheduleRequest,
+    ): GatewayResult<DvrEntryId>
+
+    public suspend fun updateDvrEntry(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+        update: DvrEntryUpdate,
+    ): GatewayResult<Unit>
+
+    public suspend fun stopDvrEntry(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+    ): GatewayResult<Unit>
+
+    public suspend fun cancelDvrEntry(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+    ): GatewayResult<Unit>
+
+    public suspend fun deleteDvrEntry(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+    ): GatewayResult<Unit>
+
+    public suspend fun createAutorecRule(
+        generation: GatewayGeneration,
+        request: AutorecRuleCreate,
+    ): GatewayResult<AutorecRuleId>
+
+    public suspend fun updateAutorecRule(
+        generation: GatewayGeneration,
+        id: AutorecRuleId,
+        update: AutorecRuleUpdate,
+    ): GatewayResult<Unit>
+
+    public suspend fun deleteAutorecRule(
+        generation: GatewayGeneration,
+        id: AutorecRuleId,
+    ): GatewayResult<Unit>
+
+    public suspend fun createTimerecRule(
+        generation: GatewayGeneration,
+        request: TimerecRuleCreate,
+    ): GatewayResult<TimerecRuleId>
+
+    public suspend fun updateTimerecRule(
+        generation: GatewayGeneration,
+        id: TimerecRuleId,
+        update: TimerecRuleUpdate,
+    ): GatewayResult<Unit>
+
+    public suspend fun deleteTimerecRule(
+        generation: GatewayGeneration,
+        id: TimerecRuleId,
+    ): GatewayResult<Unit>
 
     public fun subscription(
         generation: GatewayGeneration,

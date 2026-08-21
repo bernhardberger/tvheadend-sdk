@@ -128,6 +128,27 @@ internal class ModuleBoundaryTest {
             "DvrConfigurationsState",
             "DvrDiskSpaceState",
             "DvrRepository",
+            "DvrSchedule",
+            "Programme",
+            "ExplicitTime",
+            "DvrScheduleRequest",
+            "DvrEntryUpdate",
+            "RecordingRuleChannel",
+            "SpecificChannel",
+            "AllChannels",
+            "AutorecRuleCreate",
+            "AutorecRuleUpdate",
+            "TimerecRuleCreate",
+            "TimerecRuleUpdate",
+            "DvrMutationResult",
+            "Confirmed",
+            "AcceptedButUnconfirmed",
+            "NotReady",
+            "ServerRejected",
+            "AccessDenied",
+            "ConnectionLimit",
+            "Timeout",
+            "NotSupported",
             "ChannelService",
             "Channel",
             "ChannelTag",
@@ -179,21 +200,33 @@ internal class ModuleBoundaryTest {
 
     @Test
     fun `public suspending SDK calls use typed outcomes or lifecycle Unit`() {
-        val sessionApi = File(
+        val publicApi = listOf(
             "src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/TvheadendSession.kt",
-        ).readText().replace(Regex("\\s+"), " ")
+            "src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/DvrRepository.kt",
+        ).joinToString(" ") { path -> File(path).readText() }.replace(Regex("\\s+"), " ")
         val expectedSignatures = setOf(
             "public suspend fun connect(profile: ServerProfile): SessionCommandResult",
             "public suspend fun retry(): SessionCommandResult",
             "public suspend fun disconnect()",
             "public suspend fun shutdown()",
+            "public suspend fun scheduleEntry(request: DvrScheduleRequest): DvrMutationResult<DvrEntryId>",
+            "public suspend fun updateEntry( id: DvrEntryId, update: DvrEntryUpdate, ): DvrMutationResult<Unit>",
+            "public suspend fun stopEntry(id: DvrEntryId): DvrMutationResult<Unit>",
+            "public suspend fun cancelEntry(id: DvrEntryId): DvrMutationResult<Unit>",
+            "public suspend fun deleteEntry(id: DvrEntryId): DvrMutationResult<Unit>",
+            "public suspend fun createAutorecRule( request: AutorecRuleCreate, ): DvrMutationResult<AutorecRuleId>",
+            "public suspend fun updateAutorecRule( id: AutorecRuleId, update: AutorecRuleUpdate, ): DvrMutationResult<Unit>",
+            "public suspend fun deleteAutorecRule(id: AutorecRuleId): DvrMutationResult<Unit>",
+            "public suspend fun createTimerecRule( request: TimerecRuleCreate, ): DvrMutationResult<TimerecRuleId>",
+            "public suspend fun updateTimerecRule( id: TimerecRuleId, update: TimerecRuleUpdate, ): DvrMutationResult<Unit>",
+            "public suspend fun deleteTimerecRule(id: TimerecRuleId): DvrMutationResult<Unit>",
         )
 
-        assertEquals(4, Regex("public suspend fun ").findAll(sessionApi).count())
+        assertEquals(expectedSignatures.size, Regex("public suspend fun ").findAll(publicApi).count())
         expectedSignatures.forEach { signature ->
             org.junit.jupiter.api.Assertions.assertTrue(
-                sessionApi.contains(signature),
-                "Missing typed public lifecycle signature",
+                publicApi.contains(signature),
+                "Missing typed public suspending signature",
             )
         }
     }

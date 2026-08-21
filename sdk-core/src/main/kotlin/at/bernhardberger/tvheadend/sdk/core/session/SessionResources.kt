@@ -11,6 +11,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
 import at.bernhardberger.tvheadend.sdk.core.DvrConfigurationsState
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpaceState
+import at.bernhardberger.tvheadend.sdk.core.DvrMutationCommands
 import at.bernhardberger.tvheadend.sdk.core.DvrRepository
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
@@ -57,6 +58,8 @@ internal interface SessionMetadata : ChannelRepository {
 
     public fun applyDvrAccess(generation: GatewayGeneration, access: Boolean?)
 
+    public fun applyDvrMutationProof(generation: GatewayGeneration, allowed: Boolean): Boolean
+
     public fun applyDvrConfigurations(
         generation: GatewayGeneration,
         result: GatewayResult<List<DvrConfiguration>>,
@@ -93,7 +96,10 @@ internal interface SessionMetadata : ChannelRepository {
     public fun capabilities(generation: GatewayGeneration): ServerCapabilities
 }
 
-internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), SessionMetadata {
+internal class PhaseOneSessionMetadata(
+    mutationCommands: DvrMutationCommands = DvrMutationCommands.None,
+    private val onDvrMetadataAccepted: (MetadataEvent) -> Unit = {},
+) : StateBackedChannelRepository(), SessionMetadata {
     private val lock = Any()
     private val reducer = ChannelTagReducer()
     private val epgReducer = EpgReducer()
@@ -110,7 +116,7 @@ internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), Session
     private val stateBackedEpgRepository = object : StateBackedEpgRepository() {
         override val state: StateFlow<EpgRepositoryState> = mutableEpg.asStateFlow()
     }
-    private val stateBackedDvrRepository = object : StateBackedDvrRepository() {
+    private val stateBackedDvrRepository = object : StateBackedDvrRepository(mutationCommands) {
         override val state: StateFlow<DvrRepositoryState> = mutableDvr.asStateFlow()
         override val configurationsState: StateFlow<DvrConfigurationsState> =
             mutableConfigurations.asStateFlow()
@@ -206,6 +212,23 @@ internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), Session
         }
     }
 
+    override fun applyDvrMutationProof(
+        generation: GatewayGeneration,
+        allowed: Boolean,
+    ): Boolean = synchronized(lock) {
+        if (this.generation !== generation) {
+            false
+        } else {
+            val proof = if (allowed) CapabilityAccess.ALLOWED else CapabilityAccess.DENIED
+            if (dvrAccess == proof) {
+                false
+            } else {
+                dvrAccess = proof
+                true
+            }
+        }
+    }
+
     override fun applyDvrConfigurations(
         generation: GatewayGeneration,
         result: GatewayResult<List<DvrConfiguration>>,
@@ -270,6 +293,7 @@ internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), Session
     }
 
     override fun acceptMetadata(event: MetadataEvent) {
+        var acceptedDvrEvent: MetadataEvent? = null
         val completedFence = synchronized(lock) {
             if (event.generation !== generation) {
                 return@synchronized null
@@ -310,15 +334,19 @@ internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), Session
                 -> {
                     reducer.accept(event)
                     epgReducer.accept(event)
-                    dvrReducer.accept(event)
+                    val dvrEventAccepted = dvrReducer.accept(event)
                     if (synchronizedCurrent) {
                         publishCurrent(reducer.snapshot(), epgReducer.snapshot(), dvrReducer.snapshot())
+                    }
+                    if (dvrEventAccepted && event.isDvrMutationConfirmation()) {
+                        acceptedDvrEvent = event
                     }
                     null
                 }
             }
         }
         completedFence?.complete(Unit)
+        acceptedDvrEvent?.let(onDvrMetadataAccepted)
     }
 
     override suspend fun awaitMetadataCurrent(generation: GatewayGeneration) {
@@ -438,6 +466,30 @@ private fun Boolean?.toCapabilityAccess(): CapabilityAccess = when (this) {
     null -> CapabilityAccess.UNKNOWN
     true -> CapabilityAccess.ALLOWED
     false -> CapabilityAccess.DENIED
+}
+
+private fun MetadataEvent.isDvrMutationConfirmation(): Boolean = when (this) {
+    is MetadataEvent.DvrEntryAdded,
+    is MetadataEvent.DvrEntryUpdated,
+    is MetadataEvent.DvrEntryDeleted,
+    is MetadataEvent.AutorecRuleAdded,
+    is MetadataEvent.AutorecRuleUpdated,
+    is MetadataEvent.AutorecRuleDeleted,
+    is MetadataEvent.TimerecRuleAdded,
+    is MetadataEvent.TimerecRuleUpdated,
+    is MetadataEvent.TimerecRuleDeleted,
+    -> true
+    is MetadataEvent.ChannelAdded,
+    is MetadataEvent.ChannelUpdated,
+    is MetadataEvent.ChannelDeleted,
+    is MetadataEvent.TagAdded,
+    is MetadataEvent.TagUpdated,
+    is MetadataEvent.TagDeleted,
+    is MetadataEvent.EventAdded,
+    is MetadataEvent.EventUpdated,
+    is MetadataEvent.EventDeleted,
+    is MetadataEvent.InitialSyncCompleted,
+    -> false
 }
 
 internal interface SessionChildren : SubscriptionOpener {

@@ -51,17 +51,40 @@ import at.bernhardberger.tvheadend.htsp.messages.HtspTimerecEntryDeleteMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspTimerecEntryUpdateMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspTimeshiftStatusMessage
 import at.bernhardberger.tvheadend.htsp.requests.HtspChannelService
+import at.bernhardberger.tvheadend.htsp.requests.AddDvrEntrySelector
 import at.bernhardberger.tvheadend.htsp.requests.HtspEvent
+import at.bernhardberger.tvheadend.htsp.requests.HtspDvrMutationResponse
+import at.bernhardberger.tvheadend.htsp.requests.HtspRecordingRuleChannel
 import at.bernhardberger.tvheadend.htsp.requests.SubscribeResponse
+import at.bernhardberger.tvheadend.htsp.requests.addAutorecEntry
+import at.bernhardberger.tvheadend.htsp.requests.addDvrEntry
+import at.bernhardberger.tvheadend.htsp.requests.addTimerecEntry
+import at.bernhardberger.tvheadend.htsp.requests.cancelDvrEntry
+import at.bernhardberger.tvheadend.htsp.requests.deleteAutorecEntry
+import at.bernhardberger.tvheadend.htsp.requests.deleteDvrEntry
+import at.bernhardberger.tvheadend.htsp.requests.deleteTimerecEntry
 import at.bernhardberger.tvheadend.htsp.requests.enableAsyncMetadataAwaitingInitialSync
 import at.bernhardberger.tvheadend.htsp.requests.getDiskSpace
 import at.bernhardberger.tvheadend.htsp.requests.getDvrConfigs
 import at.bernhardberger.tvheadend.htsp.requests.getEvents
+import at.bernhardberger.tvheadend.htsp.requests.stopDvrEntry
 import at.bernhardberger.tvheadend.htsp.requests.subscribe
 import at.bernhardberger.tvheadend.htsp.requests.unsubscribe
+import at.bernhardberger.tvheadend.htsp.requests.updateAutorecEntry
+import at.bernhardberger.tvheadend.htsp.requests.updateDvrEntry
+import at.bernhardberger.tvheadend.htsp.requests.updateTimerecEntry
 import at.bernhardberger.tvheadend.htsp.wire.HtspBinary
+import at.bernhardberger.tvheadend.sdk.core.AutorecRuleCreate
+import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
+import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
+import at.bernhardberger.tvheadend.sdk.core.DvrSchedule
+import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
+import at.bernhardberger.tvheadend.sdk.core.RecordingRuleChannel
+import at.bernhardberger.tvheadend.sdk.core.TimerecRuleCreate
+import at.bernhardberger.tvheadend.sdk.core.TimerecRuleUpdate
+import at.bernhardberger.tvheadend.sdk.core.toDvrMutationSeconds
 import at.bernhardberger.tvheadend.sdk.core.gateway.AutorecRuleId
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.gateway.DvrConfigId
@@ -243,6 +266,194 @@ internal class HtspProtocolGateway internal constructor(
         )
     }
 
+    override suspend fun scheduleDvrEntry(
+        generation: GatewayGeneration,
+        request: DvrScheduleRequest,
+    ): GatewayResult<DvrEntryId> = connection.addDvrEntry(
+        selector = request.schedule.toHtspSelector(),
+        configName = request.configId?.value,
+        language = request.language,
+        title = request.title,
+        subtitle = request.subtitle,
+        summary = request.summary,
+        description = request.description,
+        ageRating = request.ageRating,
+        expectedGeneration = htspGenerationFor(generation),
+    ).toDvrGatewayResult { response ->
+        response.entryId?.takeIf { response.success == 1L }?.let(::DvrEntryId)
+    }
+
+    override suspend fun updateDvrEntry(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+        update: DvrEntryUpdate,
+    ): GatewayResult<Unit> = connection.updateDvrEntry(
+        entryId = id.value,
+        channelId = update.channelId?.value,
+        configName = update.configId?.value,
+        title = update.title,
+        subtitle = update.subtitle,
+        summary = update.summary,
+        description = update.description,
+        language = update.language,
+        comment = update.comment,
+        enabled = update.enabled?.toWireFlag(),
+        start = update.start?.epochSeconds,
+        stop = update.stop?.epochSeconds,
+        startExtra = update.startExtraMinutes,
+        stopExtra = update.stopExtraMinutes,
+        retention = update.retentionDays,
+        removal = update.removalDays,
+        priority = update.priority,
+        ageRating = update.ageRating,
+        expectedGeneration = htspGenerationFor(generation),
+    ).toDvrGatewayResult(::acceptedDvrAcknowledgement)
+
+    override suspend fun stopDvrEntry(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+    ): GatewayResult<Unit> = connection.stopDvrEntry(
+        entryId = id.value,
+        expectedGeneration = htspGenerationFor(generation),
+    ).toDvrGatewayResult(::acceptedDvrAcknowledgement)
+
+    override suspend fun cancelDvrEntry(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+    ): GatewayResult<Unit> = connection.cancelDvrEntry(
+        entryId = id.value,
+        expectedGeneration = htspGenerationFor(generation),
+    ).toDvrGatewayResult(::acceptedDvrAcknowledgement)
+
+    override suspend fun deleteDvrEntry(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+    ): GatewayResult<Unit> = connection.deleteDvrEntry(
+        entryId = id.value,
+        expectedGeneration = htspGenerationFor(generation),
+    ).toDvrGatewayResult(::acceptedDvrAcknowledgement)
+
+    override suspend fun createAutorecRule(
+        generation: GatewayGeneration,
+        request: AutorecRuleCreate,
+    ): GatewayResult<AutorecRuleId> = connection.addAutorecEntry(
+        title = request.title,
+        channel = request.channel.toHtspChannel(),
+        minDurationSeconds = request.minDuration?.toDvrMutationSeconds(),
+        maxDurationSeconds = request.maxDuration?.toDvrMutationSeconds(),
+        fullText = request.fullText?.toWireFlag(),
+        mergeText = request.mergeText?.toWireFlag(),
+        duplicateDetection = request.duplicateDetection,
+        maximumRecordingCount = request.maximumRecordingCount,
+        broadcastType = request.broadcastType,
+        startExtraMinutes = request.startExtraMinutes,
+        stopExtraMinutes = request.stopExtraMinutes,
+        seriesLinkUri = request.seriesLinkUri,
+        approximateStartMinutesSinceMidnight = request.approximateStartMinutesSinceMidnight,
+        startMinutesSinceMidnight = request.startMinutesSinceMidnight,
+        startWindowEndMinutesSinceMidnight = request.startWindowEndMinutesSinceMidnight,
+        enabled = request.enabled,
+        retentionDays = request.retentionDays,
+        removalDays = request.removalDays,
+        priority = request.priority,
+        name = request.name,
+        comment = request.comment,
+        directory = request.directory,
+        configName = request.configId?.value,
+        daysOfWeekMask = request.daysOfWeekMask,
+        expectedGeneration = htspGenerationFor(generation),
+    ).toGatewayResult { response -> AutorecRuleId(response.id) }
+
+    override suspend fun updateAutorecRule(
+        generation: GatewayGeneration,
+        id: AutorecRuleId,
+        update: AutorecRuleUpdate,
+    ): GatewayResult<Unit> = connection.updateAutorecEntry(
+        id = id.value,
+        channel = update.channel.toHtspChannel(),
+        minDurationSeconds = update.minDuration?.toDvrMutationSeconds(),
+        maxDurationSeconds = update.maxDuration?.toDvrMutationSeconds(),
+        fullText = update.fullText?.toWireFlag(),
+        mergeText = update.mergeText?.toWireFlag(),
+        duplicateDetection = update.duplicateDetection,
+        maximumRecordingCount = update.maximumRecordingCount,
+        broadcastType = update.broadcastType,
+        startExtraMinutes = update.startExtraMinutes,
+        stopExtraMinutes = update.stopExtraMinutes,
+        seriesLinkUri = update.seriesLinkUri,
+        startMinutesSinceMidnight = update.startMinutesSinceMidnight,
+        startWindowEndMinutesSinceMidnight = update.startWindowEndMinutesSinceMidnight,
+        enabled = update.enabled,
+        retentionDays = update.retentionDays,
+        removalDays = update.removalDays,
+        priority = update.priority,
+        name = update.name,
+        comment = update.comment,
+        directory = update.directory,
+        title = update.title,
+        configName = update.configId?.value,
+        daysOfWeekMask = update.daysOfWeekMask,
+        expectedGeneration = htspGenerationFor(generation),
+    ).toGatewayResult {}
+
+    override suspend fun deleteAutorecRule(
+        generation: GatewayGeneration,
+        id: AutorecRuleId,
+    ): GatewayResult<Unit> = connection.deleteAutorecEntry(
+        id = id.value,
+        expectedGeneration = htspGenerationFor(generation),
+    ).toGatewayResult {}
+
+    override suspend fun createTimerecRule(
+        generation: GatewayGeneration,
+        request: TimerecRuleCreate,
+    ): GatewayResult<TimerecRuleId> = connection.addTimerecEntry(
+        title = request.title,
+        channel = request.channel.toHtspChannel(),
+        startMinutesSinceMidnight = request.startMinutesSinceMidnight?.toLong(),
+        stopMinutesSinceMidnight = request.stopMinutesSinceMidnight?.toLong(),
+        enabled = request.enabled,
+        retentionDays = request.retentionDays,
+        removalDays = request.removalDays,
+        priority = request.priority,
+        name = request.name,
+        comment = request.comment,
+        directory = request.directory,
+        configName = request.configId?.value,
+        daysOfWeekMask = request.daysOfWeekMask,
+        expectedGeneration = htspGenerationFor(generation),
+    ).toGatewayResult { response -> TimerecRuleId(response.id) }
+
+    override suspend fun updateTimerecRule(
+        generation: GatewayGeneration,
+        id: TimerecRuleId,
+        update: TimerecRuleUpdate,
+    ): GatewayResult<Unit> = connection.updateTimerecEntry(
+        id = id.value,
+        channel = update.channel.toHtspChannel(),
+        startMinutesSinceMidnight = update.startMinutesSinceMidnight?.toLong(),
+        stopMinutesSinceMidnight = update.stopMinutesSinceMidnight?.toLong(),
+        enabled = update.enabled,
+        retentionDays = update.retentionDays,
+        removalDays = update.removalDays,
+        priority = update.priority,
+        name = update.name,
+        comment = update.comment,
+        directory = update.directory,
+        title = update.title,
+        configName = update.configId?.value,
+        daysOfWeekMask = update.daysOfWeekMask,
+        expectedGeneration = htspGenerationFor(generation),
+    ).toGatewayResult {}
+
+    override suspend fun deleteTimerecRule(
+        generation: GatewayGeneration,
+        id: TimerecRuleId,
+    ): GatewayResult<Unit> = connection.deleteTimerecEntry(
+        id = id.value,
+        expectedGeneration = htspGenerationFor(generation),
+    ).toGatewayResult {}
+
     override fun subscription(
         generation: GatewayGeneration,
         id: SubscriptionId,
@@ -365,6 +576,39 @@ private inline fun <T, R> HtspResult<T>.toGatewayResult(
     HtspResult.TransportUnavailable -> GatewayResult.TransportUnavailable
     HtspResult.NotSupported -> GatewayResult.NotSupported
 }
+
+private inline fun <T, R : Any> HtspResult<T>.toDvrGatewayResult(
+    transform: (T) -> R?,
+): GatewayResult<R> = when (this) {
+    is HtspResult.Ok -> transform(value)?.let { transformed -> GatewayResult.Ok(transformed) }
+        ?: GatewayResult.ServerRejected
+    HtspResult.ServerError -> GatewayResult.ServerRejected
+    HtspResult.AccessDenied -> GatewayResult.AccessDenied
+    HtspResult.ConnectionLimit -> GatewayResult.ConnectionLimit
+    HtspResult.Timeout -> GatewayResult.Timeout
+    HtspResult.TransportUnavailable -> GatewayResult.TransportUnavailable
+    HtspResult.NotSupported -> GatewayResult.NotSupported
+}
+
+private fun acceptedDvrAcknowledgement(response: HtspDvrMutationResponse): Unit? =
+    Unit.takeIf { response.success == 1L }
+
+private fun DvrSchedule.toHtspSelector(): AddDvrEntrySelector = when (this) {
+    is DvrSchedule.Programme -> AddDvrEntrySelector.Event(eventId.value)
+    is DvrSchedule.ExplicitTime -> AddDvrEntrySelector.ExplicitChannelTime(
+        channelId = channelId.value,
+        start = start.epochSeconds,
+        stop = stop.epochSeconds,
+    )
+}
+
+private fun RecordingRuleChannel?.toHtspChannel(): HtspRecordingRuleChannel? = when (this) {
+    null -> null
+    is RecordingRuleChannel.SpecificChannel -> HtspRecordingRuleChannel.Id(channelId.value)
+    RecordingRuleChannel.AllChannels -> HtspRecordingRuleChannel.Any
+}
+
+private fun Boolean.toWireFlag(): Long = if (this) 1L else 0L
 
 @OptIn(SubscriptionInfrastructureApi::class)
 private inline fun <T, R> HtspResult<T>.toSubscriptionResult(

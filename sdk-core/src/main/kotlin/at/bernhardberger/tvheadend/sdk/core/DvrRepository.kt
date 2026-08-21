@@ -589,9 +589,57 @@ public interface DvrRepository {
 
     /** Observes one configuration from the current or retained stale snapshot. */
     public fun configuration(id: DvrConfigId): Flow<DvrConfiguration?>
+
+    /** Schedules one DVR entry and waits for authoritative stream confirmation. */
+    public suspend fun scheduleEntry(request: DvrScheduleRequest): DvrMutationResult<DvrEntryId>
+
+    /** Changes one DVR entry and waits for authoritative stream confirmation. */
+    public suspend fun updateEntry(
+        id: DvrEntryId,
+        update: DvrEntryUpdate,
+    ): DvrMutationResult<Unit>
+
+    /** Stops one recording and waits for authoritative stream confirmation. */
+    public suspend fun stopEntry(id: DvrEntryId): DvrMutationResult<Unit>
+
+    /** Cancels one DVR entry and waits for authoritative stream confirmation. */
+    public suspend fun cancelEntry(id: DvrEntryId): DvrMutationResult<Unit>
+
+    /** Deletes one DVR entry and waits for authoritative stream confirmation. */
+    public suspend fun deleteEntry(id: DvrEntryId): DvrMutationResult<Unit>
+
+    /** Creates one automatic-recording rule and waits for authoritative stream confirmation. */
+    public suspend fun createAutorecRule(
+        request: AutorecRuleCreate,
+    ): DvrMutationResult<AutorecRuleId>
+
+    /** Changes one automatic-recording rule and waits for authoritative stream confirmation. */
+    public suspend fun updateAutorecRule(
+        id: AutorecRuleId,
+        update: AutorecRuleUpdate,
+    ): DvrMutationResult<Unit>
+
+    /** Deletes one automatic-recording rule and waits for authoritative stream confirmation. */
+    public suspend fun deleteAutorecRule(id: AutorecRuleId): DvrMutationResult<Unit>
+
+    /** Creates one time-based recording rule and waits for authoritative stream confirmation. */
+    public suspend fun createTimerecRule(
+        request: TimerecRuleCreate,
+    ): DvrMutationResult<TimerecRuleId>
+
+    /** Changes one time-based recording rule and waits for authoritative stream confirmation. */
+    public suspend fun updateTimerecRule(
+        id: TimerecRuleId,
+        update: TimerecRuleUpdate,
+    ): DvrMutationResult<Unit>
+
+    /** Deletes one time-based recording rule and waits for authoritative stream confirmation. */
+    public suspend fun deleteTimerecRule(id: TimerecRuleId): DvrMutationResult<Unit>
 }
 
-internal abstract class StateBackedDvrRepository : DvrRepository {
+internal abstract class StateBackedDvrRepository(
+    private val mutations: DvrMutationCommands = DvrMutationCommands.None,
+) : DvrRepository {
     final override val entries: StateFlow<List<DvrEntry>> by lazy {
         MappedDvrStateFlow(state, DvrRepositoryState::entries)
     }
@@ -624,6 +672,48 @@ internal abstract class StateBackedDvrRepository : DvrRepository {
         configurations.map { configurations ->
             configurations.firstOrNull { configuration -> configuration.id == id }
         }.distinctUntilChanged()
+
+    final override suspend fun scheduleEntry(
+        request: DvrScheduleRequest,
+    ): DvrMutationResult<DvrEntryId> = mutations.scheduleEntry(request)
+
+    final override suspend fun updateEntry(
+        id: DvrEntryId,
+        update: DvrEntryUpdate,
+    ): DvrMutationResult<Unit> = mutations.updateEntry(id, update)
+
+    final override suspend fun stopEntry(id: DvrEntryId): DvrMutationResult<Unit> =
+        mutations.stopEntry(id)
+
+    final override suspend fun cancelEntry(id: DvrEntryId): DvrMutationResult<Unit> =
+        mutations.cancelEntry(id)
+
+    final override suspend fun deleteEntry(id: DvrEntryId): DvrMutationResult<Unit> =
+        mutations.deleteEntry(id)
+
+    final override suspend fun createAutorecRule(
+        request: AutorecRuleCreate,
+    ): DvrMutationResult<AutorecRuleId> = mutations.createAutorecRule(request)
+
+    final override suspend fun updateAutorecRule(
+        id: AutorecRuleId,
+        update: AutorecRuleUpdate,
+    ): DvrMutationResult<Unit> = mutations.updateAutorecRule(id, update)
+
+    final override suspend fun deleteAutorecRule(id: AutorecRuleId): DvrMutationResult<Unit> =
+        mutations.deleteAutorecRule(id)
+
+    final override suspend fun createTimerecRule(
+        request: TimerecRuleCreate,
+    ): DvrMutationResult<TimerecRuleId> = mutations.createTimerecRule(request)
+
+    final override suspend fun updateTimerecRule(
+        id: TimerecRuleId,
+        update: TimerecRuleUpdate,
+    ): DvrMutationResult<Unit> = mutations.updateTimerecRule(id, update)
+
+    final override suspend fun deleteTimerecRule(id: TimerecRuleId): DvrMutationResult<Unit> =
+        mutations.deleteTimerecRule(id)
 }
 
 @OptIn(ExperimentalForInheritanceCoroutinesApi::class, InternalCoroutinesApi::class)

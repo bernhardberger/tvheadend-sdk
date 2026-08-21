@@ -2,8 +2,17 @@
 
 package at.bernhardberger.tvheadend.sdk.core.session
 
+import at.bernhardberger.tvheadend.sdk.core.AutorecRuleCreate
+import at.bernhardberger.tvheadend.sdk.core.AutorecRuleId
+import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
+import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
+import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
+import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
+import at.bernhardberger.tvheadend.sdk.core.TimerecRuleCreate
+import at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
+import at.bernhardberger.tvheadend.sdk.core.TimerecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailureEvent
@@ -288,6 +297,64 @@ private class SubscriptionGateway : ProtocolGateway {
     override suspend fun getDiskSpace(
         generation: GatewayGeneration,
     ): GatewayResult<DvrDiskSpace> = GatewayResult.Ok(DvrDiskSpace(0, 0, 0))
+
+    override suspend fun scheduleDvrEntry(
+        generation: GatewayGeneration,
+        request: DvrScheduleRequest,
+    ): GatewayResult<DvrEntryId> = GatewayResult.NotSupported
+
+    override suspend fun updateDvrEntry(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+        update: DvrEntryUpdate,
+    ): GatewayResult<Unit> = GatewayResult.NotSupported
+
+    override suspend fun stopDvrEntry(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+    ): GatewayResult<Unit> = GatewayResult.NotSupported
+
+    override suspend fun cancelDvrEntry(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+    ): GatewayResult<Unit> = GatewayResult.NotSupported
+
+    override suspend fun deleteDvrEntry(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+    ): GatewayResult<Unit> = GatewayResult.NotSupported
+
+    override suspend fun createAutorecRule(
+        generation: GatewayGeneration,
+        request: AutorecRuleCreate,
+    ): GatewayResult<AutorecRuleId> = GatewayResult.NotSupported
+
+    override suspend fun updateAutorecRule(
+        generation: GatewayGeneration,
+        id: AutorecRuleId,
+        update: AutorecRuleUpdate,
+    ): GatewayResult<Unit> = GatewayResult.NotSupported
+
+    override suspend fun deleteAutorecRule(
+        generation: GatewayGeneration,
+        id: AutorecRuleId,
+    ): GatewayResult<Unit> = GatewayResult.NotSupported
+
+    override suspend fun createTimerecRule(
+        generation: GatewayGeneration,
+        request: TimerecRuleCreate,
+    ): GatewayResult<TimerecRuleId> = GatewayResult.NotSupported
+
+    override suspend fun updateTimerecRule(
+        generation: GatewayGeneration,
+        id: TimerecRuleId,
+        update: TimerecRuleUpdate,
+    ): GatewayResult<Unit> = GatewayResult.NotSupported
+
+    override suspend fun deleteTimerecRule(
+        generation: GatewayGeneration,
+        id: TimerecRuleId,
+    ): GatewayResult<Unit> = GatewayResult.NotSupported
 
     override fun subscription(
         generation: GatewayGeneration,

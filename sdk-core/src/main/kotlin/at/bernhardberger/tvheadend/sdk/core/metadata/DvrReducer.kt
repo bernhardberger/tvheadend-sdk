@@ -541,29 +541,42 @@ internal class DvrReducer {
         timerecRules.clear()
     }
 
-    internal fun accept(event: MetadataEvent) {
-        when (event) {
-            is MetadataEvent.DvrEntryAdded -> acceptEntryAdd(event.entry)
-            is MetadataEvent.DvrEntryUpdated -> acceptEntryUpdate(event.entry)
-            is MetadataEvent.DvrEntryDeleted -> entries.remove(event.entryId)
-            is MetadataEvent.AutorecRuleAdded -> acceptAutorecAdd(event.rule)
-            is MetadataEvent.AutorecRuleUpdated -> acceptAutorecUpdate(event.rule)
-            is MetadataEvent.AutorecRuleDeleted -> autorecRules.remove(event.ruleId)
-            is MetadataEvent.TimerecRuleAdded -> acceptTimerecAdd(event.rule)
-            is MetadataEvent.TimerecRuleUpdated -> acceptTimerecUpdate(event.rule)
-            is MetadataEvent.TimerecRuleDeleted -> timerecRules.remove(event.ruleId)
-            is MetadataEvent.ChannelAdded,
-            is MetadataEvent.ChannelUpdated,
-            is MetadataEvent.ChannelDeleted,
-            is MetadataEvent.TagAdded,
-            is MetadataEvent.TagUpdated,
-            is MetadataEvent.TagDeleted,
-            is MetadataEvent.EventAdded,
-            is MetadataEvent.EventUpdated,
-            is MetadataEvent.EventDeleted,
-            is MetadataEvent.InitialSyncCompleted,
-            -> Unit
+    internal fun accept(event: MetadataEvent): Boolean = when (event) {
+        is MetadataEvent.DvrEntryAdded -> acceptEntryAdd(event.entry)
+        is MetadataEvent.DvrEntryUpdated -> acceptEntryUpdate(event.entry)
+        is MetadataEvent.DvrEntryDeleted -> {
+            entries.remove(event.entryId)
+            true
         }
+        is MetadataEvent.AutorecRuleAdded -> {
+            acceptAutorecAdd(event.rule)
+            true
+        }
+        is MetadataEvent.AutorecRuleUpdated -> {
+            acceptAutorecUpdate(event.rule)
+            true
+        }
+        is MetadataEvent.AutorecRuleDeleted -> {
+            autorecRules.remove(event.ruleId)
+            true
+        }
+        is MetadataEvent.TimerecRuleAdded -> acceptTimerecAdd(event.rule)
+        is MetadataEvent.TimerecRuleUpdated -> acceptTimerecUpdate(event.rule)
+        is MetadataEvent.TimerecRuleDeleted -> {
+            timerecRules.remove(event.ruleId)
+            true
+        }
+        is MetadataEvent.ChannelAdded,
+        is MetadataEvent.ChannelUpdated,
+        is MetadataEvent.ChannelDeleted,
+        is MetadataEvent.TagAdded,
+        is MetadataEvent.TagUpdated,
+        is MetadataEvent.TagDeleted,
+        is MetadataEvent.EventAdded,
+        is MetadataEvent.EventUpdated,
+        is MetadataEvent.EventDeleted,
+        is MetadataEvent.InitialSyncCompleted,
+        -> false
     }
 
     internal fun snapshot(): DvrSnapshot = DvrSnapshot.create(
@@ -572,24 +585,26 @@ internal class DvrReducer {
         timerecRules = timerecRules.values.mapNotNull(ReducedTimerecRule::toPublicOrNull),
     )
 
-    private fun acceptEntryAdd(entry: GatewayDvrEntry) {
+    private fun acceptEntryAdd(entry: GatewayDvrEntry): Boolean {
         val current = entries[entry.id]
         val candidate = if (current == null) {
             ReducedDvrEntry.fromAdd(entry)
         } else {
             current.mergeFromAdd(entry)
-        } ?: return
+        } ?: return false
         entries[entry.id] = candidate
+        return true
     }
 
-    private fun acceptEntryUpdate(entry: GatewayDvrEntry) {
+    private fun acceptEntryUpdate(entry: GatewayDvrEntry): Boolean {
         val current = entries[entry.id]
         val candidate = if (current == null) {
             ReducedDvrEntry.fromUpdate(entry)
         } else {
             current.mergeFromUpdate(entry)
-        } ?: return
+        } ?: return false
         entries[entry.id] = candidate
+        return true
     }
 
     private fun acceptAutorecAdd(rule: GatewayAutorecRule) {
@@ -600,20 +615,22 @@ internal class DvrReducer {
         autorecRules[rule.id] = autorecRules[rule.id]?.merge(rule) ?: ReducedAutorecRule.fromUpdate(rule)
     }
 
-    private fun acceptTimerecAdd(rule: GatewayTimerecRule) {
+    private fun acceptTimerecAdd(rule: GatewayTimerecRule): Boolean {
         val candidate = ReducedTimerecRule.fromAdd(rule)
-        if (candidate.toPublicOrNull() == null) return
+        if (candidate.toPublicOrNull() == null) return false
         timerecRules[rule.id] = candidate
+        return true
     }
 
-    private fun acceptTimerecUpdate(rule: GatewayTimerecRule) {
+    private fun acceptTimerecUpdate(rule: GatewayTimerecRule): Boolean {
         val current = timerecRules[rule.id]
         val candidate = if (current == null) {
             ReducedTimerecRule.fromUpdate(rule)
         } else {
             current.merge(rule).takeUnless { it.toPublicOrNull() == null }
-        } ?: return
+        } ?: return false
         timerecRules[rule.id] = candidate
+        return true
     }
 }
 

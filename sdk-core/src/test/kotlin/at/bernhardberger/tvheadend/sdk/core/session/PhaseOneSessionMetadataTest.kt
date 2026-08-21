@@ -9,6 +9,8 @@ import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
 import at.bernhardberger.tvheadend.sdk.core.DvrConfigurationsState
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpaceState
+import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
+import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.ServerCapabilities
@@ -40,6 +42,81 @@ import kotlin.time.Instant
 
 @OptIn(ExperimentalCoroutinesApi::class)
 internal class PhaseOneSessionMetadataTest {
+    @Test
+    fun `mutation confirmation is delivered only after authoritative DVR publication`() = runTest {
+        val gateway = MutationGateway()
+        val coordinator = DvrMutationCoordinator(gateway)
+        val metadata = PhaseOneSessionMetadata(
+            mutationCommands = coordinator,
+            onDvrMetadataAccepted = coordinator::acceptMetadata,
+        )
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        coordinator.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.DvrEntryAdded(generation, dvrEntry(1, "old")))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        coordinator.startAdmission(generation)
+        gateway.updateBehavior = { _, _, _ -> GatewayResult.Ok(Unit) }
+
+        val result = async {
+            val mutation = metadata.dvrRepository.updateEntry(
+                DvrEntryId(1),
+                DvrEntryUpdate(title = "new"),
+            )
+            assertEquals("new", metadata.currentDvrSnapshot().entries.single().title)
+            mutation
+        }
+        runCurrent()
+        assertFalse(result.isCompleted)
+
+        metadata.acceptMetadata(
+            MetadataEvent.DvrEntryUpdated(generation, dvrEntry(1, "new")),
+        )
+        runCurrent()
+
+        assertTrue(result.await() is DvrMutationResult.Confirmed)
+    }
+
+    @Test
+    fun `reducer-rejected DVR metadata cannot confirm a mutation`() = runTest {
+        val gateway = MutationGateway()
+        val coordinator = DvrMutationCoordinator(gateway)
+        val metadata = PhaseOneSessionMetadata(
+            mutationCommands = coordinator,
+            onDvrMetadataAccepted = coordinator::acceptMetadata,
+        )
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        coordinator.bindGeneration(generation)
+        metadata.acceptMetadata(
+            MetadataEvent.DvrEntryAdded(generation, dvrEntry(1, "old", start = 0, stop = 10)),
+        )
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        coordinator.startAdmission(generation)
+        gateway.updateBehavior = { _, _, _ -> GatewayResult.Ok(Unit) }
+
+        val result = async {
+            metadata.dvrRepository.updateEntry(DvrEntryId(1), DvrEntryUpdate(title = "new"))
+        }
+        runCurrent()
+        metadata.acceptMetadata(
+            MetadataEvent.DvrEntryUpdated(
+                generation,
+                dvrEntry(1, "invalid", start = 20, stop = 10),
+            ),
+        )
+        runCurrent()
+
+        assertFalse(result.isCompleted)
+        assertEquals("old", metadata.currentDvrSnapshot().entries.single().title)
+
+        metadata.acceptMetadata(
+            MetadataEvent.DvrEntryUpdated(generation, dvrEntry(1, "new")),
+        )
+        runCurrent()
+        assertTrue(result.await() is DvrMutationResult.Confirmed)
+    }
+
     @Test
     fun `matching fence publishes the complete working catalog before readiness`() = runTest {
         val metadata = PhaseOneSessionMetadata()
@@ -703,9 +780,16 @@ internal class PhaseOneSessionMetadataTest {
     private fun PhaseOneSessionMetadata.currentDvrSnapshot() =
         (dvrRepository.state.value as DvrRepositoryState.Current).snapshot
 
-    private fun dvrEntry(id: Long, title: String? = null): GatewayDvrEntry = GatewayDvrEntry(
+    private fun dvrEntry(
+        id: Long,
+        title: String? = null,
+        start: Long? = null,
+        stop: Long? = null,
+    ): GatewayDvrEntry = GatewayDvrEntry(
         id = DvrEntryId(id),
         title = title,
+        start = start?.let(Instant::fromEpochSeconds),
+        stop = stop?.let(Instant::fromEpochSeconds),
     )
 
     private fun channel(

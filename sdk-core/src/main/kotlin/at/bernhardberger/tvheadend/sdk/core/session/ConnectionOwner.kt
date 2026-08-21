@@ -48,6 +48,7 @@ internal class ConnectionOwner(
     private val gateway: ProtocolGateway,
     private val metadata: SessionMetadata,
     private val children: SessionChildren,
+    private val dvrMutations: DvrMutationLifecycle = DvrMutationLifecycle.None,
     defaultDispatcher: CoroutineDispatcher,
     private val backoff: ReconnectBackoff,
     private val onShutdown: () -> Unit = {},
@@ -61,6 +62,7 @@ internal class ConnectionOwner(
     private var selectedProfile: ServerProfile? = null
     private var worker: Job? = null
     private var activeToken: SessionToken? = null
+    private var activeGeneration: GatewayGeneration? = null
     private var retryDisposition: RetryDisposition? = null
     private var closed = false
     private var shutdownCompletion: CompletableDeferred<Unit>? = null
@@ -216,8 +218,10 @@ internal class ConnectionOwner(
         worker = null
         val admissionFailure = synchronized(stateLock) {
             activeToken = null
+            activeGeneration = null
             retryDisposition = null
-            val failure = captureFailure { children.stopAdmission() }
+            var failure = captureFailure { dvrMutations.stopAdmission() }
+            failure = captureFailure(failure) { children.stopAdmission() }
             if (retainPublishedCatalog) {
                 metadata.resetWorkingStateRetainingPublishedSnapshot()
             } else {
@@ -326,6 +330,7 @@ internal class ConnectionOwner(
             }
             generation.complete(connection.generation)
             requireCurrent(token)
+            dvrMutations.bindGeneration(connection.generation)
             children.bindGeneration(connection.generation)
             metadata.bindGeneration(connection.generation)
             metadata.applyDvrAccess(connection.generation, connection.dvrAccess)
@@ -432,9 +437,13 @@ internal class ConnectionOwner(
     ): Boolean = synchronized(stateLock) {
         if (activeToken !== token || closed) {
             false
+        } else if (!dvrMutations.startAdmission(generation)) {
+            false
         } else if (!children.startAdmission(generation)) {
+            dvrMutations.stopAdmission()
             false
         } else {
+            activeGeneration = generation
             retryDisposition = null
             mutableState.value = SessionState.Ready(capabilities)
             true
@@ -467,8 +476,10 @@ internal class ConnectionOwner(
         if (activeToken !== token || closed) {
             UnavailableCommit(committed = false, admissionFailure = null)
         } else {
+            activeGeneration = null
             retryDisposition = disposition
-            val admissionFailure = captureFailure { children.stopAdmission() }
+            var admissionFailure = captureFailure { dvrMutations.stopAdmission() }
+            admissionFailure = captureFailure(admissionFailure) { children.stopAdmission() }
             metadata.resetWorkingStateRetainingPublishedSnapshot()
             mutableState.value = SessionState.Unavailable(failure)
             UnavailableCommit(committed = true, admissionFailure = admissionFailure)
@@ -479,6 +490,27 @@ internal class ConnectionOwner(
         retryDisposition
     }
 
+    internal fun refreshDvrCapabilities(generation: GatewayGeneration) {
+        val capabilities = try {
+            metadata.capabilities(generation)
+        } catch (_: IllegalStateException) {
+            return
+        }
+        synchronized(stateLock) {
+            if (
+                !closed &&
+                activeGeneration === generation &&
+                mutableState.value is SessionState.Ready
+            ) {
+                mutableState.value = SessionState.Ready(capabilities)
+            }
+        }
+    }
+
+    internal fun isDvrMutationReady(generation: GatewayGeneration): Boolean = synchronized(stateLock) {
+        !closed && activeGeneration === generation && mutableState.value is SessionState.Ready
+    }
+
     private class SessionToken
 }
 
@@ -487,6 +519,13 @@ private fun captureFailure(block: () -> Unit): Throwable? = try {
     null
 } catch (failure: Throwable) {
     failure
+}
+
+private fun captureFailure(previous: Throwable?, block: () -> Unit): Throwable? = try {
+    block()
+    previous
+} catch (failure: Throwable) {
+    previous ?: failure
 }
 
 private suspend fun runOrderedCleanup(

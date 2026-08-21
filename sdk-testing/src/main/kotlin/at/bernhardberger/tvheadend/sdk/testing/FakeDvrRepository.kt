@@ -1,7 +1,9 @@
 package at.bernhardberger.tvheadend.sdk.testing
 
 import at.bernhardberger.tvheadend.sdk.core.AutorecRule
+import at.bernhardberger.tvheadend.sdk.core.AutorecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleId
+import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrConfigId
 import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
 import at.bernhardberger.tvheadend.sdk.core.DvrConfigurationsState
@@ -9,10 +11,15 @@ import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpaceState
 import at.bernhardberger.tvheadend.sdk.core.DvrEntry
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
+import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
+import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult
 import at.bernhardberger.tvheadend.sdk.core.DvrRepository
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
 import at.bernhardberger.tvheadend.sdk.core.TimerecRule
+import at.bernhardberger.tvheadend.sdk.core.TimerecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
+import at.bernhardberger.tvheadend.sdk.core.TimerecRuleUpdate
 import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
 import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -48,6 +55,39 @@ public class FakeDvrRepository @JvmOverloads constructor(
     override val diskSpace: StateFlow<DvrDiskSpace?> =
         MappedFakeDvrStateFlow(diskSpaceState, DvrDiskSpaceState::diskSpace)
 
+    /** Scripted outcome returned by [scheduleEntry]. */
+    public var scheduleEntryResult: DvrMutationResult<DvrEntryId> = DvrMutationResult.NotReady
+
+    /** Scripted outcome returned by [updateEntry]. */
+    public var updateEntryResult: DvrMutationResult<Unit> = DvrMutationResult.NotReady
+
+    /** Scripted outcome returned by [stopEntry]. */
+    public var stopEntryResult: DvrMutationResult<Unit> = DvrMutationResult.NotReady
+
+    /** Scripted outcome returned by [cancelEntry]. */
+    public var cancelEntryResult: DvrMutationResult<Unit> = DvrMutationResult.NotReady
+
+    /** Scripted outcome returned by [deleteEntry]. */
+    public var deleteEntryResult: DvrMutationResult<Unit> = DvrMutationResult.NotReady
+
+    /** Scripted outcome returned by [createAutorecRule]. */
+    public var createAutorecRuleResult: DvrMutationResult<AutorecRuleId> = DvrMutationResult.NotReady
+
+    /** Scripted outcome returned by [updateAutorecRule]. */
+    public var updateAutorecRuleResult: DvrMutationResult<Unit> = DvrMutationResult.NotReady
+
+    /** Scripted outcome returned by [deleteAutorecRule]. */
+    public var deleteAutorecRuleResult: DvrMutationResult<Unit> = DvrMutationResult.NotReady
+
+    /** Scripted outcome returned by [createTimerecRule]. */
+    public var createTimerecRuleResult: DvrMutationResult<TimerecRuleId> = DvrMutationResult.NotReady
+
+    /** Scripted outcome returned by [updateTimerecRule]. */
+    public var updateTimerecRuleResult: DvrMutationResult<Unit> = DvrMutationResult.NotReady
+
+    /** Scripted outcome returned by [deleteTimerecRule]. */
+    public var deleteTimerecRuleResult: DvrMutationResult<Unit> = DvrMutationResult.NotReady
+
     /** Publishes one complete repository transition. */
     public fun setState(state: DvrRepositoryState) {
         mutableState.value = state
@@ -79,6 +119,44 @@ public class FakeDvrRepository @JvmOverloads constructor(
         configurations.map { configurations ->
             configurations.firstOrNull { configuration -> configuration.id == id }
         }.distinctUntilChanged()
+
+    override suspend fun scheduleEntry(request: DvrScheduleRequest): DvrMutationResult<DvrEntryId> =
+        scheduleEntryResult
+
+    override suspend fun updateEntry(
+        id: DvrEntryId,
+        update: DvrEntryUpdate,
+    ): DvrMutationResult<Unit> = updateEntryResult
+
+    override suspend fun stopEntry(id: DvrEntryId): DvrMutationResult<Unit> = stopEntryResult
+
+    override suspend fun cancelEntry(id: DvrEntryId): DvrMutationResult<Unit> = cancelEntryResult
+
+    override suspend fun deleteEntry(id: DvrEntryId): DvrMutationResult<Unit> = deleteEntryResult
+
+    override suspend fun createAutorecRule(
+        request: AutorecRuleCreate,
+    ): DvrMutationResult<AutorecRuleId> = createAutorecRuleResult
+
+    override suspend fun updateAutorecRule(
+        id: AutorecRuleId,
+        update: AutorecRuleUpdate,
+    ): DvrMutationResult<Unit> = updateAutorecRuleResult
+
+    override suspend fun deleteAutorecRule(id: AutorecRuleId): DvrMutationResult<Unit> =
+        deleteAutorecRuleResult
+
+    override suspend fun createTimerecRule(
+        request: TimerecRuleCreate,
+    ): DvrMutationResult<TimerecRuleId> = createTimerecRuleResult
+
+    override suspend fun updateTimerecRule(
+        id: TimerecRuleId,
+        update: TimerecRuleUpdate,
+    ): DvrMutationResult<Unit> = updateTimerecRuleResult
+
+    override suspend fun deleteTimerecRule(id: TimerecRuleId): DvrMutationResult<Unit> =
+        deleteTimerecRuleResult
 }
 
 @OptIn(ExperimentalForInheritanceCoroutinesApi::class, InternalCoroutinesApi::class)

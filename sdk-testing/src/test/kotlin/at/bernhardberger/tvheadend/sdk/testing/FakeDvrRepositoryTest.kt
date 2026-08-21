@@ -9,8 +9,12 @@ import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpaceState
 import at.bernhardberger.tvheadend.sdk.core.DvrEntry
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
+import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.DvrSchedule
+import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
 import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
+import at.bernhardberger.tvheadend.sdk.core.EventId
 import at.bernhardberger.tvheadend.sdk.core.TimerecRule
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
 import kotlinx.coroutines.flow.first
@@ -59,5 +63,23 @@ internal class FakeDvrRepositoryTest {
         assertEquals(null, repository.configuration(DvrConfigId("config")).first())
         assertEquals(null, repository.diskSpace.value)
         assertEquals(DvrConfigurationsState.Denied, repository.configurationsState.value)
+    }
+
+    @Test
+    fun `fake scripts typed mutation outcomes without changing repository state`() = runTest {
+        val repository = FakeDvrRepository()
+        val scheduled = DvrMutationResult.Confirmed(DvrEntryId(7))
+        val stopped = DvrMutationResult.AcceptedButUnconfirmed(Unit)
+        repository.scheduleEntryResult = scheduled
+        repository.stopEntryResult = stopped
+
+        assertSame(
+            scheduled,
+            repository.scheduleEntry(
+                DvrScheduleRequest(DvrSchedule.Programme(EventId(1))),
+            ),
+        )
+        assertSame(stopped, repository.stopEntry(DvrEntryId(7)))
+        assertEquals(DvrRepositoryState.Empty, repository.state.value)
     }
 }
