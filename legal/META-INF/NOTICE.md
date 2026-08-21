@@ -15,3 +15,9 @@ was copied from those projects.
 
 Kotlin, Kotlin coroutines, AndroidX, and Media3 retain their own copyright and
 license terms. Exact selected versions are recorded in the root build.
+
+`sdk-media3` includes the AndroidX Media3 FFmpeg decoder wrapper under the
+Apache License 2.0 and a purpose-built FFmpeg 6.0-series native library under
+the GNU Lesser General Public License 2.1 or later. Its exact provenance,
+corresponding source, and binary checksums are recorded in
+`docs/ffmpeg-contingency.md`.

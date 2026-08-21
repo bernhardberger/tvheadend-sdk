@@ -219,9 +219,18 @@ internal class ModuleBoundaryTest {
             "ScriptedSubscriptionRegistration",
             "SubscriptionBinaryFixture",
         )
+        val expectedMedia3 = setOf(
+            "PlaybackRecoveryPolicy",
+            "PlaybackRecoveryReason",
+            "TvheadendPlaybackRecovery",
+            "createTvheadendLiveMediaSource",
+            "createTvheadendPlaybackRecovery",
+            "createTvheadendRenderersFactory",
+        )
 
         assertPublicInfrastructure("sdk-playback", expectedPlayback, unannotatedCount = 1)
         assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 2)
+        assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 5)
 
         val sessionApi = java.io.File(
             "src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/TvheadendSession.kt",
@@ -244,7 +253,7 @@ internal class ModuleBoundaryTest {
 
     @Test
     fun `every hand written public SDK type is reachable from a public entry point`() {
-        val scope = listOf("sdk-core", "sdk-playback", "sdk-testing")
+        val scope = listOf("sdk-core", "sdk-playback", "sdk-testing", "sdk-media3")
             .map(::productionScope)
             .reduce(KoScope::plus)
         val publicTypes = scope.classesAndInterfacesAndObjects(includeNested = true, includeLocal = false)
@@ -265,11 +274,18 @@ internal class ModuleBoundaryTest {
         scope.functions(includeLocal = false, includeNested = false)
             .filter { function ->
                 function.hasPublicOrDefaultModifier &&
-                    function.name in setOf("createTvheadendSession", "createSubscriptionManager")
+                    function.name in setOf(
+                        "createTvheadendSession",
+                        "createSubscriptionManager",
+                        "createTvheadendLiveMediaSource",
+                        "createTvheadendPlaybackRecovery",
+                        "createTvheadendRenderersFactory",
+                    )
             }
             .forEach { function -> function.referencedPublicTypes().forEach(::enqueue) }
         setOf(
             "at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi",
+            "at.bernhardberger.tvheadend.sdk.media3.PlaybackRecoveryReason",
             "at.bernhardberger.tvheadend.sdk.core.ChannelService",
             "at.bernhardberger.tvheadend.sdk.testing.ScriptedSubscriptionConnection",
             "at.bernhardberger.tvheadend.sdk.testing.SubscriptionBinaryFixture",

@@ -39,6 +39,9 @@ public fun interface SubscriptionEventConsumer {
      * from this callback.
      */
     public suspend fun accept(event: SubscriptionEvent)
+
+    /** Receives the validated immutable tracks before the subscription can become playable. */
+    public fun tracksReady(tracks: SubscriptionTracks): Unit = Unit
 }
 
 /** Immutable validated track set that made a subscription playable. */
@@ -620,7 +623,9 @@ private class ActiveSubscriptionImpl(
             setLocalFailure(SubscriptionTerminalReason.InvalidTracks)
             return
         }
+        val candidate = SubscriptionTracks(streams)
         synchronized(lock) {
+            if (terminal != null || closeRequestedFlag) return
             if (tracks != null) {
                 consumerEnabled = false
                 setTerminalLocked(
@@ -630,7 +635,27 @@ private class ActiveSubscriptionImpl(
                 )
                 return
             }
-            tracks = SubscriptionTracks(streams)
+        }
+        try {
+            consumer.tracksReady(candidate)
+        } catch (cancellation: CancellationException) {
+            synchronized(lock) {
+                terminalCancellation = terminalCancellation ?: cancellation
+                consumerEnabled = false
+                setTerminalLocked(
+                    SubscriptionTerminalReason.InfrastructureFailed,
+                    stopCollection = false,
+                    completeOpen = false,
+                )
+            }
+            return
+        } catch (_: Exception) {
+            setLocalFailure(SubscriptionTerminalReason.ConsumerFailed)
+            return
+        }
+        synchronized(lock) {
+            if (tracks != null || terminal != null || closeRequestedFlag) return
+            tracks = candidate
         }
         tryPublishPlayable()
     }

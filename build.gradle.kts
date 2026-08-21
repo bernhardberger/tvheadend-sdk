@@ -1,6 +1,7 @@
 import com.android.Version
 import com.android.build.api.dsl.LibraryExtension
 import org.gradle.api.Project
+import org.gradle.api.artifacts.FileCollectionDependency
 import org.gradle.api.artifacts.ProjectDependency
 import org.gradle.api.artifacts.VersionCatalogsExtension
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier
@@ -66,7 +67,7 @@ val requiredVersions = mapOf(
     "detekt" to "2.0.0-alpha.6",
     "dokka" to "2.2.0",
     "foojay" to "1.0.0",
-    "htsp" to "0.4.0",
+    "htsp" to "0.5.0",
     "jdk" to "21",
     "junit" to "6.1.3",
     "jvmTarget" to "17",
@@ -155,13 +156,13 @@ val commonResolved = setOf(
     "org.jetbrains.kotlin:kotlin-stdlib:2.4.10",
 )
 val coreResolved = (commonResolved - "org.jetbrains:annotations:13.0") + setOf(
-    "at.bernhardberger.tvheadend:htsp:0.4.0",
+    "at.bernhardberger.tvheadend:htsp:0.5.0",
     "org.jetbrains:annotations:23.0.0",
     "org.jetbrains.kotlinx:kotlinx-coroutines-bom:1.10.2",
     "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
     "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.10.2",
 )
-val coroutineResolved = (coreResolved - "at.bernhardberger.tvheadend:htsp:0.4.0")
+val coroutineResolved = (coreResolved - "at.bernhardberger.tvheadend:htsp:0.5.0")
 val useHtspComposite = providers.gradleProperty("tvheadend.htsp.composite")
     .map(String::toBooleanStrict)
     .getOrElse(false)
@@ -177,11 +178,11 @@ val productionGraphs = sdkModules.associateWith {
     this["sdk-core"] = ProductionGraph(
         direct = commonDirect + setOf(
             "project::sdk-playback",
-            "at.bernhardberger.tvheadend:htsp:0.4.0",
+            "at.bernhardberger.tvheadend:htsp:0.5.0",
             "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
         ),
         resolved = (if (useHtspComposite) {
-            (coreResolved - "at.bernhardberger.tvheadend:htsp:0.4.0") + "project::tvheadend-htsp"
+            (coreResolved - "at.bernhardberger.tvheadend:htsp:0.5.0") + "project::tvheadend-htsp"
         } else {
             coreResolved
         }) + "project::sdk-playback",
@@ -190,10 +191,41 @@ val productionGraphs = sdkModules.associateWith {
         direct = setOf("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2"),
         resolved = coroutineResolved,
     )
+    this["sdk-media3"] = ProductionGraph(
+        direct = setOf(
+            "project::sdk-playback",
+            "androidx.media3:media3-exoplayer:1.11.0",
+            "androidx.media3:media3-extractor:1.11.0",
+            "file:media3-decoder-ffmpeg-1.11.0.jar",
+            "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
+        ),
+        resolved = setOf(
+            "androidx.annotation:annotation-experimental:1.3.1",
+            "androidx.annotation:annotation-jvm:1.6.0",
+            "androidx.annotation:annotation:1.6.0",
+            "androidx.exifinterface:exifinterface:1.3.6",
+            "androidx.media3:media3-common:1.11.0",
+            "androidx.media3:media3-container:1.11.0",
+            "androidx.media3:media3-database:1.11.0",
+            "androidx.media3:media3-datasource:1.11.0",
+            "androidx.media3:media3-decoder:1.11.0",
+            "androidx.media3:media3-exoplayer:1.11.0",
+            "androidx.media3:media3-extractor:1.11.0",
+            "com.google.guava:failureaccess:1.0.2",
+            "com.google.guava:guava:33.3.1-android",
+            "com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava",
+            "org.jetbrains.kotlin:kotlin-stdlib:2.4.10",
+            "org.jetbrains.kotlinx:kotlinx-coroutines-bom:1.10.2",
+            "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.10.2",
+            "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
+            "org.jetbrains:annotations:23.0.0",
+            "project::sdk-playback",
+        ),
+    )
     this["sdk-testing"] = ProductionGraph(
         direct = setOf("project::sdk-core", "project::sdk-playback"),
         resolved = (if (useHtspComposite) {
-            (coreResolved - "at.bernhardberger.tvheadend:htsp:0.4.0") + "project::tvheadend-htsp"
+            (coreResolved - "at.bernhardberger.tvheadend:htsp:0.5.0") + "project::tvheadend-htsp"
         } else {
             coreResolved
         }) + setOf("project::sdk-core", "project::sdk-playback"),
@@ -203,10 +235,17 @@ val scopedDirectDependencies = sdkModules.associateWith { emptySet<String>() }.t
     this["sdk-core"] = setOf(
         "api=project::sdk-playback",
         "api=org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
-        "implementation=at.bernhardberger.tvheadend:htsp:0.4.0",
+        "implementation=at.bernhardberger.tvheadend:htsp:0.5.0",
     )
     this["sdk-playback"] = setOf(
         "api=org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
+    )
+    this["sdk-media3"] = setOf(
+        "api=project::sdk-playback",
+        "api=androidx.media3:media3-exoplayer:1.11.0",
+        "implementation=androidx.media3:media3-extractor:1.11.0",
+        "implementation=file:media3-decoder-ffmpeg-1.11.0.jar",
+        "implementation=org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
     )
     this["sdk-testing"] = setOf(
         "api=project::sdk-core",
@@ -227,10 +266,10 @@ fun Project.registerProductionDependencyVerification(
                 dependency.group == "org.jetbrains.kotlin" && dependency.name == "kotlin-stdlib"
             }
             .map { dependency ->
-                if (dependency is ProjectDependency) {
-                    "project:${dependency.path}"
-                } else {
-                    "${dependency.group}:${dependency.name}:${dependency.version}"
+                when (dependency) {
+                    is ProjectDependency -> "project:${dependency.path}"
+                    is FileCollectionDependency -> "file:${dependency.files.single().name}"
+                    else -> "${dependency.group}:${dependency.name}:${dependency.version}"
                 }
             }
             .toSortedSet()
@@ -243,10 +282,10 @@ fun Project.registerProductionDependencyVerification(
                     dependency.group == "org.jetbrains.kotlin" && dependency.name == "kotlin-stdlib"
                 }
                 .map { dependency ->
-                    val coordinate = if (dependency is ProjectDependency) {
-                        "project:${dependency.path}"
-                    } else {
-                        "${dependency.group}:${dependency.name}:${dependency.version}"
+                    val coordinate = when (dependency) {
+                        is ProjectDependency -> "project:${dependency.path}"
+                        is FileCollectionDependency -> "file:${dependency.files.single().name}"
+                        else -> "${dependency.group}:${dependency.name}:${dependency.version}"
                     }
                     "$configurationName=$coordinate"
                 }

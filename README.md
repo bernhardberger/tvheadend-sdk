@@ -16,10 +16,12 @@ the normal build. `./gradlew clean build check stageLocalPublication` verifies
 the repository and stages all five modules under `build/local-maven`.
 
 The default build resolves
-`at.bernhardberger.tvheadend:htsp:0.4.0` from Maven Central. Maintainers working
+`at.bernhardberger.tvheadend:htsp:0.5.0` from Maven Central. Maintainers working
 across adjacent checkouts may explicitly opt into source substitution with
 `-Ptvheadend.htsp.composite=true`; CI and release builds do not use that
 property.
 
 See [the build matrix](docs/build-matrix.md) for the pinned toolchain and test
-runtime split.
+runtime split. The optional decoder fallback's exact source, build, checksums,
+and redistribution requirements are recorded in the
+[FFmpeg contingency notes](docs/ffmpeg-contingency.md).

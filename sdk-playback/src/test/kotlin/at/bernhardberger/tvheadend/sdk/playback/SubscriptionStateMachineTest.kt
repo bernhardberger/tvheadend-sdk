@@ -26,6 +26,65 @@ import org.junit.jupiter.api.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class SubscriptionStateMachineTest {
     @Test
+    fun `validated tracks callback completes before playable and later packets`() = runTest {
+        val connection = RecordingSubscriptionConnection()
+        val order = mutableListOf<String>()
+        val manager = manager(connection)
+        manager.startAdmission()
+        val consumer = object : SubscriptionEventConsumer {
+            override suspend fun accept(event: SubscriptionEvent) {
+                order += if (event is SubscriptionEvent.Packet) "packet" else "event"
+            }
+
+            override fun tracksReady(tracks: SubscriptionTracks) {
+                assertEquals(1, tracks.streams.size)
+                order += "tracks"
+            }
+        }
+
+        val opened = async { manager.open(SubscriptionChannelId(2L), consumer) }
+        runCurrent()
+        connection.emit(started(stream()))
+        runCurrent()
+        val active = (opened.await() as SubscriptionOpenResult.Opened).subscription
+        order += "playable"
+        connection.emit(packet())
+        runCurrent()
+
+        assertEquals(listOf("event", "tracks", "playable", "packet"), order)
+        active.close()
+        manager.closeAndJoin()
+    }
+
+    @Test
+    fun `validated tracks callback failure prevents playable and cleans up`() = runTest {
+        val connection = RecordingSubscriptionConnection()
+        val manager = manager(connection)
+        manager.startAdmission()
+        val consumer = object : SubscriptionEventConsumer {
+            override suspend fun accept(event: SubscriptionEvent): Unit = Unit
+
+            override fun tracksReady(tracks: SubscriptionTracks) {
+                error("unsafe fixture detail")
+            }
+        }
+
+        val opened = async { manager.open(SubscriptionChannelId(3L), consumer) }
+        runCurrent()
+        connection.emit(started(stream()))
+        runCurrent()
+
+        val result = opened.await()
+        assertTrue(result is SubscriptionOpenResult.Failed)
+        assertSame(
+            SubscriptionTerminalReason.ConsumerFailed,
+            (result as SubscriptionOpenResult.Failed).reason,
+        )
+        assertEquals(1, connection.unsubscribeCount)
+        manager.closeAndJoin()
+    }
+
+    @Test
     fun `collection registers before immediate subscribe and playable publishes once`() = runTest {
         val connection = RecordingSubscriptionConnection()
         val manager = manager(connection)

@@ -217,6 +217,11 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionEvent$Ti
 
 public abstract interface class at/bernhardberger/tvheadend/sdk/playback/SubscriptionEventConsumer {
 	public abstract fun accept (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionEvent;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun tracksReady (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionTracks;)V
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionEventConsumer$DefaultImpls {
+	public static fun tracksReady (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionEventConsumer;Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionTracks;)V
 }
 
 public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionId {
