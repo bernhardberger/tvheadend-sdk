@@ -2,6 +2,7 @@
 
 package at.bernhardberger.tvheadend.sdk.core.session
 
+import at.bernhardberger.tvheadend.sdk.core.ChannelRepository
 import at.bernhardberger.tvheadend.sdk.core.ServerProfile
 import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
 import at.bernhardberger.tvheadend.sdk.core.SessionFailure
@@ -63,6 +64,7 @@ internal class ConnectionOwner(
     private var shutdownCompletion: CompletableDeferred<Unit>? = null
 
     override val state: StateFlow<SessionState> = mutableState.asStateFlow()
+    override val channelRepository: ChannelRepository = metadata
     override val subscriptions: SubscriptionOpener = children
 
     override suspend fun connect(profile: ServerProfile): SessionCommandResult {
@@ -79,7 +81,7 @@ internal class ConnectionOwner(
             withContext(NonCancellable) {
                 if (selectedProfile != null || worker != null) {
                     selectedProfile = null
-                    tearDownReusableSession()
+                    tearDownReusableSession(retainPublishedCatalog = false)
                 }
                 selectedProfile = profile
                 startWorker(profile)
@@ -105,7 +107,7 @@ internal class ConnectionOwner(
                 -> {
                     withContext(NonCancellable) {
                         selectedProfile = null
-                        tearDownReusableSession()
+                        tearDownReusableSession(retainPublishedCatalog = true)
                         selectedProfile = profile
                         startWorker(profile)
                     }
@@ -125,7 +127,7 @@ internal class ConnectionOwner(
             }
             withContext(NonCancellable) {
                 selectedProfile = null
-                tearDownReusableSession()
+                tearDownReusableSession(retainPublishedCatalog = false)
             }
             currentCoroutineContext().ensureActive()
         }
@@ -138,7 +140,7 @@ internal class ConnectionOwner(
             val completion = CompletableDeferred<Unit>()
             shutdownCompletion = completion
             closed = true
-            val invalidated = invalidateSession()
+            val invalidated = invalidateSession(retainPublishedCatalog = false)
             selectedProfile = null
             ShutdownPlan.Run(completion, invalidated.worker, invalidated.admissionFailure)
         }
@@ -160,7 +162,7 @@ internal class ConnectionOwner(
                                     children::closeAndJoinSubscriptions,
                                     gateway::disconnect,
                                     gateway::shutdown,
-                                    { metadata.resetWorkingStateRetainingPublishedSnapshot() },
+                                    { metadata.clearAllState() },
                                 ),
                             )
                             mutableState.value = SessionState.Disconnected
@@ -182,8 +184,8 @@ internal class ConnectionOwner(
         }
     }
 
-    private suspend fun tearDownReusableSession() {
-        val invalidated = invalidateSession()
+    private suspend fun tearDownReusableSession(retainPublishedCatalog: Boolean) {
+        val invalidated = invalidateSession(retainPublishedCatalog)
         runOrderedCleanup(
             initialFailure = invalidated.admissionFailure,
             steps = listOf(
@@ -194,19 +196,29 @@ internal class ConnectionOwner(
                 children::cancelAndJoinEpgWorker,
                 children::closeAndJoinSubscriptions,
                 gateway::disconnect,
-                { metadata.resetWorkingStateRetainingPublishedSnapshot() },
+                {
+                    if (retainPublishedCatalog) {
+                        metadata.resetWorkingStateRetainingPublishedSnapshot()
+                    } else {
+                        metadata.clearAllState()
+                    }
+                },
             ),
         )
     }
 
-    private fun invalidateSession(): InvalidatedSession {
+    private fun invalidateSession(retainPublishedCatalog: Boolean): InvalidatedSession {
         val activeWorker = worker
         worker = null
         val admissionFailure = synchronized(stateLock) {
             activeToken = null
             retryDisposition = null
             val failure = captureFailure { children.stopAdmission() }
-            metadata.resetWorkingStateRetainingPublishedSnapshot()
+            if (retainPublishedCatalog) {
+                metadata.resetWorkingStateRetainingPublishedSnapshot()
+            } else {
+                metadata.clearAllState()
+            }
             mutableState.value = SessionState.Disconnected
             failure
         }

@@ -3,28 +3,33 @@
 package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
+import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
+import at.bernhardberger.tvheadend.sdk.core.ChannelRepository
+import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.ServerCapabilities
+import at.bernhardberger.tvheadend.sdk.core.StateBackedChannelRepository
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayServerFacts
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
-import at.bernhardberger.tvheadend.sdk.core.metadata.ChannelTagCatalogState
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener
 import at.bernhardberger.tvheadend.sdk.core.metadata.ChannelTagReducer
-import at.bernhardberger.tvheadend.sdk.core.metadata.ChannelTagSnapshot
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-internal interface SessionMetadata {
-    public val channelsAndTags: StateFlow<ChannelTagCatalogState>
+internal interface SessionMetadata : ChannelRepository {
+    public val channelsAndTags: StateFlow<ChannelRepositoryState>
+        get() = state
 
     public fun resetWorkingStateRetainingPublishedSnapshot()
+
+    public fun clearAllState()
 
     public fun bindGeneration(generation: GatewayGeneration)
 
@@ -39,23 +44,31 @@ internal interface SessionMetadata {
     public fun capabilities(generation: GatewayGeneration): ServerCapabilities
 }
 
-internal class PhaseOneSessionMetadata : SessionMetadata {
+internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), SessionMetadata {
     private val lock = Any()
     private val reducer = ChannelTagReducer()
-    private val mutableChannelsAndTags = MutableStateFlow<ChannelTagCatalogState>(
-        ChannelTagCatalogState.Empty,
+    private val mutableChannelsAndTags = MutableStateFlow<ChannelRepositoryState>(
+        ChannelRepositoryState.Empty,
     )
     private var generation: GatewayGeneration? = null
     private var initialSync = CompletableDeferred<Unit>()
-    private var publishedSnapshot: ChannelTagSnapshot? = null
+    private var publishedCatalog: ChannelCatalog? = null
     private var synchronizedCurrent = false
     private var streaming: Boolean? = null
     private var dvrAccess: Boolean? = null
 
-    override val channelsAndTags: StateFlow<ChannelTagCatalogState> =
+    override val state: StateFlow<ChannelRepositoryState> =
         mutableChannelsAndTags.asStateFlow()
 
     override fun resetWorkingStateRetainingPublishedSnapshot() {
+        resetState(retainPublishedCatalog = true)
+    }
+
+    override fun clearAllState() {
+        resetState(retainPublishedCatalog = false)
+    }
+
+    private fun resetState(retainPublishedCatalog: Boolean) {
         val retiredFence = synchronized(lock) {
             generation = null
             val previousFence = initialSync
@@ -64,10 +77,13 @@ internal class PhaseOneSessionMetadata : SessionMetadata {
             streaming = null
             dvrAccess = null
             reducer.clear()
-            mutableChannelsAndTags.value = publishedSnapshot?.let { snapshot ->
-                ChannelTagCatalogState.Stale(snapshot)
+            if (!retainPublishedCatalog) {
+                publishedCatalog = null
             }
-                ?: ChannelTagCatalogState.Empty
+            mutableChannelsAndTags.value = publishedCatalog?.let { catalog ->
+                ChannelRepositoryState.Stale(catalog)
+            }
+                ?: ChannelRepositoryState.Empty
             previousFence
         }
         retiredFence.cancel(CancellationException("Session generation is no longer current"))
@@ -82,7 +98,7 @@ internal class PhaseOneSessionMetadata : SessionMetadata {
             streaming = null
             dvrAccess = null
             reducer.clear()
-            mutableChannelsAndTags.value = ChannelTagCatalogState.Synchronizing(publishedSnapshot)
+            mutableChannelsAndTags.value = ChannelRepositoryState.Synchronizing(publishedCatalog)
             previousFence
         }
         retiredFence.cancel(CancellationException("Session generation is no longer current"))
@@ -151,7 +167,7 @@ internal class PhaseOneSessionMetadata : SessionMetadata {
             check(
                 this.generation === generation &&
                     synchronizedCurrent &&
-                    mutableChannelsAndTags.value is ChannelTagCatalogState.Current,
+                    mutableChannelsAndTags.value is ChannelRepositoryState.Current,
             ) { "Session generation is not current" }
         }
     }
@@ -166,9 +182,9 @@ internal class PhaseOneSessionMetadata : SessionMetadata {
         )
     }
 
-    private fun publishCurrent(snapshot: ChannelTagSnapshot) {
-        mutableChannelsAndTags.value = ChannelTagCatalogState.Current(snapshot)
-        publishedSnapshot = (mutableChannelsAndTags.value as ChannelTagCatalogState.Current).snapshot
+    private fun publishCurrent(catalog: ChannelCatalog) {
+        mutableChannelsAndTags.value = ChannelRepositoryState.Current(catalog)
+        publishedCatalog = (mutableChannelsAndTags.value as ChannelRepositoryState.Current).catalog
     }
 }
 

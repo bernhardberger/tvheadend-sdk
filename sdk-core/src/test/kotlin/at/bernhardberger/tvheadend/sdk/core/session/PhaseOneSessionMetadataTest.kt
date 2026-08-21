@@ -1,6 +1,9 @@
 package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
+import at.bernhardberger.tvheadend.sdk.core.Channel
+import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.ChannelService
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.gateway.DeferredMetadataKind
 import at.bernhardberger.tvheadend.sdk.core.gateway.EventId
@@ -11,9 +14,6 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayServerFacts
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayTagMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.TagId
-import at.bernhardberger.tvheadend.sdk.core.metadata.ChannelTagCatalogState
-import at.bernhardberger.tvheadend.sdk.core.metadata.ReducedChannel
-import at.bernhardberger.tvheadend.sdk.core.metadata.ReducedChannelService
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runCurrent
@@ -41,7 +41,7 @@ internal class PhaseOneSessionMetadataTest {
         val awaiting = async {
             metadata.awaitChannelsAndTagsCurrent(current)
             assertTrue(
-                metadata.channelsAndTags.value is ChannelTagCatalogState.Current,
+                metadata.channelsAndTags.value is ChannelRepositoryState.Current,
                 "The metadata fence completed before catalog publication",
             )
         }
@@ -52,13 +52,13 @@ internal class PhaseOneSessionMetadataTest {
         runCurrent()
         assertFalse(awaiting.isCompleted)
         assertEquals(
-            ChannelTagCatalogState.Synchronizing(staleSnapshot = null),
+            ChannelRepositoryState.Synchronizing(staleCatalog = null),
             metadata.channelsAndTags.value,
         )
 
         metadata.acceptMetadata(MetadataEvent.ChannelAdded(current, channel(id = 1, name = "one")))
         metadata.acceptMetadata(MetadataEvent.TagAdded(current, tag(id = 2, channelIds = listOf(1))))
-        assertTrue(metadata.channelsAndTags.value is ChannelTagCatalogState.Synchronizing)
+        assertTrue(metadata.channelsAndTags.value is ChannelRepositoryState.Synchronizing)
 
         metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(current))
         runCurrent()
@@ -242,11 +242,11 @@ internal class PhaseOneSessionMetadataTest {
         val staleSnapshot = metadata.currentSnapshot()
 
         metadata.resetWorkingStateRetainingPublishedSnapshot()
-        val staleState = metadata.channelsAndTags.value as ChannelTagCatalogState.Stale
-        assertSame(staleSnapshot, staleState.snapshot)
+        val staleState = metadata.channelsAndTags.value as ChannelRepositoryState.Stale
+        assertSame(staleSnapshot, staleState.catalog)
         metadata.bindGeneration(second)
-        val synchronizing = metadata.channelsAndTags.value as ChannelTagCatalogState.Synchronizing
-        assertSame(staleSnapshot, synchronizing.staleSnapshot)
+        val synchronizing = metadata.channelsAndTags.value as ChannelRepositoryState.Synchronizing
+        assertSame(staleSnapshot, synchronizing.staleCatalog)
 
         metadata.acceptMetadata(
             MetadataEvent.ChannelUpdated(
@@ -259,7 +259,7 @@ internal class PhaseOneSessionMetadataTest {
         )
         metadata.acceptMetadata(MetadataEvent.ChannelAdded(first, channel(id = 3, name = "stale")))
         metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(first))
-        assertSame(staleSnapshot, synchronizing.staleSnapshot)
+        assertSame(staleSnapshot, synchronizing.staleCatalog)
         assertEquals(listOf(1L, 2L), staleSnapshot.channels.map { it.id.value })
 
         metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(second))
@@ -300,17 +300,17 @@ internal class PhaseOneSessionMetadataTest {
         mutableServices.clear()
         mutableTags.clear()
 
-        val state = metadata.channelsAndTags.value as ChannelTagCatalogState.Current
-        val snapshot = state.snapshot
+        val state = metadata.channelsAndTags.value as ChannelRepositoryState.Current
+        val snapshot = state.catalog
         assertEquals(listOf(2L, 1L), snapshot.channels.map { it.id.value })
         assertEquals(2, snapshot.channels.first().services?.size)
         assertEquals(listOf(7L, 7L), snapshot.channels.first().tagIds?.map { it.value })
         assertEquals(listOf(2L, 2L), snapshot.tags.single().channelIds?.map { it.value })
         assertThrows(UnsupportedOperationException::class.java) {
-            (snapshot.channels as MutableList<ReducedChannel>).add(snapshot.channels.first())
+            (snapshot.channels as MutableList<Channel>).add(snapshot.channels.first())
         }
         assertThrows(UnsupportedOperationException::class.java) {
-            (snapshot.channels.first().services as MutableList<ReducedChannelService>).clear()
+            (snapshot.channels.first().services as MutableList<ChannelService>).clear()
         }
         assertThrows(UnsupportedOperationException::class.java) {
             (snapshot.channels.first().tagIds as MutableList<TagId>).clear()
@@ -327,8 +327,8 @@ internal class PhaseOneSessionMetadataTest {
         metadata.acceptMetadata(MetadataEvent.ChannelDeleted(GatewayGeneration(), ChannelId(2)))
         assertSame(state, metadata.channelsAndTags.value)
         metadata.resetWorkingStateRetainingPublishedSnapshot()
-        val stale = metadata.channelsAndTags.value as ChannelTagCatalogState.Stale
-        assertSame(snapshot, stale.snapshot)
+        val stale = metadata.channelsAndTags.value as ChannelRepositoryState.Stale
+        assertSame(snapshot, stale.catalog)
 
         val rendering = listOf(
             state,
@@ -373,7 +373,7 @@ internal class PhaseOneSessionMetadataTest {
     }
 
     private fun PhaseOneSessionMetadata.currentSnapshot() =
-        (channelsAndTags.value as ChannelTagCatalogState.Current).snapshot
+        (channelsAndTags.value as ChannelRepositoryState.Current).catalog
 
     private fun channel(
         id: Long,

@@ -18,6 +18,9 @@ public interface TvheadendSession {
     /** Current durable connection and synchronization state. */
     public val state: StateFlow<SessionState>
 
+    /** Channel and channel-tag metadata for the selected server profile. */
+    public val channelRepository: ChannelRepository
+
     /** Generation-bound subscription entry point used by SDK playback adapters. */
     @SubscriptionInfrastructureApi
     public val subscriptions: SubscriptionOpener

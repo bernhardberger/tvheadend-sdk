@@ -1,5 +1,9 @@
 package at.bernhardberger.tvheadend.sdk.core.metadata
 
+import at.bernhardberger.tvheadend.sdk.core.Channel
+import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
+import at.bernhardberger.tvheadend.sdk.core.ChannelService
+import at.bernhardberger.tvheadend.sdk.core.ChannelTag
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.gateway.EventId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelMetadata
@@ -8,46 +12,6 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayTagMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.TagId
 import java.util.Collections
-
-internal sealed interface ChannelTagCatalogState {
-    public data object Empty : ChannelTagCatalogState
-
-    public data class Synchronizing(
-        public val staleSnapshot: ChannelTagSnapshot?,
-    ) : ChannelTagCatalogState {
-        override fun toString(): String = "ChannelTagCatalogState.Synchronizing(<redacted>)"
-    }
-
-    public data class Current(
-        public val snapshot: ChannelTagSnapshot,
-    ) : ChannelTagCatalogState {
-        override fun toString(): String = "ChannelTagCatalogState.Current(<redacted>)"
-    }
-
-    public data class Stale(
-        public val snapshot: ChannelTagSnapshot,
-    ) : ChannelTagCatalogState {
-        override fun toString(): String = "ChannelTagCatalogState.Stale(<redacted>)"
-    }
-}
-
-@ConsistentCopyVisibility
-internal data class ChannelTagSnapshot private constructor(
-    internal val channels: List<ReducedChannel>,
-    internal val tags: List<ReducedChannelTag>,
-) {
-    override fun toString(): String = "ChannelTagSnapshot(<redacted>)"
-
-    internal companion object {
-        internal fun create(
-            channels: Collection<ReducedChannel>,
-            tags: Collection<ReducedChannelTag>,
-        ): ChannelTagSnapshot = ChannelTagSnapshot(
-            channels = channels.toImmutableList(),
-            tags = tags.toImmutableList(),
-        )
-    }
-}
 
 @ConsistentCopyVisibility
 internal data class ReducedChannel private constructor(
@@ -251,9 +215,9 @@ internal class ChannelTagReducer {
         }
     }
 
-    internal fun snapshot(): ChannelTagSnapshot = ChannelTagSnapshot.create(
-        channels = channels.values,
-        tags = tags.values,
+    internal fun snapshot(): ChannelCatalog = ChannelCatalog.create(
+        channels = channels.values.map(ReducedChannel::toPublic),
+        tags = tags.values.map(ReducedChannelTag::toPublic),
     )
 
     private fun mergeChannel(metadata: GatewayChannelMetadata, resetEventLinks: Boolean) {
@@ -293,6 +257,38 @@ private fun GatewayChannelService.toReduced(): ReducedChannelService = ReducedCh
     conditionalAccessId = conditionalAccessId,
     conditionalAccessName = conditionalAccessName,
     providerName = providerName,
+)
+
+private fun ReducedChannel.toPublic(): Channel = Channel.create(
+    id = id,
+    name = name,
+    uuid = uuid,
+    number = number,
+    numberMinor = numberMinor,
+    icon = icon,
+    currentEventId = currentEventId,
+    nextEventId = nextEventId,
+    services = services?.map(ReducedChannelService::toPublic),
+    tagIds = tagIds,
+)
+
+private fun ReducedChannelService.toPublic(): ChannelService = ChannelService(
+    name = name,
+    type = type,
+    content = content,
+    conditionalAccessId = conditionalAccessId,
+    conditionalAccessName = conditionalAccessName,
+    providerName = providerName,
+)
+
+private fun ReducedChannelTag.toPublic(): ChannelTag = ChannelTag.create(
+    id = id,
+    name = name,
+    uuid = uuid,
+    index = index,
+    icon = icon,
+    titledIcon = titledIcon,
+    channelIds = channelIds,
 )
 
 private fun <T> Collection<T>.toImmutableList(): List<T> =

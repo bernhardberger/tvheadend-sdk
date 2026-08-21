@@ -1,33 +1,8 @@
 package at.bernhardberger.tvheadend.sdk.core.gateway
 
-private const val U32_MAX: Long = 0xffff_ffffL
-
-@JvmInline
-internal value class ChannelId(internal val value: Long) {
-    init {
-        require(value in 0L..U32_MAX) { "ChannelId must be an unsigned 32-bit value" }
-    }
-
-    override fun toString(): String = "ChannelId(<redacted>)"
-}
-
-@JvmInline
-internal value class TagId(internal val value: Long) {
-    init {
-        require(value in 0L..U32_MAX) { "TagId must be an unsigned 32-bit value" }
-    }
-
-    override fun toString(): String = "TagId(<redacted>)"
-}
-
-@JvmInline
-internal value class EventId(internal val value: Long) {
-    init {
-        require(value in 0L..U32_MAX) { "EventId must be an unsigned 32-bit value" }
-    }
-
-    override fun toString(): String = "EventId(<redacted>)"
-}
+internal typealias ChannelId = at.bernhardberger.tvheadend.sdk.core.ChannelId
+internal typealias EventId = at.bernhardberger.tvheadend.sdk.core.EventId
+internal typealias TagId = at.bernhardberger.tvheadend.sdk.core.ChannelTagId
 
 internal sealed interface MetadataEvent {
     public val generation: GatewayGeneration

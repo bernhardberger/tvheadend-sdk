@@ -7,6 +7,193 @@ public final class at/bernhardberger/tvheadend/sdk/core/CapabilityAccess : java/
 	public static fun values ()[Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
 }
 
+public final class at/bernhardberger/tvheadend/sdk/core/Channel {
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/Channel$Companion;
+	public final fun component1-X9YaTts ()J
+	public final fun component10 ()Ljava/util/List;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Ljava/lang/Long;
+	public final fun component5 ()Ljava/lang/Long;
+	public final fun component6 ()Ljava/lang/String;
+	public final fun component7-IwUpMHo ()Lat/bernhardberger/tvheadend/sdk/core/EventId;
+	public final fun component8-IwUpMHo ()Lat/bernhardberger/tvheadend/sdk/core/EventId;
+	public final fun component9 ()Ljava/util/List;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCurrentEventId-IwUpMHo ()Lat/bernhardberger/tvheadend/sdk/core/EventId;
+	public final fun getIcon ()Ljava/lang/String;
+	public final fun getId-X9YaTts ()J
+	public final fun getName ()Ljava/lang/String;
+	public final fun getNextEventId-IwUpMHo ()Lat/bernhardberger/tvheadend/sdk/core/EventId;
+	public final fun getNumber ()Ljava/lang/Long;
+	public final fun getNumberMinor ()Ljava/lang/Long;
+	public final fun getServices ()Ljava/util/List;
+	public final fun getTagIds ()Ljava/util/List;
+	public final fun getUuid ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/Channel$Companion {
+	public final fun create-J0Iu09U (JLjava/lang/String;Ljava/lang/String;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/String;Lat/bernhardberger/tvheadend/sdk/core/EventId;Lat/bernhardberger/tvheadend/sdk/core/EventId;Ljava/util/List;Ljava/util/List;)Lat/bernhardberger/tvheadend/sdk/core/Channel;
+	public static synthetic fun create-J0Iu09U$default (Lat/bernhardberger/tvheadend/sdk/core/Channel$Companion;JLjava/lang/String;Ljava/lang/String;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/String;Lat/bernhardberger/tvheadend/sdk/core/EventId;Lat/bernhardberger/tvheadend/sdk/core/EventId;Ljava/util/List;Ljava/util/List;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/Channel;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ChannelCatalog {
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/ChannelCatalog$Companion;
+	public final fun component1 ()Ljava/util/List;
+	public final fun component2 ()Ljava/util/List;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getChannels ()Ljava/util/List;
+	public final fun getTags ()Ljava/util/List;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ChannelCatalog$Companion {
+	public final fun create (Ljava/util/List;Ljava/util/List;)Lat/bernhardberger/tvheadend/sdk/core/ChannelCatalog;
+	public static synthetic fun create$default (Lat/bernhardberger/tvheadend/sdk/core/ChannelCatalog$Companion;Ljava/util/List;Ljava/util/List;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/ChannelCatalog;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ChannelId {
+	public static final synthetic fun box-impl (J)Lat/bernhardberger/tvheadend/sdk/core/ChannelId;
+	public static fun constructor-impl (J)J
+	public fun equals (Ljava/lang/Object;)Z
+	public static fun equals-impl (JLjava/lang/Object;)Z
+	public static final fun equals-impl0 (JJ)Z
+	public final fun getValue ()J
+	public fun hashCode ()I
+	public static fun hashCode-impl (J)I
+	public fun toString ()Ljava/lang/String;
+	public static fun toString-impl (J)Ljava/lang/String;
+	public final synthetic fun unbox-impl ()J
+}
+
+public abstract interface class at/bernhardberger/tvheadend/sdk/core/ChannelRepository {
+	public abstract fun channel-9w0kQQ0 (J)Lkotlinx/coroutines/flow/Flow;
+	public abstract fun getChannels ()Lkotlinx/coroutines/flow/StateFlow;
+	public abstract fun getState ()Lkotlinx/coroutines/flow/StateFlow;
+	public abstract fun getTags ()Lkotlinx/coroutines/flow/StateFlow;
+}
+
+public abstract interface class at/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState {
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState$Current : at/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState {
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/ChannelCatalog;)V
+	public final fun component1 ()Lat/bernhardberger/tvheadend/sdk/core/ChannelCatalog;
+	public final fun copy (Lat/bernhardberger/tvheadend/sdk/core/ChannelCatalog;)Lat/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState$Current;
+	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState$Current;Lat/bernhardberger/tvheadend/sdk/core/ChannelCatalog;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState$Current;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCatalog ()Lat/bernhardberger/tvheadend/sdk/core/ChannelCatalog;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState$Empty : at/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState$Empty;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState$Stale : at/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState {
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/ChannelCatalog;)V
+	public final fun component1 ()Lat/bernhardberger/tvheadend/sdk/core/ChannelCatalog;
+	public final fun copy (Lat/bernhardberger/tvheadend/sdk/core/ChannelCatalog;)Lat/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState$Stale;
+	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState$Stale;Lat/bernhardberger/tvheadend/sdk/core/ChannelCatalog;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState$Stale;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCatalog ()Lat/bernhardberger/tvheadend/sdk/core/ChannelCatalog;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState$Synchronizing : at/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState {
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/ChannelCatalog;)V
+	public final fun component1 ()Lat/bernhardberger/tvheadend/sdk/core/ChannelCatalog;
+	public final fun copy (Lat/bernhardberger/tvheadend/sdk/core/ChannelCatalog;)Lat/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState$Synchronizing;
+	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState$Synchronizing;Lat/bernhardberger/tvheadend/sdk/core/ChannelCatalog;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState$Synchronizing;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getStaleCatalog ()Lat/bernhardberger/tvheadend/sdk/core/ChannelCatalog;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ChannelService {
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;JLjava/lang/Long;Ljava/lang/String;Ljava/lang/String;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()J
+	public final fun component4 ()Ljava/lang/Long;
+	public final fun component5 ()Ljava/lang/String;
+	public final fun component6 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;JLjava/lang/Long;Ljava/lang/String;Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/ChannelService;
+	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/ChannelService;Ljava/lang/String;Ljava/lang/String;JLjava/lang/Long;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/ChannelService;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getConditionalAccessId ()Ljava/lang/Long;
+	public final fun getConditionalAccessName ()Ljava/lang/String;
+	public final fun getContent ()J
+	public final fun getName ()Ljava/lang/String;
+	public final fun getProviderName ()Ljava/lang/String;
+	public final fun getType ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ChannelTag {
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/ChannelTag$Companion;
+	public final fun component1-JMqym6k ()J
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Ljava/lang/Long;
+	public final fun component5 ()Ljava/lang/String;
+	public final fun component6 ()Ljava/lang/Long;
+	public final fun component7 ()Ljava/util/List;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getChannelIds ()Ljava/util/List;
+	public final fun getIcon ()Ljava/lang/String;
+	public final fun getId-JMqym6k ()J
+	public final fun getIndex ()Ljava/lang/Long;
+	public final fun getName ()Ljava/lang/String;
+	public final fun getTitledIcon ()Ljava/lang/Long;
+	public final fun getUuid ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ChannelTag$Companion {
+	public final fun create-YrdoeHo (JLjava/lang/String;Ljava/lang/String;Ljava/lang/Long;Ljava/lang/String;Ljava/lang/Long;Ljava/util/List;)Lat/bernhardberger/tvheadend/sdk/core/ChannelTag;
+	public static synthetic fun create-YrdoeHo$default (Lat/bernhardberger/tvheadend/sdk/core/ChannelTag$Companion;JLjava/lang/String;Ljava/lang/String;Ljava/lang/Long;Ljava/lang/String;Ljava/lang/Long;Ljava/util/List;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/ChannelTag;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ChannelTagId {
+	public static final synthetic fun box-impl (J)Lat/bernhardberger/tvheadend/sdk/core/ChannelTagId;
+	public static fun constructor-impl (J)J
+	public fun equals (Ljava/lang/Object;)Z
+	public static fun equals-impl (JLjava/lang/Object;)Z
+	public static final fun equals-impl0 (JJ)Z
+	public final fun getValue ()J
+	public fun hashCode ()I
+	public static fun hashCode-impl (J)I
+	public fun toString ()Ljava/lang/String;
+	public static fun toString-impl (J)Ljava/lang/String;
+	public final synthetic fun unbox-impl ()J
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/EventId {
+	public static final synthetic fun box-impl (J)Lat/bernhardberger/tvheadend/sdk/core/EventId;
+	public static fun constructor-impl (J)J
+	public fun equals (Ljava/lang/Object;)Z
+	public static fun equals-impl (JLjava/lang/Object;)Z
+	public static final fun equals-impl0 (JJ)Z
+	public final fun getValue ()J
+	public fun hashCode ()I
+	public static fun hashCode-impl (J)I
+	public fun toString ()Ljava/lang/String;
+	public static fun toString-impl (J)Ljava/lang/String;
+	public final synthetic fun unbox-impl ()J
+}
+
 public abstract interface class at/bernhardberger/tvheadend/sdk/core/ServerAuthentication {
 }
 
@@ -183,6 +370,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/SessionState$Unavailable
 public abstract interface class at/bernhardberger/tvheadend/sdk/core/TvheadendSession {
 	public abstract fun connect (Lat/bernhardberger/tvheadend/sdk/core/ServerProfile;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun disconnect (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun getChannelRepository ()Lat/bernhardberger/tvheadend/sdk/core/ChannelRepository;
 	public abstract fun getState ()Lkotlinx/coroutines/flow/StateFlow;
 	public abstract fun getSubscriptions ()Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOpener;
 	public abstract fun retry (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;

@@ -32,6 +32,7 @@ java {
 }
 
 dependencies {
+    api(project(":sdk-core"))
     api(project(":sdk-playback"))
 
     testImplementation(libs.junit)

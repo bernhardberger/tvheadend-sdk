@@ -99,13 +99,26 @@ internal class ModuleBoundaryTest {
     @Test
     fun `public SDK type set remains deliberate and reachable from the session API`() {
         val publicType = Regex(
-            "public\\s+(?:(?:data|sealed)\\s+)*(?:class|interface|enum\\s+class|object)\\s+(\\w+)",
+            "public\\s+(?:(?:data|sealed|value)\\s+)*(?:class|interface|enum\\s+class|object)\\s+(\\w+)",
         )
-        val sessionApi = File(
-            "src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/TvheadendSession.kt",
-        ).readText()
-        val actual = publicType.findAll(sessionApi).map { match -> match.groupValues[1] }.toSet()
+        val coreApi = productionScope("sdk-core").files
+            .filter { file -> file.packagee?.name == "at.bernhardberger.tvheadend.sdk.core" }
+            .joinToString("\n") { file -> file.text }
+        val actual = publicType.findAll(coreApi).map { match -> match.groupValues[1] }.toSet()
         val expected = setOf(
+            "ChannelId",
+            "ChannelTagId",
+            "EventId",
+            "ChannelService",
+            "Channel",
+            "ChannelTag",
+            "ChannelCatalog",
+            "ChannelRepositoryState",
+            "Empty",
+            "Synchronizing",
+            "Current",
+            "Stale",
+            "ChannelRepository",
             "TvheadendSession",
             "ServerProfile",
             "ServerAuthentication",
@@ -189,6 +202,7 @@ internal class ModuleBoundaryTest {
             "createSubscriptionManager",
         )
         val expectedTesting = setOf(
+            "FakeChannelRepository",
             "ScriptedSubscriptionCall",
             "ScriptedSubscriptionConnection",
             "ScriptedSubscriptionRegistration",
@@ -196,7 +210,7 @@ internal class ModuleBoundaryTest {
         )
 
         assertPublicInfrastructure("sdk-playback", expectedPlayback, unannotatedCount = 1)
-        assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 0)
+        assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 1)
 
         val sessionApi = java.io.File(
             "src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/TvheadendSession.kt",
@@ -206,6 +220,10 @@ internal class ModuleBoundaryTest {
                 "@SubscriptionInfrastructureApi\\s+public val subscriptions: SubscriptionOpener",
             ).containsMatchIn(sessionApi),
             "Missing opted-in subscription opener on the public session",
+        )
+        org.junit.jupiter.api.Assertions.assertTrue(
+            sessionApi.contains("public val channelRepository: ChannelRepository"),
+            "Missing channel repository on the public session",
         )
     }
 
@@ -237,8 +255,10 @@ internal class ModuleBoundaryTest {
             .forEach { function -> function.referencedPublicTypes().forEach(::enqueue) }
         setOf(
             "at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi",
+            "at.bernhardberger.tvheadend.sdk.core.ChannelService",
             "at.bernhardberger.tvheadend.sdk.testing.ScriptedSubscriptionConnection",
             "at.bernhardberger.tvheadend.sdk.testing.SubscriptionBinaryFixture",
+            "at.bernhardberger.tvheadend.sdk.testing.FakeChannelRepository",
         ).forEach { name -> enqueue(publicTypes[name]) }
 
         while (pending.isNotEmpty()) {

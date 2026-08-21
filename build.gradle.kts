@@ -191,8 +191,12 @@ val productionGraphs = sdkModules.associateWith {
         resolved = coroutineResolved,
     )
     this["sdk-testing"] = ProductionGraph(
-        direct = setOf("project::sdk-playback"),
-        resolved = coroutineResolved + "project::sdk-playback",
+        direct = setOf("project::sdk-core", "project::sdk-playback"),
+        resolved = (if (useHtspComposite) {
+            (coreResolved - "at.bernhardberger.tvheadend:htsp:0.4.0") + "project::tvheadend-htsp"
+        } else {
+            coreResolved
+        }) + setOf("project::sdk-core", "project::sdk-playback"),
     )
 }
 val scopedDirectDependencies = sdkModules.associateWith { emptySet<String>() }.toMutableMap().apply {
@@ -204,7 +208,10 @@ val scopedDirectDependencies = sdkModules.associateWith { emptySet<String>() }.t
     this["sdk-playback"] = setOf(
         "api=org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
     )
-    this["sdk-testing"] = setOf("api=project::sdk-playback")
+    this["sdk-testing"] = setOf(
+        "api=project::sdk-core",
+        "api=project::sdk-playback",
+    )
 }
 
 fun Project.registerProductionDependencyVerification(
