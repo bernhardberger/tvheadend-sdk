@@ -138,6 +138,15 @@ internal data class ReducedEpgEvent private constructor(
 
     private fun hasInvalidTiming(): Boolean = start != null && stop != null && stop < start
 
+    internal fun shouldRetain(from: Instant, to: Instant): Boolean {
+        val start = start
+        val stop = stop
+        if (start != null && stop != null) return stop >= from && start <= to
+        if (start != null) return start <= to
+        if (stop != null) return stop >= from
+        return false
+    }
+
     private fun ratingOrNull(): EpgRating? {
         if (
             ageRating == null &&
@@ -378,10 +387,7 @@ internal class EpgReducer {
 
     internal fun retainOverlapping(from: Instant, to: Instant) {
         require(to >= from) { "EPG retention stop must not precede start" }
-        events.entries.removeIf { entry ->
-            val event = entry.value.toPublicOrNull() ?: return@removeIf false
-            event.stop < from || event.start > to
-        }
+        events.entries.removeIf { entry -> !entry.value.shouldRetain(from, to) }
     }
 
     internal fun snapshot(): EpgSnapshot {
@@ -405,8 +411,9 @@ internal class EpgReducer {
             ReducedEpgEvent.fromUpdate(update)
         } else {
             current.merge(update)
-        }
-        if (candidate != null) events[update.id] = candidate
+        } ?: return
+        if (current == null && candidate.start == null && candidate.stop == null) return
+        events[update.id] = candidate
     }
 
     private fun removeChannel(channelId: ChannelId) {

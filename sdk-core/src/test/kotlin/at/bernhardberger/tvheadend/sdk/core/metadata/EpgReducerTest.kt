@@ -79,7 +79,7 @@ internal class EpgReducerTest {
 
         reducer.accept(MetadataEvent.EventUpdated(generation, update(10, stop = 20)))
         val event = reducer.snapshot().events.single()
-        assertEquals("draft", event.title)
+        assertEquals(null, event.title)
         assertEquals(ChannelId(1), event.channelId)
         assertEquals(instant(10), event.start)
         assertEquals(instant(20), event.stop)
@@ -95,6 +95,25 @@ internal class EpgReducerTest {
         reducer.accept(MetadataEvent.EventUpdated(generation, update(10, stop = 20)))
 
         val event = reducer.snapshot().events.single()
+        assertEquals(instant(10), event.start)
+        assertEquals(instant(20), event.stop)
+    }
+
+    @Test
+    fun `untimed unknown updates are not retained as drafts`() {
+        val reducer = EpgReducer()
+        addChannel(reducer, 1)
+        reducer.accept(MetadataEvent.EventUpdated(generation, update(10, title = "draft")))
+        reducer.retainOverlapping(instant(0), instant(20))
+        reducer.accept(
+            MetadataEvent.EventUpdated(
+                generation,
+                update(10, channelId = 1, start = 10, stop = 20),
+            ),
+        )
+
+        val event = reducer.snapshot().events.single()
+        assertEquals(null, event.title)
         assertEquals(instant(10), event.start)
         assertEquals(instant(20), event.stop)
     }

@@ -166,6 +166,38 @@ internal class ConnectionOwnerTest {
     }
 
     @Test
+    fun `persistent EPG query rejection still reaches ready`() = runTest {
+        val gateway = FakeProtocolGateway()
+        val generation = GatewayGeneration()
+        gateway.connectResults += connected(generation)
+        gateway.queryBehavior = { _, _, _ -> GatewayResult.NotSupported }
+        val metadata = PhaseOneSessionMetadata()
+        val children = PlaybackSessionChildren(
+            gateway = gateway,
+            metadata = metadata,
+            dispatcher = StandardTestDispatcher(testScheduler),
+            clock = object : Clock {
+                override fun now(): Instant = Instant.fromEpochSeconds(0)
+            },
+        )
+        val owner = owner(gateway, children, metadata)
+
+        try {
+            owner.connect(ServerProfile("server"))
+            runCurrent()
+            gateway.emitMetadata(MetadataEvent.ChannelAdded(generation, channelMetadata(1)))
+            gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+            runCurrent()
+            advanceTimeBy(250)
+            runCurrent()
+
+            assertTrue(owner.state.value is SessionState.Ready)
+        } finally {
+            owner.shutdown()
+        }
+    }
+
+    @Test
     fun `independent EPG query cancellation becomes unavailable and cleans up`() = runTest {
         val order = mutableListOf<String>()
         val gateway = FakeProtocolGateway(order)

@@ -113,10 +113,12 @@ internal fun isEpgWarm(
     snapshot: EpgSnapshot,
     now: Instant,
     settings: EpgWorkerSettings,
+    satisfiedChannelIds: Set<ChannelId> = emptySet(),
 ): Boolean {
     val requiredTo = now + settings.warmupHorizon
     return snapshot.coverages.all { coverage ->
-        coverage.knownTo?.let { knownTo -> knownTo >= requiredTo } == true
+        coverage.channelId in satisfiedChannelIds ||
+            coverage.knownTo?.let { knownTo -> knownTo >= requiredTo } == true
     }
 }
 
@@ -133,6 +135,8 @@ internal class EpgWorker(
     private val activityLock = Any()
     private val inFlight = mutableSetOf<ChannelId>()
     private val coolingDown = mutableSetOf<ChannelId>()
+    private val attempted = mutableSetOf<ChannelId>()
+    private val ineligible = mutableSetOf<ChannelId>()
     private val warmup = CompletableDeferred<Unit>()
     private var started = false
 
@@ -163,7 +167,15 @@ internal class EpgWorker(
                         to = now + settings.retainFuture,
                     )
                     val snapshot = metadata.currentEpgSnapshot(generation)
-                    if (snapshot != null && isEpgWarm(snapshot, warmupStartedAt, settings)) {
+                    if (
+                        snapshot != null &&
+                        isEpgWarm(
+                            snapshot,
+                            warmupStartedAt,
+                            settings,
+                            satisfiedChannelIds(),
+                        )
+                    ) {
                         warmup.complete(Unit)
                     }
                     val plans = snapshot?.let { current ->
@@ -171,9 +183,7 @@ internal class EpgWorker(
                             snapshot = current,
                             now = now,
                             settings = settings,
-                            excludedChannelIds = synchronized(activityLock) {
-                                inFlight + coolingDown
-                            },
+                            excludedChannelIds = excludedChannelIds(),
                         )
                     }.orEmpty()
                     if (plans.isEmpty()) {
@@ -224,12 +234,13 @@ internal class EpgWorker(
                             queriedTo = plan.target,
                             events = result.value,
                         )
-                        GatewayResult.ServerRejected,
                         GatewayResult.AccessDenied,
+                        GatewayResult.NotSupported,
+                        -> synchronized(activityLock) { ineligible += plan.channelId }
+                        GatewayResult.ServerRejected,
                         GatewayResult.ConnectionLimit,
                         GatewayResult.Timeout,
                         GatewayResult.TransportUnavailable,
-                        GatewayResult.NotSupported,
                         -> Unit
                     }
                 } catch (cancellation: CancellationException) {
@@ -237,7 +248,10 @@ internal class EpgWorker(
                 } catch (_: Exception) {
                     // A channel-local failure must not terminate the worker.
                 } finally {
-                    synchronized(activityLock) { inFlight -= plan.channelId }
+                    synchronized(activityLock) {
+                        inFlight -= plan.channelId
+                        attempted += plan.channelId
+                    }
                     wake.trySend(Unit)
                 }
             }
@@ -245,5 +259,13 @@ internal class EpgWorker(
         }
         requests.awaitAll()
         currentCoroutineContext().ensureActive()
+    }
+
+    private fun excludedChannelIds(): Set<ChannelId> = synchronized(activityLock) {
+        inFlight + coolingDown + ineligible
+    }
+
+    private fun satisfiedChannelIds(): Set<ChannelId> = synchronized(activityLock) {
+        ineligible + attempted
     }
 }
