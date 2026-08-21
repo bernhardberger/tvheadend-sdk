@@ -4,6 +4,7 @@ package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.ServerAuthentication
 import at.bernhardberger.tvheadend.sdk.core.ServerCapabilities
 import at.bernhardberger.tvheadend.sdk.core.ServerProfile
@@ -12,11 +13,13 @@ import at.bernhardberger.tvheadend.sdk.core.SessionFailure
 import at.bernhardberger.tvheadend.sdk.core.SessionOperationFailure
 import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
+import at.bernhardberger.tvheadend.sdk.core.gateway.EventId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnection
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailureEvent
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayServerFacts
@@ -35,6 +38,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
 import java.util.Collections
 import java.util.IdentityHashMap
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -73,7 +77,9 @@ internal class ConnectionOwnerTest {
 
         assertEquals(SessionState.Disconnected, owner.state.value)
         assertSame(metadata, owner.channelRepository)
+        assertSame(metadata.epgRepository, owner.epgRepository)
         assertEquals(ChannelRepositoryState.Empty, metadata.channelsAndTags.value)
+        assertEquals(EpgRepositoryState.Empty, owner.epgRepository.state.value)
         assertTrue(order.isEmpty(), "Construction must not launch lifecycle work")
 
         assertEquals(SessionCommandResult.STARTED, owner.connect(ServerProfile(" server ")))
@@ -86,6 +92,7 @@ internal class ConnectionOwnerTest {
         )
         assertFalse("admission.start" in order, "Admission started before metadata synchronization")
         assertTrue(metadata.channelsAndTags.value is ChannelRepositoryState.Synchronizing)
+        assertTrue(owner.epgRepository.state.value is EpgRepositoryState.Synchronizing)
 
         gateway.emitMetadata(
             MetadataEvent.ChannelAdded(generation, channelMetadata(id = 1)),
@@ -105,6 +112,7 @@ internal class ConnectionOwnerTest {
             owner.state.value,
         )
         assertTrue(metadata.channelsAndTags.value is ChannelRepositoryState.Current)
+        assertTrue(owner.epgRepository.state.value is EpgRepositoryState.Current)
         assertEquals(listOf(1L), owner.channelRepository.channels.value.map { it.id.value })
         assertEquals("admission.start", order.last())
         owner.shutdown()
@@ -469,30 +477,37 @@ internal class ConnectionOwnerTest {
         gateway.emitMetadata(
             MetadataEvent.ChannelAdded(firstGeneration, channelMetadata(id = 1)),
         )
+        gateway.emitMetadata(MetadataEvent.EventAdded(firstGeneration, epgMetadata(1, 1)))
         gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(firstGeneration))
         runCurrent()
         assertEquals(listOf(1L), owner.channelRepository.channels.value.map { it.id.value })
+        assertEquals(listOf(1L), owner.epgRepository.events.value.map { it.id.value })
 
         owner.connect(ServerProfile("second"))
         runCurrent()
         assertEquals(SessionState.Unavailable(SessionFailure.NoChannels), owner.state.value)
         assertEquals(ChannelRepositoryState.Empty, owner.channelRepository.state.value)
+        assertEquals(EpgRepositoryState.Empty, owner.epgRepository.state.value)
 
         owner.connect(ServerProfile("first"))
         runCurrent()
         gateway.emitMetadata(
             MetadataEvent.ChannelAdded(secondGeneration, channelMetadata(id = 2)),
         )
+        gateway.emitMetadata(MetadataEvent.EventAdded(secondGeneration, epgMetadata(2, 2)))
         gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(secondGeneration))
         runCurrent()
         assertEquals(listOf(2L), owner.channelRepository.channels.value.map { it.id.value })
+        assertEquals(listOf(2L), owner.epgRepository.events.value.map { it.id.value })
 
         owner.disconnect()
         assertEquals(ChannelRepositoryState.Empty, owner.channelRepository.state.value)
+        assertEquals(EpgRepositoryState.Empty, owner.epgRepository.state.value)
         owner.connect(ServerProfile("third"))
         runCurrent()
         assertEquals(SessionState.Unavailable(SessionFailure.NoChannels), owner.state.value)
         assertEquals(ChannelRepositoryState.Empty, owner.channelRepository.state.value)
+        assertEquals(EpgRepositoryState.Empty, owner.epgRepository.state.value)
         owner.shutdown()
     }
 
@@ -644,6 +659,13 @@ private fun channelMetadata(id: Long): GatewayChannelMetadata = GatewayChannelMe
     nextEventId = null,
     services = null,
     tagIds = null,
+)
+
+private fun epgMetadata(id: Long, channelId: Long): GatewayEpgEvent = GatewayEpgEvent(
+    id = EventId(id),
+    channelId = ChannelId(channelId),
+    start = Instant.fromEpochSeconds(10),
+    stop = Instant.fromEpochSeconds(20),
 )
 
 private class ConnectionFailureCase(

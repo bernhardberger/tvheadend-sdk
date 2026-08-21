@@ -20,7 +20,9 @@ import at.bernhardberger.tvheadend.htsp.messages.HtspChannelAddMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspChannelDeleteMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspChannelUpdateMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspDescrambleInfoMessage
+import at.bernhardberger.tvheadend.htsp.messages.HtspEventAddMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspEventDeleteMessage
+import at.bernhardberger.tvheadend.htsp.messages.HtspEventUpdateMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspInitialSyncCompletedMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspMuxPacketMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspQueueStatusMessage
@@ -40,6 +42,7 @@ import at.bernhardberger.tvheadend.htsp.messages.HtspTimeshiftStatusMessage
 import at.bernhardberger.tvheadend.htsp.requests.EnableAsyncMetadataRequest
 import at.bernhardberger.tvheadend.htsp.requests.HtspChannelService
 import at.bernhardberger.tvheadend.htsp.requests.HtspEmptyResponse
+import at.bernhardberger.tvheadend.htsp.requests.HtspEvent
 import at.bernhardberger.tvheadend.htsp.requests.HtspRequest
 import at.bernhardberger.tvheadend.htsp.requests.SubscribeRequest
 import at.bernhardberger.tvheadend.htsp.requests.SubscribeResponse
@@ -82,6 +85,7 @@ import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import kotlin.time.Instant
 
 internal class HtspProtocolGatewayTest {
     @Test
@@ -343,6 +347,121 @@ internal class HtspProtocolGatewayTest {
             events.map(Any::toString),
         )
         assertFalse(events.toString().contains("Private"))
+    }
+
+    @Test
+    fun `metadata maps complete event adds and nullable updates without losing wall clock semantics`() = runTest {
+        val generation = HtspConnectionGeneration()
+        val add = HtspEventAddMessage(
+            event = HtspEvent(
+                eventId = 1,
+                channelId = 2,
+                start = -3,
+                stop = 2_147_483_648,
+                title = "Private title",
+                subtitle = "Private subtitle",
+                summary = "Private summary",
+                description = "Private description",
+                categories = listOf("category"),
+                keywords = listOf("keyword"),
+                seriesLinkUri = "private-series-uri",
+                episodeUri = "private-episode-uri",
+                contentType = 4,
+                ageRating = 5,
+                ratingLabel = "Private rating",
+                ratingIcon = "private-rating-icon",
+                ratingAuthority = "Private authority",
+                ratingCountry = "GB",
+                starRating = 6,
+                copyrightYear = 2026,
+                firstAired = 0,
+                isNew = 0,
+                seasonNumber = 7,
+                seasonCount = 8,
+                episodeNumber = 9,
+                episodeCount = 10,
+                partNumber = 11,
+                partCount = 12,
+                episodeOnscreen = "S07E09",
+                image = "private-image",
+                dvrId = 13,
+                nextEventId = 14,
+            ),
+            genre = "Private genre",
+            episodeId = 15,
+            seriesLinkId = 16,
+        )
+        val update = HtspEventUpdateMessage(
+            eventId = 1,
+            channelId = 3,
+            stop = 2_147_483_649,
+            title = "",
+            categories = emptyList(),
+            keywords = emptyList(),
+            contentType = 17,
+            ageRating = 18,
+            starRating = 19,
+            copyrightYear = 0,
+            firstAired = -20,
+            isNew = 2,
+            seasonNumber = 21,
+            seasonCount = 22,
+            episodeNumber = 23,
+            episodeCount = 24,
+            partNumber = 25,
+            partCount = 26,
+            episodeId = 27,
+            seriesLinkId = 28,
+            dvrId = 29,
+            nextEventId = 30,
+        )
+        val fake = FakeHtspConnection().apply {
+            eventsFlow = flowOf(
+                HtspTransportEvent.ServerMessage(add, generation, 1),
+                HtspTransportEvent.ServerMessage(update, generation, 2),
+                HtspTransportEvent.ServerMessage(HtspEventDeleteMessage(1), generation, 3),
+            )
+        }
+
+        val events = HtspProtocolGateway(fake).metadata.toList()
+
+        assertEquals(
+            listOf(
+                MetadataEvent.EventAdded::class,
+                MetadataEvent.EventUpdated::class,
+                MetadataEvent.EventDeleted::class,
+            ),
+            events.map { it::class },
+        )
+        val added = (events[0] as MetadataEvent.EventAdded).event
+        assertEquals(1L, added.id.value)
+        assertEquals(2L, added.channelId?.value)
+        assertEquals(Instant.fromEpochSeconds(-3), added.start)
+        assertEquals(Instant.fromEpochSeconds(2_147_483_648), added.stop)
+        assertEquals("Private title", added.title)
+        assertEquals(listOf("category"), added.categories)
+        assertEquals(listOf("keyword"), added.keywords)
+        assertEquals(false, added.isNew)
+        assertEquals(Instant.fromEpochSeconds(0), added.firstAired)
+        assertEquals(13L, added.dvrEntryId?.value)
+        assertEquals(14L, added.nextEventId?.value)
+        assertEquals(15L, added.episodeId?.value)
+        assertEquals(16L, added.seriesLinkId?.value)
+
+        val updated = (events[1] as MetadataEvent.EventUpdated).event
+        assertEquals(null, updated.start)
+        assertEquals(Instant.fromEpochSeconds(2_147_483_649), updated.stop)
+        assertEquals("", updated.title)
+        assertEquals(emptyList<String>(), updated.categories)
+        assertEquals(emptyList<String>(), updated.keywords)
+        assertEquals(true, updated.isNew)
+        assertEquals(Instant.fromEpochSeconds(-20), updated.firstAired)
+        assertEquals(27L, updated.episodeId?.value)
+        assertEquals(28L, updated.seriesLinkId?.value)
+        assertEquals(29L, updated.dvrEntryId?.value)
+        assertEquals(30L, updated.nextEventId?.value)
+        assertTrue(events.all { it.generation === events.first().generation })
+        assertFalse(events.toString().contains("Private"), "Gateway EPG rendering exposed metadata")
     }
 
     @Test

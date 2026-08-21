@@ -181,6 +181,243 @@ public final class at/bernhardberger/tvheadend/sdk/core/ChannelTagId {
 	public final synthetic fun unbox-impl ()J
 }
 
+public final class at/bernhardberger/tvheadend/sdk/core/DvrEntryId {
+	public static final synthetic fun box-impl (J)Lat/bernhardberger/tvheadend/sdk/core/DvrEntryId;
+	public static fun constructor-impl (J)J
+	public fun equals (Ljava/lang/Object;)Z
+	public static fun equals-impl (JLjava/lang/Object;)Z
+	public static final fun equals-impl0 (JJ)Z
+	public final fun getValue ()J
+	public fun hashCode ()I
+	public static fun hashCode-impl (J)I
+	public fun toString ()Ljava/lang/String;
+	public static fun toString-impl (J)Ljava/lang/String;
+	public final synthetic fun unbox-impl ()J
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/EpgCoverage {
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/EpgCoverage$Companion;
+	public final fun component1-X9YaTts ()J
+	public final fun component2 ()Lkotlin/time/Instant;
+	public final fun component3 ()Lkotlin/time/Instant;
+	public final fun component4 ()Lkotlin/time/Instant;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getChannelId-X9YaTts ()J
+	public final fun getCoveredFrom ()Lkotlin/time/Instant;
+	public final fun getCoveredTo ()Lkotlin/time/Instant;
+	public final fun getKnownTo ()Lkotlin/time/Instant;
+	public final fun getQueriedTo ()Lkotlin/time/Instant;
+	public fun hashCode ()I
+	public final fun isEmpty ()Z
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/EpgCoverage$Companion {
+	public final fun create-dKmK3DQ (JLkotlin/time/Instant;Lkotlin/time/Instant;Lkotlin/time/Instant;)Lat/bernhardberger/tvheadend/sdk/core/EpgCoverage;
+	public static synthetic fun create-dKmK3DQ$default (Lat/bernhardberger/tvheadend/sdk/core/EpgCoverage$Companion;JLkotlin/time/Instant;Lkotlin/time/Instant;Lkotlin/time/Instant;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/EpgCoverage;
+	public final fun empty-RL2hoTo (JLkotlin/time/Instant;)Lat/bernhardberger/tvheadend/sdk/core/EpgCoverage;
+	public static synthetic fun empty-RL2hoTo$default (Lat/bernhardberger/tvheadend/sdk/core/EpgCoverage$Companion;JLkotlin/time/Instant;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/EpgCoverage;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/EpgEpisode {
+	public synthetic fun <init> (Lat/bernhardberger/tvheadend/sdk/core/EpgEpisodeId;Lat/bernhardberger/tvheadend/sdk/core/EpgSeriesLinkId;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/String;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1-heC5Ni0 ()Lat/bernhardberger/tvheadend/sdk/core/EpgEpisodeId;
+	public final fun component2-NdtuhsU ()Lat/bernhardberger/tvheadend/sdk/core/EpgSeriesLinkId;
+	public final fun component3 ()Ljava/lang/Long;
+	public final fun component4 ()Ljava/lang/Long;
+	public final fun component5 ()Ljava/lang/Long;
+	public final fun component6 ()Ljava/lang/Long;
+	public final fun component7 ()Ljava/lang/Long;
+	public final fun component8 ()Ljava/lang/Long;
+	public final fun component9 ()Ljava/lang/String;
+	public final fun copy-ZcWzLc8 (Lat/bernhardberger/tvheadend/sdk/core/EpgEpisodeId;Lat/bernhardberger/tvheadend/sdk/core/EpgSeriesLinkId;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/EpgEpisode;
+	public static synthetic fun copy-ZcWzLc8$default (Lat/bernhardberger/tvheadend/sdk/core/EpgEpisode;Lat/bernhardberger/tvheadend/sdk/core/EpgEpisodeId;Lat/bernhardberger/tvheadend/sdk/core/EpgSeriesLinkId;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/String;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/EpgEpisode;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getEpisodeCount ()Ljava/lang/Long;
+	public final fun getEpisodeNumber ()Ljava/lang/Long;
+	public final fun getId-heC5Ni0 ()Lat/bernhardberger/tvheadend/sdk/core/EpgEpisodeId;
+	public final fun getOnscreen ()Ljava/lang/String;
+	public final fun getPartCount ()Ljava/lang/Long;
+	public final fun getPartNumber ()Ljava/lang/Long;
+	public final fun getSeasonCount ()Ljava/lang/Long;
+	public final fun getSeasonNumber ()Ljava/lang/Long;
+	public final fun getSeriesLinkId-NdtuhsU ()Lat/bernhardberger/tvheadend/sdk/core/EpgSeriesLinkId;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/EpgEpisodeId {
+	public static final synthetic fun box-impl (J)Lat/bernhardberger/tvheadend/sdk/core/EpgEpisodeId;
+	public static fun constructor-impl (J)J
+	public fun equals (Ljava/lang/Object;)Z
+	public static fun equals-impl (JLjava/lang/Object;)Z
+	public static final fun equals-impl0 (JJ)Z
+	public final fun getValue ()J
+	public fun hashCode ()I
+	public static fun hashCode-impl (J)I
+	public fun toString ()Ljava/lang/String;
+	public static fun toString-impl (J)Ljava/lang/String;
+	public final synthetic fun unbox-impl ()J
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/EpgEvent {
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/EpgEvent$Companion;
+	public final fun component1-mQnfRTA ()J
+	public final fun component10 ()Ljava/util/List;
+	public final fun component11 ()Ljava/util/List;
+	public final fun component12 ()Ljava/lang/String;
+	public final fun component13 ()Ljava/lang/String;
+	public final fun component14 ()Ljava/lang/Long;
+	public final fun component15 ()Lat/bernhardberger/tvheadend/sdk/core/EpgRating;
+	public final fun component16 ()Ljava/lang/Long;
+	public final fun component17 ()Lkotlin/time/Instant;
+	public final fun component18 ()Ljava/lang/Boolean;
+	public final fun component19 ()Lat/bernhardberger/tvheadend/sdk/core/EpgEpisode;
+	public final fun component2-tg-tQzc ()Lat/bernhardberger/tvheadend/sdk/core/ChannelId;
+	public final fun component20 ()Ljava/lang/String;
+	public final fun component21-iqnyXvo ()Lat/bernhardberger/tvheadend/sdk/core/DvrEntryId;
+	public final fun component22-IwUpMHo ()Lat/bernhardberger/tvheadend/sdk/core/EventId;
+	public final fun component3 ()Lkotlin/time/Instant;
+	public final fun component4 ()Lkotlin/time/Instant;
+	public final fun component5 ()Ljava/lang/String;
+	public final fun component6 ()Ljava/lang/String;
+	public final fun component7 ()Ljava/lang/String;
+	public final fun component8 ()Ljava/lang/String;
+	public final fun component9 ()Ljava/lang/String;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCategories ()Ljava/util/List;
+	public final fun getChannelId-tg-tQzc ()Lat/bernhardberger/tvheadend/sdk/core/ChannelId;
+	public final fun getContentType ()Ljava/lang/Long;
+	public final fun getCopyrightYear ()Ljava/lang/Long;
+	public final fun getDescription ()Ljava/lang/String;
+	public final fun getDvrEntryId-iqnyXvo ()Lat/bernhardberger/tvheadend/sdk/core/DvrEntryId;
+	public final fun getEpisode ()Lat/bernhardberger/tvheadend/sdk/core/EpgEpisode;
+	public final fun getEpisodeUri ()Ljava/lang/String;
+	public final fun getFirstAired ()Lkotlin/time/Instant;
+	public final fun getGenre ()Ljava/lang/String;
+	public final fun getId-mQnfRTA ()J
+	public final fun getImage ()Ljava/lang/String;
+	public final fun getKeywords ()Ljava/util/List;
+	public final fun getNextEventId-IwUpMHo ()Lat/bernhardberger/tvheadend/sdk/core/EventId;
+	public final fun getRating ()Lat/bernhardberger/tvheadend/sdk/core/EpgRating;
+	public final fun getSeriesLinkUri ()Ljava/lang/String;
+	public final fun getStart ()Lkotlin/time/Instant;
+	public final fun getStop ()Lkotlin/time/Instant;
+	public final fun getSubtitle ()Ljava/lang/String;
+	public final fun getSummary ()Ljava/lang/String;
+	public final fun getTitle ()Ljava/lang/String;
+	public fun hashCode ()I
+	public final fun isNew ()Ljava/lang/Boolean;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/EpgEvent$Companion {
+	public final fun create-AVHxFZQ (JLat/bernhardberger/tvheadend/sdk/core/ChannelId;Lkotlin/time/Instant;Lkotlin/time/Instant;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Long;Lat/bernhardberger/tvheadend/sdk/core/EpgRating;Ljava/lang/Long;Lkotlin/time/Instant;Ljava/lang/Boolean;Lat/bernhardberger/tvheadend/sdk/core/EpgEpisode;Ljava/lang/String;Lat/bernhardberger/tvheadend/sdk/core/DvrEntryId;Lat/bernhardberger/tvheadend/sdk/core/EventId;)Lat/bernhardberger/tvheadend/sdk/core/EpgEvent;
+	public static synthetic fun create-AVHxFZQ$default (Lat/bernhardberger/tvheadend/sdk/core/EpgEvent$Companion;JLat/bernhardberger/tvheadend/sdk/core/ChannelId;Lkotlin/time/Instant;Lkotlin/time/Instant;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Long;Lat/bernhardberger/tvheadend/sdk/core/EpgRating;Ljava/lang/Long;Lkotlin/time/Instant;Ljava/lang/Boolean;Lat/bernhardberger/tvheadend/sdk/core/EpgEpisode;Ljava/lang/String;Lat/bernhardberger/tvheadend/sdk/core/DvrEntryId;Lat/bernhardberger/tvheadend/sdk/core/EventId;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/EpgEvent;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/EpgRating {
+	public fun <init> (Ljava/lang/Long;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Long;)V
+	public final fun component1 ()Ljava/lang/Long;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Ljava/lang/String;
+	public final fun component5 ()Ljava/lang/String;
+	public final fun component6 ()Ljava/lang/Long;
+	public final fun copy (Ljava/lang/Long;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Long;)Lat/bernhardberger/tvheadend/sdk/core/EpgRating;
+	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/EpgRating;Ljava/lang/Long;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Long;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/EpgRating;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAge ()Ljava/lang/Long;
+	public final fun getAuthority ()Ljava/lang/String;
+	public final fun getCountry ()Ljava/lang/String;
+	public final fun getIcon ()Ljava/lang/String;
+	public final fun getLabel ()Ljava/lang/String;
+	public final fun getStars ()Ljava/lang/Long;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class at/bernhardberger/tvheadend/sdk/core/EpgRepository {
+	public abstract fun coverage-9w0kQQ0 (J)Lkotlinx/coroutines/flow/Flow;
+	public abstract fun event-eg3kBS8 (J)Lkotlinx/coroutines/flow/Flow;
+	public abstract fun events-9w0kQQ0 (J)Lkotlinx/coroutines/flow/Flow;
+	public abstract fun getEvents ()Lkotlinx/coroutines/flow/StateFlow;
+	public abstract fun getState ()Lkotlinx/coroutines/flow/StateFlow;
+}
+
+public abstract interface class at/bernhardberger/tvheadend/sdk/core/EpgRepositoryState {
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/EpgRepositoryState$Current : at/bernhardberger/tvheadend/sdk/core/EpgRepositoryState {
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/EpgSnapshot;)V
+	public final fun component1 ()Lat/bernhardberger/tvheadend/sdk/core/EpgSnapshot;
+	public final fun copy (Lat/bernhardberger/tvheadend/sdk/core/EpgSnapshot;)Lat/bernhardberger/tvheadend/sdk/core/EpgRepositoryState$Current;
+	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/EpgRepositoryState$Current;Lat/bernhardberger/tvheadend/sdk/core/EpgSnapshot;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/EpgRepositoryState$Current;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getSnapshot ()Lat/bernhardberger/tvheadend/sdk/core/EpgSnapshot;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/EpgRepositoryState$Empty : at/bernhardberger/tvheadend/sdk/core/EpgRepositoryState {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/EpgRepositoryState$Empty;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/EpgRepositoryState$Stale : at/bernhardberger/tvheadend/sdk/core/EpgRepositoryState {
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/EpgSnapshot;)V
+	public final fun component1 ()Lat/bernhardberger/tvheadend/sdk/core/EpgSnapshot;
+	public final fun copy (Lat/bernhardberger/tvheadend/sdk/core/EpgSnapshot;)Lat/bernhardberger/tvheadend/sdk/core/EpgRepositoryState$Stale;
+	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/EpgRepositoryState$Stale;Lat/bernhardberger/tvheadend/sdk/core/EpgSnapshot;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/EpgRepositoryState$Stale;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getSnapshot ()Lat/bernhardberger/tvheadend/sdk/core/EpgSnapshot;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/EpgRepositoryState$Synchronizing : at/bernhardberger/tvheadend/sdk/core/EpgRepositoryState {
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/EpgSnapshot;)V
+	public final fun component1 ()Lat/bernhardberger/tvheadend/sdk/core/EpgSnapshot;
+	public final fun copy (Lat/bernhardberger/tvheadend/sdk/core/EpgSnapshot;)Lat/bernhardberger/tvheadend/sdk/core/EpgRepositoryState$Synchronizing;
+	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/EpgRepositoryState$Synchronizing;Lat/bernhardberger/tvheadend/sdk/core/EpgSnapshot;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/EpgRepositoryState$Synchronizing;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getStaleSnapshot ()Lat/bernhardberger/tvheadend/sdk/core/EpgSnapshot;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/EpgSeriesLinkId {
+	public static final synthetic fun box-impl (J)Lat/bernhardberger/tvheadend/sdk/core/EpgSeriesLinkId;
+	public static fun constructor-impl (J)J
+	public fun equals (Ljava/lang/Object;)Z
+	public static fun equals-impl (JLjava/lang/Object;)Z
+	public static final fun equals-impl0 (JJ)Z
+	public final fun getValue ()J
+	public fun hashCode ()I
+	public static fun hashCode-impl (J)I
+	public fun toString ()Ljava/lang/String;
+	public static fun toString-impl (J)Ljava/lang/String;
+	public final synthetic fun unbox-impl ()J
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/EpgSnapshot {
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/EpgSnapshot$Companion;
+	public final fun component1 ()Ljava/util/List;
+	public final fun component2 ()Ljava/util/List;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCoverages ()Ljava/util/List;
+	public final fun getEvents ()Ljava/util/List;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/EpgSnapshot$Companion {
+	public final fun create (Ljava/util/List;Ljava/util/List;)Lat/bernhardberger/tvheadend/sdk/core/EpgSnapshot;
+	public static synthetic fun create$default (Lat/bernhardberger/tvheadend/sdk/core/EpgSnapshot$Companion;Ljava/util/List;Ljava/util/List;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/EpgSnapshot;
+}
+
 public final class at/bernhardberger/tvheadend/sdk/core/EventId {
 	public static final synthetic fun box-impl (J)Lat/bernhardberger/tvheadend/sdk/core/EventId;
 	public static fun constructor-impl (J)J
@@ -405,6 +642,7 @@ public abstract interface class at/bernhardberger/tvheadend/sdk/core/TvheadendSe
 	public abstract fun connect (Lat/bernhardberger/tvheadend/sdk/core/ServerProfile;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun disconnect (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun getChannelRepository ()Lat/bernhardberger/tvheadend/sdk/core/ChannelRepository;
+	public abstract fun getEpgRepository ()Lat/bernhardberger/tvheadend/sdk/core/EpgRepository;
 	public abstract fun getState ()Lkotlinx/coroutines/flow/StateFlow;
 	public abstract fun getSubscriptions ()Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOpener;
 	public abstract fun retry (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;

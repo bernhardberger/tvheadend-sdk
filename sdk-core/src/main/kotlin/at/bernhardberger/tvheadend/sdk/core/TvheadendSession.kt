@@ -22,6 +22,9 @@ public interface TvheadendSession {
     /** Channel and channel-tag metadata for the selected server profile. */
     public val channelRepository: ChannelRepository
 
+    /** Programme-guide metadata and retained coverage for the selected server profile. */
+    public val epgRepository: EpgRepository
+
     /** Generation-bound subscription entry point used by SDK playback adapters. */
     @SubscriptionInfrastructureApi
     public val subscriptions: SubscriptionOpener

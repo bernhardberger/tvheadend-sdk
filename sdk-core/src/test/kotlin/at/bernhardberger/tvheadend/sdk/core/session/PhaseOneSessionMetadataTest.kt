@@ -4,12 +4,14 @@ import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.Channel
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.ChannelService
+import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.ServerCapabilities
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.gateway.DeferredMetadataKind
 import at.bernhardberger.tvheadend.sdk.core.gateway.EventId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelService
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayServerFacts
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayTagMetadata
@@ -25,6 +27,7 @@ import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import kotlin.time.Instant
 
 @OptIn(ExperimentalCoroutinesApi::class)
 internal class PhaseOneSessionMetadataTest {
@@ -40,7 +43,7 @@ internal class PhaseOneSessionMetadataTest {
         metadata.publishServerFacts(stale, serverFacts(streaming = false))
         metadata.publishServerFacts(current, serverFacts(streaming = true))
         val awaiting = async {
-            metadata.awaitChannelsAndTagsCurrent(current)
+            metadata.awaitMetadataCurrent(current)
             assertTrue(
                 metadata.channelsAndTags.value is ChannelRepositoryState.Current,
                 "The metadata fence completed before catalog publication",
@@ -49,6 +52,7 @@ internal class PhaseOneSessionMetadataTest {
         runCurrent()
 
         metadata.acceptMetadata(MetadataEvent.ChannelAdded(stale, channel(id = 99)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(stale, epgEvent(99, 99, 0, 10)))
         metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(stale))
         runCurrent()
         assertFalse(awaiting.isCompleted)
@@ -59,7 +63,9 @@ internal class PhaseOneSessionMetadataTest {
 
         metadata.acceptMetadata(MetadataEvent.ChannelAdded(current, channel(id = 1, name = "one")))
         metadata.acceptMetadata(MetadataEvent.TagAdded(current, tag(id = 2, channelIds = listOf(1))))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(current, epgEvent(4, 1, -1, 10)))
         assertTrue(metadata.channelsAndTags.value is ChannelRepositoryState.Synchronizing)
+        assertTrue(metadata.epgRepository.state.value is EpgRepositoryState.Synchronizing)
 
         metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(current))
         runCurrent()
@@ -67,6 +73,10 @@ internal class PhaseOneSessionMetadataTest {
         val snapshot = metadata.currentSnapshot()
         assertEquals(listOf(1L), snapshot.channels.map { it.id.value })
         assertEquals(listOf(2L), snapshot.tags.map { it.id.value })
+        val epg = metadata.currentEpgSnapshot()
+        assertEquals(listOf(4L), epg.events.map { it.id.value })
+        assertEquals(Instant.fromEpochSeconds(-1), epg.coverages.single().coveredFrom)
+        assertEquals(Instant.fromEpochSeconds(10), epg.coverages.single().coveredTo)
         assertEquals(CapabilityAccess.ALLOWED, metadata.capabilities(current).streaming)
         assertEquals(CapabilityAccess.DENIED, metadata.capabilities(current).dvrWrite)
         assertEquals(CapabilityAccess.UNKNOWN, metadata.capabilities(current).protocolDvr)
@@ -111,7 +121,7 @@ internal class PhaseOneSessionMetadataTest {
         )
         features.clear()
         metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(current))
-        metadata.awaitChannelsAndTagsCurrent(current)
+        metadata.awaitMetadataCurrent(current)
 
         val capabilities = metadata.capabilities(current)
         assertEquals(
@@ -299,6 +309,7 @@ internal class PhaseOneSessionMetadataTest {
         assertEquals(null, channel.nextEventId)
         assertEquals(10L, tag.id.value)
         assertEquals(listOf(1L, 1L), tag.channelIds?.map { it.value })
+        assertEquals(emptyList<Any>(), metadata.currentEpgSnapshot().events)
     }
 
     @Test
@@ -319,15 +330,25 @@ internal class PhaseOneSessionMetadataTest {
         metadata.acceptMetadata(
             MetadataEvent.TagAdded(first, tag(id = 10, channelIds = listOf(1, 2))),
         )
+        metadata.acceptMetadata(MetadataEvent.EventAdded(first, epgEvent(4, 1, 10, 20, "old-event")))
         metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(first))
         val staleSnapshot = metadata.currentSnapshot()
+        val staleEpgSnapshot = metadata.currentEpgSnapshot()
 
         metadata.resetWorkingStateRetainingPublishedSnapshot()
         val staleState = metadata.channelsAndTags.value as ChannelRepositoryState.Stale
         assertSame(staleSnapshot, staleState.catalog)
+        assertSame(
+            staleEpgSnapshot,
+            (metadata.epgRepository.state.value as EpgRepositoryState.Stale).snapshot,
+        )
         metadata.bindGeneration(second)
         val synchronizing = metadata.channelsAndTags.value as ChannelRepositoryState.Synchronizing
         assertSame(staleSnapshot, synchronizing.staleCatalog)
+        assertSame(
+            staleEpgSnapshot,
+            (metadata.epgRepository.state.value as EpgRepositoryState.Synchronizing).staleSnapshot,
+        )
 
         metadata.acceptMetadata(
             MetadataEvent.ChannelUpdated(
@@ -338,7 +359,9 @@ internal class PhaseOneSessionMetadataTest {
         metadata.acceptMetadata(
             MetadataEvent.TagAdded(second, tag(id = 11, channelIds = listOf(1, 2))),
         )
+        metadata.acceptMetadata(MetadataEvent.EventAdded(second, epgEvent(6, 1, 30, 40, "new-event")))
         metadata.acceptMetadata(MetadataEvent.ChannelAdded(first, channel(id = 3, name = "stale")))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(first, epgEvent(7, 1, 50, 60, "stale-event")))
         metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(first))
         assertSame(staleSnapshot, synchronizing.staleCatalog)
         assertEquals(listOf(1L, 2L), staleSnapshot.channels.map { it.id.value })
@@ -354,6 +377,40 @@ internal class PhaseOneSessionMetadataTest {
         assertEquals(11L, tag.id.value)
         assertEquals(listOf(1L), tag.channelIds?.map { it.value })
         assertEquals(listOf(1L, 2L), staleSnapshot.channels.map { it.id.value })
+        assertEquals(listOf(6L), metadata.currentEpgSnapshot().events.map { it.id.value })
+        assertEquals(listOf(4L), staleEpgSnapshot.events.map { it.id.value })
+    }
+
+    @Test
+    fun `coverage and retention mutations are generation fenced and preserve successful horizon`() {
+        val metadata = PhaseOneSessionMetadata()
+        val stale = GatewayGeneration()
+        val current = GatewayGeneration()
+        metadata.bindGeneration(current)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(current, channel(id = 1)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(current, epgEvent(1, 1, 0, 10)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(current, epgEvent(2, 1, 20, 30)))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(current))
+
+        metadata.recordSuccessfulEpgQuery(stale, ChannelId(1), Instant.fromEpochSeconds(100))
+        metadata.retainEpgEvents(stale, Instant.fromEpochSeconds(20), Instant.fromEpochSeconds(10))
+        metadata.recordSuccessfulEpgQuery(current, ChannelId(1), Instant.fromEpochSeconds(50))
+        metadata.recordSuccessfulEpgQuery(current, ChannelId(1), Instant.fromEpochSeconds(40))
+        metadata.retainEpgEvents(current, Instant.fromEpochSeconds(10), Instant.fromEpochSeconds(20))
+
+        var snapshot = metadata.currentEpgSnapshot()
+        assertEquals(listOf(1L, 2L), snapshot.events.map { it.id.value })
+        var coverage = snapshot.coverages.single()
+        assertEquals(Instant.fromEpochSeconds(0), coverage.coveredFrom)
+        assertEquals(Instant.fromEpochSeconds(30), coverage.coveredTo)
+        assertEquals(Instant.fromEpochSeconds(50), coverage.queriedTo)
+
+        metadata.retainEpgEvents(current, Instant.fromEpochSeconds(11), Instant.fromEpochSeconds(19))
+        snapshot = metadata.currentEpgSnapshot()
+        coverage = snapshot.coverages.single()
+        assertEquals(emptyList<Any>(), snapshot.events)
+        assertTrue(coverage.isEmpty)
+        assertEquals(Instant.fromEpochSeconds(50), coverage.knownTo)
     }
 
     @Test
@@ -402,7 +459,7 @@ internal class PhaseOneSessionMetadataTest {
 
         metadata.acceptMetadata(MetadataEvent.ChannelUpdated(generation, channel(id = 2)))
         metadata.acceptMetadata(
-            MetadataEvent.Deferred(generation, DeferredMetadataKind.EPG_UPDATED),
+            MetadataEvent.Deferred(generation, DeferredMetadataKind.DVR_UPDATED),
         )
         metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
         metadata.acceptMetadata(MetadataEvent.ChannelDeleted(GatewayGeneration(), ChannelId(2)))
@@ -426,7 +483,7 @@ internal class PhaseOneSessionMetadataTest {
         val metadata = PhaseOneSessionMetadata()
         val first = GatewayGeneration()
         metadata.bindGeneration(first)
-        val retired = async { metadata.awaitChannelsAndTagsCurrent(first) }
+        val retired = async { metadata.awaitMetadataCurrent(first) }
         runCurrent()
 
         metadata.resetWorkingStateRetainingPublishedSnapshot()
@@ -436,7 +493,7 @@ internal class PhaseOneSessionMetadataTest {
         val second = GatewayGeneration()
         metadata.bindGeneration(second)
         val raced = async {
-            runCatching { metadata.awaitChannelsAndTagsCurrent(second) }
+            runCatching { metadata.awaitMetadataCurrent(second) }
         }
         runCurrent()
         metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(second))
@@ -447,14 +504,18 @@ internal class PhaseOneSessionMetadataTest {
         val third = GatewayGeneration()
         metadata.bindGeneration(third)
         metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(third))
-        metadata.awaitChannelsAndTagsCurrent(third)
+        metadata.awaitMetadataCurrent(third)
         val snapshot = metadata.currentSnapshot()
         assertTrue(snapshot.channels.isEmpty(), "Empty synchronized channels were not current")
         assertTrue(snapshot.tags.isEmpty(), "Empty synchronized tags were not current")
+        assertTrue(metadata.currentEpgSnapshot().events.isEmpty(), "Empty synchronized EPG was not current")
     }
 
     private fun PhaseOneSessionMetadata.currentSnapshot() =
         (channelsAndTags.value as ChannelRepositoryState.Current).catalog
+
+    private fun PhaseOneSessionMetadata.currentEpgSnapshot() =
+        (epgRepository.state.value as EpgRepositoryState.Current).snapshot
 
     private fun channel(
         id: Long,
@@ -496,6 +557,20 @@ internal class PhaseOneSessionMetadataTest {
         icon = icon,
         titledIcon = titledIcon,
         channelIds = channelIds?.map(::ChannelId),
+    )
+
+    private fun epgEvent(
+        id: Long,
+        channelId: Long?,
+        start: Long,
+        stop: Long,
+        title: String? = null,
+    ): GatewayEpgEvent = GatewayEpgEvent(
+        id = EventId(id),
+        channelId = channelId?.let(::ChannelId),
+        start = Instant.fromEpochSeconds(start),
+        stop = Instant.fromEpochSeconds(stop),
+        title = title,
     )
 
     private fun service(name: String): GatewayChannelService = GatewayChannelService(

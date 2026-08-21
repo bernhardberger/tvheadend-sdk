@@ -50,6 +50,7 @@ import at.bernhardberger.tvheadend.htsp.messages.HtspTimerecEntryDeleteMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspTimerecEntryUpdateMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspTimeshiftStatusMessage
 import at.bernhardberger.tvheadend.htsp.requests.HtspChannelService
+import at.bernhardberger.tvheadend.htsp.requests.HtspEvent
 import at.bernhardberger.tvheadend.htsp.requests.SubscribeResponse
 import at.bernhardberger.tvheadend.htsp.requests.enableAsyncMetadataAwaitingInitialSync
 import at.bernhardberger.tvheadend.htsp.requests.subscribe
@@ -57,6 +58,9 @@ import at.bernhardberger.tvheadend.htsp.requests.unsubscribe
 import at.bernhardberger.tvheadend.htsp.wire.HtspBinary
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.gateway.DeferredMetadataKind
+import at.bernhardberger.tvheadend.sdk.core.gateway.DvrEntryId
+import at.bernhardberger.tvheadend.sdk.core.gateway.EpgEpisodeId
+import at.bernhardberger.tvheadend.sdk.core.gateway.EpgSeriesLinkId
 import at.bernhardberger.tvheadend.sdk.core.gateway.EventId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelService
@@ -64,6 +68,8 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnection
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailureEvent
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgUpdate
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayServerFacts
@@ -97,6 +103,7 @@ import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.transform
+import kotlin.time.Instant
 
 @OptIn(SubscriptionInfrastructureApi::class)
 internal class HtspProtocolGateway internal constructor(
@@ -340,8 +347,8 @@ private fun HtspServerMessage.toGatewayMetadata(
         tagId = TagId(tagId),
     )
     HtspInitialSyncCompletedMessage -> MetadataEvent.InitialSyncCompleted(generation)
-    is HtspEventAddMessage -> MetadataEvent.Deferred(generation, DeferredMetadataKind.EPG_ADDED)
-    is HtspEventUpdateMessage -> MetadataEvent.Deferred(generation, DeferredMetadataKind.EPG_UPDATED)
+    is HtspEventAddMessage -> MetadataEvent.EventAdded(generation, toGatewayEpgEvent())
+    is HtspEventUpdateMessage -> MetadataEvent.EventUpdated(generation, toGatewayEpgUpdate())
     is HtspEventDeleteMessage -> MetadataEvent.EventDeleted(generation, EventId(eventId))
     is HtspDvrEntryAddMessage -> MetadataEvent.Deferred(generation, DeferredMetadataKind.DVR_ADDED)
     is HtspDvrEntryUpdateMessage -> MetadataEvent.Deferred(generation, DeferredMetadataKind.DVR_UPDATED)
@@ -371,6 +378,92 @@ private fun HtspServerMessage.toGatewayMetadata(
     is HtspSubscriptionSkipMessage,
     -> null
 }
+
+private fun HtspEventAddMessage.toGatewayEpgEvent(): GatewayEpgEvent = event.toGatewayEpgEvent(
+    genre = genre,
+    episodeId = episodeId?.let(::EpgEpisodeId),
+    seriesLinkId = seriesLinkId?.let(::EpgSeriesLinkId),
+)
+
+private fun HtspEvent.toGatewayEpgEvent(
+    genre: String?,
+    episodeId: EpgEpisodeId?,
+    seriesLinkId: EpgSeriesLinkId?,
+): GatewayEpgEvent = GatewayEpgEvent(
+    id = EventId(eventId),
+    channelId = channelId?.let(::ChannelId),
+    start = Instant.fromEpochSeconds(start),
+    stop = Instant.fromEpochSeconds(stop),
+    title = title,
+    subtitle = subtitle,
+    summary = summary,
+    description = description,
+    genre = genre,
+    categories = categories,
+    keywords = keywords,
+    seriesLinkUri = seriesLinkUri,
+    episodeUri = episodeUri,
+    contentType = contentType,
+    ageRating = ageRating,
+    ratingLabel = ratingLabel,
+    ratingIcon = ratingIcon,
+    ratingAuthority = ratingAuthority,
+    ratingCountry = ratingCountry,
+    starRating = starRating,
+    copyrightYear = copyrightYear,
+    firstAired = firstAired?.let { Instant.fromEpochSeconds(it) },
+    isNew = isNew.toFlag(),
+    seasonNumber = seasonNumber,
+    seasonCount = seasonCount,
+    episodeNumber = episodeNumber,
+    episodeCount = episodeCount,
+    partNumber = partNumber,
+    partCount = partCount,
+    episodeOnscreen = episodeOnscreen,
+    episodeId = episodeId,
+    seriesLinkId = seriesLinkId,
+    image = image,
+    dvrEntryId = dvrId?.let(::DvrEntryId),
+    nextEventId = nextEventId?.let(::EventId),
+)
+
+private fun HtspEventUpdateMessage.toGatewayEpgUpdate(): GatewayEpgUpdate = GatewayEpgUpdate(
+    id = EventId(eventId),
+    channelId = channelId?.let(::ChannelId),
+    start = start?.let { Instant.fromEpochSeconds(it) },
+    stop = stop?.let { Instant.fromEpochSeconds(it) },
+    title = title,
+    subtitle = subtitle,
+    summary = summary,
+    description = description,
+    genre = genre,
+    categories = categories,
+    keywords = keywords,
+    seriesLinkUri = seriesLinkUri,
+    episodeUri = episodeUri,
+    contentType = contentType,
+    ageRating = ageRating,
+    ratingLabel = ratingLabel,
+    ratingIcon = ratingIcon,
+    ratingAuthority = ratingAuthority,
+    ratingCountry = ratingCountry,
+    starRating = starRating,
+    copyrightYear = copyrightYear,
+    firstAired = firstAired?.let { Instant.fromEpochSeconds(it) },
+    isNew = isNew.toFlag(),
+    seasonNumber = seasonNumber,
+    seasonCount = seasonCount,
+    episodeNumber = episodeNumber,
+    episodeCount = episodeCount,
+    partNumber = partNumber,
+    partCount = partCount,
+    episodeOnscreen = episodeOnscreen,
+    episodeId = episodeId?.let(::EpgEpisodeId),
+    seriesLinkId = seriesLinkId?.let(::EpgSeriesLinkId),
+    image = image,
+    dvrEntryId = dvrId?.let(::DvrEntryId),
+    nextEventId = nextEventId?.let(::EventId),
+)
 
 private fun HtspChannelAddMessage.toGatewayChannel(): GatewayChannelMetadata =
     GatewayChannelMetadata(

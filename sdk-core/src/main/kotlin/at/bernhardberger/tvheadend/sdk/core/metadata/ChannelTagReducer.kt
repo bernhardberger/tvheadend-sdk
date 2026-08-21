@@ -198,6 +198,8 @@ internal class ChannelTagReducer {
             is MetadataEvent.TagUpdated -> mergeTag(event.tag)
             is MetadataEvent.TagDeleted -> deleteTag(event.tagId)
             is MetadataEvent.EventDeleted -> clearEvent(event.eventId)
+            is MetadataEvent.EventAdded,
+            is MetadataEvent.EventUpdated,
             is MetadataEvent.InitialSyncCompleted,
             is MetadataEvent.Deferred,
             -> Unit

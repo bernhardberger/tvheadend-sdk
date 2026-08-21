@@ -4,28 +4,37 @@ package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
+import at.bernhardberger.tvheadend.sdk.core.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepository
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.EpgRepository
+import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.ServerCapabilities
 import at.bernhardberger.tvheadend.sdk.core.StateBackedChannelRepository
+import at.bernhardberger.tvheadend.sdk.core.StateBackedEpgRepository
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayServerFacts
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
+import at.bernhardberger.tvheadend.sdk.core.metadata.ChannelTagReducer
+import at.bernhardberger.tvheadend.sdk.core.metadata.EpgReducer
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener
-import at.bernhardberger.tvheadend.sdk.core.metadata.ChannelTagReducer
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlin.time.Instant
 
 internal interface SessionMetadata : ChannelRepository {
     public val channelsAndTags: StateFlow<ChannelRepositoryState>
         get() = state
+
+    public val epgRepository: EpgRepository
 
     public fun resetWorkingStateRetainingPublishedSnapshot()
 
@@ -39,7 +48,15 @@ internal interface SessionMetadata : ChannelRepository {
 
     public fun acceptMetadata(event: MetadataEvent)
 
-    public suspend fun awaitChannelsAndTagsCurrent(generation: GatewayGeneration)
+    public suspend fun awaitMetadataCurrent(generation: GatewayGeneration)
+
+    public fun recordSuccessfulEpgQuery(
+        generation: GatewayGeneration,
+        channelId: ChannelId,
+        queriedTo: Instant,
+    )
+
+    public fun retainEpgEvents(generation: GatewayGeneration, from: Instant, to: Instant)
 
     public fun capabilities(generation: GatewayGeneration): ServerCapabilities
 }
@@ -47,18 +64,25 @@ internal interface SessionMetadata : ChannelRepository {
 internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), SessionMetadata {
     private val lock = Any()
     private val reducer = ChannelTagReducer()
+    private val epgReducer = EpgReducer()
     private val mutableChannelsAndTags = MutableStateFlow<ChannelRepositoryState>(
         ChannelRepositoryState.Empty,
     )
+    private val mutableEpg = MutableStateFlow<EpgRepositoryState>(EpgRepositoryState.Empty)
+    private val stateBackedEpgRepository = object : StateBackedEpgRepository() {
+        override val state: StateFlow<EpgRepositoryState> = mutableEpg.asStateFlow()
+    }
     private var generation: GatewayGeneration? = null
     private var initialSync = CompletableDeferred<Unit>()
     private var publishedCatalog: ChannelCatalog? = null
+    private var publishedEpgSnapshot: EpgSnapshot? = null
     private var synchronizedCurrent = false
     private var serverFacts: GatewayServerFacts? = null
     private var dvrAccess: Boolean? = null
 
     override val state: StateFlow<ChannelRepositoryState> =
         mutableChannelsAndTags.asStateFlow()
+    override val epgRepository: EpgRepository = stateBackedEpgRepository
 
     override fun resetWorkingStateRetainingPublishedSnapshot() {
         resetState(retainPublishedCatalog = true)
@@ -77,13 +101,16 @@ internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), Session
             serverFacts = null
             dvrAccess = null
             reducer.clear()
+            epgReducer.clear()
             if (!retainPublishedCatalog) {
                 publishedCatalog = null
+                publishedEpgSnapshot = null
             }
             mutableChannelsAndTags.value = publishedCatalog?.let { catalog ->
                 ChannelRepositoryState.Stale(catalog)
-            }
-                ?: ChannelRepositoryState.Empty
+            } ?: ChannelRepositoryState.Empty
+            mutableEpg.value = publishedEpgSnapshot?.let(EpgRepositoryState::Stale)
+                ?: EpgRepositoryState.Empty
             previousFence
         }
         retiredFence.cancel(CancellationException("Session generation is no longer current"))
@@ -98,7 +125,9 @@ internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), Session
             serverFacts = null
             dvrAccess = null
             reducer.clear()
+            epgReducer.clear()
             mutableChannelsAndTags.value = ChannelRepositoryState.Synchronizing(publishedCatalog)
+            mutableEpg.value = EpgRepositoryState.Synchronizing(publishedEpgSnapshot)
             previousFence
         }
         retiredFence.cancel(CancellationException("Session generation is no longer current"))
@@ -131,9 +160,11 @@ internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), Session
                         null
                     } else {
                         reducer.reconcileReferences()
-                        val snapshot = reducer.snapshot()
+                        val channelSnapshot = reducer.snapshot()
+                        epgReducer.reconcileChannels(channelSnapshot.channels.map { channel -> channel.id })
+                        val epgSnapshot = epgReducer.snapshot()
                         synchronizedCurrent = true
-                        publishCurrent(snapshot)
+                        publishCurrent(channelSnapshot, epgSnapshot)
                         initialSync
                     }
                 }
@@ -143,11 +174,14 @@ internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), Session
                 is MetadataEvent.TagAdded,
                 is MetadataEvent.TagUpdated,
                 is MetadataEvent.TagDeleted,
+                is MetadataEvent.EventAdded,
+                is MetadataEvent.EventUpdated,
                 is MetadataEvent.EventDeleted,
                 -> {
                     reducer.accept(event)
+                    epgReducer.accept(event)
                     if (synchronizedCurrent) {
-                        publishCurrent(reducer.snapshot())
+                        publishCurrent(reducer.snapshot(), epgReducer.snapshot())
                     }
                     null
                 }
@@ -157,7 +191,7 @@ internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), Session
         completedFence?.complete(Unit)
     }
 
-    override suspend fun awaitChannelsAndTagsCurrent(generation: GatewayGeneration) {
+    override suspend fun awaitMetadataCurrent(generation: GatewayGeneration) {
         val fence = synchronized(lock) {
             check(this.generation === generation) { "Session generation is not current" }
             initialSync
@@ -167,8 +201,31 @@ internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), Session
             check(
                 this.generation === generation &&
                     synchronizedCurrent &&
-                    mutableChannelsAndTags.value is ChannelRepositoryState.Current,
+                    mutableChannelsAndTags.value is ChannelRepositoryState.Current &&
+                    mutableEpg.value is EpgRepositoryState.Current,
             ) { "Session generation is not current" }
+        }
+    }
+
+    override fun recordSuccessfulEpgQuery(
+        generation: GatewayGeneration,
+        channelId: ChannelId,
+        queriedTo: Instant,
+    ) {
+        synchronized(lock) {
+            if (this.generation === generation) {
+                epgReducer.recordSuccessfulQuery(channelId, queriedTo)
+                if (synchronizedCurrent) publishCurrentEpg(epgReducer.snapshot())
+            }
+        }
+    }
+
+    override fun retainEpgEvents(generation: GatewayGeneration, from: Instant, to: Instant) {
+        synchronized(lock) {
+            if (this.generation === generation) {
+                epgReducer.retainOverlapping(from, to)
+                if (synchronizedCurrent) publishCurrentEpg(epgReducer.snapshot())
+            }
         }
     }
 
@@ -198,9 +255,15 @@ internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), Session
         )
     }
 
-    private fun publishCurrent(catalog: ChannelCatalog) {
+    private fun publishCurrent(catalog: ChannelCatalog, epgSnapshot: EpgSnapshot) {
         mutableChannelsAndTags.value = ChannelRepositoryState.Current(catalog)
         publishedCatalog = (mutableChannelsAndTags.value as ChannelRepositoryState.Current).catalog
+        publishCurrentEpg(epgSnapshot)
+    }
+
+    private fun publishCurrentEpg(snapshot: EpgSnapshot) {
+        mutableEpg.value = EpgRepositoryState.Current(snapshot)
+        publishedEpgSnapshot = (mutableEpg.value as EpgRepositoryState.Current).snapshot
     }
 }
 

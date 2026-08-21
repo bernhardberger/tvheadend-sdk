@@ -109,6 +109,9 @@ internal class ModuleBoundaryTest {
             "ChannelId",
             "ChannelTagId",
             "EventId",
+            "EpgEpisodeId",
+            "EpgSeriesLinkId",
+            "DvrEntryId",
             "ChannelService",
             "Channel",
             "ChannelTag",
@@ -119,6 +122,13 @@ internal class ModuleBoundaryTest {
             "Current",
             "Stale",
             "ChannelRepository",
+            "EpgRating",
+            "EpgEpisode",
+            "EpgEvent",
+            "EpgCoverage",
+            "EpgSnapshot",
+            "EpgRepositoryState",
+            "EpgRepository",
             "TvheadendSession",
             "ServerProfile",
             "ServerAuthentication",
@@ -203,6 +213,7 @@ internal class ModuleBoundaryTest {
         )
         val expectedTesting = setOf(
             "FakeChannelRepository",
+            "FakeEpgRepository",
             "ScriptedSubscriptionCall",
             "ScriptedSubscriptionConnection",
             "ScriptedSubscriptionRegistration",
@@ -210,7 +221,7 @@ internal class ModuleBoundaryTest {
         )
 
         assertPublicInfrastructure("sdk-playback", expectedPlayback, unannotatedCount = 1)
-        assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 1)
+        assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 2)
 
         val sessionApi = java.io.File(
             "src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/TvheadendSession.kt",
@@ -224,6 +235,10 @@ internal class ModuleBoundaryTest {
         org.junit.jupiter.api.Assertions.assertTrue(
             sessionApi.contains("public val channelRepository: ChannelRepository"),
             "Missing channel repository on the public session",
+        )
+        org.junit.jupiter.api.Assertions.assertTrue(
+            sessionApi.contains("public val epgRepository: EpgRepository"),
+            "Missing EPG repository on the public session",
         )
     }
 
@@ -259,6 +274,7 @@ internal class ModuleBoundaryTest {
             "at.bernhardberger.tvheadend.sdk.testing.ScriptedSubscriptionConnection",
             "at.bernhardberger.tvheadend.sdk.testing.SubscriptionBinaryFixture",
             "at.bernhardberger.tvheadend.sdk.testing.FakeChannelRepository",
+            "at.bernhardberger.tvheadend.sdk.testing.FakeEpgRepository",
         ).forEach { name -> enqueue(publicTypes[name]) }
 
         while (pending.isNotEmpty()) {
