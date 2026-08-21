@@ -12,6 +12,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.EventId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelService
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayServerFacts
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayTagMetadata
@@ -411,6 +412,57 @@ internal class PhaseOneSessionMetadataTest {
         assertEquals(emptyList<Any>(), snapshot.events)
         assertTrue(coverage.isEmpty)
         assertEquals(Instant.fromEpochSeconds(50), coverage.knownTo)
+    }
+
+    @Test
+    fun `successful query applies events and horizon together only to a current channel`() {
+        val metadata = PhaseOneSessionMetadata()
+        val stale = GatewayGeneration()
+        val current = GatewayGeneration()
+        metadata.bindGeneration(current)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(current, channel(id = 1)))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(current))
+        val original = metadata.epgRepository.state.value
+        val event = GatewayEpgQueryEvent(
+            id = EventId(10),
+            channelId = ChannelId(1),
+            start = Instant.fromEpochSeconds(10),
+            stop = Instant.fromEpochSeconds(20),
+            title = "private-title",
+        )
+
+        metadata.applySuccessfulEpgQuery(
+            stale,
+            ChannelId(1),
+            Instant.fromEpochSeconds(100),
+            listOf(event),
+        )
+        assertSame(original, metadata.epgRepository.state.value)
+
+        metadata.applySuccessfulEpgQuery(
+            current,
+            ChannelId(1),
+            Instant.fromEpochSeconds(100),
+            listOf(event),
+        )
+        var snapshot = metadata.currentEpgSnapshot(current)
+        assertEquals(listOf(10L), snapshot?.events?.map { it.id.value })
+        assertEquals(Instant.fromEpochSeconds(100), snapshot?.coverages?.single()?.queriedTo)
+
+        metadata.acceptMetadata(MetadataEvent.ChannelDeleted(current, ChannelId(1)))
+        metadata.applySuccessfulEpgQuery(
+            current,
+            ChannelId(1),
+            Instant.fromEpochSeconds(200),
+            listOf(event),
+        )
+        snapshot = metadata.currentEpgSnapshot(current)
+        assertEquals(emptyList<Any>(), snapshot?.events)
+        assertEquals(emptyList<Any>(), snapshot?.coverages)
+        assertFalse(
+            metadata.epgRepository.state.value.toString().contains("private"),
+            "Query publication rendering exposed programme data",
+        )
     }
 
     @Test

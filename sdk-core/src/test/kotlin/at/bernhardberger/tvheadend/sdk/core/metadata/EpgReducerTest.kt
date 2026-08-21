@@ -7,6 +7,7 @@ import at.bernhardberger.tvheadend.sdk.core.EpgSeriesLinkId
 import at.bernhardberger.tvheadend.sdk.core.EventId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgUpdate
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
@@ -155,6 +156,70 @@ internal class EpgReducerTest {
         snapshot = reducer.snapshot()
         assertEquals(emptyList<Any>(), snapshot.events)
         assertEquals(listOf(ChannelId(1)), snapshot.coverages.map { it.channelId })
+    }
+
+    @Test
+    fun `successful query replaces represented fields while preserving async-only metadata`() {
+        val reducer = EpgReducer()
+        addChannel(reducer, 1)
+        addChannel(reducer, 2)
+        reducer.accept(
+            MetadataEvent.EventAdded(
+                generation,
+                event(
+                    id = 10,
+                    channelId = 1,
+                    start = 10,
+                    stop = 20,
+                    title = "old",
+                    categories = listOf("old"),
+                    episodeId = EpgEpisodeId(30),
+                    seriesLinkId = EpgSeriesLinkId(31),
+                ),
+            ),
+        )
+
+        reducer.acceptSuccessfulQuery(
+            channelId = ChannelId(2),
+            queriedTo = instant(100),
+            queriedEvents = listOf(
+                GatewayEpgQueryEvent(
+                    id = EventId(10),
+                    channelId = ChannelId(2),
+                    start = instant(30),
+                    stop = instant(40),
+                    title = null,
+                    categories = null,
+                ),
+                GatewayEpgQueryEvent(
+                    id = EventId(11),
+                    channelId = ChannelId(1),
+                    start = instant(30),
+                    stop = instant(40),
+                ),
+                GatewayEpgQueryEvent(
+                    id = EventId(12),
+                    channelId = ChannelId(2),
+                    start = instant(50),
+                    stop = instant(49),
+                ),
+            ),
+        )
+
+        val snapshot = reducer.snapshot()
+        val event = snapshot.events.single()
+        assertEquals(EventId(10), event.id)
+        assertEquals(ChannelId(2), event.channelId)
+        assertEquals(instant(30), event.start)
+        assertEquals(null, event.title)
+        assertEquals(null, event.categories)
+        assertEquals(EpgEpisodeId(30), event.episode?.id)
+        assertEquals(EpgSeriesLinkId(31), event.episode?.seriesLinkId)
+        assertTrue(snapshot.coverages.first { it.channelId == ChannelId(1) }.isEmpty)
+        assertEquals(
+            instant(100),
+            snapshot.coverages.first { it.channelId == ChannelId(2) }.queriedTo,
+        )
     }
 
     @Test

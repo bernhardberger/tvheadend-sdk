@@ -14,6 +14,7 @@ import at.bernhardberger.tvheadend.sdk.core.ServerCapabilities
 import at.bernhardberger.tvheadend.sdk.core.StateBackedChannelRepository
 import at.bernhardberger.tvheadend.sdk.core.StateBackedEpgRepository
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayServerFacts
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.metadata.ChannelTagReducer
@@ -54,6 +55,15 @@ internal interface SessionMetadata : ChannelRepository {
         generation: GatewayGeneration,
         channelId: ChannelId,
         queriedTo: Instant,
+    )
+
+    public fun currentEpgSnapshot(generation: GatewayGeneration): EpgSnapshot?
+
+    public fun applySuccessfulEpgQuery(
+        generation: GatewayGeneration,
+        channelId: ChannelId,
+        queriedTo: Instant,
+        events: List<GatewayEpgQueryEvent>,
     )
 
     public fun retainEpgEvents(generation: GatewayGeneration, from: Instant, to: Instant)
@@ -220,6 +230,28 @@ internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), Session
         }
     }
 
+    override fun currentEpgSnapshot(generation: GatewayGeneration): EpgSnapshot? = synchronized(lock) {
+        if (this.generation !== generation || !synchronizedCurrent) {
+            null
+        } else {
+            (mutableEpg.value as? EpgRepositoryState.Current)?.snapshot
+        }
+    }
+
+    override fun applySuccessfulEpgQuery(
+        generation: GatewayGeneration,
+        channelId: ChannelId,
+        queriedTo: Instant,
+        events: List<GatewayEpgQueryEvent>,
+    ) {
+        synchronized(lock) {
+            if (this.generation === generation && synchronizedCurrent) {
+                epgReducer.acceptSuccessfulQuery(channelId, queriedTo, events)
+                publishCurrentEpg(epgReducer.snapshot())
+            }
+        }
+    }
+
     override fun retainEpgEvents(generation: GatewayGeneration, from: Instant, to: Instant) {
         synchronized(lock) {
             if (this.generation === generation) {
@@ -280,6 +312,10 @@ internal interface SessionChildren : SubscriptionOpener {
 
     public fun stopAdmission()
 
+    public fun startEpgWorker(generation: GatewayGeneration): Boolean = true
+
+    public suspend fun awaitEpgWarmup(generation: GatewayGeneration) = Unit
+
     public suspend fun cancelAndJoinEpgWorker()
 
     public suspend fun closeAndJoinSubscriptions()
@@ -295,6 +331,10 @@ internal interface SessionChildren : SubscriptionOpener {
         override fun startAdmission(generation: GatewayGeneration): Boolean = true
 
         override fun stopAdmission() = Unit
+
+        override fun startEpgWorker(generation: GatewayGeneration): Boolean = true
+
+        override suspend fun awaitEpgWarmup(generation: GatewayGeneration) = Unit
 
         override suspend fun cancelAndJoinEpgWorker() = Unit
 

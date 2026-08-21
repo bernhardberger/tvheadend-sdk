@@ -187,6 +187,46 @@ internal class GatewayEpgUpdate(
     override fun toString(): String = "GatewayEpgUpdate(<redacted>)"
 }
 
+internal class GatewayEpgQueryEvent(
+    internal val id: EventId,
+    internal val channelId: ChannelId? = null,
+    internal val start: Instant,
+    internal val stop: Instant,
+    internal val title: String? = null,
+    internal val subtitle: String? = null,
+    internal val summary: String? = null,
+    internal val description: String? = null,
+    categories: List<String>? = null,
+    keywords: List<String>? = null,
+    internal val seriesLinkUri: String? = null,
+    internal val episodeUri: String? = null,
+    internal val contentType: Long? = null,
+    internal val ageRating: Long? = null,
+    internal val ratingLabel: String? = null,
+    internal val ratingIcon: String? = null,
+    internal val ratingAuthority: String? = null,
+    internal val ratingCountry: String? = null,
+    internal val starRating: Long? = null,
+    internal val copyrightYear: Long? = null,
+    internal val firstAired: Instant? = null,
+    internal val isNew: Boolean? = null,
+    internal val seasonNumber: Long? = null,
+    internal val seasonCount: Long? = null,
+    internal val episodeNumber: Long? = null,
+    internal val episodeCount: Long? = null,
+    internal val partNumber: Long? = null,
+    internal val partCount: Long? = null,
+    internal val episodeOnscreen: String? = null,
+    internal val image: String? = null,
+    internal val dvrEntryId: DvrEntryId? = null,
+    internal val nextEventId: EventId? = null,
+) {
+    internal val categories: List<String>? = categories?.toList()
+    internal val keywords: List<String>? = keywords?.toList()
+
+    override fun toString(): String = "GatewayEpgQueryEvent(<redacted>)"
+}
+
 internal class GatewayChannelMetadata(
     internal val id: ChannelId,
     internal val name: String?,

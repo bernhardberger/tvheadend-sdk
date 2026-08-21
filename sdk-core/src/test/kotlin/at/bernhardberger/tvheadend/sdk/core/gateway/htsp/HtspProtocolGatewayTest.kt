@@ -40,6 +40,8 @@ import at.bernhardberger.tvheadend.htsp.messages.HtspTagDeleteMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspTagUpdateMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspTimeshiftStatusMessage
 import at.bernhardberger.tvheadend.htsp.requests.EnableAsyncMetadataRequest
+import at.bernhardberger.tvheadend.htsp.requests.GetEventsRequest
+import at.bernhardberger.tvheadend.htsp.requests.GetEventsResponse
 import at.bernhardberger.tvheadend.htsp.requests.HtspChannelService
 import at.bernhardberger.tvheadend.htsp.requests.HtspEmptyResponse
 import at.bernhardberger.tvheadend.htsp.requests.HtspEvent
@@ -462,6 +464,103 @@ internal class HtspProtocolGatewayTest {
         assertEquals(30L, updated.nextEventId?.value)
         assertTrue(events.all { it.generation === events.first().generation })
         assertFalse(events.toString().contains("Private"), "Gateway EPG rendering exposed metadata")
+    }
+
+    @Test
+    fun `EPG query maps exact generation horizon results and redacted events`() = runTest {
+        val sourceGeneration = HtspConnectionGeneration()
+        val fake = FakeHtspConnection().apply {
+            liveConnectionValue.value = liveConnection(sourceGeneration)
+            connectOutcome = HtspConnectOutcome.Connected(requireNotNull(liveConnectionValue.value))
+            executeResult = HtspResult.Ok(
+                GetEventsResponse(
+                    listOf(
+                        HtspEvent(
+                            eventId = 1,
+                            channelId = 2,
+                            start = -3,
+                            stop = 2_147_483_648,
+                            title = "Private title",
+                            subtitle = "Private subtitle",
+                            summary = "Private summary",
+                            description = "Private description",
+                            categories = listOf("category"),
+                            keywords = emptyList(),
+                            seriesLinkUri = "private-series",
+                            episodeUri = "private-episode",
+                            contentType = 4,
+                            ageRating = 5,
+                            ratingLabel = "Private rating",
+                            ratingIcon = "private-icon",
+                            ratingAuthority = "Private authority",
+                            ratingCountry = "GB",
+                            starRating = 6,
+                            copyrightYear = 2026,
+                            firstAired = 0,
+                            isNew = 0,
+                            seasonNumber = 7,
+                            seasonCount = 8,
+                            episodeNumber = 9,
+                            episodeCount = 10,
+                            partNumber = 11,
+                            partCount = 12,
+                            episodeOnscreen = "S07E09",
+                            image = "private-image",
+                            dvrId = 13,
+                            nextEventId = 14,
+                        ),
+                    ),
+                ),
+            )
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+        val maxTime = Instant.fromEpochSeconds(2_147_483_649, 999_000_000)
+
+        val result = gateway.queryEpg(generation, ChannelId(2), maxTime) as GatewayResult.Ok
+        val request = fake.lastRequest as GetEventsRequest
+        val event = result.value.single()
+
+        assertSame(sourceGeneration, fake.lastExpectedGeneration)
+        assertEquals(2L, request.channelId)
+        assertEquals(2_147_483_649L, request.maxTime)
+        assertEquals(null, request.eventId)
+        assertEquals(null, request.language)
+        assertEquals(null, request.numFollowing)
+        assertEquals(Instant.fromEpochSeconds(-3), event.start)
+        assertEquals(Instant.fromEpochSeconds(2_147_483_648), event.stop)
+        assertEquals(false, event.isNew)
+        assertEquals(emptyList<String>(), event.keywords)
+        assertEquals(13L, event.dvrEntryId?.value)
+        assertEquals("GatewayEpgQueryEvent(<redacted>)", event.toString())
+        assertFalse(result.value.toString().contains("Private"))
+        assertThrows(UnsupportedOperationException::class.java) {
+            (result.value as MutableList<*>).clear()
+        }
+
+        val failures = listOf(
+            HtspResult.ServerError to GatewayResult.ServerRejected,
+            HtspResult.AccessDenied to GatewayResult.AccessDenied,
+            HtspResult.ConnectionLimit to GatewayResult.ConnectionLimit,
+            HtspResult.Timeout to GatewayResult.Timeout,
+            HtspResult.TransportUnavailable to GatewayResult.TransportUnavailable,
+            HtspResult.NotSupported to GatewayResult.NotSupported,
+        )
+        failures.forEach { (source, expected) ->
+            fake.executeResult = source
+            assertSame(expected, gateway.queryEpg(generation, ChannelId(2), maxTime))
+        }
+
+        val cancellation = CancellationException("private cancellation")
+        fake.executeException = cancellation
+        var caught: CancellationException? = null
+        try {
+            gateway.queryEpg(generation, ChannelId(2), maxTime)
+        } catch (failure: CancellationException) {
+            caught = failure
+        }
+        assertSame(cancellation, caught)
     }
 
     @Test

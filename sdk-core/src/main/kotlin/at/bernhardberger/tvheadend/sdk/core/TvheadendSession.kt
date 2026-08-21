@@ -13,6 +13,7 @@ import java.util.Collections
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.StateFlow
 import kotlin.random.Random
+import kotlin.time.Clock
 
 /** Owns one TVHeadend connection lifecycle. */
 public interface TvheadendSession {
@@ -64,11 +65,17 @@ private object SessionRegistry {
 
     private fun createOwner(): ConnectionOwner {
         val gateway = HtspProtocolGateway(Dispatchers.IO)
+        val metadata = PhaseOneSessionMetadata()
         lateinit var owner: ConnectionOwner
         owner = ConnectionOwner(
             gateway = gateway,
-            metadata = PhaseOneSessionMetadata(),
-            children = PlaybackSessionChildren(gateway, Dispatchers.Default),
+            metadata = metadata,
+            children = PlaybackSessionChildren(
+                gateway = gateway,
+                metadata = metadata,
+                dispatcher = Dispatchers.Default,
+                clock = Clock.System,
+            ),
             defaultDispatcher = Dispatchers.Default,
             backoff = ExponentialReconnectBackoff(
                 nextJitter = { Random.Default.nextDouble() },

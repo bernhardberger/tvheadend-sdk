@@ -7,6 +7,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+import kotlin.time.Instant
 
 @OptIn(SubscriptionInfrastructureApi::class)
 internal interface ProtocolGateway {
@@ -28,6 +29,12 @@ internal interface ProtocolGateway {
     public suspend fun enableInitialMetadata(
         generation: GatewayGeneration,
     ): GatewayResult<Unit>
+
+    public suspend fun queryEpg(
+        generation: GatewayGeneration,
+        channelId: ChannelId,
+        maxTime: Instant,
+    ): GatewayResult<List<GatewayEpgQueryEvent>>
 
     public fun subscription(
         generation: GatewayGeneration,

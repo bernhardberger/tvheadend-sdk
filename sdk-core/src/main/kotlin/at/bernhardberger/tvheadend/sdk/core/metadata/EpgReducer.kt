@@ -11,6 +11,7 @@ import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.gateway.EventId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgUpdate
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import java.util.Collections
@@ -96,6 +97,14 @@ internal data class ReducedEpgEvent private constructor(
         )
         return candidate.takeUnless(ReducedEpgEvent::hasInvalidTiming)
     }
+
+    internal fun replaceFromQuery(event: GatewayEpgQueryEvent): ReducedEpgEvent? =
+        fromQuery(
+            event = event,
+            genre = genre,
+            episodeId = episodeId,
+            seriesLinkId = seriesLinkId,
+        )
 
     internal fun toPublicOrNull(): EpgEvent? {
         val start = start ?: return null
@@ -256,6 +265,52 @@ internal data class ReducedEpgEvent private constructor(
             dvrEntryId = null,
             nextEventId = null,
         ).merge(update)
+
+        internal fun fromQuery(
+            event: GatewayEpgQueryEvent,
+            genre: String? = null,
+            episodeId: EpgEpisodeId? = null,
+            seriesLinkId: EpgSeriesLinkId? = null,
+        ): ReducedEpgEvent? {
+            if (event.stop < event.start) return null
+            return ReducedEpgEvent(
+                id = event.id,
+                channelId = event.channelId,
+                start = event.start,
+                stop = event.stop,
+                title = event.title,
+                subtitle = event.subtitle,
+                summary = event.summary,
+                description = event.description,
+                genre = genre,
+                categories = event.categories?.toImmutableList(),
+                keywords = event.keywords?.toImmutableList(),
+                seriesLinkUri = event.seriesLinkUri,
+                episodeUri = event.episodeUri,
+                contentType = event.contentType,
+                ageRating = event.ageRating,
+                ratingLabel = event.ratingLabel,
+                ratingIcon = event.ratingIcon,
+                ratingAuthority = event.ratingAuthority,
+                ratingCountry = event.ratingCountry,
+                starRating = event.starRating,
+                copyrightYear = event.copyrightYear,
+                firstAired = event.firstAired,
+                isNew = event.isNew,
+                seasonNumber = event.seasonNumber,
+                seasonCount = event.seasonCount,
+                episodeNumber = event.episodeNumber,
+                episodeCount = event.episodeCount,
+                partNumber = event.partNumber,
+                partCount = event.partCount,
+                episodeOnscreen = event.episodeOnscreen,
+                episodeId = episodeId,
+                seriesLinkId = seriesLinkId,
+                image = event.image,
+                dvrEntryId = event.dvrEntryId,
+                nextEventId = event.nextEventId,
+            )
+        }
     }
 }
 
@@ -304,6 +359,21 @@ internal class EpgReducer {
         if (previous == null || queriedTo > previous) {
             queriedToByChannel[channelId] = queriedTo
         }
+    }
+
+    internal fun acceptSuccessfulQuery(
+        channelId: ChannelId,
+        queriedTo: Instant,
+        queriedEvents: List<GatewayEpgQueryEvent>,
+    ) {
+        if (channelId !in channelIds) return
+        queriedEvents.forEach { event ->
+            if (event.channelId != null && event.channelId != channelId) return@forEach
+            val candidate = events[event.id]?.replaceFromQuery(event)
+                ?: ReducedEpgEvent.fromQuery(event)
+            if (candidate != null) events[event.id] = candidate
+        }
+        recordSuccessfulQuery(channelId, queriedTo)
     }
 
     internal fun retainOverlapping(from: Instant, to: Instant) {

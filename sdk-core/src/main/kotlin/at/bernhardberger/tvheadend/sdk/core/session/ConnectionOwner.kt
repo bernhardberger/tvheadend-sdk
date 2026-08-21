@@ -382,7 +382,21 @@ internal class ConnectionOwner(
         return when (val result = gateway.enableInitialMetadata(generation)) {
             is GatewayResult.Ok -> {
                 metadata.awaitMetadataCurrent(generation)
-                SynchronizationOutcome.Ready
+                if (!children.startEpgWorker(generation)) {
+                    SynchronizationOutcome.ConnectionFailed(
+                        GatewayConnectionFailure.TRANSPORT_UNAVAILABLE,
+                    )
+                } else {
+                    try {
+                        children.awaitEpgWarmup(generation)
+                        SynchronizationOutcome.Ready
+                    } catch (cancellation: CancellationException) {
+                        currentCoroutineContext().ensureActive()
+                        SynchronizationOutcome.ConnectionFailed(
+                            GatewayConnectionFailure.TRANSPORT_UNAVAILABLE,
+                        )
+                    }
+                }
             }
             GatewayResult.ServerRejected -> GatewayResult.ServerRejected.toSynchronizationFailure()
             GatewayResult.AccessDenied -> GatewayResult.AccessDenied.toSynchronizationFailure()

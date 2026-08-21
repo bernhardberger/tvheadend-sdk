@@ -20,6 +20,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnection
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailureEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayServerFacts
@@ -37,6 +38,8 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
 import java.util.Collections
 import java.util.IdentityHashMap
+import java.util.concurrent.CancellationException
+import kotlin.time.Clock
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlinx.coroutines.CompletableDeferred
@@ -116,6 +119,90 @@ internal class ConnectionOwnerTest {
         assertEquals(listOf(1L), owner.channelRepository.channels.value.map { it.id.value })
         assertEquals("admission.start", order.last())
         owner.shutdown()
+    }
+
+    @Test
+    fun `production children keep readiness closed until EPG warmup succeeds`() = runTest {
+        val queryStarted = CompletableDeferred<Unit>()
+        val releaseQuery = CompletableDeferred<Unit>()
+        val gateway = FakeProtocolGateway()
+        val generation = GatewayGeneration()
+        gateway.connectResults += connected(generation)
+        gateway.queryBehavior = { queryGeneration, _, _ ->
+            assertSame(generation, queryGeneration)
+            queryStarted.complete(Unit)
+            releaseQuery.await()
+            GatewayResult.Ok(emptyList())
+        }
+        val metadata = PhaseOneSessionMetadata()
+        val children = PlaybackSessionChildren(
+            gateway = gateway,
+            metadata = metadata,
+            dispatcher = StandardTestDispatcher(testScheduler),
+            clock = object : Clock {
+                override fun now(): Instant = Instant.fromEpochSeconds(0)
+            },
+        )
+        val owner = owner(gateway, children, metadata)
+
+        try {
+            owner.connect(ServerProfile("server"))
+            runCurrent()
+            gateway.emitMetadata(MetadataEvent.ChannelAdded(generation, channelMetadata(1)))
+            gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+            runCurrent()
+
+            assertTrue(queryStarted.isCompleted, "EPG warmup query did not start")
+            assertEquals(SessionState.Synchronizing, owner.state.value)
+
+            releaseQuery.complete(Unit)
+            advanceTimeBy(250)
+            runCurrent()
+
+            assertTrue(owner.state.value is SessionState.Ready)
+        } finally {
+            owner.shutdown()
+        }
+    }
+
+    @Test
+    fun `independent EPG query cancellation becomes unavailable and cleans up`() = runTest {
+        val order = mutableListOf<String>()
+        val gateway = FakeProtocolGateway(order)
+        val generation = GatewayGeneration()
+        gateway.connectResults += connected(generation)
+        gateway.queryBehavior = { _, _, _ ->
+            throw CancellationException("fixed independent cancellation")
+        }
+        val metadata = PhaseOneSessionMetadata()
+        val children = PlaybackSessionChildren(
+            gateway = gateway,
+            metadata = metadata,
+            dispatcher = StandardTestDispatcher(testScheduler),
+            clock = object : Clock {
+                override fun now(): Instant = Instant.fromEpochSeconds(0)
+            },
+        )
+        val owner = owner(gateway, children, metadata)
+
+        try {
+            owner.connect(ServerProfile("server"))
+            runCurrent()
+            gateway.emitMetadata(MetadataEvent.ChannelAdded(generation, channelMetadata(1)))
+            gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+            runCurrent()
+            advanceTimeBy(250)
+            runCurrent()
+
+            assertEquals(
+                SessionState.Unavailable(SessionFailure.TransportUnavailable),
+                owner.state.value,
+            )
+            assertTrue("disconnect" in order, "Cancelled EPG warmup did not clean up transport")
+            assertTrue(metadata.epgRepository.state.value is EpgRepositoryState.Stale)
+        } finally {
+            owner.shutdown()
+        }
     }
 
     @Test
@@ -729,6 +816,11 @@ private class FakeProtocolGateway(
         failed(GatewayConnectionFailure.TRANSPORT_UNAVAILABLE)
     internal var enableResult: GatewayResult<Unit> = GatewayResult.Ok(Unit)
     internal var connectBehavior: (suspend FakeProtocolGateway.() -> GatewayConnectResult)? = null
+    internal var queryBehavior: suspend (
+        GatewayGeneration,
+        ChannelId,
+        Instant,
+    ) -> GatewayResult<List<GatewayEpgQueryEvent>> = { _, _, _ -> GatewayResult.Ok(emptyList()) }
     internal var connectCalls: Int = 0
     internal var maximumConcurrentConnects: Int = 0
     internal var invalidateOnReadyCommit: Boolean = false
@@ -788,6 +880,15 @@ private class FakeProtocolGateway(
     ): GatewayResult<Unit> {
         order += "enable"
         return enableResult
+    }
+
+    override suspend fun queryEpg(
+        generation: GatewayGeneration,
+        channelId: ChannelId,
+        maxTime: Instant,
+    ): GatewayResult<List<GatewayEpgQueryEvent>> {
+        order += "epg.query"
+        return queryBehavior(generation, channelId, maxTime)
     }
 
     override fun subscription(

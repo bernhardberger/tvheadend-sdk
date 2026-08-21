@@ -53,6 +53,7 @@ import at.bernhardberger.tvheadend.htsp.requests.HtspChannelService
 import at.bernhardberger.tvheadend.htsp.requests.HtspEvent
 import at.bernhardberger.tvheadend.htsp.requests.SubscribeResponse
 import at.bernhardberger.tvheadend.htsp.requests.enableAsyncMetadataAwaitingInitialSync
+import at.bernhardberger.tvheadend.htsp.requests.getEvents
 import at.bernhardberger.tvheadend.htsp.requests.subscribe
 import at.bernhardberger.tvheadend.htsp.requests.unsubscribe
 import at.bernhardberger.tvheadend.htsp.wire.HtspBinary
@@ -69,6 +70,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnection
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailureEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgUpdate
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
@@ -94,6 +96,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStream
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTermination
 import java.lang.ref.WeakReference
+import java.util.Collections
 import java.util.WeakHashMap
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
@@ -182,6 +185,20 @@ internal class HtspProtocolGateway internal constructor(
     ): GatewayResult<Unit> = connection.enableAsyncMetadataAwaitingInitialSync(
         expectedGeneration = htspGenerationFor(generation),
     ).toGatewayResult {}
+
+    override suspend fun queryEpg(
+        generation: GatewayGeneration,
+        channelId: ChannelId,
+        maxTime: Instant,
+    ): GatewayResult<List<GatewayEpgQueryEvent>> = connection.getEvents(
+        channelId = channelId.value,
+        maxTime = maxTime.epochSeconds,
+        expectedGeneration = htspGenerationFor(generation),
+    ).toGatewayResult { response ->
+        Collections.unmodifiableList(
+            response.events.mapTo(ArrayList(), HtspEvent::toGatewayEpgQueryEvent),
+        )
+    }
 
     override fun subscription(
         generation: GatewayGeneration,
@@ -422,6 +439,41 @@ private fun HtspEvent.toGatewayEpgEvent(
     episodeOnscreen = episodeOnscreen,
     episodeId = episodeId,
     seriesLinkId = seriesLinkId,
+    image = image,
+    dvrEntryId = dvrId?.let(::DvrEntryId),
+    nextEventId = nextEventId?.let(::EventId),
+)
+
+private fun HtspEvent.toGatewayEpgQueryEvent(): GatewayEpgQueryEvent = GatewayEpgQueryEvent(
+    id = EventId(eventId),
+    channelId = channelId?.let(::ChannelId),
+    start = Instant.fromEpochSeconds(start),
+    stop = Instant.fromEpochSeconds(stop),
+    title = title,
+    subtitle = subtitle,
+    summary = summary,
+    description = description,
+    categories = categories,
+    keywords = keywords,
+    seriesLinkUri = seriesLinkUri,
+    episodeUri = episodeUri,
+    contentType = contentType,
+    ageRating = ageRating,
+    ratingLabel = ratingLabel,
+    ratingIcon = ratingIcon,
+    ratingAuthority = ratingAuthority,
+    ratingCountry = ratingCountry,
+    starRating = starRating,
+    copyrightYear = copyrightYear,
+    firstAired = firstAired?.let { Instant.fromEpochSeconds(it) },
+    isNew = isNew.toFlag(),
+    seasonNumber = seasonNumber,
+    seasonCount = seasonCount,
+    episodeNumber = episodeNumber,
+    episodeCount = episodeCount,
+    partNumber = partNumber,
+    partCount = partCount,
+    episodeOnscreen = episodeOnscreen,
     image = image,
     dvrEntryId = dvrId?.let(::DvrEntryId),
     nextEventId = nextEventId?.let(::EventId),

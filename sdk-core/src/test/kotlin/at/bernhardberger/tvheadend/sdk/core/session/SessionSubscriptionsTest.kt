@@ -5,6 +5,7 @@ package at.bernhardberger.tvheadend.sdk.core.session
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailureEvent
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayState
@@ -42,13 +43,18 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import kotlin.time.Instant
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SessionSubscriptionsTest {
     @Test
     fun `children bind admission and teardown one exact generation at a time`() = runTest {
         val gateway = SubscriptionGateway()
-        val children = PlaybackSessionChildren(gateway, StandardTestDispatcher(testScheduler))
+        val children = PlaybackSessionChildren(
+            gateway,
+            PhaseOneSessionMetadata(),
+            StandardTestDispatcher(testScheduler),
+        )
         val generationA = GatewayGeneration()
         val generationB = GatewayGeneration()
 
@@ -109,7 +115,11 @@ class SessionSubscriptionsTest {
     @Test
     fun `cancelled teardown retains the manager until every subscription joins`() = runTest {
         val gateway = SubscriptionGateway()
-        val children = PlaybackSessionChildren(gateway, StandardTestDispatcher(testScheduler))
+        val children = PlaybackSessionChildren(
+            gateway,
+            PhaseOneSessionMetadata(),
+            StandardTestDispatcher(testScheduler),
+        )
         val generation = GatewayGeneration()
         val consumerEntered = CompletableDeferred<Unit>()
         val releaseConsumer = CompletableDeferred<Unit>()
@@ -166,7 +176,11 @@ class SessionSubscriptionsTest {
     @Test
     fun `child cancellation clears the old manager before a fresh generation binds`() = runTest {
         val gateway = SubscriptionGateway()
-        val children = PlaybackSessionChildren(gateway, StandardTestDispatcher(testScheduler))
+        val children = PlaybackSessionChildren(
+            gateway,
+            PhaseOneSessionMetadata(),
+            StandardTestDispatcher(testScheduler),
+        )
         val generationA = GatewayGeneration()
         val generationB = GatewayGeneration()
         val consumerEntered = CompletableDeferred<Unit>()
@@ -258,6 +272,12 @@ private class SubscriptionGateway : ProtocolGateway {
 
     override suspend fun enableInitialMetadata(generation: GatewayGeneration): GatewayResult<Unit> =
         GatewayResult.Ok(Unit)
+
+    override suspend fun queryEpg(
+        generation: GatewayGeneration,
+        channelId: ChannelId,
+        maxTime: Instant,
+    ): GatewayResult<List<GatewayEpgQueryEvent>> = GatewayResult.Ok(emptyList())
 
     override fun subscription(
         generation: GatewayGeneration,
