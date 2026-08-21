@@ -197,7 +197,36 @@ internal class DvrRepositoryTest {
         }
     }
 
-    private class TestDvrRepository : StateBackedDvrRepository() {
+    @Test
+    fun `progress reports stay command-only and do not change repository state`() = runTest {
+        val accepted = DvrProgressResult.Accepted
+        val commands = object : DvrProgressCommands {
+            override suspend fun reportProgress(
+                id: DvrEntryId,
+                progress: DvrPlaybackProgress,
+            ): DvrProgressResult = accepted
+        }
+        val repository = TestDvrRepository(progressCommands = commands)
+        val snapshot = DvrSnapshot.create(listOf(DvrEntry.create(DvrEntryId(1))))
+        repository.set(DvrRepositoryState.Current(snapshot))
+
+        assertSame(
+            accepted,
+            repository.reportProgress(DvrEntryId(1), DvrPlaybackProgress.checkpoint(30.seconds)),
+        )
+        assertSame(snapshot, (repository.state.value as DvrRepositoryState.Current).snapshot)
+        assertSame(
+            DvrProgressResult.NotReady,
+            TestDvrRepository().reportProgress(
+                DvrEntryId(1),
+                DvrPlaybackProgress.checkpoint(30.seconds),
+            ),
+        )
+    }
+
+    private class TestDvrRepository(
+        progressCommands: DvrProgressCommands = DvrProgressCommands.None,
+    ) : StateBackedDvrRepository(progressCommands = progressCommands) {
         private val mutableState = MutableStateFlow<DvrRepositoryState>(DvrRepositoryState.Empty)
         private val mutableConfigurations =
             MutableStateFlow<DvrConfigurationsState>(DvrConfigurationsState.Unknown)

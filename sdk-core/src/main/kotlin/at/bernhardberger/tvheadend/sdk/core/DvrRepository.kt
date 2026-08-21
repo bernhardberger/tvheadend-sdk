@@ -635,10 +635,17 @@ public interface DvrRepository {
 
     /** Deletes one time-based recording rule and waits for authoritative stream confirmation. */
     public suspend fun deleteTimerecRule(id: TimerecRuleId): DvrMutationResult<Unit>
+
+    /** Reports playback progress without mutating the authoritative DVR snapshot. */
+    public suspend fun reportProgress(
+        id: DvrEntryId,
+        progress: DvrPlaybackProgress,
+    ): DvrProgressResult
 }
 
 internal abstract class StateBackedDvrRepository(
     private val mutations: DvrMutationCommands = DvrMutationCommands.None,
+    private val progressCommands: DvrProgressCommands = DvrProgressCommands.None,
 ) : DvrRepository {
     final override val entries: StateFlow<List<DvrEntry>> by lazy {
         MappedDvrStateFlow(state, DvrRepositoryState::entries)
@@ -714,6 +721,11 @@ internal abstract class StateBackedDvrRepository(
 
     final override suspend fun deleteTimerecRule(id: TimerecRuleId): DvrMutationResult<Unit> =
         mutations.deleteTimerecRule(id)
+
+    final override suspend fun reportProgress(
+        id: DvrEntryId,
+        progress: DvrPlaybackProgress,
+    ): DvrProgressResult = progressCommands.reportProgress(id, progress)
 }
 
 @OptIn(ExperimentalForInheritanceCoroutinesApi::class, InternalCoroutinesApi::class)

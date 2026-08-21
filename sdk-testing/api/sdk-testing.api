@@ -37,6 +37,7 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeDvrRepository : a
 	public fun getDiskSpace ()Lkotlinx/coroutines/flow/StateFlow;
 	public fun getDiskSpaceState ()Lkotlinx/coroutines/flow/StateFlow;
 	public fun getEntries ()Lkotlinx/coroutines/flow/StateFlow;
+	public final fun getReportProgressResult ()Lat/bernhardberger/tvheadend/sdk/core/DvrProgressResult;
 	public final fun getScheduleEntryResult ()Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;
 	public fun getState ()Lkotlinx/coroutines/flow/StateFlow;
 	public final fun getStopEntryResult ()Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;
@@ -44,6 +45,7 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeDvrRepository : a
 	public final fun getUpdateAutorecRuleResult ()Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;
 	public final fun getUpdateEntryResult ()Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;
 	public final fun getUpdateTimerecRuleResult ()Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;
+	public fun reportProgress-c8JLQRw (JLat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun scheduleEntry (Lat/bernhardberger/tvheadend/sdk/core/DvrScheduleRequest;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun setCancelEntryResult (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
 	public final fun setConfigurationsState (Lat/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState;)V
@@ -53,6 +55,7 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeDvrRepository : a
 	public final fun setDeleteEntryResult (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
 	public final fun setDeleteTimerecRuleResult (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
 	public final fun setDiskSpaceState (Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpaceState;)V
+	public final fun setReportProgressResult (Lat/bernhardberger/tvheadend/sdk/core/DvrProgressResult;)V
 	public final fun setScheduleEntryResult (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
 	public final fun setState (Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState;)V
 	public final fun setStopEntryResult (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V

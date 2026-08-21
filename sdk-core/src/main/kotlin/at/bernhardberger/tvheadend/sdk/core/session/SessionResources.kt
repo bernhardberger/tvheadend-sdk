@@ -12,6 +12,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrConfigurationsState
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpaceState
 import at.bernhardberger.tvheadend.sdk.core.DvrMutationCommands
+import at.bernhardberger.tvheadend.sdk.core.DvrProgressCommands
 import at.bernhardberger.tvheadend.sdk.core.DvrRepository
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
@@ -98,6 +99,7 @@ internal interface SessionMetadata : ChannelRepository {
 
 internal class PhaseOneSessionMetadata(
     mutationCommands: DvrMutationCommands = DvrMutationCommands.None,
+    progressCommands: DvrProgressCommands = DvrProgressCommands.None,
     private val onDvrMetadataAccepted: (MetadataEvent) -> Unit = {},
 ) : StateBackedChannelRepository(), SessionMetadata {
     private val lock = Any()
@@ -116,7 +118,10 @@ internal class PhaseOneSessionMetadata(
     private val stateBackedEpgRepository = object : StateBackedEpgRepository() {
         override val state: StateFlow<EpgRepositoryState> = mutableEpg.asStateFlow()
     }
-    private val stateBackedDvrRepository = object : StateBackedDvrRepository(mutationCommands) {
+    private val stateBackedDvrRepository = object : StateBackedDvrRepository(
+        mutations = mutationCommands,
+        progressCommands = progressCommands,
+    ) {
         override val state: StateFlow<DvrRepositoryState> = mutableDvr.asStateFlow()
         override val configurationsState: StateFlow<DvrConfigurationsState> =
             mutableConfigurations.asStateFlow()

@@ -143,6 +143,14 @@ internal class ModuleBoundaryTest {
             "DvrMutationResult",
             "Confirmed",
             "AcceptedButUnconfirmed",
+            "DvrPlaybackProgress",
+            "DvrProgressResult",
+            "Accepted",
+            "DvrProgressPolicy",
+            "DvrResumeOffer",
+            "Resume",
+            "StartOver",
+            "DvrProgressTracker",
             "NotReady",
             "ServerRejected",
             "AccessDenied",
@@ -220,6 +228,7 @@ internal class ModuleBoundaryTest {
             "public suspend fun createTimerecRule( request: TimerecRuleCreate, ): DvrMutationResult<TimerecRuleId>",
             "public suspend fun updateTimerecRule( id: TimerecRuleId, update: TimerecRuleUpdate, ): DvrMutationResult<Unit>",
             "public suspend fun deleteTimerecRule(id: TimerecRuleId): DvrMutationResult<Unit>",
+            "public suspend fun reportProgress( id: DvrEntryId, progress: DvrPlaybackProgress, ): DvrProgressResult",
         )
 
         assertEquals(expectedSignatures.size, Regex("public suspend fun ").findAll(publicApi).count())

@@ -13,6 +13,8 @@ import at.bernhardberger.tvheadend.sdk.core.DvrEntry
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult
+import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
+import at.bernhardberger.tvheadend.sdk.core.DvrProgressResult
 import at.bernhardberger.tvheadend.sdk.core.DvrRepository
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
@@ -88,6 +90,9 @@ public class FakeDvrRepository @JvmOverloads constructor(
     /** Scripted outcome returned by [deleteTimerecRule]. */
     public var deleteTimerecRuleResult: DvrMutationResult<Unit> = DvrMutationResult.NotReady
 
+    /** Scripted outcome returned by [reportProgress]. */
+    public var reportProgressResult: DvrProgressResult = DvrProgressResult.NotReady
+
     /** Publishes one complete repository transition. */
     public fun setState(state: DvrRepositoryState) {
         mutableState.value = state
@@ -157,6 +162,11 @@ public class FakeDvrRepository @JvmOverloads constructor(
 
     override suspend fun deleteTimerecRule(id: TimerecRuleId): DvrMutationResult<Unit> =
         deleteTimerecRuleResult
+
+    override suspend fun reportProgress(
+        id: DvrEntryId,
+        progress: DvrPlaybackProgress,
+    ): DvrProgressResult = reportProgressResult
 }
 
 @OptIn(ExperimentalForInheritanceCoroutinesApi::class, InternalCoroutinesApi::class)

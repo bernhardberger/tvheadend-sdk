@@ -10,6 +10,8 @@ import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpaceState
 import at.bernhardberger.tvheadend.sdk.core.DvrEntry
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult
+import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
+import at.bernhardberger.tvheadend.sdk.core.DvrProgressResult
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.DvrSchedule
 import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
@@ -22,6 +24,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Test
+import kotlin.time.Duration.Companion.seconds
 
 internal class FakeDvrRepositoryTest {
     @Test
@@ -80,6 +83,22 @@ internal class FakeDvrRepositoryTest {
             ),
         )
         assertSame(stopped, repository.stopEntry(DvrEntryId(7)))
+        assertEquals(DvrRepositoryState.Empty, repository.state.value)
+    }
+
+    @Test
+    fun `fake scripts progress outcomes without changing repository state`() = runTest {
+        val repository = FakeDvrRepository()
+        val accepted = DvrProgressResult.Accepted
+        repository.reportProgressResult = accepted
+
+        assertSame(
+            accepted,
+            repository.reportProgress(
+                DvrEntryId(7),
+                DvrPlaybackProgress.checkpoint(30.seconds),
+            ),
+        )
         assertEquals(DvrRepositoryState.Empty, repository.state.value)
     }
 }

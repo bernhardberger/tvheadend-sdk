@@ -94,7 +94,10 @@ import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
+import at.bernhardberger.tvheadend.sdk.core.DVR_PROGRESS_INCR_PLAY_COUNT
+import at.bernhardberger.tvheadend.sdk.core.DVR_PROGRESS_KEEP_PLAY_COUNT
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
+import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
 import at.bernhardberger.tvheadend.sdk.core.DvrSchedule
 import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
 import at.bernhardberger.tvheadend.sdk.core.DvrSubscriptionError
@@ -1025,6 +1028,86 @@ internal class HtspProtocolGatewayTest {
         var caught: CancellationException? = null
         try {
             gateway.scheduleDvrEntry(generation, schedule)
+        } catch (failure: CancellationException) {
+            caught = failure
+        }
+        assertSame(cancellation, caught)
+    }
+
+    @Test
+    fun `DVR progress maps keep and increment playcount without metadata fields`() = runTest {
+        val sourceGeneration = HtspConnectionGeneration()
+        val fake = FakeHtspConnection().apply {
+            liveConnectionValue.value = liveConnection(sourceGeneration)
+            connectOutcome = HtspConnectOutcome.Connected(requireNotNull(liveConnectionValue.value))
+            executeResult = HtspResult.Ok(UpdateDvrEntryResponse(1, "private ignored"))
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+
+        assertTrue(
+            gateway.reportDvrProgress(
+                generation,
+                DvrEntryId(7),
+                DvrPlaybackProgress.checkpoint(90.seconds),
+            ) is GatewayResult.Ok,
+        )
+        val keep = fake.lastRequest as UpdateDvrEntryRequest
+        assertEquals(7L, keep.entryId)
+        assertEquals(90L, keep.playPosition)
+        assertEquals(DVR_PROGRESS_KEEP_PLAY_COUNT, keep.playCount)
+        assertEquals(null, keep.title)
+        assertEquals(null, keep.channelId)
+
+        assertTrue(
+            gateway.reportDvrProgress(
+                generation,
+                DvrEntryId(7),
+                DvrPlaybackProgress(120.seconds, markWatched = true),
+            ) is GatewayResult.Ok,
+        )
+        val increment = fake.lastRequest as UpdateDvrEntryRequest
+        assertEquals(120L, increment.playPosition)
+        assertEquals(DVR_PROGRESS_INCR_PLAY_COUNT, increment.playCount)
+
+        fake.executeResult = HtspResult.Ok(UpdateDvrEntryResponse(null, "private rejected"))
+        assertSame(
+            GatewayResult.ServerRejected,
+            gateway.reportDvrProgress(
+                generation,
+                DvrEntryId(7),
+                DvrPlaybackProgress.checkpoint(1.seconds),
+            ),
+        )
+        val failures = listOf(
+            HtspResult.ServerError to GatewayResult.ServerRejected,
+            HtspResult.AccessDenied to GatewayResult.AccessDenied,
+            HtspResult.ConnectionLimit to GatewayResult.ConnectionLimit,
+            HtspResult.Timeout to GatewayResult.Timeout,
+            HtspResult.TransportUnavailable to GatewayResult.TransportUnavailable,
+            HtspResult.NotSupported to GatewayResult.NotSupported,
+        )
+        failures.forEach { (source, expected) ->
+            fake.executeResult = source
+            assertSame(
+                expected,
+                gateway.reportDvrProgress(
+                    generation,
+                    DvrEntryId(7),
+                    DvrPlaybackProgress.checkpoint(1.seconds),
+                ),
+            )
+        }
+        val cancellation = CancellationException("private cancellation")
+        fake.executeException = cancellation
+        var caught: CancellationException? = null
+        try {
+            gateway.reportDvrProgress(
+                generation,
+                DvrEntryId(7),
+                DvrPlaybackProgress.checkpoint(1.seconds),
+            )
         } catch (failure: CancellationException) {
             caught = failure
         }

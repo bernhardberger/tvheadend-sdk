@@ -78,7 +78,10 @@ import at.bernhardberger.tvheadend.sdk.core.AutorecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
+import at.bernhardberger.tvheadend.sdk.core.DVR_PROGRESS_INCR_PLAY_COUNT
+import at.bernhardberger.tvheadend.sdk.core.DVR_PROGRESS_KEEP_PLAY_COUNT
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
+import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
 import at.bernhardberger.tvheadend.sdk.core.DvrSchedule
 import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
 import at.bernhardberger.tvheadend.sdk.core.RecordingRuleChannel
@@ -445,6 +448,21 @@ internal class HtspProtocolGateway internal constructor(
         daysOfWeekMask = update.daysOfWeekMask,
         expectedGeneration = htspGenerationFor(generation),
     ).toGatewayResult {}
+
+    override suspend fun reportDvrProgress(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+        progress: DvrPlaybackProgress,
+    ): GatewayResult<Unit> = connection.updateDvrEntry(
+        entryId = id.value,
+        playCount = if (progress.markWatched) {
+            DVR_PROGRESS_INCR_PLAY_COUNT
+        } else {
+            DVR_PROGRESS_KEEP_PLAY_COUNT
+        },
+        playPosition = progress.position.inWholeSeconds,
+        expectedGeneration = htspGenerationFor(generation),
+    ).toDvrGatewayResult(::acceptedDvrAcknowledgement)
 
     override suspend fun deleteTimerecRule(
         generation: GatewayGeneration,

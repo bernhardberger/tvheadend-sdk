@@ -5,6 +5,7 @@ import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
+import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
 import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleUpdate
@@ -108,6 +109,12 @@ internal interface ProtocolGateway {
     public suspend fun deleteTimerecRule(
         generation: GatewayGeneration,
         id: TimerecRuleId,
+    ): GatewayResult<Unit>
+
+    public suspend fun reportDvrProgress(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+        progress: DvrPlaybackProgress,
     ): GatewayResult<Unit>
 
     public fun subscription(

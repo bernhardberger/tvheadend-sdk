@@ -13,7 +13,10 @@ import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpaceState
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult
+import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
+import at.bernhardberger.tvheadend.sdk.core.DvrProgressResult
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
 import at.bernhardberger.tvheadend.sdk.core.DvrSchedule
 import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
@@ -302,6 +305,96 @@ internal class ConnectionOwnerTest {
 
         owner.disconnect()
         assertSame(DvrMutationResult.NotReady, owner.dvrRepository.scheduleEntry(request))
+        owner.shutdown()
+    }
+
+    @Test
+    fun `progress reports require ready v27 and latch not supported until reconnect`() = runTest {
+        val gateway = FakeProtocolGateway()
+        val generation = GatewayGeneration()
+        gateway.connectResults += connected(generation, protocolVersion = 26)
+        lateinit var owner: ConnectionOwner
+        lateinit var metadata: PhaseOneSessionMetadata
+        val onProof = { proofGeneration: GatewayGeneration, allowed: Boolean ->
+            if (metadata.applyDvrMutationProof(proofGeneration, allowed)) {
+                owner.refreshDvrCapabilities(proofGeneration)
+            }
+        }
+        val mutations = DvrMutationCoordinator(
+            gateway = gateway,
+            isSessionReady = { commandGeneration -> owner.isDvrMutationReady(commandGeneration) },
+            onDvrAccessProof = onProof,
+        )
+        val progress = DvrProgressCoordinator(
+            gateway = gateway,
+            isSessionReady = { commandGeneration -> owner.isDvrMutationReady(commandGeneration) },
+            onDvrAccessProof = onProof,
+        )
+        metadata = PhaseOneSessionMetadata(
+            mutationCommands = mutations,
+            progressCommands = progress,
+            onDvrMetadataAccepted = mutations::acceptMetadata,
+        )
+        owner = owner(
+            gateway = gateway,
+            metadata = metadata,
+            dvrMutations = mutations,
+            dvrProgress = progress,
+        )
+        val report = DvrPlaybackProgress.checkpoint(30.seconds)
+
+        assertSame(
+            DvrProgressResult.NotReady,
+            owner.dvrRepository.reportProgress(DvrEntryId(7), report),
+        )
+        owner.connect(ServerProfile("server"))
+        runCurrent()
+        gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        runCurrent()
+        assertSame(
+            DvrProgressResult.NotSupported,
+            owner.dvrRepository.reportProgress(DvrEntryId(7), report),
+        )
+        assertEquals(0, gateway.progressReportCount)
+
+        owner.disconnect()
+        runCurrent()
+        val next = GatewayGeneration()
+        gateway.connectResults += connected(next, protocolVersion = 27)
+        owner.connect(ServerProfile("server"))
+        runCurrent()
+        gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(next))
+        runCurrent()
+        gateway.reportDvrProgressBehavior = { _, _, _ -> GatewayResult.NotSupported }
+        assertSame(
+            DvrProgressResult.NotSupported,
+            owner.dvrRepository.reportProgress(DvrEntryId(7), report),
+        )
+        assertEquals(1, gateway.progressReportCount)
+        assertSame(
+            DvrProgressResult.NotSupported,
+            owner.dvrRepository.reportProgress(DvrEntryId(7), report),
+        )
+        assertEquals(1, gateway.progressReportCount)
+
+        owner.disconnect()
+        runCurrent()
+        val restored = GatewayGeneration()
+        gateway.connectResults += connected(restored, protocolVersion = 27)
+        owner.connect(ServerProfile("server"))
+        runCurrent()
+        gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(restored))
+        runCurrent()
+        gateway.reportDvrProgressBehavior = { _, _, _ -> GatewayResult.Ok(Unit) }
+        assertSame(
+            DvrProgressResult.Accepted,
+            owner.dvrRepository.reportProgress(DvrEntryId(7), report),
+        )
+        assertEquals(2, gateway.progressReportCount)
+        assertEquals(
+            DvrRepositoryState.Current(DvrSnapshot.create()),
+            owner.dvrRepository.state.value,
+        )
         owner.shutdown()
     }
 
@@ -951,11 +1044,13 @@ internal class ConnectionOwnerTest {
         children: SessionChildren = SessionChildren.None,
         metadata: PhaseOneSessionMetadata = PhaseOneSessionMetadata(),
         dvrMutations: DvrMutationLifecycle = DvrMutationLifecycle.None,
+        dvrProgress: DvrProgressLifecycle = DvrProgressLifecycle.None,
     ): ConnectionOwner = ConnectionOwner(
         gateway = gateway,
         metadata = metadata,
         children = children,
         dvrMutations = dvrMutations,
+        dvrProgress = dvrProgress,
         defaultDispatcher = StandardTestDispatcher(testScheduler),
         backoff = ExponentialReconnectBackoff(nextJitter = { 0.5 }),
     )
@@ -1002,10 +1097,11 @@ private fun connected(
     generation: GatewayGeneration,
     streaming: Boolean? = null,
     dvrAccess: Boolean? = null,
+    protocolVersion: Int? = 43,
 ): GatewayConnectResult.Connected = GatewayConnectResult.Connected(
     GatewayConnection(
         generation = generation,
-        protocolVersion = 43,
+        protocolVersion = protocolVersion,
         dvrAccess = dvrAccess,
         serverFacts = GatewayServerFacts(
             serverName = null,
@@ -1062,6 +1158,12 @@ private class FakeProtocolGateway(
         GatewayGeneration,
         DvrScheduleRequest,
     ) -> GatewayResult<DvrEntryId> = { _, _ -> GatewayResult.NotSupported }
+    internal var reportDvrProgressBehavior: suspend (
+        GatewayGeneration,
+        DvrEntryId,
+        DvrPlaybackProgress,
+    ) -> GatewayResult<Unit> = { _, _, _ -> GatewayResult.NotSupported }
+    internal var progressReportCount: Int = 0
     internal var connectCalls: Int = 0
     internal var maximumConcurrentConnects: Int = 0
     internal var invalidateOnReadyCommit: Boolean = false
@@ -1206,6 +1308,15 @@ private class FakeProtocolGateway(
         generation: GatewayGeneration,
         id: TimerecRuleId,
     ): GatewayResult<Unit> = GatewayResult.NotSupported
+
+    override suspend fun reportDvrProgress(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+        progress: DvrPlaybackProgress,
+    ): GatewayResult<Unit> {
+        progressReportCount += 1
+        return reportDvrProgressBehavior(generation, id, progress)
+    }
 
     override fun subscription(
         generation: GatewayGeneration,

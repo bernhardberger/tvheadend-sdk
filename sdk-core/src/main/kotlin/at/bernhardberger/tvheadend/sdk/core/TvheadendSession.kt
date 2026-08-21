@@ -1,10 +1,12 @@
 package at.bernhardberger.tvheadend.sdk.core
 
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.ServerAuthentication as GatewayAuthentication
 import at.bernhardberger.tvheadend.sdk.core.gateway.ServerConfiguration
 import at.bernhardberger.tvheadend.sdk.core.gateway.htsp.HtspProtocolGateway
 import at.bernhardberger.tvheadend.sdk.core.session.ConnectionOwner
 import at.bernhardberger.tvheadend.sdk.core.session.DvrMutationCoordinator
+import at.bernhardberger.tvheadend.sdk.core.session.DvrProgressCoordinator
 import at.bernhardberger.tvheadend.sdk.core.session.ExponentialReconnectBackoff
 import at.bernhardberger.tvheadend.sdk.core.session.PhaseOneSessionMetadata
 import at.bernhardberger.tvheadend.sdk.core.session.PlaybackSessionChildren
@@ -71,17 +73,24 @@ private object SessionRegistry {
         val gateway = HtspProtocolGateway(Dispatchers.IO)
         lateinit var owner: ConnectionOwner
         lateinit var metadata: PhaseOneSessionMetadata
+        val onDvrAccessProof = { generation: GatewayGeneration, allowed: Boolean ->
+            if (metadata.applyDvrMutationProof(generation, allowed)) {
+                owner.refreshDvrCapabilities(generation)
+            }
+        }
         val dvrMutations = DvrMutationCoordinator(
             gateway = gateway,
             isSessionReady = { generation -> owner.isDvrMutationReady(generation) },
-            onDvrAccessProof = { generation, allowed ->
-                if (metadata.applyDvrMutationProof(generation, allowed)) {
-                    owner.refreshDvrCapabilities(generation)
-                }
-            },
+            onDvrAccessProof = onDvrAccessProof,
+        )
+        val dvrProgress = DvrProgressCoordinator(
+            gateway = gateway,
+            isSessionReady = { generation -> owner.isDvrMutationReady(generation) },
+            onDvrAccessProof = onDvrAccessProof,
         )
         metadata = PhaseOneSessionMetadata(
             mutationCommands = dvrMutations,
+            progressCommands = dvrProgress,
             onDvrMetadataAccepted = dvrMutations::acceptMetadata,
         )
         owner = ConnectionOwner(
@@ -94,6 +103,7 @@ private object SessionRegistry {
                 clock = Clock.System,
             ),
             dvrMutations = dvrMutations,
+            dvrProgress = dvrProgress,
             defaultDispatcher = Dispatchers.Default,
             backoff = ExponentialReconnectBackoff(
                 nextJitter = { Random.Default.nextDouble() },

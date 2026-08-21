@@ -9,6 +9,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
+import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
 import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
@@ -354,6 +355,12 @@ private class SubscriptionGateway : ProtocolGateway {
     override suspend fun deleteTimerecRule(
         generation: GatewayGeneration,
         id: TimerecRuleId,
+    ): GatewayResult<Unit> = GatewayResult.NotSupported
+
+    override suspend fun reportDvrProgress(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+        progress: DvrPlaybackProgress,
     ): GatewayResult<Unit> = GatewayResult.NotSupported
 
     override fun subscription(

@@ -11,6 +11,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult
+import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
 import at.bernhardberger.tvheadend.sdk.core.DvrSchedule
 import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
 import at.bernhardberger.tvheadend.sdk.core.EventId
@@ -318,6 +319,11 @@ internal class MutationGateway : ProtocolGateway {
         GatewayGeneration,
         TimerecRuleId,
     ) -> GatewayResult<Unit> = { _, _ -> GatewayResult.NotSupported }
+    internal var progressBehavior: suspend (
+        GatewayGeneration,
+        DvrEntryId,
+        DvrPlaybackProgress,
+    ) -> GatewayResult<Unit> = { _, _, _ -> GatewayResult.NotSupported }
 
     override val connectionState: MutableStateFlow<GatewayState> =
         MutableStateFlow(GatewayState.Disconnected)
@@ -407,6 +413,12 @@ internal class MutationGateway : ProtocolGateway {
         generation: GatewayGeneration,
         id: TimerecRuleId,
     ): GatewayResult<Unit> = deleteTimerecBehavior(generation, id)
+
+    override suspend fun reportDvrProgress(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+        progress: DvrPlaybackProgress,
+    ): GatewayResult<Unit> = progressBehavior(generation, id, progress)
 
     override fun subscription(
         generation: GatewayGeneration,

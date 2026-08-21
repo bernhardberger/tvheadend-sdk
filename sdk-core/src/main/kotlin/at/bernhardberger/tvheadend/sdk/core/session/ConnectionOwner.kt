@@ -49,6 +49,7 @@ internal class ConnectionOwner(
     private val metadata: SessionMetadata,
     private val children: SessionChildren,
     private val dvrMutations: DvrMutationLifecycle = DvrMutationLifecycle.None,
+    private val dvrProgress: DvrProgressLifecycle = DvrProgressLifecycle.None,
     defaultDispatcher: CoroutineDispatcher,
     private val backoff: ReconnectBackoff,
     private val onShutdown: () -> Unit = {},
@@ -221,6 +222,7 @@ internal class ConnectionOwner(
             activeGeneration = null
             retryDisposition = null
             var failure = captureFailure { dvrMutations.stopAdmission() }
+            failure = captureFailure(failure) { dvrProgress.stopAdmission() }
             failure = captureFailure(failure) { children.stopAdmission() }
             if (retainPublishedCatalog) {
                 metadata.resetWorkingStateRetainingPublishedSnapshot()
@@ -331,6 +333,7 @@ internal class ConnectionOwner(
             generation.complete(connection.generation)
             requireCurrent(token)
             dvrMutations.bindGeneration(connection.generation)
+            dvrProgress.bindGeneration(connection.generation, connection.protocolVersion)
             children.bindGeneration(connection.generation)
             metadata.bindGeneration(connection.generation)
             metadata.applyDvrAccess(connection.generation, connection.dvrAccess)
@@ -439,7 +442,11 @@ internal class ConnectionOwner(
             false
         } else if (!dvrMutations.startAdmission(generation)) {
             false
+        } else if (!dvrProgress.startAdmission(generation)) {
+            dvrMutations.stopAdmission()
+            false
         } else if (!children.startAdmission(generation)) {
+            dvrProgress.stopAdmission()
             dvrMutations.stopAdmission()
             false
         } else {
@@ -479,6 +486,7 @@ internal class ConnectionOwner(
             activeGeneration = null
             retryDisposition = disposition
             var admissionFailure = captureFailure { dvrMutations.stopAdmission() }
+            admissionFailure = captureFailure(admissionFailure) { dvrProgress.stopAdmission() }
             admissionFailure = captureFailure(admissionFailure) { children.stopAdmission() }
             metadata.resetWorkingStateRetainingPublishedSnapshot()
             mutableState.value = SessionState.Unavailable(failure)

@@ -745,6 +745,123 @@ public final class at/bernhardberger/tvheadend/sdk/core/DvrMutationResult$Transp
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class at/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress {
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress$Companion;
+	public synthetic fun <init> (JZILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (JZLkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1-UwyO8pc ()J
+	public final fun component2 ()Z
+	public final fun copy-VtjQ1oo (JZ)Lat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress;
+	public static synthetic fun copy-VtjQ1oo$default (Lat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress;JZILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getMarkWatched ()Z
+	public final fun getPosition-UwyO8pc ()J
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress$Companion {
+	public final fun checkpoint-LRDsOJo (J)Lat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress;
+	public final fun close-9LpIZVw (JLkotlin/time/Duration;Lat/bernhardberger/tvheadend/sdk/core/DvrProgressPolicy;)Lat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress;
+	public static synthetic fun close-9LpIZVw$default (Lat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress$Companion;JLkotlin/time/Duration;Lat/bernhardberger/tvheadend/sdk/core/DvrProgressPolicy;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrProgressPolicy {
+	public synthetic fun <init> (JJJJDJILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (JJJJDJLkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun closeProgress-JKoRlfk (JLkotlin/time/Duration;)Lat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress;
+	public final fun component1-UwyO8pc ()J
+	public final fun component2-UwyO8pc ()J
+	public final fun component3-UwyO8pc ()J
+	public final fun component4-UwyO8pc ()J
+	public final fun component5 ()D
+	public final fun component6-UwyO8pc ()J
+	public final fun copy-5JAl_9I (JJJJDJ)Lat/bernhardberger/tvheadend/sdk/core/DvrProgressPolicy;
+	public static synthetic fun copy-5JAl_9I$default (Lat/bernhardberger/tvheadend/sdk/core/DvrProgressPolicy;JJJJDJILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/DvrProgressPolicy;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCheckpointInterval-UwyO8pc ()J
+	public final fun getCheckpointMinimumDelta-UwyO8pc ()J
+	public final fun getFinishedRemaining-UwyO8pc ()J
+	public final fun getFinishedWatchedFraction ()D
+	public final fun getResumeFloor-UwyO8pc ()J
+	public final fun getSeekDebounce-UwyO8pc ()J
+	public fun hashCode ()I
+	public final fun isFinished-JKoRlfk (JLkotlin/time/Duration;)Z
+	public final fun resumeOffer (Lat/bernhardberger/tvheadend/sdk/core/DvrEntry;)Lat/bernhardberger/tvheadend/sdk/core/DvrResumeOffer;
+	public fun toString ()Ljava/lang/String;
+	public final fun tracker ()Lat/bernhardberger/tvheadend/sdk/core/DvrProgressTracker;
+}
+
+public abstract interface class at/bernhardberger/tvheadend/sdk/core/DvrProgressResult {
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrProgressResult$Accepted : at/bernhardberger/tvheadend/sdk/core/DvrProgressResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrProgressResult$Accepted;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrProgressResult$AccessDenied : at/bernhardberger/tvheadend/sdk/core/DvrProgressResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrProgressResult$AccessDenied;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrProgressResult$ConnectionLimit : at/bernhardberger/tvheadend/sdk/core/DvrProgressResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrProgressResult$ConnectionLimit;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrProgressResult$NotReady : at/bernhardberger/tvheadend/sdk/core/DvrProgressResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrProgressResult$NotReady;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrProgressResult$NotSupported : at/bernhardberger/tvheadend/sdk/core/DvrProgressResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrProgressResult$NotSupported;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrProgressResult$ServerRejected : at/bernhardberger/tvheadend/sdk/core/DvrProgressResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrProgressResult$ServerRejected;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrProgressResult$Timeout : at/bernhardberger/tvheadend/sdk/core/DvrProgressResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrProgressResult$Timeout;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrProgressResult$TransportUnavailable : at/bernhardberger/tvheadend/sdk/core/DvrProgressResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrProgressResult$TransportUnavailable;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrProgressTracker {
+	public fun <init> ()V
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/DvrProgressPolicy;)V
+	public synthetic fun <init> (Lat/bernhardberger/tvheadend/sdk/core/DvrProgressPolicy;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun close-JKoRlfk (JLkotlin/time/Duration;)Lat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress;
+	public final fun getPolicy ()Lat/bernhardberger/tvheadend/sdk/core/DvrProgressPolicy;
+	public final fun onElapsed-HG0u8IE (Lkotlin/time/Instant;J)Lat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress;
+	public final fun onSeek (Lkotlin/time/Instant;)V
+	public final fun reset ()V
+}
+
 public final class at/bernhardberger/tvheadend/sdk/core/DvrRecordingFile {
 	public fun <init> (Ljava/lang/Long;Ljava/lang/String;Lkotlin/time/Instant;Lkotlin/time/Instant;Ljava/lang/Long;)V
 	public final fun component1 ()Ljava/lang/Long;
@@ -782,6 +899,7 @@ public abstract interface class at/bernhardberger/tvheadend/sdk/core/DvrReposito
 	public abstract fun getEntries ()Lkotlinx/coroutines/flow/StateFlow;
 	public abstract fun getState ()Lkotlinx/coroutines/flow/StateFlow;
 	public abstract fun getTimerecRules ()Lkotlinx/coroutines/flow/StateFlow;
+	public abstract fun reportProgress-c8JLQRw (JLat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun scheduleEntry (Lat/bernhardberger/tvheadend/sdk/core/DvrScheduleRequest;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun stopEntry-LuN5gl8 (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun timerecRule-OXQAzx4 (Ljava/lang/String;)Lkotlinx/coroutines/flow/Flow;
@@ -829,6 +947,27 @@ public final class at/bernhardberger/tvheadend/sdk/core/DvrRepositoryState$Synch
 	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState$Synchronizing;Lat/bernhardberger/tvheadend/sdk/core/DvrSnapshot;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState$Synchronizing;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getStaleSnapshot ()Lat/bernhardberger/tvheadend/sdk/core/DvrSnapshot;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class at/bernhardberger/tvheadend/sdk/core/DvrResumeOffer {
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrResumeOffer$Resume : at/bernhardberger/tvheadend/sdk/core/DvrResumeOffer {
+	public synthetic fun <init> (JLkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1-UwyO8pc ()J
+	public final fun copy-LRDsOJo (J)Lat/bernhardberger/tvheadend/sdk/core/DvrResumeOffer$Resume;
+	public static synthetic fun copy-LRDsOJo$default (Lat/bernhardberger/tvheadend/sdk/core/DvrResumeOffer$Resume;JILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/DvrResumeOffer$Resume;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getPosition-UwyO8pc ()J
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrResumeOffer$StartOver : at/bernhardberger/tvheadend/sdk/core/DvrResumeOffer {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrResumeOffer$StartOver;
+	public fun equals (Ljava/lang/Object;)Z
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
