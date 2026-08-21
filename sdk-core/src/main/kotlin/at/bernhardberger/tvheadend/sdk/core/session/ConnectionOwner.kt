@@ -3,6 +3,7 @@
 package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepository
+import at.bernhardberger.tvheadend.sdk.core.DvrRepository
 import at.bernhardberger.tvheadend.sdk.core.EpgRepository
 import at.bernhardberger.tvheadend.sdk.core.ServerProfile
 import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
@@ -67,6 +68,7 @@ internal class ConnectionOwner(
     override val state: StateFlow<SessionState> = mutableState.asStateFlow()
     override val channelRepository: ChannelRepository = metadata
     override val epgRepository: EpgRepository = metadata.epgRepository
+    override val dvrRepository: DvrRepository = metadata.dvrRepository
     override val subscriptions: SubscriptionOpener = children
 
     override suspend fun connect(profile: ServerProfile): SessionCommandResult {

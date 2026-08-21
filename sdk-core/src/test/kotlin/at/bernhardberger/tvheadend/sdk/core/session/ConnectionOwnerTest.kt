@@ -4,6 +4,7 @@ package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.ServerAuthentication
 import at.bernhardberger.tvheadend.sdk.core.ServerCapabilities
@@ -13,12 +14,14 @@ import at.bernhardberger.tvheadend.sdk.core.SessionFailure
 import at.bernhardberger.tvheadend.sdk.core.SessionOperationFailure
 import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
+import at.bernhardberger.tvheadend.sdk.core.gateway.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.gateway.EventId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnection
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailureEvent
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
@@ -81,8 +84,10 @@ internal class ConnectionOwnerTest {
         assertEquals(SessionState.Disconnected, owner.state.value)
         assertSame(metadata, owner.channelRepository)
         assertSame(metadata.epgRepository, owner.epgRepository)
+        assertSame(metadata.dvrRepository, owner.dvrRepository)
         assertEquals(ChannelRepositoryState.Empty, metadata.channelsAndTags.value)
         assertEquals(EpgRepositoryState.Empty, owner.epgRepository.state.value)
+        assertEquals(DvrRepositoryState.Empty, owner.dvrRepository.state.value)
         assertTrue(order.isEmpty(), "Construction must not launch lifecycle work")
 
         assertEquals(SessionCommandResult.STARTED, owner.connect(ServerProfile(" server ")))
@@ -96,9 +101,13 @@ internal class ConnectionOwnerTest {
         assertFalse("admission.start" in order, "Admission started before metadata synchronization")
         assertTrue(metadata.channelsAndTags.value is ChannelRepositoryState.Synchronizing)
         assertTrue(owner.epgRepository.state.value is EpgRepositoryState.Synchronizing)
+        assertTrue(owner.dvrRepository.state.value is DvrRepositoryState.Synchronizing)
 
         gateway.emitMetadata(
             MetadataEvent.ChannelAdded(generation, channelMetadata(id = 1)),
+        )
+        gateway.emitMetadata(
+            MetadataEvent.DvrEntryAdded(generation, dvrMetadata(id = 8)),
         )
         assertTrue(metadata.channelsAndTags.value is ChannelRepositoryState.Synchronizing)
 
@@ -116,7 +125,9 @@ internal class ConnectionOwnerTest {
         )
         assertTrue(metadata.channelsAndTags.value is ChannelRepositoryState.Current)
         assertTrue(owner.epgRepository.state.value is EpgRepositoryState.Current)
+        assertTrue(owner.dvrRepository.state.value is DvrRepositoryState.Current)
         assertEquals(listOf(1L), owner.channelRepository.channels.value.map { it.id.value })
+        assertEquals(listOf(8L), owner.dvrRepository.entries.value.map { it.id.value })
         assertEquals("admission.start", order.last())
         owner.shutdown()
     }
@@ -601,12 +612,16 @@ internal class ConnectionOwnerTest {
         runCurrent()
         assertEquals(listOf(1L), owner.channelRepository.channels.value.map { it.id.value })
         assertEquals(listOf(1L), owner.epgRepository.events.value.map { it.id.value })
+        gateway.emitMetadata(MetadataEvent.DvrEntryAdded(firstGeneration, dvrMetadata(1)))
+        runCurrent()
+        assertEquals(listOf(1L), owner.dvrRepository.entries.value.map { it.id.value })
 
         owner.connect(ServerProfile("second"))
         runCurrent()
         assertEquals(SessionState.Unavailable(SessionFailure.NoChannels), owner.state.value)
         assertEquals(ChannelRepositoryState.Empty, owner.channelRepository.state.value)
         assertEquals(EpgRepositoryState.Empty, owner.epgRepository.state.value)
+        assertEquals(DvrRepositoryState.Empty, owner.dvrRepository.state.value)
 
         owner.connect(ServerProfile("first"))
         runCurrent()
@@ -622,11 +637,13 @@ internal class ConnectionOwnerTest {
         owner.disconnect()
         assertEquals(ChannelRepositoryState.Empty, owner.channelRepository.state.value)
         assertEquals(EpgRepositoryState.Empty, owner.epgRepository.state.value)
+        assertEquals(DvrRepositoryState.Empty, owner.dvrRepository.state.value)
         owner.connect(ServerProfile("third"))
         runCurrent()
         assertEquals(SessionState.Unavailable(SessionFailure.NoChannels), owner.state.value)
         assertEquals(ChannelRepositoryState.Empty, owner.channelRepository.state.value)
         assertEquals(EpgRepositoryState.Empty, owner.epgRepository.state.value)
+        assertEquals(DvrRepositoryState.Empty, owner.dvrRepository.state.value)
         owner.shutdown()
     }
 
@@ -785,6 +802,11 @@ private fun epgMetadata(id: Long, channelId: Long): GatewayEpgEvent = GatewayEpg
     channelId = ChannelId(channelId),
     start = Instant.fromEpochSeconds(10),
     stop = Instant.fromEpochSeconds(20),
+)
+
+private fun dvrMetadata(id: Long): GatewayDvrEntry = GatewayDvrEntry(
+    id = DvrEntryId(id),
+    title = "entry",
 )
 
 private class ConnectionFailureCase(

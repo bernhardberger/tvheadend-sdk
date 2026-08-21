@@ -1,3 +1,83 @@
+public final class at/bernhardberger/tvheadend/sdk/core/AutorecRule {
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/AutorecRule$Companion;
+	public final fun component1-1h3jQm0 ()Ljava/lang/String;
+	public final fun component10 ()Ljava/lang/Integer;
+	public final fun component11 ()Ljava/lang/Long;
+	public final fun component12 ()Ljava/lang/Long;
+	public final fun component13 ()Ljava/lang/Long;
+	public final fun component14 ()Ljava/lang/Long;
+	public final fun component15 ()Ljava/lang/Long;
+	public final fun component16 ()Ljava/lang/Long;
+	public final fun component17 ()Ljava/lang/String;
+	public final fun component18 ()Ljava/lang/String;
+	public final fun component19 ()Ljava/lang/Boolean;
+	public final fun component2 ()Ljava/lang/Boolean;
+	public final fun component20 ()Ljava/lang/Boolean;
+	public final fun component21 ()Ljava/lang/String;
+	public final fun component22 ()Ljava/lang/String;
+	public final fun component23 ()Ljava/lang/String;
+	public final fun component24 ()Ljava/lang/String;
+	public final fun component25-tg-tQzc ()Lat/bernhardberger/tvheadend/sdk/core/ChannelId;
+	public final fun component26 ()Ljava/lang/String;
+	public final fun component27-2_39p4U ()Ljava/lang/String;
+	public final fun component3-FghU774 ()Lkotlin/time/Duration;
+	public final fun component4-FghU774 ()Lkotlin/time/Duration;
+	public final fun component5 ()Ljava/lang/Long;
+	public final fun component6 ()Ljava/lang/Long;
+	public final fun component7 ()Ljava/lang/Long;
+	public final fun component8 ()Ljava/lang/Integer;
+	public final fun component9 ()Ljava/lang/Integer;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getApproximateStartMinutesSinceMidnight ()Ljava/lang/Integer;
+	public final fun getBroadcastType ()Ljava/lang/Long;
+	public final fun getChannelId-tg-tQzc ()Lat/bernhardberger/tvheadend/sdk/core/ChannelId;
+	public final fun getComment ()Ljava/lang/String;
+	public final fun getConfigId-2_39p4U ()Ljava/lang/String;
+	public final fun getCreator ()Ljava/lang/String;
+	public final fun getDaysOfWeekMask ()Ljava/lang/Long;
+	public final fun getDirectory ()Ljava/lang/String;
+	public final fun getDuplicateDetection ()Ljava/lang/Long;
+	public final fun getEnabled ()Ljava/lang/Boolean;
+	public final fun getFullText ()Ljava/lang/Boolean;
+	public final fun getId-1h3jQm0 ()Ljava/lang/String;
+	public final fun getMaxDuration-FghU774 ()Lkotlin/time/Duration;
+	public final fun getMaximumRecordingCount ()Ljava/lang/Long;
+	public final fun getMergeText ()Ljava/lang/Boolean;
+	public final fun getMinDuration-FghU774 ()Lkotlin/time/Duration;
+	public final fun getName ()Ljava/lang/String;
+	public final fun getOwner ()Ljava/lang/String;
+	public final fun getPriority ()Ljava/lang/Long;
+	public final fun getRemovalDays ()Ljava/lang/Long;
+	public final fun getRetentionDays ()Ljava/lang/Long;
+	public final fun getSeriesLinkUri ()Ljava/lang/String;
+	public final fun getStartExtraMinutes ()Ljava/lang/Long;
+	public final fun getStartMinutesSinceMidnight ()Ljava/lang/Integer;
+	public final fun getStartWindowEndMinutesSinceMidnight ()Ljava/lang/Integer;
+	public final fun getStopExtraMinutes ()Ljava/lang/Long;
+	public final fun getTitle ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/AutorecRule$Companion {
+	public final fun create-qsKN4bo (Ljava/lang/String;Ljava/lang/Boolean;Lkotlin/time/Duration;Lkotlin/time/Duration;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Boolean;Ljava/lang/Boolean;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Lat/bernhardberger/tvheadend/sdk/core/ChannelId;Ljava/lang/String;Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/AutorecRule;
+	public static synthetic fun create-qsKN4bo$default (Lat/bernhardberger/tvheadend/sdk/core/AutorecRule$Companion;Ljava/lang/String;Ljava/lang/Boolean;Lkotlin/time/Duration;Lkotlin/time/Duration;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Boolean;Ljava/lang/Boolean;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Lat/bernhardberger/tvheadend/sdk/core/ChannelId;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/AutorecRule;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/AutorecRuleId {
+	public static final synthetic fun box-impl (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/AutorecRuleId;
+	public static fun constructor-impl (Ljava/lang/String;)Ljava/lang/String;
+	public fun equals (Ljava/lang/Object;)Z
+	public static fun equals-impl (Ljava/lang/String;Ljava/lang/Object;)Z
+	public static final fun equals-impl0 (Ljava/lang/String;Ljava/lang/String;)Z
+	public final fun getValue ()Ljava/lang/String;
+	public fun hashCode ()I
+	public static fun hashCode-impl (Ljava/lang/String;)I
+	public fun toString ()Ljava/lang/String;
+	public static fun toString-impl (Ljava/lang/String;)Ljava/lang/String;
+	public final synthetic fun unbox-impl ()Ljava/lang/String;
+}
+
 public final class at/bernhardberger/tvheadend/sdk/core/CapabilityAccess : java/lang/Enum {
 	public static final field ALLOWED Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
 	public static final field DENIED Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
@@ -181,6 +261,110 @@ public final class at/bernhardberger/tvheadend/sdk/core/ChannelTagId {
 	public final synthetic fun unbox-impl ()J
 }
 
+public final class at/bernhardberger/tvheadend/sdk/core/DvrConfigId {
+	public static final synthetic fun box-impl (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/DvrConfigId;
+	public static fun constructor-impl (Ljava/lang/String;)Ljava/lang/String;
+	public fun equals (Ljava/lang/Object;)Z
+	public static fun equals-impl (Ljava/lang/String;Ljava/lang/Object;)Z
+	public static final fun equals-impl0 (Ljava/lang/String;Ljava/lang/String;)Z
+	public final fun getValue ()Ljava/lang/String;
+	public fun hashCode ()I
+	public static fun hashCode-impl (Ljava/lang/String;)I
+	public fun toString ()Ljava/lang/String;
+	public static fun toString-impl (Ljava/lang/String;)Ljava/lang/String;
+	public final synthetic fun unbox-impl ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrEntry {
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/DvrEntry$Companion;
+	public final fun component1-YcJ-2to ()J
+	public final fun component10 ()Lkotlin/time/Instant;
+	public final fun component11 ()Ljava/lang/Long;
+	public final fun component12 ()Ljava/lang/Long;
+	public final fun component13 ()Ljava/lang/Long;
+	public final fun component14 ()Ljava/lang/Long;
+	public final fun component15 ()Ljava/lang/Long;
+	public final fun component16 ()Ljava/lang/Long;
+	public final fun component17 ()Lat/bernhardberger/tvheadend/sdk/core/EpgRating;
+	public final fun component18 ()Ljava/lang/Long;
+	public final fun component19-FghU774 ()Lkotlin/time/Duration;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component20 ()Lat/bernhardberger/tvheadend/sdk/core/EpgEpisode;
+	public final fun component21 ()Ljava/lang/String;
+	public final fun component22 ()Ljava/lang/String;
+	public final fun component23 ()Ljava/lang/String;
+	public final fun component24 ()Ljava/lang/String;
+	public final fun component25 ()Ljava/lang/String;
+	public final fun component26 ()Ljava/lang/String;
+	public final fun component27 ()Ljava/lang/String;
+	public final fun component28 ()Ljava/lang/String;
+	public final fun component29 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/Boolean;
+	public final fun component30 ()Ljava/lang/Long;
+	public final fun component31 ()Ljava/util/List;
+	public final fun component32 ()Ljava/lang/String;
+	public final fun component33-2_39p4U ()Ljava/lang/String;
+	public final fun component34 ()Ljava/lang/Long;
+	public final fun component35 ()Lat/bernhardberger/tvheadend/sdk/core/DvrEntryState;
+	public final fun component36 ()Lat/bernhardberger/tvheadend/sdk/core/DvrSubscriptionError;
+	public final fun component37 ()Ljava/lang/Long;
+	public final fun component38 ()Ljava/lang/Long;
+	public final fun component39 ()Ljava/lang/Long;
+	public final fun component4-tg-tQzc ()Lat/bernhardberger/tvheadend/sdk/core/ChannelId;
+	public final fun component5 ()Ljava/lang/String;
+	public final fun component6-IwUpMHo ()Lat/bernhardberger/tvheadend/sdk/core/EventId;
+	public final fun component7-aDRcnu8 ()Ljava/lang/String;
+	public final fun component8-qrdGAho ()Ljava/lang/String;
+	public final fun component9 ()Lkotlin/time/Instant;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAutorecRuleId-aDRcnu8 ()Ljava/lang/String;
+	public final fun getChannelId-tg-tQzc ()Lat/bernhardberger/tvheadend/sdk/core/ChannelId;
+	public final fun getChannelName ()Ljava/lang/String;
+	public final fun getComment ()Ljava/lang/String;
+	public final fun getConfigId-2_39p4U ()Ljava/lang/String;
+	public final fun getContentType ()Ljava/lang/Long;
+	public final fun getCopyrightYear ()Ljava/lang/Long;
+	public final fun getCreator ()Ljava/lang/String;
+	public final fun getDataErrors ()Ljava/lang/Long;
+	public final fun getDataSizeBytes ()Ljava/lang/Long;
+	public final fun getDescription ()Ljava/lang/String;
+	public final fun getDuplicate ()Ljava/lang/Long;
+	public final fun getEnabled ()Ljava/lang/Boolean;
+	public final fun getEpisode ()Lat/bernhardberger/tvheadend/sdk/core/EpgEpisode;
+	public final fun getEventId-IwUpMHo ()Lat/bernhardberger/tvheadend/sdk/core/EventId;
+	public final fun getFanartImage ()Ljava/lang/String;
+	public final fun getFiles ()Ljava/util/List;
+	public final fun getId-YcJ-2to ()J
+	public final fun getImage ()Ljava/lang/String;
+	public final fun getOwner ()Ljava/lang/String;
+	public final fun getPath ()Ljava/lang/String;
+	public final fun getPlayCount ()Ljava/lang/Long;
+	public final fun getPlayPosition-FghU774 ()Lkotlin/time/Duration;
+	public final fun getPriority ()Ljava/lang/Long;
+	public final fun getRating ()Lat/bernhardberger/tvheadend/sdk/core/EpgRating;
+	public final fun getRemovalDays ()Ljava/lang/Long;
+	public final fun getRetentionDays ()Ljava/lang/Long;
+	public final fun getStart ()Lkotlin/time/Instant;
+	public final fun getStartExtraMinutes ()Ljava/lang/Long;
+	public final fun getState ()Lat/bernhardberger/tvheadend/sdk/core/DvrEntryState;
+	public final fun getStop ()Lkotlin/time/Instant;
+	public final fun getStopExtraMinutes ()Ljava/lang/Long;
+	public final fun getStreamErrors ()Ljava/lang/Long;
+	public final fun getSubscriptionError ()Lat/bernhardberger/tvheadend/sdk/core/DvrSubscriptionError;
+	public final fun getSubtitle ()Ljava/lang/String;
+	public final fun getSummary ()Ljava/lang/String;
+	public final fun getTimerecRuleId-qrdGAho ()Ljava/lang/String;
+	public final fun getTitle ()Ljava/lang/String;
+	public final fun getUuid ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrEntry$Companion {
+	public final fun create-xOe8CU0 (JLjava/lang/String;Ljava/lang/Boolean;Lat/bernhardberger/tvheadend/sdk/core/ChannelId;Ljava/lang/String;Lat/bernhardberger/tvheadend/sdk/core/EventId;Ljava/lang/String;Ljava/lang/String;Lkotlin/time/Instant;Lkotlin/time/Instant;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Lat/bernhardberger/tvheadend/sdk/core/EpgRating;Ljava/lang/Long;Lkotlin/time/Duration;Lat/bernhardberger/tvheadend/sdk/core/EpgEpisode;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Long;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Long;Lat/bernhardberger/tvheadend/sdk/core/DvrEntryState;Lat/bernhardberger/tvheadend/sdk/core/DvrSubscriptionError;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;)Lat/bernhardberger/tvheadend/sdk/core/DvrEntry;
+	public static synthetic fun create-xOe8CU0$default (Lat/bernhardberger/tvheadend/sdk/core/DvrEntry$Companion;JLjava/lang/String;Ljava/lang/Boolean;Lat/bernhardberger/tvheadend/sdk/core/ChannelId;Ljava/lang/String;Lat/bernhardberger/tvheadend/sdk/core/EventId;Ljava/lang/String;Ljava/lang/String;Lkotlin/time/Instant;Lkotlin/time/Instant;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Lat/bernhardberger/tvheadend/sdk/core/EpgRating;Ljava/lang/Long;Lkotlin/time/Duration;Lat/bernhardberger/tvheadend/sdk/core/EpgEpisode;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Long;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Long;Lat/bernhardberger/tvheadend/sdk/core/DvrEntryState;Lat/bernhardberger/tvheadend/sdk/core/DvrSubscriptionError;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;IILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/DvrEntry;
+}
+
 public final class at/bernhardberger/tvheadend/sdk/core/DvrEntryId {
 	public static final synthetic fun box-impl (J)Lat/bernhardberger/tvheadend/sdk/core/DvrEntryId;
 	public static fun constructor-impl (J)J
@@ -193,6 +377,131 @@ public final class at/bernhardberger/tvheadend/sdk/core/DvrEntryId {
 	public fun toString ()Ljava/lang/String;
 	public static fun toString-impl (J)Ljava/lang/String;
 	public final synthetic fun unbox-impl ()J
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrEntryState : java/lang/Enum {
+	public static final field COMPLETED Lat/bernhardberger/tvheadend/sdk/core/DvrEntryState;
+	public static final field COMPLETED_ERROR Lat/bernhardberger/tvheadend/sdk/core/DvrEntryState;
+	public static final field FILE_MISSING Lat/bernhardberger/tvheadend/sdk/core/DvrEntryState;
+	public static final field INVALID Lat/bernhardberger/tvheadend/sdk/core/DvrEntryState;
+	public static final field MISSED Lat/bernhardberger/tvheadend/sdk/core/DvrEntryState;
+	public static final field RECORDING Lat/bernhardberger/tvheadend/sdk/core/DvrEntryState;
+	public static final field RECORDING_ERROR Lat/bernhardberger/tvheadend/sdk/core/DvrEntryState;
+	public static final field SCHEDULED Lat/bernhardberger/tvheadend/sdk/core/DvrEntryState;
+	public static final field UNKNOWN Lat/bernhardberger/tvheadend/sdk/core/DvrEntryState;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/DvrEntryState;
+	public static fun values ()[Lat/bernhardberger/tvheadend/sdk/core/DvrEntryState;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrRecordingFile {
+	public fun <init> (Ljava/lang/Long;Ljava/lang/String;Lkotlin/time/Instant;Lkotlin/time/Instant;Ljava/lang/Long;)V
+	public final fun component1 ()Ljava/lang/Long;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Lkotlin/time/Instant;
+	public final fun component4 ()Lkotlin/time/Instant;
+	public final fun component5 ()Ljava/lang/Long;
+	public final fun copy (Ljava/lang/Long;Ljava/lang/String;Lkotlin/time/Instant;Lkotlin/time/Instant;Ljava/lang/Long;)Lat/bernhardberger/tvheadend/sdk/core/DvrRecordingFile;
+	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/DvrRecordingFile;Ljava/lang/Long;Ljava/lang/String;Lkotlin/time/Instant;Lkotlin/time/Instant;Ljava/lang/Long;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/DvrRecordingFile;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getFileId ()Ljava/lang/Long;
+	public final fun getPath ()Ljava/lang/String;
+	public final fun getSizeBytes ()Ljava/lang/Long;
+	public final fun getStart ()Lkotlin/time/Instant;
+	public final fun getStop ()Lkotlin/time/Instant;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class at/bernhardberger/tvheadend/sdk/core/DvrRepository {
+	public abstract fun autorecRule-K-0Ra0w (Ljava/lang/String;)Lkotlinx/coroutines/flow/Flow;
+	public abstract fun entry-lyT0IZA (J)Lkotlinx/coroutines/flow/Flow;
+	public abstract fun getAutorecRules ()Lkotlinx/coroutines/flow/StateFlow;
+	public abstract fun getEntries ()Lkotlinx/coroutines/flow/StateFlow;
+	public abstract fun getState ()Lkotlinx/coroutines/flow/StateFlow;
+	public abstract fun getTimerecRules ()Lkotlinx/coroutines/flow/StateFlow;
+	public abstract fun timerecRule-OXQAzx4 (Ljava/lang/String;)Lkotlinx/coroutines/flow/Flow;
+}
+
+public abstract interface class at/bernhardberger/tvheadend/sdk/core/DvrRepositoryState {
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrRepositoryState$Current : at/bernhardberger/tvheadend/sdk/core/DvrRepositoryState {
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/DvrSnapshot;)V
+	public final fun component1 ()Lat/bernhardberger/tvheadend/sdk/core/DvrSnapshot;
+	public final fun copy (Lat/bernhardberger/tvheadend/sdk/core/DvrSnapshot;)Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState$Current;
+	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState$Current;Lat/bernhardberger/tvheadend/sdk/core/DvrSnapshot;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState$Current;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getSnapshot ()Lat/bernhardberger/tvheadend/sdk/core/DvrSnapshot;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrRepositoryState$Empty : at/bernhardberger/tvheadend/sdk/core/DvrRepositoryState {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState$Empty;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrRepositoryState$Stale : at/bernhardberger/tvheadend/sdk/core/DvrRepositoryState {
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/DvrSnapshot;)V
+	public final fun component1 ()Lat/bernhardberger/tvheadend/sdk/core/DvrSnapshot;
+	public final fun copy (Lat/bernhardberger/tvheadend/sdk/core/DvrSnapshot;)Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState$Stale;
+	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState$Stale;Lat/bernhardberger/tvheadend/sdk/core/DvrSnapshot;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState$Stale;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getSnapshot ()Lat/bernhardberger/tvheadend/sdk/core/DvrSnapshot;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrRepositoryState$Synchronizing : at/bernhardberger/tvheadend/sdk/core/DvrRepositoryState {
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/DvrSnapshot;)V
+	public final fun component1 ()Lat/bernhardberger/tvheadend/sdk/core/DvrSnapshot;
+	public final fun copy (Lat/bernhardberger/tvheadend/sdk/core/DvrSnapshot;)Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState$Synchronizing;
+	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState$Synchronizing;Lat/bernhardberger/tvheadend/sdk/core/DvrSnapshot;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState$Synchronizing;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getStaleSnapshot ()Lat/bernhardberger/tvheadend/sdk/core/DvrSnapshot;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrSnapshot {
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/DvrSnapshot$Companion;
+	public final fun component1 ()Ljava/util/List;
+	public final fun component2 ()Ljava/util/List;
+	public final fun component3 ()Ljava/util/List;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAutorecRules ()Ljava/util/List;
+	public final fun getEntries ()Ljava/util/List;
+	public final fun getTimerecRules ()Ljava/util/List;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrSnapshot$Companion {
+	public final fun create (Ljava/util/List;Ljava/util/List;Ljava/util/List;)Lat/bernhardberger/tvheadend/sdk/core/DvrSnapshot;
+	public static synthetic fun create$default (Lat/bernhardberger/tvheadend/sdk/core/DvrSnapshot$Companion;Ljava/util/List;Ljava/util/List;Ljava/util/List;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/DvrSnapshot;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrSubscriptionError : java/lang/Enum {
+	public static final field BAD_SIGNAL Lat/bernhardberger/tvheadend/sdk/core/DvrSubscriptionError;
+	public static final field INVALID_SERVICE Lat/bernhardberger/tvheadend/sdk/core/DvrSubscriptionError;
+	public static final field INVALID_TARGET Lat/bernhardberger/tvheadend/sdk/core/DvrSubscriptionError;
+	public static final field MUX_NOT_ENABLED Lat/bernhardberger/tvheadend/sdk/core/DvrSubscriptionError;
+	public static final field NO_DISK_SPACE Lat/bernhardberger/tvheadend/sdk/core/DvrSubscriptionError;
+	public static final field NO_FREE_ADAPTER Lat/bernhardberger/tvheadend/sdk/core/DvrSubscriptionError;
+	public static final field NO_SERVICE Lat/bernhardberger/tvheadend/sdk/core/DvrSubscriptionError;
+	public static final field SCRAMBLED Lat/bernhardberger/tvheadend/sdk/core/DvrSubscriptionError;
+	public static final field SUBSCRIPTION_OVERRIDDEN Lat/bernhardberger/tvheadend/sdk/core/DvrSubscriptionError;
+	public static final field TUNING_FAILED Lat/bernhardberger/tvheadend/sdk/core/DvrSubscriptionError;
+	public static final field UNKNOWN Lat/bernhardberger/tvheadend/sdk/core/DvrSubscriptionError;
+	public static final field USER_ACCESS Lat/bernhardberger/tvheadend/sdk/core/DvrSubscriptionError;
+	public static final field USER_LIMIT Lat/bernhardberger/tvheadend/sdk/core/DvrSubscriptionError;
+	public static final field WEAK_STREAM Lat/bernhardberger/tvheadend/sdk/core/DvrSubscriptionError;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/DvrSubscriptionError;
+	public static fun values ()[Lat/bernhardberger/tvheadend/sdk/core/DvrSubscriptionError;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/EpgCoverage {
@@ -638,10 +947,67 @@ public final class at/bernhardberger/tvheadend/sdk/core/SessionState$Unavailable
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class at/bernhardberger/tvheadend/sdk/core/TimerecRule {
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/TimerecRule$Companion;
+	public final fun component1-bdPwwM0 ()Ljava/lang/String;
+	public final fun component10 ()Ljava/lang/Long;
+	public final fun component11 ()Ljava/lang/String;
+	public final fun component12 ()Ljava/lang/String;
+	public final fun component13 ()Ljava/lang/String;
+	public final fun component14-2_39p4U ()Ljava/lang/String;
+	public final fun component15 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/Boolean;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Ljava/lang/String;
+	public final fun component5-tg-tQzc ()Lat/bernhardberger/tvheadend/sdk/core/ChannelId;
+	public final fun component6 ()Ljava/lang/Integer;
+	public final fun component7 ()Ljava/lang/Integer;
+	public final fun component8 ()Ljava/lang/Long;
+	public final fun component9 ()Ljava/lang/Long;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getChannelId-tg-tQzc ()Lat/bernhardberger/tvheadend/sdk/core/ChannelId;
+	public final fun getComment ()Ljava/lang/String;
+	public final fun getConfigId-2_39p4U ()Ljava/lang/String;
+	public final fun getCreator ()Ljava/lang/String;
+	public final fun getDaysOfWeekMask ()Ljava/lang/Long;
+	public final fun getDirectory ()Ljava/lang/String;
+	public final fun getEnabled ()Ljava/lang/Boolean;
+	public final fun getId-bdPwwM0 ()Ljava/lang/String;
+	public final fun getName ()Ljava/lang/String;
+	public final fun getOwner ()Ljava/lang/String;
+	public final fun getPriority ()Ljava/lang/Long;
+	public final fun getRetentionDays ()Ljava/lang/Long;
+	public final fun getStartMinutesSinceMidnight ()Ljava/lang/Integer;
+	public final fun getStopMinutesSinceMidnight ()Ljava/lang/Integer;
+	public final fun getTitle ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/TimerecRule$Companion {
+	public final fun create-prHtOVM (Ljava/lang/String;Ljava/lang/Boolean;Ljava/lang/String;Ljava/lang/String;Lat/bernhardberger/tvheadend/sdk/core/ChannelId;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/TimerecRule;
+	public static synthetic fun create-prHtOVM$default (Lat/bernhardberger/tvheadend/sdk/core/TimerecRule$Companion;Ljava/lang/String;Ljava/lang/Boolean;Ljava/lang/String;Ljava/lang/String;Lat/bernhardberger/tvheadend/sdk/core/ChannelId;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/TimerecRule;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/TimerecRuleId {
+	public static final synthetic fun box-impl (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/TimerecRuleId;
+	public static fun constructor-impl (Ljava/lang/String;)Ljava/lang/String;
+	public fun equals (Ljava/lang/Object;)Z
+	public static fun equals-impl (Ljava/lang/String;Ljava/lang/Object;)Z
+	public static final fun equals-impl0 (Ljava/lang/String;Ljava/lang/String;)Z
+	public final fun getValue ()Ljava/lang/String;
+	public fun hashCode ()I
+	public static fun hashCode-impl (Ljava/lang/String;)I
+	public fun toString ()Ljava/lang/String;
+	public static fun toString-impl (Ljava/lang/String;)Ljava/lang/String;
+	public final synthetic fun unbox-impl ()Ljava/lang/String;
+}
+
 public abstract interface class at/bernhardberger/tvheadend/sdk/core/TvheadendSession {
 	public abstract fun connect (Lat/bernhardberger/tvheadend/sdk/core/ServerProfile;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun disconnect (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun getChannelRepository ()Lat/bernhardberger/tvheadend/sdk/core/ChannelRepository;
+	public abstract fun getDvrRepository ()Lat/bernhardberger/tvheadend/sdk/core/DvrRepository;
 	public abstract fun getEpgRepository ()Lat/bernhardberger/tvheadend/sdk/core/EpgRepository;
 	public abstract fun getState ()Lkotlinx/coroutines/flow/StateFlow;
 	public abstract fun getSubscriptions ()Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOpener;

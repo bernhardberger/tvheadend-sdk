@@ -26,6 +26,7 @@ import at.bernhardberger.tvheadend.htsp.messages.HtspChannelUpdateMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspDvrEntryAddMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspDvrEntryDeleteMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspDvrEntryUpdateMessage
+import at.bernhardberger.tvheadend.htsp.messages.HtspDvrRecordingFile
 import at.bernhardberger.tvheadend.htsp.messages.HtspDescrambleInfoMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspEventAddMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspEventDeleteMessage
@@ -57,14 +58,21 @@ import at.bernhardberger.tvheadend.htsp.requests.getEvents
 import at.bernhardberger.tvheadend.htsp.requests.subscribe
 import at.bernhardberger.tvheadend.htsp.requests.unsubscribe
 import at.bernhardberger.tvheadend.htsp.wire.HtspBinary
+import at.bernhardberger.tvheadend.sdk.core.gateway.AutorecRuleId
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
-import at.bernhardberger.tvheadend.sdk.core.gateway.DeferredMetadataKind
+import at.bernhardberger.tvheadend.sdk.core.gateway.DvrConfigId
 import at.bernhardberger.tvheadend.sdk.core.gateway.DvrEntryId
+import at.bernhardberger.tvheadend.sdk.core.gateway.DvrEntryState
+import at.bernhardberger.tvheadend.sdk.core.gateway.DvrSubscriptionError
 import at.bernhardberger.tvheadend.sdk.core.gateway.EpgEpisodeId
 import at.bernhardberger.tvheadend.sdk.core.gateway.EpgSeriesLinkId
 import at.bernhardberger.tvheadend.sdk.core.gateway.EventId
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayAutorecRule
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelService
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrFailure
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrRecordingFile
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnection
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailure
@@ -77,11 +85,13 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayServerFacts
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayState
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayTagMetadata
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayTimerecRule
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.ProtocolGateway
 import at.bernhardberger.tvheadend.sdk.core.gateway.ServerAuthentication
 import at.bernhardberger.tvheadend.sdk.core.gateway.ServerConfiguration
 import at.bernhardberger.tvheadend.sdk.core.gateway.TagId
+import at.bernhardberger.tvheadend.sdk.core.gateway.TimerecRuleId
 import at.bernhardberger.tvheadend.sdk.playback.MuxFrameType
 import at.bernhardberger.tvheadend.sdk.playback.SkipOutcome
 import at.bernhardberger.tvheadend.sdk.playback.StreamIndex
@@ -106,6 +116,7 @@ import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.transform
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
 @OptIn(SubscriptionInfrastructureApi::class)
@@ -367,21 +378,19 @@ private fun HtspServerMessage.toGatewayMetadata(
     is HtspEventAddMessage -> MetadataEvent.EventAdded(generation, toGatewayEpgEvent())
     is HtspEventUpdateMessage -> MetadataEvent.EventUpdated(generation, toGatewayEpgUpdate())
     is HtspEventDeleteMessage -> MetadataEvent.EventDeleted(generation, EventId(eventId))
-    is HtspDvrEntryAddMessage -> MetadataEvent.Deferred(generation, DeferredMetadataKind.DVR_ADDED)
-    is HtspDvrEntryUpdateMessage -> MetadataEvent.Deferred(generation, DeferredMetadataKind.DVR_UPDATED)
-    is HtspDvrEntryDeleteMessage -> MetadataEvent.Deferred(generation, DeferredMetadataKind.DVR_DELETED)
-    is HtspAutorecEntryAddMessage ->
-        MetadataEvent.Deferred(generation, DeferredMetadataKind.AUTOREC_ADDED)
+    is HtspDvrEntryAddMessage -> MetadataEvent.DvrEntryAdded(generation, toGatewayDvrEntry())
+    is HtspDvrEntryUpdateMessage -> MetadataEvent.DvrEntryUpdated(generation, toGatewayDvrEntry())
+    is HtspDvrEntryDeleteMessage -> MetadataEvent.DvrEntryDeleted(generation, DvrEntryId(entryId))
+    is HtspAutorecEntryAddMessage -> MetadataEvent.AutorecRuleAdded(generation, toGatewayAutorecRule())
     is HtspAutorecEntryUpdateMessage ->
-        MetadataEvent.Deferred(generation, DeferredMetadataKind.AUTOREC_UPDATED)
+        MetadataEvent.AutorecRuleUpdated(generation, toGatewayAutorecRule())
     is HtspAutorecEntryDeleteMessage ->
-        MetadataEvent.Deferred(generation, DeferredMetadataKind.AUTOREC_DELETED)
-    is HtspTimerecEntryAddMessage ->
-        MetadataEvent.Deferred(generation, DeferredMetadataKind.TIMEREC_ADDED)
+        MetadataEvent.AutorecRuleDeleted(generation, AutorecRuleId(id))
+    is HtspTimerecEntryAddMessage -> MetadataEvent.TimerecRuleAdded(generation, toGatewayTimerecRule())
     is HtspTimerecEntryUpdateMessage ->
-        MetadataEvent.Deferred(generation, DeferredMetadataKind.TIMEREC_UPDATED)
+        MetadataEvent.TimerecRuleUpdated(generation, toGatewayTimerecRule())
     is HtspTimerecEntryDeleteMessage ->
-        MetadataEvent.Deferred(generation, DeferredMetadataKind.TIMEREC_DELETED)
+        MetadataEvent.TimerecRuleDeleted(generation, TimerecRuleId(id))
     is HtspMuxPacketMessage,
     is HtspQueueStatusMessage,
     is HtspSubscriptionStartMessage,
@@ -575,6 +584,249 @@ private fun HtspTagUpdateMessage.toGatewayTag(): GatewayTagMetadata = GatewayTag
 )
 
 private fun Long?.toFlag(): Boolean? = this?.let { it != 0L }
+
+private fun HtspDvrEntryAddMessage.toGatewayDvrEntry(): GatewayDvrEntry = GatewayDvrEntry(
+    id = DvrEntryId(entryId),
+    uuid = entryUuid,
+    enabled = enabled.toFlag(),
+    channelId = channelId?.let(::ChannelId),
+    channelName = channelName,
+    eventId = eventId?.let(::EventId),
+    autorecRuleId = autorecEntryUuid?.let(::AutorecRuleId),
+    timerecRuleId = timerecEntryUuid?.let(::TimerecRuleId),
+    start = start?.let(Instant::fromEpochSeconds),
+    stop = stop?.let(Instant::fromEpochSeconds),
+    startExtraMinutes = startExtraMinutes,
+    stopExtraMinutes = stopExtraMinutes,
+    retentionDays = retentionDays,
+    removalDays = removalDays,
+    priority = priority,
+    contentType = contentType,
+    ageRating = ageRating,
+    ratingLabel = ratingLabel,
+    ratingIcon = ratingIcon,
+    ratingAuthority = ratingAuthority,
+    ratingCountry = ratingCountry,
+    playCount = playCount,
+    playPosition = playPositionSeconds?.seconds,
+    seasonNumber = seasonNumber,
+    episodeNumber = episodeNumber,
+    episodeCount = episodeCount,
+    partNumber = partNumber,
+    partCount = partCount,
+    title = title,
+    description = description,
+    summary = summary,
+    subtitle = subtitle,
+    owner = owner,
+    creator = creator,
+    comment = comment,
+    image = image,
+    fanartImage = fanartImage,
+    copyrightYear = copyrightYear,
+    files = files?.map(HtspDvrRecordingFile::toGatewayFile),
+    path = path,
+    configId = dvrConfigUuid?.let(::DvrConfigId),
+    duplicate = duplicate,
+    state = state.toDvrEntryState(),
+    failure = error.toDvrFailure(),
+    subscriptionError = subscriptionError.toDvrSubscriptionError(),
+    streamErrors = streamErrors,
+    dataErrors = dataErrors,
+    dataSizeBytes = dataSizeBytes,
+)
+
+private fun HtspDvrEntryUpdateMessage.toGatewayDvrEntry(): GatewayDvrEntry = GatewayDvrEntry(
+    id = DvrEntryId(entryId),
+    uuid = entryUuid,
+    enabled = enabled.toFlag(),
+    channelId = channelId?.let(::ChannelId),
+    channelName = channelName,
+    eventId = eventId?.let(::EventId),
+    autorecRuleId = autorecEntryUuid?.let(::AutorecRuleId),
+    timerecRuleId = timerecEntryUuid?.let(::TimerecRuleId),
+    start = start?.let(Instant::fromEpochSeconds),
+    stop = stop?.let(Instant::fromEpochSeconds),
+    startExtraMinutes = startExtraMinutes,
+    stopExtraMinutes = stopExtraMinutes,
+    retentionDays = retentionDays,
+    removalDays = removalDays,
+    priority = priority,
+    contentType = contentType,
+    ageRating = ageRating,
+    ratingLabel = ratingLabel,
+    ratingIcon = ratingIcon,
+    ratingAuthority = ratingAuthority,
+    ratingCountry = ratingCountry,
+    playCount = playCount,
+    playPosition = playPositionSeconds?.seconds,
+    seasonNumber = seasonNumber,
+    episodeNumber = episodeNumber,
+    episodeCount = episodeCount,
+    partNumber = partNumber,
+    partCount = partCount,
+    title = title,
+    description = description,
+    summary = summary,
+    subtitle = subtitle,
+    owner = owner,
+    creator = creator,
+    comment = comment,
+    image = image,
+    fanartImage = fanartImage,
+    copyrightYear = copyrightYear,
+    files = files?.map(HtspDvrRecordingFile::toGatewayFile),
+    path = path,
+    configId = dvrConfigUuid?.let(::DvrConfigId),
+    duplicate = duplicate,
+    state = state.toDvrEntryState(),
+    failure = error.toDvrFailure(),
+    subscriptionError = subscriptionError.toDvrSubscriptionError(),
+    streamErrors = streamErrors,
+    dataErrors = dataErrors,
+    dataSizeBytes = dataSizeBytes,
+)
+
+private fun HtspDvrRecordingFile.toGatewayFile(): GatewayDvrRecordingFile = GatewayDvrRecordingFile(
+    fileId = fileId,
+    path = path,
+    start = start?.let(Instant::fromEpochSeconds),
+    stop = stop?.let(Instant::fromEpochSeconds),
+    sizeBytes = sizeBytes,
+)
+
+private fun HtspAutorecEntryAddMessage.toGatewayAutorecRule(): GatewayAutorecRule = GatewayAutorecRule(
+    id = AutorecRuleId(id),
+    enabled = enabled,
+    maxDuration = maxDurationSeconds.seconds,
+    minDuration = minDurationSeconds.seconds,
+    retentionDays = retentionDays,
+    removalDays = removalDays,
+    daysOfWeekMask = daysOfWeekMask,
+    approximateStartMinutesSinceMidnight = approximateStartMinutesSinceMidnight,
+    startMinutesSinceMidnight = startMinutesSinceMidnight,
+    startWindowEndMinutesSinceMidnight = startWindowEndMinutesSinceMidnight,
+    priority = priority,
+    startExtraMinutes = startExtraMinutes,
+    stopExtraMinutes = stopExtraMinutes,
+    duplicateDetection = duplicateDetection,
+    maximumRecordingCount = maximumRecordingCount,
+    broadcastType = broadcastType,
+    comment = comment,
+    title = title,
+    fullText = fullText,
+    mergeText = mergeText,
+    name = name,
+    directory = directory,
+    owner = owner,
+    creator = creator,
+    channelId = channelId?.let(::ChannelId),
+    seriesLinkUri = seriesLinkUri,
+    configId = configId?.let(::DvrConfigId),
+)
+
+private fun HtspAutorecEntryUpdateMessage.toGatewayAutorecRule(): GatewayAutorecRule =
+    GatewayAutorecRule(
+        id = AutorecRuleId(id),
+        enabled = enabled,
+        maxDuration = maxDurationSeconds?.seconds,
+        minDuration = minDurationSeconds?.seconds,
+        retentionDays = retentionDays,
+        removalDays = removalDays,
+        daysOfWeekMask = daysOfWeekMask,
+        approximateStartMinutesSinceMidnight = approximateStartMinutesSinceMidnight,
+        startMinutesSinceMidnight = startMinutesSinceMidnight,
+        startWindowEndMinutesSinceMidnight = startWindowEndMinutesSinceMidnight,
+        priority = priority,
+        startExtraMinutes = startExtraMinutes,
+        stopExtraMinutes = stopExtraMinutes,
+        duplicateDetection = duplicateDetection,
+        maximumRecordingCount = maximumRecordingCount,
+        broadcastType = broadcastType,
+        comment = comment,
+        title = title,
+        fullText = fullText,
+        mergeText = mergeText,
+        name = name,
+        directory = directory,
+        owner = owner,
+        creator = creator,
+        channelId = channelId?.let(::ChannelId),
+        seriesLinkUri = seriesLinkUri,
+        configId = configId?.let(::DvrConfigId),
+    )
+
+private fun HtspTimerecEntryAddMessage.toGatewayTimerecRule(): GatewayTimerecRule = GatewayTimerecRule(
+    id = TimerecRuleId(id),
+    enabled = enabled,
+    name = name,
+    title = title,
+    channelId = ChannelId(channelId.toLong()),
+    startMinutesSinceMidnight = startMinutesSinceMidnight,
+    stopMinutesSinceMidnight = stopMinutesSinceMidnight,
+    daysOfWeekMask = daysOfWeekMask,
+    priority = priority,
+    retentionDays = retentionDays,
+    directory = directory,
+    owner = owner,
+    creator = creator,
+    configId = configId?.let(::DvrConfigId),
+    comment = comment,
+)
+
+private fun HtspTimerecEntryUpdateMessage.toGatewayTimerecRule(): GatewayTimerecRule =
+    GatewayTimerecRule(
+        id = TimerecRuleId(id),
+        enabled = enabled,
+        name = name,
+        title = title,
+        channelId = channelId?.let { ChannelId(it.toLong()) },
+        startMinutesSinceMidnight = startMinutesSinceMidnight,
+        stopMinutesSinceMidnight = stopMinutesSinceMidnight,
+        daysOfWeekMask = daysOfWeekMask,
+        priority = priority,
+        retentionDays = retentionDays,
+        directory = directory,
+        owner = owner,
+        creator = creator,
+        configId = configId?.let(::DvrConfigId),
+        comment = comment,
+    )
+
+private fun String?.toDvrEntryState(): DvrEntryState? = when (this) {
+    null -> null
+    "scheduled" -> DvrEntryState.SCHEDULED
+    "recording" -> DvrEntryState.RECORDING
+    "completed" -> DvrEntryState.COMPLETED
+    "missed" -> DvrEntryState.MISSED
+    "invalid" -> DvrEntryState.INVALID
+    else -> DvrEntryState.UNKNOWN
+}
+
+private fun String?.toDvrFailure(): GatewayDvrFailure? = when (this) {
+    null -> null
+    "none" -> GatewayDvrFailure.NONE
+    "File missing" -> GatewayDvrFailure.FILE_MISSING
+    else -> GatewayDvrFailure.PRESENT
+}
+
+private fun String?.toDvrSubscriptionError(): DvrSubscriptionError? = when (this) {
+    null -> null
+    "noFreeAdapter" -> DvrSubscriptionError.NO_FREE_ADAPTER
+    "scrambled" -> DvrSubscriptionError.SCRAMBLED
+    "badSignal" -> DvrSubscriptionError.BAD_SIGNAL
+    "tuningFailed" -> DvrSubscriptionError.TUNING_FAILED
+    "subscriptionOverridden" -> DvrSubscriptionError.SUBSCRIPTION_OVERRIDDEN
+    "muxNotEnabled" -> DvrSubscriptionError.MUX_NOT_ENABLED
+    "invalidTarget" -> DvrSubscriptionError.INVALID_TARGET
+    "No service assigned to channel" -> DvrSubscriptionError.NO_SERVICE
+    "Invalid service" -> DvrSubscriptionError.INVALID_SERVICE
+    "userAccess" -> DvrSubscriptionError.USER_ACCESS
+    "userLimit" -> DvrSubscriptionError.USER_LIMIT
+    "weakStream" -> DvrSubscriptionError.WEAK_STREAM
+    "noDiskSpace" -> DvrSubscriptionError.NO_DISK_SPACE
+    else -> DvrSubscriptionError.UNKNOWN
+}
 
 private fun HtspSubscriptionEvent.toGatewayEvent(): SubscriptionEvent = when (this) {
     is HtspSubscriptionEvent.Started -> message.toGatewayEvent()

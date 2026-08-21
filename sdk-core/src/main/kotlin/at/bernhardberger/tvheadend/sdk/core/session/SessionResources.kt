@@ -7,17 +7,22 @@ import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepository
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.DvrRepository
+import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
 import at.bernhardberger.tvheadend.sdk.core.EpgRepository
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.ServerCapabilities
 import at.bernhardberger.tvheadend.sdk.core.StateBackedChannelRepository
+import at.bernhardberger.tvheadend.sdk.core.StateBackedDvrRepository
 import at.bernhardberger.tvheadend.sdk.core.StateBackedEpgRepository
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayServerFacts
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.metadata.ChannelTagReducer
+import at.bernhardberger.tvheadend.sdk.core.metadata.DvrReducer
 import at.bernhardberger.tvheadend.sdk.core.metadata.EpgReducer
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
@@ -36,6 +41,8 @@ internal interface SessionMetadata : ChannelRepository {
         get() = state
 
     public val epgRepository: EpgRepository
+
+    public val dvrRepository: DvrRepository
 
     public fun resetWorkingStateRetainingPublishedSnapshot()
 
@@ -75,17 +82,23 @@ internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), Session
     private val lock = Any()
     private val reducer = ChannelTagReducer()
     private val epgReducer = EpgReducer()
+    private val dvrReducer = DvrReducer()
     private val mutableChannelsAndTags = MutableStateFlow<ChannelRepositoryState>(
         ChannelRepositoryState.Empty,
     )
     private val mutableEpg = MutableStateFlow<EpgRepositoryState>(EpgRepositoryState.Empty)
+    private val mutableDvr = MutableStateFlow<DvrRepositoryState>(DvrRepositoryState.Empty)
     private val stateBackedEpgRepository = object : StateBackedEpgRepository() {
         override val state: StateFlow<EpgRepositoryState> = mutableEpg.asStateFlow()
+    }
+    private val stateBackedDvrRepository = object : StateBackedDvrRepository() {
+        override val state: StateFlow<DvrRepositoryState> = mutableDvr.asStateFlow()
     }
     private var generation: GatewayGeneration? = null
     private var initialSync = CompletableDeferred<Unit>()
     private var publishedCatalog: ChannelCatalog? = null
     private var publishedEpgSnapshot: EpgSnapshot? = null
+    private var publishedDvrSnapshot: DvrSnapshot? = null
     private var synchronizedCurrent = false
     private var serverFacts: GatewayServerFacts? = null
     private var dvrAccess: Boolean? = null
@@ -93,6 +106,7 @@ internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), Session
     override val state: StateFlow<ChannelRepositoryState> =
         mutableChannelsAndTags.asStateFlow()
     override val epgRepository: EpgRepository = stateBackedEpgRepository
+    override val dvrRepository: DvrRepository = stateBackedDvrRepository
 
     override fun resetWorkingStateRetainingPublishedSnapshot() {
         resetState(retainPublishedCatalog = true)
@@ -112,15 +126,19 @@ internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), Session
             dvrAccess = null
             reducer.clear()
             epgReducer.clear()
+            dvrReducer.clear()
             if (!retainPublishedCatalog) {
                 publishedCatalog = null
                 publishedEpgSnapshot = null
+                publishedDvrSnapshot = null
             }
             mutableChannelsAndTags.value = publishedCatalog?.let { catalog ->
                 ChannelRepositoryState.Stale(catalog)
             } ?: ChannelRepositoryState.Empty
             mutableEpg.value = publishedEpgSnapshot?.let(EpgRepositoryState::Stale)
                 ?: EpgRepositoryState.Empty
+            mutableDvr.value = publishedDvrSnapshot?.let(DvrRepositoryState::Stale)
+                ?: DvrRepositoryState.Empty
             previousFence
         }
         retiredFence.cancel(CancellationException("Session generation is no longer current"))
@@ -136,8 +154,10 @@ internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), Session
             dvrAccess = null
             reducer.clear()
             epgReducer.clear()
+            dvrReducer.clear()
             mutableChannelsAndTags.value = ChannelRepositoryState.Synchronizing(publishedCatalog)
             mutableEpg.value = EpgRepositoryState.Synchronizing(publishedEpgSnapshot)
+            mutableDvr.value = DvrRepositoryState.Synchronizing(publishedDvrSnapshot)
             previousFence
         }
         retiredFence.cancel(CancellationException("Session generation is no longer current"))
@@ -173,8 +193,9 @@ internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), Session
                         val channelSnapshot = reducer.snapshot()
                         epgReducer.reconcileChannels(channelSnapshot.channels.map { channel -> channel.id })
                         val epgSnapshot = epgReducer.snapshot()
+                        val dvrSnapshot = dvrReducer.snapshot()
                         synchronizedCurrent = true
-                        publishCurrent(channelSnapshot, epgSnapshot)
+                        publishCurrent(channelSnapshot, epgSnapshot, dvrSnapshot)
                         initialSync
                     }
                 }
@@ -187,15 +208,24 @@ internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), Session
                 is MetadataEvent.EventAdded,
                 is MetadataEvent.EventUpdated,
                 is MetadataEvent.EventDeleted,
+                is MetadataEvent.DvrEntryAdded,
+                is MetadataEvent.DvrEntryUpdated,
+                is MetadataEvent.DvrEntryDeleted,
+                is MetadataEvent.AutorecRuleAdded,
+                is MetadataEvent.AutorecRuleUpdated,
+                is MetadataEvent.AutorecRuleDeleted,
+                is MetadataEvent.TimerecRuleAdded,
+                is MetadataEvent.TimerecRuleUpdated,
+                is MetadataEvent.TimerecRuleDeleted,
                 -> {
                     reducer.accept(event)
                     epgReducer.accept(event)
+                    dvrReducer.accept(event)
                     if (synchronizedCurrent) {
-                        publishCurrent(reducer.snapshot(), epgReducer.snapshot())
+                        publishCurrent(reducer.snapshot(), epgReducer.snapshot(), dvrReducer.snapshot())
                     }
                     null
                 }
-                is MetadataEvent.Deferred -> null
             }
         }
         completedFence?.complete(Unit)
@@ -212,7 +242,8 @@ internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), Session
                 this.generation === generation &&
                     synchronizedCurrent &&
                     mutableChannelsAndTags.value is ChannelRepositoryState.Current &&
-                    mutableEpg.value is EpgRepositoryState.Current,
+                    mutableEpg.value is EpgRepositoryState.Current &&
+                    mutableDvr.value is DvrRepositoryState.Current,
             ) { "Session generation is not current" }
         }
     }
@@ -287,10 +318,20 @@ internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), Session
         )
     }
 
-    private fun publishCurrent(catalog: ChannelCatalog, epgSnapshot: EpgSnapshot) {
+    private fun publishCurrent(
+        catalog: ChannelCatalog,
+        epgSnapshot: EpgSnapshot,
+        dvrSnapshot: DvrSnapshot,
+    ) {
         mutableChannelsAndTags.value = ChannelRepositoryState.Current(catalog)
         publishedCatalog = (mutableChannelsAndTags.value as ChannelRepositoryState.Current).catalog
         publishCurrentEpg(epgSnapshot)
+        publishCurrentDvr(dvrSnapshot)
+    }
+
+    private fun publishCurrentDvr(snapshot: DvrSnapshot) {
+        mutableDvr.value = DvrRepositoryState.Current(snapshot)
+        publishedDvrSnapshot = (mutableDvr.value as DvrRepositoryState.Current).snapshot
     }
 
     private fun publishCurrentEpg(snapshot: EpgSnapshot) {

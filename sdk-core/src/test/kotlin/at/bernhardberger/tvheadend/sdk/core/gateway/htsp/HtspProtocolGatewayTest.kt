@@ -16,10 +16,17 @@ import at.bernhardberger.tvheadend.htsp.connection.HtspSubscriptionTermination
 import at.bernhardberger.tvheadend.htsp.connection.HtspTransportEvent
 import at.bernhardberger.tvheadend.htsp.connection.HtspTransportFailure
 import at.bernhardberger.tvheadend.htsp.connection.HtspTransportFailureKind
+import at.bernhardberger.tvheadend.htsp.messages.HtspAutorecEntryAddMessage
+import at.bernhardberger.tvheadend.htsp.messages.HtspAutorecEntryDeleteMessage
+import at.bernhardberger.tvheadend.htsp.messages.HtspAutorecEntryUpdateMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspChannelAddMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspChannelDeleteMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspChannelUpdateMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspDescrambleInfoMessage
+import at.bernhardberger.tvheadend.htsp.messages.HtspDvrEntryAddMessage
+import at.bernhardberger.tvheadend.htsp.messages.HtspDvrEntryDeleteMessage
+import at.bernhardberger.tvheadend.htsp.messages.HtspDvrEntryUpdateMessage
+import at.bernhardberger.tvheadend.htsp.messages.HtspDvrRecordingFile
 import at.bernhardberger.tvheadend.htsp.messages.HtspEventAddMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspEventDeleteMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspEventUpdateMessage
@@ -38,6 +45,9 @@ import at.bernhardberger.tvheadend.htsp.messages.HtspSubscriptionStream
 import at.bernhardberger.tvheadend.htsp.messages.HtspTagAddMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspTagDeleteMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspTagUpdateMessage
+import at.bernhardberger.tvheadend.htsp.messages.HtspTimerecEntryAddMessage
+import at.bernhardberger.tvheadend.htsp.messages.HtspTimerecEntryDeleteMessage
+import at.bernhardberger.tvheadend.htsp.messages.HtspTimerecEntryUpdateMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspTimeshiftStatusMessage
 import at.bernhardberger.tvheadend.htsp.requests.EnableAsyncMetadataRequest
 import at.bernhardberger.tvheadend.htsp.requests.GetEventsRequest
@@ -50,7 +60,10 @@ import at.bernhardberger.tvheadend.htsp.requests.SubscribeRequest
 import at.bernhardberger.tvheadend.htsp.requests.SubscribeResponse
 import at.bernhardberger.tvheadend.htsp.requests.UnsubscribeRequest
 import at.bernhardberger.tvheadend.htsp.wire.HtspBinary
+import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
+import at.bernhardberger.tvheadend.sdk.core.DvrSubscriptionError
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
@@ -87,6 +100,7 @@ import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
 internal class HtspProtocolGatewayTest {
@@ -464,6 +478,206 @@ internal class HtspProtocolGatewayTest {
         assertEquals(30L, updated.nextEventId?.value)
         assertTrue(events.all { it.generation === events.first().generation })
         assertFalse(events.toString().contains("Private"), "Gateway EPG rendering exposed metadata")
+    }
+
+    @Test
+    fun `metadata maps DVR entry and rule payloads without leaking paths or errors`() = runTest {
+        val generation = HtspConnectionGeneration()
+        val files = mutableListOf(
+            HtspDvrRecordingFile(
+                fileId = 9,
+                path = "/private/recording.ts",
+                start = 10,
+                stop = 20,
+                sizeBytes = 30,
+            ),
+        )
+        val add = HtspDvrEntryAddMessage(
+            entryId = 1,
+            enabled = 1,
+            channelId = 2,
+            eventId = 3,
+            start = -4,
+            stop = 2_147_483_648,
+            startExtraMinutes = 5,
+            stopExtraMinutes = 6,
+            contentType = 7,
+            playCount = 8,
+            playPositionSeconds = 9,
+            title = "Private title",
+            files = files,
+            path = "/private/path.ts",
+            dvrConfigUuid = "private-config",
+            state = "recording",
+            error = "Private error",
+            subscriptionError = "scrambled",
+        )
+        val update = HtspDvrEntryUpdateMessage(
+            entryId = 1,
+            enabled = 0,
+            title = "",
+            files = emptyList(),
+            state = "completed",
+            error = "File missing",
+            subscriptionError = "invalidTarget",
+        )
+        val autorecAdd = HtspAutorecEntryAddMessage(
+            id = "private-auto",
+            enabled = true,
+            maxDurationSeconds = 60,
+            minDurationSeconds = 0,
+            retentionDays = 1,
+            removalDays = 2,
+            daysOfWeekMask = 127,
+            approximateStartMinutesSinceMidnight = 3,
+            startMinutesSinceMidnight = 4,
+            startWindowEndMinutesSinceMidnight = 5,
+            priority = 6,
+            startExtraMinutes = 7,
+            stopExtraMinutes = 8,
+            duplicateDetection = 9,
+            maximumRecordingCount = 10,
+            broadcastType = 11,
+            title = "Private autorec",
+            channelId = 12,
+            configId = "private-auto-config",
+        )
+        val messages = listOf<HtspServerMessage>(
+            add,
+            update,
+            HtspDvrEntryDeleteMessage(1),
+            autorecAdd,
+            HtspAutorecEntryUpdateMessage(id = "private-auto", title = null, enabled = false),
+            HtspAutorecEntryDeleteMessage("private-auto"),
+            HtspTimerecEntryAddMessage(
+                id = "private-time",
+                enabled = true,
+                name = "Private name",
+                title = "Private timerec",
+                channelId = 13,
+                startMinutesSinceMidnight = 60,
+                stopMinutesSinceMidnight = 120,
+                configId = "private-time-config",
+            ),
+            HtspTimerecEntryUpdateMessage(id = "private-time", title = null),
+            HtspTimerecEntryDeleteMessage("private-time"),
+        )
+        val fake = FakeHtspConnection().apply {
+            eventsFlow = flowOf(
+                *messages.mapIndexed { index, message ->
+                    HtspTransportEvent.ServerMessage(message, generation, index + 1L)
+                }.toTypedArray(),
+            )
+        }
+        files.clear()
+
+        val events = HtspProtocolGateway(fake).metadata.toList()
+
+        assertEquals(
+            listOf(
+                MetadataEvent.DvrEntryAdded::class,
+                MetadataEvent.DvrEntryUpdated::class,
+                MetadataEvent.DvrEntryDeleted::class,
+                MetadataEvent.AutorecRuleAdded::class,
+                MetadataEvent.AutorecRuleUpdated::class,
+                MetadataEvent.AutorecRuleDeleted::class,
+                MetadataEvent.TimerecRuleAdded::class,
+                MetadataEvent.TimerecRuleUpdated::class,
+                MetadataEvent.TimerecRuleDeleted::class,
+            ),
+            events.map { it::class },
+        )
+        val added = (events[0] as MetadataEvent.DvrEntryAdded).entry
+        assertEquals(1L, added.id.value)
+        assertEquals(true, added.enabled)
+        assertEquals(2L, added.channelId?.value)
+        assertEquals(Instant.fromEpochSeconds(-4), added.start)
+        assertEquals(Instant.fromEpochSeconds(2_147_483_648), added.stop)
+        assertEquals(9.seconds, added.playPosition)
+        assertEquals("/private/recording.ts", added.files?.single()?.path)
+        assertEquals(DvrEntryState.RECORDING, added.state)
+        assertEquals(GatewayDvrFailure.PRESENT, added.failure)
+        assertEquals(DvrSubscriptionError.SCRAMBLED, added.subscriptionError)
+        val updated = (events[1] as MetadataEvent.DvrEntryUpdated).entry
+        assertEquals(false, updated.enabled)
+        assertEquals("", updated.title)
+        assertEquals(emptyList<Any>(), updated.files)
+        assertEquals(DvrEntryState.COMPLETED, updated.state)
+        assertEquals(GatewayDvrFailure.FILE_MISSING, updated.failure)
+        assertEquals(DvrSubscriptionError.INVALID_TARGET, updated.subscriptionError)
+        assertEquals("private-auto", (events[3] as MetadataEvent.AutorecRuleAdded).rule.id.value)
+        assertEquals(false, (events[4] as MetadataEvent.AutorecRuleUpdated).rule.enabled)
+        assertEquals(null, (events[4] as MetadataEvent.AutorecRuleUpdated).rule.title)
+        assertEquals(13L, (events[6] as MetadataEvent.TimerecRuleAdded).rule.channelId?.value)
+        assertEquals(null, (events[7] as MetadataEvent.TimerecRuleUpdated).rule.title)
+        assertTrue(events.all { it.generation === events.first().generation })
+        assertFalse(events.toString().contains("Private"), "Gateway DVR rendering exposed metadata")
+        assertFalse(events.toString().contains("/private"), "Gateway DVR rendering exposed a path")
+    }
+
+    @Test
+    fun `DVR failure none is not an error and subscription tokens include source fallbacks`() = runTest {
+        val generation = HtspConnectionGeneration()
+        val fake = FakeHtspConnection().apply {
+            eventsFlow = flowOf(
+                HtspTransportEvent.ServerMessage(
+                    HtspDvrEntryAddMessage(
+                        entryId = 1,
+                        state = "completed",
+                        error = "none",
+                        subscriptionError = "No service assigned to channel",
+                    ),
+                    generation,
+                    1,
+                ),
+                HtspTransportEvent.ServerMessage(
+                    HtspDvrEntryUpdateMessage(
+                        entryId = 1,
+                        error = "File missing",
+                        subscriptionError = "Invalid service",
+                    ),
+                    generation,
+                    2,
+                ),
+                HtspTransportEvent.ServerMessage(
+                    HtspDvrEntryUpdateMessage(entryId = 1, state = "invalid", subscriptionError = "noDiskSpace"),
+                    generation,
+                    3,
+                ),
+                HtspTransportEvent.ServerMessage(
+                    HtspDvrEntryUpdateMessage(entryId = 1, subscriptionError = "noService"),
+                    generation,
+                    4,
+                ),
+                HtspTransportEvent.ServerMessage(
+                    HtspDvrEntryUpdateMessage(entryId = 1, subscriptionError = "invalidService"),
+                    generation,
+                    5,
+                ),
+            )
+        }
+
+        val events = HtspProtocolGateway(fake).metadata.toList()
+        val added = (events[0] as MetadataEvent.DvrEntryAdded).entry
+        assertEquals(DvrEntryState.COMPLETED, added.state)
+        assertEquals(GatewayDvrFailure.NONE, added.failure)
+        assertEquals(DvrSubscriptionError.NO_SERVICE, added.subscriptionError)
+        val updated = (events[1] as MetadataEvent.DvrEntryUpdated).entry
+        assertEquals(null, updated.state)
+        assertEquals(GatewayDvrFailure.FILE_MISSING, updated.failure)
+        assertEquals(DvrSubscriptionError.INVALID_SERVICE, updated.subscriptionError)
+        val invalid = (events[2] as MetadataEvent.DvrEntryUpdated).entry
+        assertEquals(DvrEntryState.INVALID, invalid.state)
+        assertEquals(DvrSubscriptionError.NO_DISK_SPACE, invalid.subscriptionError)
+        assertEquals(
+            DvrSubscriptionError.UNKNOWN,
+            (events[3] as MetadataEvent.DvrEntryUpdated).entry.subscriptionError,
+        )
+        assertEquals(
+            DvrSubscriptionError.UNKNOWN,
+            (events[4] as MetadataEvent.DvrEntryUpdated).entry.subscriptionError,
+        )
+        assertFalse(events.toString().contains("service"), "Gateway DVR rendering exposed a server error")
     }
 
     @Test

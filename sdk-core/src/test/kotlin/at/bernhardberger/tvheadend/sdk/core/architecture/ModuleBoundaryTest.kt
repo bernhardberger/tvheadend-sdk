@@ -112,6 +112,18 @@ internal class ModuleBoundaryTest {
             "EpgEpisodeId",
             "EpgSeriesLinkId",
             "DvrEntryId",
+            "AutorecRuleId",
+            "TimerecRuleId",
+            "DvrConfigId",
+            "DvrEntryState",
+            "DvrSubscriptionError",
+            "DvrRecordingFile",
+            "DvrEntry",
+            "AutorecRule",
+            "TimerecRule",
+            "DvrSnapshot",
+            "DvrRepositoryState",
+            "DvrRepository",
             "ChannelService",
             "Channel",
             "ChannelTag",
@@ -214,6 +226,7 @@ internal class ModuleBoundaryTest {
         val expectedTesting = setOf(
             "FakeChannelRepository",
             "FakeEpgRepository",
+            "FakeDvrRepository",
             "ScriptedSubscriptionCall",
             "ScriptedSubscriptionConnection",
             "ScriptedSubscriptionRegistration",
@@ -229,7 +242,7 @@ internal class ModuleBoundaryTest {
         )
 
         assertPublicInfrastructure("sdk-playback", expectedPlayback, unannotatedCount = 1)
-        assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 2)
+        assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 3)
         assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 5)
 
         val sessionApi = java.io.File(
@@ -248,6 +261,10 @@ internal class ModuleBoundaryTest {
         org.junit.jupiter.api.Assertions.assertTrue(
             sessionApi.contains("public val epgRepository: EpgRepository"),
             "Missing EPG repository on the public session",
+        )
+        org.junit.jupiter.api.Assertions.assertTrue(
+            sessionApi.contains("public val dvrRepository: DvrRepository"),
+            "Missing DVR repository on the public session",
         )
     }
 
@@ -287,10 +304,12 @@ internal class ModuleBoundaryTest {
             "at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi",
             "at.bernhardberger.tvheadend.sdk.media3.PlaybackRecoveryReason",
             "at.bernhardberger.tvheadend.sdk.core.ChannelService",
+            "at.bernhardberger.tvheadend.sdk.core.DvrRecordingFile",
             "at.bernhardberger.tvheadend.sdk.testing.ScriptedSubscriptionConnection",
             "at.bernhardberger.tvheadend.sdk.testing.SubscriptionBinaryFixture",
             "at.bernhardberger.tvheadend.sdk.testing.FakeChannelRepository",
             "at.bernhardberger.tvheadend.sdk.testing.FakeEpgRepository",
+            "at.bernhardberger.tvheadend.sdk.testing.FakeDvrRepository",
         ).forEach { name -> enqueue(publicTypes[name]) }
 
         while (pending.isNotEmpty()) {

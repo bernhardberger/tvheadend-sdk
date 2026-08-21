@@ -201,7 +201,15 @@ internal class ChannelTagReducer {
             is MetadataEvent.EventAdded,
             is MetadataEvent.EventUpdated,
             is MetadataEvent.InitialSyncCompleted,
-            is MetadataEvent.Deferred,
+            is MetadataEvent.DvrEntryAdded,
+            is MetadataEvent.DvrEntryUpdated,
+            is MetadataEvent.DvrEntryDeleted,
+            is MetadataEvent.AutorecRuleAdded,
+            is MetadataEvent.AutorecRuleUpdated,
+            is MetadataEvent.AutorecRuleDeleted,
+            is MetadataEvent.TimerecRuleAdded,
+            is MetadataEvent.TimerecRuleUpdated,
+            is MetadataEvent.TimerecRuleDeleted,
             -> Unit
         }
     }

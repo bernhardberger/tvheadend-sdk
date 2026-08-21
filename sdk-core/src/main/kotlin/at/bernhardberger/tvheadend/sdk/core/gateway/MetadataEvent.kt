@@ -1,13 +1,25 @@
 package at.bernhardberger.tvheadend.sdk.core.gateway
 
+import kotlin.time.Duration
 import kotlin.time.Instant
 
+internal typealias AutorecRuleId = at.bernhardberger.tvheadend.sdk.core.AutorecRuleId
 internal typealias ChannelId = at.bernhardberger.tvheadend.sdk.core.ChannelId
+internal typealias DvrConfigId = at.bernhardberger.tvheadend.sdk.core.DvrConfigId
 internal typealias DvrEntryId = at.bernhardberger.tvheadend.sdk.core.DvrEntryId
+internal typealias DvrEntryState = at.bernhardberger.tvheadend.sdk.core.DvrEntryState
+internal typealias DvrSubscriptionError = at.bernhardberger.tvheadend.sdk.core.DvrSubscriptionError
+
+internal enum class GatewayDvrFailure {
+    NONE,
+    FILE_MISSING,
+    PRESENT,
+}
 internal typealias EpgEpisodeId = at.bernhardberger.tvheadend.sdk.core.EpgEpisodeId
 internal typealias EpgSeriesLinkId = at.bernhardberger.tvheadend.sdk.core.EpgSeriesLinkId
 internal typealias EventId = at.bernhardberger.tvheadend.sdk.core.EventId
 internal typealias TagId = at.bernhardberger.tvheadend.sdk.core.ChannelTagId
+internal typealias TimerecRuleId = at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
 
 internal sealed interface MetadataEvent {
     public val generation: GatewayGeneration
@@ -81,24 +93,68 @@ internal sealed interface MetadataEvent {
         override fun toString(): String = "MetadataEvent.InitialSyncCompleted(<redacted>)"
     }
 
-    public class Deferred(
+    public class DvrEntryAdded(
         override val generation: GatewayGeneration,
-        internal val kind: DeferredMetadataKind,
+        internal val entry: GatewayDvrEntry,
     ) : MetadataEvent {
-        override fun toString(): String = "MetadataEvent.Deferred(<redacted>)"
+        override fun toString(): String = "MetadataEvent.DvrEntryAdded(<redacted>)"
     }
-}
 
-internal enum class DeferredMetadataKind {
-    DVR_ADDED,
-    DVR_UPDATED,
-    DVR_DELETED,
-    AUTOREC_ADDED,
-    AUTOREC_UPDATED,
-    AUTOREC_DELETED,
-    TIMEREC_ADDED,
-    TIMEREC_UPDATED,
-    TIMEREC_DELETED,
+    public class DvrEntryUpdated(
+        override val generation: GatewayGeneration,
+        internal val entry: GatewayDvrEntry,
+    ) : MetadataEvent {
+        override fun toString(): String = "MetadataEvent.DvrEntryUpdated(<redacted>)"
+    }
+
+    public class DvrEntryDeleted(
+        override val generation: GatewayGeneration,
+        internal val entryId: DvrEntryId,
+    ) : MetadataEvent {
+        override fun toString(): String = "MetadataEvent.DvrEntryDeleted(<redacted>)"
+    }
+
+    public class AutorecRuleAdded(
+        override val generation: GatewayGeneration,
+        internal val rule: GatewayAutorecRule,
+    ) : MetadataEvent {
+        override fun toString(): String = "MetadataEvent.AutorecRuleAdded(<redacted>)"
+    }
+
+    public class AutorecRuleUpdated(
+        override val generation: GatewayGeneration,
+        internal val rule: GatewayAutorecRule,
+    ) : MetadataEvent {
+        override fun toString(): String = "MetadataEvent.AutorecRuleUpdated(<redacted>)"
+    }
+
+    public class AutorecRuleDeleted(
+        override val generation: GatewayGeneration,
+        internal val ruleId: AutorecRuleId,
+    ) : MetadataEvent {
+        override fun toString(): String = "MetadataEvent.AutorecRuleDeleted(<redacted>)"
+    }
+
+    public class TimerecRuleAdded(
+        override val generation: GatewayGeneration,
+        internal val rule: GatewayTimerecRule,
+    ) : MetadataEvent {
+        override fun toString(): String = "MetadataEvent.TimerecRuleAdded(<redacted>)"
+    }
+
+    public class TimerecRuleUpdated(
+        override val generation: GatewayGeneration,
+        internal val rule: GatewayTimerecRule,
+    ) : MetadataEvent {
+        override fun toString(): String = "MetadataEvent.TimerecRuleUpdated(<redacted>)"
+    }
+
+    public class TimerecRuleDeleted(
+        override val generation: GatewayGeneration,
+        internal val ruleId: TimerecRuleId,
+    ) : MetadataEvent {
+        override fun toString(): String = "MetadataEvent.TimerecRuleDeleted(<redacted>)"
+    }
 }
 
 internal class GatewayEpgEvent(
@@ -268,4 +324,121 @@ internal class GatewayTagMetadata(
     internal val channelIds: List<ChannelId>? = channelIds?.toList()
 
     override fun toString(): String = "GatewayTagMetadata(<redacted>)"
+}
+
+internal class GatewayDvrEntry(
+    internal val id: DvrEntryId,
+    internal val uuid: String? = null,
+    internal val enabled: Boolean? = null,
+    internal val channelId: ChannelId? = null,
+    internal val channelName: String? = null,
+    internal val eventId: EventId? = null,
+    internal val autorecRuleId: AutorecRuleId? = null,
+    internal val timerecRuleId: TimerecRuleId? = null,
+    internal val start: Instant? = null,
+    internal val stop: Instant? = null,
+    internal val startExtraMinutes: Long? = null,
+    internal val stopExtraMinutes: Long? = null,
+    internal val retentionDays: Long? = null,
+    internal val removalDays: Long? = null,
+    internal val priority: Long? = null,
+    internal val contentType: Long? = null,
+    internal val ageRating: Long? = null,
+    internal val ratingLabel: String? = null,
+    internal val ratingIcon: String? = null,
+    internal val ratingAuthority: String? = null,
+    internal val ratingCountry: String? = null,
+    internal val playCount: Long? = null,
+    internal val playPosition: Duration? = null,
+    internal val seasonNumber: Long? = null,
+    internal val episodeNumber: Long? = null,
+    internal val episodeCount: Long? = null,
+    internal val partNumber: Long? = null,
+    internal val partCount: Long? = null,
+    internal val title: String? = null,
+    internal val description: String? = null,
+    internal val summary: String? = null,
+    internal val subtitle: String? = null,
+    internal val owner: String? = null,
+    internal val creator: String? = null,
+    internal val comment: String? = null,
+    internal val image: String? = null,
+    internal val fanartImage: String? = null,
+    internal val copyrightYear: Long? = null,
+    files: List<GatewayDvrRecordingFile>? = null,
+    internal val path: String? = null,
+    internal val configId: DvrConfigId? = null,
+    internal val duplicate: Long? = null,
+    internal val state: DvrEntryState? = null,
+    internal val failure: GatewayDvrFailure? = null,
+    internal val subscriptionError: DvrSubscriptionError? = null,
+    internal val streamErrors: Long? = null,
+    internal val dataErrors: Long? = null,
+    internal val dataSizeBytes: Long? = null,
+) {
+    internal val files: List<GatewayDvrRecordingFile>? = files?.toList()
+
+    override fun toString(): String = "GatewayDvrEntry(<redacted>)"
+}
+
+internal class GatewayDvrRecordingFile(
+    internal val fileId: Long?,
+    internal val path: String?,
+    internal val start: Instant?,
+    internal val stop: Instant?,
+    internal val sizeBytes: Long?,
+) {
+    override fun toString(): String = "GatewayDvrRecordingFile(<redacted>)"
+}
+
+internal class GatewayAutorecRule(
+    internal val id: AutorecRuleId,
+    internal val enabled: Boolean? = null,
+    internal val maxDuration: Duration? = null,
+    internal val minDuration: Duration? = null,
+    internal val retentionDays: Long? = null,
+    internal val removalDays: Long? = null,
+    internal val daysOfWeekMask: Long? = null,
+    internal val approximateStartMinutesSinceMidnight: Int? = null,
+    internal val startMinutesSinceMidnight: Int? = null,
+    internal val startWindowEndMinutesSinceMidnight: Int? = null,
+    internal val priority: Long? = null,
+    internal val startExtraMinutes: Long? = null,
+    internal val stopExtraMinutes: Long? = null,
+    internal val duplicateDetection: Long? = null,
+    internal val maximumRecordingCount: Long? = null,
+    internal val broadcastType: Long? = null,
+    internal val comment: String? = null,
+    internal val title: String? = null,
+    internal val fullText: Boolean? = null,
+    internal val mergeText: Boolean? = null,
+    internal val name: String? = null,
+    internal val directory: String? = null,
+    internal val owner: String? = null,
+    internal val creator: String? = null,
+    internal val channelId: ChannelId? = null,
+    internal val seriesLinkUri: String? = null,
+    internal val configId: DvrConfigId? = null,
+) {
+    override fun toString(): String = "GatewayAutorecRule(<redacted>)"
+}
+
+internal class GatewayTimerecRule(
+    internal val id: TimerecRuleId,
+    internal val enabled: Boolean? = null,
+    internal val name: String? = null,
+    internal val title: String? = null,
+    internal val channelId: ChannelId? = null,
+    internal val startMinutesSinceMidnight: Int? = null,
+    internal val stopMinutesSinceMidnight: Int? = null,
+    internal val daysOfWeekMask: Long? = null,
+    internal val priority: Long? = null,
+    internal val retentionDays: Long? = null,
+    internal val directory: String? = null,
+    internal val owner: String? = null,
+    internal val creator: String? = null,
+    internal val configId: DvrConfigId? = null,
+    internal val comment: String? = null,
+) {
+    override fun toString(): String = "GatewayTimerecRule(<redacted>)"
 }

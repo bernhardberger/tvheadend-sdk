@@ -4,13 +4,15 @@ import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.Channel
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.ChannelService
+import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.ServerCapabilities
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
-import at.bernhardberger.tvheadend.sdk.core.gateway.DeferredMetadataKind
+import at.bernhardberger.tvheadend.sdk.core.gateway.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.gateway.EventId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelService
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
@@ -65,8 +67,10 @@ internal class PhaseOneSessionMetadataTest {
         metadata.acceptMetadata(MetadataEvent.ChannelAdded(current, channel(id = 1, name = "one")))
         metadata.acceptMetadata(MetadataEvent.TagAdded(current, tag(id = 2, channelIds = listOf(1))))
         metadata.acceptMetadata(MetadataEvent.EventAdded(current, epgEvent(4, 1, -1, 10)))
+        metadata.acceptMetadata(MetadataEvent.DvrEntryAdded(current, dvrEntry(8, "one")))
         assertTrue(metadata.channelsAndTags.value is ChannelRepositoryState.Synchronizing)
         assertTrue(metadata.epgRepository.state.value is EpgRepositoryState.Synchronizing)
+        assertTrue(metadata.dvrRepository.state.value is DvrRepositoryState.Synchronizing)
 
         metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(current))
         runCurrent()
@@ -76,6 +80,7 @@ internal class PhaseOneSessionMetadataTest {
         assertEquals(listOf(2L), snapshot.tags.map { it.id.value })
         val epg = metadata.currentEpgSnapshot()
         assertEquals(listOf(4L), epg.events.map { it.id.value })
+        assertEquals(listOf(8L), metadata.currentDvrSnapshot().entries.map { it.id.value })
         assertEquals(Instant.fromEpochSeconds(-1), epg.coverages.single().coveredFrom)
         assertEquals(Instant.fromEpochSeconds(10), epg.coverages.single().coveredTo)
         assertEquals(CapabilityAccess.ALLOWED, metadata.capabilities(current).streaming)
@@ -332,9 +337,11 @@ internal class PhaseOneSessionMetadataTest {
             MetadataEvent.TagAdded(first, tag(id = 10, channelIds = listOf(1, 2))),
         )
         metadata.acceptMetadata(MetadataEvent.EventAdded(first, epgEvent(4, 1, 10, 20, "old-event")))
+        metadata.acceptMetadata(MetadataEvent.DvrEntryAdded(first, dvrEntry(8, "old-dvr")))
         metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(first))
         val staleSnapshot = metadata.currentSnapshot()
         val staleEpgSnapshot = metadata.currentEpgSnapshot()
+        val staleDvrSnapshot = metadata.currentDvrSnapshot()
 
         metadata.resetWorkingStateRetainingPublishedSnapshot()
         val staleState = metadata.channelsAndTags.value as ChannelRepositoryState.Stale
@@ -343,12 +350,20 @@ internal class PhaseOneSessionMetadataTest {
             staleEpgSnapshot,
             (metadata.epgRepository.state.value as EpgRepositoryState.Stale).snapshot,
         )
+        assertSame(
+            staleDvrSnapshot,
+            (metadata.dvrRepository.state.value as DvrRepositoryState.Stale).snapshot,
+        )
         metadata.bindGeneration(second)
         val synchronizing = metadata.channelsAndTags.value as ChannelRepositoryState.Synchronizing
         assertSame(staleSnapshot, synchronizing.staleCatalog)
         assertSame(
             staleEpgSnapshot,
             (metadata.epgRepository.state.value as EpgRepositoryState.Synchronizing).staleSnapshot,
+        )
+        assertSame(
+            staleDvrSnapshot,
+            (metadata.dvrRepository.state.value as DvrRepositoryState.Synchronizing).staleSnapshot,
         )
 
         metadata.acceptMetadata(
@@ -361,8 +376,10 @@ internal class PhaseOneSessionMetadataTest {
             MetadataEvent.TagAdded(second, tag(id = 11, channelIds = listOf(1, 2))),
         )
         metadata.acceptMetadata(MetadataEvent.EventAdded(second, epgEvent(6, 1, 30, 40, "new-event")))
+        metadata.acceptMetadata(MetadataEvent.DvrEntryAdded(second, dvrEntry(9, "new-dvr")))
         metadata.acceptMetadata(MetadataEvent.ChannelAdded(first, channel(id = 3, name = "stale")))
         metadata.acceptMetadata(MetadataEvent.EventAdded(first, epgEvent(7, 1, 50, 60, "stale-event")))
+        metadata.acceptMetadata(MetadataEvent.DvrEntryAdded(first, dvrEntry(10, "stale-dvr")))
         metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(first))
         assertSame(staleSnapshot, synchronizing.staleCatalog)
         assertEquals(listOf(1L, 2L), staleSnapshot.channels.map { it.id.value })
@@ -380,6 +397,8 @@ internal class PhaseOneSessionMetadataTest {
         assertEquals(listOf(1L, 2L), staleSnapshot.channels.map { it.id.value })
         assertEquals(listOf(6L), metadata.currentEpgSnapshot().events.map { it.id.value })
         assertEquals(listOf(4L), staleEpgSnapshot.events.map { it.id.value })
+        assertEquals(listOf(9L), metadata.currentDvrSnapshot().entries.map { it.id.value })
+        assertEquals(listOf(8L), staleDvrSnapshot.entries.map { it.id.value })
     }
 
     @Test
@@ -510,9 +529,7 @@ internal class PhaseOneSessionMetadataTest {
         }
 
         metadata.acceptMetadata(MetadataEvent.ChannelUpdated(generation, channel(id = 2)))
-        metadata.acceptMetadata(
-            MetadataEvent.Deferred(generation, DeferredMetadataKind.DVR_UPDATED),
-        )
+        metadata.acceptMetadata(MetadataEvent.DvrEntryUpdated(generation, dvrEntry(8, "private-dvr")))
         metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
         metadata.acceptMetadata(MetadataEvent.ChannelDeleted(GatewayGeneration(), ChannelId(2)))
         assertSame(state, metadata.channelsAndTags.value)
@@ -526,6 +543,7 @@ internal class PhaseOneSessionMetadataTest {
             snapshot.channels.first(),
             snapshot.channels.first().services?.first(),
             snapshot.tags.first(),
+            metadata.dvrRepository.state.value,
         ).joinToString()
         assertFalse(rendering.contains("private"), "Catalog rendering exposed metadata")
     }
@@ -561,6 +579,7 @@ internal class PhaseOneSessionMetadataTest {
         assertTrue(snapshot.channels.isEmpty(), "Empty synchronized channels were not current")
         assertTrue(snapshot.tags.isEmpty(), "Empty synchronized tags were not current")
         assertTrue(metadata.currentEpgSnapshot().events.isEmpty(), "Empty synchronized EPG was not current")
+        assertTrue(metadata.currentDvrSnapshot().entries.isEmpty(), "Empty synchronized DVR was not current")
     }
 
     private fun PhaseOneSessionMetadata.currentSnapshot() =
@@ -568,6 +587,14 @@ internal class PhaseOneSessionMetadataTest {
 
     private fun PhaseOneSessionMetadata.currentEpgSnapshot() =
         (epgRepository.state.value as EpgRepositoryState.Current).snapshot
+
+    private fun PhaseOneSessionMetadata.currentDvrSnapshot() =
+        (dvrRepository.state.value as DvrRepositoryState.Current).snapshot
+
+    private fun dvrEntry(id: Long, title: String? = null): GatewayDvrEntry = GatewayDvrEntry(
+        id = DvrEntryId(id),
+        title = title,
+    )
 
     private fun channel(
         id: Long,
