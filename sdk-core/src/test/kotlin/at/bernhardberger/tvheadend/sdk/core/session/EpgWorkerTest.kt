@@ -28,6 +28,7 @@ import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -222,12 +223,77 @@ internal class EpgWorkerTest {
         assertEquals(listOf(1L), snapshot.events.map { it.id.value })
         job.cancelAndJoin()
     }
+
+    @Test
+    fun `clock jump drains actual coverage without clearing queried horizon`() = runTest {
+        val generation = GatewayGeneration()
+        val origin = Instant.fromEpochSeconds(1_000_000)
+        val clock = MutableClock(origin)
+        val metadata = synchronizedMetadata(generation, 1L..2L) {
+            acceptMetadata(
+                MetadataEvent.EventAdded(
+                    generation,
+                    timedEvent(1, 1, origin - 1.hours, origin - 1.seconds),
+                ),
+            )
+            acceptMetadata(
+                MetadataEvent.EventAdded(
+                    generation,
+                    timedEvent(2, 1, origin + 2.hours, origin + 3.hours),
+                ),
+            )
+            acceptMetadata(
+                MetadataEvent.EventAdded(
+                    generation,
+                    timedEvent(3, 2, origin - 2.hours, origin - 1.hours),
+                ),
+            )
+        }
+        val worker = EpgWorker(
+            metadata = metadata,
+            clock = clock,
+            queryEpg = { _, _, _ -> GatewayResult.Ok(emptyList()) },
+        )
+        val job = backgroundScope.launch { worker.run(generation) }
+
+        runCurrent()
+        advanceTimeBy(1.seconds)
+        runCurrent()
+        assertTrue(worker.isWarm)
+        val warmed = (metadata.epgRepository.state.value as EpgRepositoryState.Current).snapshot
+        assertEquals(setOf(1L, 2L, 3L), warmed.events.map { it.id.value }.toSet())
+        val queried = warmed.coverages.associate { coverage ->
+            coverage.channelId to coverage.queriedTo
+        }
+        assertTrue(queried.values.all { horizon -> horizon != null })
+
+        clock.now = origin + 7.hours
+        advanceTimeBy(10.minutes)
+        runCurrent()
+
+        val drained = (metadata.epgRepository.state.value as EpgRepositoryState.Current).snapshot
+        assertEquals(listOf(2L), drained.events.map { it.id.value })
+        val retained = drained.coverages.single { coverage -> coverage.channelId == ChannelId(1) }
+        val emptied = drained.coverages.single { coverage -> coverage.channelId == ChannelId(2) }
+        assertFalse(retained.isEmpty)
+        assertTrue(emptied.isEmpty)
+        assertTrue(retained.queriedTo != null && retained.queriedTo >= queried.getValue(ChannelId(1))!!)
+        assertTrue(emptied.queriedTo != null && emptied.queriedTo >= queried.getValue(ChannelId(2))!!)
+        assertEquals(emptied.queriedTo, emptied.knownTo)
+        job.cancelAndJoin()
+    }
 }
 
 private class SchedulerClock(
     private val currentTimeMillis: () -> Long,
 ) : Clock {
     override fun now(): Instant = instant(0) + currentTimeMillis().milliseconds
+}
+
+private class MutableClock(
+    var now: Instant,
+) : Clock {
+    override fun now(): Instant = now
 }
 
 private fun synchronizedMetadata(
@@ -257,11 +323,18 @@ private fun channel(id: Long): GatewayChannelMetadata = GatewayChannelMetadata(
 )
 
 private fun event(id: Long, channelId: Long, start: Long, stop: Long): GatewayEpgEvent =
-    GatewayEpgEvent(
-        id = EventId(id),
-        channelId = ChannelId(channelId),
-        start = instant(start),
-        stop = instant(stop),
-    )
+    timedEvent(id, channelId, instant(start), instant(stop))
+
+private fun timedEvent(
+    id: Long,
+    channelId: Long,
+    start: Instant,
+    stop: Instant,
+): GatewayEpgEvent = GatewayEpgEvent(
+    id = EventId(id),
+    channelId = ChannelId(channelId),
+    start = start,
+    stop = stop,
+)
 
 private fun instant(seconds: Long): Instant = Instant.fromEpochSeconds(seconds)
