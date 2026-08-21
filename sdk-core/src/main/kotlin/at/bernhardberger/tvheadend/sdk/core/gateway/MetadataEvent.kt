@@ -119,7 +119,7 @@ internal class GatewayTagMetadata(
     internal val uuid: String?,
     internal val index: Long?,
     internal val icon: String?,
-    internal val titledIcon: Long?,
+    internal val titledIcon: Boolean?,
     channelIds: List<ChannelId>?,
 ) {
     internal val channelIds: List<ChannelId>? = channelIds?.toList()

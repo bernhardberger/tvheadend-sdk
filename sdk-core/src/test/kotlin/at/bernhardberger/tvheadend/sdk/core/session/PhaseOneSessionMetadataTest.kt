@@ -4,6 +4,7 @@ import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.Channel
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.ChannelService
+import at.bernhardberger.tvheadend.sdk.core.ServerCapabilities
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.gateway.DeferredMetadataKind
 import at.bernhardberger.tvheadend.sdk.core.gateway.EventId
@@ -68,6 +69,85 @@ internal class PhaseOneSessionMetadataTest {
         assertEquals(listOf(2L), snapshot.tags.map { it.id.value })
         assertEquals(CapabilityAccess.ALLOWED, metadata.capabilities(current).streaming)
         assertEquals(CapabilityAccess.DENIED, metadata.capabilities(current).dvrWrite)
+        assertEquals(CapabilityAccess.UNKNOWN, metadata.capabilities(current).protocolDvr)
+    }
+
+    @Test
+    fun `server facts project every observation while dvr write stays independently latched`() = runTest {
+        val metadata = PhaseOneSessionMetadata()
+        val stale = GatewayGeneration()
+        val current = GatewayGeneration()
+        val features = mutableListOf("htsp", "satip")
+        metadata.bindGeneration(current)
+        metadata.applyDvrAccess(current, false)
+        metadata.publishServerFacts(
+            stale,
+            serverFacts(
+                streaming = false,
+                dvr = false,
+                serverName = "stale-server",
+            ),
+        )
+        metadata.publishServerFacts(
+            current,
+            serverFacts(
+                streaming = true,
+                dvr = true,
+                failedDvr = false,
+                admin = true,
+                anonymous = false,
+                apiVersion = 42,
+                limitAll = 0,
+                limitDvr = 9,
+                limitStreaming = 8,
+                uiLevel = 0,
+                serverCapabilities = features,
+                serverName = "private-server",
+                serverVersion = "private-version",
+                webRoot = "/secret",
+                language = "eng",
+                uiLanguage = "deu",
+            ),
+        )
+        features.clear()
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(current))
+        metadata.awaitChannelsAndTagsCurrent(current)
+
+        val capabilities = metadata.capabilities(current)
+        assertEquals(
+            ServerCapabilities.create(
+                streaming = CapabilityAccess.ALLOWED,
+                dvrWrite = CapabilityAccess.DENIED,
+                protocolDvr = CapabilityAccess.ALLOWED,
+                failedDvr = CapabilityAccess.DENIED,
+                admin = CapabilityAccess.ALLOWED,
+                anonymous = CapabilityAccess.DENIED,
+                apiVersion = 42,
+                allLimit = 0,
+                dvrLimit = 9,
+                streamingLimit = 8,
+                uiLevel = 0,
+                features = listOf("htsp", "satip"),
+                serverName = "private-server",
+                serverVersion = "private-version",
+                webRoot = "/secret",
+                language = "eng",
+                uiLanguage = "deu",
+            ),
+            capabilities,
+        )
+        assertEquals(listOf("htsp", "satip"), capabilities.features)
+        assertThrows(UnsupportedOperationException::class.java) {
+            (capabilities.features as MutableList<String>).clear()
+        }
+        assertFalse(
+            capabilities.toString().contains("private"),
+            "Capability rendering exposed server identity",
+        )
+        assertFalse(
+            capabilities.toString().contains("/secret"),
+            "Capability rendering exposed a path",
+        )
     }
 
     @Test
@@ -101,7 +181,7 @@ internal class PhaseOneSessionMetadataTest {
                     uuid = "tag-uuid",
                     index = 9,
                     icon = "tag-icon",
-                    titledIcon = 1,
+                    titledIcon = true,
                     channelIds = listOf(1),
                 ),
             ),
@@ -135,6 +215,7 @@ internal class PhaseOneSessionMetadataTest {
         assertEquals("", tag.name)
         assertEquals("tag-uuid", tag.uuid)
         assertEquals(0L, tag.index)
+        assertEquals(true, tag.titledIcon)
         assertEquals(listOf(1L), tag.channelIds?.map { it.value })
 
         metadata.acceptMetadata(
@@ -405,7 +486,7 @@ internal class PhaseOneSessionMetadataTest {
         uuid: String? = null,
         index: Long? = null,
         icon: String? = null,
-        titledIcon: Long? = null,
+        titledIcon: Boolean? = null,
         channelIds: List<Long>? = null,
     ): GatewayTagMetadata = GatewayTagMetadata(
         id = TagId(id),
@@ -426,22 +507,39 @@ internal class PhaseOneSessionMetadataTest {
         providerName = "private-provider",
     )
 
-    private fun serverFacts(streaming: Boolean): GatewayServerFacts = GatewayServerFacts(
-        serverName = null,
-        serverVersion = null,
-        webRoot = null,
-        language = null,
-        serverCapabilities = null,
-        apiVersion = null,
-        admin = null,
+    private fun serverFacts(
+        streaming: Boolean? = null,
+        dvr: Boolean? = null,
+        failedDvr: Boolean? = null,
+        admin: Boolean? = null,
+        anonymous: Boolean? = null,
+        apiVersion: Int? = null,
+        limitAll: Int? = null,
+        limitDvr: Int? = null,
+        limitStreaming: Int? = null,
+        uiLevel: Int? = null,
+        serverCapabilities: List<String>? = null,
+        serverName: String? = null,
+        serverVersion: String? = null,
+        webRoot: String? = null,
+        language: String? = null,
+        uiLanguage: String? = null,
+    ): GatewayServerFacts = GatewayServerFacts(
+        serverName = serverName,
+        serverVersion = serverVersion,
+        webRoot = webRoot,
+        language = language,
+        serverCapabilities = serverCapabilities,
+        apiVersion = apiVersion,
+        admin = admin,
         streaming = streaming,
-        dvr = null,
-        failedDvr = null,
-        anonymous = null,
-        limitAll = null,
-        limitDvr = null,
-        limitStreaming = null,
-        uiLevel = null,
-        uiLanguage = null,
+        dvr = dvr,
+        failedDvr = failedDvr,
+        anonymous = anonymous,
+        limitAll = limitAll,
+        limitDvr = limitDvr,
+        limitStreaming = limitStreaming,
+        uiLevel = uiLevel,
+        uiLanguage = uiLanguage,
     )
 }

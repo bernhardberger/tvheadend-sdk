@@ -22,6 +22,75 @@ internal class ChannelRepositoryTest {
         assertEquals(0xffff_ffffL, ChannelTagId(0xffff_ffffL).value)
         assertThrows(IllegalArgumentException::class.java) { EventId(-1) }
         assertThrows(IllegalArgumentException::class.java) { ChannelId(0x1_0000_0000L) }
+        assertThrows(IllegalArgumentException::class.java) {
+            Channel.create(ChannelId(1), number = -1)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            Channel.create(ChannelId(1), numberMinor = 0x1_0000_0000L)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            ChannelTag.create(ChannelTagId(1), index = -1)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            ChannelService(
+                name = "service",
+                type = "type",
+                content = 0x1_0000_0000L,
+                conditionalAccessId = null,
+                conditionalAccessName = null,
+                providerName = null,
+            )
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            ChannelService(
+                name = "service",
+                type = "type",
+                content = 0,
+                conditionalAccessId = -1,
+                conditionalAccessName = null,
+                providerName = null,
+            )
+        }
+        assertEquals(0L, Channel.create(ChannelId(1), number = 0, numberMinor = 0xffff_ffffL).number)
+        assertEquals(true, ChannelTag.create(ChannelTagId(1), titledIcon = true).titledIcon)
+        assertEquals(false, ChannelTag.create(ChannelTagId(1), titledIcon = false).titledIcon)
+    }
+
+    @Test
+    fun `server capabilities freeze features and distinguish empty from unknown`() {
+        val features = mutableListOf("htsp")
+        val capabilities = ServerCapabilities.create(
+            streaming = CapabilityAccess.ALLOWED,
+            dvrWrite = CapabilityAccess.UNKNOWN,
+            features = features,
+            serverName = "private-server",
+            webRoot = "/secret",
+        )
+        features.clear()
+        assertEquals(listOf("htsp"), capabilities.features)
+        assertEquals(
+            null,
+            ServerCapabilities.create(CapabilityAccess.UNKNOWN, CapabilityAccess.UNKNOWN).features,
+        )
+        assertEquals(
+            emptyList<String>(),
+            ServerCapabilities.create(
+                streaming = CapabilityAccess.UNKNOWN,
+                dvrWrite = CapabilityAccess.UNKNOWN,
+                features = emptyList(),
+            ).features,
+        )
+        assertThrows(UnsupportedOperationException::class.java) {
+            (capabilities.features as MutableList<String>).clear()
+        }
+        assertFalse(
+            capabilities.toString().contains("private"),
+            "Capability rendering exposed server identity",
+        )
+        assertFalse(
+            capabilities.toString().contains("/secret"),
+            "Capability rendering exposed a path",
+        )
     }
 
     @Test
@@ -69,16 +138,20 @@ internal class ChannelRepositoryTest {
     fun `all projections derive atomically from one freshness state`() = runTest {
         val repository = TestChannelRepository()
         val channel = Channel.create(ChannelId(1), name = "one")
-        val catalog = ChannelCatalog.create(channels = listOf(channel))
+        val tag = ChannelTag.create(ChannelTagId(2), name = "two", titledIcon = false)
+        val catalog = ChannelCatalog.create(channels = listOf(channel), tags = listOf(tag))
 
         assertEquals(ChannelRepositoryState.Empty, repository.state.value)
         assertEquals(emptyList<Channel>(), repository.channels.value)
         assertEquals(emptyList<ChannelTag>(), repository.tags.value)
         assertEquals(null, repository.channel(ChannelId(1)).first())
+        assertEquals(null, repository.tag(ChannelTagId(2)).first())
 
         repository.set(ChannelRepositoryState.Synchronizing(catalog))
         assertSame(catalog.channels, repository.channels.value)
+        assertSame(catalog.tags, repository.tags.value)
         assertSame(channel, repository.channel(ChannelId(1)).first())
+        assertSame(tag, repository.tag(ChannelTagId(2)).first())
 
         val replayed = async { repository.channels.first() }
         runCurrent()
@@ -86,7 +159,9 @@ internal class ChannelRepositoryTest {
 
         repository.set(ChannelRepositoryState.Current(ChannelCatalog.create()))
         assertEquals(emptyList<Channel>(), repository.channels.value)
+        assertEquals(emptyList<ChannelTag>(), repository.tags.value)
         assertEquals(null, repository.channel(ChannelId(1)).first())
+        assertEquals(null, repository.tag(ChannelTagId(2)).first())
         assertEquals(
             ChannelRepositoryState.Current(ChannelCatalog.create()),
             repository.state.value,

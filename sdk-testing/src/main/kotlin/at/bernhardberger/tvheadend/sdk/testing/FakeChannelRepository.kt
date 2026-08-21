@@ -5,6 +5,7 @@ import at.bernhardberger.tvheadend.sdk.core.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepository
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.ChannelTag
+import at.bernhardberger.tvheadend.sdk.core.ChannelTagId
 import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
 import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -34,6 +35,10 @@ public class FakeChannelRepository(
 
     override fun channel(id: ChannelId): Flow<Channel?> =
         channels.map { channels -> channels.firstOrNull { channel -> channel.id == id } }
+            .distinctUntilChanged()
+
+    override fun tag(id: ChannelTagId): Flow<ChannelTag?> =
+        tags.map { tags -> tags.firstOrNull { tag -> tag.id == id } }
             .distinctUntilChanged()
 }
 

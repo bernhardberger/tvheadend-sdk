@@ -322,6 +322,7 @@ internal class HtspProtocolGatewayTest {
         assertEquals(emptyList<ChannelId>(), updated.channel.tagIds)
         val tagAdded = events[3] as MetadataEvent.TagAdded
         assertEquals("Private tag", tagAdded.tag.name)
+        assertEquals(true, tagAdded.tag.titledIcon)
         assertEquals(1L, tagAdded.tag.channelIds?.single()?.value)
         val tagUpdated = events[4] as MetadataEvent.TagUpdated
         assertEquals(null, tagUpdated.tag.name)
@@ -342,6 +343,34 @@ internal class HtspProtocolGatewayTest {
             events.map(Any::toString),
         )
         assertFalse(events.toString().contains("Private"))
+    }
+
+    @Test
+    fun `tag titled icon maps absent zero and nonzero flags`() = runTest {
+        val generation = HtspConnectionGeneration()
+        val fake = FakeHtspConnection().apply {
+            eventsFlow = flowOf(
+                HtspTransportEvent.ServerMessage(
+                    message = HtspTagAddMessage(tagId = 1),
+                    generation = generation,
+                    messageSequence = 1,
+                ),
+                HtspTransportEvent.ServerMessage(
+                    message = HtspTagAddMessage(tagId = 2, tagTitledIcon = 0),
+                    generation = generation,
+                    messageSequence = 2,
+                ),
+                HtspTransportEvent.ServerMessage(
+                    message = HtspTagAddMessage(tagId = 3, tagTitledIcon = 2),
+                    generation = generation,
+                    messageSequence = 3,
+                ),
+            )
+        }
+        val events = HtspProtocolGateway(fake).metadata.toList()
+        assertEquals(null, (events[0] as MetadataEvent.TagAdded).tag.titledIcon)
+        assertEquals(false, (events[1] as MetadataEvent.TagAdded).tag.titledIcon)
+        assertEquals(true, (events[2] as MetadataEvent.TagAdded).tag.titledIcon)
     }
 
     @Test

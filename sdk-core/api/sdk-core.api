@@ -74,6 +74,7 @@ public abstract interface class at/bernhardberger/tvheadend/sdk/core/ChannelRepo
 	public abstract fun getChannels ()Lkotlinx/coroutines/flow/StateFlow;
 	public abstract fun getState ()Lkotlinx/coroutines/flow/StateFlow;
 	public abstract fun getTags ()Lkotlinx/coroutines/flow/StateFlow;
+	public abstract fun tag-tZzeWiw (J)Lkotlinx/coroutines/flow/Flow;
 }
 
 public abstract interface class at/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState {
@@ -147,7 +148,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/ChannelTag {
 	public final fun component3 ()Ljava/lang/String;
 	public final fun component4 ()Ljava/lang/Long;
 	public final fun component5 ()Ljava/lang/String;
-	public final fun component6 ()Ljava/lang/Long;
+	public final fun component6 ()Ljava/lang/Boolean;
 	public final fun component7 ()Ljava/util/List;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getChannelIds ()Ljava/util/List;
@@ -155,15 +156,15 @@ public final class at/bernhardberger/tvheadend/sdk/core/ChannelTag {
 	public final fun getId-JMqym6k ()J
 	public final fun getIndex ()Ljava/lang/Long;
 	public final fun getName ()Ljava/lang/String;
-	public final fun getTitledIcon ()Ljava/lang/Long;
+	public final fun getTitledIcon ()Ljava/lang/Boolean;
 	public final fun getUuid ()Ljava/lang/String;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/ChannelTag$Companion {
-	public final fun create-YrdoeHo (JLjava/lang/String;Ljava/lang/String;Ljava/lang/Long;Ljava/lang/String;Ljava/lang/Long;Ljava/util/List;)Lat/bernhardberger/tvheadend/sdk/core/ChannelTag;
-	public static synthetic fun create-YrdoeHo$default (Lat/bernhardberger/tvheadend/sdk/core/ChannelTag$Companion;JLjava/lang/String;Ljava/lang/String;Ljava/lang/Long;Ljava/lang/String;Ljava/lang/Long;Ljava/util/List;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/ChannelTag;
+	public final fun create-YrdoeHo (JLjava/lang/String;Ljava/lang/String;Ljava/lang/Long;Ljava/lang/String;Ljava/lang/Boolean;Ljava/util/List;)Lat/bernhardberger/tvheadend/sdk/core/ChannelTag;
+	public static synthetic fun create-YrdoeHo$default (Lat/bernhardberger/tvheadend/sdk/core/ChannelTag$Companion;JLjava/lang/String;Ljava/lang/String;Ljava/lang/Long;Ljava/lang/String;Ljava/lang/Boolean;Ljava/util/List;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/ChannelTag;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/ChannelTagId {
@@ -210,16 +211,49 @@ public final class at/bernhardberger/tvheadend/sdk/core/ServerAuthentication$Pas
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/ServerCapabilities {
-	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;)V
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/ServerCapabilities$Companion;
 	public final fun component1 ()Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
+	public final fun component10 ()Ljava/lang/Integer;
+	public final fun component11 ()Ljava/lang/Integer;
+	public final fun component12 ()Ljava/util/List;
+	public final fun component13 ()Ljava/lang/String;
+	public final fun component14 ()Ljava/lang/String;
+	public final fun component15 ()Ljava/lang/String;
+	public final fun component16 ()Ljava/lang/String;
+	public final fun component17 ()Ljava/lang/String;
 	public final fun component2 ()Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
-	public final fun copy (Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;)Lat/bernhardberger/tvheadend/sdk/core/ServerCapabilities;
-	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/ServerCapabilities;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/ServerCapabilities;
+	public final fun component3 ()Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
+	public final fun component4 ()Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
+	public final fun component5 ()Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
+	public final fun component6 ()Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
+	public final fun component7 ()Ljava/lang/Integer;
+	public final fun component8 ()Ljava/lang/Integer;
+	public final fun component9 ()Ljava/lang/Integer;
 	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAdmin ()Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
+	public final fun getAllLimit ()Ljava/lang/Integer;
+	public final fun getAnonymous ()Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
+	public final fun getApiVersion ()Ljava/lang/Integer;
+	public final fun getDvrLimit ()Ljava/lang/Integer;
 	public final fun getDvrWrite ()Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
+	public final fun getFailedDvr ()Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
+	public final fun getFeatures ()Ljava/util/List;
+	public final fun getLanguage ()Ljava/lang/String;
+	public final fun getProtocolDvr ()Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
+	public final fun getServerName ()Ljava/lang/String;
+	public final fun getServerVersion ()Ljava/lang/String;
 	public final fun getStreaming ()Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
+	public final fun getStreamingLimit ()Ljava/lang/Integer;
+	public final fun getUiLanguage ()Ljava/lang/String;
+	public final fun getUiLevel ()Ljava/lang/Integer;
+	public final fun getWebRoot ()Ljava/lang/String;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ServerCapabilities$Companion {
+	public final fun create (Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/ServerCapabilities;
+	public static synthetic fun create$default (Lat/bernhardberger/tvheadend/sdk/core/ServerCapabilities$Companion;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/ServerCapabilities;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/ServerProfile {

@@ -415,7 +415,7 @@ private fun HtspTagAddMessage.toGatewayTag(): GatewayTagMetadata = GatewayTagMet
     uuid = tagUuid,
     index = tagIndex,
     icon = tagIcon,
-    titledIcon = tagTitledIcon,
+    titledIcon = tagTitledIcon.toFlag(),
     channelIds = channelIds?.map(::ChannelId),
 )
 
@@ -425,9 +425,11 @@ private fun HtspTagUpdateMessage.toGatewayTag(): GatewayTagMetadata = GatewayTag
     uuid = tagUuid,
     index = tagIndex,
     icon = tagIcon,
-    titledIcon = tagTitledIcon,
+    titledIcon = tagTitledIcon.toFlag(),
     channelIds = channelIds?.map(::ChannelId),
 )
+
+private fun Long?.toFlag(): Boolean? = this?.let { it != 0L }
 
 private fun HtspSubscriptionEvent.toGatewayEvent(): SubscriptionEvent = when (this) {
     is HtspSubscriptionEvent.Started -> message.toGatewayEvent()

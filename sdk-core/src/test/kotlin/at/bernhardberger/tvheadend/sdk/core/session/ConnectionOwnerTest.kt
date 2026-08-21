@@ -5,6 +5,7 @@ package at.bernhardberger.tvheadend.sdk.core.session
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.ServerAuthentication
+import at.bernhardberger.tvheadend.sdk.core.ServerCapabilities
 import at.bernhardberger.tvheadend.sdk.core.ServerProfile
 import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
 import at.bernhardberger.tvheadend.sdk.core.SessionFailure
@@ -96,7 +97,7 @@ internal class ConnectionOwnerTest {
 
         assertEquals(
             SessionState.Ready(
-                at.bernhardberger.tvheadend.sdk.core.ServerCapabilities(
+                ServerCapabilities.create(
                     streaming = CapabilityAccess.ALLOWED,
                     dvrWrite = CapabilityAccess.DENIED,
                 ),

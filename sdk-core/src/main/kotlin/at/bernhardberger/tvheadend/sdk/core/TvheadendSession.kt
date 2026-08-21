@@ -9,6 +9,7 @@ import at.bernhardberger.tvheadend.sdk.core.session.PhaseOneSessionMetadata
 import at.bernhardberger.tvheadend.sdk.core.session.PlaybackSessionChildren
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener
+import java.util.Collections
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.StateFlow
 import kotlin.random.Random
@@ -234,11 +235,70 @@ public enum class SessionOperationFailure {
     NOT_SUPPORTED,
 }
 
-/** Capabilities proven for the current synchronized generation. */
-public data class ServerCapabilities(
+/** Capabilities and server observations proven for the current synchronized generation. */
+@ConsistentCopyVisibility
+public data class ServerCapabilities private constructor(
     public val streaming: CapabilityAccess,
     public val dvrWrite: CapabilityAccess,
-)
+    public val protocolDvr: CapabilityAccess,
+    public val failedDvr: CapabilityAccess,
+    public val admin: CapabilityAccess,
+    public val anonymous: CapabilityAccess,
+    public val apiVersion: Int?,
+    public val allLimit: Int?,
+    public val dvrLimit: Int?,
+    public val streamingLimit: Int?,
+    public val uiLevel: Int?,
+    public val features: List<String>?,
+    public val serverName: String?,
+    public val serverVersion: String?,
+    public val webRoot: String?,
+    public val language: String?,
+    public val uiLanguage: String?,
+) {
+    override fun toString(): String = "ServerCapabilities(<redacted>)"
+
+    public companion object {
+        /** Creates capabilities while defensively copying feature tokens. */
+        public fun create(
+            streaming: CapabilityAccess,
+            dvrWrite: CapabilityAccess,
+            protocolDvr: CapabilityAccess = CapabilityAccess.UNKNOWN,
+            failedDvr: CapabilityAccess = CapabilityAccess.UNKNOWN,
+            admin: CapabilityAccess = CapabilityAccess.UNKNOWN,
+            anonymous: CapabilityAccess = CapabilityAccess.UNKNOWN,
+            apiVersion: Int? = null,
+            allLimit: Int? = null,
+            dvrLimit: Int? = null,
+            streamingLimit: Int? = null,
+            uiLevel: Int? = null,
+            features: List<String>? = null,
+            serverName: String? = null,
+            serverVersion: String? = null,
+            webRoot: String? = null,
+            language: String? = null,
+            uiLanguage: String? = null,
+        ): ServerCapabilities = ServerCapabilities(
+            streaming = streaming,
+            dvrWrite = dvrWrite,
+            protocolDvr = protocolDvr,
+            failedDvr = failedDvr,
+            admin = admin,
+            anonymous = anonymous,
+            apiVersion = apiVersion,
+            allLimit = allLimit,
+            dvrLimit = dvrLimit,
+            streamingLimit = streamingLimit,
+            uiLevel = uiLevel,
+            features = features?.let { Collections.unmodifiableList(ArrayList(it)) },
+            serverName = serverName,
+            serverVersion = serverVersion,
+            webRoot = webRoot,
+            language = language,
+            uiLanguage = uiLanguage,
+        )
+    }
+}
 
 /** Positive, negative, or absent evidence for a server capability. */
 public enum class CapabilityAccess {

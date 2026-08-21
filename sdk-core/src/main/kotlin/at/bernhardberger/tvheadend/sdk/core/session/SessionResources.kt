@@ -54,7 +54,7 @@ internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), Session
     private var initialSync = CompletableDeferred<Unit>()
     private var publishedCatalog: ChannelCatalog? = null
     private var synchronizedCurrent = false
-    private var streaming: Boolean? = null
+    private var serverFacts: GatewayServerFacts? = null
     private var dvrAccess: Boolean? = null
 
     override val state: StateFlow<ChannelRepositoryState> =
@@ -74,7 +74,7 @@ internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), Session
             val previousFence = initialSync
             initialSync = CompletableDeferred()
             synchronizedCurrent = false
-            streaming = null
+            serverFacts = null
             dvrAccess = null
             reducer.clear()
             if (!retainPublishedCatalog) {
@@ -95,7 +95,7 @@ internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), Session
             this.generation = generation
             initialSync = CompletableDeferred()
             synchronizedCurrent = false
-            streaming = null
+            serverFacts = null
             dvrAccess = null
             reducer.clear()
             mutableChannelsAndTags.value = ChannelRepositoryState.Synchronizing(publishedCatalog)
@@ -115,7 +115,7 @@ internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), Session
     override fun publishServerFacts(generation: GatewayGeneration, facts: GatewayServerFacts) {
         synchronized(lock) {
             if (this.generation === generation) {
-                streaming = facts.streaming
+                serverFacts = facts
             }
         }
     }
@@ -176,9 +176,25 @@ internal class PhaseOneSessionMetadata : StateBackedChannelRepository(), Session
         check(this.generation === generation && synchronizedCurrent) {
             "Session generation is not current"
         }
-        ServerCapabilities(
-            streaming = streaming.toCapabilityAccess(),
+        val facts = serverFacts
+        ServerCapabilities.create(
+            streaming = facts?.streaming.toCapabilityAccess(),
             dvrWrite = dvrAccess.toCapabilityAccess(),
+            protocolDvr = facts?.dvr.toCapabilityAccess(),
+            failedDvr = facts?.failedDvr.toCapabilityAccess(),
+            admin = facts?.admin.toCapabilityAccess(),
+            anonymous = facts?.anonymous.toCapabilityAccess(),
+            apiVersion = facts?.apiVersion,
+            allLimit = facts?.limitAll,
+            dvrLimit = facts?.limitDvr,
+            streamingLimit = facts?.limitStreaming,
+            uiLevel = facts?.uiLevel,
+            features = facts?.serverCapabilities,
+            serverName = facts?.serverName,
+            serverVersion = facts?.serverVersion,
+            webRoot = facts?.webRoot,
+            language = facts?.language,
+            uiLanguage = facts?.uiLanguage,
         )
     }
 

@@ -50,6 +50,11 @@ public data class ChannelService(
     public val conditionalAccessName: String?,
     public val providerName: String?,
 ) {
+    init {
+        requireUnsignedU32("ChannelService content", content)
+        conditionalAccessId?.let { requireUnsignedU32("ChannelService conditionalAccessId", it) }
+    }
+
     override fun toString(): String = "ChannelService(<redacted>)"
 }
 
@@ -82,18 +87,22 @@ public data class Channel private constructor(
             nextEventId: EventId? = null,
             services: List<ChannelService>? = null,
             tagIds: List<ChannelTagId>? = null,
-        ): Channel = Channel(
-            id = id,
-            name = name,
-            uuid = uuid,
-            number = number,
-            numberMinor = numberMinor,
-            icon = icon,
-            currentEventId = currentEventId,
-            nextEventId = nextEventId,
-            services = services?.toImmutableList(),
-            tagIds = tagIds?.toImmutableList(),
-        )
+        ): Channel {
+            number?.let { requireUnsignedU32("Channel number", it) }
+            numberMinor?.let { requireUnsignedU32("Channel numberMinor", it) }
+            return Channel(
+                id = id,
+                name = name,
+                uuid = uuid,
+                number = number,
+                numberMinor = numberMinor,
+                icon = icon,
+                currentEventId = currentEventId,
+                nextEventId = nextEventId,
+                services = services?.toImmutableList(),
+                tagIds = tagIds?.toImmutableList(),
+            )
+        }
     }
 }
 
@@ -105,7 +114,7 @@ public data class ChannelTag private constructor(
     public val uuid: String?,
     public val index: Long?,
     public val icon: String?,
-    public val titledIcon: Long?,
+    public val titledIcon: Boolean?,
     public val channelIds: List<ChannelId>?,
 ) {
     override fun toString(): String = "ChannelTag(<redacted>)"
@@ -118,17 +127,20 @@ public data class ChannelTag private constructor(
             uuid: String? = null,
             index: Long? = null,
             icon: String? = null,
-            titledIcon: Long? = null,
+            titledIcon: Boolean? = null,
             channelIds: List<ChannelId>? = null,
-        ): ChannelTag = ChannelTag(
-            id = id,
-            name = name,
-            uuid = uuid,
-            index = index,
-            icon = icon,
-            titledIcon = titledIcon,
-            channelIds = channelIds?.toImmutableList(),
-        )
+        ): ChannelTag {
+            index?.let { requireUnsignedU32("ChannelTag index", it) }
+            return ChannelTag(
+                id = id,
+                name = name,
+                uuid = uuid,
+                index = index,
+                icon = icon,
+                titledIcon = titledIcon,
+                channelIds = channelIds?.toImmutableList(),
+            )
+        }
     }
 }
 
@@ -192,6 +204,9 @@ public interface ChannelRepository {
 
     /** Observes one channel from the current or retained stale catalog. */
     public fun channel(id: ChannelId): Flow<Channel?>
+
+    /** Observes one channel tag from the current or retained stale catalog. */
+    public fun tag(id: ChannelTagId): Flow<ChannelTag?>
 }
 
 internal abstract class StateBackedChannelRepository : ChannelRepository {
@@ -204,6 +219,10 @@ internal abstract class StateBackedChannelRepository : ChannelRepository {
 
     final override fun channel(id: ChannelId): Flow<Channel?> =
         channels.map { channels -> channels.firstOrNull { channel -> channel.id == id } }
+            .distinctUntilChanged()
+
+    final override fun tag(id: ChannelTagId): Flow<ChannelTag?> =
+        tags.map { tags -> tags.firstOrNull { tag -> tag.id == id } }
             .distinctUntilChanged()
 }
 
@@ -242,6 +261,10 @@ private fun ChannelRepositoryState.catalogOrNull(): ChannelCatalog? = when (this
 private fun ChannelRepositoryState.channels(): List<Channel> = catalogOrNull()?.channels.orEmpty()
 
 private fun ChannelRepositoryState.tags(): List<ChannelTag> = catalogOrNull()?.tags.orEmpty()
+
+private fun requireUnsignedU32(name: String, value: Long) {
+    require(value in 0L..U32_MAX) { "$name must be an unsigned 32-bit value" }
+}
 
 private fun <T> Collection<T>.toImmutableList(): List<T> =
     Collections.unmodifiableList(ArrayList(this))

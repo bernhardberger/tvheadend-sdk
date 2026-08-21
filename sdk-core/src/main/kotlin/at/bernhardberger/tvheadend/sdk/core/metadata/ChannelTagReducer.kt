@@ -130,7 +130,7 @@ internal data class ReducedChannelTag private constructor(
     internal val uuid: String?,
     internal val index: Long?,
     internal val icon: String?,
-    internal val titledIcon: Long?,
+    internal val titledIcon: Boolean?,
     internal val channelIds: List<ChannelId>?,
 ) {
     override fun toString(): String = "ReducedChannelTag(<redacted>)"
