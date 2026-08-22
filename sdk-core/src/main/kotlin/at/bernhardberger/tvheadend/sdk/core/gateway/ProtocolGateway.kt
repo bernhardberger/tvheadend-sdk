@@ -14,8 +14,10 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+import kotlin.time.Duration
 import kotlin.time.Instant
 
 @OptIn(SubscriptionInfrastructureApi::class)
@@ -126,7 +128,14 @@ internal interface ProtocolGateway {
         generation: GatewayGeneration,
         id: SubscriptionId,
         channelId: ChannelId,
+        timeshiftPeriod: Duration,
     ): SubscriptionOperationResult<SubscriptionConfirmation>
+
+    public suspend fun skipSubscription(
+        generation: GatewayGeneration,
+        id: SubscriptionId,
+        target: SubscriptionSeekTarget,
+    ): SubscriptionOperationResult<Unit>
 
     public suspend fun unsubscribe(
         generation: GatewayGeneration,

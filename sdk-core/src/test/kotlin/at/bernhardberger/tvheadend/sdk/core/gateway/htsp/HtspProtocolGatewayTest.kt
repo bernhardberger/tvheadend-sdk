@@ -81,6 +81,9 @@ import at.bernhardberger.tvheadend.htsp.requests.StopDvrEntryRequest
 import at.bernhardberger.tvheadend.htsp.requests.StopDvrEntryResponse
 import at.bernhardberger.tvheadend.htsp.requests.SubscribeRequest
 import at.bernhardberger.tvheadend.htsp.requests.SubscribeResponse
+import at.bernhardberger.tvheadend.htsp.requests.SubscriptionLiveRequest
+import at.bernhardberger.tvheadend.htsp.requests.SubscriptionSeekPosition
+import at.bernhardberger.tvheadend.htsp.requests.SubscriptionSkipRequest
 import at.bernhardberger.tvheadend.htsp.requests.UnsubscribeRequest
 import at.bernhardberger.tvheadend.htsp.requests.UpdateAutorecEntryRequest
 import at.bernhardberger.tvheadend.htsp.requests.UpdateAutorecEntryResponse
@@ -125,6 +128,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTermination
 import java.util.concurrent.CancellationException
@@ -147,6 +151,8 @@ import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
@@ -1316,7 +1322,7 @@ internal class HtspProtocolGatewayTest {
         )
         operationFailures.forEach { (source, expected) ->
             fake.executeResult = source
-            val result = gateway.subscribe(generation, SubscriptionId(10), ChannelId(20))
+            val result = gateway.subscribe(generation, SubscriptionId(10), ChannelId(20), Duration.ZERO)
             assertSame(expected, result)
             assertSame(sourceGeneration, fake.lastExpectedGeneration)
             val request = fake.lastRequest as SubscribeRequest
@@ -1337,7 +1343,7 @@ internal class HtspProtocolGatewayTest {
                 timeshiftPeriodSeconds = 40,
             ),
         )
-        val subscribed = gateway.subscribe(generation, SubscriptionId(10), ChannelId(20))
+        val subscribed = gateway.subscribe(generation, SubscriptionId(10), ChannelId(20), Duration.ZERO)
             as SubscriptionOperationResult.Ok
         assertEquals(true, subscribed.value.ninetyKhz)
         assertEquals(false, subscribed.value.normalizedTimestamps)
@@ -1359,7 +1365,7 @@ internal class HtspProtocolGatewayTest {
         fake.executeException = cancellation
         var caught: CancellationException? = null
         try {
-            gateway.subscribe(generation, SubscriptionId(11), ChannelId(21))
+            gateway.subscribe(generation, SubscriptionId(11), ChannelId(21), Duration.ZERO)
         } catch (failure: CancellationException) {
             caught = failure
         }
@@ -1378,6 +1384,100 @@ internal class HtspProtocolGatewayTest {
             unknownGenerationFailure = failure
         }
         assertEquals("Unknown gateway generation", unknownGenerationFailure?.message)
+    }
+
+    @Test
+    fun `timeshift requests map exact generation bound HTSP commands`() = runTest {
+        val sourceGeneration = HtspConnectionGeneration()
+        val fake = FakeHtspConnection().apply {
+            connectOutcome = HtspConnectOutcome.Connected(
+                liveConnection(sourceGeneration),
+            )
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+
+        fake.executeResult = HtspResult.Ok(
+            SubscribeResponse(
+                ninetyKhz = null,
+                normalizedTimestamps = null,
+                weight = null,
+                timeshiftPeriodSeconds = 300,
+            ),
+        )
+        gateway.subscribe(generation, SubscriptionId(5), ChannelId(6), 300.seconds)
+        assertEquals(300L, (fake.lastRequest as SubscribeRequest).timeshiftPeriodSeconds)
+        gateway.subscribe(generation, SubscriptionId(5), ChannelId(6), Duration.ZERO)
+        assertEquals(null, (fake.lastRequest as SubscribeRequest).timeshiftPeriodSeconds)
+        gateway.subscribe(generation, SubscriptionId(5), ChannelId(6), 900.milliseconds)
+        assertEquals(
+            null,
+            (fake.lastRequest as SubscribeRequest).timeshiftPeriodSeconds,
+            "A sub-second timeshift request must not become a zero-second request",
+        )
+
+        fake.executeResult = HtspResult.Ok(HtspEmptyResponse)
+        assertTrue(
+            gateway.skipSubscription(
+                generation,
+                SubscriptionId(5),
+                SubscriptionSeekTarget.Absolute(90.seconds),
+            ) is SubscriptionOperationResult.Ok,
+        )
+        val absolute = fake.lastRequest as SubscriptionSkipRequest
+        assertEquals(5L, absolute.subscriptionId)
+        assertEquals(SubscriptionSeekPosition.Time(90_000_000L), absolute.position)
+        assertEquals(1L, absolute.absolute)
+        assertSame(sourceGeneration, fake.lastExpectedGeneration)
+
+        gateway.skipSubscription(
+            generation,
+            SubscriptionId(5),
+            SubscriptionSeekTarget.Relative((-30).seconds),
+        )
+        val relative = fake.lastRequest as SubscriptionSkipRequest
+        assertEquals(SubscriptionSeekPosition.Time(-30_000_000L), relative.position)
+        assertEquals(0L, relative.absolute)
+
+        gateway.skipSubscription(generation, SubscriptionId(5), SubscriptionSeekTarget.Live)
+        assertEquals(5L, (fake.lastRequest as SubscriptionLiveRequest).subscriptionId)
+        assertSame(sourceGeneration, fake.lastExpectedGeneration)
+
+        listOf(
+            HtspResult.ServerError to SubscriptionOperationResult.ServerRejected,
+            HtspResult.AccessDenied to SubscriptionOperationResult.AccessDenied,
+            HtspResult.ConnectionLimit to SubscriptionOperationResult.ConnectionLimit,
+            HtspResult.Timeout to SubscriptionOperationResult.Timeout,
+            HtspResult.TransportUnavailable to SubscriptionOperationResult.TransportUnavailable,
+            HtspResult.NotSupported to SubscriptionOperationResult.NotSupported,
+        ).forEach { (source, expected) ->
+            fake.executeResult = source
+            assertSame(
+                expected,
+                gateway.skipSubscription(
+                    generation,
+                    SubscriptionId(5),
+                    SubscriptionSeekTarget.Live,
+                ),
+            )
+        }
+
+        val cancellation = CancellationException("private cancellation")
+        fake.executeException = cancellation
+        var caught: CancellationException? = null
+        try {
+            gateway.skipSubscription(
+                generation,
+                SubscriptionId(5),
+                SubscriptionSeekTarget.Absolute(1.seconds),
+            )
+        } catch (failure: CancellationException) {
+            caught = failure
+        }
+        assertSame(cancellation, caught)
+
+        gateway.shutdown()
     }
 
     @Test

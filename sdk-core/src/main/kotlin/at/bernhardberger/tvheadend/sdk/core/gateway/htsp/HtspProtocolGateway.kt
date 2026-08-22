@@ -56,6 +56,7 @@ import at.bernhardberger.tvheadend.htsp.requests.HtspEvent
 import at.bernhardberger.tvheadend.htsp.requests.HtspDvrMutationResponse
 import at.bernhardberger.tvheadend.htsp.requests.HtspRecordingRuleChannel
 import at.bernhardberger.tvheadend.htsp.requests.SubscribeResponse
+import at.bernhardberger.tvheadend.htsp.requests.SubscriptionSeekPosition
 import at.bernhardberger.tvheadend.htsp.requests.addAutorecEntry
 import at.bernhardberger.tvheadend.htsp.requests.addDvrEntry
 import at.bernhardberger.tvheadend.htsp.requests.addTimerecEntry
@@ -69,6 +70,8 @@ import at.bernhardberger.tvheadend.htsp.requests.getDvrConfigs
 import at.bernhardberger.tvheadend.htsp.requests.getEvents
 import at.bernhardberger.tvheadend.htsp.requests.stopDvrEntry
 import at.bernhardberger.tvheadend.htsp.requests.subscribe
+import at.bernhardberger.tvheadend.htsp.requests.subscriptionLive
+import at.bernhardberger.tvheadend.htsp.requests.subscriptionSkip
 import at.bernhardberger.tvheadend.htsp.requests.unsubscribe
 import at.bernhardberger.tvheadend.htsp.requests.updateAutorecEntry
 import at.bernhardberger.tvheadend.htsp.requests.updateDvrEntry
@@ -132,6 +135,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStream
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTermination
@@ -146,6 +150,7 @@ import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.transform
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
@@ -484,11 +489,42 @@ internal class HtspProtocolGateway internal constructor(
         generation: GatewayGeneration,
         id: SubscriptionId,
         channelId: ChannelId,
+        timeshiftPeriod: Duration,
     ): SubscriptionOperationResult<SubscriptionConfirmation> = connection.subscribe(
         subscriptionId = id.value,
         channelId = channelId.value,
+        timeshiftPeriodSeconds = timeshiftPeriod.inWholeSeconds.takeIf { seconds -> seconds > 0L },
         expectedGeneration = htspGenerationFor(generation),
     ).toSubscriptionResult(SubscribeResponse::toGatewayConfirmation)
+
+    /**
+     * Maps one timeshift positioning request onto its exact HTSP command.
+     *
+     * SDK subscriptions never request the 90 kHz clock, so media coordinates are sent as
+     * microseconds. Returning to live has no coordinate and uses `subscriptionLive`.
+     */
+    override suspend fun skipSubscription(
+        generation: GatewayGeneration,
+        id: SubscriptionId,
+        target: SubscriptionSeekTarget,
+    ): SubscriptionOperationResult<Unit> = when (target) {
+        SubscriptionSeekTarget.Live -> connection.subscriptionLive(
+            subscriptionId = id.value,
+            expectedGeneration = htspGenerationFor(generation),
+        )
+        is SubscriptionSeekTarget.Absolute -> connection.subscriptionSkip(
+            subscriptionId = id.value,
+            position = SubscriptionSeekPosition.Time(target.position.inWholeMicroseconds),
+            absolute = ABSOLUTE_SKIP_FLAG,
+            expectedGeneration = htspGenerationFor(generation),
+        )
+        is SubscriptionSeekTarget.Relative -> connection.subscriptionSkip(
+            subscriptionId = id.value,
+            position = SubscriptionSeekPosition.Time(target.offset.inWholeMicroseconds),
+            absolute = RELATIVE_SKIP_FLAG,
+            expectedGeneration = htspGenerationFor(generation),
+        )
+    }.toSubscriptionResult {}
 
     override suspend fun unsubscribe(
         generation: GatewayGeneration,
@@ -1256,6 +1292,9 @@ private fun subscriptionCondition(
     error != null -> SubscriptionCondition.ERROR_REPORTED
     else -> SubscriptionCondition.NO_DETAIL
 }
+
+private const val ABSOLUTE_SKIP_FLAG = 1L
+private const val RELATIVE_SKIP_FLAG = 0L
 
 private fun SubscribeResponse.toGatewayConfirmation(): SubscriptionConfirmation =
     SubscriptionConfirmation(

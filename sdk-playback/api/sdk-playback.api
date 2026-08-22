@@ -1,7 +1,9 @@
 public abstract interface class at/bernhardberger/tvheadend/sdk/playback/ActiveSubscription {
 	public abstract fun close (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun getDiagnostics ()Lkotlinx/coroutines/flow/StateFlow;
+	public abstract fun getGrantedTimeshiftPeriod-FghU774 ()Lkotlin/time/Duration;
 	public abstract fun getState ()Lkotlinx/coroutines/flow/StateFlow;
+	public abstract fun seek (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekTarget;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/playback/MuxFrameType : java/lang/Enum {
@@ -91,7 +93,8 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionConfirma
 public abstract interface class at/bernhardberger/tvheadend/sdk/playback/SubscriptionConnection {
 	public abstract fun commitIfLive (Lkotlin/jvm/functions/Function0;)Ljava/lang/Object;
 	public abstract fun events-QsRD2oE (J)Lkotlinx/coroutines/flow/Flow;
-	public abstract fun subscribe-fSvH1uM (JJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun skip-BrKCP9I (JLat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekTarget;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun subscribe-kDjujcg (JJJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun unsubscribe--aUbMvU (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
@@ -243,9 +246,13 @@ public abstract interface annotation class at/bernhardberger/tvheadend/sdk/playb
 
 public abstract interface class at/bernhardberger/tvheadend/sdk/playback/SubscriptionManager : at/bernhardberger/tvheadend/sdk/playback/SubscriptionOpener {
 	public abstract fun closeAndJoin (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public abstract fun open-ZgZDtJ4 (JLat/bernhardberger/tvheadend/sdk/playback/SubscriptionEventConsumer;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun open-bv-IccA (JLat/bernhardberger/tvheadend/sdk/playback/SubscriptionEventConsumer;JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun startAdmission ()V
 	public abstract fun stopAdmission ()V
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionManager$DefaultImpls {
+	public static fun open-ZgZDtJ4 (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionManager;JLat/bernhardberger/tvheadend/sdk/playback/SubscriptionEventConsumer;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
 public abstract interface class at/bernhardberger/tvheadend/sdk/playback/SubscriptionOpenResult {
@@ -278,7 +285,12 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionOpenResu
 }
 
 public abstract interface class at/bernhardberger/tvheadend/sdk/playback/SubscriptionOpener {
-	public abstract fun open-ZgZDtJ4 (JLat/bernhardberger/tvheadend/sdk/playback/SubscriptionEventConsumer;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun open-ZgZDtJ4 (JLat/bernhardberger/tvheadend/sdk/playback/SubscriptionEventConsumer;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun open-bv-IccA (JLat/bernhardberger/tvheadend/sdk/playback/SubscriptionEventConsumer;JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionOpener$DefaultImpls {
+	public static fun open-ZgZDtJ4 (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOpener;JLat/bernhardberger/tvheadend/sdk/playback/SubscriptionEventConsumer;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationFailure : java/lang/Enum {
@@ -341,6 +353,95 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionOperatio
 	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult$TransportUnavailable;
 	public fun equals (Ljava/lang/Object;)Z
 	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekInvalidation : java/lang/Enum {
+	public static final field ACKNOWLEDGEMENT_TIMEOUT Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekInvalidation;
+	public static final field PENDING_QUEUE_OVERFLOW Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekInvalidation;
+	public static final field UNCERTAIN_REQUEST_OUTCOME Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekInvalidation;
+	public static final field UNRECOGNIZED_ACKNOWLEDGEMENT Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekInvalidation;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekInvalidation;
+	public static fun values ()[Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekInvalidation;
+}
+
+public abstract interface class at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult {
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult$Accepted : at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult$Accepted;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult$AlreadyPending : at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult$AlreadyPending;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult$Invalidated : at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult {
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekInvalidation;)V
+	public final fun getCause ()Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekInvalidation;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult$NotAcknowledged : at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult$NotAcknowledged;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult$NotSeekable : at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult$NotSeekable;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult$Refused : at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult {
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationFailure;)V
+	public final fun getFailure ()Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationFailure;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult$Rejected : at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult$Rejected;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult$SubscriptionEnded : at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult$SubscriptionEnded;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekTarget {
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekTarget$Absolute : at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekTarget {
+	public synthetic fun <init> (JLkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getPosition-UwyO8pc ()J
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekTarget$Live : at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekTarget {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekTarget$Live;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekTarget$Relative : at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekTarget {
+	public synthetic fun <init> (JLkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getOffset-UwyO8pc ()J
 	public fun toString ()Ljava/lang/String;
 }
 
@@ -469,6 +570,12 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminal
 public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason$OperationFailed : at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason {
 	public fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationFailure;)V
 	public final fun getFailure ()Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationFailure;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason$SeekInvalidated : at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason {
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekInvalidation;)V
+	public final fun getCause ()Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekInvalidation;
 	public fun toString ()Ljava/lang/String;
 }
 

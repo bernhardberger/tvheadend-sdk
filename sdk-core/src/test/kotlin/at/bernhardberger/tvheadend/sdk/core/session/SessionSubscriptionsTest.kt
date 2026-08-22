@@ -24,6 +24,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayState
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.ProtocolGateway
 import at.bernhardberger.tvheadend.sdk.core.gateway.ServerConfiguration
+import at.bernhardberger.tvheadend.sdk.playback.SkipOutcome
 import at.bernhardberger.tvheadend.sdk.playback.StreamIndex
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionCondition
@@ -34,6 +35,8 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekResult
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStream
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import java.util.IdentityHashMap
@@ -55,6 +58,8 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -123,6 +128,52 @@ class SessionSubscriptionsTest {
         )
         children.closeAndJoinSubscriptions()
     }
+
+    @Test
+    fun `the session forwards the timeshift request and generation bound seek commands`() =
+        runTest {
+            val gateway = SubscriptionGateway()
+            gateway.grantedTimeshiftSeconds = 600L
+            val children = PlaybackSessionChildren(
+                gateway,
+                PhaseOneSessionMetadata(),
+                StandardTestDispatcher(testScheduler),
+            )
+            val generation = GatewayGeneration()
+            children.bindGeneration(generation)
+            assertTrue(children.startAdmission(generation))
+            val opening = async {
+                children.open(
+                    SubscriptionChannelId(4L),
+                    SubscriptionEventConsumer {},
+                    600.seconds,
+                )
+            }
+            runCurrent()
+            gateway.emitStarted(generation)
+            runCurrent()
+            val subscription =
+                (opening.await() as SubscriptionOpenResult.Opened).subscription
+
+            assertEquals(listOf(600.seconds), gateway.requestedTimeshiftPeriods)
+            assertEquals(600.seconds, subscription.grantedTimeshiftPeriod)
+
+            val seeking = async {
+                subscription.seek(SubscriptionSeekTarget.Absolute(120.seconds))
+            }
+            runCurrent()
+            gateway.emitSkipped(generation, SkipOutcome.ACCEPTED)
+            runCurrent()
+
+            assertSame(SubscriptionSeekResult.Accepted, seeking.await())
+            val target = gateway.skippedTargets.single() as SubscriptionSeekTarget.Absolute
+            assertEquals(
+                120.seconds,
+                target.position,
+                "The absolute media position must reach the gateway unchanged",
+            )
+            children.closeAndJoinSubscriptions()
+        }
 
     @Test
     fun `cancelled teardown retains the manager until every subscription joins`() = runTest {
@@ -261,6 +312,9 @@ private class SubscriptionGateway : ProtocolGateway {
     internal val collectedIds = ArrayList<SubscriptionId>()
     internal val unsubscribedGenerations = ArrayList<GatewayGeneration>()
     internal val unsubscribedIds = ArrayList<SubscriptionId>()
+    internal val requestedTimeshiftPeriods = ArrayList<Duration>()
+    internal val skippedTargets = ArrayList<SubscriptionSeekTarget>()
+    internal var grantedTimeshiftSeconds: Long? = null
     internal var unsubscribeCount: Int = 0
         private set
 
@@ -380,8 +434,22 @@ private class SubscriptionGateway : ProtocolGateway {
         generation: GatewayGeneration,
         id: SubscriptionId,
         channelId: ChannelId,
-    ): SubscriptionOperationResult<SubscriptionConfirmation> =
-        SubscriptionOperationResult.Ok(SubscriptionConfirmation(null, null, null, null))
+        timeshiftPeriod: Duration,
+    ): SubscriptionOperationResult<SubscriptionConfirmation> {
+        synchronized(lock) { requestedTimeshiftPeriods += timeshiftPeriod }
+        return SubscriptionOperationResult.Ok(
+            SubscriptionConfirmation(null, null, null, grantedTimeshiftSeconds),
+        )
+    }
+
+    override suspend fun skipSubscription(
+        generation: GatewayGeneration,
+        id: SubscriptionId,
+        target: SubscriptionSeekTarget,
+    ): SubscriptionOperationResult<Unit> {
+        synchronized(lock) { skippedTargets += target }
+        return SubscriptionOperationResult.Ok(Unit)
+    }
 
     override suspend fun unsubscribe(
         generation: GatewayGeneration,
@@ -407,6 +475,18 @@ private class SubscriptionGateway : ProtocolGateway {
         )
     }
 
+
+    internal suspend fun emitSkipped(generation: GatewayGeneration, outcome: SkipOutcome) {
+        val stream = synchronized(lock) { streams.getValue(generation) }
+        stream.send(
+            SubscriptionEvent.Skipped(
+                absolute = null,
+                outcome = outcome,
+                time = null,
+                sizeBytes = null,
+            ),
+        )
+    }
 
     internal suspend fun emitPacket(generation: GatewayGeneration) {
         val stream = synchronized(lock) { streams.getValue(generation) }

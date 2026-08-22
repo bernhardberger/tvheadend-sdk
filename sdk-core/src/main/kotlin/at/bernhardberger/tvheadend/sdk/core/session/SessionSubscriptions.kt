@@ -15,6 +15,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionManager
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import at.bernhardberger.tvheadend.sdk.playback.createSubscriptionManager
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -29,6 +30,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.time.Clock
+import kotlin.time.Duration
 
 internal class PlaybackSessionChildren(
     private val gateway: ProtocolGateway,
@@ -45,10 +47,11 @@ internal class PlaybackSessionChildren(
     override suspend fun open(
         channelId: SubscriptionChannelId,
         consumer: SubscriptionEventConsumer,
+        timeshiftPeriod: Duration,
     ): SubscriptionOpenResult {
         currentCoroutineContext().ensureActive()
         return synchronized(lock) { subscriptions }
-            ?.open(channelId, consumer)
+            ?.open(channelId, consumer, timeshiftPeriod)
             ?: SubscriptionOpenResult.NotReady
     }
 
@@ -151,11 +154,18 @@ private class GatewaySubscriptionConnection(
     override suspend fun subscribe(
         id: SubscriptionId,
         channelId: SubscriptionChannelId,
+        timeshiftPeriod: Duration,
     ): SubscriptionOperationResult<SubscriptionConfirmation> = gateway.subscribe(
         generation = generation,
         id = id,
         channelId = ChannelId(channelId.value),
+        timeshiftPeriod = timeshiftPeriod,
     )
+
+    override suspend fun skip(
+        id: SubscriptionId,
+        target: SubscriptionSeekTarget,
+    ): SubscriptionOperationResult<Unit> = gateway.skipSubscription(generation, id, target)
 
     override suspend fun unsubscribe(id: SubscriptionId): SubscriptionOperationResult<Unit> =
         gateway.unsubscribe(generation, id)

@@ -56,10 +56,12 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import java.util.Collections
 import java.util.IdentityHashMap
 import java.util.concurrent.CancellationException
 import kotlin.time.Clock
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlinx.coroutines.CompletableDeferred
@@ -1327,8 +1329,15 @@ private class FakeProtocolGateway(
         generation: GatewayGeneration,
         id: SubscriptionId,
         channelId: ChannelId,
+        timeshiftPeriod: Duration,
     ): SubscriptionOperationResult<SubscriptionConfirmation> =
         SubscriptionOperationResult.TransportUnavailable
+
+    override suspend fun skipSubscription(
+        generation: GatewayGeneration,
+        id: SubscriptionId,
+        target: SubscriptionSeekTarget,
+    ): SubscriptionOperationResult<Unit> = SubscriptionOperationResult.TransportUnavailable
 
     override suspend fun unsubscribe(
         generation: GatewayGeneration,
@@ -1351,6 +1360,7 @@ private class RecordingSessionChildren(
     override suspend fun open(
         channelId: SubscriptionChannelId,
         consumer: SubscriptionEventConsumer,
+        timeshiftPeriod: Duration,
     ): SubscriptionOpenResult = SubscriptionOpenResult.NotReady
 
     override fun bindGeneration(generation: GatewayGeneration) {
@@ -1383,6 +1393,7 @@ private class BlockingSessionChildren(
     override suspend fun open(
         channelId: SubscriptionChannelId,
         consumer: SubscriptionEventConsumer,
+        timeshiftPeriod: Duration,
     ): SubscriptionOpenResult = SubscriptionOpenResult.NotReady
 
     override fun bindGeneration(generation: GatewayGeneration) = Unit
@@ -1410,6 +1421,7 @@ private class ThrowingSessionChildren(
     override suspend fun open(
         channelId: SubscriptionChannelId,
         consumer: SubscriptionEventConsumer,
+        timeshiftPeriod: Duration,
     ): SubscriptionOpenResult = SubscriptionOpenResult.NotReady
 
     override fun bindGeneration(generation: GatewayGeneration) = Unit

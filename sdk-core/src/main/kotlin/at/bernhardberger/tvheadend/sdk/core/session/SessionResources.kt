@@ -41,6 +41,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlin.time.Duration
 import kotlin.time.Instant
 
 internal interface SessionMetadata : ChannelRepository {
@@ -516,6 +517,7 @@ internal interface SessionChildren : SubscriptionOpener {
         override suspend fun open(
             channelId: SubscriptionChannelId,
             consumer: SubscriptionEventConsumer,
+            timeshiftPeriod: Duration,
         ): SubscriptionOpenResult = SubscriptionOpenResult.NotReady
 
         override fun bindGeneration(generation: GatewayGeneration) = Unit

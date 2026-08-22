@@ -34,6 +34,8 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekResult
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionState
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTracks
@@ -49,6 +51,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlin.time.Duration
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -361,6 +364,7 @@ private class ObservedSubscriptionOpener(
     override suspend fun open(
         channelId: SubscriptionChannelId,
         consumer: SubscriptionEventConsumer,
+        timeshiftPeriod: Duration,
     ): SubscriptionOpenResult {
         val observedConsumer = object : SubscriptionEventConsumer {
             override fun tracksReady(tracks: SubscriptionTracks) {
@@ -391,11 +395,19 @@ private class ObservedSubscriptionOpener(
                 }
             }
         }
-        return when (val result = delegate.open(channelId, observedConsumer)) {
+        return when (
+            val result = delegate.open(channelId, observedConsumer, timeshiftPeriod)
+        ) {
             is SubscriptionOpenResult.Opened -> SubscriptionOpenResult.Opened(
                 object : ActiveSubscription {
                     override val state: StateFlow<SubscriptionState> = result.subscription.state
                     override val diagnostics: StateFlow<SubscriptionDiagnostics> = result.subscription.diagnostics
+                    override val grantedTimeshiftPeriod: Duration? =
+                        result.subscription.grantedTimeshiftPeriod
+
+                    override suspend fun seek(
+                        target: SubscriptionSeekTarget,
+                    ): SubscriptionSeekResult = result.subscription.seek(target)
 
                     override suspend fun close(): SubscriptionCloseResult = try {
                         result.subscription.close().also { closeResult ->

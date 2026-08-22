@@ -2,6 +2,7 @@ package at.bernhardberger.tvheadend.sdk.playback
 
 import java.util.Collections
 import kotlinx.coroutines.flow.Flow
+import kotlin.time.Duration
 
 /** Marks the transport-neutral infrastructure API used to compose SDK playback internals. */
 @RequiresOptIn(
@@ -240,6 +241,37 @@ public enum class MuxFrameType { UNKNOWN, I, P, B }
 @SubscriptionInfrastructureApi
 public enum class SkipOutcome { ACCEPTED, REJECTED, UNKNOWN }
 
+/**
+ * Closed set of timeshift positioning requests.
+ *
+ * Media coordinates share the microsecond base used by
+ * [SubscriptionEvent.Packet.presentationTimeUs] and [SubscriptionEvent.Timeshift].
+ */
+@SubscriptionInfrastructureApi
+public sealed interface SubscriptionSeekTarget {
+    /** Absolute media position inside the granted timeshift buffer. */
+    public class Absolute(public val position: Duration) : SubscriptionSeekTarget {
+        init {
+            require(position.isFinite()) { "Absolute seek position must be finite" }
+            require(!position.isNegative()) { "Absolute seek position must not be negative" }
+        }
+
+        override fun toString(): String = "SubscriptionSeekTarget.Absolute(<redacted>)"
+    }
+
+    /** Signed offset from the current media position. */
+    public class Relative(public val offset: Duration) : SubscriptionSeekTarget {
+        init {
+            require(offset.isFinite()) { "Relative seek offset must be finite" }
+        }
+
+        override fun toString(): String = "SubscriptionSeekTarget.Relative(<redacted>)"
+    }
+
+    /** Returns the subscription to its live edge. */
+    public data object Live : SubscriptionSeekTarget
+}
+
 /** Reason the ordered stream was terminated by the transport. */
 @SubscriptionInfrastructureApi
 public enum class SubscriptionTermination { GENERATION_LOST, TRANSPORT_CLOSED }
@@ -294,11 +326,28 @@ public interface SubscriptionConnection {
     /** Returns the cold, single-collection, generation-fenced ordered stream for [id]. */
     public fun events(id: SubscriptionId): Flow<SubscriptionEvent>
 
-    /** Issues subscribe after event collection has registered. */
+    /**
+     * Issues subscribe after event collection has registered.
+     *
+     * A positive [timeshiftPeriod] requests a server-side timeshift buffer of that length. The
+     * granted period is reported by [SubscriptionConfirmation.timeshiftPeriodSeconds].
+     */
     public suspend fun subscribe(
         id: SubscriptionId,
         channelId: SubscriptionChannelId,
+        timeshiftPeriod: Duration,
     ): SubscriptionOperationResult<SubscriptionConfirmation>
+
+    /**
+     * Issues one generation-bound timeshift positioning request for [id].
+     *
+     * A successful result reports only that the server accepted the command. The ordered
+     * [SubscriptionEvent.Skipped] acknowledgement remains authoritative for the resulting position.
+     */
+    public suspend fun skip(
+        id: SubscriptionId,
+        target: SubscriptionSeekTarget,
+    ): SubscriptionOperationResult<Unit>
 
     /** Issues generation-bound unsubscribe whose success drains and then completes [events]. */
     public suspend fun unsubscribe(id: SubscriptionId): SubscriptionOperationResult<Unit>

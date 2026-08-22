@@ -8,6 +8,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
@@ -16,6 +17,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import kotlin.time.Duration.Companion.seconds
 
 class ScriptedSubscriptionConnectionTest {
     @Test
@@ -25,24 +27,32 @@ class ScriptedSubscriptionConnectionTest {
         val collected = async { connection.events(id).toList() }
 
         connection.awaitCollectionRegistered()
-        val subscribe = connection.subscribe(id, SubscriptionChannelId(4L))
+        val subscribe = connection.subscribe(id, SubscriptionChannelId(4L), 120.seconds)
         val status = SubscriptionEvent.Status(SubscriptionCondition.STATUS_REPORTED)
         connection.emit(status)
+        val skip = connection.skip(id, SubscriptionSeekTarget.Absolute(30.seconds))
         val unsubscribe = connection.unsubscribe(id)
 
         assertTrue(subscribe is SubscriptionOperationResult.Ok)
+        assertTrue(skip is SubscriptionOperationResult.Ok)
         assertTrue(unsubscribe is SubscriptionOperationResult.Ok)
         assertEquals(listOf(status), collected.await())
         assertEquals(
             listOf(
                 ScriptedSubscriptionCall.COLLECTION_REGISTERED,
                 ScriptedSubscriptionCall.SUBSCRIBE,
+                ScriptedSubscriptionCall.SKIP,
                 ScriptedSubscriptionCall.UNSUBSCRIBE,
             ),
             connection.calls,
         )
         assertEquals(1, connection.subscribeCount)
         assertEquals(1, connection.unsubscribeCount)
+        assertEquals(120L, connection.requestedTimeshiftSeconds)
+        assertEquals(
+            30.seconds,
+            (connection.seekTargets.single() as SubscriptionSeekTarget.Absolute).position,
+        )
         assertTrue(connection.toString().contains("<redacted>"))
     }
 

@@ -84,6 +84,7 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeEpgRepository : a
 public final class at/bernhardberger/tvheadend/sdk/testing/ScriptedSubscriptionCall : java/lang/Enum {
 	public static final field COLLECTION_REGISTERED Lat/bernhardberger/tvheadend/sdk/testing/ScriptedSubscriptionCall;
 	public static final field LIVE_COMMIT Lat/bernhardberger/tvheadend/sdk/testing/ScriptedSubscriptionCall;
+	public static final field SKIP Lat/bernhardberger/tvheadend/sdk/testing/ScriptedSubscriptionCall;
 	public static final field SUBSCRIBE Lat/bernhardberger/tvheadend/sdk/testing/ScriptedSubscriptionCall;
 	public static final field UNSUBSCRIBE Lat/bernhardberger/tvheadend/sdk/testing/ScriptedSubscriptionCall;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
@@ -100,13 +101,17 @@ public final class at/bernhardberger/tvheadend/sdk/testing/ScriptedSubscriptionC
 	public final fun emit (Lat/bernhardberger/tvheadend/sdk/testing/ScriptedSubscriptionRegistration;Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionEvent;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun events-QsRD2oE (J)Lkotlinx/coroutines/flow/Flow;
 	public final fun getCalls ()Ljava/util/List;
+	public final fun getRequestedTimeshiftSeconds ()Ljava/lang/Long;
+	public final fun getSeekTargets ()Ljava/util/List;
 	public final fun getSubscribeCount ()I
 	public final fun getUnsubscribeCount ()I
 	public final fun loseGeneration (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun scriptSkip (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult;)V
 	public final fun scriptSubscribe (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult;)V
 	public final fun scriptUnsubscribe (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult;)V
 	public final fun setLive (Z)V
-	public fun subscribe-fSvH1uM (JJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun skip-BrKCP9I (JLat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekTarget;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun subscribe-kDjujcg (JJJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun toString ()Ljava/lang/String;
 	public fun unsubscribe--aUbMvU (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }

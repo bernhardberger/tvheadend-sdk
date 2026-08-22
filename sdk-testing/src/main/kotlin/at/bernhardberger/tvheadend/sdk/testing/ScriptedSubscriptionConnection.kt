@@ -10,18 +10,21 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlin.time.Duration
 
 /** Safe call-order observation emitted by [ScriptedSubscriptionConnection]. */
 @SubscriptionInfrastructureApi
 public enum class ScriptedSubscriptionCall {
     COLLECTION_REGISTERED,
     SUBSCRIBE,
+    SKIP,
     UNSUBSCRIBE,
     LIVE_COMMIT,
 }
@@ -37,9 +40,12 @@ public class ScriptedSubscriptionConnection : SubscriptionConnection {
     private val mutableCalls = ArrayList<ScriptedSubscriptionCall>()
     private var subscribeResult: SubscriptionOperationResult<SubscriptionConfirmation> =
         SubscriptionOperationResult.Ok(SubscriptionConfirmation(null, null, null, null))
+    private var skipResult: SubscriptionOperationResult<Unit> =
+        SubscriptionOperationResult.Ok(Unit)
     private var unsubscribeResult: SubscriptionOperationResult<Unit> =
         SubscriptionOperationResult.Ok(Unit)
     private var live = true
+    private val mutableSeekTargets = ArrayList<SubscriptionSeekTarget>()
 
     /** Snapshot of value-free invocation order. */
     public val calls: List<ScriptedSubscriptionCall>
@@ -53,9 +59,23 @@ public class ScriptedSubscriptionConnection : SubscriptionConnection {
     public val unsubscribeCount: Int
         get() = synchronized(lock) { mutableCalls.count { it == ScriptedSubscriptionCall.UNSUBSCRIBE } }
 
+    /** Ordered timeshift positioning requests issued through this connection. */
+    public val seekTargets: List<SubscriptionSeekTarget>
+        get() = synchronized(lock) { mutableSeekTargets.toImmutableList() }
+
+    /** Requested timeshift period in whole seconds, or null before subscribe. */
+    public var requestedTimeshiftSeconds: Long? = null
+        get() = synchronized(lock) { field }
+        private set
+
     /** Scripts the next and subsequent subscribe result. */
     public fun scriptSubscribe(result: SubscriptionOperationResult<SubscriptionConfirmation>) {
         synchronized(lock) { subscribeResult = result }
+    }
+
+    /** Scripts the next and subsequent skip result. */
+    public fun scriptSkip(result: SubscriptionOperationResult<Unit>) {
+        synchronized(lock) { skipResult = result }
     }
 
     /** Scripts the next and subsequent unsubscribe result. */
@@ -136,12 +156,27 @@ public class ScriptedSubscriptionConnection : SubscriptionConnection {
     override suspend fun subscribe(
         id: SubscriptionId,
         channelId: SubscriptionChannelId,
+        timeshiftPeriod: Duration,
     ): SubscriptionOperationResult<SubscriptionConfirmation> {
         currentCoroutineContext().ensureActive()
         return synchronized(lock) {
             check(streams.containsKey(id.value)) { "Collector must register before subscribe" }
             mutableCalls += ScriptedSubscriptionCall.SUBSCRIBE
+            requestedTimeshiftSeconds = timeshiftPeriod.inWholeSeconds
             subscribeResult
+        }
+    }
+
+    override suspend fun skip(
+        id: SubscriptionId,
+        target: SubscriptionSeekTarget,
+    ): SubscriptionOperationResult<Unit> {
+        currentCoroutineContext().ensureActive()
+        return synchronized(lock) {
+            check(streams.containsKey(id.value)) { "Subscription stream is not active" }
+            mutableCalls += ScriptedSubscriptionCall.SKIP
+            mutableSeekTargets += target
+            skipResult
         }
     }
 

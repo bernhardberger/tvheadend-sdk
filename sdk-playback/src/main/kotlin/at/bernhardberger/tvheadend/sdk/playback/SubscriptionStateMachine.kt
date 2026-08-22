@@ -25,7 +25,12 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /** Direct suspending consumer of the complete committed subscription event order. */
 @SubscriptionInfrastructureApi
@@ -36,7 +41,12 @@ public fun interface SubscriptionEventConsumer {
      * Implementations must remain cancellation-cooperative and must not suspend indefinitely,
      * because ordered subscription shutdown drains already committed events through this call.
      * Implementations must not call joining lifecycle methods such as [ActiveSubscription.close]
-     * from this callback.
+     * or [ActiveSubscription.seek] from this callback.
+     *
+     * While a seek acknowledgement is pending, [SubscriptionEvent.Packet] and
+     * [SubscriptionEvent.Dropped] are withheld and every other event is still delivered
+     * immediately. Withheld events keep their relative order and are either replayed before the
+     * rejecting acknowledgement or discarded before the accepting one.
      */
     public suspend fun accept(event: SubscriptionEvent)
 
@@ -112,6 +122,66 @@ public sealed interface SubscriptionTerminalReason {
         SubscriptionTerminalReason {
         override fun toString(): String = "SubscriptionTerminalReason.OperationFailed"
     }
+
+    /** The seek gate invalidated the subscription rather than mixing uncertain packets. */
+    public class SeekInvalidated(public val cause: SubscriptionSeekInvalidation) :
+        SubscriptionTerminalReason {
+        override fun toString(): String = "SubscriptionTerminalReason.SeekInvalidated"
+    }
+}
+
+/** Payload-free reason the seek gate invalidated a subscription. */
+@SubscriptionInfrastructureApi
+public enum class SubscriptionSeekInvalidation {
+    /** No ordered acknowledgement arrived before the gate deadline. */
+    ACKNOWLEDGEMENT_TIMEOUT,
+
+    /** Withheld packets exceeded the bounded gate capacity. */
+    PENDING_QUEUE_OVERFLOW,
+
+    /** The request outcome is unknown, so pre-seek and post-seek packets cannot be separated. */
+    UNCERTAIN_REQUEST_OUTCOME,
+
+    /** The acknowledgement carried an unrecognized result. */
+    UNRECOGNIZED_ACKNOWLEDGEMENT,
+}
+
+/** Typed outcome of one gated timeshift positioning request. */
+@SubscriptionInfrastructureApi
+public sealed interface SubscriptionSeekResult {
+    /** The ordered acknowledgement accepted the request and withheld packets were discarded. */
+    public data object Accepted : SubscriptionSeekResult
+
+    /** The ordered acknowledgement rejected the request and withheld packets were replayed. */
+    public data object Rejected : SubscriptionSeekResult
+
+    /** The server refused the command itself; withheld packets were replayed unchanged. */
+    public class Refused(public val failure: SubscriptionOperationFailure) :
+        SubscriptionSeekResult {
+        override fun toString(): String = "SubscriptionSeekResult.Refused"
+    }
+
+    /** The subscription holds no server-granted timeshift buffer. */
+    public data object NotSeekable : SubscriptionSeekResult
+
+    /** An earlier request is still awaiting its ordered acknowledgement. */
+    public data object AlreadyPending : SubscriptionSeekResult
+
+    /**
+     * Returning to live produced no ordered acknowledgement; withheld packets were replayed.
+     *
+     * TVHeadend does not acknowledge a live request that changes nothing.
+     */
+    public data object NotAcknowledged : SubscriptionSeekResult
+
+    /** The gate invalidated the subscription instead of mixing uncertain packets. */
+    public class Invalidated(public val cause: SubscriptionSeekInvalidation) :
+        SubscriptionSeekResult {
+        override fun toString(): String = "SubscriptionSeekResult.Invalidated"
+    }
+
+    /** The subscription became terminal before the request resolved. */
+    public data object SubscriptionEnded : SubscriptionSeekResult
 }
 
 /** Payload-free subscription operation failure. */
@@ -182,6 +252,23 @@ public interface ActiveSubscription {
     /** Stable durable diagnostics. */
     public val diagnostics: StateFlow<SubscriptionDiagnostics>
 
+    /** Timeshift buffer granted by the server, or null when it granted none. */
+    public val grantedTimeshiftPeriod: Duration?
+
+    /**
+     * Requests one timeshift position change and returns only after its gate resolves.
+     *
+     * Mux packets and drop markers committed before the ordered acknowledgement are withheld from
+     * the event consumer. An accepted acknowledgement discards them, a rejected acknowledgement
+     * replays them through unchanged consumer state, and an uncertain outcome invalidates this
+     * subscription instead of mixing pre-seek and post-seek packets.
+     *
+     * Requests are serialized: a second call while one is pending returns
+     * [SubscriptionSeekResult.AlreadyPending]. Caller cancellation propagates and leaves the
+     * pending gate under subscription ownership.
+     */
+    public suspend fun seek(target: SubscriptionSeekTarget): SubscriptionSeekResult
+
     /** Closes, unsubscribes, and joins this subscription exactly once. */
     public suspend fun close(): SubscriptionCloseResult
 }
@@ -189,11 +276,28 @@ public interface ActiveSubscription {
 /** Opens subscriptions without exposing generation admission or teardown controls. */
 @SubscriptionInfrastructureApi
 public fun interface SubscriptionOpener {
-    /** Opens a subscription and returns only after it is playable or terminal. */
+    /**
+     * Opens a subscription and returns only after it is playable or terminal.
+     *
+     * A positive [timeshiftPeriod] requests a server-side timeshift buffer. Only a subscription
+     * whose server granted one can be repositioned through [ActiveSubscription.seek].
+     */
     public suspend fun open(
         channelId: SubscriptionChannelId,
         consumer: SubscriptionEventConsumer,
+        timeshiftPeriod: Duration,
     ): SubscriptionOpenResult
+
+    /**
+     * Opens a live subscription without requesting a timeshift buffer.
+     *
+     * A functional interface cannot carry a default argument, so the live case stays an explicit
+     * convenience over the single abstract member.
+     */
+    public suspend fun open(
+        channelId: SubscriptionChannelId,
+        consumer: SubscriptionEventConsumer,
+    ): SubscriptionOpenResult = open(channelId, consumer, Duration.ZERO)
 }
 
 /** Owns every subscription and identifier for one connection generation. */
@@ -209,6 +313,7 @@ public interface SubscriptionManager : SubscriptionOpener {
     override suspend fun open(
         channelId: SubscriptionChannelId,
         consumer: SubscriptionEventConsumer,
+        timeshiftPeriod: Duration,
     ): SubscriptionOpenResult
 
     /** Stops admission, closes every admitted subscription, and joins all work. */
@@ -222,6 +327,48 @@ public fun createSubscriptionManager(
     dispatcher: CoroutineDispatcher,
 ): SubscriptionManager = SubscriptionManagerImpl(connection, dispatcher)
 
+/** Creates a manager whose seek gate uses non-default bounds for deterministic tests. */
+internal fun createSubscriptionManager(
+    connection: SubscriptionConnection,
+    dispatcher: CoroutineDispatcher,
+    seekGate: SeekGateSettings,
+): SubscriptionManager = SubscriptionManagerImpl(connection, dispatcher, seekGate = seekGate)
+
+/** Bounded seek-gate limits kept internal and injectable. */
+internal class SeekGateSettings(
+    internal val acknowledgementTimeout: Duration = DEFAULT_SEEK_ACKNOWLEDGEMENT_TIMEOUT,
+    internal val liveAcknowledgementTimeout: Duration = DEFAULT_LIVE_ACKNOWLEDGEMENT_TIMEOUT,
+    internal val maximumPendingEvents: Int = DEFAULT_SEEK_PENDING_EVENTS,
+    internal val maximumPendingBytes: Long = DEFAULT_SEEK_PENDING_BYTES,
+) {
+    init {
+        require(acknowledgementTimeout > Duration.ZERO) {
+            "Seek acknowledgement timeout must be positive"
+        }
+        require(liveAcknowledgementTimeout > Duration.ZERO) {
+            "Live acknowledgement timeout must be positive"
+        }
+        require(liveAcknowledgementTimeout <= acknowledgementTimeout) {
+            "Live acknowledgement timeout must not exceed the seek acknowledgement timeout"
+        }
+        require(maximumPendingEvents > 0) { "Seek gate capacity must be positive" }
+        require(maximumPendingBytes > 0L) { "Seek gate byte capacity must be positive" }
+    }
+}
+
+private val DEFAULT_SEEK_ACKNOWLEDGEMENT_TIMEOUT = 5.seconds
+
+/**
+ * Shorter bound for return to live, whose acknowledgement is absent whenever nothing changes.
+ *
+ * Holding the data plane for the full seek deadline on that common request would stall a healthy
+ * live stream and can exhaust the byte bound on a high bitrate mux.
+ */
+private val DEFAULT_LIVE_ACKNOWLEDGEMENT_TIMEOUT = 1.seconds
+private const val DEFAULT_SEEK_PENDING_EVENTS = 2_048
+private const val DEFAULT_SEEK_PENDING_BYTES = 16L * 1024L * 1024L
+private const val MAXIMUM_TIMESHIFT_PERIOD_SECONDS = 0xffff_ffffL
+
 internal class SubscriptionIdAllocator(private var next: Long = 0L) {
     internal fun allocate(): SubscriptionId? = if (next > 0xffff_ffffL) {
         null
@@ -234,6 +381,7 @@ private class SubscriptionManagerImpl(
     private val connection: SubscriptionConnection,
     dispatcher: CoroutineDispatcher,
     initialSubscriptionId: Long = 0L,
+    private val seekGate: SeekGateSettings = SeekGateSettings(),
 ) : SubscriptionManager {
     private val lock = Any()
     private val rootJob = SupervisorJob()
@@ -261,7 +409,14 @@ private class SubscriptionManagerImpl(
     override suspend fun open(
         channelId: SubscriptionChannelId,
         consumer: SubscriptionEventConsumer,
+        timeshiftPeriod: Duration,
     ): SubscriptionOpenResult {
+        require(timeshiftPeriod.isFinite() && !timeshiftPeriod.isNegative()) {
+            "Requested timeshift period must be finite and not negative"
+        }
+        require(timeshiftPeriod.inWholeSeconds <= MAXIMUM_TIMESHIFT_PERIOD_SECONDS) {
+            "Requested timeshift period must be an unsigned 32-bit second count"
+        }
         currentCoroutineContext().ensureActive()
         val token = Any()
         val handle = synchronized(lock) {
@@ -273,6 +428,8 @@ private class SubscriptionManagerImpl(
                 connection = connection,
                 consumer = consumer,
                 scope = scope,
+                seekGate = seekGate,
+                timeshiftPeriod = timeshiftPeriod,
                 tryCommitPlayable = { candidate, publication ->
                     connection.commitIfLive {
                         synchronized(lock) {
@@ -336,7 +493,7 @@ private class SubscriptionManagerImpl(
     private fun handlesDoNotOwnCaller(
         handles: Collection<ActiveSubscriptionImpl>,
         callerJob: Job?,
-    ): Boolean = handles.none { handle -> handle.ownsCollectionJob(callerJob) }
+    ): Boolean = handles.none { handle -> handle.ownsDeliveryJob(callerJob) }
 }
 
 private class ActiveSubscriptionImpl(
@@ -345,6 +502,8 @@ private class ActiveSubscriptionImpl(
     private val connection: SubscriptionConnection,
     private val consumer: SubscriptionEventConsumer,
     private val scope: CoroutineScope,
+    private val seekGate: SeekGateSettings,
+    private val timeshiftPeriod: Duration,
     private val tryCommitPlayable: (
         ActiveSubscriptionImpl,
         publication: () -> Unit,
@@ -352,6 +511,7 @@ private class ActiveSubscriptionImpl(
     private val onFinished: () -> Unit,
 ) : ActiveSubscription {
     private val lock = Any()
+    private val deliveryMutex = Mutex()
     private val started = AtomicBoolean()
     private val mutableState = MutableStateFlow<SubscriptionState>(SubscriptionState.Starting)
     private val mutableDiagnostics = MutableStateFlow(emptyDiagnostics())
@@ -360,6 +520,7 @@ private class ActiveSubscriptionImpl(
     private val terminalSignal = CompletableDeferred<SubscriptionTerminalReason>()
     private val finished = CompletableDeferred<SubscriptionCloseResult>()
     private var subscribeAccepted = false
+    private var grantedTimeshiftSeconds: Long? = null
     private var tracks: SubscriptionTracks? = null
     private var terminal: SubscriptionTerminalReason? = null
     private var closeRequestedFlag = false
@@ -368,9 +529,17 @@ private class ActiveSubscriptionImpl(
     private var stopEventCollection = false
     private var collectionJob: Job? = null
     private var consumerEnabled = true
+    private var pendingSeek: PendingSeek? = null
+    private var seekAdmissionClosed = false
+    private val seekDrivers = LinkedHashSet<Job>()
 
     override val state: StateFlow<SubscriptionState> = mutableState.asStateFlow()
     override val diagnostics: StateFlow<SubscriptionDiagnostics> = mutableDiagnostics.asStateFlow()
+
+    override val grantedTimeshiftPeriod: Duration?
+        get() = synchronized(lock) { grantedTimeshiftSeconds }
+            ?.takeIf { seconds -> seconds > 0L }
+            ?.seconds
 
     internal fun start() {
         check(started.compareAndSet(false, true)) { "Subscription was already started" }
@@ -384,8 +553,9 @@ private class ActiveSubscriptionImpl(
         throw synchronized(lock) { terminalCancellation } ?: cancellation
     }
 
-    internal fun ownsCollectionJob(job: Job?): Boolean =
-        synchronized(lock) { job != null && collectionJob === job }
+    /** Reports whether [job] is one of the coroutines that delivers events to the consumer. */
+    internal fun ownsDeliveryJob(job: Job?): Boolean =
+        synchronized(lock) { job != null && (collectionJob === job || job in seekDrivers) }
 
     internal fun requestClose() {
         synchronized(lock) { closeRequestedFlag = true }
@@ -399,9 +569,41 @@ private class ActiveSubscriptionImpl(
         return FinishedOutcome(result, synchronized(lock) { terminalCancellation })
     }
 
+    override suspend fun seek(target: SubscriptionSeekTarget): SubscriptionSeekResult {
+        check(!ownsDeliveryJob(currentCoroutineContext()[Job])) {
+            "Subscription seek cannot join from its event consumer"
+        }
+        currentCoroutineContext().ensureActive()
+        val (pending, driver) = synchronized(lock) {
+            if (
+                terminal != null ||
+                closeRequestedFlag ||
+                seekAdmissionClosed ||
+                !playablePublished
+            ) {
+                return SubscriptionSeekResult.SubscriptionEnded
+            }
+            if ((grantedTimeshiftSeconds ?: 0L) <= 0L) return SubscriptionSeekResult.NotSeekable
+            if (pendingSeek != null) return SubscriptionSeekResult.AlreadyPending
+            val created = PendingSeek(target)
+            // A lazy start runs no user code under the monitor and keeps registration atomic.
+            val job = scope.launch(start = CoroutineStart.LAZY) { driveSeek(created) }
+            pendingSeek = created
+            seekDrivers += job
+            created to job
+        }
+        driver.invokeOnCompletion { synchronized(lock) { seekDrivers -= driver } }
+        driver.start()
+        return try {
+            pending.outcome.await()
+        } catch (cancellation: CancellationException) {
+            currentCoroutineContext().ensureActive()
+            throw cancellation
+        }
+    }
+
     override suspend fun close(): SubscriptionCloseResult {
-        val callerJob = currentCoroutineContext()[Job]
-        check(synchronized(lock) { callerJob !== collectionJob }) {
+        check(!ownsDeliveryJob(currentCoroutineContext()[Job])) {
             "Subscription close cannot join from its event consumer"
         }
         requestClose()
@@ -458,7 +660,11 @@ private class ActiveSubscriptionImpl(
                                 when (val result = outcome.outcome) {
                                     is CommandOutcome.Result -> when (val value = result.value) {
                                         is SubscriptionOperationResult.Ok -> {
-                                            synchronized(lock) { subscribeAccepted = true }
+                                            synchronized(lock) {
+                                                subscribeAccepted = true
+                                                grantedTimeshiftSeconds =
+                                                    value.value.timeshiftPeriodSeconds
+                                            }
                                             tryPublishPlayable()
                                         }
                                         SubscriptionOperationResult.ServerRejected,
@@ -491,6 +697,11 @@ private class ActiveSubscriptionImpl(
                 } finally {
                     withContext(NonCancellable) {
                         subscribe.cancelAndJoin()
+                        val drivers = synchronized(lock) {
+                            seekAdmissionClosed = true
+                            seekDrivers.toList()
+                        }
+                        drivers.forEach { driver -> driver.cancelAndJoin() }
                         val cleanup = cleanUpCollection(collection)
                         closeResult = cleanup.result
                         if (primaryCancellation == null) {
@@ -550,7 +761,7 @@ private class ActiveSubscriptionImpl(
     }
 
     private suspend fun invokeSubscribe(): CommandOutcome = try {
-        CommandOutcome.Result(connection.subscribe(id, channelId))
+        CommandOutcome.Result(connection.subscribe(id, channelId, timeshiftPeriod))
     } catch (cancellation: CancellationException) {
         CommandOutcome.Cancelled(cancellation)
     } catch (_: Exception) {
@@ -558,31 +769,202 @@ private class ActiveSubscriptionImpl(
     }
 
     private suspend fun acceptEvent(event: SubscriptionEvent): Boolean {
-        if (synchronized(lock) { consumerEnabled }) {
-            try {
-                consumer.accept(event)
-            } catch (cancellation: CancellationException) {
-                synchronized(lock) {
-                    consumerEnabled = false
-                    terminalCancellation = terminalCancellation ?: cancellation
-                    setTerminalLocked(
-                        SubscriptionTerminalReason.InfrastructureFailed,
-                        stopCollection = false,
-                        completeOpen = false,
-                    )
-                }
-            } catch (_: Exception) {
-                synchronized(lock) {
-                    consumerEnabled = false
-                    setTerminalLocked(
-                        SubscriptionTerminalReason.ConsumerFailed,
-                        stopCollection = false,
-                        completeOpen = false,
-                    )
+        deliveryMutex.withLock {
+            when (val decision = admitToGate(event)) {
+                GateDecision.Pass -> deliverToConsumer(event)
+                GateDecision.Withheld, GateDecision.Discarded -> Unit
+                is GateDecision.Resolved -> {
+                    decision.replayed.forEach { withheld -> deliverToConsumer(withheld) }
+                    deliverToConsumer(event)
                 }
             }
+            applyEventState(event)
         }
+        return synchronized(lock) { !stopEventCollection }
+    }
 
+    /**
+     * Classifies one committed event against the seek gate.
+     *
+     * Mux packets and drop markers are withheld while an acknowledgement is pending; every other
+     * event is delivered immediately so terminal handling is never delayed by a gate.
+     */
+    private fun admitToGate(event: SubscriptionEvent): GateDecision = synchronized(lock) {
+        val pending = pendingSeek ?: return GateDecision.Pass
+        when (event) {
+            is SubscriptionEvent.Packet, is SubscriptionEvent.Dropped -> {
+                val bytes = (event as? SubscriptionEvent.Packet)?.payload?.size?.toLong() ?: 0L
+                if (pending.canAccept(bytes, seekGate)) {
+                    pending.enqueue(event, bytes)
+                    GateDecision.Withheld
+                } else {
+                    val cause = SubscriptionSeekInvalidation.PENDING_QUEUE_OVERFLOW
+                    pending.discard()
+                    resolveSeekLocked(
+                        pending = pending,
+                        result = SubscriptionSeekResult.Invalidated(cause),
+                        terminalReason = SubscriptionTerminalReason.SeekInvalidated(cause),
+                    )
+                    GateDecision.Discarded
+                }
+            }
+            is SubscriptionEvent.Skipped -> when (event.outcome) {
+                SkipOutcome.ACCEPTED -> {
+                    pending.discard()
+                    resolveSeekLocked(pending, SubscriptionSeekResult.Accepted)
+                    GateDecision.Resolved(emptyList())
+                }
+                SkipOutcome.REJECTED -> {
+                    val replayed = pending.drain()
+                    resolveSeekLocked(pending, SubscriptionSeekResult.Rejected)
+                    GateDecision.Resolved(replayed)
+                }
+                SkipOutcome.UNKNOWN -> {
+                    val cause = SubscriptionSeekInvalidation.UNRECOGNIZED_ACKNOWLEDGEMENT
+                    pending.discard()
+                    resolveSeekLocked(
+                        pending = pending,
+                        result = SubscriptionSeekResult.Invalidated(cause),
+                        terminalReason = SubscriptionTerminalReason.SeekInvalidated(cause),
+                    )
+                    GateDecision.Resolved(emptyList())
+                }
+            }
+            else -> GateDecision.Pass
+        }
+    }
+
+    /**
+     * Removes [pending] from the gate, completes its caller outcome, and optionally invalidates
+     * the subscription.
+     *
+     * The outcome completes before any withheld event is delivered so a cancelled replay can never
+     * strand the caller.
+     */
+    private fun resolveSeekLocked(
+        pending: PendingSeek,
+        result: SubscriptionSeekResult,
+        terminalReason: SubscriptionTerminalReason? = null,
+    ) {
+        if (pendingSeek === pending) pendingSeek = null
+        pending.outcome.complete(result)
+        terminalReason?.let { reason ->
+            setTerminalLocked(reason, stopCollection = true, completeOpen = false)
+        }
+    }
+
+    /**
+     * Issues the request and bounds the wait for its ordered acknowledgement.
+     *
+     * Only the request and the acknowledgement wait are deadline-bounded. Replaying withheld
+     * events happens afterwards so an expiring deadline can never deliver a partial replay.
+     */
+    private suspend fun driveSeek(pending: PendingSeek) {
+        if (synchronized(lock) { pendingSeek !== pending }) return
+        val deadline = if (pending.target is SubscriptionSeekTarget.Live) {
+            seekGate.liveAcknowledgementTimeout
+        } else {
+            seekGate.acknowledgementTimeout
+        }
+        val bounded = withTimeoutOrNull(deadline) {
+            when (val result = invokeSkip(pending.target)) {
+                null -> SeekResolution.Invalidate(
+                    SubscriptionSeekInvalidation.UNCERTAIN_REQUEST_OUTCOME,
+                )
+                is SubscriptionOperationResult.Ok -> {
+                    pending.outcome.await()
+                    SeekResolution.Acknowledged
+                }
+                // A timed out command may still have executed, so replaying could mix packets.
+                SubscriptionOperationResult.Timeout -> SeekResolution.Invalidate(
+                    SubscriptionSeekInvalidation.UNCERTAIN_REQUEST_OUTCOME,
+                )
+                else -> SeekResolution.Replay(
+                    SubscriptionSeekResult.Refused(result.toFailure()),
+                )
+            }
+        }
+        val resolution = bounded ?: if (pending.target is SubscriptionSeekTarget.Live) {
+            // TVHeadend absorbs a live request that changes nothing, so silence is not uncertainty.
+            SeekResolution.Replay(SubscriptionSeekResult.NotAcknowledged)
+        } else {
+            SeekResolution.Invalidate(SubscriptionSeekInvalidation.ACKNOWLEDGEMENT_TIMEOUT)
+        }
+        when (resolution) {
+            SeekResolution.Acknowledged -> Unit
+            is SeekResolution.Replay -> replaySeek(pending, resolution.result)
+            is SeekResolution.Invalidate -> invalidateSeek(pending, resolution.cause)
+        }
+    }
+
+    private suspend fun invokeSkip(
+        target: SubscriptionSeekTarget,
+    ): SubscriptionOperationResult<Unit>? = try {
+        connection.skip(id, target)
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (_: Exception) {
+        null
+    }
+
+    /** Completes [pending] and then replays every withheld event in committed order. */
+    private suspend fun replaySeek(pending: PendingSeek, result: SubscriptionSeekResult) {
+        deliveryMutex.withLock {
+            val replayed = synchronized(lock) {
+                if (pendingSeek !== pending) return@withLock
+                pending.drain().also { resolveSeekLocked(pending, result) }
+            }
+            replayed.forEach { withheld -> deliverToConsumer(withheld) }
+        }
+    }
+
+    /** Discards withheld events and ends the subscription rather than mixing uncertain packets. */
+    private fun invalidateSeek(pending: PendingSeek, cause: SubscriptionSeekInvalidation) {
+        synchronized(lock) {
+            if (pendingSeek !== pending) return
+            pending.discard()
+            if (terminal != null || closeRequestedFlag) {
+                resolveSeekLocked(pending, SubscriptionSeekResult.SubscriptionEnded)
+            } else {
+                // The collection coroutine stops only after its next delivery, so silence the
+                // consumer here or one packet of unknown provenance still reaches the readers.
+                consumerEnabled = false
+                resolveSeekLocked(
+                    pending = pending,
+                    result = SubscriptionSeekResult.Invalidated(cause),
+                    terminalReason = SubscriptionTerminalReason.SeekInvalidated(cause),
+                )
+            }
+        }
+    }
+
+    private suspend fun deliverToConsumer(event: SubscriptionEvent) {
+        if (!synchronized(lock) { consumerEnabled }) return
+        try {
+            consumer.accept(event)
+        } catch (cancellation: CancellationException) {
+            synchronized(lock) {
+                consumerEnabled = false
+                terminalCancellation = terminalCancellation ?: cancellation
+                setTerminalLocked(
+                    SubscriptionTerminalReason.InfrastructureFailed,
+                    stopCollection = false,
+                    completeOpen = false,
+                )
+            }
+        } catch (_: Exception) {
+            synchronized(lock) {
+                consumerEnabled = false
+                setTerminalLocked(
+                    SubscriptionTerminalReason.ConsumerFailed,
+                    stopCollection = false,
+                    completeOpen = false,
+                )
+            }
+        }
+    }
+
+    private fun applyEventState(event: SubscriptionEvent) {
         when (event) {
             is SubscriptionEvent.Started -> acceptStarted(event)
             is SubscriptionEvent.Status -> updateDiagnostics(condition = event.condition)
@@ -609,7 +991,6 @@ private class ActiveSubscriptionImpl(
             is SubscriptionEvent.Descramble,
             -> Unit
         }
-        return synchronized(lock) { !stopEventCollection }
     }
 
     private fun acceptStarted(event: SubscriptionEvent.Started) {
@@ -723,6 +1104,11 @@ private class ActiveSubscriptionImpl(
         if (terminal != null) return
         terminal = reason
         mutableState.value = SubscriptionState.Terminal(reason)
+        pendingSeek?.let { pending ->
+            pendingSeek = null
+            pending.discard()
+            pending.outcome.complete(SubscriptionSeekResult.SubscriptionEnded)
+        }
         terminalSignal.complete(reason)
         if (completeOpen) openCompletion.complete(SubscriptionOpenResult.Failed(reason))
     }
@@ -809,6 +1195,58 @@ private fun emptyDiagnostics(): SubscriptionDiagnostics = SubscriptionDiagnostic
     droppedPacketCount = 0L,
     droppedPacketCountOverflowed = false,
 )
+
+/** One in-flight seek request and its bounded queue of withheld data-plane events. */
+private class PendingSeek(internal val target: SubscriptionSeekTarget) {
+    internal val outcome = CompletableDeferred<SubscriptionSeekResult>()
+    private val withheld = ArrayDeque<SubscriptionEvent>()
+    private var withheldBytes = 0L
+
+    internal fun canAccept(bytes: Long, settings: SeekGateSettings): Boolean =
+        withheld.size < settings.maximumPendingEvents &&
+            withheldBytes <= settings.maximumPendingBytes - bytes
+
+    internal fun enqueue(event: SubscriptionEvent, bytes: Long) {
+        withheld.addLast(event)
+        withheldBytes += bytes
+    }
+
+    internal fun drain(): List<SubscriptionEvent> {
+        val snapshot = withheld.toList()
+        discard()
+        return snapshot
+    }
+
+    internal fun discard() {
+        withheld.clear()
+        withheldBytes = 0L
+    }
+}
+
+private sealed interface SeekResolution {
+    /** The ordered acknowledgement already resolved the gate. */
+    public data object Acknowledged : SeekResolution
+
+    /** Withheld events must be replayed and the caller told [result]. */
+    public class Replay(internal val result: SubscriptionSeekResult) : SeekResolution
+
+    /** Withheld events must be discarded and the subscription invalidated. */
+    public class Invalidate(internal val cause: SubscriptionSeekInvalidation) : SeekResolution
+}
+
+private sealed interface GateDecision {
+    /** The event is delivered immediately in committed order. */
+    public data object Pass : GateDecision
+
+    /** The event joined the bounded gate queue. */
+    public data object Withheld : GateDecision
+
+    /** The gate overflowed, so the event and every withheld event were dropped. */
+    public data object Discarded : GateDecision
+
+    /** The acknowledgement resolved the gate; [replayed] precedes it in committed order. */
+    public class Resolved(internal val replayed: List<SubscriptionEvent>) : GateDecision
+}
 
 private sealed interface OwnerOutcome {
     public data object Close : OwnerOutcome

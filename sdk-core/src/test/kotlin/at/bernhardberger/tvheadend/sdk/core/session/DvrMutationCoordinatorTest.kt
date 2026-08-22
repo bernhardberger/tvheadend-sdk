@@ -34,6 +34,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionConfirmation
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -50,6 +51,7 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
@@ -429,8 +431,15 @@ internal class MutationGateway : ProtocolGateway {
         generation: GatewayGeneration,
         id: SubscriptionId,
         channelId: ChannelId,
+        timeshiftPeriod: Duration,
     ): SubscriptionOperationResult<SubscriptionConfirmation> =
         SubscriptionOperationResult.NotSupported
+
+    override suspend fun skipSubscription(
+        generation: GatewayGeneration,
+        id: SubscriptionId,
+        target: SubscriptionSeekTarget,
+    ): SubscriptionOperationResult<Unit> = SubscriptionOperationResult.NotSupported
 
     override suspend fun unsubscribe(
         generation: GatewayGeneration,
