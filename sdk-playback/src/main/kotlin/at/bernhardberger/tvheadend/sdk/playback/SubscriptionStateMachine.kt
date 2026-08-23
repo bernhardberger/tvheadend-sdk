@@ -47,6 +47,17 @@ public fun interface SubscriptionEventConsumer {
      * [SubscriptionEvent.Dropped] are withheld and every other event is still delivered
      * immediately. Withheld events keep their relative order and are either replayed before the
      * rejecting acknowledgement or discarded before the accepting one.
+     *
+     * After an accepted [SubscriptionEvent.Skipped], packets are discarded until the timeline
+     * re-anchors, and one shared offset is then applied to the presentation and decoding
+     * timestamps of every track. Re-anchoring waits for a video keyframe, releases after a
+     * bounded number of discarded packets so a stream that reports no frame type cannot stall it,
+     * and happens on the first timed packet when no committed track can carry video.
+     *
+     * No delivered timestamp is therefore at or below the last timestamp delivered before that
+     * discontinuity, and relative track positions inside the resumed segment stay unchanged. This
+     * is not a claim of global monotonicity: cross-track interleaving and reordered frames still
+     * present decreasing timestamps, exactly as they do without a seek.
      */
     public suspend fun accept(event: SubscriptionEvent)
 
@@ -130,7 +141,7 @@ public sealed interface SubscriptionTerminalReason {
     }
 }
 
-/** Payload-free reason the seek gate invalidated a subscription. */
+/** Payload-free reason the seek path invalidated a subscription. */
 @SubscriptionInfrastructureApi
 public enum class SubscriptionSeekInvalidation {
     /** No ordered acknowledgement arrived before the gate deadline. */
@@ -144,6 +155,15 @@ public enum class SubscriptionSeekInvalidation {
 
     /** The acknowledgement carried an unrecognized result. */
     UNRECOGNIZED_ACKNOWLEDGEMENT,
+
+    /**
+     * The resumed segment never produced a packet able to re-anchor the delivered timeline.
+     *
+     * Only a packet carrying a presentation time can define the shared offset, so a segment that
+     * omits them entirely ends the subscription instead of discarding every remaining packet
+     * while still reporting a playable state.
+     */
+    RESUMED_SEGMENT_UNANCHORABLE,
 }
 
 /** Typed outcome of one gated timeshift positioning request. */
@@ -202,18 +222,26 @@ public class SubscriptionDiagnostics internal constructor(
     public val graceTimeoutSeconds: Long?,
     public val droppedPacketCount: Long,
     public val droppedPacketCountOverflowed: Boolean,
+    /** Times the delivered timeline re-anchored after an accepted skip. */
+    public val timestampAnchorCount: Long,
+    /** Packets discarded while awaiting a re-anchor or below the post-seek floor. */
+    public val rebaseDiscardedPacketCount: Long,
 ) {
     override fun equals(other: Any?): Boolean = other is SubscriptionDiagnostics &&
         condition == other.condition &&
         graceTimeoutSeconds == other.graceTimeoutSeconds &&
         droppedPacketCount == other.droppedPacketCount &&
-        droppedPacketCountOverflowed == other.droppedPacketCountOverflowed
+        droppedPacketCountOverflowed == other.droppedPacketCountOverflowed &&
+        timestampAnchorCount == other.timestampAnchorCount &&
+        rebaseDiscardedPacketCount == other.rebaseDiscardedPacketCount
 
     override fun hashCode(): Int {
         var result = condition.hashCode()
         result = 31 * result + (graceTimeoutSeconds?.hashCode() ?: 0)
         result = 31 * result + droppedPacketCount.hashCode()
-        return 31 * result + droppedPacketCountOverflowed.hashCode()
+        result = 31 * result + droppedPacketCountOverflowed.hashCode()
+        result = 31 * result + timestampAnchorCount.hashCode()
+        return 31 * result + rebaseDiscardedPacketCount.hashCode()
     }
 
     override fun toString(): String = "SubscriptionDiagnostics(<redacted>)"
@@ -262,6 +290,14 @@ public interface ActiveSubscription {
      * the event consumer. An accepted acknowledgement discards them, a rejected acknowledgement
      * replays them through unchanged consumer state, and an uncertain outcome invalidates this
      * subscription instead of mixing pre-seek and post-seek packets.
+     *
+     * An accepted acknowledgement also rebases the resumed segment onto the delivered timeline, so
+     * a repeated recording position is never presented at or below the last timestamp delivered
+     * before this request. A bounded prefix of the resumed segment is discarded while the timeline
+     * re-anchors, as documented on [SubscriptionEventConsumer.accept], and a segment that never
+     * becomes anchorable ends the subscription with
+     * [SubscriptionSeekInvalidation.RESUMED_SEGMENT_UNANCHORABLE] rather than discarding for the
+     * remainder of the session.
      *
      * Requests are serialized: a second call while one is pending returns
      * [SubscriptionSeekResult.AlreadyPending]. Caller cancellation propagates and leaves the
@@ -327,12 +363,14 @@ public fun createSubscriptionManager(
     dispatcher: CoroutineDispatcher,
 ): SubscriptionManager = SubscriptionManagerImpl(connection, dispatcher)
 
-/** Creates a manager whose seek gate uses non-default bounds for deterministic tests. */
+/** Creates a manager whose seek and rebase bounds are non-default for deterministic tests. */
 internal fun createSubscriptionManager(
     connection: SubscriptionConnection,
     dispatcher: CoroutineDispatcher,
     seekGate: SeekGateSettings,
-): SubscriptionManager = SubscriptionManagerImpl(connection, dispatcher, seekGate = seekGate)
+    rebase: TimestampRebaseSettings = TimestampRebaseSettings(),
+): SubscriptionManager =
+    SubscriptionManagerImpl(connection, dispatcher, seekGate = seekGate, rebase = rebase)
 
 /** Bounded seek-gate limits kept internal and injectable. */
 internal class SeekGateSettings(
@@ -382,6 +420,7 @@ private class SubscriptionManagerImpl(
     dispatcher: CoroutineDispatcher,
     initialSubscriptionId: Long = 0L,
     private val seekGate: SeekGateSettings = SeekGateSettings(),
+    private val rebase: TimestampRebaseSettings = TimestampRebaseSettings(),
 ) : SubscriptionManager {
     private val lock = Any()
     private val rootJob = SupervisorJob()
@@ -429,6 +468,7 @@ private class SubscriptionManagerImpl(
                 consumer = consumer,
                 scope = scope,
                 seekGate = seekGate,
+                rebase = rebase,
                 timeshiftPeriod = timeshiftPeriod,
                 tryCommitPlayable = { candidate, publication ->
                     connection.commitIfLive {
@@ -503,6 +543,7 @@ private class ActiveSubscriptionImpl(
     private val consumer: SubscriptionEventConsumer,
     private val scope: CoroutineScope,
     private val seekGate: SeekGateSettings,
+    rebase: TimestampRebaseSettings,
     private val timeshiftPeriod: Duration,
     private val tryCommitPlayable: (
         ActiveSubscriptionImpl,
@@ -512,8 +553,16 @@ private class ActiveSubscriptionImpl(
 ) : ActiveSubscription {
     private val lock = Any()
     private val deliveryMutex = Mutex()
+
+    /** Confined to [deliveryMutex], which serializes every ordered and replayed delivery. */
+    private val rebaser = SubscriptionTimestampRebaser(rebase)
     private val started = AtomicBoolean()
     private val mutableState = MutableStateFlow<SubscriptionState>(SubscriptionState.Starting)
+
+    /**
+     * Read-modify-written only under [deliveryMutex], which serializes state application and
+     * delivery, so the non-atomic counter updates below cannot interleave.
+     */
     private val mutableDiagnostics = MutableStateFlow(emptyDiagnostics())
     private val openCompletion = CompletableDeferred<SubscriptionOpenResult>()
     private val closeRequested = CompletableDeferred<Unit>()
@@ -940,8 +989,23 @@ private class ActiveSubscriptionImpl(
 
     private suspend fun deliverToConsumer(event: SubscriptionEvent) {
         if (!synchronized(lock) { consumerEnabled }) return
+        val rebased = when (val decision = rebaser.classify(event)) {
+            RebaseDecision.Discard -> {
+                addRebaseDiscardedPacket()
+                return
+            }
+            RebaseDecision.Unanchorable -> {
+                addRebaseDiscardedPacket()
+                invalidateUnanchorableSegment()
+                return
+            }
+            is RebaseDecision.Deliver -> {
+                if (decision.anchored) addTimestampAnchor()
+                decision.event
+            }
+        }
         try {
-            consumer.accept(event)
+            consumer.accept(rebased)
         } catch (cancellation: CancellationException) {
             synchronized(lock) {
                 consumerEnabled = false
@@ -961,6 +1025,27 @@ private class ActiveSubscriptionImpl(
                     completeOpen = false,
                 )
             }
+        }
+    }
+
+    /**
+     * Ends the subscription when the resumed segment can never re-anchor the delivered timeline.
+     *
+     * Every other uncertain path here is bounded and typed, so an unanchorable segment must not
+     * decay into an unbounded silent discard that still reports a playable subscription.
+     */
+    private fun invalidateUnanchorableSegment() {
+        synchronized(lock) {
+            // The collection coroutine stops only after its next delivery, so silence the
+            // consumer here as well; no later packet can be placed on the delivered timeline.
+            consumerEnabled = false
+            setTerminalLocked(
+                SubscriptionTerminalReason.SeekInvalidated(
+                    SubscriptionSeekInvalidation.RESUMED_SEGMENT_UNANCHORABLE,
+                ),
+                stopCollection = true,
+                completeOpen = false,
+            )
         }
     }
 
@@ -1017,6 +1102,8 @@ private class ActiveSubscriptionImpl(
                 return
             }
         }
+        // The committed track set decides which stream indices may end an anchor wait.
+        rebaser.onTracks(candidate)
         try {
             consumer.tracksReady(candidate)
         } catch (cancellation: CancellationException) {
@@ -1117,23 +1204,32 @@ private class ActiveSubscriptionImpl(
         condition: SubscriptionCondition = mutableDiagnostics.value.condition,
         graceTimeoutSeconds: Long? = mutableDiagnostics.value.graceTimeoutSeconds,
     ) {
-        val current = mutableDiagnostics.value
-        mutableDiagnostics.value = SubscriptionDiagnostics(
+        mutableDiagnostics.value = mutableDiagnostics.value.with(
             condition = condition,
             graceTimeoutSeconds = graceTimeoutSeconds,
-            droppedPacketCount = current.droppedPacketCount,
-            droppedPacketCountOverflowed = current.droppedPacketCountOverflowed,
         )
     }
 
     private fun addDroppedPackets(count: Long) {
         val current = mutableDiagnostics.value
         val overflow = Long.MAX_VALUE - current.droppedPacketCount < count
-        mutableDiagnostics.value = SubscriptionDiagnostics(
-            condition = current.condition,
-            graceTimeoutSeconds = current.graceTimeoutSeconds,
+        mutableDiagnostics.value = current.with(
             droppedPacketCount = if (overflow) Long.MAX_VALUE else current.droppedPacketCount + count,
             droppedPacketCountOverflowed = current.droppedPacketCountOverflowed || overflow,
+        )
+    }
+
+    private fun addTimestampAnchor() {
+        val current = mutableDiagnostics.value
+        mutableDiagnostics.value = current.with(
+            timestampAnchorCount = saturatingIncrement(current.timestampAnchorCount),
+        )
+    }
+
+    private fun addRebaseDiscardedPacket() {
+        val current = mutableDiagnostics.value
+        mutableDiagnostics.value = current.with(
+            rebaseDiscardedPacketCount = saturatingIncrement(current.rebaseDiscardedPacketCount),
         )
     }
 
@@ -1194,7 +1290,28 @@ private fun emptyDiagnostics(): SubscriptionDiagnostics = SubscriptionDiagnostic
     graceTimeoutSeconds = null,
     droppedPacketCount = 0L,
     droppedPacketCountOverflowed = false,
+    timestampAnchorCount = 0L,
+    rebaseDiscardedPacketCount = 0L,
 )
+
+private fun SubscriptionDiagnostics.with(
+    condition: SubscriptionCondition = this.condition,
+    graceTimeoutSeconds: Long? = this.graceTimeoutSeconds,
+    droppedPacketCount: Long = this.droppedPacketCount,
+    droppedPacketCountOverflowed: Boolean = this.droppedPacketCountOverflowed,
+    timestampAnchorCount: Long = this.timestampAnchorCount,
+    rebaseDiscardedPacketCount: Long = this.rebaseDiscardedPacketCount,
+): SubscriptionDiagnostics = SubscriptionDiagnostics(
+    condition = condition,
+    graceTimeoutSeconds = graceTimeoutSeconds,
+    droppedPacketCount = droppedPacketCount,
+    droppedPacketCountOverflowed = droppedPacketCountOverflowed,
+    timestampAnchorCount = timestampAnchorCount,
+    rebaseDiscardedPacketCount = rebaseDiscardedPacketCount,
+)
+
+/** Counts one more occurrence without wrapping a durable diagnostic counter. */
+private fun saturatingIncrement(value: Long): Long = if (value == Long.MAX_VALUE) value else value + 1L
 
 /** One in-flight seek request and its bounded queue of withheld data-plane events. */
 private class PendingSeek(internal val target: SubscriptionSeekTarget) {

@@ -154,9 +154,10 @@ internal fun started(vararg streams: SubscriptionStream): SubscriptionEvent.Star
 internal fun stream(
     index: Long = 0L,
     codecMetadata: SubscriptionBinary? = null,
+    type: SubscriptionStreamType = SubscriptionStreamType.H264,
 ): SubscriptionStream = SubscriptionStream(
     index = StreamIndex(index),
-    type = SubscriptionStreamType.H264,
+    type = type,
     language = null,
     compositionId = null,
     ancillaryId = null,
@@ -176,12 +177,16 @@ internal fun stream(
 internal fun packet(
     payload: SubscriptionBinary = CountingBinary(byteArrayOf(7)),
     presentationTimeUs: Long? = 2L,
+    frameType: MuxFrameType = MuxFrameType.I,
+    streamIndex: Long = 0L,
+    decodingTimeUs: Long? = 1L,
+    durationUs: Long = 3L,
 ): SubscriptionEvent.Packet = SubscriptionEvent.Packet(
-    frameType = MuxFrameType.I,
-    streamIndex = StreamIndex(0L),
-    decodingTimeUs = 1L,
+    frameType = frameType,
+    streamIndex = StreamIndex(streamIndex),
+    decodingTimeUs = decodingTimeUs,
     presentationTimeUs = presentationTimeUs,
-    durationUs = 3L,
+    durationUs = durationUs,
     payload = payload,
 )
 

@@ -81,7 +81,14 @@ public sealed interface SubscriptionEvent {
         override fun toString(): String = "SubscriptionEvent.Started(<redacted>)"
     }
 
-    /** One mux packet in committed protocol order. */
+    /**
+     * One mux packet in committed protocol order.
+     *
+     * [decodingTimeUs] and [presentationTimeUs] are the transport's own media coordinates on the
+     * [SubscriptionConnection] boundary. An [ActiveSubscription] may move both by one shared
+     * offset after an accepted [Skipped], so the timestamps its consumer observes are output
+     * coordinates rather than server positions.
+     */
     public class Packet(
         public val frameType: MuxFrameType,
         public val streamIndex: StreamIndex,
@@ -93,7 +100,12 @@ public sealed interface SubscriptionEvent {
         override fun toString(): String = "SubscriptionEvent.Packet(<redacted>)"
     }
 
-    /** Result of a timeshift skip request. */
+    /**
+     * Result of a timeshift skip request.
+     *
+     * [time] is the server position the reader reached, not the output coordinate an
+     * [ActiveSubscription] presents for the packets that follow it.
+     */
     public class Skipped(
         public val absolute: Boolean?,
         public val outcome: SkipOutcome,
@@ -123,7 +135,12 @@ public sealed interface SubscriptionEvent {
         override fun toString(): String = "SubscriptionEvent.Speed(<redacted>)"
     }
 
-    /** Timeshift status update in the negotiated wire-clock units. */
+    /**
+     * Timeshift status update in the negotiated wire-clock units.
+     *
+     * [start], [end], and [shift] describe server positions inside the buffer, so they remain the
+     * base a [SubscriptionSeekTarget] uses. They are not output coordinates.
+     */
     public class Timeshift(
         public val full: Long,
         public val shift: Long,
@@ -244,8 +261,10 @@ public enum class SkipOutcome { ACCEPTED, REJECTED, UNKNOWN }
 /**
  * Closed set of timeshift positioning requests.
  *
- * Media coordinates share the microsecond base used by
- * [SubscriptionEvent.Packet.presentationTimeUs] and [SubscriptionEvent.Timeshift].
+ * Media coordinates are server positions in the microsecond base reported by
+ * [SubscriptionEvent.Timeshift] and [SubscriptionEvent.Skipped]. They are not the output
+ * coordinates an [ActiveSubscription] hands to its consumer, because a resumed segment is rebased
+ * onto the already delivered timeline.
  */
 @SubscriptionInfrastructureApi
 public sealed interface SubscriptionSeekTarget {
@@ -303,7 +322,14 @@ public sealed interface SubscriptionOperationResult<out T> {
     public data object NotSupported : SubscriptionOperationResult<Nothing>
 }
 
-/** Safe successful subscribe acknowledgement. */
+/**
+ * Safe successful subscribe acknowledgement.
+ *
+ * [normalizedTimestamps] describes the server's ingest-time normalization of this subscription.
+ * It is not a promise that a resumed timeshift segment continues the timestamps already
+ * delivered, which is why an [ActiveSubscription] rebases after an accepted
+ * [SubscriptionEvent.Skipped].
+ */
 @SubscriptionInfrastructureApi
 public class SubscriptionConfirmation(
     public val ninetyKhz: Boolean?,

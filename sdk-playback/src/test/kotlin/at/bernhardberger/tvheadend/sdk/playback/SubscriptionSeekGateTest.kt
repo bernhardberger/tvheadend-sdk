@@ -51,8 +51,9 @@ class SubscriptionSeekGateTest {
         fixture.connection.emit(packet(presentationTimeUs = 30L))
         runCurrent()
         assertEquals(
-            listOf("started", "packet:10", "status", "skipped", "packet:30"),
+            listOf("started", "packet:10", "status", "skipped", "packet:13"),
             fixture.received,
+            "The resumed keyframe is rebased one frame after the last delivered packet",
         )
         fixture.close()
     }

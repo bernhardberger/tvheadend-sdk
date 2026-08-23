@@ -104,6 +104,8 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionDiagnost
 	public final fun getDroppedPacketCount ()J
 	public final fun getDroppedPacketCountOverflowed ()Z
 	public final fun getGraceTimeoutSeconds ()Ljava/lang/Long;
+	public final fun getRebaseDiscardedPacketCount ()J
+	public final fun getTimestampAnchorCount ()J
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
@@ -359,6 +361,7 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionOperatio
 public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekInvalidation : java/lang/Enum {
 	public static final field ACKNOWLEDGEMENT_TIMEOUT Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekInvalidation;
 	public static final field PENDING_QUEUE_OVERFLOW Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekInvalidation;
+	public static final field RESUMED_SEGMENT_UNANCHORABLE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekInvalidation;
 	public static final field UNCERTAIN_REQUEST_OUTCOME Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekInvalidation;
 	public static final field UNRECOGNIZED_ACKNOWLEDGEMENT Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekInvalidation;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
