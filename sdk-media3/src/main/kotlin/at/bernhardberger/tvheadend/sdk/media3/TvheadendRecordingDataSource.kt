@@ -44,7 +44,10 @@ public class TvheadendRecordingException(
 @SubscriptionInfrastructureApi
 @androidx.media3.common.util.UnstableApi
 public fun tvheadendRecordingMediaItem(recordingId: RecordingId): MediaItem =
-    MediaItem.fromUri(recordingUri(recordingId))
+    MediaItem.Builder()
+        .setMediaId(recordingUri(recordingId))
+        .setUri(recordingUri(recordingId))
+        .build()
 
 /**
  * Creates a Media3 data source factory that serves recordings through [recordings].

@@ -6,6 +6,7 @@ import at.bernhardberger.tvheadend.sdk.core.AutorecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleId
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
+import at.bernhardberger.tvheadend.sdk.core.DvrCutpoint
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
@@ -447,6 +448,11 @@ private class SubscriptionGateway : ProtocolGateway {
     override suspend fun getDiskSpace(
         generation: GatewayGeneration,
     ): GatewayResult<DvrDiskSpace> = GatewayResult.Ok(DvrDiskSpace(0, 0, 0))
+
+    override suspend fun getDvrCutpoints(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+    ): GatewayResult<List<DvrCutpoint>> = GatewayResult.NotSupported
 
     override suspend fun scheduleDvrEntry(
         generation: GatewayGeneration,

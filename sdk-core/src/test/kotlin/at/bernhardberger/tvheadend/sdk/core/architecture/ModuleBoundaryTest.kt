@@ -151,6 +151,10 @@ internal class ModuleBoundaryTest {
             "Resume",
             "StartOver",
             "DvrProgressTracker",
+            "DvrCutpointAction",
+            "DvrCutpoint",
+            "DvrCutpointsResult",
+            "Available",
             "NotReady",
             "ServerRejected",
             "AccessDenied",
@@ -229,6 +233,7 @@ internal class ModuleBoundaryTest {
             "public suspend fun updateTimerecRule( id: TimerecRuleId, update: TimerecRuleUpdate, ): DvrMutationResult<Unit>",
             "public suspend fun deleteTimerecRule(id: TimerecRuleId): DvrMutationResult<Unit>",
             "public suspend fun reportProgress( id: DvrEntryId, progress: DvrPlaybackProgress, ): DvrProgressResult",
+            "public suspend fun cutpoints(id: DvrEntryId): DvrCutpointsResult",
         )
 
         assertEquals(expectedSignatures.size, Regex("public suspend fun ").findAll(publicApi).count())
@@ -298,11 +303,13 @@ internal class ModuleBoundaryTest {
             "PlaybackRecoveryReason",
             "TvheadendPlaybackRecovery",
             "TvheadendRecordingException",
+            "TvheadendRecordingResume",
             "createTvheadendLiveMediaSource",
             "createTvheadendPlaybackRecovery",
             "createTvheadendRenderersFactory",
             "createTvheadendRecordingDataSourceFactory",
             "createTvheadendRecordingMediaSource",
+            "createTvheadendRecordingResume",
             "tvheadendRecordingMediaItem",
         )
 
@@ -371,6 +378,7 @@ internal class ModuleBoundaryTest {
                         "createTvheadendRenderersFactory",
                         "createTvheadendRecordingDataSourceFactory",
                         "createTvheadendRecordingMediaSource",
+                        "createTvheadendRecordingResume",
                         "tvheadendRecordingMediaItem",
                     )
             }

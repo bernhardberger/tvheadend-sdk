@@ -78,9 +78,12 @@ import at.bernhardberger.tvheadend.htsp.requests.GetDiskSpaceRequest
 import at.bernhardberger.tvheadend.htsp.requests.GetDiskSpaceResponse
 import at.bernhardberger.tvheadend.htsp.requests.GetDvrConfigsRequest
 import at.bernhardberger.tvheadend.htsp.requests.GetDvrConfigsResponse
+import at.bernhardberger.tvheadend.htsp.requests.GetDvrCutpointsRequest
+import at.bernhardberger.tvheadend.htsp.requests.GetDvrCutpointsResponse
 import at.bernhardberger.tvheadend.htsp.requests.GetEventsRequest
 import at.bernhardberger.tvheadend.htsp.requests.GetEventsResponse
 import at.bernhardberger.tvheadend.htsp.requests.HtspDvrConfig
+import at.bernhardberger.tvheadend.htsp.requests.HtspDvrCutpoint
 import at.bernhardberger.tvheadend.htsp.requests.HtspChannelService
 import at.bernhardberger.tvheadend.htsp.requests.HtspEmptyResponse
 import at.bernhardberger.tvheadend.htsp.requests.HtspEvent
@@ -103,6 +106,7 @@ import at.bernhardberger.tvheadend.htsp.requests.UpdateTimerecEntryResponse
 import at.bernhardberger.tvheadend.htsp.wire.HtspBinary
 import at.bernhardberger.tvheadend.sdk.core.DvrConfigId
 import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
+import at.bernhardberger.tvheadend.sdk.core.DvrCutpointAction
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
@@ -1124,6 +1128,85 @@ internal class HtspProtocolGatewayTest {
                 DvrEntryId(7),
                 DvrPlaybackProgress.checkpoint(1.seconds),
             )
+        } catch (failure: CancellationException) {
+            caught = failure
+        }
+        assertSame(cancellation, caught)
+    }
+
+    @Test
+    fun `DVR cutpoints preserve wire order and map safe actions atomically`() = runTest {
+        val sourceGeneration = HtspConnectionGeneration()
+        val fake = FakeHtspConnection().apply {
+            liveConnectionValue.value = liveConnection(sourceGeneration)
+            connectOutcome = HtspConnectOutcome.Connected(requireNotNull(liveConnectionValue.value))
+            executeResult = HtspResult.Ok(
+                GetDvrCutpointsResponse(
+                    listOf(
+                        HtspDvrCutpoint(start = 5_000, end = 10_000, type = 0),
+                        HtspDvrCutpoint(start = 1_000, end = 8_000, type = 1),
+                        HtspDvrCutpoint(start = 10_000, end = 10_001, type = 2),
+                        HtspDvrCutpoint(start = 12_000, end = 15_000, type = 3),
+                        HtspDvrCutpoint(start = 20_000, end = 21_000, type = 99),
+                    ),
+                ),
+            )
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+
+        val result = gateway.getDvrCutpoints(generation, DvrEntryId(7)) as GatewayResult.Ok
+        assertEquals(
+            listOf(5_000L, 1_000L, 10_000L, 12_000L, 20_000L),
+            result.value.map { cutpoint -> cutpoint.start.inWholeMilliseconds },
+            "Overlapping, unsorted cutpoints must retain server order",
+        )
+        assertEquals(
+            listOf(
+                DvrCutpointAction.CUT,
+                DvrCutpointAction.MUTE,
+                DvrCutpointAction.SCENE_MARKER,
+                DvrCutpointAction.COMMERCIAL_BREAK,
+                DvrCutpointAction.UNKNOWN,
+            ),
+            result.value.map { cutpoint -> cutpoint.action },
+        )
+        assertEquals(7L, (fake.lastRequest as GetDvrCutpointsRequest).entryId)
+        assertSame(sourceGeneration, fake.lastExpectedGeneration)
+
+        fake.executeResult = HtspResult.Ok(GetDvrCutpointsResponse(null))
+        assertEquals(
+            emptyList<Any>(),
+            (gateway.getDvrCutpoints(generation, DvrEntryId(7)) as GatewayResult.Ok).value,
+        )
+
+        fake.executeResult = HtspResult.Ok(
+            GetDvrCutpointsResponse(listOf(HtspDvrCutpoint(start = 10, end = 10, type = 0))),
+        )
+        assertSame(
+            GatewayResult.ServerRejected,
+            gateway.getDvrCutpoints(generation, DvrEntryId(7)),
+            "One invalid interval must reject the complete response",
+        )
+
+        listOf(
+            HtspResult.ServerError to GatewayResult.ServerRejected,
+            HtspResult.AccessDenied to GatewayResult.AccessDenied,
+            HtspResult.ConnectionLimit to GatewayResult.ConnectionLimit,
+            HtspResult.Timeout to GatewayResult.Timeout,
+            HtspResult.TransportUnavailable to GatewayResult.TransportUnavailable,
+            HtspResult.NotSupported to GatewayResult.NotSupported,
+        ).forEach { (source, expected) ->
+            fake.executeResult = source
+            assertSame(expected, gateway.getDvrCutpoints(generation, DvrEntryId(7)))
+        }
+
+        val cancellation = CancellationException("private cancellation")
+        fake.executeException = cancellation
+        var caught: CancellationException? = null
+        try {
+            gateway.getDvrCutpoints(generation, DvrEntryId(7))
         } catch (failure: CancellationException) {
             caught = failure
         }

@@ -641,11 +641,15 @@ public interface DvrRepository {
         id: DvrEntryId,
         progress: DvrPlaybackProgress,
     ): DvrProgressResult
+
+    /** Retrieves the selected entry's ordered cutpoint intervals without caching them. */
+    public suspend fun cutpoints(id: DvrEntryId): DvrCutpointsResult
 }
 
 internal abstract class StateBackedDvrRepository(
     private val mutations: DvrMutationCommands = DvrMutationCommands.None,
     private val progressCommands: DvrProgressCommands = DvrProgressCommands.None,
+    private val cutpointCommands: DvrCutpointCommands = DvrCutpointCommands.None,
 ) : DvrRepository {
     final override val entries: StateFlow<List<DvrEntry>> by lazy {
         MappedDvrStateFlow(state, DvrRepositoryState::entries)
@@ -726,6 +730,9 @@ internal abstract class StateBackedDvrRepository(
         id: DvrEntryId,
         progress: DvrPlaybackProgress,
     ): DvrProgressResult = progressCommands.reportProgress(id, progress)
+
+    final override suspend fun cutpoints(id: DvrEntryId): DvrCutpointsResult =
+        cutpointCommands.getCutpoints(id)
 }
 
 @OptIn(ExperimentalForInheritanceCoroutinesApi::class, InternalCoroutinesApi::class)

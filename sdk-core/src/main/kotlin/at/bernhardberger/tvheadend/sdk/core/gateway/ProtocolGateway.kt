@@ -3,6 +3,7 @@ package at.bernhardberger.tvheadend.sdk.core.gateway
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
+import at.bernhardberger.tvheadend.sdk.core.DvrCutpoint
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
@@ -54,6 +55,11 @@ internal interface ProtocolGateway {
     public suspend fun getDiskSpace(
         generation: GatewayGeneration,
     ): GatewayResult<DvrDiskSpace>
+
+    public suspend fun getDvrCutpoints(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+    ): GatewayResult<List<DvrCutpoint>>
 
     public suspend fun scheduleDvrEntry(
         generation: GatewayGeneration,

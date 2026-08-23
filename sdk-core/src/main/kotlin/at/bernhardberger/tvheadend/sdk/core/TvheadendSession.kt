@@ -96,6 +96,7 @@ private object SessionRegistry {
         metadata = PhaseOneSessionMetadata(
             mutationCommands = dvrMutations,
             progressCommands = dvrProgress,
+            cutpointCommands = dvrProgress,
             onDvrMetadataAccepted = dvrMutations::acceptMetadata,
         )
         owner = ConnectionOwner(

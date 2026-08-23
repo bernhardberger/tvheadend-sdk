@@ -5,6 +5,9 @@ import at.bernhardberger.tvheadend.sdk.core.AutorecRuleId
 import at.bernhardberger.tvheadend.sdk.core.DvrConfigId
 import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
 import at.bernhardberger.tvheadend.sdk.core.DvrConfigurationsState
+import at.bernhardberger.tvheadend.sdk.core.DvrCutpoint
+import at.bernhardberger.tvheadend.sdk.core.DvrCutpointAction
+import at.bernhardberger.tvheadend.sdk.core.DvrCutpointsResult
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpaceState
 import at.bernhardberger.tvheadend.sdk.core.DvrEntry
@@ -99,6 +102,18 @@ internal class FakeDvrRepositoryTest {
                 DvrPlaybackProgress.checkpoint(30.seconds),
             ),
         )
+        assertEquals(DvrRepositoryState.Empty, repository.state.value)
+    }
+
+    @Test
+    fun `fake scripts cutpoint outcomes without changing repository state`() = runTest {
+        val repository = FakeDvrRepository()
+        val available = DvrCutpointsResult.Available.create(
+            listOf(DvrCutpoint(1.seconds, 2.seconds, DvrCutpointAction.CUT)),
+        )
+        repository.cutpointsResult = available
+
+        assertSame(available, repository.cutpoints(DvrEntryId(7)))
         assertEquals(DvrRepositoryState.Empty, repository.state.value)
     }
 }

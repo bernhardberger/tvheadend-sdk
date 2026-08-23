@@ -54,6 +54,7 @@ import at.bernhardberger.tvheadend.htsp.requests.FileSeekResponse
 import at.bernhardberger.tvheadend.htsp.requests.FileSeekWhence
 import at.bernhardberger.tvheadend.htsp.requests.HtspChannelService
 import at.bernhardberger.tvheadend.htsp.requests.AddDvrEntrySelector
+import at.bernhardberger.tvheadend.htsp.requests.HtspDvrCutpoint
 import at.bernhardberger.tvheadend.htsp.requests.HtspEvent
 import at.bernhardberger.tvheadend.htsp.requests.HtspDvrMutationResponse
 import at.bernhardberger.tvheadend.htsp.requests.HtspRecordingRuleChannel
@@ -72,6 +73,7 @@ import at.bernhardberger.tvheadend.htsp.requests.fileOpen
 import at.bernhardberger.tvheadend.htsp.requests.fileRead
 import at.bernhardberger.tvheadend.htsp.requests.fileSeek
 import at.bernhardberger.tvheadend.htsp.requests.getDiskSpace
+import at.bernhardberger.tvheadend.htsp.requests.getDvrCutpoints
 import at.bernhardberger.tvheadend.htsp.requests.getDvrConfigs
 import at.bernhardberger.tvheadend.htsp.requests.getEvents
 import at.bernhardberger.tvheadend.htsp.requests.stopDvrEntry
@@ -86,6 +88,8 @@ import at.bernhardberger.tvheadend.htsp.wire.HtspBinary
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
+import at.bernhardberger.tvheadend.sdk.core.DvrCutpoint
+import at.bernhardberger.tvheadend.sdk.core.DvrCutpointAction
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.DVR_PROGRESS_INCR_PLAY_COUNT
 import at.bernhardberger.tvheadend.sdk.core.DVR_PROGRESS_KEEP_PLAY_COUNT
@@ -160,6 +164,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.transform
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
@@ -281,6 +286,20 @@ internal class HtspProtocolGateway internal constructor(
             usedBytes = response.usedBytes,
             totalBytes = response.totalBytes,
         )
+    }
+
+    override suspend fun getDvrCutpoints(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+    ): GatewayResult<List<DvrCutpoint>> = connection.getDvrCutpoints(
+        entryId = id.value,
+        expectedGeneration = htspGenerationFor(generation),
+    ).toCheckedGatewayResult { response ->
+        val mapped = ArrayList<DvrCutpoint>(response.cutpoints?.size ?: 0)
+        response.cutpoints.orEmpty().forEach { cutpoint ->
+            mapped += cutpoint.toDvrCutpointOrNull() ?: return@toCheckedGatewayResult null
+        }
+        Collections.unmodifiableList(mapped)
     }
 
     override suspend fun scheduleDvrEntry(
@@ -563,7 +582,9 @@ internal class HtspProtocolGateway internal constructor(
      * TVHeadend increments the play count on every close whose `playcount` field is absent, so a
      * plain close would count each extractor reopen as another play. The keep sentinel suppresses
      * that, but the field only exists from protocol 27, so an older server falls back to a plain
-     * close rather than a request the transport would refuse.
+     * close rather than a request the transport would refuse. A DataSource close may be only an
+     * extractor reopen, so it never carries a play position; playback checkpoints and final
+     * position use the separate DVR progress command.
      */
     override suspend fun closeRecordingFile(
         generation: GatewayGeneration,
@@ -754,6 +775,21 @@ private inline fun <T, R : Any> HtspResult<T>.toCheckedGatewayResult(
 
 private fun acceptedDvrAcknowledgement(response: HtspDvrMutationResponse): Unit? =
     Unit.takeIf { response.success == 1L }
+
+private fun HtspDvrCutpoint.toDvrCutpointOrNull(): DvrCutpoint? {
+    if (end <= start) return null
+    return DvrCutpoint(
+        start = start.milliseconds,
+        end = end.milliseconds,
+        action = when (type) {
+            0L -> DvrCutpointAction.CUT
+            1L -> DvrCutpointAction.MUTE
+            2L -> DvrCutpointAction.SCENE_MARKER
+            3L -> DvrCutpointAction.COMMERCIAL_BREAK
+            else -> DvrCutpointAction.UNKNOWN
+        },
+    )
+}
 
 private fun DvrSchedule.toHtspSelector(): AddDvrEntrySelector = when (this) {
     is DvrSchedule.Programme -> AddDvrEntrySelector.Event(eventId.value)

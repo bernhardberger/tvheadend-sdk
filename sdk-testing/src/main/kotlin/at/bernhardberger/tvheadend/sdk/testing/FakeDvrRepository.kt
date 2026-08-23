@@ -7,6 +7,7 @@ import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrConfigId
 import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
 import at.bernhardberger.tvheadend.sdk.core.DvrConfigurationsState
+import at.bernhardberger.tvheadend.sdk.core.DvrCutpointsResult
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpaceState
 import at.bernhardberger.tvheadend.sdk.core.DvrEntry
@@ -93,6 +94,9 @@ public class FakeDvrRepository @JvmOverloads constructor(
     /** Scripted outcome returned by [reportProgress]. */
     public var reportProgressResult: DvrProgressResult = DvrProgressResult.NotReady
 
+    /** Scripted outcome returned by [cutpoints]. */
+    public var cutpointsResult: DvrCutpointsResult = DvrCutpointsResult.NotReady
+
     /** Publishes one complete repository transition. */
     public fun setState(state: DvrRepositoryState) {
         mutableState.value = state
@@ -167,6 +171,8 @@ public class FakeDvrRepository @JvmOverloads constructor(
         id: DvrEntryId,
         progress: DvrPlaybackProgress,
     ): DvrProgressResult = reportProgressResult
+
+    override suspend fun cutpoints(id: DvrEntryId): DvrCutpointsResult = cutpointsResult
 }
 
 @OptIn(ExperimentalForInheritanceCoroutinesApi::class, InternalCoroutinesApi::class)

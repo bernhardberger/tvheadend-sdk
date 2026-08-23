@@ -460,6 +460,97 @@ public final class at/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState$U
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class at/bernhardberger/tvheadend/sdk/core/DvrCutpoint {
+	public synthetic fun <init> (JJLat/bernhardberger/tvheadend/sdk/core/DvrCutpointAction;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1-UwyO8pc ()J
+	public final fun component2-UwyO8pc ()J
+	public final fun component3 ()Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointAction;
+	public final fun copy-NqJ4yvY (JJLat/bernhardberger/tvheadend/sdk/core/DvrCutpointAction;)Lat/bernhardberger/tvheadend/sdk/core/DvrCutpoint;
+	public static synthetic fun copy-NqJ4yvY$default (Lat/bernhardberger/tvheadend/sdk/core/DvrCutpoint;JJLat/bernhardberger/tvheadend/sdk/core/DvrCutpointAction;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/DvrCutpoint;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAction ()Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointAction;
+	public final fun getEnd-UwyO8pc ()J
+	public final fun getStart-UwyO8pc ()J
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrCutpointAction : java/lang/Enum {
+	public static final field COMMERCIAL_BREAK Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointAction;
+	public static final field CUT Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointAction;
+	public static final field MUTE Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointAction;
+	public static final field SCENE_MARKER Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointAction;
+	public static final field UNKNOWN Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointAction;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointAction;
+	public static fun values ()[Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointAction;
+}
+
+public abstract interface class at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult {
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$AccessDenied : at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$AccessDenied;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$Available : at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult {
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$Available$Companion;
+	public final fun component1 ()Ljava/util/List;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCutpoints ()Ljava/util/List;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$Available$Companion {
+	public final fun create (Ljava/util/List;)Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$Available;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$ConnectionLimit : at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$ConnectionLimit;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$NotReady : at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$NotReady;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$NotSupported : at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$NotSupported;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$ServerRejected : at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$ServerRejected;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$Timeout : at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$Timeout;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$TransportUnavailable : at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$TransportUnavailable;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class at/bernhardberger/tvheadend/sdk/core/DvrDiskSpace {
 	public fun <init> (JLjava/lang/Long;J)V
 	public final fun component1 ()J
@@ -887,6 +978,7 @@ public abstract interface class at/bernhardberger/tvheadend/sdk/core/DvrReposito
 	public abstract fun configuration-5XLS7Ck (Ljava/lang/String;)Lkotlinx/coroutines/flow/Flow;
 	public abstract fun createAutorecRule (Lat/bernhardberger/tvheadend/sdk/core/AutorecRuleCreate;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun createTimerecRule (Lat/bernhardberger/tvheadend/sdk/core/TimerecRuleCreate;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun cutpoints-LuN5gl8 (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun deleteAutorecRule-8LEu20c (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun deleteEntry-LuN5gl8 (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun deleteTimerecRule-kEPY2d4 (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;

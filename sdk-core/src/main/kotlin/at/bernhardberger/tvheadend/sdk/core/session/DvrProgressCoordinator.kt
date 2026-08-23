@@ -1,6 +1,9 @@
 package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.DVR_PROGRESS_MINIMUM_PROTOCOL_VERSION
+import at.bernhardberger.tvheadend.sdk.core.DVR_CUTPOINTS_MINIMUM_PROTOCOL_VERSION
+import at.bernhardberger.tvheadend.sdk.core.DvrCutpointCommands
+import at.bernhardberger.tvheadend.sdk.core.DvrCutpointsResult
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
 import at.bernhardberger.tvheadend.sdk.core.DvrProgressCommands
@@ -32,11 +35,12 @@ internal class DvrProgressCoordinator(
     private val gateway: ProtocolGateway,
     private val isSessionReady: (GatewayGeneration) -> Boolean = { true },
     private val onDvrAccessProof: (GatewayGeneration, Boolean) -> Unit = { _, _ -> },
-) : DvrProgressCommands, DvrProgressLifecycle {
+) : DvrProgressCommands, DvrCutpointCommands, DvrProgressLifecycle {
     private val lock = Any()
     private var generation: GatewayGeneration? = null
     private var admitted = false
     private var notSupported = false
+    private var cutpointsNotSupported = false
 
     override fun bindGeneration(generation: GatewayGeneration, protocolVersion: Int?) {
         synchronized(lock) {
@@ -44,6 +48,8 @@ internal class DvrProgressCoordinator(
             this.generation = generation
             notSupported = protocolVersion == null ||
                 protocolVersion < DVR_PROGRESS_MINIMUM_PROTOCOL_VERSION
+            cutpointsNotSupported = protocolVersion == null ||
+                protocolVersion < DVR_CUTPOINTS_MINIMUM_PROTOCOL_VERSION
         }
     }
 
@@ -61,6 +67,7 @@ internal class DvrProgressCoordinator(
             admitted = false
             generation = null
             notSupported = false
+            cutpointsNotSupported = false
         }
     }
 
@@ -110,6 +117,45 @@ internal class DvrProgressCoordinator(
         }
         classified.proof?.let { allowed -> onDvrAccessProof(activeGeneration, allowed) }
         return classified.result
+    }
+
+    override suspend fun getCutpoints(id: DvrEntryId): DvrCutpointsResult {
+        val activeGeneration = synchronized(lock) {
+            when {
+                !admitted -> return DvrCutpointsResult.NotReady
+                cutpointsNotSupported -> return DvrCutpointsResult.NotSupported
+                else -> generation
+            }
+        } ?: return DvrCutpointsResult.NotReady
+        if (!isSessionReady(activeGeneration)) {
+            return DvrCutpointsResult.NotReady
+        }
+        val result = try {
+            gateway.getDvrCutpoints(activeGeneration, id)
+        } catch (cancellation: CancellationException) {
+            currentCoroutineContext().ensureActive()
+            throw cancellation
+        } catch (_: Exception) {
+            GatewayResult.TransportUnavailable
+        }
+        return synchronized(lock) {
+            if (!admitted || generation !== activeGeneration) {
+                DvrCutpointsResult.TransportUnavailable
+            } else {
+                when (result) {
+                    is GatewayResult.Ok -> DvrCutpointsResult.Available.create(result.value)
+                    GatewayResult.AccessDenied -> DvrCutpointsResult.AccessDenied
+                    GatewayResult.NotSupported -> {
+                        cutpointsNotSupported = true
+                        DvrCutpointsResult.NotSupported
+                    }
+                    GatewayResult.ServerRejected -> DvrCutpointsResult.ServerRejected
+                    GatewayResult.ConnectionLimit -> DvrCutpointsResult.ConnectionLimit
+                    GatewayResult.Timeout -> DvrCutpointsResult.Timeout
+                    GatewayResult.TransportUnavailable -> DvrCutpointsResult.TransportUnavailable
+                }
+            }
+        }
     }
 }
 

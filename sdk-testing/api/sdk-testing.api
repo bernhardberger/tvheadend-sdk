@@ -21,6 +21,7 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeDvrRepository : a
 	public fun configuration-5XLS7Ck (Ljava/lang/String;)Lkotlinx/coroutines/flow/Flow;
 	public fun createAutorecRule (Lat/bernhardberger/tvheadend/sdk/core/AutorecRuleCreate;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun createTimerecRule (Lat/bernhardberger/tvheadend/sdk/core/TimerecRuleCreate;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun cutpoints-LuN5gl8 (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun deleteAutorecRule-8LEu20c (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun deleteEntry-LuN5gl8 (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun deleteTimerecRule-kEPY2d4 (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -31,6 +32,7 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeDvrRepository : a
 	public fun getConfigurationsState ()Lkotlinx/coroutines/flow/StateFlow;
 	public final fun getCreateAutorecRuleResult ()Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;
 	public final fun getCreateTimerecRuleResult ()Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;
+	public final fun getCutpointsResult ()Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult;
 	public final fun getDeleteAutorecRuleResult ()Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;
 	public final fun getDeleteEntryResult ()Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;
 	public final fun getDeleteTimerecRuleResult ()Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;
@@ -51,6 +53,7 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeDvrRepository : a
 	public final fun setConfigurationsState (Lat/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState;)V
 	public final fun setCreateAutorecRuleResult (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
 	public final fun setCreateTimerecRuleResult (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
+	public final fun setCutpointsResult (Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult;)V
 	public final fun setDeleteAutorecRuleResult (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
 	public final fun setDeleteEntryResult (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
 	public final fun setDeleteTimerecRuleResult (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V

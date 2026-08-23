@@ -34,6 +34,10 @@ class TvheadendRecordingDataSourceTest {
             "tvheadend-recording://7",
             tvheadendRecordingMediaItem(RecordingId(7L)).localConfiguration?.uri.toString(),
         )
+        assertEquals(
+            "tvheadend-recording://7",
+            tvheadendRecordingMediaItem(RecordingId(7L)).mediaId,
+        )
     }
 
     @Test

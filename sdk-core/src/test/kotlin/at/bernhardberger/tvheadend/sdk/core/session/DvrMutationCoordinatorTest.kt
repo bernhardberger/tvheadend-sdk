@@ -7,6 +7,7 @@ import at.bernhardberger.tvheadend.sdk.core.AutorecRuleId
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
+import at.bernhardberger.tvheadend.sdk.core.DvrCutpoint
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
@@ -327,6 +328,10 @@ internal class MutationGateway : ProtocolGateway {
         DvrEntryId,
         DvrPlaybackProgress,
     ) -> GatewayResult<Unit> = { _, _, _ -> GatewayResult.NotSupported }
+    internal var cutpointsBehavior: suspend (
+        GatewayGeneration,
+        DvrEntryId,
+    ) -> GatewayResult<List<DvrCutpoint>> = { _, _ -> GatewayResult.NotSupported }
 
     override val connectionState: MutableStateFlow<GatewayState> =
         MutableStateFlow(GatewayState.Disconnected)
@@ -358,6 +363,11 @@ internal class MutationGateway : ProtocolGateway {
     override suspend fun getDiskSpace(
         generation: GatewayGeneration,
     ): GatewayResult<DvrDiskSpace> = GatewayResult.NotSupported
+
+    override suspend fun getDvrCutpoints(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+    ): GatewayResult<List<DvrCutpoint>> = cutpointsBehavior(generation, id)
 
     override suspend fun scheduleDvrEntry(
         generation: GatewayGeneration,

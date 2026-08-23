@@ -9,6 +9,7 @@ import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
 import at.bernhardberger.tvheadend.sdk.core.DvrConfigurationsState
+import at.bernhardberger.tvheadend.sdk.core.DvrCutpoint
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpaceState
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
@@ -1250,6 +1251,11 @@ private class FakeProtocolGateway(
         order += "dvr.disk"
         return diskSpaceBehavior(generation)
     }
+
+    override suspend fun getDvrCutpoints(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+    ): GatewayResult<List<DvrCutpoint>> = GatewayResult.NotSupported
 
     override suspend fun scheduleDvrEntry(
         generation: GatewayGeneration,

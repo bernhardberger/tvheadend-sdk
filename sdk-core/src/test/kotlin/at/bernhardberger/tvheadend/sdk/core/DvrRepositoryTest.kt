@@ -224,9 +224,36 @@ internal class DvrRepositoryTest {
         )
     }
 
+    @Test
+    fun `cutpoint queries stay command only and default to not ready`() = runTest {
+        val expected = DvrCutpointsResult.Available.create(
+            listOf(
+                DvrCutpoint(
+                    1.seconds,
+                    2.seconds,
+                    DvrCutpointAction.COMMERCIAL_BREAK,
+                ),
+            ),
+        )
+        val commands = object : DvrCutpointCommands {
+            override suspend fun getCutpoints(id: DvrEntryId): DvrCutpointsResult = expected
+        }
+        val repository = TestDvrRepository(cutpointCommands = commands)
+        val snapshot = DvrSnapshot.create(listOf(DvrEntry.create(DvrEntryId(1))))
+        repository.set(DvrRepositoryState.Current(snapshot))
+
+        assertSame(expected, repository.cutpoints(DvrEntryId(1)))
+        assertSame(snapshot, (repository.state.value as DvrRepositoryState.Current).snapshot)
+        assertSame(DvrCutpointsResult.NotReady, TestDvrRepository().cutpoints(DvrEntryId(1)))
+    }
+
     private class TestDvrRepository(
         progressCommands: DvrProgressCommands = DvrProgressCommands.None,
-    ) : StateBackedDvrRepository(progressCommands = progressCommands) {
+        cutpointCommands: DvrCutpointCommands = DvrCutpointCommands.None,
+    ) : StateBackedDvrRepository(
+        progressCommands = progressCommands,
+        cutpointCommands = cutpointCommands,
+    ) {
         private val mutableState = MutableStateFlow<DvrRepositoryState>(DvrRepositoryState.Empty)
         private val mutableConfigurations =
             MutableStateFlow<DvrConfigurationsState>(DvrConfigurationsState.Unknown)
