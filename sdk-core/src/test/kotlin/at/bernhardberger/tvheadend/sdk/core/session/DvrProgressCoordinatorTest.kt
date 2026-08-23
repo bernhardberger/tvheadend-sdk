@@ -46,6 +46,10 @@ internal class DvrProgressCoordinatorTest {
         )
         coordinator.bindGeneration(generation, protocolVersion = 26)
         assertTrue(coordinator.startAdmission(generation))
+        assertSame(
+            DvrProgressResult.NotReady,
+            coordinator.reportProgress(DvrEntryId(7), checkpoint()),
+        )
         ready = true
         assertSame(
             DvrProgressResult.NotSupported,
@@ -184,6 +188,43 @@ internal class DvrProgressCoordinatorTest {
     }
 
     @Test
+    fun `readiness check runs after lock release and rechecks admission`() = runTest {
+        val generation = GatewayGeneration()
+        val gateway = MutationGateway()
+        lateinit var coordinator: DvrProgressCoordinator
+        coordinator = DvrProgressCoordinator(
+            gateway = gateway,
+            isSessionReady = {
+                val released = CountDownLatch(1)
+                val waiter = Thread {
+                    coordinator.stopAdmission()
+                    released.countDown()
+                }
+                waiter.start()
+                check(released.await(1, TimeUnit.SECONDS)) {
+                    "Coordinator lock was still held during the readiness check"
+                }
+                waiter.join()
+                true
+            },
+        )
+
+        coordinator.bindGeneration(generation, protocolVersion = 26)
+        assertTrue(coordinator.startAdmission(generation))
+        assertSame(
+            DvrProgressResult.TransportUnavailable,
+            coordinator.reportProgress(DvrEntryId(7), checkpoint()),
+        )
+
+        coordinator.bindGeneration(generation, protocolVersion = 11)
+        assertTrue(coordinator.startAdmission(generation))
+        assertSame(
+            DvrCutpointsResult.TransportUnavailable,
+            coordinator.getCutpoints(DvrEntryId(7)),
+        )
+    }
+
+    @Test
     fun `cutpoints wait for admission readiness and protocol version 12`() = runTest {
         val generation = GatewayGeneration()
         val gateway = MutationGateway()
@@ -208,6 +249,7 @@ internal class DvrProgressCoordinatorTest {
         assertSame(DvrCutpointsResult.NotReady, coordinator.getCutpoints(DvrEntryId(7)))
         coordinator.bindGeneration(generation, protocolVersion = 11)
         assertTrue(coordinator.startAdmission(generation))
+        assertSame(DvrCutpointsResult.NotReady, coordinator.getCutpoints(DvrEntryId(7)))
         ready = true
         assertSame(DvrCutpointsResult.NotSupported, coordinator.getCutpoints(DvrEntryId(7)))
         assertEquals(0, commandCount)
