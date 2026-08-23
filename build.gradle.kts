@@ -187,6 +187,21 @@ val productionGraphs = sdkModules.associateWith {
             coreResolved
         }) + "project::sdk-playback",
     )
+    this["sdk-android"] = ProductionGraph(
+        direct = setOf(
+            "project::sdk-core",
+            "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
+        ),
+        resolved = (if (useHtspComposite) {
+            (coreResolved - "at.bernhardberger.tvheadend:htsp:0.5.0") +
+                "project::tvheadend-htsp"
+        } else {
+            coreResolved
+        }) + setOf(
+            "project::sdk-core",
+            "project::sdk-playback",
+        ),
+    )
     this["sdk-playback"] = ProductionGraph(
         direct = setOf("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2"),
         resolved = coroutineResolved,
@@ -236,6 +251,10 @@ val scopedDirectDependencies = sdkModules.associateWith { emptySet<String>() }.t
         "api=project::sdk-playback",
         "api=org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
         "implementation=at.bernhardberger.tvheadend:htsp:0.5.0",
+    )
+    this["sdk-android"] = setOf(
+        "api=project::sdk-core",
+        "api=org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
     )
     this["sdk-playback"] = setOf(
         "api=org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",

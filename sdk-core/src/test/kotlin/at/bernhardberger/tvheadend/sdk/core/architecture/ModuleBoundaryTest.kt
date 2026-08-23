@@ -21,6 +21,10 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 
 internal class ModuleBoundaryTest {
+    private val repositoryRoot = generateSequence(File(System.getProperty("user.dir")).canonicalFile) { file ->
+        file.parentFile
+    }.first { file -> File(file, "settings.gradle.kts").isFile }
+
     private val modulePackages = mapOf(
         "sdk-android" to "at.bernhardberger.tvheadend.sdk.android",
         "sdk-core" to "at.bernhardberger.tvheadend.sdk.core",
@@ -32,7 +36,13 @@ internal class ModuleBoundaryTest {
     @Test
     fun `production sources stay inside their module package`() {
         modulePackages.forEach { (module, packagePrefix) ->
-            assertFalse(File("$module/src/main/java").exists(), "$module must use Kotlin production sources")
+            val hasJavaProductionSource = File(repositoryRoot, "$module/src/main")
+                .walkTopDown()
+                .any { file -> file.isFile && file.extension == "java" }
+            assertFalse(
+                hasJavaProductionSource,
+                "$module must use Kotlin production sources",
+            )
             val files = productionScope(module).files
             assertFalse(files.isEmpty(), "$module must have production source")
             files.assertTrue { file ->
@@ -312,7 +322,16 @@ internal class ModuleBoundaryTest {
             "createTvheadendRecordingResume",
             "tvheadendRecordingMediaItem",
         )
+        val expectedAndroid = setOf(
+            "TvheadendDiscovery",
+            "DiscoveredTvheadendServer",
+            "TvheadendDiscoveryState",
+            "TvheadendDiscoveryFailure",
+            "TvheadendConnectivity",
+            "TvheadendConnectivityStatus",
+        )
 
+        assertPublicInfrastructure("sdk-android", expectedAndroid, unannotatedCount = expectedAndroid.size)
         assertPublicInfrastructure("sdk-playback", expectedPlayback, unannotatedCount = 1)
         assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 3)
         assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 5)
@@ -348,7 +367,7 @@ internal class ModuleBoundaryTest {
 
     @Test
     fun `every hand written public SDK type is reachable from a public entry point`() {
-        val scope = listOf("sdk-core", "sdk-playback", "sdk-testing", "sdk-media3")
+        val scope = listOf("sdk-android", "sdk-core", "sdk-playback", "sdk-testing", "sdk-media3")
             .map(::productionScope)
             .reduce(KoScope::plus)
         val publicTypes = scope.classesAndInterfacesAndObjects(includeNested = true, includeLocal = false)
@@ -384,6 +403,8 @@ internal class ModuleBoundaryTest {
             }
             .forEach { function -> function.referencedPublicTypes().forEach(::enqueue) }
         setOf(
+            "at.bernhardberger.tvheadend.sdk.android.TvheadendConnectivity",
+            "at.bernhardberger.tvheadend.sdk.android.TvheadendDiscovery",
             "at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi",
             "at.bernhardberger.tvheadend.sdk.media3.PlaybackRecoveryReason",
             "at.bernhardberger.tvheadend.sdk.media3.TvheadendRecordingException",

@@ -33,6 +33,8 @@ extensions.configure<LibraryExtension> {
     }
     packaging {
         resources.excludes.remove("/META-INF/LICENSE")
+        resources.pickFirsts.add("/META-INF/LICENSE")
+        resources.pickFirsts.add("/META-INF/NOTICE.md")
     }
     publishing {
         singleVariant("release") {
@@ -51,7 +53,10 @@ kotlin {
 }
 
 dependencies {
+    api(project(":sdk-core"))
+    api(libs.kotlinx.coroutines.core)
     testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
     testRuntimeOnly(libs.junit.platform.launcher)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
