@@ -19,11 +19,15 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailureEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayRecordingFile
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayState
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.ProtocolGateway
 import at.bernhardberger.tvheadend.sdk.core.gateway.ServerConfiguration
+import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
+import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
+import at.bernhardberger.tvheadend.sdk.playback.RecordingId
 import at.bernhardberger.tvheadend.sdk.playback.SkipOutcome
 import at.bernhardberger.tvheadend.sdk.playback.StreamIndex
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
@@ -299,6 +303,90 @@ class SessionSubscriptionsTest {
         )
         children.closeAndJoinSubscriptions()
     }
+
+    @Test
+    fun `recording handles bind one generation and refuse a changed connection`() = runTest {
+        val gateway = SubscriptionGateway()
+        val children = PlaybackSessionChildren(
+            gateway,
+            PhaseOneSessionMetadata(),
+            StandardTestDispatcher(testScheduler),
+        )
+        val generation = GatewayGeneration()
+
+        assertSame(
+            RecordingFileFailure.CONNECTION_CHANGED,
+            (children.openRecording(RecordingId(5L)) as RecordingFileResult.Failed).failure,
+            "An unbound session must not present a recording as unreadable",
+        )
+        assertTrue(gateway.openedRecordingGenerations.isEmpty())
+
+        children.bindGeneration(generation)
+        val file = (children.openRecording(RecordingId(5L)) as RecordingFileResult.Ok).value
+        assertSame(generation, gateway.openedRecordingGenerations.single())
+        assertEquals(DvrEntryId(5L), gateway.openedRecordingIds.single())
+        assertEquals(64L, file.sizeBytes)
+        assertEquals("GatewayRecordingFileHandle(<redacted>)", file.toString())
+
+        assertEquals(32L, (file.seek(32L) as RecordingFileResult.Ok).value)
+        assertSame(generation, gateway.seekedRecordingGenerations.single())
+        val destination = ByteArray(4)
+        assertEquals(2, (file.read(32L, destination, 1, 2) as RecordingFileResult.Ok).value)
+        assertSame(generation, gateway.readRecordingGenerations.single())
+
+        assertTrue(file.close() is RecordingFileResult.Ok)
+        assertTrue(file.close() is RecordingFileResult.Ok)
+        assertSame(
+            generation,
+            gateway.closedRecordingGenerations.single(),
+            "Closing a recording handle twice must release the server handle once",
+        )
+        assertSame(
+            RecordingFileFailure.FILE_UNAVAILABLE,
+            (file.seek(0L) as RecordingFileResult.Failed).failure,
+        )
+        assertSame(
+            RecordingFileFailure.FILE_UNAVAILABLE,
+            (file.read(0L, destination, 0, 1) as RecordingFileResult.Failed).failure,
+        )
+        assertEquals(1, gateway.seekedRecordingGenerations.size)
+        assertEquals(1, gateway.readRecordingGenerations.size)
+
+        children.closeAndJoinSubscriptions()
+        assertSame(
+            RecordingFileFailure.CONNECTION_CHANGED,
+            (children.openRecording(RecordingId(5L)) as RecordingFileResult.Failed).failure,
+            "A torn-down generation must report a changed connection, not a bad file",
+        )
+    }
+
+    @Test
+    fun `recording open failures separate a changed connection from an unreadable file`() = runTest {
+        val gateway = SubscriptionGateway()
+        val children = PlaybackSessionChildren(
+            gateway,
+            PhaseOneSessionMetadata(),
+            StandardTestDispatcher(testScheduler),
+        )
+        children.bindGeneration(GatewayGeneration())
+
+        listOf(
+            GatewayResult.TransportUnavailable to RecordingFileFailure.CONNECTION_CHANGED,
+            GatewayResult.ServerRejected to RecordingFileFailure.FILE_UNAVAILABLE,
+            GatewayResult.AccessDenied to RecordingFileFailure.ACCESS_DENIED,
+            GatewayResult.ConnectionLimit to RecordingFileFailure.CONNECTION_LIMIT,
+            GatewayResult.Timeout to RecordingFileFailure.TIMEOUT,
+            GatewayResult.NotSupported to RecordingFileFailure.NOT_SUPPORTED,
+        ).forEach { (source, expected) ->
+            gateway.recordingOpenResult = source
+            assertSame(
+                expected,
+                (children.openRecording(RecordingId(9L)) as RecordingFileResult.Failed).failure,
+            )
+        }
+
+        children.closeAndJoinSubscriptions()
+    }
 }
 
 private class SubscriptionGateway : ProtocolGateway {
@@ -314,6 +402,13 @@ private class SubscriptionGateway : ProtocolGateway {
     internal val unsubscribedIds = ArrayList<SubscriptionId>()
     internal val requestedTimeshiftPeriods = ArrayList<Duration>()
     internal val skippedTargets = ArrayList<SubscriptionSeekTarget>()
+    internal val openedRecordingGenerations = ArrayList<GatewayGeneration>()
+    internal val openedRecordingIds = ArrayList<DvrEntryId>()
+    internal val seekedRecordingGenerations = ArrayList<GatewayGeneration>()
+    internal val readRecordingGenerations = ArrayList<GatewayGeneration>()
+    internal val closedRecordingGenerations = ArrayList<GatewayGeneration>()
+    internal var recordingOpenResult: GatewayResult<GatewayRecordingFile> =
+        GatewayResult.Ok(GatewayRecordingFile(handleId = 7L, sizeBytes = 64L, protocolVersion = 27))
     internal var grantedTimeshiftSeconds: Long? = null
     internal var unsubscribeCount: Int = 0
         private set
@@ -416,6 +511,45 @@ private class SubscriptionGateway : ProtocolGateway {
         id: DvrEntryId,
         progress: DvrPlaybackProgress,
     ): GatewayResult<Unit> = GatewayResult.NotSupported
+
+    override suspend fun openRecordingFile(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+    ): GatewayResult<GatewayRecordingFile> {
+        openedRecordingGenerations += generation
+        openedRecordingIds += id
+        return recordingOpenResult
+    }
+
+    override suspend fun seekRecordingFile(
+        generation: GatewayGeneration,
+        file: GatewayRecordingFile,
+        position: Long,
+    ): GatewayResult<Long> {
+        seekedRecordingGenerations += generation
+        return GatewayResult.Ok(position)
+    }
+
+    override suspend fun readRecordingFile(
+        generation: GatewayGeneration,
+        file: GatewayRecordingFile,
+        position: Long,
+        destination: ByteArray,
+        destinationOffset: Int,
+        length: Int,
+    ): GatewayResult<Int> {
+        readRecordingGenerations += generation
+        destination.fill(1, destinationOffset, destinationOffset + length)
+        return GatewayResult.Ok(length)
+    }
+
+    override suspend fun closeRecordingFile(
+        generation: GatewayGeneration,
+        file: GatewayRecordingFile,
+    ): GatewayResult<Unit> {
+        closedRecordingGenerations += generation
+        return GatewayResult.Ok(Unit)
+    }
 
     override fun subscription(
         generation: GatewayGeneration,

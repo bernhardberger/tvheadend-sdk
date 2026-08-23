@@ -31,6 +31,11 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.metadata.ChannelTagReducer
 import at.bernhardberger.tvheadend.sdk.core.metadata.DvrReducer
 import at.bernhardberger.tvheadend.sdk.core.metadata.EpgReducer
+import at.bernhardberger.tvheadend.sdk.playback.RecordingFile
+import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
+import at.bernhardberger.tvheadend.sdk.playback.RecordingFileOpener
+import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
+import at.bernhardberger.tvheadend.sdk.playback.RecordingId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
@@ -498,7 +503,13 @@ private fun MetadataEvent.isDvrMutationConfirmation(): Boolean = when (this) {
     -> false
 }
 
-internal interface SessionChildren : SubscriptionOpener {
+internal interface SessionChildren : SubscriptionOpener, RecordingFileOpener {
+    /** Reports the changed connection until a child actually binds a generation to recordings. */
+    public override suspend fun openRecording(
+        recordingId: RecordingId,
+    ): RecordingFileResult<RecordingFile> =
+        RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
+
     public fun bindGeneration(generation: GatewayGeneration)
 
     public fun startAdmission(generation: GatewayGeneration): Boolean

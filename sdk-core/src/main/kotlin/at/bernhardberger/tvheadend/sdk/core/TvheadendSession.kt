@@ -10,6 +10,7 @@ import at.bernhardberger.tvheadend.sdk.core.session.DvrProgressCoordinator
 import at.bernhardberger.tvheadend.sdk.core.session.ExponentialReconnectBackoff
 import at.bernhardberger.tvheadend.sdk.core.session.PhaseOneSessionMetadata
 import at.bernhardberger.tvheadend.sdk.core.session.PlaybackSessionChildren
+import at.bernhardberger.tvheadend.sdk.playback.RecordingFileOpener
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener
 import java.util.Collections
@@ -35,6 +36,10 @@ public interface TvheadendSession {
     /** Generation-bound subscription entry point used by SDK playback adapters. */
     @SubscriptionInfrastructureApi
     public val subscriptions: SubscriptionOpener
+
+    /** Generation-bound recording file entry point used by SDK recording playback adapters. */
+    @SubscriptionInfrastructureApi
+    public val recordings: RecordingFileOpener
 
     /**
      * Selects [profile] and starts connection work.

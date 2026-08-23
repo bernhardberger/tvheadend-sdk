@@ -3,8 +3,13 @@
 package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
+import at.bernhardberger.tvheadend.sdk.core.gateway.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.ProtocolGateway
+import at.bernhardberger.tvheadend.sdk.playback.RecordingFile
+import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
+import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
+import at.bernhardberger.tvheadend.sdk.playback.RecordingId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionConnection
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionConfirmation
@@ -53,6 +58,22 @@ internal class PlaybackSessionChildren(
         return synchronized(lock) { subscriptions }
             ?.open(channelId, consumer, timeshiftPeriod)
             ?: SubscriptionOpenResult.NotReady
+    }
+
+    /**
+     * Opens one recording file on the currently bound generation.
+     *
+     * The returned handle keeps that generation, so it stays usable for its own close even after a
+     * newer generation is bound; every other operation on it then reports the changed connection.
+     */
+    override suspend fun openRecording(
+        recordingId: RecordingId,
+    ): RecordingFileResult<RecordingFile> {
+        currentCoroutineContext().ensureActive()
+        val bound = synchronized(lock) { generation }
+            ?: return RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
+        return gateway.openRecordingFile(bound, DvrEntryId(recordingId.value))
+            .toRecordingFileResult { file -> GatewayRecordingFileHandle(gateway, bound, file) }
     }
 
     override fun bindGeneration(generation: GatewayGeneration) {

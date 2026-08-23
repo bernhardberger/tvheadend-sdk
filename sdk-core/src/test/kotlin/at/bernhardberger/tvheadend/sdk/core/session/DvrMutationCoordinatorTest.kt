@@ -24,6 +24,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailureEven
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayRecordingFile
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayState
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayTimerecRule
@@ -421,6 +422,31 @@ internal class MutationGateway : ProtocolGateway {
         id: DvrEntryId,
         progress: DvrPlaybackProgress,
     ): GatewayResult<Unit> = progressBehavior(generation, id, progress)
+
+    override suspend fun openRecordingFile(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+    ): GatewayResult<GatewayRecordingFile> = GatewayResult.NotSupported
+
+    override suspend fun seekRecordingFile(
+        generation: GatewayGeneration,
+        file: GatewayRecordingFile,
+        position: Long,
+    ): GatewayResult<Long> = GatewayResult.NotSupported
+
+    override suspend fun readRecordingFile(
+        generation: GatewayGeneration,
+        file: GatewayRecordingFile,
+        position: Long,
+        destination: ByteArray,
+        destinationOffset: Int,
+        length: Int,
+    ): GatewayResult<Int> = GatewayResult.NotSupported
+
+    override suspend fun closeRecordingFile(
+        generation: GatewayGeneration,
+        file: GatewayRecordingFile,
+    ): GatewayResult<Unit> = GatewayResult.NotSupported
 
     override fun subscription(
         generation: GatewayGeneration,

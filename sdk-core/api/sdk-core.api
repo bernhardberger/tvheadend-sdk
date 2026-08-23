@@ -1663,6 +1663,7 @@ public abstract interface class at/bernhardberger/tvheadend/sdk/core/TvheadendSe
 	public abstract fun getChannelRepository ()Lat/bernhardberger/tvheadend/sdk/core/ChannelRepository;
 	public abstract fun getDvrRepository ()Lat/bernhardberger/tvheadend/sdk/core/DvrRepository;
 	public abstract fun getEpgRepository ()Lat/bernhardberger/tvheadend/sdk/core/EpgRepository;
+	public abstract fun getRecordings ()Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileOpener;
 	public abstract fun getState ()Lkotlinx/coroutines/flow/StateFlow;
 	public abstract fun getSubscriptions ()Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOpener;
 	public abstract fun retry (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;

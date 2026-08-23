@@ -119,6 +119,31 @@ internal interface ProtocolGateway {
         progress: DvrPlaybackProgress,
     ): GatewayResult<Unit>
 
+    public suspend fun openRecordingFile(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+    ): GatewayResult<GatewayRecordingFile>
+
+    public suspend fun seekRecordingFile(
+        generation: GatewayGeneration,
+        file: GatewayRecordingFile,
+        position: Long,
+    ): GatewayResult<Long>
+
+    public suspend fun readRecordingFile(
+        generation: GatewayGeneration,
+        file: GatewayRecordingFile,
+        position: Long,
+        destination: ByteArray,
+        destinationOffset: Int,
+        length: Int,
+    ): GatewayResult<Int>
+
+    public suspend fun closeRecordingFile(
+        generation: GatewayGeneration,
+        file: GatewayRecordingFile,
+    ): GatewayResult<Unit>
+
     public fun subscription(
         generation: GatewayGeneration,
         id: SubscriptionId,
@@ -195,6 +220,20 @@ internal class GatewayConnection(
     internal val serverFacts: GatewayServerFacts,
 ) {
     override fun toString(): String = "GatewayConnection(<redacted>)"
+}
+
+/**
+ * One open server-side recording file handle bound to the generation that opened it.
+ *
+ * [protocolVersion] is the version negotiated by that exact generation, snapshotted at open so a
+ * later close applies the same wire capabilities the handle was created with.
+ */
+internal class GatewayRecordingFile(
+    internal val handleId: Long,
+    internal val sizeBytes: Long?,
+    internal val protocolVersion: Int?,
+) {
+    override fun toString(): String = "GatewayRecordingFile(<redacted>)"
 }
 
 internal class GatewayServerFacts(

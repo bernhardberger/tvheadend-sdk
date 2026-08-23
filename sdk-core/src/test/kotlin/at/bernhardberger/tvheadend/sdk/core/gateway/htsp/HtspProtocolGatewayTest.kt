@@ -65,6 +65,15 @@ import at.bernhardberger.tvheadend.htsp.requests.DeleteDvrEntryRequest
 import at.bernhardberger.tvheadend.htsp.requests.DeleteDvrEntryResponse
 import at.bernhardberger.tvheadend.htsp.requests.DeleteTimerecEntryRequest
 import at.bernhardberger.tvheadend.htsp.requests.DeleteTimerecEntryResponse
+import at.bernhardberger.tvheadend.htsp.requests.FileCloseRequest
+import at.bernhardberger.tvheadend.htsp.requests.FileCloseResponse
+import at.bernhardberger.tvheadend.htsp.requests.FileOpenRequest
+import at.bernhardberger.tvheadend.htsp.requests.FileOpenResponse
+import at.bernhardberger.tvheadend.htsp.requests.FileReadRequest
+import at.bernhardberger.tvheadend.htsp.requests.FileReadResponse
+import at.bernhardberger.tvheadend.htsp.requests.FileSeekRequest
+import at.bernhardberger.tvheadend.htsp.requests.FileSeekResponse
+import at.bernhardberger.tvheadend.htsp.requests.FileSeekWhence
 import at.bernhardberger.tvheadend.htsp.requests.GetDiskSpaceRequest
 import at.bernhardberger.tvheadend.htsp.requests.GetDiskSpaceResponse
 import at.bernhardberger.tvheadend.htsp.requests.GetDvrConfigsRequest
@@ -116,6 +125,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailure
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayRecordingFile
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayState
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
@@ -1478,6 +1488,173 @@ internal class HtspProtocolGatewayTest {
         assertSame(cancellation, caught)
 
         gateway.shutdown()
+    }
+
+    @Test
+    fun `recording file access binds the DVR selector bounded reads and generation`() = runTest {
+        val sourceGeneration = HtspConnectionGeneration()
+        val fake = FakeHtspConnection().apply {
+            liveConnectionValue.value = liveConnection(sourceGeneration)
+            connectOutcome = HtspConnectOutcome.Connected(requireNotNull(liveConnectionValue.value))
+            executeResult = HtspResult.Ok(
+                FileOpenResponse(id = 12, sizeBytes = 4_096, modifiedAtUnixSeconds = 1_700_000_000),
+            )
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+
+        val opened = gateway.openRecordingFile(generation, DvrEntryId(7))
+        val file = (opened as GatewayResult.Ok).value
+        assertEquals("dvr/7", (fake.lastRequest as FileOpenRequest).file)
+        assertSame(sourceGeneration, fake.lastExpectedGeneration)
+        assertEquals(12L, file.handleId)
+        assertEquals(4_096L, file.sizeBytes)
+        assertEquals(43, file.protocolVersion)
+        assertEquals("GatewayRecordingFile(<redacted>)", file.toString())
+
+        fake.executeResult = HtspResult.Ok(
+            FileOpenResponse(id = 13, sizeBytes = -1, modifiedAtUnixSeconds = null),
+        )
+        assertEquals(
+            null,
+            ((gateway.openRecordingFile(generation, DvrEntryId(7)) as GatewayResult.Ok).value).sizeBytes,
+            "A negative reported size must not be published as a readable length",
+        )
+
+        fake.executeResult = HtspResult.Ok(FileSeekResponse(offset = 900))
+        assertEquals(900L, (gateway.seekRecordingFile(generation, file, 900) as GatewayResult.Ok).value)
+        val seek = fake.lastRequest as FileSeekRequest
+        assertEquals(12L, seek.id)
+        assertEquals(900L, seek.offset)
+        assertSame(FileSeekWhence.SET, seek.whence, "A recording seek must be absolute")
+        assertSame(sourceGeneration, fake.lastExpectedGeneration)
+
+        val destination = ByteArray(8) { 9 }
+        fake.executeResult = HtspResult.Ok(FileReadResponse(HtspBinary(byteArrayOf(1, 2, 3))))
+        assertEquals(
+            3,
+            (gateway.readRecordingFile(generation, file, 900, destination, 2, 4) as GatewayResult.Ok).value,
+        )
+        val read = fake.lastRequest as FileReadRequest
+        assertEquals(12L, read.id)
+        assertEquals(4L, read.size)
+        assertEquals(900L, read.offset, "Every read must carry its absolute position")
+        assertArrayEquals(byteArrayOf(9, 9, 1, 2, 3, 9, 9, 9), destination)
+
+        fake.lastRequest = null
+        assertEquals(
+            0,
+            (gateway.readRecordingFile(generation, file, 900, destination, 2, 0) as GatewayResult.Ok).value,
+        )
+        assertEquals(null, fake.lastRequest, "An empty read must not reach the server")
+
+        val guarded = ByteArray(4) { 7 }
+        fake.executeResult = HtspResult.Ok(FileReadResponse(HtspBinary(byteArrayOf(1, 2, 3, 4))))
+        assertSame(
+            GatewayResult.ServerRejected,
+            gateway.readRecordingFile(generation, file, 0, guarded, 0, 2),
+            "A payload larger than the request must be rejected instead of copied",
+        )
+        assertArrayEquals(byteArrayOf(7, 7, 7, 7), guarded)
+
+        fake.executeResult = HtspResult.Ok(FileCloseResponse)
+        assertTrue(gateway.closeRecordingFile(generation, file) is GatewayResult.Ok)
+        val close = fake.lastRequest as FileCloseRequest
+        assertEquals(12L, close.id)
+        assertEquals(
+            DVR_PROGRESS_KEEP_PLAY_COUNT,
+            close.playCount,
+            "A negotiated version 27 server must not increment the play count on every reopen",
+        )
+        assertEquals(null, close.playPositionSeconds)
+        assertSame(sourceGeneration, fake.lastExpectedGeneration)
+
+        listOf(
+            HtspResult.ServerError to GatewayResult.ServerRejected,
+            HtspResult.AccessDenied to GatewayResult.AccessDenied,
+            HtspResult.ConnectionLimit to GatewayResult.ConnectionLimit,
+            HtspResult.Timeout to GatewayResult.Timeout,
+            HtspResult.TransportUnavailable to GatewayResult.TransportUnavailable,
+            HtspResult.NotSupported to GatewayResult.NotSupported,
+        ).forEach { (source, expected) ->
+            fake.executeResult = source
+            assertSame(expected, gateway.openRecordingFile(generation, DvrEntryId(7)))
+            assertSame(expected, gateway.seekRecordingFile(generation, file, 0))
+            assertSame(expected, gateway.readRecordingFile(generation, file, 0, destination, 0, 4))
+            assertSame(expected, gateway.closeRecordingFile(generation, file))
+        }
+
+        assertRejects("negative read position") {
+            gateway.readRecordingFile(generation, file, -1, destination, 0, 4)
+        }
+        assertRejects("destination offset outside the array") {
+            gateway.readRecordingFile(generation, file, 0, destination, 9, 0)
+        }
+        assertRejects("length past the destination window") {
+            gateway.readRecordingFile(generation, file, 0, destination, 6, 4)
+        }
+        assertRejects("negative seek position") {
+            gateway.seekRecordingFile(generation, file, -1)
+        }
+
+        val cancellation = CancellationException("private cancellation")
+        fake.executeException = cancellation
+        var cancelled: CancellationException? = null
+        try {
+            gateway.readRecordingFile(generation, file, 0, destination, 0, 4)
+        } catch (failure: CancellationException) {
+            cancelled = failure
+        }
+        assertSame(cancellation, cancelled)
+
+        gateway.shutdown()
+    }
+
+    @Test
+    fun `recording file close omits the play count below the progress protocol version`() = runTest {
+        val sourceGeneration = HtspConnectionGeneration()
+        val legacy = HtspLiveConnection(
+            generation = sourceGeneration,
+            protocolVersion = 26,
+            dvrAccess = true,
+            serverFacts = HtspServerFacts(),
+        )
+        val fake = FakeHtspConnection().apply {
+            liveConnectionValue.value = legacy
+            connectOutcome = HtspConnectOutcome.Connected(legacy)
+            executeResult = HtspResult.Ok(
+                FileOpenResponse(id = 3, sizeBytes = 10, modifiedAtUnixSeconds = null),
+            )
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+
+        val file = (gateway.openRecordingFile(generation, DvrEntryId(4)) as GatewayResult.Ok).value
+        assertEquals(26, file.protocolVersion)
+
+        fake.executeResult = HtspResult.Ok(FileCloseResponse)
+        assertTrue(gateway.closeRecordingFile(generation, file) is GatewayResult.Ok)
+        val close = fake.lastRequest as FileCloseRequest
+        assertEquals(3L, close.id)
+        assertEquals(
+            null,
+            close.playCount,
+            "A pre-27 server rejects a play-count field, so the close must stay bare",
+        )
+
+        gateway.shutdown()
+    }
+
+    private suspend fun assertRejects(reason: String, block: suspend () -> Unit) {
+        var caught: IllegalArgumentException? = null
+        try {
+            block()
+        } catch (failure: IllegalArgumentException) {
+            caught = failure
+        }
+        assertTrue(caught != null, "Expected rejection of $reason")
     }
 
     @Test

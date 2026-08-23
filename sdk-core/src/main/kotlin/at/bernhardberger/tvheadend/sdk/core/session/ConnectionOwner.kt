@@ -16,6 +16,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.ProtocolGateway
+import at.bernhardberger.tvheadend.sdk.playback.RecordingFileOpener
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener
 import java.util.concurrent.CancellationException
@@ -73,6 +74,7 @@ internal class ConnectionOwner(
     override val epgRepository: EpgRepository = metadata.epgRepository
     override val dvrRepository: DvrRepository = metadata.dvrRepository
     override val subscriptions: SubscriptionOpener = children
+    override val recordings: RecordingFileOpener = children
 
     override suspend fun connect(profile: ServerProfile): SessionCommandResult {
         currentCoroutineContext().ensureActive()

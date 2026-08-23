@@ -273,6 +273,16 @@ internal class ModuleBoundaryTest {
             "SubscriptionOpener",
             "SubscriptionManager",
             "createSubscriptionManager",
+            "RecordingId",
+            "RecordingFileFailure",
+            "RecordingFileResult",
+            "RecordingFile",
+            "RecordingFileOpener",
+            "RecordingFileReader",
+            "createRecordingFileReader",
+            "MAX_RECORDING_READ_BYTES",
+            "DEFAULT_RECORDING_READ_AHEAD_BYTES",
+            "RECORDING_END_OF_INPUT",
         )
         val expectedTesting = setOf(
             "FakeChannelRepository",
@@ -287,9 +297,13 @@ internal class ModuleBoundaryTest {
             "PlaybackRecoveryPolicy",
             "PlaybackRecoveryReason",
             "TvheadendPlaybackRecovery",
+            "TvheadendRecordingException",
             "createTvheadendLiveMediaSource",
             "createTvheadendPlaybackRecovery",
             "createTvheadendRenderersFactory",
+            "createTvheadendRecordingDataSourceFactory",
+            "createTvheadendRecordingMediaSource",
+            "tvheadendRecordingMediaItem",
         )
 
         assertPublicInfrastructure("sdk-playback", expectedPlayback, unannotatedCount = 1)
@@ -304,6 +318,12 @@ internal class ModuleBoundaryTest {
                 "@SubscriptionInfrastructureApi\\s+public val subscriptions: SubscriptionOpener",
             ).containsMatchIn(sessionApi),
             "Missing opted-in subscription opener on the public session",
+        )
+        org.junit.jupiter.api.Assertions.assertTrue(
+            Regex(
+                "@SubscriptionInfrastructureApi\\s+public val recordings: RecordingFileOpener",
+            ).containsMatchIn(sessionApi),
+            "Missing opted-in recording file opener on the public session",
         )
         org.junit.jupiter.api.Assertions.assertTrue(
             sessionApi.contains("public val channelRepository: ChannelRepository"),
@@ -345,15 +365,20 @@ internal class ModuleBoundaryTest {
                     function.name in setOf(
                         "createTvheadendSession",
                         "createSubscriptionManager",
+                        "createRecordingFileReader",
                         "createTvheadendLiveMediaSource",
                         "createTvheadendPlaybackRecovery",
                         "createTvheadendRenderersFactory",
+                        "createTvheadendRecordingDataSourceFactory",
+                        "createTvheadendRecordingMediaSource",
+                        "tvheadendRecordingMediaItem",
                     )
             }
             .forEach { function -> function.referencedPublicTypes().forEach(::enqueue) }
         setOf(
             "at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi",
             "at.bernhardberger.tvheadend.sdk.media3.PlaybackRecoveryReason",
+            "at.bernhardberger.tvheadend.sdk.media3.TvheadendRecordingException",
             "at.bernhardberger.tvheadend.sdk.core.ChannelService",
             "at.bernhardberger.tvheadend.sdk.core.DvrRecordingFile",
             "at.bernhardberger.tvheadend.sdk.testing.ScriptedSubscriptionConnection",
@@ -397,7 +422,7 @@ internal class ModuleBoundaryTest {
     ) {
         val source = productionScope(module).files.joinToString("\n") { file -> file.text }
         val declaration = Regex(
-            pattern = "^public\\s+(?:(?:data|sealed|value|fun)\\s+)*(?:annotation\\s+class|enum\\s+class|class|interface|object|fun)\\s+(\\w+)",
+            pattern = "^public\\s+(?:(?:data|sealed|value|fun)\\s+)*(?:annotation\\s+class|enum\\s+class|class|interface|object|fun|const\\s+val|val)\\s+(\\w+)",
             option = RegexOption.MULTILINE,
         )
         val actual = declaration.findAll(source).map { match -> match.groupValues[1] }.toSet()

@@ -16,6 +16,72 @@ public final class at/bernhardberger/tvheadend/sdk/playback/MuxFrameType : java/
 	public static fun values ()[Lat/bernhardberger/tvheadend/sdk/playback/MuxFrameType;
 }
 
+public abstract interface class at/bernhardberger/tvheadend/sdk/playback/RecordingFile {
+	public abstract fun close (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun getSizeBytes ()Ljava/lang/Long;
+	public abstract fun read (J[BIILkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun seek (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/RecordingFileFailure : java/lang/Enum {
+	public static final field ACCESS_DENIED Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileFailure;
+	public static final field CONNECTION_CHANGED Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileFailure;
+	public static final field CONNECTION_LIMIT Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileFailure;
+	public static final field FILE_UNAVAILABLE Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileFailure;
+	public static final field NOT_SUPPORTED Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileFailure;
+	public static final field TIMEOUT Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileFailure;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileFailure;
+	public static fun values ()[Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileFailure;
+}
+
+public abstract interface class at/bernhardberger/tvheadend/sdk/playback/RecordingFileOpener {
+	public abstract fun openRecording-ISBBIW0 (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public abstract interface class at/bernhardberger/tvheadend/sdk/playback/RecordingFileReader {
+	public abstract fun close (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun open-D_U2i0Q (JJLjava/lang/Long;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun read ([BIILkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/RecordingFileReaderKt {
+	public static final field DEFAULT_RECORDING_READ_AHEAD_BYTES I
+	public static final field MAX_RECORDING_READ_BYTES I
+	public static final field RECORDING_END_OF_INPUT I
+	public static final fun createRecordingFileReader (Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileOpener;I)Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileReader;
+	public static synthetic fun createRecordingFileReader$default (Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileOpener;IILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileReader;
+}
+
+public abstract interface class at/bernhardberger/tvheadend/sdk/playback/RecordingFileResult {
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/RecordingFileResult$Failed : at/bernhardberger/tvheadend/sdk/playback/RecordingFileResult {
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileFailure;)V
+	public final fun getFailure ()Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileFailure;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/RecordingFileResult$Ok : at/bernhardberger/tvheadend/sdk/playback/RecordingFileResult {
+	public fun <init> (Ljava/lang/Object;)V
+	public final fun getValue ()Ljava/lang/Object;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/RecordingId {
+	public static final synthetic fun box-impl (J)Lat/bernhardberger/tvheadend/sdk/playback/RecordingId;
+	public static fun constructor-impl (J)J
+	public fun equals (Ljava/lang/Object;)Z
+	public static fun equals-impl (JLjava/lang/Object;)Z
+	public static final fun equals-impl0 (JJ)Z
+	public final fun getValue ()J
+	public fun hashCode ()I
+	public static fun hashCode-impl (J)I
+	public fun toString ()Ljava/lang/String;
+	public static fun toString-impl (J)Ljava/lang/String;
+	public final synthetic fun unbox-impl ()J
+}
+
 public final class at/bernhardberger/tvheadend/sdk/playback/SkipOutcome : java/lang/Enum {
 	public static final field ACCEPTED Lat/bernhardberger/tvheadend/sdk/playback/SkipOutcome;
 	public static final field REJECTED Lat/bernhardberger/tvheadend/sdk/playback/SkipOutcome;

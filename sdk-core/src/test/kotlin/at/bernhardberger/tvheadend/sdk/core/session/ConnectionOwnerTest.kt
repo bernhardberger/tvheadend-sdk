@@ -42,6 +42,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayRecordingFile
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayServerFacts
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayState
@@ -1319,6 +1320,31 @@ private class FakeProtocolGateway(
         progressReportCount += 1
         return reportDvrProgressBehavior(generation, id, progress)
     }
+
+    override suspend fun openRecordingFile(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+    ): GatewayResult<GatewayRecordingFile> = GatewayResult.NotSupported
+
+    override suspend fun seekRecordingFile(
+        generation: GatewayGeneration,
+        file: GatewayRecordingFile,
+        position: Long,
+    ): GatewayResult<Long> = GatewayResult.NotSupported
+
+    override suspend fun readRecordingFile(
+        generation: GatewayGeneration,
+        file: GatewayRecordingFile,
+        position: Long,
+        destination: ByteArray,
+        destinationOffset: Int,
+        length: Int,
+    ): GatewayResult<Int> = GatewayResult.NotSupported
+
+    override suspend fun closeRecordingFile(
+        generation: GatewayGeneration,
+        file: GatewayRecordingFile,
+    ): GatewayResult<Unit> = GatewayResult.NotSupported
 
     override fun subscription(
         generation: GatewayGeneration,

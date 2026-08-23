@@ -50,6 +50,8 @@ import at.bernhardberger.tvheadend.htsp.messages.HtspTimerecEntryAddMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspTimerecEntryDeleteMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspTimerecEntryUpdateMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspTimeshiftStatusMessage
+import at.bernhardberger.tvheadend.htsp.requests.FileSeekResponse
+import at.bernhardberger.tvheadend.htsp.requests.FileSeekWhence
 import at.bernhardberger.tvheadend.htsp.requests.HtspChannelService
 import at.bernhardberger.tvheadend.htsp.requests.AddDvrEntrySelector
 import at.bernhardberger.tvheadend.htsp.requests.HtspEvent
@@ -65,6 +67,10 @@ import at.bernhardberger.tvheadend.htsp.requests.deleteAutorecEntry
 import at.bernhardberger.tvheadend.htsp.requests.deleteDvrEntry
 import at.bernhardberger.tvheadend.htsp.requests.deleteTimerecEntry
 import at.bernhardberger.tvheadend.htsp.requests.enableAsyncMetadataAwaitingInitialSync
+import at.bernhardberger.tvheadend.htsp.requests.fileClose
+import at.bernhardberger.tvheadend.htsp.requests.fileOpen
+import at.bernhardberger.tvheadend.htsp.requests.fileRead
+import at.bernhardberger.tvheadend.htsp.requests.fileSeek
 import at.bernhardberger.tvheadend.htsp.requests.getDiskSpace
 import at.bernhardberger.tvheadend.htsp.requests.getDvrConfigs
 import at.bernhardberger.tvheadend.htsp.requests.getEvents
@@ -83,6 +89,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.DVR_PROGRESS_INCR_PLAY_COUNT
 import at.bernhardberger.tvheadend.sdk.core.DVR_PROGRESS_KEEP_PLAY_COUNT
+import at.bernhardberger.tvheadend.sdk.core.DVR_PROGRESS_MINIMUM_PROTOCOL_VERSION
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
 import at.bernhardberger.tvheadend.sdk.core.DvrSchedule
@@ -114,6 +121,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgUpdate
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayRecordingFile
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayServerFacts
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayState
@@ -125,6 +133,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.ServerAuthentication
 import at.bernhardberger.tvheadend.sdk.core.gateway.ServerConfiguration
 import at.bernhardberger.tvheadend.sdk.core.gateway.TagId
 import at.bernhardberger.tvheadend.sdk.core.gateway.TimerecRuleId
+import at.bernhardberger.tvheadend.sdk.playback.MAX_RECORDING_READ_BYTES
 import at.bernhardberger.tvheadend.sdk.playback.MuxFrameType
 import at.bernhardberger.tvheadend.sdk.playback.SkipOutcome
 import at.bernhardberger.tvheadend.sdk.playback.StreamIndex
@@ -287,7 +296,7 @@ internal class HtspProtocolGateway internal constructor(
         description = request.description,
         ageRating = request.ageRating,
         expectedGeneration = htspGenerationFor(generation),
-    ).toDvrGatewayResult { response ->
+    ).toCheckedGatewayResult { response ->
         response.entryId?.takeIf { response.success == 1L }?.let(::DvrEntryId)
     }
 
@@ -315,7 +324,7 @@ internal class HtspProtocolGateway internal constructor(
         priority = update.priority,
         ageRating = update.ageRating,
         expectedGeneration = htspGenerationFor(generation),
-    ).toDvrGatewayResult(::acceptedDvrAcknowledgement)
+    ).toCheckedGatewayResult(::acceptedDvrAcknowledgement)
 
     override suspend fun stopDvrEntry(
         generation: GatewayGeneration,
@@ -323,7 +332,7 @@ internal class HtspProtocolGateway internal constructor(
     ): GatewayResult<Unit> = connection.stopDvrEntry(
         entryId = id.value,
         expectedGeneration = htspGenerationFor(generation),
-    ).toDvrGatewayResult(::acceptedDvrAcknowledgement)
+    ).toCheckedGatewayResult(::acceptedDvrAcknowledgement)
 
     override suspend fun cancelDvrEntry(
         generation: GatewayGeneration,
@@ -331,7 +340,7 @@ internal class HtspProtocolGateway internal constructor(
     ): GatewayResult<Unit> = connection.cancelDvrEntry(
         entryId = id.value,
         expectedGeneration = htspGenerationFor(generation),
-    ).toDvrGatewayResult(::acceptedDvrAcknowledgement)
+    ).toCheckedGatewayResult(::acceptedDvrAcknowledgement)
 
     override suspend fun deleteDvrEntry(
         generation: GatewayGeneration,
@@ -339,7 +348,7 @@ internal class HtspProtocolGateway internal constructor(
     ): GatewayResult<Unit> = connection.deleteDvrEntry(
         entryId = id.value,
         expectedGeneration = htspGenerationFor(generation),
-    ).toDvrGatewayResult(::acceptedDvrAcknowledgement)
+    ).toCheckedGatewayResult(::acceptedDvrAcknowledgement)
 
     override suspend fun createAutorecRule(
         generation: GatewayGeneration,
@@ -467,7 +476,105 @@ internal class HtspProtocolGateway internal constructor(
         },
         playPosition = progress.position.inWholeSeconds,
         expectedGeneration = htspGenerationFor(generation),
-    ).toDvrGatewayResult(::acceptedDvrAcknowledgement)
+    ).toCheckedGatewayResult(::acceptedDvrAcknowledgement)
+
+    /**
+     * Opens the stored file of one DVR entry using TVHeadend's `dvr/<id>` selector.
+     *
+     * The negotiated protocol version is snapshotted from the same live generation that opens the
+     * handle, because only that version decides whether the matching close may keep the entry's
+     * play count. A negative reported size is dropped rather than trusted as a length.
+     */
+    override suspend fun openRecordingFile(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+    ): GatewayResult<GatewayRecordingFile> {
+        val htspGeneration = htspGenerationFor(generation)
+        val protocolVersion = connection.commitIfLive(htspGeneration) { live ->
+            live.protocolVersion
+        }
+        return connection.fileOpen(
+            file = "$RECORDING_FILE_SELECTOR_PREFIX${id.value}",
+            expectedGeneration = htspGeneration,
+        ).toGatewayResult { response ->
+            GatewayRecordingFile(
+                handleId = response.id,
+                sizeBytes = response.sizeBytes?.takeIf { size -> size >= 0L },
+                protocolVersion = protocolVersion,
+            )
+        }
+    }
+
+    override suspend fun seekRecordingFile(
+        generation: GatewayGeneration,
+        file: GatewayRecordingFile,
+        position: Long,
+    ): GatewayResult<Long> {
+        require(position >= 0L) { "Recording seek position must not be negative" }
+        return connection.fileSeek(
+            id = file.handleId,
+            offset = position,
+            whence = FileSeekWhence.SET,
+            expectedGeneration = htspGenerationFor(generation),
+        ).toGatewayResult(FileSeekResponse::offset)
+    }
+
+    /**
+     * Reads one bounded window at an absolute offset so a retried read cannot move a server cursor.
+     *
+     * A reply larger than the requested window is rejected instead of copied, because the binary
+     * payload's own copy is bounded only by the destination array and would otherwise overwrite
+     * bytes outside the caller's window.
+     */
+    override suspend fun readRecordingFile(
+        generation: GatewayGeneration,
+        file: GatewayRecordingFile,
+        position: Long,
+        destination: ByteArray,
+        destinationOffset: Int,
+        length: Int,
+    ): GatewayResult<Int> {
+        require(position >= 0L) { "Recording read position must not be negative" }
+        require(destinationOffset in 0..destination.size) {
+            "Recording read offset must lie inside the destination array"
+        }
+        require(length in 0..(destination.size - destinationOffset)) {
+            "Recording read window must lie inside the destination array"
+        }
+        require(length <= MAX_RECORDING_READ_BYTES) {
+            "Recording read must not exceed $MAX_RECORDING_READ_BYTES bytes"
+        }
+        if (length == 0) return GatewayResult.Ok(0)
+        return connection.fileRead(
+            id = file.handleId,
+            size = length.toLong(),
+            offset = position,
+            expectedGeneration = htspGenerationFor(generation),
+        ).toCheckedGatewayResult { response ->
+            response.data
+                .takeIf { data -> data.size <= length }
+                ?.copyInto(destination, destinationOffset)
+        }
+    }
+
+    /**
+     * Closes one recording handle without inflating the entry's play count.
+     *
+     * TVHeadend increments the play count on every close whose `playcount` field is absent, so a
+     * plain close would count each extractor reopen as another play. The keep sentinel suppresses
+     * that, but the field only exists from protocol 27, so an older server falls back to a plain
+     * close rather than a request the transport would refuse.
+     */
+    override suspend fun closeRecordingFile(
+        generation: GatewayGeneration,
+        file: GatewayRecordingFile,
+    ): GatewayResult<Unit> = connection.fileClose(
+        id = file.handleId,
+        playCount = DVR_PROGRESS_KEEP_PLAY_COUNT.takeIf {
+            (file.protocolVersion ?: 0) >= DVR_PROGRESS_MINIMUM_PROTOCOL_VERSION
+        },
+        expectedGeneration = htspGenerationFor(generation),
+    ).toGatewayResult {}
 
     override suspend fun deleteTimerecRule(
         generation: GatewayGeneration,
@@ -631,7 +738,8 @@ private inline fun <T, R> HtspResult<T>.toGatewayResult(
     HtspResult.NotSupported -> GatewayResult.NotSupported
 }
 
-private inline fun <T, R : Any> HtspResult<T>.toDvrGatewayResult(
+/** Maps a reply whose payload must still pass a local acceptance check before it is trusted. */
+private inline fun <T, R : Any> HtspResult<T>.toCheckedGatewayResult(
     transform: (T) -> R?,
 ): GatewayResult<R> = when (this) {
     is HtspResult.Ok -> transform(value)?.let { transformed -> GatewayResult.Ok(transformed) }
@@ -1293,6 +1401,7 @@ private fun subscriptionCondition(
     else -> SubscriptionCondition.NO_DETAIL
 }
 
+private const val RECORDING_FILE_SELECTOR_PREFIX = "dvr/"
 private const val ABSOLUTE_SKIP_FLAG = 1L
 private const val RELATIVE_SKIP_FLAG = 0L
 
