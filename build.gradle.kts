@@ -64,6 +64,7 @@ val requiredVersions = mapOf(
     "buildTools" to "36.0.0",
     "compileSdk" to "36",
     "coroutines" to "1.10.2",
+    "dataStore" to "1.2.1",
     "detekt" to "2.0.0-alpha.6",
     "dokka" to "2.2.0",
     "foojay" to "1.0.0",
@@ -76,6 +77,7 @@ val requiredVersions = mapOf(
     "media3" to "1.11.0",
     "minSdk" to "24",
     "targetSdk" to "36",
+    "tink" to "1.23.0",
     "turbine" to "1.2.1",
 )
 val selectedVersions = requiredVersions.keys.associateWith { alias ->
@@ -189,6 +191,8 @@ val productionGraphs = sdkModules.associateWith {
     )
     this["sdk-android"] = ProductionGraph(
         direct = setOf(
+            "androidx.datastore:datastore-preferences:1.2.1",
+            "com.google.crypto.tink:tink-android:1.23.0",
             "project::sdk-core",
             "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
         ),
@@ -198,6 +202,31 @@ val productionGraphs = sdkModules.associateWith {
         } else {
             coreResolved
         }) + setOf(
+            "androidx.annotation:annotation-jvm:1.9.1",
+            "androidx.annotation:annotation:1.9.1",
+            "androidx.datastore:datastore-android:1.2.1",
+            "androidx.datastore:datastore-core-android:1.2.1",
+            "androidx.datastore:datastore-core-okio-jvm:1.2.1",
+            "androidx.datastore:datastore-core-okio:1.2.1",
+            "androidx.datastore:datastore-core:1.2.1",
+            "androidx.datastore:datastore-preferences-android:1.2.1",
+            "androidx.datastore:datastore-preferences-core-android:1.2.1",
+            "androidx.datastore:datastore-preferences-core:1.2.1",
+            "androidx.datastore:datastore-preferences-external-protobuf:1.2.1",
+            "androidx.datastore:datastore-preferences-proto:1.2.1",
+            "androidx.datastore:datastore-preferences:1.2.1",
+            "androidx.datastore:datastore:1.2.1",
+            "com.google.code.findbugs:jsr305:3.0.2",
+            "com.google.code.gson:gson:2.13.2",
+            "com.google.crypto.tink:tink-android:1.23.0",
+            "com.google.errorprone:error_prone_annotations:2.41.0",
+            "com.squareup.okio:okio-jvm:3.9.1",
+            "com.squareup.okio:okio:3.9.1",
+            "org.jetbrains.kotlinx:kotlinx-serialization-bom:1.7.3",
+            "org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.7.3",
+            "org.jetbrains.kotlinx:kotlinx-serialization-core:1.7.3",
+            "org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:1.7.3",
+            "org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3",
             "project::sdk-core",
             "project::sdk-playback",
         ),
@@ -255,6 +284,8 @@ val scopedDirectDependencies = sdkModules.associateWith { emptySet<String>() }.t
     this["sdk-android"] = setOf(
         "api=project::sdk-core",
         "api=org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
+        "implementation=androidx.datastore:datastore-preferences:1.2.1",
+        "implementation=com.google.crypto.tink:tink-android:1.23.0",
     )
     this["sdk-playback"] = setOf(
         "api=org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",

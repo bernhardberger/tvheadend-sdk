@@ -323,12 +323,15 @@ internal class ModuleBoundaryTest {
             "tvheadendRecordingMediaItem",
         )
         val expectedAndroid = setOf(
+            "CredentialOperationResult",
+            "CredentialReadResult",
             "TvheadendDiscovery",
             "DiscoveredTvheadendServer",
             "TvheadendDiscoveryState",
             "TvheadendDiscoveryFailure",
             "TvheadendConnectivity",
             "TvheadendConnectivityStatus",
+            "TvheadendCredentialStore",
         )
 
         assertPublicInfrastructure("sdk-android", expectedAndroid, unannotatedCount = expectedAndroid.size)
@@ -404,6 +407,7 @@ internal class ModuleBoundaryTest {
             .forEach { function -> function.referencedPublicTypes().forEach(::enqueue) }
         setOf(
             "at.bernhardberger.tvheadend.sdk.android.TvheadendConnectivity",
+            "at.bernhardberger.tvheadend.sdk.android.TvheadendCredentialStore",
             "at.bernhardberger.tvheadend.sdk.android.TvheadendDiscovery",
             "at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi",
             "at.bernhardberger.tvheadend.sdk.media3.PlaybackRecoveryReason",

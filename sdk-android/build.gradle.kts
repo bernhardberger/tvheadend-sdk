@@ -55,11 +55,14 @@ kotlin {
 dependencies {
     api(project(":sdk-core"))
     api(libs.kotlinx.coroutines.core)
+    implementation(libs.androidx.datastore.preferences)
+    implementation(libs.tink.android)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testRuntimeOnly(libs.junit.platform.launcher)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.kotlinx.coroutines.test)
 }
 
 detekt {

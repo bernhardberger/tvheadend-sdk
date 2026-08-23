@@ -13,5 +13,6 @@ acknowledges ideas and code from
 the linked protocol library's lineage; it does not claim that this SDK's source
 was copied from those projects.
 
-Kotlin, Kotlin coroutines, AndroidX, and Media3 retain their own copyright and
-license terms. Exact selected versions are recorded in the root build.
+Kotlin, Kotlin coroutines, AndroidX, Google Tink, and Media3 retain their own
+copyright and license terms. Exact selected versions are recorded in the root
+build.

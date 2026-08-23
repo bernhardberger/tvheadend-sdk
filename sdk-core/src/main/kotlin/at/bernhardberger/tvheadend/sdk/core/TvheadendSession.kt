@@ -16,6 +16,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener
 import java.util.Collections
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.StateFlow
+import kotlin.jvm.JvmSynthetic
 import kotlin.random.Random
 import kotlin.time.Clock
 
@@ -171,7 +172,10 @@ public sealed interface ServerAuthentication {
         username: String,
         password: String,
     ) : ServerAuthentication {
+        @get:JvmSynthetic
         internal val username: String = username.trim()
+
+        @get:JvmSynthetic
         internal val password: String = password
 
         init {

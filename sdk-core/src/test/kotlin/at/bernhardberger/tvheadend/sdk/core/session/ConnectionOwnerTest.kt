@@ -1037,10 +1037,25 @@ internal class ConnectionOwnerTest {
         assertTrue(profile.host == "server", "Host normalization failed")
         assertTrue(authentication.username == "user", "Username normalization failed")
         assertTrue(authentication.password == " exact password ", "Password preservation failed")
-        assertEquals("ServerProfile(<redacted>)", profile.toString())
-        assertEquals("ServerAuthentication.Password(<redacted>)", authentication.toString())
+        assertTrue(profile.toString() == "ServerProfile(<redacted>)", "Profile rendering was not redacted")
+        assertTrue(
+            authentication.toString() == "ServerAuthentication.Password(<redacted>)",
+            "Authentication rendering was not redacted",
+        )
         assertFalse(profile.toString().contains("server"), "Profile rendering exposed its host")
         assertFalse(authentication.toString().contains("user"), "Authentication rendering exposed a username")
+    }
+
+    @Test
+    fun `password credential accessors are hidden from Java source`() {
+        val exposedStringAccessor = ServerAuthentication.Password::class.java.declaredMethods.any { method ->
+            method.parameterCount == 0 &&
+                method.returnType == String::class.java &&
+                method.name != "toString" &&
+                !method.isSynthetic
+        }
+
+        assertFalse(exposedStringAccessor, "Credential accessors must be JVM-synthetic")
     }
 
     private fun TestScope.owner(
