@@ -29,107 +29,149 @@ internal class DvrProgressTest {
     }
 
     @Test
-    fun `resume is offered only for completed recordings past the floor and not finished`() {
+    fun `resume offers every positive completed position without scheduled duration heuristics`() {
         val policy = DvrProgressPolicy()
-        val duration = 200.minutes
         assertSame(
             DvrResumeOffer.StartOver,
-            policy.resumeOffer(entry(DvrEntryState.RECORDING, 10.minutes, duration)),
+            policy.resumeOffer(entry(DvrEntryState.RECORDING, 1.seconds)),
         )
         assertSame(
             DvrResumeOffer.StartOver,
-            policy.resumeOffer(entry(DvrEntryState.COMPLETED, 179.seconds, duration)),
-        )
-        val offered = policy.resumeOffer(entry(DvrEntryState.COMPLETED, 180.seconds, duration))
-        assertEquals(DvrResumeOffer.Resume(180.seconds).toString(), offered.toString())
-        assertEquals(180.seconds, (offered as DvrResumeOffer.Resume).position)
-        assertFalse(offered.toString().contains("180"))
-        assertSame(
-            DvrResumeOffer.StartOver,
-            policy.resumeOffer(entry(DvrEntryState.COMPLETED, 190.minutes, duration)),
+            policy.resumeOffer(entry(DvrEntryState.COMPLETED, null)),
         )
         assertSame(
             DvrResumeOffer.StartOver,
-            policy.resumeOffer(entry(DvrEntryState.COMPLETED, 5.minutes, 10.minutes)),
+            policy.resumeOffer(entry(DvrEntryState.COMPLETED, Duration.ZERO)),
         )
+        val oneSecond = policy.resumeOffer(entry(DvrEntryState.COMPLETED, 1.seconds))
+        assertEquals(1.seconds, (oneSecond as DvrResumeOffer.Resume).position)
+        assertFalse(oneSecond.toString().contains("1"))
         assertEquals(
-            180.seconds,
-            (policy.resumeOffer(entry(DvrEntryState.COMPLETED, 180.seconds, 10.minutes))
-                as DvrResumeOffer.Resume).position,
-        )
-        assertSame(
-            DvrResumeOffer.StartOver,
-            policy.resumeOffer(entry(DvrEntryState.COMPLETED, 180.seconds, 4.minutes)),
-        )
-        assertEquals(
-            DvrResumeOffer.Resume(180.seconds),
-            policy.resumeOffer(
-                DvrEntry.create(
-                    id = DvrEntryId(1),
-                    state = DvrEntryState.COMPLETED,
-                    playPosition = 180.seconds,
-                ),
-            ),
+            DvrResumeOffer.Resume(200.minutes),
+            policy.resumeOffer(entry(DvrEntryState.COMPLETED, 200.minutes, 1.minutes)),
         )
     }
 
     @Test
-    fun `tracker checkpoints on interval and minimum delta then debounces seeks`() {
+    fun `tracker uses one elapsed cadence and any positive movement`() {
         val tracker = DvrProgressPolicy().tracker()
         val origin = Instant.fromEpochSeconds(0)
         assertNull(tracker.onElapsed(origin, 0.seconds))
-        assertNull(tracker.onElapsed(Instant.fromEpochSeconds(29), 29.seconds))
-        assertNull(tracker.onElapsed(Instant.fromEpochSeconds(30), 9.seconds))
+        assertNull(tracker.onElapsed(Instant.fromEpochSeconds(29), 20.seconds))
         assertEquals(
-            DvrPlaybackProgress.checkpoint(10.seconds),
-            tracker.onElapsed(Instant.fromEpochSeconds(30), 10.seconds),
+            DvrPlaybackProgress.checkpoint(1.seconds),
+            tracker.onElapsed(Instant.fromEpochSeconds(30), 1.seconds),
         )
-
-        tracker.onSeek(Instant.fromEpochSeconds(31))
-        assertNull(tracker.onElapsed(Instant.fromEpochSeconds(32), 50.seconds))
+        assertNull(tracker.onElapsed(Instant.fromEpochSeconds(60), 1.seconds))
+        assertNull(tracker.onElapsed(Instant.fromEpochSeconds(90), 500.milliseconds))
         assertEquals(
-            DvrPlaybackProgress.checkpoint(51.seconds),
-            tracker.onElapsed(Instant.fromEpochSeconds(33), 51.seconds),
-        )
-
-        tracker.onSeek(Instant.fromEpochSeconds(34))
-        tracker.onSeek(Instant.fromEpochSeconds(35))
-        assertNull(tracker.onElapsed(Instant.fromEpochSeconds(36), 80.seconds))
-        assertEquals(
-            DvrPlaybackProgress.checkpoint(80.seconds),
-            tracker.onElapsed(Instant.fromEpochSeconds(37), 80.seconds),
+            DvrPlaybackProgress.checkpoint(0.seconds),
+            tracker.onElapsed(Instant.fromEpochSeconds(120), 600.milliseconds),
         )
     }
 
     @Test
-    fun `close always reports and marks watched at the finished threshold`() {
-        val policy = DvrProgressPolicy()
-        assertEquals(
-            DvrPlaybackProgress(189.minutes, markWatched = false),
-            policy.closeProgress(189.minutes, 200.minutes),
-        )
-        assertEquals(
-            DvrPlaybackProgress(190.minutes, markWatched = true),
-            DvrPlaybackProgress.close(190.minutes, 200.minutes),
-        )
-        val tracker = policy.tracker()
+    fun `pause and terminal observations are never suppressed and reset cadence`() {
+        val tracker = DvrProgressPolicy().tracker()
         tracker.onElapsed(Instant.fromEpochSeconds(0), 0.seconds)
         assertEquals(
-            DvrPlaybackProgress(12.seconds, markWatched = false),
-            tracker.close(12.seconds, 40.minutes),
+            DvrPlaybackProgress.checkpoint(5.seconds),
+            tracker.onPause(Instant.fromEpochSeconds(5), 5_900.milliseconds),
         )
-        assertNull(tracker.onElapsed(Instant.fromEpochSeconds(30), 30.seconds))
+        assertNull(tracker.onElapsed(Instant.fromEpochSeconds(34), 20.seconds))
+        assertEquals(
+            DvrPlaybackProgress(6.seconds, markWatched = true),
+            tracker.onTerminal(
+                position = 6.seconds,
+                duration = null,
+                state = DvrEntryState.COMPLETED,
+                exit = DvrPlaybackExit.NATURAL_END,
+            ),
+        )
+        assertNull(tracker.onElapsed(Instant.fromEpochSeconds(35), 30.seconds))
+    }
+
+    @Test
+    fun `terminal completion uses actual proportional and explicit exit semantics`() {
+        val policy = DvrProgressPolicy()
+        assertFalse(terminal(policy, 56.seconds, 60.seconds).markWatched)
+        assertTrue(terminal(policy, 57.seconds, 60.seconds).markWatched)
+        assertFalse(terminal(policy, 94.minutes, 100.minutes).markWatched)
+        assertTrue(terminal(policy, 95.minutes, 100.minutes).markWatched)
+        assertFalse(terminal(policy, 1.minutes, 6.minutes).markWatched)
+        assertFalse(terminal(policy, 95.seconds, null).markWatched)
+        assertFalse(terminal(policy, 95.seconds, Duration.ZERO).markWatched)
+
+        val fractional = terminal(policy, 9_500.milliseconds, 10.seconds)
+        assertEquals(9.seconds, fractional.position)
+        assertTrue(fractional.markWatched)
+        assertTrue(
+            policy.terminalProgress(
+                1.seconds,
+                null,
+                DvrEntryState.COMPLETED,
+                DvrPlaybackExit.NATURAL_END,
+            ).markWatched,
+        )
+        assertFalse(
+            policy.terminalProgress(
+                100.seconds,
+                100.seconds,
+                DvrEntryState.COMPLETED,
+                DvrPlaybackExit.ERROR,
+            ).markWatched,
+        )
+        assertFalse(
+            policy.terminalProgress(
+                100.seconds,
+                100.seconds,
+                DvrEntryState.RECORDING,
+                DvrPlaybackExit.NATURAL_END,
+            ).markWatched,
+        )
+        assertFalse(
+            policy.terminalProgress(
+                100.seconds,
+                100.seconds,
+                state = null,
+                exit = DvrPlaybackExit.NATURAL_END,
+            ).markWatched,
+        )
+    }
+
+    @Test
+    fun `policy and tracker reject invalid observations`() {
+        assertThrows(IllegalArgumentException::class.java) {
+            DvrProgressPolicy(checkpointInterval = Duration.ZERO)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            DvrProgressPolicy(orderlyCompletionFraction = Double.NaN)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            DvrProgressPolicy().tracker().onElapsed(Instant.fromEpochSeconds(0), (-1).seconds)
+        }
     }
 
     private fun entry(
         state: DvrEntryState,
-        position: Duration,
-        duration: Duration,
+        position: Duration?,
+        scheduledDuration: Duration? = null,
     ): DvrEntry = DvrEntry.create(
         id = DvrEntryId(1),
-        start = Instant.fromEpochSeconds(0),
-        stop = Instant.fromEpochSeconds(duration.inWholeSeconds),
+        start = scheduledDuration?.let { Instant.fromEpochSeconds(0) },
+        stop = scheduledDuration?.let { Instant.fromEpochSeconds(it.inWholeSeconds) },
         playPosition = position,
         state = state,
+    )
+
+    private fun terminal(
+        policy: DvrProgressPolicy,
+        position: Duration,
+        duration: Duration?,
+    ): DvrPlaybackProgress = policy.terminalProgress(
+        position = position,
+        duration = duration,
+        state = DvrEntryState.COMPLETED,
+        exit = DvrPlaybackExit.ORDERLY,
     )
 }

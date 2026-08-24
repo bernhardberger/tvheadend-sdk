@@ -636,7 +636,13 @@ public interface DvrRepository {
     /** Deletes one time-based recording rule and waits for authoritative stream confirmation. */
     public suspend fun deleteTimerecRule(id: TimerecRuleId): DvrMutationResult<Unit>
 
-    /** Reports playback progress without mutating the authoritative DVR snapshot. */
+    /**
+     * Sends one low-level playback-progress RPC without mutating the authoritative DVR snapshot.
+     *
+     * The current ready generation must expose [RecordingProgressCapability.SUPPORTED]. Direct
+     * callers own serialization, coalescing, and terminal ordering; this function provides no
+     * durable retry or single-writer coordination.
+     */
     public suspend fun reportProgress(
         id: DvrEntryId,
         progress: DvrPlaybackProgress,

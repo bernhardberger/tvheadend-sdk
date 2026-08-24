@@ -23,6 +23,7 @@ import at.bernhardberger.tvheadend.sdk.core.TimerecRule
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleUpdate
+import java.util.Collections
 import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
 import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -33,6 +34,14 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
+/** One ordered progress call captured by [FakeDvrRepository]. */
+public data class FakeDvrProgressCall(
+    public val id: DvrEntryId,
+    public val progress: DvrPlaybackProgress,
+) {
+    override fun toString(): String = "FakeDvrProgressCall(<redacted>)"
+}
+
 /** Mutable DVR repository for application and SDK consumer tests. */
 public class FakeDvrRepository @JvmOverloads constructor(
     initialState: DvrRepositoryState = DvrRepositoryState.Empty,
@@ -42,6 +51,10 @@ public class FakeDvrRepository @JvmOverloads constructor(
     private val mutableState = MutableStateFlow(initialState)
     private val mutableConfigurationsState = MutableStateFlow(initialConfigurationsState)
     private val mutableDiskSpaceState = MutableStateFlow(initialDiskSpaceState)
+    private val progressLock = Any()
+    private val scriptedProgressResults = ArrayDeque<DvrProgressResult>()
+    private val mutableProgressCalls = mutableListOf<FakeDvrProgressCall>()
+    private var fallbackProgressResult: DvrProgressResult = DvrProgressResult.NotReady
 
     override val state: StateFlow<DvrRepositoryState> = mutableState.asStateFlow()
     override val entries: StateFlow<List<DvrEntry>> =
@@ -91,8 +104,20 @@ public class FakeDvrRepository @JvmOverloads constructor(
     /** Scripted outcome returned by [deleteTimerecRule]. */
     public var deleteTimerecRuleResult: DvrMutationResult<Unit> = DvrMutationResult.NotReady
 
-    /** Scripted outcome returned by [reportProgress]. */
-    public var reportProgressResult: DvrProgressResult = DvrProgressResult.NotReady
+    /** Fallback outcome returned by [reportProgress] after queued outcomes are exhausted. */
+    public var reportProgressResult: DvrProgressResult
+        get() = synchronized(progressLock) { fallbackProgressResult }
+        set(value) {
+            synchronized(progressLock) {
+                fallbackProgressResult = value
+            }
+        }
+
+    /** Immutable snapshot of progress calls in observation order. */
+    public val progressCalls: List<FakeDvrProgressCall>
+        get() = synchronized(progressLock) {
+            Collections.unmodifiableList(ArrayList(mutableProgressCalls))
+        }
 
     /** Scripted outcome returned by [cutpoints]. */
     public var cutpointsResult: DvrCutpointsResult = DvrCutpointsResult.NotReady
@@ -110,6 +135,20 @@ public class FakeDvrRepository @JvmOverloads constructor(
     /** Publishes one complete disk-space-freshness transition. */
     public fun setDiskSpaceState(state: DvrDiskSpaceState) {
         mutableDiskSpaceState.value = state
+    }
+
+    /** Queues one progress outcome ahead of [reportProgressResult]. */
+    public fun enqueueProgressResult(result: DvrProgressResult) {
+        synchronized(progressLock) {
+            scriptedProgressResults.addLast(result)
+        }
+    }
+
+    /** Clears captured progress calls without changing queued or fallback outcomes. */
+    public fun clearProgressCalls() {
+        synchronized(progressLock) {
+            mutableProgressCalls.clear()
+        }
     }
 
     override fun entry(id: DvrEntryId): Flow<DvrEntry?> =
@@ -170,7 +209,10 @@ public class FakeDvrRepository @JvmOverloads constructor(
     override suspend fun reportProgress(
         id: DvrEntryId,
         progress: DvrPlaybackProgress,
-    ): DvrProgressResult = reportProgressResult
+    ): DvrProgressResult = synchronized(progressLock) {
+        mutableProgressCalls += FakeDvrProgressCall(id, progress)
+        scriptedProgressResults.removeFirstOrNull() ?: fallbackProgressResult
+    }
 
     override suspend fun cutpoints(id: DvrEntryId): DvrCutpointsResult = cutpointsResult
 }

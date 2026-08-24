@@ -51,3 +51,21 @@ does not install a path-derived Coil key, so authenticated selectors do not
 enter memory-cache or disk-cache keys. Coil owns decoding and closes every
 successfully returned image source. TVHeadend requires recorder access for this
 authenticated file API; otherwise loads report `ACCESS_DENIED`.
+
+## Recording progress
+
+`TvheadendSession.recordingProgressCapability` is `SUPPORTED` only when the
+current ready generation can close recording files without changing play count
+and can report position and watched state separately. Unknown and pre-v27
+connections fail closed; there is no degraded fallback.
+
+`DvrProgressPolicy` offers every positive saved position for completed
+recordings. Its pure tracker uses one 30-second elapsed cadence and reports any
+positive movement, plus explicit pause and terminal observations. Natural end
+marks a completed recording watched; an orderly exit requires at least 95% of a
+known positive actual media duration. Errors and growing recordings never infer
+completion.
+
+`DvrRepository.reportProgress` is an uncoordinated low-level RPC. Direct callers
+must serialize reports and preserve observation and terminal ordering
+themselves; the SDK does not persist or replay pending progress.

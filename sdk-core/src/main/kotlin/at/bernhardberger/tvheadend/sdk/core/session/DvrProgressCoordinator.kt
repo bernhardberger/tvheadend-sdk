@@ -35,6 +35,7 @@ internal class DvrProgressCoordinator(
     private val gateway: ProtocolGateway,
     private val isSessionReady: (GatewayGeneration) -> Boolean = { true },
     private val onDvrAccessProof: suspend (GatewayGeneration, Boolean) -> Unit = { _, _ -> },
+    private val onProgressNotSupported: suspend (GatewayGeneration) -> Unit = {},
 ) : DvrProgressCommands, DvrCutpointCommands, DvrProgressLifecycle {
     private val lock = Any()
     private var generation: GatewayGeneration? = null
@@ -121,6 +122,12 @@ internal class DvrProgressCoordinator(
             }
         }
         classified.proof?.let { allowed -> onDvrAccessProof(activeGeneration, allowed) }
+        if (
+            result === GatewayResult.NotSupported &&
+            classified.result === DvrProgressResult.NotSupported
+        ) {
+            onProgressNotSupported(activeGeneration)
+        }
         return classified.result
     }
 

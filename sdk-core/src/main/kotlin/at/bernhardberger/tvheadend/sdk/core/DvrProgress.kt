@@ -1,7 +1,6 @@
 package at.bernhardberger.tvheadend.sdk.core
 
 import kotlin.time.Duration
-import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
@@ -33,14 +32,19 @@ public data class DvrPlaybackProgress(
         /** Creates a position-only checkpoint that does not mark the recording watched. */
         public fun checkpoint(position: Duration): DvrPlaybackProgress =
             DvrPlaybackProgress(position, markWatched = false)
-
-        /** Creates the close report for [position] using [policy] finished detection. */
-        public fun close(
-            position: Duration,
-            duration: Duration?,
-            policy: DvrProgressPolicy = DvrProgressPolicy(),
-        ): DvrPlaybackProgress = policy.closeProgress(position, duration)
     }
+}
+
+/** How playback of one completed-recording target ended. */
+public enum class DvrPlaybackExit {
+    /** Media3 reached the natural end of the active recording. */
+    NATURAL_END,
+
+    /** The active recording was replaced or stopped without a playback error. */
+    ORDERLY,
+
+    /** Playback terminated because of an error. */
+    ERROR,
 }
 
 /** Typed outcome of one generation-bound DVR progress report. */
@@ -83,130 +87,124 @@ public sealed interface DvrResumeOffer {
     public data object StartOver : DvrResumeOffer
 }
 
-/** Defaults for DVR progress checkpoints, seek debounce, resume, and finished detection. */
+/** Policy for DVR progress cadence, resume offers, and orderly completion. */
 public data class DvrProgressPolicy(
-    public val resumeFloor: Duration = 180.seconds,
     public val checkpointInterval: Duration = 30.seconds,
-    public val checkpointMinimumDelta: Duration = 10.seconds,
-    public val seekDebounce: Duration = 2.seconds,
-    public val finishedWatchedFraction: Double = 0.95,
-    public val finishedRemaining: Duration = 5.minutes,
+    public val orderlyCompletionFraction: Double = 0.95,
 ) {
     init {
-        require(resumeFloor.isFinite() && !resumeFloor.isNegative()) {
-            "DVR resume floor must be a finite non-negative duration"
-        }
         require(checkpointInterval.isFinite() && checkpointInterval.isPositive()) {
             "DVR checkpoint interval must be finite and positive"
         }
-        require(checkpointMinimumDelta.isFinite() && !checkpointMinimumDelta.isNegative()) {
-            "DVR checkpoint minimum delta must be a finite non-negative duration"
-        }
-        require(seekDebounce.isFinite() && seekDebounce.isPositive()) {
-            "DVR seek debounce must be finite and positive"
-        }
-        require(finishedWatchedFraction > 0.0 && finishedWatchedFraction <= 1.0) {
-            "DVR finished watched fraction must be in (0.0, 1.0]"
-        }
-        require(finishedRemaining.isFinite() && !finishedRemaining.isNegative()) {
-            "DVR finished remaining duration must be a finite non-negative duration"
+        require(orderlyCompletionFraction > 0.0 && orderlyCompletionFraction <= 1.0) {
+            "DVR orderly completion fraction must be in (0.0, 1.0]"
         }
     }
 
     /** Creates a caller-driven tracker that applies this policy. */
     public fun tracker(): DvrProgressTracker = DvrProgressTracker(this)
 
-    /** Offers resume only for completed recordings that are past the floor and not finished. */
+    /** Offers every positive saved position for a completed recording. */
     public fun resumeOffer(entry: DvrEntry): DvrResumeOffer {
         val position = entry.playPosition
-        if (entry.state != DvrEntryState.COMPLETED || position == null || position < resumeFloor) {
-            return DvrResumeOffer.StartOver
-        }
-        if (isFinished(position, entry.programmeDuration())) {
+        if (entry.state != DvrEntryState.COMPLETED || position == null || !position.isPositive()) {
             return DvrResumeOffer.StartOver
         }
         return DvrResumeOffer.Resume(position)
     }
 
-    /** True when [position] has reached 95 percent or has at most five minutes remaining. */
-    public fun isFinished(position: Duration, duration: Duration?): Boolean {
-        if (duration == null || !duration.isPositive()) {
-            return false
+    /**
+     * Creates one terminal report from actual playback measurements.
+     *
+     * A natural end marks a completed recording watched. An orderly exit does so only at the
+     * configured fraction of a known positive duration. Errors and growing recordings never do.
+     */
+    public fun terminalProgress(
+        position: Duration,
+        duration: Duration?,
+        state: DvrEntryState?,
+        exit: DvrPlaybackExit,
+    ): DvrPlaybackProgress {
+        val observation = position.toPlaybackProgress(markWatched = false)
+        val markWatched = state == DvrEntryState.COMPLETED && when (exit) {
+            DvrPlaybackExit.NATURAL_END -> true
+            DvrPlaybackExit.ORDERLY ->
+                duration != null &&
+                    duration.isFinite() &&
+                    duration.isPositive() &&
+                    position >= duration * orderlyCompletionFraction
+            DvrPlaybackExit.ERROR -> false
         }
-        if (position >= duration * finishedWatchedFraction) {
-            return true
-        }
-        return duration - position <= finishedRemaining
+        return observation.copy(markWatched = markWatched)
     }
-
-    /** Close report that marks watched only when [isFinished] is true. */
-    public fun closeProgress(position: Duration, duration: Duration?): DvrPlaybackProgress =
-        DvrPlaybackProgress(
-            position = position.wholeProgressSeconds(),
-            markWatched = isFinished(position.wholeProgressSeconds(), duration),
-        )
 }
 
-/** Caller-driven checkpoint and seek-debounce helper; it does not own a coroutine or clock. */
+/**
+ * Caller-driven progress state machine; it owns neither a coroutine nor a clock.
+ *
+ * This mutable tracker is not thread-safe. The caller must serialize all observations.
+ */
 public class DvrProgressTracker(
     public val policy: DvrProgressPolicy = DvrProgressPolicy(),
 ) {
-    private var lastCheckpointAt: Instant? = null
-    private var lastCheckpointPosition: Duration? = null
-    private var pendingSeekAt: Instant? = null
+    private var cadenceAt: Instant? = null
+    private var cadencePosition: Duration? = null
 
-    /** Records a seek and waits for [DvrProgressPolicy.seekDebounce] before reporting. */
-    public fun onSeek(now: Instant) {
-        pendingSeekAt = now
-    }
-
-    /** Returns a checkpoint when interval, minimum delta, or a settled seek requires one. */
+    /** Returns a checkpoint after one elapsed interval when playback moved forward. */
     public fun onElapsed(now: Instant, position: Duration): DvrPlaybackProgress? {
-        val snapped = position.wholeProgressSeconds()
-        val seekStartedAt = pendingSeekAt
-        if (seekStartedAt != null) {
-            return if (now - seekStartedAt >= policy.seekDebounce) {
-                emitCheckpoint(now, snapped)
-            } else {
-                null
-            }
-        }
-        val originAt = lastCheckpointAt
-        val originPosition = lastCheckpointPosition
+        val observation = position.toPlaybackProgress(markWatched = false)
+        val originAt = cadenceAt
+        val originPosition = cadencePosition
         if (originAt == null || originPosition == null) {
-            lastCheckpointAt = now
-            lastCheckpointPosition = snapped
+            setCadence(now, position)
             return null
         }
         if (now - originAt < policy.checkpointInterval) {
             return null
         }
-        val delta = (snapped - originPosition).absoluteValue
-        if (delta < policy.checkpointMinimumDelta) {
-            return null
-        }
-        return emitCheckpoint(now, snapped)
+        setCadence(now, position)
+        return observation.takeIf { position > originPosition }
     }
 
-    /** Always reports [position], marking watched when the policy considers playback finished. */
-    public fun close(position: Duration, duration: Duration?): DvrPlaybackProgress {
+    /** Always reports an explicit pause and restarts cadence from that observation. */
+    public fun onPause(now: Instant, position: Duration): DvrPlaybackProgress {
+        val observation = position.toPlaybackProgress(markWatched = false)
+        setCadence(now, position)
+        return observation
+    }
+
+    /** Always reports a terminal observation and clears cadence for a subsequent target. */
+    public fun onTerminal(
+        position: Duration,
+        duration: Duration?,
+        state: DvrEntryState?,
+        exit: DvrPlaybackExit,
+    ): DvrPlaybackProgress {
+        val observation = policy.terminalProgress(position, duration, state, exit)
         reset()
-        return policy.closeProgress(position, duration)
+        return observation
     }
 
-    /** Clears checkpoint and seek-debounce state. */
+    /** Clears the elapsed-time cadence. */
     public fun reset() {
-        lastCheckpointAt = null
-        lastCheckpointPosition = null
-        pendingSeekAt = null
+        cadenceAt = null
+        cadencePosition = null
     }
 
-    private fun emitCheckpoint(now: Instant, position: Duration): DvrPlaybackProgress {
-        pendingSeekAt = null
-        lastCheckpointAt = now
-        lastCheckpointPosition = position
-        return DvrPlaybackProgress.checkpoint(position)
+    private fun setCadence(now: Instant, position: Duration) {
+        cadenceAt = now
+        cadencePosition = position
     }
+}
+
+private fun Duration.toPlaybackProgress(markWatched: Boolean): DvrPlaybackProgress {
+    require(isFinite() && !isNegative()) {
+        "DVR playback position must be a finite non-negative duration"
+    }
+    return DvrPlaybackProgress(
+        position = inWholeSeconds.seconds,
+        markWatched = markWatched,
+    )
 }
 
 internal interface DvrProgressCommands {
@@ -222,11 +220,3 @@ internal interface DvrProgressCommands {
         ): DvrProgressResult = DvrProgressResult.NotReady
     }
 }
-
-internal fun DvrEntry.programmeDuration(): Duration? {
-    val start = start ?: return null
-    val stop = stop ?: return null
-    return (stop - start).takeIf { duration -> duration.isPositive() }
-}
-
-private fun Duration.wholeProgressSeconds(): Duration = inWholeSeconds.seconds

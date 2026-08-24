@@ -25,6 +25,15 @@ public interface TvheadendSession {
     /** Current durable connection and synchronization state. */
     public val state: StateFlow<SessionState>
 
+    /**
+     * Safe recording close and separate progress/watch support for the current ready generation.
+     *
+     * A ready transition can precede the generation's non-[RecordingProgressCapability.UNKNOWN]
+     * value so positive support is never exposed outside ready. Treat unknown as fail-closed and
+     * keep observing this flow rather than caching its value at the ready transition.
+     */
+    public val recordingProgressCapability: StateFlow<RecordingProgressCapability>
+
     /** Channel and channel-tag metadata for the selected server profile. */
     public val channelRepository: ChannelRepository
 
@@ -94,6 +103,9 @@ private object SessionRegistry {
             gateway = gateway,
             isSessionReady = { generation -> owner.isDvrMutationReady(generation) },
             onDvrAccessProof = onDvrAccessProof,
+            onProgressNotSupported = { generation ->
+                owner.applyRecordingProgressNotSupported(generation)
+            },
         )
         metadata = PhaseOneSessionMetadata(
             mutationCommands = dvrMutations,
@@ -354,4 +366,16 @@ public enum class CapabilityAccess {
     UNKNOWN,
     ALLOWED,
     DENIED,
+}
+
+/** Current-generation support for safe recording close and separate progress/watch mutation. */
+public enum class RecordingProgressCapability {
+    /** No ready generation has established whether the complete semantic contract is available. */
+    UNKNOWN,
+
+    /** The ready generation supports the complete HTSP v27 recording-progress contract. */
+    SUPPORTED,
+
+    /** The ready generation cannot provide the complete recording-progress contract. */
+    UNSUPPORTED,
 }

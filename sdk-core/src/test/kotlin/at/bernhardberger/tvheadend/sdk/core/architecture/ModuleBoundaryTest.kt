@@ -169,6 +169,7 @@ internal class ModuleBoundaryTest {
             "Confirmed",
             "AcceptedButUnconfirmed",
             "DvrPlaybackProgress",
+            "DvrPlaybackExit",
             "DvrProgressResult",
             "Accepted",
             "DvrProgressPolicy",
@@ -230,6 +231,7 @@ internal class ModuleBoundaryTest {
             "SessionOperationFailure",
             "ServerCapabilities",
             "CapabilityAccess",
+            "RecordingProgressCapability",
         )
 
         assertEquals(expected, actual)
@@ -318,6 +320,7 @@ internal class ModuleBoundaryTest {
             "FakeChannelRepository",
             "FakeEpgRepository",
             "FakeDvrRepository",
+            "FakeDvrProgressCall",
             "ScriptedSubscriptionCall",
             "ScriptedSubscriptionConnection",
             "ScriptedSubscriptionRegistration",
@@ -353,7 +356,7 @@ internal class ModuleBoundaryTest {
 
         assertPublicInfrastructure("sdk-android", expectedAndroid, unannotatedCount = expectedAndroid.size)
         assertPublicInfrastructure("sdk-playback", expectedPlayback, unannotatedCount = 1)
-        assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 3)
+        assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 4)
         assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 5)
 
         val sessionApi = java.io.File(
@@ -382,6 +385,12 @@ internal class ModuleBoundaryTest {
         org.junit.jupiter.api.Assertions.assertTrue(
             sessionApi.contains("public val dvrRepository: DvrRepository"),
             "Missing DVR repository on the public session",
+        )
+        org.junit.jupiter.api.Assertions.assertTrue(
+            sessionApi.contains(
+                "public val recordingProgressCapability: StateFlow<RecordingProgressCapability>",
+            ),
+            "Missing recording progress capability on the public session",
         )
     }
 
@@ -432,6 +441,7 @@ internal class ModuleBoundaryTest {
             "at.bernhardberger.tvheadend.sdk.media3.TvheadendRecordingException",
             "at.bernhardberger.tvheadend.sdk.core.ChannelService",
             "at.bernhardberger.tvheadend.sdk.core.DvrRecordingFile",
+            "at.bernhardberger.tvheadend.sdk.core.DvrProgressPolicy",
             "at.bernhardberger.tvheadend.sdk.testing.ScriptedSubscriptionConnection",
             "at.bernhardberger.tvheadend.sdk.testing.SubscriptionBinaryFixture",
             "at.bernhardberger.tvheadend.sdk.testing.FakeChannelRepository",

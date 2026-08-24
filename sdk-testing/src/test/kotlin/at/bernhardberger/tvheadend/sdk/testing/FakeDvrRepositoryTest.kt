@@ -22,10 +22,16 @@ import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
 import at.bernhardberger.tvheadend.sdk.core.EventId
 import at.bernhardberger.tvheadend.sdk.core.TimerecRule
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertSame
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 import kotlin.time.Duration.Companion.seconds
 
@@ -90,19 +96,66 @@ internal class FakeDvrRepositoryTest {
     }
 
     @Test
-    fun `fake scripts progress outcomes without changing repository state`() = runTest {
-        val repository = FakeDvrRepository()
-        val accepted = DvrProgressResult.Accepted
-        repository.reportProgressResult = accepted
+    fun `fake captures ordered progress calls and consumes scripted outcomes before fallback`() =
+        runTest {
+            val repository = FakeDvrRepository()
+            val first = DvrPlaybackProgress.checkpoint(30.seconds)
+            val second = DvrPlaybackProgress(60.seconds, markWatched = true)
+            repository.reportProgressResult = DvrProgressResult.Timeout
+            repository.enqueueProgressResult(DvrProgressResult.AccessDenied)
+            repository.enqueueProgressResult(DvrProgressResult.Accepted)
 
-        assertSame(
-            accepted,
-            repository.reportProgress(
-                DvrEntryId(7),
-                DvrPlaybackProgress.checkpoint(30.seconds),
-            ),
-        )
-        assertEquals(DvrRepositoryState.Empty, repository.state.value)
+            assertSame(
+                DvrProgressResult.AccessDenied,
+                repository.reportProgress(DvrEntryId(7), first),
+            )
+            assertSame(
+                DvrProgressResult.Accepted,
+                repository.reportProgress(DvrEntryId(8), second),
+            )
+            assertSame(
+                DvrProgressResult.Timeout,
+                repository.reportProgress(DvrEntryId(9), first),
+            )
+            assertEquals(
+                listOf(
+                    FakeDvrProgressCall(DvrEntryId(7), first),
+                    FakeDvrProgressCall(DvrEntryId(8), second),
+                    FakeDvrProgressCall(DvrEntryId(9), first),
+                ),
+                repository.progressCalls,
+            )
+            assertFalse(repository.progressCalls.toString().contains("60"))
+            assertEquals(DvrRepositoryState.Empty, repository.state.value)
+        }
+
+    @Test
+    fun `progress capture snapshots are immutable defensive and thread safe`() = runTest {
+        val repository = FakeDvrRepository()
+        repository.reportProgressResult = DvrProgressResult.Accepted
+        repository.reportProgress(DvrEntryId(1), DvrPlaybackProgress.checkpoint(1.seconds))
+        val snapshot = repository.progressCalls
+
+        repository.clearProgressCalls()
+        assertEquals(1, snapshot.size)
+        assertEquals(emptyList<FakeDvrProgressCall>(), repository.progressCalls)
+        assertThrows(UnsupportedOperationException::class.java) {
+            @Suppress("UNCHECKED_CAST")
+            (snapshot as MutableList<FakeDvrProgressCall>).clear()
+        }
+
+        coroutineScope {
+            (1L..100L).map { id ->
+                async(Dispatchers.Default) {
+                    repository.reportProgress(
+                        DvrEntryId(id),
+                        DvrPlaybackProgress.checkpoint(id.seconds),
+                    )
+                }
+            }.awaitAll()
+        }
+        assertEquals(100, repository.progressCalls.size)
+        assertEquals((1L..100L).toSet(), repository.progressCalls.map { it.id.value }.toSet())
     }
 
     @Test

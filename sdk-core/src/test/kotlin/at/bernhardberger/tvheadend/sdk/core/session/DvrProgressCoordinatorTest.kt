@@ -57,6 +57,14 @@ internal class DvrProgressCoordinatorTest {
         )
         assertEquals(0, commandCount)
 
+        coordinator.bindGeneration(generation, protocolVersion = null)
+        assertTrue(coordinator.startAdmission(generation))
+        assertSame(
+            DvrProgressResult.NotSupported,
+            coordinator.reportProgress(DvrEntryId(7), checkpoint()),
+        )
+        assertEquals(0, commandCount)
+
         coordinator.bindGeneration(generation, protocolVersion = 27)
         assertTrue(coordinator.startAdmission(generation))
         ready = false
@@ -78,7 +86,11 @@ internal class DvrProgressCoordinatorTest {
         val next = GatewayGeneration()
         val gateway = MutationGateway()
         var commandCount = 0
-        val coordinator = DvrProgressCoordinator(gateway = gateway)
+        val unsupportedGenerations = mutableListOf<GatewayGeneration>()
+        val coordinator = DvrProgressCoordinator(
+            gateway = gateway,
+            onProgressNotSupported = { unsupportedGenerations += it },
+        )
         gateway.progressBehavior = { _, _, _ ->
             commandCount += 1
             GatewayResult.NotSupported
@@ -95,6 +107,7 @@ internal class DvrProgressCoordinatorTest {
             coordinator.reportProgress(DvrEntryId(7), checkpoint()),
         )
         assertEquals(1, commandCount)
+        assertEquals(listOf(generation), unsupportedGenerations)
 
         coordinator.bindGeneration(next, protocolVersion = 27)
         coordinator.startAdmission(next)
@@ -107,6 +120,7 @@ internal class DvrProgressCoordinatorTest {
             coordinator.reportProgress(DvrEntryId(7), checkpoint()),
         )
         assertEquals(2, commandCount)
+        assertEquals(listOf(generation), unsupportedGenerations)
     }
 
     @Test
@@ -115,9 +129,11 @@ internal class DvrProgressCoordinatorTest {
             val generation = GatewayGeneration()
             val gateway = MutationGateway()
             val proofs = mutableListOf<Boolean>()
+            val unsupportedGenerations = mutableListOf<GatewayGeneration>()
             val coordinator = DvrProgressCoordinator(
                 gateway = gateway,
                 onDvrAccessProof = { _, allowed -> proofs += allowed },
+                onProgressNotSupported = { unsupportedGenerations += it },
             )
             coordinator.bindGeneration(generation, protocolVersion = 43)
             coordinator.startAdmission(generation)
@@ -149,8 +165,9 @@ internal class DvrProgressCoordinatorTest {
             val inFlight = async { coordinator.reportProgress(DvrEntryId(8), checkpoint()) }
             runCurrent()
             coordinator.stopAdmission()
-            blocked.complete(GatewayResult.Ok(Unit))
+            blocked.complete(GatewayResult.NotSupported)
             assertSame(DvrProgressResult.TransportUnavailable, inFlight.await())
+            assertEquals(emptyList<GatewayGeneration>(), unsupportedGenerations)
         }
 
     @Test

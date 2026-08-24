@@ -10,6 +10,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult
+import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackExit
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
 import at.bernhardberger.tvheadend.sdk.core.DvrProgressPolicy
 import at.bernhardberger.tvheadend.sdk.core.DvrProgressResult
@@ -264,9 +265,11 @@ internal class DvrRealServerVerificationTest {
             credentials.forbidLeak(DvrProgressPolicy().resumeOffer(stopped).toString())
             val closeProgress = dvr.reportProgress(
                 liveId,
-                DvrPlaybackProgress.close(
+                DvrProgressPolicy().terminalProgress(
                     position = 15.seconds,
                     duration = 75.seconds,
+                    state = stopped.state,
+                    exit = DvrPlaybackExit.ORDERLY,
                 ),
             )
             assertEquals(DvrProgressResult.Accepted, closeProgress)

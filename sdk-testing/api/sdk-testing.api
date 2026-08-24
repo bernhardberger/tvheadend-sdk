@@ -10,6 +10,19 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeChannelRepository
 	public fun tag-tZzeWiw (J)Lkotlinx/coroutines/flow/Flow;
 }
 
+public final class at/bernhardberger/tvheadend/sdk/testing/FakeDvrProgressCall {
+	public synthetic fun <init> (JLat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1-YcJ-2to ()J
+	public final fun component2 ()Lat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress;
+	public final fun copy-LuN5gl8 (JLat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress;)Lat/bernhardberger/tvheadend/sdk/testing/FakeDvrProgressCall;
+	public static synthetic fun copy-LuN5gl8$default (Lat/bernhardberger/tvheadend/sdk/testing/FakeDvrProgressCall;JLat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/testing/FakeDvrProgressCall;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getId-YcJ-2to ()J
+	public final fun getProgress ()Lat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class at/bernhardberger/tvheadend/sdk/testing/FakeDvrRepository : at/bernhardberger/tvheadend/sdk/core/DvrRepository {
 	public fun <init> ()V
 	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState;)V
@@ -18,6 +31,7 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeDvrRepository : a
 	public synthetic fun <init> (Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState;Lat/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState;Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpaceState;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun autorecRule-K-0Ra0w (Ljava/lang/String;)Lkotlinx/coroutines/flow/Flow;
 	public fun cancelEntry-LuN5gl8 (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun clearProgressCalls ()V
 	public fun configuration-5XLS7Ck (Ljava/lang/String;)Lkotlinx/coroutines/flow/Flow;
 	public fun createAutorecRule (Lat/bernhardberger/tvheadend/sdk/core/AutorecRuleCreate;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun createTimerecRule (Lat/bernhardberger/tvheadend/sdk/core/TimerecRuleCreate;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -25,6 +39,7 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeDvrRepository : a
 	public fun deleteAutorecRule-8LEu20c (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun deleteEntry-LuN5gl8 (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun deleteTimerecRule-kEPY2d4 (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun enqueueProgressResult (Lat/bernhardberger/tvheadend/sdk/core/DvrProgressResult;)V
 	public fun entry-lyT0IZA (J)Lkotlinx/coroutines/flow/Flow;
 	public fun getAutorecRules ()Lkotlinx/coroutines/flow/StateFlow;
 	public final fun getCancelEntryResult ()Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;
@@ -39,6 +54,7 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeDvrRepository : a
 	public fun getDiskSpace ()Lkotlinx/coroutines/flow/StateFlow;
 	public fun getDiskSpaceState ()Lkotlinx/coroutines/flow/StateFlow;
 	public fun getEntries ()Lkotlinx/coroutines/flow/StateFlow;
+	public final fun getProgressCalls ()Ljava/util/List;
 	public final fun getReportProgressResult ()Lat/bernhardberger/tvheadend/sdk/core/DvrProgressResult;
 	public final fun getScheduleEntryResult ()Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;
 	public fun getState ()Lkotlinx/coroutines/flow/StateFlow;

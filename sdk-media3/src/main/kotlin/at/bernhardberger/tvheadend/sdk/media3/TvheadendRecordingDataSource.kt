@@ -69,7 +69,10 @@ public fun createTvheadendRecordingDataSourceFactory(
  *
  * Playback uses the standard progressive pipeline, so the stored MKV, MP4, or TS container is
  * parsed by Media3's own extractors. Each extractor reopen performs a fresh transport open and
- * seek rather than reusing a stale server handle.
+ * seek rather than reusing a stale server handle. Below HTSP v27, TVHeadend increments play count
+ * on a plain file close, so this lower-level source cannot provide coordinated watched semantics;
+ * callers needing that invariant must require the session's supported recording-progress
+ * capability before opening it.
  */
 @SubscriptionInfrastructureApi
 @androidx.media3.common.util.UnstableApi

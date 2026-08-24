@@ -21,6 +21,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
 import at.bernhardberger.tvheadend.sdk.core.DvrSchedule
 import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability
 import at.bernhardberger.tvheadend.sdk.core.ServerAuthentication
 import at.bernhardberger.tvheadend.sdk.core.ServerCapabilities
 import at.bernhardberger.tvheadend.sdk.core.ServerProfile
@@ -339,6 +340,9 @@ internal class ConnectionOwnerTest {
             gateway = gateway,
             isSessionReady = { commandGeneration -> owner.isDvrMutationReady(commandGeneration) },
             onDvrAccessProof = onProof,
+            onProgressNotSupported = { commandGeneration ->
+                owner.applyRecordingProgressNotSupported(commandGeneration)
+            },
         )
         metadata = PhaseOneSessionMetadata(
             mutationCommands = mutations,
@@ -415,6 +419,9 @@ internal class ConnectionOwnerTest {
             gateway = gateway,
             isSessionReady = { commandGeneration -> owner.isDvrMutationReady(commandGeneration) },
             onDvrAccessProof = onProof,
+            onProgressNotSupported = { commandGeneration ->
+                owner.applyRecordingProgressNotSupported(commandGeneration)
+            },
         )
         metadata = PhaseOneSessionMetadata(
             mutationCommands = mutations,
@@ -430,6 +437,10 @@ internal class ConnectionOwnerTest {
         val report = DvrPlaybackProgress.checkpoint(30.seconds)
 
         assertSame(
+            RecordingProgressCapability.UNKNOWN,
+            owner.recordingProgressCapability.value,
+        )
+        assertSame(
             DvrProgressResult.NotReady,
             owner.dvrRepository.reportProgress(DvrEntryId(7), report),
         )
@@ -438,6 +449,10 @@ internal class ConnectionOwnerTest {
         gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
         runCurrent()
         assertSame(
+            RecordingProgressCapability.UNSUPPORTED,
+            owner.recordingProgressCapability.value,
+        )
+        assertSame(
             DvrProgressResult.NotSupported,
             owner.dvrRepository.reportProgress(DvrEntryId(7), report),
         )
@@ -445,18 +460,30 @@ internal class ConnectionOwnerTest {
 
         owner.disconnect()
         runCurrent()
+        assertSame(
+            RecordingProgressCapability.UNKNOWN,
+            owner.recordingProgressCapability.value,
+        )
         val next = GatewayGeneration()
         gateway.connectResults += connected(next, protocolVersion = 27)
         owner.connect(ServerProfile("server"))
         runCurrent()
         gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(next))
         runCurrent()
+        assertSame(
+            RecordingProgressCapability.SUPPORTED,
+            owner.recordingProgressCapability.value,
+        )
         gateway.reportDvrProgressBehavior = { _, _, _ -> GatewayResult.NotSupported }
         assertSame(
             DvrProgressResult.NotSupported,
             owner.dvrRepository.reportProgress(DvrEntryId(7), report),
         )
         assertEquals(1, gateway.progressReportCount)
+        assertSame(
+            RecordingProgressCapability.UNSUPPORTED,
+            owner.recordingProgressCapability.value,
+        )
         assertSame(
             DvrProgressResult.NotSupported,
             owner.dvrRepository.reportProgress(DvrEntryId(7), report),
@@ -465,12 +492,20 @@ internal class ConnectionOwnerTest {
 
         owner.disconnect()
         runCurrent()
+        assertSame(
+            RecordingProgressCapability.UNKNOWN,
+            owner.recordingProgressCapability.value,
+        )
         val restored = GatewayGeneration()
         gateway.connectResults += connected(restored, protocolVersion = 27)
         owner.connect(ServerProfile("server"))
         runCurrent()
         gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(restored))
         runCurrent()
+        assertSame(
+            RecordingProgressCapability.SUPPORTED,
+            owner.recordingProgressCapability.value,
+        )
         gateway.reportDvrProgressBehavior = { _, _, _ -> GatewayResult.Ok(Unit) }
         assertSame(
             DvrProgressResult.Accepted,
@@ -480,6 +515,26 @@ internal class ConnectionOwnerTest {
         assertEquals(
             DvrRepositoryState.Current(DvrSnapshot.create()),
             owner.dvrRepository.state.value,
+        )
+        owner.shutdown()
+    }
+
+    @Test
+    fun `unknown negotiated version keeps recording progress capability fail closed`() = runTest {
+        val gateway = FakeProtocolGateway()
+        val generation = GatewayGeneration()
+        gateway.connectResults += connected(generation, protocolVersion = null)
+        val owner = owner(gateway)
+
+        owner.connect(ServerProfile("server"))
+        runCurrent()
+        gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        runCurrent()
+
+        assertTrue(owner.state.value is SessionState.Ready)
+        assertSame(
+            RecordingProgressCapability.UNKNOWN,
+            owner.recordingProgressCapability.value,
         )
         owner.shutdown()
     }

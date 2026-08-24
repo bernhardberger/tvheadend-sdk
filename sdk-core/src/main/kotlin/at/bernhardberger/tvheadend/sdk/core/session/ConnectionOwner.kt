@@ -4,8 +4,10 @@ package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoader
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepository
+import at.bernhardberger.tvheadend.sdk.core.DVR_PROGRESS_MINIMUM_PROTOCOL_VERSION
 import at.bernhardberger.tvheadend.sdk.core.DvrRepository
 import at.bernhardberger.tvheadend.sdk.core.EpgRepository
+import at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability
 import at.bernhardberger.tvheadend.sdk.core.ServerProfile
 import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
 import at.bernhardberger.tvheadend.sdk.core.SessionFailure
@@ -62,6 +64,8 @@ internal class ConnectionOwner(
     private val commandMutex = Mutex()
     private val stateLock = Any()
     private val mutableState = MutableStateFlow<SessionState>(SessionState.Disconnected)
+    private val mutableRecordingProgressCapability =
+        MutableStateFlow(RecordingProgressCapability.UNKNOWN)
 
     private var selectedProfile: ServerProfile? = null
     private var worker: Job? = null
@@ -73,6 +77,8 @@ internal class ConnectionOwner(
     private var shutdownCompletion: CompletableDeferred<Unit>? = null
 
     override val state: StateFlow<SessionState> = mutableState.asStateFlow()
+    override val recordingProgressCapability: StateFlow<RecordingProgressCapability> =
+        mutableRecordingProgressCapability.asStateFlow()
     override val channelRepository: ChannelRepository = metadata
     override val epgRepository: EpgRepository = metadata.epgRepository
     override val dvrRepository: DvrRepository = metadata.dvrRepository
@@ -242,6 +248,7 @@ internal class ConnectionOwner(
             } else {
                 metadata.clearAllState()
             }
+            mutableRecordingProgressCapability.value = RecordingProgressCapability.UNKNOWN
             mutableState.value = SessionState.Disconnected
             failure
         }
@@ -378,8 +385,15 @@ internal class ConnectionOwner(
 
             requireCurrent(token)
             val capabilities = metadata.capabilitySnapshot(connection.generation)
+            val protocolVersion = connection.protocolVersion
+            val progressCapability = when {
+                protocolVersion == null -> RecordingProgressCapability.UNKNOWN
+                protocolVersion < DVR_PROGRESS_MINIMUM_PROTOCOL_VERSION ->
+                    RecordingProgressCapability.UNSUPPORTED
+                else -> RecordingProgressCapability.SUPPORTED
+            }
             val committed = gateway.commitIfLive(connection.generation) {
-                commitReady(token, connection.generation, capabilities)
+                commitReady(token, connection.generation, capabilities, progressCapability)
             } == true
             if (!committed) {
                 requireCurrent(token)
@@ -443,6 +457,7 @@ internal class ConnectionOwner(
             if (activeToken !== token || closed) {
                 throw CancellationException("Session generation is no longer active")
             }
+            mutableRecordingProgressCapability.value = RecordingProgressCapability.UNKNOWN
             mutableState.value = state
         }
     }
@@ -451,6 +466,7 @@ internal class ConnectionOwner(
         token: SessionToken,
         generation: GatewayGeneration,
         capabilities: SessionCapabilitiesSnapshot,
+        progressCapability: RecordingProgressCapability,
     ): Boolean = synchronized(stateLock) {
         if (activeToken !== token || closed || capabilities.generation !== generation) {
             false
@@ -468,6 +484,7 @@ internal class ConnectionOwner(
             latestDvrCapabilityRevision = capabilities.revision
             retryDisposition = null
             mutableState.value = SessionState.Ready(capabilities.capabilities)
+            mutableRecordingProgressCapability.value = progressCapability
             true
         }
     }
@@ -505,6 +522,7 @@ internal class ConnectionOwner(
             admissionFailure = captureFailure(admissionFailure) { dvrProgress.stopAdmission() }
             admissionFailure = captureFailure(admissionFailure) { children.stopAdmission() }
             metadata.resetWorkingStateRetainingPublishedSnapshot()
+            mutableRecordingProgressCapability.value = RecordingProgressCapability.UNKNOWN
             mutableState.value = SessionState.Unavailable(failure)
             UnavailableCommit(committed = true, admissionFailure = admissionFailure)
         }
@@ -538,6 +556,18 @@ internal class ConnectionOwner(
                 mutableState.value is SessionState.Ready
             ) {
                 mutableState.value = SessionState.Ready(snapshot.capabilities)
+            }
+        }
+    }
+
+    internal fun applyRecordingProgressNotSupported(generation: GatewayGeneration) {
+        synchronized(stateLock) {
+            if (
+                !closed &&
+                activeGeneration === generation &&
+                mutableState.value is SessionState.Ready
+            ) {
+                mutableRecordingProgressCapability.value = RecordingProgressCapability.UNSUPPORTED
             }
         }
     }
