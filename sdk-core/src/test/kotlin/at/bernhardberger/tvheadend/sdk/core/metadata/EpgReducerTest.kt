@@ -198,8 +198,9 @@ internal class EpgReducerTest {
             ),
         )
 
+        val query = requireNotNull(reducer.beginQuery(ChannelId(2)))
         reducer.acceptSuccessfulQuery(
-            channelId = ChannelId(2),
+            query = query,
             queriedTo = instant(100),
             queriedEvents = listOf(
                 GatewayEpgQueryEvent(
@@ -239,6 +240,54 @@ internal class EpgReducerTest {
             instant(100),
             snapshot.coverages.first { it.channelId == ChannelId(2) }.queriedTo,
         )
+    }
+
+    @Test
+    fun `overlapping query fences retain authority until every older reply completes`() {
+        val reducer = EpgReducer()
+        addChannel(reducer, 1)
+        reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20, title = "old")))
+
+        val older = requireNotNull(reducer.beginQuery(ChannelId(1)))
+        reducer.accept(MetadataEvent.EventUpdated(generation, update(1, title = "async")))
+        val newer = requireNotNull(reducer.beginQuery(ChannelId(1)))
+
+        assertTrue(
+            reducer.acceptSuccessfulQuery(
+                query = newer,
+                queriedTo = instant(200),
+                queriedEvents = listOf(queryEvent(1, 1, 10, 20, title = "async")),
+            ),
+        )
+        assertTrue(
+            reducer.acceptSuccessfulQuery(
+                query = older,
+                queriedTo = instant(100),
+                queriedEvents = listOf(queryEvent(1, 1, 10, 20, title = "stale")),
+            ),
+        )
+        var snapshot = reducer.snapshot()
+        assertEquals("async", snapshot.events.single().title)
+        assertEquals(instant(200), snapshot.coverages.single().queriedTo)
+
+        val afterPrune = requireNotNull(reducer.beginQuery(ChannelId(1)))
+        assertTrue(
+            reducer.acceptSuccessfulQuery(
+                query = afterPrune,
+                queriedTo = instant(300),
+                queriedEvents = listOf(queryEvent(1, 1, 10, 20, title = "after")),
+            ),
+        )
+        assertFalse(
+            reducer.acceptSuccessfulQuery(
+                query = afterPrune,
+                queriedTo = instant(400),
+                queriedEvents = emptyList(),
+            ),
+        )
+        snapshot = reducer.snapshot()
+        assertEquals("after", snapshot.events.single().title)
+        assertEquals(instant(300), snapshot.coverages.single().queriedTo)
     }
 
     @Test
@@ -376,6 +425,20 @@ internal class EpgReducerTest {
         stop = stop?.let(::instant),
         title = title,
         categories = categories,
+    )
+
+    private fun queryEvent(
+        id: Long,
+        channelId: Long,
+        start: Long,
+        stop: Long,
+        title: String? = null,
+    ): GatewayEpgQueryEvent = GatewayEpgQueryEvent(
+        id = EventId(id),
+        channelId = ChannelId(channelId),
+        start = instant(start),
+        stop = instant(stop),
+        title = title,
     )
 
     private fun instant(seconds: Long): Instant = Instant.fromEpochSeconds(seconds)

@@ -79,6 +79,7 @@ internal fun epgQueryTarget(
     now: Instant,
     settings: EpgWorkerSettings,
 ): Instant? {
+    if (coverage.queriedTo == null) return now + settings.warmupHorizon
     val knownTo = coverage.knownTo
     val warmupTarget = now + settings.warmupHorizon
     if (knownTo == null || knownTo < warmupTarget) return warmupTarget
@@ -118,6 +119,7 @@ internal fun isEpgWarm(
     val requiredTo = now + settings.warmupHorizon
     return snapshot.coverages.all { coverage ->
         coverage.channelId in satisfiedChannelIds ||
+            coverage.queriedTo != null &&
             coverage.knownTo?.let { knownTo -> knownTo >= requiredTo } == true
     }
 }
@@ -227,21 +229,26 @@ internal class EpgWorker(
             }
             requests += async {
                 try {
-                    when (val result = queryEpg(generation, plan.channelId, plan.target)) {
-                        is GatewayResult.Ok -> metadata.applySuccessfulEpgQuery(
-                            generation = generation,
-                            channelId = plan.channelId,
-                            queriedTo = plan.target,
-                            events = result.value,
-                        )
-                        GatewayResult.AccessDenied,
-                        GatewayResult.NotSupported,
-                        -> synchronized(activityLock) { ineligible += plan.channelId }
-                        GatewayResult.ServerRejected,
-                        GatewayResult.ConnectionLimit,
-                        GatewayResult.Timeout,
-                        GatewayResult.TransportUnavailable,
-                        -> Unit
+                    val query = metadata.beginEpgQuery(generation, plan.channelId) ?: return@async
+                    try {
+                        when (val result = queryEpg(generation, plan.channelId, plan.target)) {
+                            is GatewayResult.Ok -> metadata.applySuccessfulEpgQuery(
+                                generation = generation,
+                                query = query,
+                                queriedTo = plan.target,
+                                events = result.value,
+                            )
+                            GatewayResult.AccessDenied,
+                            GatewayResult.NotSupported,
+                            -> synchronized(activityLock) { ineligible += plan.channelId }
+                            GatewayResult.ServerRejected,
+                            GatewayResult.ConnectionLimit,
+                            GatewayResult.Timeout,
+                            GatewayResult.TransportUnavailable,
+                            -> Unit
+                        }
+                    } finally {
+                        metadata.abandonEpgQuery(generation, query)
                     }
                 } catch (cancellation: CancellationException) {
                     throw cancellation

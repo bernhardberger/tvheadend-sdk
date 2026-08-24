@@ -76,6 +76,7 @@ import at.bernhardberger.tvheadend.htsp.requests.getDiskSpace
 import at.bernhardberger.tvheadend.htsp.requests.getDvrCutpoints
 import at.bernhardberger.tvheadend.htsp.requests.getDvrConfigs
 import at.bernhardberger.tvheadend.htsp.requests.getEvents
+import at.bernhardberger.tvheadend.htsp.requests.getSysTime
 import at.bernhardberger.tvheadend.htsp.requests.stopDvrEntry
 import at.bernhardberger.tvheadend.htsp.requests.subscribe
 import at.bernhardberger.tvheadend.htsp.requests.subscriptionLive
@@ -164,6 +165,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.transform
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
@@ -242,9 +244,28 @@ internal class HtspProtocolGateway internal constructor(
 
     override suspend fun enableInitialMetadata(
         generation: GatewayGeneration,
-    ): GatewayResult<Unit> = connection.enableAsyncMetadataAwaitingInitialSync(
-        expectedGeneration = htspGenerationFor(generation),
-    ).toGatewayResult {}
+    ): GatewayResult<Unit> {
+        val htspGeneration = htspGenerationFor(generation)
+        val protocolVersion = connection.commitIfLive(htspGeneration) { live ->
+            live.protocolVersion
+        }
+        val supportsAsyncEpg = protocolVersion != null &&
+            protocolVersion >= ASYNC_EPG_MINIMUM_PROTOCOL_VERSION
+        val epgMaxTime = if (supportsAsyncEpg) {
+            when (val serverTime = connection.getSysTime(expectedGeneration = htspGeneration)) {
+                is HtspResult.Ok -> serverTime.value.unixTimeSeconds +
+                    ASYNC_EPG_HORIZON.inWholeSeconds
+                else -> return serverTime.toGatewayResult {}
+            }
+        } else {
+            null
+        }
+        return connection.enableAsyncMetadataAwaitingInitialSync(
+            epg = ASYNC_EPG_ENABLED.takeIf { supportsAsyncEpg },
+            epgMaxTime = epgMaxTime,
+            expectedGeneration = htspGeneration,
+        ).toGatewayResult {}
+    }
 
     override suspend fun queryEpg(
         generation: GatewayGeneration,
@@ -1447,6 +1468,9 @@ private fun subscriptionCondition(
 private const val RECORDING_FILE_SELECTOR_PREFIX = "dvr/"
 private const val ABSOLUTE_SKIP_FLAG = 1L
 private const val RELATIVE_SKIP_FLAG = 0L
+private const val ASYNC_EPG_MINIMUM_PROTOCOL_VERSION = 6
+private const val ASYNC_EPG_ENABLED = 1L
+private val ASYNC_EPG_HORIZON = 24.hours
 
 private fun SubscribeResponse.toGatewayConfirmation(): SubscriptionConfirmation =
     SubscriptionConfirmation(

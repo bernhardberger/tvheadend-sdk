@@ -7,6 +7,8 @@ import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.EventId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgUpdate
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
@@ -34,7 +36,7 @@ import kotlin.time.Instant
 @OptIn(ExperimentalCoroutinesApi::class)
 internal class EpgWorkerTest {
     @Test
-    fun `defaults and target policy use known horizon for warmup and steady advancement`() {
+    fun `defaults and target policy require polling proof before steady advancement`() {
         val settings = EpgWorkerSettings()
         val now = instant(1_000)
         val channelId = ChannelId(1)
@@ -58,6 +60,13 @@ internal class EpgWorkerTest {
             epgQueryTarget(EpgCoverage.empty(channelId, now + 10.hours), now, settings),
         )
         assertNull(epgQueryTarget(EpgCoverage.empty(channelId, now + 20.hours), now, settings))
+        val asyncOnlyCoverage = EpgCoverage.create(
+            channelId = channelId,
+            coveredFrom = now,
+            coveredTo = now + 24.hours,
+        )
+        assertEquals(now + 4.hours, epgQueryTarget(asyncOnlyCoverage, now, settings))
+        assertFalse(isEpgWarm(EpgSnapshot.create(coverages = listOf(asyncOnlyCoverage)), now, settings))
         assertTrue(
             isEpgWarm(
                 EpgSnapshot.create(coverages = listOf(EpgCoverage.empty(channelId, now + 4.hours))),
@@ -153,6 +162,78 @@ internal class EpgWorkerTest {
         assertEquals((1L..8L).toList(), starts.map { it.first })
         assertEquals(listOf(1_500L, 1_750L), starts.takeLast(2).map { it.second })
         assertTrue(worker.isWarm)
+        job.cancelAndJoin()
+    }
+
+    @Test
+    fun `async delete after query dispatch prevents stale query resurrection`() = runTest {
+        val generation = GatewayGeneration()
+        val dispatched = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val metadata = synchronizedMetadata(generation, 1L..1L) {
+            acceptMetadata(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20)))
+        }
+        val worker = EpgWorker(
+            metadata = metadata,
+            clock = SchedulerClock { testScheduler.currentTime },
+            queryEpg = { _, _, _ ->
+                dispatched.complete(Unit)
+                release.await()
+                GatewayResult.Ok(listOf(queryEvent(1, 1, 10, 20, title = "stale")))
+            },
+        )
+        val job = backgroundScope.launch { worker.run(generation) }
+
+        runCurrent()
+        assertTrue(dispatched.isCompleted)
+        metadata.acceptMetadata(MetadataEvent.EventDeleted(generation, EventId(1)))
+        release.complete(Unit)
+        runCurrent()
+
+        val snapshot = (metadata.epgRepository.state.value as EpgRepositoryState.Current).snapshot
+        assertEquals(emptyList<Any>(), snapshot.events)
+        assertTrue(snapshot.coverages.single().queriedTo != null)
+        job.cancelAndJoin()
+    }
+
+    @Test
+    fun `async update after query dispatch remains authoritative over stale query fields`() = runTest {
+        val generation = GatewayGeneration()
+        val dispatched = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val metadata = synchronizedMetadata(generation, 1L..1L) {
+            acceptMetadata(
+                MetadataEvent.EventAdded(
+                    generation,
+                    timedEvent(1, 1, instant(10), instant(20), title = "old"),
+                ),
+            )
+        }
+        val worker = EpgWorker(
+            metadata = metadata,
+            clock = SchedulerClock { testScheduler.currentTime },
+            queryEpg = { _, _, _ ->
+                dispatched.complete(Unit)
+                release.await()
+                GatewayResult.Ok(listOf(queryEvent(1, 1, 10, 20, title = "old")))
+            },
+        )
+        val job = backgroundScope.launch { worker.run(generation) }
+
+        runCurrent()
+        assertTrue(dispatched.isCompleted)
+        metadata.acceptMetadata(
+            MetadataEvent.EventUpdated(
+                generation,
+                GatewayEpgUpdate(id = EventId(1), title = "new"),
+            ),
+        )
+        release.complete(Unit)
+        runCurrent()
+
+        val snapshot = (metadata.epgRepository.state.value as EpgRepositoryState.Current).snapshot
+        assertEquals("new", snapshot.events.single().title)
+        assertTrue(snapshot.coverages.single().queriedTo != null)
         job.cancelAndJoin()
     }
 
@@ -390,11 +471,27 @@ private fun timedEvent(
     channelId: Long,
     start: Instant,
     stop: Instant,
+    title: String? = null,
 ): GatewayEpgEvent = GatewayEpgEvent(
     id = EventId(id),
     channelId = ChannelId(channelId),
     start = start,
     stop = stop,
+    title = title,
+)
+
+private fun queryEvent(
+    id: Long,
+    channelId: Long,
+    start: Long,
+    stop: Long,
+    title: String? = null,
+): GatewayEpgQueryEvent = GatewayEpgQueryEvent(
+    id = EventId(id),
+    channelId = ChannelId(channelId),
+    start = instant(start),
+    stop = instant(stop),
+    title = title,
 )
 
 private fun instant(seconds: Long): Instant = Instant.fromEpochSeconds(seconds)

@@ -31,6 +31,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayServerFacts
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.metadata.ChannelTagReducer
 import at.bernhardberger.tvheadend.sdk.core.metadata.DvrReducer
+import at.bernhardberger.tvheadend.sdk.core.metadata.EpgQueryFence
 import at.bernhardberger.tvheadend.sdk.core.metadata.EpgReducer
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFile
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
@@ -95,9 +96,16 @@ internal interface SessionMetadata : ChannelRepository {
 
     public fun currentEpgSnapshot(generation: GatewayGeneration): EpgSnapshot?
 
-    public fun applySuccessfulEpgQuery(
+    public fun beginEpgQuery(
         generation: GatewayGeneration,
         channelId: ChannelId,
+    ): EpgQueryFence?
+
+    public fun abandonEpgQuery(generation: GatewayGeneration, query: EpgQueryFence)
+
+    public fun applySuccessfulEpgQuery(
+        generation: GatewayGeneration,
+        query: EpgQueryFence,
         queriedTo: Instant,
         events: List<GatewayEpgQueryEvent>,
     )
@@ -417,16 +425,34 @@ internal class PhaseOneSessionMetadata(
         }
     }
 
-    override fun applySuccessfulEpgQuery(
+    override fun beginEpgQuery(
         generation: GatewayGeneration,
         channelId: ChannelId,
+    ): EpgQueryFence? = synchronized(lock) {
+        if (this.generation !== generation || !synchronizedCurrent) {
+            null
+        } else {
+            epgReducer.beginQuery(channelId)
+        }
+    }
+
+    override fun abandonEpgQuery(generation: GatewayGeneration, query: EpgQueryFence) {
+        synchronized(lock) {
+            if (this.generation === generation) epgReducer.abandonQuery(query)
+        }
+    }
+
+    override fun applySuccessfulEpgQuery(
+        generation: GatewayGeneration,
+        query: EpgQueryFence,
         queriedTo: Instant,
         events: List<GatewayEpgQueryEvent>,
     ) {
         synchronized(lock) {
             if (this.generation === generation && synchronizedCurrent) {
-                epgReducer.acceptSuccessfulQuery(channelId, queriedTo, events)
-                publishCurrentEpg(epgReducer.snapshot())
+                if (epgReducer.acceptSuccessfulQuery(query, queriedTo, events)) {
+                    publishCurrentEpg(epgReducer.snapshot())
+                }
             }
         }
     }

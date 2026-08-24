@@ -82,6 +82,8 @@ import at.bernhardberger.tvheadend.htsp.requests.GetDvrCutpointsRequest
 import at.bernhardberger.tvheadend.htsp.requests.GetDvrCutpointsResponse
 import at.bernhardberger.tvheadend.htsp.requests.GetEventsRequest
 import at.bernhardberger.tvheadend.htsp.requests.GetEventsResponse
+import at.bernhardberger.tvheadend.htsp.requests.GetSysTimeRequest
+import at.bernhardberger.tvheadend.htsp.requests.GetSysTimeResponse
 import at.bernhardberger.tvheadend.htsp.requests.HtspDvrConfig
 import at.bernhardberger.tvheadend.htsp.requests.HtspDvrCutpoint
 import at.bernhardberger.tvheadend.htsp.requests.HtspChannelService
@@ -867,6 +869,76 @@ internal class HtspProtocolGatewayTest {
     }
 
     @Test
+    fun `initial metadata uses server time for bounded async EPG with legacy fallback`() = runTest {
+        val serverNow = 1_000_000L
+        val serverTime = GetSysTimeResponse(
+            unixTimeSeconds = serverNow,
+            legacyTimezoneHoursWestOfGmt = 0,
+            gmtOffsetMinutes = 0,
+        )
+
+        suspend fun requestFor(
+            protocolVersion: Int,
+            serverTimeResult: HtspResult<GetSysTimeResponse> = HtspResult.Ok(serverTime),
+        ): Pair<GatewayResult<Unit>, List<HtspRequest<*>>> {
+            val sourceGeneration = HtspConnectionGeneration()
+            val metadataEvents = MutableSharedFlow<HtspTransportEvent>()
+            val requests = mutableListOf<HtspRequest<*>>()
+            val fake = FakeHtspConnection().apply {
+                liveConnectionValue.value = liveConnection(sourceGeneration, protocolVersion)
+                connectOutcome = HtspConnectOutcome.Connected(requireNotNull(liveConnectionValue.value))
+                eventsFlow = metadataEvents
+                beforeExecute = { request ->
+                    requests += request
+                    when (request) {
+                        is GetSysTimeRequest -> executeResult = serverTimeResult
+                        is EnableAsyncMetadataRequest -> {
+                            executeResult = HtspResult.Ok(HtspEmptyResponse)
+                            metadataEvents.emit(
+                                HtspTransportEvent.ServerMessage(
+                                    message = HtspInitialSyncCompletedMessage,
+                                    generation = sourceGeneration,
+                                    messageSequence = 1,
+                                ),
+                            )
+                        }
+                        else -> error("Unexpected initial metadata request")
+                    }
+                }
+            }
+            val gateway = HtspProtocolGateway(fake)
+            val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+                as GatewayConnectResult.Connected).connection.generation
+
+            val result = gateway.enableInitialMetadata(generation)
+            assertSame(sourceGeneration, fake.lastExpectedGeneration)
+            return result to requests
+        }
+
+        val (supportedResult, supportedRequests) = requestFor(protocolVersion = 6)
+        assertTrue(supportedResult is GatewayResult.Ok)
+        assertTrue(supportedRequests.singleOrNull { it is GetSysTimeRequest } is GetSysTimeRequest)
+        val supported = supportedRequests.last() as EnableAsyncMetadataRequest
+        assertEquals(1L, supported.epg)
+        assertEquals(serverNow + 86_400L, supported.epgMaxTime)
+        assertEquals(6, supported.minimumProtocolVersion)
+
+        val (legacyResult, legacyRequests) = requestFor(protocolVersion = 5)
+        assertTrue(legacyResult is GatewayResult.Ok)
+        val legacy = legacyRequests.single() as EnableAsyncMetadataRequest
+        assertEquals(null, legacy.epg)
+        assertEquals(null, legacy.epgMaxTime)
+        assertEquals(null, legacy.minimumProtocolVersion)
+
+        val (failure, failedRequests) = requestFor(
+            protocolVersion = 6,
+            serverTimeResult = HtspResult.Timeout,
+        )
+        assertSame(GatewayResult.Timeout, failure)
+        assertTrue(failedRequests.single() is GetSysTimeRequest)
+    }
+
+    @Test
     fun `DVR configs and disk space map generation results failures and redaction`() = runTest {
         val sourceGeneration = HtspConnectionGeneration()
         val fake = FakeHtspConnection().apply {
@@ -1412,14 +1484,25 @@ internal class HtspProtocolGatewayTest {
             connectOutcome = HtspConnectOutcome.Connected(requireNotNull(liveConnectionValue.value))
             eventsFlow = metadataEvents
             beforeExecute = { request ->
-                if (request is EnableAsyncMetadataRequest) {
-                    metadataEvents.emit(
-                        HtspTransportEvent.ServerMessage(
-                            message = HtspInitialSyncCompletedMessage,
-                            generation = sourceGeneration,
-                            messageSequence = 1,
+                when (request) {
+                    is GetSysTimeRequest -> executeResult = HtspResult.Ok(
+                        GetSysTimeResponse(
+                            unixTimeSeconds = 1_000_000L,
+                            legacyTimezoneHoursWestOfGmt = 0,
+                            gmtOffsetMinutes = 0,
                         ),
                     )
+                    is EnableAsyncMetadataRequest -> {
+                        executeResult = HtspResult.Ok(HtspEmptyResponse)
+                        metadataEvents.emit(
+                            HtspTransportEvent.ServerMessage(
+                                message = HtspInitialSyncCompletedMessage,
+                                generation = sourceGeneration,
+                                messageSequence = 1,
+                            ),
+                        )
+                    }
+                    else -> Unit
                 }
             }
         }
@@ -1989,10 +2072,13 @@ internal class HtspProtocolGatewayTest {
         assertEquals(sourceTerminations.size, terminations.distinct().size)
     }
 
-    private fun liveConnection(generation: HtspConnectionGeneration): HtspLiveConnection =
+    private fun liveConnection(
+        generation: HtspConnectionGeneration,
+        protocolVersion: Int? = 43,
+    ): HtspLiveConnection =
         HtspLiveConnection(
             generation = generation,
-            protocolVersion = 43,
+            protocolVersion = protocolVersion,
             dvrAccess = true,
             serverFacts = HtspServerFacts(),
         )

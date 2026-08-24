@@ -34,6 +34,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -623,12 +624,13 @@ internal class PhaseOneSessionMetadataTest {
     }
 
     @Test
-    fun `successful query applies events and horizon together only to a current channel`() {
+    fun `successful query applies events and horizon together only to a current channel lifetime`() {
         val metadata = PhaseOneSessionMetadata()
         val stale = GatewayGeneration()
         val current = GatewayGeneration()
         metadata.bindGeneration(current)
         metadata.acceptMetadata(MetadataEvent.ChannelAdded(current, channel(id = 1)))
+        assertNull(metadata.beginEpgQuery(current, ChannelId(1)))
         metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(current))
         val original = metadata.epgRepository.state.value
         val event = GatewayEpgQueryEvent(
@@ -639,17 +641,14 @@ internal class PhaseOneSessionMetadataTest {
             title = "private-title",
         )
 
-        metadata.applySuccessfulEpgQuery(
-            stale,
-            ChannelId(1),
-            Instant.fromEpochSeconds(100),
-            listOf(event),
-        )
+        assertNull(metadata.beginEpgQuery(stale, ChannelId(1)))
         assertSame(original, metadata.epgRepository.state.value)
 
+        val currentQuery = requireNotNull(metadata.beginEpgQuery(current, ChannelId(1)))
+        metadata.acceptMetadata(MetadataEvent.ChannelUpdated(current, channel(id = 1)))
         metadata.applySuccessfulEpgQuery(
             current,
-            ChannelId(1),
+            currentQuery,
             Instant.fromEpochSeconds(100),
             listOf(event),
         )
@@ -657,16 +656,19 @@ internal class PhaseOneSessionMetadataTest {
         assertEquals(listOf(10L), snapshot?.events?.map { it.id.value })
         assertEquals(Instant.fromEpochSeconds(100), snapshot?.coverages?.single()?.queriedTo)
 
+        val overtakenQuery = requireNotNull(metadata.beginEpgQuery(current, ChannelId(1)))
         metadata.acceptMetadata(MetadataEvent.ChannelDeleted(current, ChannelId(1)))
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(current, channel(id = 1)))
         metadata.applySuccessfulEpgQuery(
             current,
-            ChannelId(1),
+            overtakenQuery,
             Instant.fromEpochSeconds(200),
             listOf(event),
         )
         snapshot = metadata.currentEpgSnapshot(current)
         assertEquals(emptyList<Any>(), snapshot?.events)
-        assertEquals(emptyList<Any>(), snapshot?.coverages)
+        assertTrue(requireNotNull(snapshot).coverages.single().isEmpty)
+        assertNull(snapshot.coverages.single().queriedTo)
         assertFalse(
             metadata.epgRepository.state.value.toString().contains("private"),
             "Query publication rendering exposed programme data",

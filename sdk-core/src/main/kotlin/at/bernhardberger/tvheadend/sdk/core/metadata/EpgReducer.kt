@@ -323,25 +323,58 @@ internal data class ReducedEpgEvent private constructor(
     }
 }
 
+internal class EpgQueryFence(
+    internal val channelId: ChannelId,
+    internal val authorityRevision: Long,
+) {
+    override fun toString(): String = "EpgQueryFence(<redacted>)"
+}
+
 internal class EpgReducer {
     private val events = linkedMapOf<EventId, ReducedEpgEvent>()
     private val channelIds = linkedSetOf<ChannelId>()
     private val queriedToByChannel = linkedMapOf<ChannelId, Instant>()
+    // Mutation revisions exist only while an older in-flight query can still observe them.
+    private val activeQueries = linkedSetOf<EpgQueryFence>()
+    private val eventAuthorityRevisions = linkedMapOf<EventId, Long>()
+    private val channelAuthorityRevisions = linkedMapOf<ChannelId, Long>()
+    private var authorityRevision = 0L
 
     internal fun clear() {
         events.clear()
         channelIds.clear()
         queriedToByChannel.clear()
+        activeQueries.clear()
+        eventAuthorityRevisions.clear()
+        channelAuthorityRevisions.clear()
+        authorityRevision = 0L
     }
 
     internal fun accept(event: MetadataEvent) {
         when (event) {
-            is MetadataEvent.ChannelAdded -> channelIds.add(event.channel.id)
-            is MetadataEvent.ChannelUpdated -> channelIds.add(event.channel.id)
-            is MetadataEvent.ChannelDeleted -> removeChannel(event.channelId)
-            is MetadataEvent.EventAdded -> acceptAdd(event.event)
-            is MetadataEvent.EventUpdated -> acceptUpdate(event.event)
-            is MetadataEvent.EventDeleted -> events.remove(event.eventId)
+            is MetadataEvent.ChannelAdded -> {
+                recordChannelAuthority(event.channel.id)
+                channelIds.add(event.channel.id)
+            }
+            is MetadataEvent.ChannelUpdated -> {
+                channelIds.add(event.channel.id)
+            }
+            is MetadataEvent.ChannelDeleted -> {
+                recordChannelAuthority(event.channelId)
+                removeChannel(event.channelId)
+            }
+            is MetadataEvent.EventAdded -> {
+                recordEventAuthority(event.event.id)
+                acceptAdd(event.event)
+            }
+            is MetadataEvent.EventUpdated -> {
+                recordEventAuthority(event.event.id)
+                acceptUpdate(event.event)
+            }
+            is MetadataEvent.EventDeleted -> {
+                recordEventAuthority(event.eventId)
+                events.remove(event.eventId)
+            }
             is MetadataEvent.TagAdded,
             is MetadataEvent.TagUpdated,
             is MetadataEvent.TagDeleted,
@@ -370,6 +403,17 @@ internal class EpgReducer {
         queriedToByChannel.keys.retainAll(valid)
     }
 
+    internal fun beginQuery(channelId: ChannelId): EpgQueryFence? {
+        if (channelId !in channelIds) return null
+        return EpgQueryFence(channelId, authorityRevision).also { query ->
+            activeQueries += query
+        }
+    }
+
+    internal fun abandonQuery(query: EpgQueryFence) {
+        if (activeQueries.remove(query)) pruneQueryAuthority()
+    }
+
     internal fun recordSuccessfulQuery(channelId: ChannelId, queriedTo: Instant) {
         if (channelId !in channelIds) return
         val previous = queriedToByChannel[channelId]
@@ -379,18 +423,37 @@ internal class EpgReducer {
     }
 
     internal fun acceptSuccessfulQuery(
-        channelId: ChannelId,
+        query: EpgQueryFence,
         queriedTo: Instant,
         queriedEvents: List<GatewayEpgQueryEvent>,
-    ) {
-        if (channelId !in channelIds) return
-        queriedEvents.forEach { event ->
-            if (event.channelId != null && event.channelId != channelId) return@forEach
-            val candidate = events[event.id]?.replaceFromQuery(event)
-                ?: ReducedEpgEvent.fromQuery(event)
-            if (candidate != null) events[event.id] = candidate
+    ): Boolean {
+        if (!activeQueries.remove(query)) return false
+        return try {
+            if (
+                query.channelId !in channelIds ||
+                channelAuthorityRevisions[query.channelId]
+                    ?.let { revision -> revision > query.authorityRevision } == true
+            ) {
+                false
+            } else {
+                queriedEvents.forEach { event ->
+                    if (event.channelId != null && event.channelId != query.channelId) return@forEach
+                    if (
+                        eventAuthorityRevisions[event.id]
+                            ?.let { revision -> revision > query.authorityRevision } == true
+                    ) {
+                        return@forEach
+                    }
+                    val candidate = events[event.id]?.replaceFromQuery(event)
+                        ?: ReducedEpgEvent.fromQuery(event)
+                    if (candidate != null) events[event.id] = candidate
+                }
+                recordSuccessfulQuery(query.channelId, queriedTo)
+                true
+            }
+        } finally {
+            pruneQueryAuthority()
         }
-        recordSuccessfulQuery(channelId, queriedTo)
     }
 
     internal fun retainOverlapping(from: Instant, to: Instant) {
@@ -422,6 +485,34 @@ internal class EpgReducer {
         } ?: return
         if (current == null && candidate.start == null && candidate.stop == null) return
         events[update.id] = candidate
+    }
+
+    private fun recordEventAuthority(eventId: EventId) {
+        if (activeQueries.isEmpty()) return
+        authorityRevision += 1
+        eventAuthorityRevisions[eventId] = authorityRevision
+    }
+
+    private fun recordChannelAuthority(channelId: ChannelId) {
+        if (activeQueries.isEmpty()) return
+        authorityRevision += 1
+        channelAuthorityRevisions[channelId] = authorityRevision
+    }
+
+    private fun pruneQueryAuthority() {
+        val oldestActiveRevision = activeQueries.minOfOrNull(EpgQueryFence::authorityRevision)
+        if (oldestActiveRevision == null) {
+            eventAuthorityRevisions.clear()
+            channelAuthorityRevisions.clear()
+            authorityRevision = 0L
+        } else {
+            eventAuthorityRevisions.entries.removeIf { entry ->
+                entry.value <= oldestActiveRevision
+            }
+            channelAuthorityRevisions.entries.removeIf { entry ->
+                entry.value <= oldestActiveRevision
+            }
+        }
     }
 
     private fun removeChannel(channelId: ChannelId) {
