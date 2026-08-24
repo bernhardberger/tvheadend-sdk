@@ -122,6 +122,7 @@ import at.bernhardberger.tvheadend.sdk.core.EventId
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleId
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
+import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.RecordingRuleChannel
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
@@ -1865,6 +1866,179 @@ internal class HtspProtocolGatewayTest {
     }
 
     @Test
+    fun `artwork access preserves bytes when handle close reports a failure`() = runTest {
+        val sourceGeneration = HtspConnectionGeneration()
+        val requests = ArrayList<HtspRequest<*>>()
+        val fake = FakeHtspConnection().apply {
+            liveConnectionValue.value = liveConnection(sourceGeneration)
+            connectOutcome = HtspConnectOutcome.Connected(requireNotNull(liveConnectionValue.value))
+            beforeExecute = { request ->
+                requests += request
+                executeResult = when (request) {
+                    is FileOpenRequest -> HtspResult.Ok(
+                        FileOpenResponse(id = 31, sizeBytes = 5, modifiedAtUnixSeconds = null),
+                    )
+                    is FileReadRequest -> HtspResult.Ok(
+                        FileReadResponse(
+                            HtspBinary(
+                                if (request.offset == 0L) byteArrayOf(1, 2, 3)
+                                else byteArrayOf(4, 5),
+                            ),
+                        ),
+                    )
+                    is FileCloseRequest -> HtspResult.Timeout
+                    else -> error("Unexpected request type")
+                }
+            }
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+
+        val result = gateway.loadArtwork(generation, ArtworkId(73)) as GatewayResult.Ok
+
+        assertArrayEquals(byteArrayOf(1, 2, 3, 4, 5), result.value)
+        assertEquals("imagecache/73", (requests[0] as FileOpenRequest).file)
+        assertEquals(listOf(0L, 3L), requests.filterIsInstance<FileReadRequest>().map { it.offset })
+        val close = requests.last() as FileCloseRequest
+        assertEquals(31L, close.id)
+        assertEquals(null, close.playCount)
+        assertEquals(null, close.playPositionSeconds)
+        assertSame(sourceGeneration, fake.lastExpectedGeneration)
+        assertTrue(fake.expectedGenerations.all { it === sourceGeneration })
+
+        gateway.shutdown()
+    }
+
+    @Test
+    fun `artwork access reads an unknown size until the first empty response`() = runTest {
+        val sourceGeneration = HtspConnectionGeneration()
+        val requests = ArrayList<HtspRequest<*>>()
+        val fake = FakeHtspConnection().apply {
+            liveConnectionValue.value = liveConnection(sourceGeneration)
+            connectOutcome = HtspConnectOutcome.Connected(requireNotNull(liveConnectionValue.value))
+            beforeExecute = { request ->
+                requests += request
+                executeResult = when (request) {
+                    is FileOpenRequest -> HtspResult.Ok(
+                        FileOpenResponse(id = 37, sizeBytes = null, modifiedAtUnixSeconds = null),
+                    )
+                    is FileReadRequest -> HtspResult.Ok(
+                        FileReadResponse(
+                            HtspBinary(
+                                when (request.offset) {
+                                    0L -> byteArrayOf(1, 2)
+                                    2L -> byteArrayOf(3)
+                                    else -> byteArrayOf()
+                                },
+                            ),
+                        ),
+                    )
+                    is FileCloseRequest -> HtspResult.Ok(FileCloseResponse)
+                    else -> error("Unexpected request type")
+                }
+            }
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+
+        val result = gateway.loadArtwork(generation, ArtworkId(81)) as GatewayResult.Ok
+
+        assertArrayEquals(byteArrayOf(1, 2, 3), result.value)
+        assertEquals(listOf(0L, 2L, 3L), requests.filterIsInstance<FileReadRequest>().map { it.offset })
+        assertTrue(requests.last() is FileCloseRequest)
+        assertSame(sourceGeneration, fake.lastExpectedGeneration)
+        assertTrue(fake.expectedGenerations.all { it === sourceGeneration })
+
+        gateway.shutdown()
+    }
+
+    @Test
+    fun `unknown size artwork rejects the first byte beyond the total limit`() = runTest {
+        val sourceGeneration = HtspConnectionGeneration()
+        val requests = ArrayList<HtspRequest<*>>()
+        val fake = FakeHtspConnection().apply {
+            liveConnectionValue.value = liveConnection(sourceGeneration)
+            connectOutcome = HtspConnectOutcome.Connected(requireNotNull(liveConnectionValue.value))
+            beforeExecute = { request ->
+                requests += request
+                executeResult = when (request) {
+                    is FileOpenRequest -> HtspResult.Ok(
+                        FileOpenResponse(id = 43, sizeBytes = null, modifiedAtUnixSeconds = null),
+                    )
+                    is FileReadRequest -> HtspResult.Ok(
+                        FileReadResponse(HtspBinary(ByteArray(request.size.toInt()) { 1 })),
+                    )
+                    is FileCloseRequest -> HtspResult.Ok(FileCloseResponse)
+                    else -> error("Unexpected request type")
+                }
+            }
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+
+        assertSame(GatewayResult.ServerRejected, gateway.loadArtwork(generation, ArtworkId(83)))
+
+        val reads = requests.filterIsInstance<FileReadRequest>()
+        assertEquals(16L * 1024 * 1024, reads.last().offset)
+        assertEquals(1L, reads.last().size)
+        assertTrue(requests.last() is FileCloseRequest)
+        assertTrue(fake.expectedGenerations.all { it === sourceGeneration })
+
+        gateway.shutdown()
+    }
+
+    @Test
+    fun `artwork access rejects oversized content and closes after cancellation`() = runTest {
+        val sourceGeneration = HtspConnectionGeneration()
+        val requests = ArrayList<HtspRequest<*>>()
+        val cancellation = CancellationException("private cancellation")
+        var cancelRead = false
+        val fake = FakeHtspConnection().apply {
+            liveConnectionValue.value = liveConnection(sourceGeneration)
+            connectOutcome = HtspConnectOutcome.Connected(requireNotNull(liveConnectionValue.value))
+            beforeExecute = { request ->
+                requests += request
+                executeResult = when (request) {
+                    is FileOpenRequest -> HtspResult.Ok(
+                        FileOpenResponse(
+                            id = 41,
+                            sizeBytes = if (cancelRead) null else 16L * 1024 * 1024 + 1,
+                            modifiedAtUnixSeconds = null,
+                        ),
+                    )
+                    is FileReadRequest -> throw cancellation
+                    is FileCloseRequest -> HtspResult.Ok(FileCloseResponse)
+                    else -> error("Unexpected request type")
+                }
+            }
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+
+        assertSame(GatewayResult.ServerRejected, gateway.loadArtwork(generation, ArtworkId(7)))
+        assertTrue(requests.none { it is FileReadRequest })
+        assertTrue(requests.last() is FileCloseRequest)
+
+        requests.clear()
+        cancelRead = true
+        var caught: CancellationException? = null
+        try {
+            gateway.loadArtwork(generation, ArtworkId(8))
+        } catch (failure: CancellationException) {
+            caught = failure
+        }
+        assertSame(cancellation, caught)
+        assertTrue(requests.any { it is FileReadRequest })
+        assertTrue(requests.last() is FileCloseRequest)
+
+        gateway.shutdown()
+    }
+
+    @Test
     fun `recording file close omits the play count below the progress protocol version`() = runTest {
         val sourceGeneration = HtspConnectionGeneration()
         val legacy = HtspLiveConnection(
@@ -2164,6 +2338,7 @@ private class FakeHtspConnection : HtspConnection {
     internal var beforeExecute: suspend (HtspRequest<*>) -> Unit = {}
     internal var lastEndpoint: HtspEndpoint? = null
     internal var lastExpectedGeneration: HtspConnectionGeneration? = null
+    internal val expectedGenerations = ArrayList<HtspConnectionGeneration?>()
     internal var lastRequest: HtspRequest<*>? = null
     internal var lastSubscriptionId: Long? = null
     internal var lastSubscriptionExpectedGeneration: HtspConnectionGeneration? = null
@@ -2198,6 +2373,7 @@ private class FakeHtspConnection : HtspConnection {
         executeException?.let { throw it }
         lastRequest = request
         lastExpectedGeneration = expectedGeneration
+        expectedGenerations += expectedGeneration
         beforeExecute(request)
         return executeResult as HtspResult<R>
     }

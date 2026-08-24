@@ -54,6 +54,7 @@ kotlin {
 
 dependencies {
     api(project(":sdk-core"))
+    api(libs.coil.core)
     api(libs.kotlinx.coroutines.core)
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.tink.android)

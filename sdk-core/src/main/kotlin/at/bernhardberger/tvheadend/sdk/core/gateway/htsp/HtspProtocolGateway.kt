@@ -89,6 +89,7 @@ import at.bernhardberger.tvheadend.htsp.requests.updateTimerecEntry
 import at.bernhardberger.tvheadend.htsp.wire.HtspBinary
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
+import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
 import at.bernhardberger.tvheadend.sdk.core.DvrCutpoint
 import at.bernhardberger.tvheadend.sdk.core.DvrCutpointAction
@@ -155,17 +156,22 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStream
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTermination
+import java.io.ByteArrayOutputStream
 import java.lang.ref.WeakReference
 import java.util.Collections
 import java.util.WeakHashMap
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
 import kotlinx.coroutines.InternalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.transform
+import kotlinx.coroutines.withContext
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
@@ -519,6 +525,112 @@ internal class HtspProtocolGateway internal constructor(
         playPosition = progress.position.inWholeSeconds,
         expectedGeneration = htspGenerationFor(generation),
     ).toCheckedGatewayResult(::acceptedDvrAcknowledgement)
+
+    override suspend fun loadArtwork(
+        generation: GatewayGeneration,
+        id: ArtworkId,
+    ): GatewayResult<ByteArray> {
+        val htspGeneration = htspGenerationFor(generation)
+        val opened = when (
+            val opening = connection.fileOpen(
+                file = "$ARTWORK_FILE_SELECTOR_PREFIX${id.value}",
+                expectedGeneration = htspGeneration,
+            ).toGatewayResult { response -> response }
+        ) {
+            is GatewayResult.Ok -> opening.value
+            GatewayResult.ServerRejected -> return GatewayResult.ServerRejected
+            GatewayResult.AccessDenied -> return GatewayResult.AccessDenied
+            GatewayResult.ConnectionLimit -> return GatewayResult.ConnectionLimit
+            GatewayResult.Timeout -> return GatewayResult.Timeout
+            GatewayResult.TransportUnavailable -> return GatewayResult.TransportUnavailable
+            GatewayResult.NotSupported -> return GatewayResult.NotSupported
+        }
+
+        val outcome = try {
+            if (opened.sizeBytes != null && opened.sizeBytes !in 0L..MAX_ARTWORK_BYTES.toLong()) {
+                GatewayResult.ServerRejected
+            } else {
+                readArtwork(opened.id, opened.sizeBytes?.toInt(), htspGeneration)
+            }
+        } finally {
+            withContext(NonCancellable) {
+                connection.fileClose(
+                    id = opened.id,
+                    expectedGeneration = htspGeneration,
+                ).toGatewayResult {}
+            }
+        }
+        currentCoroutineContext().ensureActive()
+        return outcome
+    }
+
+    private suspend fun readArtwork(
+        handleId: Long,
+        expectedSize: Int?,
+        generation: HtspConnectionGeneration,
+    ): GatewayResult<ByteArray> {
+        if (expectedSize != null) {
+            val destination = ByteArray(expectedSize)
+            var offset = 0
+            while (offset < destination.size) {
+                val requested = minOf(ARTWORK_READ_CHUNK_BYTES, destination.size - offset)
+                when (
+                    val reading = connection.fileRead(
+                        id = handleId,
+                        size = requested.toLong(),
+                        offset = offset.toLong(),
+                        expectedGeneration = generation,
+                    ).toGatewayResult { response -> response.data }
+                ) {
+                    is GatewayResult.Ok -> {
+                        val data = reading.value
+                        if (data.size !in 1..requested) return GatewayResult.ServerRejected
+                        data.copyInto(destination, offset)
+                        offset += data.size
+                    }
+                    GatewayResult.ServerRejected -> return GatewayResult.ServerRejected
+                    GatewayResult.AccessDenied -> return GatewayResult.AccessDenied
+                    GatewayResult.ConnectionLimit -> return GatewayResult.ConnectionLimit
+                    GatewayResult.Timeout -> return GatewayResult.Timeout
+                    GatewayResult.TransportUnavailable -> return GatewayResult.TransportUnavailable
+                    GatewayResult.NotSupported -> return GatewayResult.NotSupported
+                }
+            }
+            return GatewayResult.Ok(destination)
+        }
+
+        val output = ByteArrayOutputStream()
+        val chunk = ByteArray(ARTWORK_READ_CHUNK_BYTES)
+        var offset = 0L
+        while (true) {
+            val requested = minOf(
+                ARTWORK_READ_CHUNK_BYTES,
+                MAX_ARTWORK_BYTES + 1 - output.size(),
+            )
+            val data = when (
+                val reading = connection.fileRead(
+                    id = handleId,
+                    size = requested.toLong(),
+                    offset = offset,
+                    expectedGeneration = generation,
+                ).toGatewayResult { response -> response.data }
+            ) {
+                is GatewayResult.Ok -> reading.value
+                GatewayResult.ServerRejected -> return GatewayResult.ServerRejected
+                GatewayResult.AccessDenied -> return GatewayResult.AccessDenied
+                GatewayResult.ConnectionLimit -> return GatewayResult.ConnectionLimit
+                GatewayResult.Timeout -> return GatewayResult.Timeout
+                GatewayResult.TransportUnavailable -> return GatewayResult.TransportUnavailable
+                GatewayResult.NotSupported -> return GatewayResult.NotSupported
+            }
+            if (data.size > requested) return GatewayResult.ServerRejected
+            if (data.size == 0) return GatewayResult.Ok(output.toByteArray())
+            if (output.size() + data.size > MAX_ARTWORK_BYTES) return GatewayResult.ServerRejected
+            data.copyInto(chunk)
+            output.write(chunk, 0, data.size)
+            offset += data.size
+        }
+    }
 
     /**
      * Opens the stored file of one DVR entry using TVHeadend's `dvr/<id>` selector.
@@ -1509,6 +1621,9 @@ private fun subscriptionCondition(
 }
 
 private const val RECORDING_FILE_SELECTOR_PREFIX = "dvr/"
+private const val ARTWORK_FILE_SELECTOR_PREFIX = "imagecache/"
+private const val ARTWORK_READ_CHUNK_BYTES = 64 * 1024
+private const val MAX_ARTWORK_BYTES = 16 * 1024 * 1024
 private const val ABSOLUTE_SKIP_FLAG = 1L
 private const val RELATIVE_SKIP_FLAG = 0L
 private const val ASYNC_EPG_MINIMUM_PROTOCOL_VERSION = 6

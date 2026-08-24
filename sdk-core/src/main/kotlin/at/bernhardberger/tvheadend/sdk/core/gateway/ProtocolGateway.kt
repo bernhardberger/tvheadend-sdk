@@ -2,6 +2,7 @@ package at.bernhardberger.tvheadend.sdk.core.gateway
 
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
+import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
 import at.bernhardberger.tvheadend.sdk.core.DvrCutpoint
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
@@ -124,6 +125,11 @@ internal interface ProtocolGateway {
         id: DvrEntryId,
         progress: DvrPlaybackProgress,
     ): GatewayResult<Unit>
+
+    public suspend fun loadArtwork(
+        generation: GatewayGeneration,
+        id: ArtworkId,
+    ): GatewayResult<ByteArray> = GatewayResult.NotSupported
 
     public suspend fun openRecordingFile(
         generation: GatewayGeneration,

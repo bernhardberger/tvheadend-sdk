@@ -66,6 +66,16 @@ internal class ModuleBoundaryTest {
     }
 
     @Test
+    fun `only the Android service module imports Coil`() {
+        modulePackages.keys.filterNot { module -> module == "sdk-android" }.forEach { module ->
+            productionScope(module).files.assertTrue { file ->
+                !file.text.contains("coil3.") &&
+                    file.imports.none { declaration -> declaration.name.startsWith("coil3.") }
+            }
+        }
+    }
+
+    @Test
     fun `only the core gateway implementation may import HTSP`() {
         modulePackages.keys.forEach { module ->
             productionScope(module).files.assertTrue { file ->
@@ -117,6 +127,11 @@ internal class ModuleBoundaryTest {
         val actual = publicType.findAll(coreApi).map { match -> match.groupValues[1] }.toSet()
         val expected = setOf(
             "ChannelId",
+            "ArtworkId",
+            "ArtworkFailure",
+            "ArtworkContent",
+            "ArtworkLoadResult",
+            "ArtworkLoader",
             "ChannelTagId",
             "EventId",
             "EpgEpisodeId",
@@ -332,6 +347,8 @@ internal class ModuleBoundaryTest {
             "TvheadendConnectivity",
             "TvheadendConnectivityStatus",
             "TvheadendCredentialStore",
+            "TvheadendArtwork",
+            "createTvheadendArtworkFetcherFactory",
         )
 
         assertPublicInfrastructure("sdk-android", expectedAndroid, unannotatedCount = expectedAndroid.size)
@@ -393,6 +410,7 @@ internal class ModuleBoundaryTest {
                 function.hasPublicOrDefaultModifier &&
                     function.name in setOf(
                         "createTvheadendSession",
+                        "createTvheadendArtworkFetcherFactory",
                         "createSubscriptionManager",
                         "createRecordingFileReader",
                         "createTvheadendLiveMediaSource",

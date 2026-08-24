@@ -34,6 +34,9 @@ public interface TvheadendSession {
     /** Recording entries, rules, configurations, and disk space for the selected server profile. */
     public val dvrRepository: DvrRepository
 
+    /** Generation-bound authenticated artwork loader used by platform image integrations. */
+    public val artwork: ArtworkLoader
+
     /** Generation-bound subscription entry point used by SDK playback adapters. */
     @SubscriptionInfrastructureApi
     public val subscriptions: SubscriptionOpener

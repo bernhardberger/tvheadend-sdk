@@ -5,6 +5,9 @@ package at.bernhardberger.tvheadend.sdk.core.session
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleId
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
+import at.bernhardberger.tvheadend.sdk.core.ArtworkFailure
+import at.bernhardberger.tvheadend.sdk.core.ArtworkId
+import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
 import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
 import at.bernhardberger.tvheadend.sdk.core.DvrCutpoint
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
@@ -491,6 +494,59 @@ class SessionSubscriptionsTest {
 
         children.closeAndJoinSubscriptions()
     }
+
+    @Test
+    fun `artwork loads bind one generation and publish only safe typed results`() = runTest {
+        val gateway = SubscriptionGateway()
+        val children = PlaybackSessionChildren(
+            gateway,
+            PhaseOneSessionMetadata(),
+            StandardTestDispatcher(testScheduler),
+        )
+        val artworkId = ArtworkId(17)
+
+        assertSame(
+            ArtworkFailure.CONNECTION_CHANGED,
+            (children.loadArtwork(artworkId) as ArtworkLoadResult.Unavailable).failure,
+        )
+
+        val generation = GatewayGeneration()
+        children.bindGeneration(generation)
+        val source = byteArrayOf(1, 2, 3)
+        gateway.artworkLoadResult = GatewayResult.Ok(source)
+        val available = children.loadArtwork(artworkId) as ArtworkLoadResult.Available
+
+        assertSame(generation, gateway.loadedArtworkGenerations.single())
+        assertEquals(artworkId, gateway.loadedArtworkIds.single())
+        assertEquals("ArtworkId(<redacted>)", artworkId.toString())
+        assertEquals(3, available.content.sizeBytes)
+        assertEquals(listOf<Byte>(1, 2, 3), available.content.openStream().readBytes().toList())
+        assertEquals("ArtworkContent(<redacted>)", available.content.toString())
+        assertEquals("ArtworkLoadResult.Available(<redacted>)", available.toString())
+
+        listOf(
+            GatewayResult.ServerRejected to ArtworkFailure.FILE_UNAVAILABLE,
+            GatewayResult.AccessDenied to ArtworkFailure.ACCESS_DENIED,
+            GatewayResult.ConnectionLimit to ArtworkFailure.CONNECTION_LIMIT,
+            GatewayResult.Timeout to ArtworkFailure.TIMEOUT,
+            GatewayResult.TransportUnavailable to ArtworkFailure.CONNECTION_CHANGED,
+            GatewayResult.NotSupported to ArtworkFailure.NOT_SUPPORTED,
+        ).forEach { (sourceResult, expected) ->
+            gateway.artworkLoadResult = sourceResult
+            val unavailable = children.loadArtwork(artworkId) as ArtworkLoadResult.Unavailable
+            assertSame(expected, unavailable.failure)
+            assertEquals(
+                "ArtworkLoadResult.Unavailable(failure=$expected)",
+                unavailable.toString(),
+            )
+        }
+
+        children.closeAndJoinSubscriptions()
+        assertSame(
+            ArtworkFailure.CONNECTION_CHANGED,
+            (children.loadArtwork(artworkId) as ArtworkLoadResult.Unavailable).failure,
+        )
+    }
 }
 
 private class SubscriptionGateway : ProtocolGateway {
@@ -515,8 +571,11 @@ private class SubscriptionGateway : ProtocolGateway {
     internal val seekedRecordingGenerations = ArrayList<GatewayGeneration>()
     internal val readRecordingGenerations = ArrayList<GatewayGeneration>()
     internal val closedRecordingGenerations = ArrayList<GatewayGeneration>()
+    internal val loadedArtworkGenerations = ArrayList<GatewayGeneration>()
+    internal val loadedArtworkIds = ArrayList<ArtworkId>()
     internal var recordingOpenResult: GatewayResult<GatewayRecordingFile> =
         GatewayResult.Ok(GatewayRecordingFile(handleId = 7L, sizeBytes = 64L, protocolVersion = 27))
+    internal var artworkLoadResult: GatewayResult<ByteArray> = GatewayResult.NotSupported
     internal var grantedTimeshiftSeconds: Long? = null
     internal var nearLiveAction: suspend () -> SubscriptionOperationResult<Unit> = {
         SubscriptionOperationResult.Ok(Unit)
@@ -627,6 +686,15 @@ private class SubscriptionGateway : ProtocolGateway {
         id: DvrEntryId,
         progress: DvrPlaybackProgress,
     ): GatewayResult<Unit> = GatewayResult.NotSupported
+
+    override suspend fun loadArtwork(
+        generation: GatewayGeneration,
+        id: ArtworkId,
+    ): GatewayResult<ByteArray> {
+        loadedArtworkGenerations += generation
+        loadedArtworkIds += id
+        return artworkLoadResult
+    }
 
     override suspend fun openRecordingFile(
         generation: GatewayGeneration,

@@ -2,9 +2,14 @@
 
 package at.bernhardberger.tvheadend.sdk.core.session
 
+import at.bernhardberger.tvheadend.sdk.core.ArtworkContent
+import at.bernhardberger.tvheadend.sdk.core.ArtworkFailure
+import at.bernhardberger.tvheadend.sdk.core.ArtworkId
+import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.gateway.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.ProtocolGateway
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFile
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
@@ -76,6 +81,13 @@ internal class PlaybackSessionChildren(
             ?: return RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
         return gateway.openRecordingFile(bound, DvrEntryId(recordingId.value))
             .toRecordingFileResult { file -> GatewayRecordingFileHandle(gateway, bound, file) }
+    }
+
+    override suspend fun loadArtwork(artworkId: ArtworkId): ArtworkLoadResult {
+        currentCoroutineContext().ensureActive()
+        val bound = synchronized(lock) { generation }
+            ?: return ArtworkLoadResult.Unavailable(ArtworkFailure.CONNECTION_CHANGED)
+        return gateway.loadArtwork(bound, artworkId).toArtworkLoadResult()
     }
 
     override fun bindGeneration(generation: GatewayGeneration) {
@@ -222,3 +234,14 @@ internal class GatewaySubscriptionConnection(
 }
 
 private const val RETURN_TO_LIVE_MARGIN_SECONDS = 3L
+
+private fun GatewayResult<ByteArray>.toArtworkLoadResult(): ArtworkLoadResult = when (this) {
+    is GatewayResult.Ok -> ArtworkLoadResult.Available(ArtworkContent(value))
+    GatewayResult.ServerRejected -> ArtworkLoadResult.Unavailable(ArtworkFailure.FILE_UNAVAILABLE)
+    GatewayResult.AccessDenied -> ArtworkLoadResult.Unavailable(ArtworkFailure.ACCESS_DENIED)
+    GatewayResult.ConnectionLimit -> ArtworkLoadResult.Unavailable(ArtworkFailure.CONNECTION_LIMIT)
+    GatewayResult.Timeout -> ArtworkLoadResult.Unavailable(ArtworkFailure.TIMEOUT)
+    GatewayResult.TransportUnavailable ->
+        ArtworkLoadResult.Unavailable(ArtworkFailure.CONNECTION_CHANGED)
+    GatewayResult.NotSupported -> ArtworkLoadResult.Unavailable(ArtworkFailure.NOT_SUPPORTED)
+}

@@ -27,3 +27,25 @@ and redistribution requirements are recorded in the
 [FFmpeg contingency notes](docs/ffmpeg-contingency.md). Phase 4 real-device
 acceptance is recorded in the
 [playback verification notes](docs/playback-device-verification.md).
+
+## Authenticated artwork
+
+`sdk-android` supplies an opaque Coil model and custom fetcher for HTSP
+`imagecache` entries. Register the component on an application-owned Coil 3
+loader, then create models from channel, tag, or rating icon metadata:
+
+```kotlin
+val imageLoader = ImageLoader.Builder(context)
+    .components {
+        add(createTvheadendArtworkFetcherFactory())
+    }
+    .build()
+
+val artwork = TvheadendArtwork.create(session, channel.icon)
+```
+
+The model rejects external URLs and malformed selectors. The SDK deliberately
+does not install a path-derived Coil key, so authenticated selectors do not
+enter memory-cache or disk-cache keys. Coil owns decoding and closes every
+successfully returned image source. TVHeadend requires recorder access for this
+authenticated file API; otherwise loads report `ACCESS_DENIED`.

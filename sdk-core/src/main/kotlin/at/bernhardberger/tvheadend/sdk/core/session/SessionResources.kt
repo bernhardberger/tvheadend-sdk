@@ -3,6 +3,10 @@
 package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
+import at.bernhardberger.tvheadend.sdk.core.ArtworkFailure
+import at.bernhardberger.tvheadend.sdk.core.ArtworkId
+import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
+import at.bernhardberger.tvheadend.sdk.core.ArtworkLoader
 import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepository
@@ -567,7 +571,11 @@ private fun MetadataEvent.isDvrMutationConfirmation(): Boolean = when (this) {
     -> false
 }
 
-internal interface SessionChildren : SubscriptionOpener, RecordingFileOpener {
+internal interface SessionChildren : ArtworkLoader, SubscriptionOpener, RecordingFileOpener {
+    /** Reports the changed connection until a child actually binds a generation to artwork. */
+    public override suspend fun loadArtwork(artworkId: ArtworkId): ArtworkLoadResult =
+        ArtworkLoadResult.Unavailable(ArtworkFailure.CONNECTION_CHANGED)
+
     /** Reports the changed connection until a child actually binds a generation to recordings. */
     public override suspend fun openRecording(
         recordingId: RecordingId,

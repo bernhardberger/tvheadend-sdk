@@ -1,3 +1,59 @@
+public final class at/bernhardberger/tvheadend/sdk/core/ArtworkContent {
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/ArtworkContent$Companion;
+	public final fun getSizeBytes ()I
+	public final fun openStream ()Ljava/io/InputStream;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ArtworkContent$Companion {
+	public final fun create ([B)Lat/bernhardberger/tvheadend/sdk/core/ArtworkContent;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ArtworkFailure : java/lang/Enum {
+	public static final field ACCESS_DENIED Lat/bernhardberger/tvheadend/sdk/core/ArtworkFailure;
+	public static final field CONNECTION_CHANGED Lat/bernhardberger/tvheadend/sdk/core/ArtworkFailure;
+	public static final field CONNECTION_LIMIT Lat/bernhardberger/tvheadend/sdk/core/ArtworkFailure;
+	public static final field FILE_UNAVAILABLE Lat/bernhardberger/tvheadend/sdk/core/ArtworkFailure;
+	public static final field NOT_SUPPORTED Lat/bernhardberger/tvheadend/sdk/core/ArtworkFailure;
+	public static final field TIMEOUT Lat/bernhardberger/tvheadend/sdk/core/ArtworkFailure;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/ArtworkFailure;
+	public static fun values ()[Lat/bernhardberger/tvheadend/sdk/core/ArtworkFailure;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ArtworkId {
+	public static final synthetic fun box-impl (I)Lat/bernhardberger/tvheadend/sdk/core/ArtworkId;
+	public static fun constructor-impl (I)I
+	public fun equals (Ljava/lang/Object;)Z
+	public static fun equals-impl (ILjava/lang/Object;)Z
+	public static final fun equals-impl0 (II)Z
+	public final fun getValue ()I
+	public fun hashCode ()I
+	public static fun hashCode-impl (I)I
+	public fun toString ()Ljava/lang/String;
+	public static fun toString-impl (I)Ljava/lang/String;
+	public final synthetic fun unbox-impl ()I
+}
+
+public abstract interface class at/bernhardberger/tvheadend/sdk/core/ArtworkLoadResult {
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ArtworkLoadResult$Available : at/bernhardberger/tvheadend/sdk/core/ArtworkLoadResult {
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/ArtworkContent;)V
+	public final fun getContent ()Lat/bernhardberger/tvheadend/sdk/core/ArtworkContent;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ArtworkLoadResult$Unavailable : at/bernhardberger/tvheadend/sdk/core/ArtworkLoadResult {
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/ArtworkFailure;)V
+	public final fun getFailure ()Lat/bernhardberger/tvheadend/sdk/core/ArtworkFailure;
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class at/bernhardberger/tvheadend/sdk/core/ArtworkLoader {
+	public abstract fun loadArtwork-U-NoPug (ILkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
 public final class at/bernhardberger/tvheadend/sdk/core/AutorecRule {
 	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/AutorecRule$Companion;
 	public final fun component1-1h3jQm0 ()Ljava/lang/String;
@@ -1752,6 +1808,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/TimerecRuleUpdate {
 public abstract interface class at/bernhardberger/tvheadend/sdk/core/TvheadendSession {
 	public abstract fun connect (Lat/bernhardberger/tvheadend/sdk/core/ServerProfile;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun disconnect (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun getArtwork ()Lat/bernhardberger/tvheadend/sdk/core/ArtworkLoader;
 	public abstract fun getChannelRepository ()Lat/bernhardberger/tvheadend/sdk/core/ChannelRepository;
 	public abstract fun getDvrRepository ()Lat/bernhardberger/tvheadend/sdk/core/DvrRepository;
 	public abstract fun getEpgRepository ()Lat/bernhardberger/tvheadend/sdk/core/EpgRepository;

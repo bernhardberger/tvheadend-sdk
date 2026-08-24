@@ -14,6 +14,7 @@ Android modules use AGP's built-in Kotlin support and never apply
 | Android compile / target / minimum SDK | 36 / 36 / 24 |
 | Android Build Tools | 36.0.0 |
 | Coroutines | 1.10.2 |
+| Coil core | 3.5.0 |
 | AndroidX DataStore Preferences | 1.2.1 |
 | Google Tink Android | 1.23.0 |
 | HTSP | 0.7.0 |

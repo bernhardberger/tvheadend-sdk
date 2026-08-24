@@ -2,6 +2,7 @@
 
 package at.bernhardberger.tvheadend.sdk.core.session
 
+import at.bernhardberger.tvheadend.sdk.core.ArtworkLoader
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepository
 import at.bernhardberger.tvheadend.sdk.core.DvrRepository
 import at.bernhardberger.tvheadend.sdk.core.EpgRepository
@@ -75,6 +76,7 @@ internal class ConnectionOwner(
     override val channelRepository: ChannelRepository = metadata
     override val epgRepository: EpgRepository = metadata.epgRepository
     override val dvrRepository: DvrRepository = metadata.dvrRepository
+    override val artwork: ArtworkLoader = children
     override val subscriptions: SubscriptionOpener = children
     override val recordings: RecordingFileOpener = children
 
