@@ -62,18 +62,23 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import java.util.Collections
 import java.util.IdentityHashMap
 import java.util.concurrent.CancellationException
+import java.util.concurrent.CountDownLatch
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -81,6 +86,8 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertSame
@@ -259,9 +266,7 @@ internal class ConnectionOwnerTest {
                 owner.isDvrMutationReady(commandGeneration)
             },
             onDvrAccessProof = { proofGeneration, allowed ->
-                if (metadata.applyDvrMutationProof(proofGeneration, allowed)) {
-                    owner.refreshDvrCapabilities(proofGeneration)
-                }
+                owner.applyDvrAccessProof(proofGeneration, allowed)
             },
         )
         metadata = PhaseOneSessionMetadata(
@@ -313,16 +318,93 @@ internal class ConnectionOwnerTest {
     }
 
     @Test
+    fun `later progress proof cannot be overwritten by an earlier mutation publication`() = runTest {
+        val earlierProofPrepared = CompletableDeferred<Unit>()
+        val releaseEarlierProof = CompletableDeferred<Unit>()
+        val gateway = FakeProtocolGateway()
+        val generation = GatewayGeneration()
+        gateway.connectResults += connected(generation, dvrAccess = null)
+        gateway.dvrConfigsBehavior = { GatewayResult.Timeout }
+        lateinit var owner: ConnectionOwner
+        lateinit var metadata: PhaseOneSessionMetadata
+        val onProof: suspend (GatewayGeneration, Boolean) -> Unit = { proofGeneration, allowed ->
+            owner.applyDvrAccessProof(proofGeneration, allowed)
+        }
+        val mutations = DvrMutationCoordinator(
+            gateway = gateway,
+            isSessionReady = { commandGeneration -> owner.isDvrMutationReady(commandGeneration) },
+            onDvrAccessProof = onProof,
+        )
+        val progress = DvrProgressCoordinator(
+            gateway = gateway,
+            isSessionReady = { commandGeneration -> owner.isDvrMutationReady(commandGeneration) },
+            onDvrAccessProof = onProof,
+        )
+        metadata = PhaseOneSessionMetadata(
+            mutationCommands = mutations,
+            progressCommands = progress,
+            onDvrMetadataAccepted = mutations::acceptMetadata,
+        )
+        owner = owner(
+            gateway = gateway,
+            metadata = metadata,
+            dvrMutations = mutations,
+            dvrProgress = progress,
+            beforeDvrCapabilityPublication = { allowed ->
+                if (allowed) {
+                    earlierProofPrepared.complete(Unit)
+                    releaseEarlierProof.await()
+                }
+            },
+        )
+        val request = DvrScheduleRequest(DvrSchedule.Programme(EventId(1)))
+        val report = DvrPlaybackProgress.checkpoint(30.seconds)
+
+        owner.connect(ServerProfile("server"))
+        runCurrent()
+        gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        runCurrent()
+        assertEquals(
+            CapabilityAccess.UNKNOWN,
+            (owner.state.value as SessionState.Ready).capabilities.dvrWrite,
+        )
+
+        gateway.scheduleDvrBehavior = { commandGeneration, _ ->
+            gateway.emitMetadata(MetadataEvent.DvrEntryAdded(commandGeneration, dvrMetadata(7)))
+            GatewayResult.Ok(DvrEntryId(7))
+        }
+        gateway.reportDvrProgressBehavior = { _, _, _ -> GatewayResult.AccessDenied }
+        val earlierMutation = async { owner.dvrRepository.scheduleEntry(request) }
+        earlierProofPrepared.await()
+
+        assertSame(
+            DvrProgressResult.AccessDenied,
+            owner.dvrRepository.reportProgress(DvrEntryId(7), report),
+        )
+        assertEquals(
+            CapabilityAccess.DENIED,
+            (owner.state.value as SessionState.Ready).capabilities.dvrWrite,
+        )
+
+        releaseEarlierProof.complete(Unit)
+        runCurrent()
+        assertTrue(earlierMutation.await() is DvrMutationResult.Confirmed)
+        assertEquals(
+            CapabilityAccess.DENIED,
+            (owner.state.value as SessionState.Ready).capabilities.dvrWrite,
+        )
+        owner.shutdown()
+    }
+
+    @Test
     fun `progress reports require ready v27 and latch not supported until reconnect`() = runTest {
         val gateway = FakeProtocolGateway()
         val generation = GatewayGeneration()
         gateway.connectResults += connected(generation, protocolVersion = 26)
         lateinit var owner: ConnectionOwner
         lateinit var metadata: PhaseOneSessionMetadata
-        val onProof = { proofGeneration: GatewayGeneration, allowed: Boolean ->
-            if (metadata.applyDvrMutationProof(proofGeneration, allowed)) {
-                owner.refreshDvrCapabilities(proofGeneration)
-            }
+        val onProof: suspend (GatewayGeneration, Boolean) -> Unit = { proofGeneration, allowed ->
+            owner.applyDvrAccessProof(proofGeneration, allowed)
         }
         val mutations = DvrMutationCoordinator(
             gateway = gateway,
@@ -643,6 +725,50 @@ internal class ConnectionOwnerTest {
         )
         assertTrue(metadata.channelsAndTags.value is ChannelRepositoryState.Stale)
         owner.shutdown()
+    }
+
+    @Test
+    fun `shutdown excludes ready while a commit is waiting at the state barrier`() = runTest {
+        val readyCommitReached = CompletableDeferred<Unit>()
+        val releaseReadyCommit = CountDownLatch(1)
+        val gateway = FakeProtocolGateway()
+        val generation = GatewayGeneration()
+        gateway.connectResults += connected(generation)
+        gateway.beforeReadyCommit = {
+            readyCommitReached.complete(Unit)
+            releaseReadyCommit.await()
+        }
+        val owner = owner(
+            gateway = gateway,
+            metadata = PhaseOneSessionMetadata(),
+            defaultDispatcher = Dispatchers.Default,
+        )
+
+        try {
+            owner.connect(ServerProfile("server"))
+            withContext(Dispatchers.Default) {
+                withTimeout(5.seconds) {
+                    owner.state.first { state -> state is SessionState.Synchronizing }
+                }
+            }
+            gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+            readyCommitReached.await()
+
+            val shutdown = async { owner.shutdown() }
+            withContext(Dispatchers.Default) {
+                withTimeout(5.seconds) {
+                    owner.state.first { state -> state is SessionState.Disconnected }
+                }
+            }
+            releaseReadyCommit.countDown()
+            shutdown.await()
+
+            assertEquals(false, gateway.readyCommitResult)
+            assertEquals(SessionState.Disconnected, owner.state.value)
+        } finally {
+            releaseReadyCommit.countDown()
+            owner.shutdown()
+        }
     }
 
     @Test
@@ -1064,14 +1190,17 @@ internal class ConnectionOwnerTest {
         metadata: PhaseOneSessionMetadata = PhaseOneSessionMetadata(),
         dvrMutations: DvrMutationLifecycle = DvrMutationLifecycle.None,
         dvrProgress: DvrProgressLifecycle = DvrProgressLifecycle.None,
+        defaultDispatcher: CoroutineDispatcher = StandardTestDispatcher(testScheduler),
+        beforeDvrCapabilityPublication: suspend (Boolean) -> Unit = {},
     ): ConnectionOwner = ConnectionOwner(
         gateway = gateway,
         metadata = metadata,
         children = children,
         dvrMutations = dvrMutations,
         dvrProgress = dvrProgress,
-        defaultDispatcher = StandardTestDispatcher(testScheduler),
+        defaultDispatcher = defaultDispatcher,
         backoff = ExponentialReconnectBackoff(nextJitter = { 0.5 }),
+        beforeDvrCapabilityPublication = beforeDvrCapabilityPublication,
     )
 }
 
@@ -1186,6 +1315,8 @@ private class FakeProtocolGateway(
     internal var connectCalls: Int = 0
     internal var maximumConcurrentConnects: Int = 0
     internal var invalidateOnReadyCommit: Boolean = false
+    internal var beforeReadyCommit: () -> Unit = {}
+    internal var readyCommitResult: Boolean? = null
 
     override val connectionState: MutableStateFlow<GatewayState> =
         MutableStateFlow(GatewayState.Disconnected)
@@ -1231,10 +1362,18 @@ private class FakeProtocolGateway(
         block: () -> T,
     ): T? {
         liveCommitCalls += 1
+        val call = liveCommitCalls
         if (invalidateOnReadyCommit && liveCommitCalls == 2) {
             liveGenerations.remove(generation)
         }
-        return if (generation in liveGenerations) block() else null
+        if (call == 2) beforeReadyCommit()
+        return if (generation in liveGenerations) {
+            block().also { result ->
+                if (call == 2 && result is Boolean) readyCommitResult = result
+            }
+        } else {
+            null
+        }
     }
 
     override suspend fun enableInitialMetadata(

@@ -53,6 +53,7 @@ internal class ConnectionOwner(
     private val dvrProgress: DvrProgressLifecycle = DvrProgressLifecycle.None,
     defaultDispatcher: CoroutineDispatcher,
     private val backoff: ReconnectBackoff,
+    private val beforeDvrCapabilityPublication: suspend (Boolean) -> Unit = {},
     private val onShutdown: () -> Unit = {},
 ) : TvheadendSession {
     private val rootJob = SupervisorJob()
@@ -65,6 +66,7 @@ internal class ConnectionOwner(
     private var worker: Job? = null
     private var activeToken: SessionToken? = null
     private var activeGeneration: GatewayGeneration? = null
+    private var latestDvrCapabilityRevision: Long? = null
     private var retryDisposition: RetryDisposition? = null
     private var closed = false
     private var shutdownCompletion: CompletableDeferred<Unit>? = null
@@ -148,8 +150,10 @@ internal class ConnectionOwner(
 
             val completion = CompletableDeferred<Unit>()
             shutdownCompletion = completion
-            closed = true
-            val invalidated = invalidateSession(retainPublishedCatalog = false)
+            val invalidated = invalidateSession(
+                retainPublishedCatalog = false,
+                terminal = true,
+            )
             selectedProfile = null
             ShutdownPlan.Run(completion, invalidated.worker, invalidated.admissionFailure)
         }
@@ -216,12 +220,17 @@ internal class ConnectionOwner(
         )
     }
 
-    private fun invalidateSession(retainPublishedCatalog: Boolean): InvalidatedSession {
+    private fun invalidateSession(
+        retainPublishedCatalog: Boolean,
+        terminal: Boolean = false,
+    ): InvalidatedSession {
         val activeWorker = worker
         worker = null
         val admissionFailure = synchronized(stateLock) {
+            if (terminal) closed = true
             activeToken = null
             activeGeneration = null
+            latestDvrCapabilityRevision = null
             retryDisposition = null
             var failure = captureFailure { dvrMutations.stopAdmission() }
             failure = captureFailure(failure) { dvrProgress.stopAdmission() }
@@ -241,6 +250,7 @@ internal class ConnectionOwner(
         val token = SessionToken()
         synchronized(stateLock) {
             activeToken = token
+            latestDvrCapabilityRevision = null
             retryDisposition = null
         }
         worker = scope.launch(start = CoroutineStart.LAZY) {
@@ -365,7 +375,7 @@ internal class ConnectionOwner(
             }
 
             requireCurrent(token)
-            val capabilities = metadata.capabilities(connection.generation)
+            val capabilities = metadata.capabilitySnapshot(connection.generation)
             val committed = gateway.commitIfLive(connection.generation) {
                 commitReady(token, connection.generation, capabilities)
             } == true
@@ -438,9 +448,9 @@ internal class ConnectionOwner(
     private fun commitReady(
         token: SessionToken,
         generation: GatewayGeneration,
-        capabilities: at.bernhardberger.tvheadend.sdk.core.ServerCapabilities,
+        capabilities: SessionCapabilitiesSnapshot,
     ): Boolean = synchronized(stateLock) {
-        if (activeToken !== token || closed) {
+        if (activeToken !== token || closed || capabilities.generation !== generation) {
             false
         } else if (!dvrMutations.startAdmission(generation)) {
             false
@@ -453,8 +463,9 @@ internal class ConnectionOwner(
             false
         } else {
             activeGeneration = generation
+            latestDvrCapabilityRevision = capabilities.revision
             retryDisposition = null
-            mutableState.value = SessionState.Ready(capabilities)
+            mutableState.value = SessionState.Ready(capabilities.capabilities)
             true
         }
     }
@@ -486,6 +497,7 @@ internal class ConnectionOwner(
             UnavailableCommit(committed = false, admissionFailure = null)
         } else {
             activeGeneration = null
+            latestDvrCapabilityRevision = null
             retryDisposition = disposition
             var admissionFailure = captureFailure { dvrMutations.stopAdmission() }
             admissionFailure = captureFailure(admissionFailure) { dvrProgress.stopAdmission() }
@@ -500,19 +512,30 @@ internal class ConnectionOwner(
         retryDisposition
     }
 
-    internal fun refreshDvrCapabilities(generation: GatewayGeneration) {
-        val capabilities = try {
-            metadata.capabilities(generation)
-        } catch (_: IllegalStateException) {
-            return
-        }
+    internal suspend fun applyDvrAccessProof(generation: GatewayGeneration, allowed: Boolean) {
+        val snapshot = synchronized(stateLock) {
+            if (
+                closed ||
+                activeGeneration !== generation ||
+                mutableState.value !is SessionState.Ready
+            ) {
+                null
+            } else {
+                metadata.applyDvrMutationProof(generation, allowed)?.also {
+                    latestDvrCapabilityRevision = it.revision
+                }
+            }
+        } ?: return
+
+        beforeDvrCapabilityPublication(allowed)
         synchronized(stateLock) {
             if (
                 !closed &&
                 activeGeneration === generation &&
+                latestDvrCapabilityRevision == snapshot.revision &&
                 mutableState.value is SessionState.Ready
             ) {
-                mutableState.value = SessionState.Ready(capabilities)
+                mutableState.value = SessionState.Ready(snapshot.capabilities)
             }
         }
     }

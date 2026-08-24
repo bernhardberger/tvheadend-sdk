@@ -32,7 +32,7 @@ automatically. CI (`.github/workflows/ci.yml`) is the authoritative gate.
 - Use JDK 21. JVM publications target Java 17 and class-file major 61.
 - Update ABI dumps only through the Gradle ABI validation workflow.
 - Local cross-repository HTSP substitution is opt-in. CI and releases always
-  resolve the pinned `at.bernhardberger.tvheadend:htsp:0.5.0` coordinate.
+  resolve the pinned `at.bernhardberger.tvheadend:htsp:0.6.0` coordinate.
 
 ## Module boundaries
 

@@ -1235,7 +1235,7 @@ private fun HtspTimerecEntryAddMessage.toGatewayTimerecRule(): GatewayTimerecRul
     enabled = enabled,
     name = name,
     title = title,
-    channelId = ChannelId(channelId.toLong()),
+    channelId = channelId?.let(::ChannelId),
     startMinutesSinceMidnight = startMinutesSinceMidnight,
     stopMinutesSinceMidnight = stopMinutesSinceMidnight,
     daysOfWeekMask = daysOfWeekMask,
@@ -1254,7 +1254,7 @@ private fun HtspTimerecEntryUpdateMessage.toGatewayTimerecRule(): GatewayTimerec
         enabled = enabled,
         name = name,
         title = title,
-        channelId = channelId?.let { ChannelId(it.toLong()) },
+        channelId = channelId?.let(::ChannelId),
         startMinutesSinceMidnight = startMinutesSinceMidnight,
         stopMinutesSinceMidnight = stopMinutesSinceMidnight,
         daysOfWeekMask = daysOfWeekMask,
@@ -1424,7 +1424,14 @@ private fun HtspDescrambleInfoMessage.toGatewayEvent(): SubscriptionEvent.Descra
 private fun HtspSubscriptionTermination.toGatewayTermination(): SubscriptionTermination =
     when (this) {
         HtspSubscriptionTermination.GENERATION_LOST -> SubscriptionTermination.GENERATION_LOST
-        HtspSubscriptionTermination.TRANSPORT_CLOSED -> SubscriptionTermination.TRANSPORT_CLOSED
+        HtspSubscriptionTermination.REMOTE_EOF -> SubscriptionTermination.REMOTE_EOF
+        HtspSubscriptionTermination.IO_FAILURE -> SubscriptionTermination.IO_FAILURE
+        HtspSubscriptionTermination.FRAMING_FAILURE -> SubscriptionTermination.FRAMING_FAILURE
+        HtspSubscriptionTermination.MALFORMED_MESSAGE -> SubscriptionTermination.MALFORMED_MESSAGE
+        HtspSubscriptionTermination.TIMEOUT -> SubscriptionTermination.TIMEOUT
+        HtspSubscriptionTermination.LOCAL_RETIREMENT -> SubscriptionTermination.LOCAL_RETIREMENT
+        HtspSubscriptionTermination.PUBLICATION_FAILURE -> SubscriptionTermination.PUBLICATION_FAILURE
+        HtspSubscriptionTermination.INTERNAL_FAILURE -> SubscriptionTermination.INTERNAL_FAILURE
     }
 
 private fun subscriptionCondition(

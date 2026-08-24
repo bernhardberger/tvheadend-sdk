@@ -330,6 +330,28 @@ internal class HtspProtocolGatewayTest {
     }
 
     @Test
+    fun `anonymous authentication rejection remains a typed terminal connection failure`() = runTest {
+        val fake = FakeHtspConnection().apply {
+            connectOutcome = HtspConnectOutcome.Failed(
+                HtspTransportFailure(HtspTransportFailureKind.AUTHENTICATION_REJECTED),
+            )
+        }
+
+        val result = HtspProtocolGateway(fake).connect(
+            ServerConfiguration(
+                host = "private-host",
+                port = 9_982,
+                authentication = ServerAuthentication.Anonymous,
+            ),
+        ) as GatewayConnectResult.Failed
+
+        assertEquals(GatewayConnectionFailure.AUTHENTICATION_REJECTED, result.failure)
+        assertEquals("", fake.lastEndpoint?.username)
+        assertEquals("", fake.lastEndpoint?.password)
+        assertEquals("GatewayConnectResult.Failed", result.toString())
+    }
+
+    @Test
     fun `metadata preserves ordered channel and tag deltas on one translated generation`() = runTest {
         val generation = HtspConnectionGeneration()
         val sourceMessages = listOf<HtspServerMessage>(
@@ -1936,6 +1958,35 @@ internal class HtspProtocolGatewayTest {
 
         assertTrue(events[0] is SubscriptionEvent.Packet, "Packet order changed at gateway")
         assertTrue(events[1] is SubscriptionEvent.Started, "Start order changed at gateway")
+    }
+
+    @Test
+    fun `every available HTSP termination keeps its attributed SDK reason`() = runTest {
+        val sourceGeneration = HtspConnectionGeneration()
+        val sourceTerminations = HtspSubscriptionTermination.entries.toList()
+        val fake = FakeHtspConnection().apply {
+            subscriptionFlow = flowOf(
+                *sourceTerminations.map { termination ->
+                    HtspSubscriptionEvent.Terminated(termination)
+                }.toTypedArray(),
+            )
+            liveConnectionValue.value = liveConnection(sourceGeneration)
+            connectOutcome = HtspConnectOutcome.Connected(requireNotNull(liveConnectionValue.value))
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+
+        val terminations = gateway.subscription(generation, SubscriptionId(77)).toList()
+            .map { event -> (event as SubscriptionEvent.Terminated).reason }
+
+        assertEquals(
+            sourceTerminations.map { termination ->
+                SubscriptionTermination.valueOf(termination.name)
+            },
+            terminations,
+        )
+        assertEquals(sourceTerminations.size, terminations.distinct().size)
     }
 
     private fun liveConnection(generation: HtspConnectionGeneration): HtspLiveConnection =

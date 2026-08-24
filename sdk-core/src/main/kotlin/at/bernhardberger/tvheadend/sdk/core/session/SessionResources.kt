@@ -66,7 +66,10 @@ internal interface SessionMetadata : ChannelRepository {
 
     public fun applyDvrAccess(generation: GatewayGeneration, access: Boolean?)
 
-    public fun applyDvrMutationProof(generation: GatewayGeneration, allowed: Boolean): Boolean
+    public fun applyDvrMutationProof(
+        generation: GatewayGeneration,
+        allowed: Boolean,
+    ): SessionCapabilitiesSnapshot?
 
     public fun applyDvrConfigurations(
         generation: GatewayGeneration,
@@ -101,8 +104,17 @@ internal interface SessionMetadata : ChannelRepository {
 
     public fun retainEpgEvents(generation: GatewayGeneration, from: Instant, to: Instant)
 
-    public fun capabilities(generation: GatewayGeneration): ServerCapabilities
+    public fun capabilitySnapshot(generation: GatewayGeneration): SessionCapabilitiesSnapshot
+
+    public fun capabilities(generation: GatewayGeneration): ServerCapabilities =
+        capabilitySnapshot(generation).capabilities
 }
+
+internal class SessionCapabilitiesSnapshot(
+    internal val generation: GatewayGeneration,
+    internal val revision: Long,
+    internal val capabilities: ServerCapabilities,
+)
 
 internal class PhaseOneSessionMetadata(
     mutationCommands: DvrMutationCommands = DvrMutationCommands.None,
@@ -146,6 +158,7 @@ internal class PhaseOneSessionMetadata(
     private var synchronizedCurrent = false
     private var serverFacts: GatewayServerFacts? = null
     private var dvrAccess: CapabilityAccess = CapabilityAccess.UNKNOWN
+    private var capabilityRevision = 0L
 
     override val state: StateFlow<ChannelRepositoryState> =
         mutableChannelsAndTags.asStateFlow()
@@ -168,6 +181,7 @@ internal class PhaseOneSessionMetadata(
             synchronizedCurrent = false
             serverFacts = null
             dvrAccess = CapabilityAccess.UNKNOWN
+            capabilityRevision += 1
             reducer.clear()
             epgReducer.clear()
             dvrReducer.clear()
@@ -201,6 +215,7 @@ internal class PhaseOneSessionMetadata(
             synchronizedCurrent = false
             serverFacts = null
             dvrAccess = CapabilityAccess.UNKNOWN
+            capabilityRevision += 1
             reducer.clear()
             epgReducer.clear()
             dvrReducer.clear()
@@ -218,8 +233,8 @@ internal class PhaseOneSessionMetadata(
         synchronized(lock) {
             if (this.generation === generation) {
                 when (access) {
-                    true -> dvrAccess = CapabilityAccess.ALLOWED
-                    false -> dvrAccess = CapabilityAccess.DENIED
+                    true -> setDvrAccess(CapabilityAccess.ALLOWED)
+                    false -> setDvrAccess(CapabilityAccess.DENIED)
                     null -> Unit
                 }
             }
@@ -229,16 +244,16 @@ internal class PhaseOneSessionMetadata(
     override fun applyDvrMutationProof(
         generation: GatewayGeneration,
         allowed: Boolean,
-    ): Boolean = synchronized(lock) {
+    ): SessionCapabilitiesSnapshot? = synchronized(lock) {
         if (this.generation !== generation) {
-            false
+            null
         } else {
             val proof = if (allowed) CapabilityAccess.ALLOWED else CapabilityAccess.DENIED
             if (dvrAccess == proof) {
-                false
+                null
             } else {
-                dvrAccess = proof
-                true
+                setDvrAccess(proof)
+                capabilitySnapshotLocked(generation)
             }
         }
     }
@@ -253,13 +268,13 @@ internal class PhaseOneSessionMetadata(
             }
             when (result) {
                 is GatewayResult.Ok -> {
-                    dvrAccess = CapabilityAccess.ALLOWED
+                    setDvrAccess(CapabilityAccess.ALLOWED)
                     val configurations = DvrConfigurationsState.Current.create(result.value)
                     publishedConfigurations = configurations.configurations
                     mutableConfigurations.value = configurations
                 }
                 GatewayResult.AccessDenied -> {
-                    dvrAccess = CapabilityAccess.DENIED
+                    setDvrAccess(CapabilityAccess.DENIED)
                     publishedConfigurations = null
                     mutableConfigurations.value = DvrConfigurationsState.Denied
                 }
@@ -302,6 +317,7 @@ internal class PhaseOneSessionMetadata(
         synchronized(lock) {
             if (this.generation === generation) {
                 serverFacts = facts
+                capabilityRevision += 1
             }
         }
     }
@@ -424,30 +440,49 @@ internal class PhaseOneSessionMetadata(
         }
     }
 
-    override fun capabilities(generation: GatewayGeneration): ServerCapabilities = synchronized(lock) {
+    override fun capabilitySnapshot(
+        generation: GatewayGeneration,
+    ): SessionCapabilitiesSnapshot = synchronized(lock) {
+        capabilitySnapshotLocked(generation)
+    }
+
+    private fun capabilitySnapshotLocked(
+        generation: GatewayGeneration,
+    ): SessionCapabilitiesSnapshot {
         check(this.generation === generation && synchronizedCurrent) {
             "Session generation is not current"
         }
         val facts = serverFacts
-        ServerCapabilities.create(
-            streaming = facts?.streaming.toCapabilityAccess(),
-            dvrWrite = dvrAccess,
-            protocolDvr = facts?.dvr.toCapabilityAccess(),
-            failedDvr = facts?.failedDvr.toCapabilityAccess(),
-            admin = facts?.admin.toCapabilityAccess(),
-            anonymous = facts?.anonymous.toCapabilityAccess(),
-            apiVersion = facts?.apiVersion,
-            allLimit = facts?.limitAll,
-            dvrLimit = facts?.limitDvr,
-            streamingLimit = facts?.limitStreaming,
-            uiLevel = facts?.uiLevel,
-            features = facts?.serverCapabilities,
-            serverName = facts?.serverName,
-            serverVersion = facts?.serverVersion,
-            webRoot = facts?.webRoot,
-            language = facts?.language,
-            uiLanguage = facts?.uiLanguage,
+        return SessionCapabilitiesSnapshot(
+            generation = generation,
+            revision = capabilityRevision,
+            capabilities = ServerCapabilities.create(
+                streaming = facts?.streaming.toCapabilityAccess(),
+                dvrWrite = dvrAccess,
+                protocolDvr = facts?.dvr.toCapabilityAccess(),
+                failedDvr = facts?.failedDvr.toCapabilityAccess(),
+                admin = facts?.admin.toCapabilityAccess(),
+                anonymous = facts?.anonymous.toCapabilityAccess(),
+                apiVersion = facts?.apiVersion,
+                allLimit = facts?.limitAll,
+                dvrLimit = facts?.limitDvr,
+                streamingLimit = facts?.limitStreaming,
+                uiLevel = facts?.uiLevel,
+                features = facts?.serverCapabilities,
+                serverName = facts?.serverName,
+                serverVersion = facts?.serverVersion,
+                webRoot = facts?.webRoot,
+                language = facts?.language,
+                uiLanguage = facts?.uiLanguage,
+            ),
         )
+    }
+
+    private fun setDvrAccess(access: CapabilityAccess) {
+        if (dvrAccess != access) {
+            dvrAccess = access
+            capabilityRevision += 1
+        }
     }
 
     private fun publishCurrent(

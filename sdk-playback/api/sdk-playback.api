@@ -615,6 +615,13 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminal
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason$FramingFailure : at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason$FramingFailure;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason$GenerationLost : at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason {
 	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason$GenerationLost;
 	public fun equals (Ljava/lang/Object;)Z
@@ -629,8 +636,36 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminal
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason$InternalFailure : at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason$InternalFailure;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason$InvalidTracks : at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason {
 	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason$InvalidTracks;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason$IoFailure : at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason$IoFailure;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason$LocalRetirement : at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason$LocalRetirement;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason$MalformedMessage : at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason$MalformedMessage;
 	public fun equals (Ljava/lang/Object;)Z
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
@@ -642,6 +677,20 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminal
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason$PublicationFailure : at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason$PublicationFailure;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason$RemoteEof : at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason$RemoteEof;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason$SeekInvalidated : at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason {
 	public fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekInvalidation;)V
 	public final fun getCause ()Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekInvalidation;
@@ -650,6 +699,13 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminal
 
 public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason$Stopped : at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason {
 	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason$Stopped;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason$Timeout : at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason$Timeout;
 	public fun equals (Ljava/lang/Object;)Z
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
@@ -677,7 +733,15 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminal
 }
 
 public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionTermination : java/lang/Enum {
+	public static final field FRAMING_FAILURE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionTermination;
 	public static final field GENERATION_LOST Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionTermination;
+	public static final field INTERNAL_FAILURE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionTermination;
+	public static final field IO_FAILURE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionTermination;
+	public static final field LOCAL_RETIREMENT Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionTermination;
+	public static final field MALFORMED_MESSAGE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionTermination;
+	public static final field PUBLICATION_FAILURE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionTermination;
+	public static final field REMOTE_EOF Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionTermination;
+	public static final field TIMEOUT Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionTermination;
 	public static final field TRANSPORT_CLOSED Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionTermination;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
 	public static fun valueOf (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionTermination;

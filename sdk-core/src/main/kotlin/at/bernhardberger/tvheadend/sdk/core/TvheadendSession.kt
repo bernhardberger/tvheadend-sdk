@@ -79,10 +79,8 @@ private object SessionRegistry {
         val gateway = HtspProtocolGateway(Dispatchers.IO)
         lateinit var owner: ConnectionOwner
         lateinit var metadata: PhaseOneSessionMetadata
-        val onDvrAccessProof = { generation: GatewayGeneration, allowed: Boolean ->
-            if (metadata.applyDvrMutationProof(generation, allowed)) {
-                owner.refreshDvrCapabilities(generation)
-            }
+        val onDvrAccessProof: suspend (GatewayGeneration, Boolean) -> Unit = { generation, allowed ->
+            owner.applyDvrAccessProof(generation, allowed)
         }
         val dvrMutations = DvrMutationCoordinator(
             gateway = gateway,

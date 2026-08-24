@@ -60,7 +60,7 @@ internal class DvrMutationCoordinator(
     private val gateway: ProtocolGateway,
     private val settings: DvrMutationSettings = DvrMutationSettings(),
     private val isSessionReady: (GatewayGeneration) -> Boolean = { true },
-    private val onDvrAccessProof: (GatewayGeneration, Boolean) -> Unit = { _, _ -> },
+    private val onDvrAccessProof: suspend (GatewayGeneration, Boolean) -> Unit = { _, _ -> },
 ) : DvrMutationCommands, DvrMutationLifecycle {
     private val lock = Any()
     private val operationMutex = Mutex()
@@ -314,7 +314,7 @@ internal class DvrMutationCoordinator(
         }
     }
 
-    private fun denied(operation: PendingMutation): DvrMutationResult<Nothing> =
+    private suspend fun denied(operation: PendingMutation): DvrMutationResult<Nothing> =
         if (applyProof(operation, allowed = false)) {
             DvrMutationResult.AccessDenied
         } else {
@@ -337,7 +337,7 @@ internal class DvrMutationCoordinator(
         }
     }
 
-    private fun applyProof(operation: PendingMutation, allowed: Boolean): Boolean {
+    private suspend fun applyProof(operation: PendingMutation, allowed: Boolean): Boolean {
         val active = isActive(operation)
         if (active) onDvrAccessProof(operation.generation, allowed)
         return active

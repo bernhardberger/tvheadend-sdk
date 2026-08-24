@@ -291,9 +291,21 @@ public sealed interface SubscriptionSeekTarget {
     public data object Live : SubscriptionSeekTarget
 }
 
-/** Reason the ordered stream was terminated by the transport. */
+/** Payload-free reason the ordered stream was terminated by subscription infrastructure. */
 @SubscriptionInfrastructureApi
-public enum class SubscriptionTermination { GENERATION_LOST, TRANSPORT_CLOSED }
+public enum class SubscriptionTermination {
+    GENERATION_LOST,
+    REMOTE_EOF,
+    IO_FAILURE,
+    FRAMING_FAILURE,
+    MALFORMED_MESSAGE,
+    TIMEOUT,
+    LOCAL_RETIREMENT,
+    PUBLICATION_FAILURE,
+    INTERNAL_FAILURE,
+    /** Legacy unattributed closure retained for SDK compatibility. */
+    TRANSPORT_CLOSED,
+}
 
 /** Typed result of a subscription protocol operation. */
 @SubscriptionInfrastructureApi

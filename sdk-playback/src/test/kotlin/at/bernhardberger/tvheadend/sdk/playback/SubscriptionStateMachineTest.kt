@@ -293,6 +293,41 @@ class SubscriptionStateMachineTest {
     }
 
     @Test
+    fun `every attributed transport termination remains distinct in durable state`() = runTest {
+        val cases = listOf(
+            SubscriptionTermination.GENERATION_LOST to SubscriptionTerminalReason.GenerationLost,
+            SubscriptionTermination.REMOTE_EOF to SubscriptionTerminalReason.RemoteEof,
+            SubscriptionTermination.IO_FAILURE to SubscriptionTerminalReason.IoFailure,
+            SubscriptionTermination.FRAMING_FAILURE to SubscriptionTerminalReason.FramingFailure,
+            SubscriptionTermination.MALFORMED_MESSAGE to SubscriptionTerminalReason.MalformedMessage,
+            SubscriptionTermination.TIMEOUT to SubscriptionTerminalReason.Timeout,
+            SubscriptionTermination.LOCAL_RETIREMENT to SubscriptionTerminalReason.LocalRetirement,
+            SubscriptionTermination.PUBLICATION_FAILURE to SubscriptionTerminalReason.PublicationFailure,
+            SubscriptionTermination.INTERNAL_FAILURE to SubscriptionTerminalReason.InternalFailure,
+            SubscriptionTermination.TRANSPORT_CLOSED to SubscriptionTerminalReason.TransportClosed,
+        )
+
+        cases.forEach { (termination, expected) ->
+            val connection = RecordingSubscriptionConnection()
+            val manager = manager(connection)
+            manager.startAdmission()
+            val opened = async {
+                manager.open(SubscriptionChannelId(10L), SubscriptionEventConsumer {})
+            }
+            runCurrent()
+            connection.emit(started(stream()))
+            runCurrent()
+            val subscription = (opened.await() as SubscriptionOpenResult.Opened).subscription
+
+            connection.emit(SubscriptionEvent.Terminated(termination))
+            runCurrent()
+
+            assertSame(expected, (subscription.state.value as SubscriptionState.Terminal).reason)
+            manager.closeAndJoin()
+        }
+    }
+
+    @Test
     fun `startup failure waits for ordered drain before returning`() = runTest {
         val connection = RecordingSubscriptionConnection().apply {
             subscribeAction = { SubscriptionOperationResult.ServerRejected }

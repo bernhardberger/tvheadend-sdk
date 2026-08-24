@@ -110,7 +110,31 @@ public sealed interface SubscriptionTerminalReason {
     /** The owning connection generation was replaced. */
     public data object GenerationLost : SubscriptionTerminalReason
 
-    /** The owning transport closed. */
+    /** The remote peer closed the transport between protocol frames. */
+    public data object RemoteEof : SubscriptionTerminalReason
+
+    /** Transport I/O failed. */
+    public data object IoFailure : SubscriptionTerminalReason
+
+    /** Protocol framing failed or EOF split a frame. */
+    public data object FramingFailure : SubscriptionTerminalReason
+
+    /** A recognized subscription message was malformed. */
+    public data object MalformedMessage : SubscriptionTerminalReason
+
+    /** Transport timeout teardown terminated the stream. */
+    public data object Timeout : SubscriptionTerminalReason
+
+    /** The local protocol connection explicitly retired the stream. */
+    public data object LocalRetirement : SubscriptionTerminalReason
+
+    /** Typed-event publication failed inside the protocol connection. */
+    public data object PublicationFailure : SubscriptionTerminalReason
+
+    /** The protocol reader failed without a more specific safe classification. */
+    public data object InternalFailure : SubscriptionTerminalReason
+
+    /** Legacy unattributed transport closure retained for SDK compatibility. */
     public data object TransportClosed : SubscriptionTerminalReason
 
     /** Started did not contain a usable nonempty unique track set. */
@@ -1063,6 +1087,22 @@ private class ActiveSubscriptionImpl(
                 when (event.reason) {
                     SubscriptionTermination.GENERATION_LOST ->
                         SubscriptionTerminalReason.GenerationLost
+                    SubscriptionTermination.REMOTE_EOF ->
+                        SubscriptionTerminalReason.RemoteEof
+                    SubscriptionTermination.IO_FAILURE ->
+                        SubscriptionTerminalReason.IoFailure
+                    SubscriptionTermination.FRAMING_FAILURE ->
+                        SubscriptionTerminalReason.FramingFailure
+                    SubscriptionTermination.MALFORMED_MESSAGE ->
+                        SubscriptionTerminalReason.MalformedMessage
+                    SubscriptionTermination.TIMEOUT ->
+                        SubscriptionTerminalReason.Timeout
+                    SubscriptionTermination.LOCAL_RETIREMENT ->
+                        SubscriptionTerminalReason.LocalRetirement
+                    SubscriptionTermination.PUBLICATION_FAILURE ->
+                        SubscriptionTerminalReason.PublicationFailure
+                    SubscriptionTermination.INTERNAL_FAILURE ->
+                        SubscriptionTerminalReason.InternalFailure
                     SubscriptionTermination.TRANSPORT_CLOSED ->
                         SubscriptionTerminalReason.TransportClosed
                 },

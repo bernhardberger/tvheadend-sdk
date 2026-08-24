@@ -34,7 +34,7 @@ internal interface DvrProgressLifecycle {
 internal class DvrProgressCoordinator(
     private val gateway: ProtocolGateway,
     private val isSessionReady: (GatewayGeneration) -> Boolean = { true },
-    private val onDvrAccessProof: (GatewayGeneration, Boolean) -> Unit = { _, _ -> },
+    private val onDvrAccessProof: suspend (GatewayGeneration, Boolean) -> Unit = { _, _ -> },
 ) : DvrProgressCommands, DvrCutpointCommands, DvrProgressLifecycle {
     private val lock = Any()
     private var generation: GatewayGeneration? = null
