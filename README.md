@@ -24,4 +24,6 @@ property.
 See [the build matrix](docs/build-matrix.md) for the pinned toolchain and test
 runtime split. The optional decoder fallback's exact source, build, checksums,
 and redistribution requirements are recorded in the
-[FFmpeg contingency notes](docs/ffmpeg-contingency.md).
+[FFmpeg contingency notes](docs/ffmpeg-contingency.md). Phase 4 real-device
+acceptance is recorded in the
+[playback verification notes](docs/playback-device-verification.md).
