@@ -335,6 +335,11 @@ public fun interface SubscriptionOpener {
     /**
      * Opens a subscription and returns only after it is playable or terminal.
      *
+     * A session may admit a channel from its retained same-process catalog while initial metadata
+     * is still synchronizing. A cold session without that catalog returns
+     * [SubscriptionOpenResult.NotReady]. A channel absent from the retained catalog returns a
+     * terminal server-rejected failure for that early attempt and may be retried after Ready.
+     *
      * A positive [timeshiftPeriod] requests a server-side timeshift buffer. Only a subscription
      * whose server granted one can be repositioned through [ActiveSubscription.seek].
      */
@@ -359,10 +364,10 @@ public fun interface SubscriptionOpener {
 /** Owns every subscription and identifier for one connection generation. */
 @SubscriptionInfrastructureApi
 public interface SubscriptionManager : SubscriptionOpener {
-    /** Opens admission immediately before the owning session publishes Ready. */
+    /** Opens admission when the owning session's streaming stage begins. */
     public fun startAdmission()
 
-    /** Stops new admission immediately before the owning session leaves Ready. */
+    /** Stops new admission immediately before the owning streaming stage ends. */
     public fun stopAdmission()
 
     /** Opens a subscription and returns only after it is playable or terminal. */

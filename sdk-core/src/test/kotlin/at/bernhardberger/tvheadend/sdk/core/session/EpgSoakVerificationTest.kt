@@ -37,7 +37,7 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable
 @EnabledIfEnvironmentVariable(named = CREDENTIALS_ENV, matches = ".+")
 internal class EpgSoakVerificationTest {
     @Test
-    fun `live HTSP warmup then accelerated drain keeps known coverage`() = runBlocking {
+    fun `live HTSP ready then background warmup keeps known coverage through drain`() = runBlocking {
         val profile = soakProfile()
         val clock = AdjustableClock(Instant.fromEpochSeconds(Clock.System.now().epochSeconds))
         val gateway = HtspProtocolGateway(Dispatchers.IO)
@@ -64,7 +64,14 @@ internal class EpgSoakVerificationTest {
             }
             assertTrue(connected is SessionState.Ready, "Live EPG soak never reached ready")
             val origin = clock.now()
-            val warmed = currentSnapshot(owner)
+            val warmed = withTimeout(12.minutes) {
+                owner.epgRepository.state.first { state ->
+                    val snapshot = (state as? EpgRepositoryState.Current)?.snapshot
+                    snapshot != null &&
+                        snapshot.coverages.isNotEmpty() &&
+                        snapshot.coverages.all { coverage -> coverage.queriedTo != null }
+                }
+            }.let { state -> (state as EpgRepositoryState.Current).snapshot }
             assertTrue(warmed.coverages.isNotEmpty(), "Live EPG soak published no channel coverage")
             assertTrue(
                 warmed.coverages.all { coverage -> coverage.queriedTo != null },

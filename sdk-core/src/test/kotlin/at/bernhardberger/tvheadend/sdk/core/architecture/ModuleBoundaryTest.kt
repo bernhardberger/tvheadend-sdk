@@ -203,6 +203,7 @@ internal class ModuleBoundaryTest {
             "EpgEpisode",
             "EpgEvent",
             "EpgCoverage",
+            "EpgCoverageRequestResult",
             "EpgSnapshot",
             "EpgRepositoryState",
             "EpgRepository",

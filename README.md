@@ -21,6 +21,26 @@ across adjacent checkouts may explicitly opt into source substitution with
 `-Ptvheadend.htsp.composite=true`; CI and release builds do not use that
 property.
 
+## Staged session readiness
+
+`SessionState.Synchronizing` admits live playback only for channel IDs from a
+retained same-process catalog when the server has not denied streaming. A cold
+session has no channel ID to validate and returns `SubscriptionOpenResult.NotReady`.
+DVR mutations and recording progress remain gated on `SessionState.Ready`.
+
+`Ready` follows the server's authoritative initial metadata fence. EPG coverage
+queries and DVR configuration and disk-space enrichment continue as supervised
+generation-owned background work and do not delay or tear down readiness.
+Consumers can prioritize one bounded EPG horizon without waiting for network
+work:
+
+```kotlin
+val result = session.epgRepository.requestCoverage(channel.id, programme.stop)
+```
+
+`EpgCoverageRequestResult` distinguishes existing coverage, an accepted or
+deduplicated hint, an ineligible request, and loss of the owning generation.
+
 See [the build matrix](docs/build-matrix.md) for the pinned toolchain and test
 runtime split. The optional decoder fallback's exact source, build, checksums,
 and redistribution requirements are recorded in the

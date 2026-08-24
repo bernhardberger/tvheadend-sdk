@@ -2,6 +2,7 @@ package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverage
+import at.bernhardberger.tvheadend.sdk.core.EpgCoverageRequestResult
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.EventId
@@ -66,30 +67,6 @@ internal class EpgWorkerTest {
             coveredTo = now + 24.hours,
         )
         assertEquals(now + 4.hours, epgQueryTarget(asyncOnlyCoverage, now, settings))
-        assertFalse(isEpgWarm(EpgSnapshot.create(coverages = listOf(asyncOnlyCoverage)), now, settings))
-        assertTrue(
-            isEpgWarm(
-                EpgSnapshot.create(coverages = listOf(EpgCoverage.empty(channelId, now + 4.hours))),
-                now,
-                settings,
-            ),
-        )
-        assertFalse(
-            isEpgWarm(
-                EpgSnapshot.create(coverages = listOf(EpgCoverage.empty(channelId, now + 4.hours - 1.milliseconds))),
-                now,
-                settings,
-            ),
-        )
-        assertTrue(
-            isEpgWarm(
-                EpgSnapshot.create(coverages = listOf(EpgCoverage.empty(channelId))),
-                now,
-                settings,
-                satisfiedChannelIds = setOf(channelId),
-            ),
-        )
-
         val capped = settings.copy(queryChunk = 10.hours)
         assertEquals(
             now + 24.hours,
@@ -123,6 +100,237 @@ internal class EpgWorkerTest {
     }
 
     @Test
+    fun `coverage request distinguishes satisfied accepted ineligible and generation lost`() {
+        val generation = GatewayGeneration()
+        val metadata = synchronizedMetadata(generation, 1L..1L)
+        val now = instant(1_000)
+        val queriedTo = now + 4.hours
+        val query = requireNotNull(metadata.beginEpgQuery(generation, ChannelId(1)))
+        metadata.applySuccessfulEpgQuery(
+            generation = generation,
+            query = query,
+            queriedTo = queriedTo,
+            events = emptyList(),
+        )
+        val worker = EpgWorker(
+            generation = generation,
+            metadata = metadata,
+            clock = MutableClock(now),
+            queryEpg = { _, _, _ -> GatewayResult.Timeout },
+        )
+
+        assertEquals(
+            EpgCoverageRequestResult.SATISFIED,
+            worker.requestCoverage(ChannelId(1), queriedTo),
+        )
+        assertEquals(
+            EpgCoverageRequestResult.ACCEPTED,
+            worker.requestCoverage(ChannelId(1), queriedTo + 1.hours),
+        )
+        assertEquals(
+            EpgCoverageRequestResult.INELIGIBLE,
+            worker.requestCoverage(ChannelId(2), queriedTo + 1.hours),
+        )
+        assertEquals(
+            EpgCoverageRequestResult.SATISFIED,
+            worker.requestCoverage(ChannelId(1), now),
+        )
+        assertEquals(
+            EpgCoverageRequestResult.INELIGIBLE,
+            worker.requestCoverage(ChannelId(1), now + 24.hours + 1.seconds),
+        )
+        worker.stopAcceptingPriorities()
+        assertEquals(
+            EpgCoverageRequestResult.GENERATION_LOST,
+            worker.requestCoverage(ChannelId(1), queriedTo + 2.hours),
+        )
+
+        val staleWorker = EpgWorker(
+            generation = GatewayGeneration(),
+            metadata = metadata,
+            clock = MutableClock(now),
+            queryEpg = { _, _, _ -> GatewayResult.Timeout },
+        )
+        assertEquals(
+            EpgCoverageRequestResult.GENERATION_LOST,
+            staleWorker.requestCoverage(ChannelId(1), queriedTo + 2.hours),
+        )
+    }
+
+    @Test
+    fun `priority requests promote and deduplicate while reserving ordinary batch work`() = runTest {
+        val generation = GatewayGeneration()
+        val metadata = synchronizedMetadata(generation, 1L..3L)
+        val release = CompletableDeferred<Unit>()
+        val starts = mutableListOf<EpgQueryPlan>()
+        val settings = EpgWorkerSettings(
+            requestSpacing = 1.milliseconds,
+            channelCooldown = 1.hours,
+            batchSize = 2,
+        )
+        val worker = EpgWorker(
+            generation = generation,
+            metadata = metadata,
+            clock = SchedulerClock { testScheduler.currentTime },
+            settings = settings,
+            queryEpg = { _, channelId, target ->
+                starts += EpgQueryPlan(channelId, target)
+                release.await()
+                GatewayResult.Timeout
+            },
+        )
+
+        assertEquals(
+            EpgCoverageRequestResult.ACCEPTED,
+            worker.requestCoverage(ChannelId(3), instant(0) + 8.hours),
+        )
+        assertEquals(
+            EpgCoverageRequestResult.ACCEPTED,
+            worker.requestCoverage(ChannelId(3), instant(0) + 12.hours + 999.milliseconds),
+        )
+        assertEquals(
+            EpgCoverageRequestResult.ACCEPTED,
+            worker.requestCoverage(ChannelId(2), instant(0) + 10.hours),
+        )
+        val job = backgroundScope.launch { worker.run() }
+
+        runCurrent()
+        assertEquals(ChannelId(3), starts.single().channelId)
+        assertEquals(instant(0) + 12.hours, starts.single().target)
+        assertEquals(
+            EpgCoverageRequestResult.ACCEPTED,
+            worker.requestCoverage(ChannelId(3), instant(0) + 11.hours),
+        )
+        advanceTimeBy(1.milliseconds)
+        runCurrent()
+
+        assertEquals(listOf(3L, 1L), starts.map { plan -> plan.channelId.value })
+        assertEquals(1, starts.count { plan -> plan.channelId == ChannelId(3) })
+        release.complete(Unit)
+        job.cancelAndJoin()
+    }
+
+    @Test
+    fun `single slot batches alternate priority and ordinary work`() = runTest {
+        val generation = GatewayGeneration()
+        val metadata = synchronizedMetadata(generation, 1L..3L)
+        val starts = mutableListOf<ChannelId>()
+        val worker = EpgWorker(
+            generation = generation,
+            metadata = metadata,
+            clock = SchedulerClock { testScheduler.currentTime },
+            settings = EpgWorkerSettings(
+                requestSpacing = 1.milliseconds,
+                channelCooldown = 1.hours,
+                batchSize = 1,
+            ),
+            queryEpg = { _, channelId, _ ->
+                starts += channelId
+                GatewayResult.Timeout
+            },
+        )
+        assertEquals(
+            EpgCoverageRequestResult.ACCEPTED,
+            worker.requestCoverage(ChannelId(3), instant(0) + 8.hours),
+        )
+        assertEquals(
+            EpgCoverageRequestResult.ACCEPTED,
+            worker.requestCoverage(ChannelId(2), instant(0) + 8.hours),
+        )
+        val job = backgroundScope.launch { worker.run() }
+
+        runCurrent()
+        advanceTimeBy(1.milliseconds)
+        runCurrent()
+        advanceTimeBy(1.milliseconds)
+        runCurrent()
+
+        assertEquals(listOf(ChannelId(3), ChannelId(1), ChannelId(2)), starts)
+        job.cancelAndJoin()
+    }
+
+    @Test
+    fun `cooling priority retains one promoted hint until the channel is eligible`() = runTest {
+        val generation = GatewayGeneration()
+        val metadata = synchronizedMetadata(generation, 1L..1L)
+        val targets = mutableListOf<Instant>()
+        val worker = EpgWorker(
+            generation = generation,
+            metadata = metadata,
+            clock = SchedulerClock { testScheduler.currentTime },
+            settings = EpgWorkerSettings(
+                requestSpacing = 1.milliseconds,
+                channelCooldown = 1.seconds,
+            ),
+            queryEpg = { _, _, target ->
+                targets += target
+                if (targets.size == 1) GatewayResult.Timeout else GatewayResult.Ok(emptyList())
+            },
+        )
+        assertEquals(
+            EpgCoverageRequestResult.ACCEPTED,
+            worker.requestCoverage(ChannelId(1), instant(0) + 8.hours),
+        )
+        val job = backgroundScope.launch { worker.run() }
+        runCurrent()
+        assertEquals(listOf(instant(0) + 8.hours), targets)
+
+        assertEquals(
+            EpgCoverageRequestResult.ACCEPTED,
+            worker.requestCoverage(ChannelId(1), instant(0) + 12.hours),
+        )
+        advanceTimeBy(999.milliseconds)
+        runCurrent()
+        assertEquals(1, targets.size)
+        advanceTimeBy(1.milliseconds)
+        runCurrent()
+
+        assertEquals(listOf(instant(0) + 8.hours, instant(0) + 12.hours), targets)
+        job.cancelAndJoin()
+    }
+
+    @Test
+    fun `successful empty priority query advances coverage and denial becomes ineligible`() = runTest {
+        val generation = GatewayGeneration()
+        val metadata = synchronizedMetadata(generation, 1L..2L)
+        val target = instant(0) + 12.hours
+        val worker = EpgWorker(
+            generation = generation,
+            metadata = metadata,
+            clock = SchedulerClock { testScheduler.currentTime },
+            queryEpg = { _, channelId, _ ->
+                if (channelId == ChannelId(1)) GatewayResult.Ok(emptyList())
+                else GatewayResult.NotSupported
+            },
+        )
+        assertEquals(
+            EpgCoverageRequestResult.ACCEPTED,
+            worker.requestCoverage(ChannelId(1), target),
+        )
+        assertEquals(
+            EpgCoverageRequestResult.ACCEPTED,
+            worker.requestCoverage(ChannelId(2), target),
+        )
+        val job = backgroundScope.launch { worker.run() }
+
+        runCurrent()
+        advanceTimeBy(250.milliseconds)
+        runCurrent()
+
+        val snapshot = (metadata.epgRepository.state.value as EpgRepositoryState.Current).snapshot
+        assertEquals(target, snapshot.coverages.single { it.channelId == ChannelId(1) }.queriedTo)
+        assertEquals(
+            EpgCoverageRequestResult.SATISFIED,
+            worker.requestCoverage(ChannelId(1), target),
+        )
+        assertEquals(
+            EpgCoverageRequestResult.INELIGIBLE,
+            worker.requestCoverage(ChannelId(2), target),
+        )
+        job.cancelAndJoin()
+    }
+
+    @Test
     fun `worker staggers six in flight requests and starts the next batch afterward`() = runTest {
         val generation = GatewayGeneration()
         val metadata = synchronizedMetadata(generation, 1L..8L)
@@ -131,6 +339,7 @@ internal class EpgWorkerTest {
         var active = 0
         var maximumActive = 0
         val worker = EpgWorker(
+            generation = generation,
             metadata = metadata,
             clock = SchedulerClock { testScheduler.currentTime },
             queryEpg = { _, channelId, _ ->
@@ -145,7 +354,7 @@ internal class EpgWorkerTest {
                 }
             },
         )
-        val job = backgroundScope.launch { worker.run(generation) }
+        val job = backgroundScope.launch { worker.run() }
 
         runCurrent()
         advanceTimeBy(1_250.milliseconds)
@@ -161,7 +370,6 @@ internal class EpgWorkerTest {
 
         assertEquals((1L..8L).toList(), starts.map { it.first })
         assertEquals(listOf(1_500L, 1_750L), starts.takeLast(2).map { it.second })
-        assertTrue(worker.isWarm)
         job.cancelAndJoin()
     }
 
@@ -174,6 +382,7 @@ internal class EpgWorkerTest {
             acceptMetadata(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20)))
         }
         val worker = EpgWorker(
+            generation = generation,
             metadata = metadata,
             clock = SchedulerClock { testScheduler.currentTime },
             queryEpg = { _, _, _ ->
@@ -182,7 +391,7 @@ internal class EpgWorkerTest {
                 GatewayResult.Ok(listOf(queryEvent(1, 1, 10, 20, title = "stale")))
             },
         )
-        val job = backgroundScope.launch { worker.run(generation) }
+        val job = backgroundScope.launch { worker.run() }
 
         runCurrent()
         assertTrue(dispatched.isCompleted)
@@ -210,6 +419,7 @@ internal class EpgWorkerTest {
             )
         }
         val worker = EpgWorker(
+            generation = generation,
             metadata = metadata,
             clock = SchedulerClock { testScheduler.currentTime },
             queryEpg = { _, _, _ ->
@@ -218,7 +428,7 @@ internal class EpgWorkerTest {
                 GatewayResult.Ok(listOf(queryEvent(1, 1, 10, 20, title = "old")))
             },
         )
-        val job = backgroundScope.launch { worker.run(generation) }
+        val job = backgroundScope.launch { worker.run() }
 
         runCurrent()
         assertTrue(dispatched.isCompleted)
@@ -243,6 +453,7 @@ internal class EpgWorkerTest {
         val metadata = synchronizedMetadata(generation, 1L..1L)
         var attempts = 0
         val worker = EpgWorker(
+            generation = generation,
             metadata = metadata,
             clock = SchedulerClock { testScheduler.currentTime },
             queryEpg = { _, _, _ ->
@@ -251,13 +462,12 @@ internal class EpgWorkerTest {
                 GatewayResult.Ok(emptyList())
             },
         )
-        val job = backgroundScope.launch { worker.run(generation) }
+        val job = backgroundScope.launch { worker.run() }
 
         runCurrent()
         assertEquals(1, attempts)
         advanceTimeBy(250.milliseconds)
         runCurrent()
-        assertTrue(worker.isWarm)
         advanceTimeBy(599_749.milliseconds)
         runCurrent()
         assertEquals(1, attempts)
@@ -268,11 +478,12 @@ internal class EpgWorkerTest {
     }
 
     @Test
-    fun `persistent timeout completes warmup and still retries after cooldown`() = runTest {
+    fun `persistent timeout still retries after cooldown`() = runTest {
         val generation = GatewayGeneration()
         val metadata = synchronizedMetadata(generation, 1L..1L)
         var attempts = 0
         val worker = EpgWorker(
+            generation = generation,
             metadata = metadata,
             clock = SchedulerClock { testScheduler.currentTime },
             queryEpg = { _, _, _ ->
@@ -280,13 +491,12 @@ internal class EpgWorkerTest {
                 GatewayResult.Timeout
             },
         )
-        val job = backgroundScope.launch { worker.run(generation) }
+        val job = backgroundScope.launch { worker.run() }
 
         runCurrent()
         assertEquals(1, attempts)
         advanceTimeBy(250.milliseconds)
         runCurrent()
-        assertTrue(worker.isWarm)
         advanceTimeBy(10.minutes)
         runCurrent()
         assertEquals(2, attempts)
@@ -294,11 +504,12 @@ internal class EpgWorkerTest {
     }
 
     @Test
-    fun `unsupported queries complete warmup and are not retried`() = runTest {
+    fun `unsupported queries become ineligible and are not retried`() = runTest {
         val generation = GatewayGeneration()
         val metadata = synchronizedMetadata(generation, 1L..1L)
         var attempts = 0
         val worker = EpgWorker(
+            generation = generation,
             metadata = metadata,
             clock = SchedulerClock { testScheduler.currentTime },
             queryEpg = { _, _, _ ->
@@ -306,13 +517,12 @@ internal class EpgWorkerTest {
                 GatewayResult.NotSupported
             },
         )
-        val job = backgroundScope.launch { worker.run(generation) }
+        val job = backgroundScope.launch { worker.run() }
 
         runCurrent()
         assertEquals(1, attempts)
         advanceTimeBy(250.milliseconds)
         runCurrent()
-        assertTrue(worker.isWarm)
         advanceTimeBy(10.minutes)
         runCurrent()
         assertEquals(1, attempts)
@@ -320,28 +530,38 @@ internal class EpgWorkerTest {
     }
 
     @Test
-    fun `request cancellation terminates the worker instead of retrying`() = runTest {
+    fun `independent request cancellation remains a channel local failure`() = runTest {
         val generation = GatewayGeneration()
         val cancellation = CancellationException("fixed cancellation")
+        var attempts = 0
         val worker = EpgWorker(
+            generation = generation,
             metadata = synchronizedMetadata(generation, 1L..1L),
             clock = SchedulerClock { testScheduler.currentTime },
-            queryEpg = { _, _, _ -> throw cancellation },
+            settings = EpgWorkerSettings(
+                requestSpacing = 1.milliseconds,
+                channelCooldown = 1.seconds,
+            ),
+            queryEpg = { _, _, _ ->
+                attempts += 1
+                if (attempts == 1) throw cancellation
+                GatewayResult.Ok(emptyList())
+            },
         )
-        var caught: CancellationException? = null
-
-        val job = backgroundScope.launch {
-            try {
-                worker.run(generation)
-            } catch (failure: CancellationException) {
-                caught = failure
-            }
-        }
+        val job = backgroundScope.launch { worker.run() }
         runCurrent()
-        job.join()
+        assertEquals(1, attempts)
+        assertTrue(job.isActive)
+        assertEquals(
+            EpgCoverageRequestResult.ACCEPTED,
+            worker.requestCoverage(ChannelId(1), instant(0) + 8.hours),
+        )
+        advanceTimeBy(1.seconds)
+        runCurrent()
 
-        assertEquals(cancellation.message, caught?.message)
-        assertFalse(worker.isWarm)
+        assertEquals(2, attempts)
+        assertTrue(job.isActive)
+        job.cancelAndJoin()
     }
 
     @Test
@@ -352,11 +572,12 @@ internal class EpgWorkerTest {
             acceptMetadata(MetadataEvent.EventAdded(generation, event(2, 1, -21_602, -21_601)))
         }
         val worker = EpgWorker(
+            generation = generation,
             metadata = metadata,
             clock = SchedulerClock { testScheduler.currentTime },
             queryEpg = { _, _, _ -> GatewayResult.Timeout },
         )
-        val job = backgroundScope.launch { worker.run(generation) }
+        val job = backgroundScope.launch { worker.run() }
 
         runCurrent()
 
@@ -391,16 +612,16 @@ internal class EpgWorkerTest {
             )
         }
         val worker = EpgWorker(
+            generation = generation,
             metadata = metadata,
             clock = clock,
             queryEpg = { _, _, _ -> GatewayResult.Ok(emptyList()) },
         )
-        val job = backgroundScope.launch { worker.run(generation) }
+        val job = backgroundScope.launch { worker.run() }
 
         runCurrent()
         advanceTimeBy(1.seconds)
         runCurrent()
-        assertTrue(worker.isWarm)
         val warmed = (metadata.epgRepository.state.value as EpgRepositoryState.Current).snapshot
         assertEquals(setOf(1L, 2L, 3L), warmed.events.map { it.id.value }.toSet())
         val queried = warmed.coverages.associate { coverage ->

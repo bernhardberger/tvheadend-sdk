@@ -21,6 +21,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrProgressCommands
 import at.bernhardberger.tvheadend.sdk.core.DvrRepository
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
+import at.bernhardberger.tvheadend.sdk.core.EpgCoverageRequestResult
 import at.bernhardberger.tvheadend.sdk.core.EpgRepository
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
@@ -79,7 +80,7 @@ internal interface SessionMetadata : ChannelRepository {
     public fun applyDvrConfigurations(
         generation: GatewayGeneration,
         result: GatewayResult<List<DvrConfiguration>>,
-    )
+    ): SessionCapabilitiesSnapshot?
 
     public fun applyDvrDiskSpace(
         generation: GatewayGeneration,
@@ -91,6 +92,21 @@ internal interface SessionMetadata : ChannelRepository {
     public fun acceptMetadata(event: MetadataEvent)
 
     public suspend fun awaitMetadataCurrent(generation: GatewayGeneration)
+
+    public fun isKnownChannel(
+        generation: GatewayGeneration,
+        channelId: ChannelId,
+    ): Boolean?
+
+    public fun bindEpgCoverageRequester(
+        generation: GatewayGeneration,
+        requester: EpgCoverageRequester,
+    ): Boolean
+
+    public fun clearEpgCoverageRequester(
+        generation: GatewayGeneration,
+        requester: EpgCoverageRequester,
+    )
 
     public fun recordSuccessfulEpgQuery(
         generation: GatewayGeneration,
@@ -128,6 +144,13 @@ internal class SessionCapabilitiesSnapshot(
     internal val capabilities: ServerCapabilities,
 )
 
+internal fun interface EpgCoverageRequester {
+    public fun requestCoverage(
+        channelId: ChannelId,
+        through: Instant,
+    ): EpgCoverageRequestResult
+}
+
 internal class PhaseOneSessionMetadata(
     mutationCommands: DvrMutationCommands = DvrMutationCommands.None,
     progressCommands: DvrProgressCommands = DvrProgressCommands.None,
@@ -149,6 +172,11 @@ internal class PhaseOneSessionMetadata(
     private val mutableDiskSpace = MutableStateFlow<DvrDiskSpaceState>(DvrDiskSpaceState.Unknown)
     private val stateBackedEpgRepository = object : StateBackedEpgRepository() {
         override val state: StateFlow<EpgRepositoryState> = mutableEpg.asStateFlow()
+
+        override fun requestCoverage(
+            channelId: ChannelId,
+            through: Instant,
+        ): EpgCoverageRequestResult = requestEpgCoverage(channelId, through)
     }
     private val stateBackedDvrRepository = object : StateBackedDvrRepository(
         mutations = mutationCommands,
@@ -171,6 +199,7 @@ internal class PhaseOneSessionMetadata(
     private var serverFacts: GatewayServerFacts? = null
     private var dvrAccess: CapabilityAccess = CapabilityAccess.UNKNOWN
     private var capabilityRevision = 0L
+    private var epgCoverageRequester: EpgCoverageRequester? = null
 
     override val state: StateFlow<ChannelRepositoryState> =
         mutableChannelsAndTags.asStateFlow()
@@ -194,6 +223,7 @@ internal class PhaseOneSessionMetadata(
             serverFacts = null
             dvrAccess = CapabilityAccess.UNKNOWN
             capabilityRevision += 1
+            epgCoverageRequester = null
             reducer.clear()
             epgReducer.clear()
             dvrReducer.clear()
@@ -228,6 +258,7 @@ internal class PhaseOneSessionMetadata(
             serverFacts = null
             dvrAccess = CapabilityAccess.UNKNOWN
             capabilityRevision += 1
+            epgCoverageRequester = null
             reducer.clear()
             epgReducer.clear()
             dvrReducer.clear()
@@ -273,11 +304,11 @@ internal class PhaseOneSessionMetadata(
     override fun applyDvrConfigurations(
         generation: GatewayGeneration,
         result: GatewayResult<List<DvrConfiguration>>,
-    ) {
-        synchronized(lock) {
+    ): SessionCapabilitiesSnapshot? = synchronized(lock) {
             if (this.generation !== generation) {
-                return
+                return@synchronized null
             }
+            val previousRevision = capabilityRevision
             when (result) {
                 is GatewayResult.Ok -> {
                     setDvrAccess(CapabilityAccess.ALLOWED)
@@ -297,8 +328,12 @@ internal class PhaseOneSessionMetadata(
                 GatewayResult.NotSupported,
                 -> mutableConfigurations.value = publishedConfigurationsState()
             }
+            if (synchronizedCurrent && capabilityRevision != previousRevision) {
+                capabilitySnapshotLocked(generation)
+            } else {
+                null
+            }
         }
-    }
 
     override fun applyDvrDiskSpace(
         generation: GatewayGeneration,
@@ -405,6 +440,46 @@ internal class PhaseOneSessionMetadata(
                     mutableEpg.value is EpgRepositoryState.Current &&
                     mutableDvr.value is DvrRepositoryState.Current,
             ) { "Session generation is not current" }
+        }
+    }
+
+    override fun isKnownChannel(
+        generation: GatewayGeneration,
+        channelId: ChannelId,
+    ): Boolean? = synchronized(lock) {
+        if (this.generation !== generation) {
+            null
+        } else {
+            val catalog = when (val state = mutableChannelsAndTags.value) {
+                ChannelRepositoryState.Empty -> null
+                is ChannelRepositoryState.Synchronizing -> state.staleCatalog
+                is ChannelRepositoryState.Current -> state.catalog
+                is ChannelRepositoryState.Stale -> state.catalog
+            }
+            catalog?.channels?.any { channel -> channel.id == channelId }
+        }
+    }
+
+    override fun bindEpgCoverageRequester(
+        generation: GatewayGeneration,
+        requester: EpgCoverageRequester,
+    ): Boolean = synchronized(lock) {
+        if (this.generation !== generation || !synchronizedCurrent || epgCoverageRequester != null) {
+            false
+        } else {
+            epgCoverageRequester = requester
+            true
+        }
+    }
+
+    override fun clearEpgCoverageRequester(
+        generation: GatewayGeneration,
+        requester: EpgCoverageRequester,
+    ) {
+        synchronized(lock) {
+            if (this.generation === generation && epgCoverageRequester === requester) {
+                epgCoverageRequester = null
+            }
         }
     }
 
@@ -539,6 +614,15 @@ internal class PhaseOneSessionMetadata(
     private fun publishedConfigurationsState(): DvrConfigurationsState =
         publishedConfigurations?.let(DvrConfigurationsState.Stale::create)
             ?: DvrConfigurationsState.Unknown
+
+    private fun requestEpgCoverage(
+        channelId: ChannelId,
+        through: Instant,
+    ): EpgCoverageRequestResult {
+        val requester = synchronized(lock) { epgCoverageRequester }
+            ?: return EpgCoverageRequestResult.GENERATION_LOST
+        return requester.requestCoverage(channelId, through)
+    }
 }
 
 private fun Boolean?.toCapabilityAccess(): CapabilityAccess = when (this) {
@@ -584,15 +668,21 @@ internal interface SessionChildren : ArtworkLoader, SubscriptionOpener, Recordin
 
     public fun bindGeneration(generation: GatewayGeneration)
 
-    public fun startAdmission(generation: GatewayGeneration): Boolean
+    public fun startLiveAdmission(
+        generation: GatewayGeneration,
+        streamingAccess: CapabilityAccess,
+    ): Boolean
 
     public fun stopAdmission()
 
-    public fun startEpgWorker(generation: GatewayGeneration): Boolean = true
+    public fun prepareBackgroundEnrichment(
+        generation: GatewayGeneration,
+        onDvrCapabilitiesChanged: suspend (SessionCapabilitiesSnapshot) -> Unit,
+    ): Boolean = true
 
-    public suspend fun awaitEpgWarmup(generation: GatewayGeneration) = Unit
+    public fun startBackgroundEnrichment(generation: GatewayGeneration): Boolean = true
 
-    public suspend fun cancelAndJoinEpgWorker()
+    public suspend fun cancelAndJoinBackgroundEnrichment()
 
     public suspend fun closeAndJoinSubscriptions()
 
@@ -605,15 +695,21 @@ internal interface SessionChildren : ArtworkLoader, SubscriptionOpener, Recordin
 
         override fun bindGeneration(generation: GatewayGeneration) = Unit
 
-        override fun startAdmission(generation: GatewayGeneration): Boolean = true
+        override fun startLiveAdmission(
+            generation: GatewayGeneration,
+            streamingAccess: CapabilityAccess,
+        ): Boolean = true
 
         override fun stopAdmission() = Unit
 
-        override fun startEpgWorker(generation: GatewayGeneration): Boolean = true
+        override fun prepareBackgroundEnrichment(
+            generation: GatewayGeneration,
+            onDvrCapabilitiesChanged: suspend (SessionCapabilitiesSnapshot) -> Unit,
+        ): Boolean = true
 
-        override suspend fun awaitEpgWarmup(generation: GatewayGeneration) = Unit
+        override fun startBackgroundEnrichment(generation: GatewayGeneration): Boolean = true
 
-        override suspend fun cancelAndJoinEpgWorker() = Unit
+        override suspend fun cancelAndJoinBackgroundEnrichment() = Unit
 
         override suspend fun closeAndJoinSubscriptions() = Unit
     }

@@ -2,12 +2,12 @@ package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverage
+import at.bernhardberger.tvheadend.sdk.core.EpgCoverageRequestResult
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import java.util.concurrent.CancellationException
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
@@ -101,7 +101,7 @@ internal fun selectEpgQueries(
         epgQueryTarget(coverage, now, settings)?.let { target ->
             coverage to EpgQueryPlan(
                 channelId = coverage.channelId,
-                target = Instant.fromEpochSeconds(target.epochSeconds),
+                target = target.toWholeSecond(),
             )
         }
     }
@@ -110,21 +110,8 @@ internal fun selectEpgQueries(
     .map { (_, plan) -> plan }
     .toList()
 
-internal fun isEpgWarm(
-    snapshot: EpgSnapshot,
-    now: Instant,
-    settings: EpgWorkerSettings,
-    satisfiedChannelIds: Set<ChannelId> = emptySet(),
-): Boolean {
-    val requiredTo = now + settings.warmupHorizon
-    return snapshot.coverages.all { coverage ->
-        coverage.channelId in satisfiedChannelIds ||
-            coverage.queriedTo != null &&
-            coverage.knownTo?.let { knownTo -> knownTo >= requiredTo } == true
-    }
-}
-
 internal class EpgWorker(
+    private val generation: GatewayGeneration,
     private val metadata: SessionMetadata,
     private val clock: Clock,
     private val settings: EpgWorkerSettings = EpgWorkerSettings(),
@@ -133,92 +120,160 @@ internal class EpgWorker(
         channelId: ChannelId,
         maxTime: Instant,
     ) -> GatewayResult<List<GatewayEpgQueryEvent>>,
-) {
+) : EpgCoverageRequester {
     private val activityLock = Any()
+    private val wake = Channel<Unit>(Channel.CONFLATED)
     private val inFlight = mutableSetOf<ChannelId>()
     private val coolingDown = mutableSetOf<ChannelId>()
-    private val attempted = mutableSetOf<ChannelId>()
     private val ineligible = mutableSetOf<ChannelId>()
-    private val warmup = CompletableDeferred<Unit>()
+    private val priorityTargets = linkedMapOf<ChannelId, Instant>()
+    private var singleSlotPriorityTurn = true
+    private var acceptingPriorities = true
     private var started = false
 
-    internal val isWarm: Boolean
-        get() = warmup.isCompleted && !warmup.isCancelled
+    override fun requestCoverage(
+        channelId: ChannelId,
+        through: Instant,
+    ): EpgCoverageRequestResult {
+        val snapshot = metadata.currentEpgSnapshot(generation)
+            ?: return EpgCoverageRequestResult.GENERATION_LOST
+        val coverage = snapshot.coverages.firstOrNull { candidate ->
+            candidate.channelId == channelId
+        } ?: return EpgCoverageRequestResult.INELIGIBLE
+        val now = clock.now().toWholeSecond()
+        val target = through.toWholeSecond()
+        if (coverage.knownTo?.let { knownTo -> knownTo >= target } == true) {
+            return EpgCoverageRequestResult.SATISFIED
+        }
+        if (target <= now || target > now + settings.steadyMaximum) {
+            return EpgCoverageRequestResult.INELIGIBLE
+        }
 
-    internal suspend fun awaitWarmup() {
-        warmup.await()
+        return synchronized(activityLock) {
+            when {
+                !acceptingPriorities -> EpgCoverageRequestResult.GENERATION_LOST
+                channelId in ineligible -> EpgCoverageRequestResult.INELIGIBLE
+                else -> {
+                    val previous = priorityTargets[channelId]
+                    priorityTargets[channelId] = previous?.let { maxOf(it, target) } ?: target
+                    wake.trySend(Unit)
+                    EpgCoverageRequestResult.ACCEPTED
+                }
+            }
+        }
     }
 
-    internal suspend fun run(generation: GatewayGeneration): Unit = coroutineScope {
+    internal fun stopAcceptingPriorities() {
+        synchronized(activityLock) { acceptingPriorities = false }
+    }
+
+    internal suspend fun run(): Unit = coroutineScope {
         synchronized(activityLock) {
             check(!started) { "EPG worker may be started only once" }
             started = true
         }
-        val wake = Channel<Unit>(Channel.CONFLATED)
-        val warmupStartedAt = Instant.fromEpochSeconds(clock.now().epochSeconds)
         val stateObserver = launch(start = CoroutineStart.UNDISPATCHED) {
             metadata.epgRepository.state.drop(1).collect { wake.trySend(Unit) }
         }
         try {
             while (currentCoroutineContext().isActive) {
                 try {
-                    val now = Instant.fromEpochSeconds(clock.now().epochSeconds)
+                    val now = clock.now().toWholeSecond()
                     metadata.retainEpgEvents(
                         generation = generation,
                         from = now - settings.retainPast,
                         to = now + settings.retainFuture,
                     )
-                    val snapshot = metadata.currentEpgSnapshot(generation)
-                    if (
-                        snapshot != null &&
-                        isEpgWarm(
-                            snapshot,
-                            warmupStartedAt,
-                            settings,
-                            satisfiedChannelIds(),
-                        )
-                    ) {
-                        warmup.complete(Unit)
-                    }
-                    val plans = snapshot?.let { current ->
-                        selectEpgQueries(
-                            snapshot = current,
-                            now = now,
-                            settings = settings,
-                            excludedChannelIds = excludedChannelIds(),
-                        )
+                    val plans = metadata.currentEpgSnapshot(generation)?.let { snapshot ->
+                        selectBatch(snapshot, now)
                     }.orEmpty()
                     if (plans.isEmpty()) {
                         withTimeoutOrNull(settings.channelCooldown) { wake.receive() }
                     } else {
-                        dispatchBatch(generation, plans, wake)
+                        dispatchBatch(plans)
                     }
                 } catch (cancellation: CancellationException) {
-                    throw cancellation
+                    currentCoroutineContext().ensureActive()
+                    delay(settings.requestSpacing)
                 } catch (_: Exception) {
                     delay(settings.requestSpacing)
                 }
             }
         } finally {
-            stateObserver.cancelAndJoin()
-            if (!warmup.isCompleted) {
-                warmup.cancel(CancellationException("EPG worker stopped before warmup"))
+            try {
+                stateObserver.cancelAndJoin()
+            } finally {
+                synchronized(activityLock) {
+                    acceptingPriorities = false
+                    inFlight.clear()
+                    coolingDown.clear()
+                    ineligible.clear()
+                    priorityTargets.clear()
+                }
+                wake.close()
             }
-            wake.close()
         }
     }
 
-    private suspend fun CoroutineScope.dispatchBatch(
-        generation: GatewayGeneration,
-        plans: List<EpgQueryPlan>,
-        wake: Channel<Unit>,
-    ) {
+    private fun selectBatch(snapshot: EpgSnapshot, now: Instant): List<EpgQueryPlan> {
+        val coverageByChannel = snapshot.coverages.associateBy(EpgCoverage::channelId)
+        val scheduling = synchronized(activityLock) {
+            priorityTargets.entries.removeAll { (channelId, target) ->
+                val coverage = coverageByChannel[channelId]
+                coverage == null ||
+                    channelId in ineligible ||
+                    coverage.knownTo?.let { knownTo -> knownTo >= target } == true
+            }
+            EpgSchedulingSnapshot(
+                excluded = inFlight + coolingDown + ineligible,
+                priorities = LinkedHashMap(priorityTargets),
+                priorityTurn = singleSlotPriorityTurn,
+            )
+        }
+        val priorityPlans = scheduling.priorities.mapNotNull { (channelId, target) ->
+            val coverage = coverageByChannel[channelId]
+            if (coverage == null || channelId in scheduling.excluded) {
+                null
+            } else {
+                val ordinaryTarget = epgQueryTarget(coverage, now, settings)
+                EpgQueryPlan(
+                    channelId = channelId,
+                    target = maxOf(target, ordinaryTarget ?: target).toWholeSecond(),
+                )
+            }
+        }
+        val ordinaryPlans = selectEpgQueries(
+            snapshot = snapshot,
+            now = now,
+            settings = settings,
+            excludedChannelIds = scheduling.excluded + scheduling.priorities.keys,
+        )
+        val selected = when {
+            priorityPlans.isEmpty() -> ordinaryPlans
+            ordinaryPlans.isEmpty() -> priorityPlans.take(settings.batchSize)
+            settings.batchSize == 1 -> if (scheduling.priorityTurn) {
+                priorityPlans.take(1)
+            } else {
+                ordinaryPlans.take(1)
+            }
+            else -> {
+                val priorityShare = priorityPlans.take(settings.batchSize - 1)
+                priorityShare + ordinaryPlans.take(settings.batchSize - priorityShare.size)
+            }
+        }
+        synchronized(activityLock) {
+            if (priorityPlans.isNotEmpty() && ordinaryPlans.isNotEmpty() && settings.batchSize == 1) {
+                singleSlotPriorityTurn = !scheduling.priorityTurn
+            }
+            selected.forEach { plan -> inFlight += plan.channelId }
+        }
+        return selected
+    }
+
+    private suspend fun CoroutineScope.dispatchBatch(plans: List<EpgQueryPlan>) {
         val requests = ArrayList<Deferred<Unit>>(plans.size)
         plans.forEach { plan ->
-            synchronized(activityLock) {
-                inFlight += plan.channelId
-                coolingDown += plan.channelId
-            }
+            synchronized(activityLock) { coolingDown += plan.channelId }
             launch {
                 try {
                     delay(settings.channelCooldown)
@@ -240,7 +295,10 @@ internal class EpgWorker(
                             )
                             GatewayResult.AccessDenied,
                             GatewayResult.NotSupported,
-                            -> synchronized(activityLock) { ineligible += plan.channelId }
+                            -> synchronized(activityLock) {
+                                ineligible += plan.channelId
+                                priorityTargets.remove(plan.channelId)
+                            }
                             GatewayResult.ServerRejected,
                             GatewayResult.ConnectionLimit,
                             GatewayResult.Timeout,
@@ -251,14 +309,11 @@ internal class EpgWorker(
                         metadata.abandonEpgQuery(generation, query)
                     }
                 } catch (cancellation: CancellationException) {
-                    throw cancellation
+                    currentCoroutineContext().ensureActive()
                 } catch (_: Exception) {
                     // A channel-local failure must not terminate the worker.
                 } finally {
-                    synchronized(activityLock) {
-                        inFlight -= plan.channelId
-                        attempted += plan.channelId
-                    }
+                    synchronized(activityLock) { inFlight -= plan.channelId }
                     wake.trySend(Unit)
                 }
             }
@@ -267,12 +322,12 @@ internal class EpgWorker(
         requests.awaitAll()
         currentCoroutineContext().ensureActive()
     }
-
-    private fun excludedChannelIds(): Set<ChannelId> = synchronized(activityLock) {
-        inFlight + coolingDown + ineligible
-    }
-
-    private fun satisfiedChannelIds(): Set<ChannelId> = synchronized(activityLock) {
-        ineligible + attempted
-    }
 }
+
+private data class EpgSchedulingSnapshot(
+    internal val excluded: Set<ChannelId>,
+    internal val priorities: Map<ChannelId, Instant>,
+    internal val priorityTurn: Boolean,
+)
+
+private fun Instant.toWholeSecond(): Instant = Instant.fromEpochSeconds(epochSeconds)

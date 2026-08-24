@@ -97,6 +97,8 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeEpgRepository : a
 	public fun events-9w0kQQ0 (J)Lkotlinx/coroutines/flow/Flow;
 	public fun getEvents ()Lkotlinx/coroutines/flow/StateFlow;
 	public fun getState ()Lkotlinx/coroutines/flow/StateFlow;
+	public fun requestCoverage-RL2hoTo (JLkotlin/time/Instant;)Lat/bernhardberger/tvheadend/sdk/core/EpgCoverageRequestResult;
+	public final fun setCoverageRequestResult (Lat/bernhardberger/tvheadend/sdk/core/EpgCoverageRequestResult;)V
 	public final fun setState (Lat/bernhardberger/tvheadend/sdk/core/EpgRepositoryState;)V
 }
 

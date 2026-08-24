@@ -72,6 +72,9 @@ internal class DvrRealServerDenialVerificationTest {
             credentials.forbidLeak(ready.toString())
 
             val dvr = session.dvrRepository
+            withTimeout(2.minutes) {
+                dvr.configurationsState.first { state -> state == DvrConfigurationsState.Denied }
+            }
             assertEquals(
                 DvrConfigurationsState.Denied,
                 dvr.configurationsState.value,

@@ -2,6 +2,7 @@ package at.bernhardberger.tvheadend.sdk.testing
 
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverage
+import at.bernhardberger.tvheadend.sdk.core.EpgCoverageRequestResult
 import at.bernhardberger.tvheadend.sdk.core.EpgEvent
 import at.bernhardberger.tvheadend.sdk.core.EpgRepository
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
@@ -15,12 +16,15 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlin.time.Instant
 
 /** Mutable EPG repository for application and SDK consumer tests. */
 public class FakeEpgRepository(
     initialState: EpgRepositoryState = EpgRepositoryState.Empty,
 ) : EpgRepository {
     private val mutableState = MutableStateFlow(initialState)
+    @Volatile
+    private var coverageRequestResult = EpgCoverageRequestResult.GENERATION_LOST
 
     override val state: StateFlow<EpgRepositoryState> = mutableState.asStateFlow()
     override val events: StateFlow<List<EpgEvent>> =
@@ -29,6 +33,11 @@ public class FakeEpgRepository(
     /** Publishes one complete repository transition. */
     public fun setState(state: EpgRepositoryState) {
         mutableState.value = state
+    }
+
+    /** Sets the immediate result returned by subsequent coverage requests. */
+    public fun setCoverageRequestResult(result: EpgCoverageRequestResult) {
+        coverageRequestResult = result
     }
 
     override fun event(id: EventId): Flow<EpgEvent?> =
@@ -45,6 +54,11 @@ public class FakeEpgRepository(
                 coverage.channelId == channelId
             }
         }.distinctUntilChanged()
+
+    override fun requestCoverage(
+        channelId: ChannelId,
+        through: Instant,
+    ): EpgCoverageRequestResult = coverageRequestResult
 }
 
 @OptIn(ExperimentalForInheritanceCoroutinesApi::class, InternalCoroutinesApi::class)

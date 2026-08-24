@@ -3,6 +3,7 @@
 package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoader
+import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepository
 import at.bernhardberger.tvheadend.sdk.core.DVR_PROGRESS_MINIMUM_PROTOCOL_VERSION
 import at.bernhardberger.tvheadend.sdk.core.DvrRepository
@@ -179,7 +180,7 @@ internal class ConnectionOwner(
                                         plan.worker?.cancelAndJoin()
                                         Unit
                                     },
-                                    children::cancelAndJoinEpgWorker,
+                                    children::cancelAndJoinBackgroundEnrichment,
                                     children::closeAndJoinSubscriptions,
                                     gateway::disconnect,
                                     gateway::shutdown,
@@ -214,7 +215,7 @@ internal class ConnectionOwner(
                     invalidated.worker?.cancelAndJoin()
                     Unit
                 },
-                children::cancelAndJoinEpgWorker,
+                children::cancelAndJoinBackgroundEnrichment,
                 children::closeAndJoinSubscriptions,
                 gateway::disconnect,
                 {
@@ -310,7 +311,7 @@ internal class ConnectionOwner(
                     runOrderedCleanup(
                         initialFailure = unavailable.admissionFailure,
                         steps = listOf(
-                            children::cancelAndJoinEpgWorker,
+                            children::cancelAndJoinBackgroundEnrichment,
                             children::closeAndJoinSubscriptions,
                             gateway::disconnect,
                             { metadata.resetWorkingStateRetainingPublishedSnapshot() },
@@ -363,6 +364,19 @@ internal class ConnectionOwner(
                 gateway.metadata.collect(metadata::acceptMetadata)
             }
             commitState(token, SessionState.Synchronizing)
+            val liveAdmissionCommitted = gateway.commitIfLive(connection.generation) {
+                commitLiveAdmission(
+                    token = token,
+                    generation = connection.generation,
+                    streamingAccess = connection.serverFacts.streaming.toCapabilityAccess(),
+                )
+            } == true
+            if (!liveAdmissionCommitted) {
+                requireCurrent(token)
+                return@coroutineScope GatewayConnectionFailure.TRANSPORT_UNAVAILABLE.toAttemptOutcome(
+                    connected = true,
+                )
+            }
 
             val synchronization = async {
                 synchronize(connection.generation)
@@ -384,6 +398,16 @@ internal class ConnectionOwner(
             }
 
             requireCurrent(token)
+            if (
+                !children.prepareBackgroundEnrichment(
+                    connection.generation,
+                    ::publishDvrCapabilitySnapshot,
+                )
+            ) {
+                return@coroutineScope GatewayConnectionFailure.TRANSPORT_UNAVAILABLE.toAttemptOutcome(
+                    connected = true,
+                )
+            }
             val capabilities = metadata.capabilitySnapshot(connection.generation)
             val protocolVersion = connection.protocolVersion
             val progressCapability = when {
@@ -399,6 +423,12 @@ internal class ConnectionOwner(
                 requireCurrent(token)
                 return@coroutineScope GatewayConnectionFailure.TRANSPORT_UNAVAILABLE.toAttemptOutcome(
                     connected = true,
+                )
+            }
+            if (!children.startBackgroundEnrichment(connection.generation)) {
+                return@coroutineScope GatewayConnectionFailure.TRANSPORT_UNAVAILABLE.toAttemptOutcome(
+                    connected = true,
+                    reachedReady = true,
                 )
             }
             runtimeFailure.await().toAttemptOutcome(
@@ -418,24 +448,14 @@ internal class ConnectionOwner(
             )
         }
         return when (val result = gateway.enableInitialMetadata(generation)) {
-            is GatewayResult.Ok -> {
+            is GatewayResult.Ok -> try {
                 metadata.awaitMetadataCurrent(generation)
-                refreshDvrResources(generation)
-                if (!children.startEpgWorker(generation)) {
-                    SynchronizationOutcome.ConnectionFailed(
-                        GatewayConnectionFailure.TRANSPORT_UNAVAILABLE,
-                    )
-                } else {
-                    try {
-                        children.awaitEpgWarmup(generation)
-                        SynchronizationOutcome.Ready
-                    } catch (cancellation: CancellationException) {
-                        currentCoroutineContext().ensureActive()
-                        SynchronizationOutcome.ConnectionFailed(
-                            GatewayConnectionFailure.TRANSPORT_UNAVAILABLE,
-                        )
-                    }
-                }
+                SynchronizationOutcome.Ready
+            } catch (cancellation: CancellationException) {
+                currentCoroutineContext().ensureActive()
+                SynchronizationOutcome.ConnectionFailed(
+                    GatewayConnectionFailure.TRANSPORT_UNAVAILABLE,
+                )
             }
             GatewayResult.ServerRejected -> GatewayResult.ServerRejected.toSynchronizationFailure()
             GatewayResult.AccessDenied -> GatewayResult.AccessDenied.toSynchronizationFailure()
@@ -447,11 +467,6 @@ internal class ConnectionOwner(
         }
     }
 
-    private suspend fun refreshDvrResources(generation: GatewayGeneration) {
-        metadata.applyDvrConfigurations(generation, gateway.getDvrConfigs(generation))
-        metadata.applyDvrDiskSpace(generation, gateway.getDiskSpace(generation))
-    }
-
     private fun commitState(token: SessionToken, state: SessionState) {
         synchronized(stateLock) {
             if (activeToken !== token || closed) {
@@ -460,6 +475,16 @@ internal class ConnectionOwner(
             mutableRecordingProgressCapability.value = RecordingProgressCapability.UNKNOWN
             mutableState.value = state
         }
+    }
+
+    private fun commitLiveAdmission(
+        token: SessionToken,
+        generation: GatewayGeneration,
+        streamingAccess: CapabilityAccess,
+    ): Boolean = synchronized(stateLock) {
+        activeToken === token &&
+            !closed &&
+            children.startLiveAdmission(generation, streamingAccess)
     }
 
     private fun commitReady(
@@ -473,10 +498,6 @@ internal class ConnectionOwner(
         } else if (!dvrMutations.startAdmission(generation)) {
             false
         } else if (!dvrProgress.startAdmission(generation)) {
-            dvrMutations.stopAdmission()
-            false
-        } else if (!children.startAdmission(generation)) {
-            dvrProgress.stopAdmission()
             dvrMutations.stopAdmission()
             false
         } else {
@@ -541,17 +562,34 @@ internal class ConnectionOwner(
             ) {
                 null
             } else {
-                metadata.applyDvrMutationProof(generation, allowed)?.also {
-                    latestDvrCapabilityRevision = it.revision
-                }
+                metadata.applyDvrMutationProof(generation, allowed)
             }
         } ?: return
 
-        beforeDvrCapabilityPublication(allowed)
+        publishDvrCapabilitySnapshot(snapshot)
+    }
+
+    private suspend fun publishDvrCapabilitySnapshot(snapshot: SessionCapabilitiesSnapshot) {
+        val accepted = synchronized(stateLock) {
+            if (
+                closed ||
+                activeGeneration !== snapshot.generation ||
+                mutableState.value !is SessionState.Ready ||
+                snapshot.revision <= (latestDvrCapabilityRevision ?: Long.MIN_VALUE)
+            ) {
+                false
+            } else {
+                latestDvrCapabilityRevision = snapshot.revision
+                true
+            }
+        }
+        if (!accepted) return
+
+        beforeDvrCapabilityPublication(snapshot.capabilities.dvrWrite == CapabilityAccess.ALLOWED)
         synchronized(stateLock) {
             if (
                 !closed &&
-                activeGeneration === generation &&
+                activeGeneration === snapshot.generation &&
                 latestDvrCapabilityRevision == snapshot.revision &&
                 mutableState.value is SessionState.Ready
             ) {
@@ -744,3 +782,9 @@ private fun synchronizationFailure(
         reachedReady = false,
     ),
 )
+
+private fun Boolean?.toCapabilityAccess(): CapabilityAccess = when (this) {
+    true -> CapabilityAccess.ALLOWED
+    false -> CapabilityAccess.DENIED
+    null -> CapabilityAccess.UNKNOWN
+}

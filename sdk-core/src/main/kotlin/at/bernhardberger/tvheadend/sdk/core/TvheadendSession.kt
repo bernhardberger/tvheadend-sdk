@@ -235,7 +235,12 @@ public sealed interface SessionState {
     /** A transport connection is being established. */
     public data object Connecting : SessionState
 
-    /** Initial metadata is being synchronized. */
+    /**
+     * Initial metadata is being synchronized.
+     *
+     * Live subscriptions may already be admitted for channels in a retained same-process catalog;
+     * DVR mutations and progress observation remain unavailable until [Ready].
+     */
     public data object Synchronizing : SessionState
 
     /** The selected generation is synchronized and available. */

@@ -87,14 +87,12 @@ internal class DvrRealServerVerificationTest {
                 dvr.state.value is DvrRepositoryState.Current,
                 "DVR snapshot was not current after ready",
             )
-            assertTrue(
-                dvr.configurationsState.value is DvrConfigurationsState.Current,
-                "DVR configurations were not current after ready",
-            )
-            assertTrue(
-                dvr.diskSpaceState.value is DvrDiskSpaceState.Current,
-                "DVR disk space was not current after ready",
-            )
+            withTimeout(2.minutes) {
+                dvr.configurationsState.first { state -> state is DvrConfigurationsState.Current }
+            }
+            withTimeout(2.minutes) {
+                dvr.diskSpaceState.first { state -> state is DvrDiskSpaceState.Current }
+            }
             credentials.forbidLeak(dvr.state.value.toString())
             credentials.forbidLeak(dvr.configurationsState.value.toString())
             credentials.forbidLeak(dvr.diskSpaceState.value.toString())
@@ -128,6 +126,13 @@ internal class DvrRealServerVerificationTest {
                 scheduledId,
                 DvrEntryUpdate(comment = marker),
             ).requireConfirmed()
+            withTimeout(2.minutes) {
+                dvr.state.first { state ->
+                    (state as? DvrRepositoryState.Current)?.snapshot?.entries
+                        ?.firstOrNull { entry -> entry.id == scheduledId }
+                        ?.comment == marker
+                }
+            }
             val updated = requireNotNull(
                 dvr.entries.value.firstOrNull { entry -> entry.id == scheduledId },
             )
@@ -141,13 +146,13 @@ internal class DvrRealServerVerificationTest {
             credentials.forbidLeak(progress.toString())
 
             dvr.cancelEntry(scheduledId).requireConfirmed()
-            val cancelled = dvr.entries.value.firstOrNull { entry -> entry.id == scheduledId }
-            assertTrue(
-                cancelled == null ||
-                    (cancelled.state != DvrEntryState.SCHEDULED &&
-                        cancelled.state != DvrEntryState.RECORDING),
-                "Cancelled recording remained active",
-            )
+            val cancelled = withTimeout(2.minutes) {
+                dvr.entry(scheduledId).first { entry ->
+                    entry == null ||
+                        (entry.state != DvrEntryState.SCHEDULED &&
+                            entry.state != DvrEntryState.RECORDING)
+                }
+            }
             if (cancelled == null) {
                 createdEntries.remove(scheduledId)
             }
@@ -171,10 +176,9 @@ internal class DvrRealServerVerificationTest {
             )
             dvr.deleteEntry(programmeId).requireConfirmed()
             createdEntries.remove(programmeId)
-            assertTrue(
-                dvr.entries.value.none { entry -> entry.id == programmeId },
-                "Deleted programme recording remained visible",
-            )
+            withTimeout(2.minutes) {
+                dvr.entries.first { entries -> entries.none { entry -> entry.id == programmeId } }
+            }
 
             val autorecId = dvr.createAutorecRule(
                 AutorecRuleCreate(
@@ -194,16 +198,20 @@ internal class DvrRealServerVerificationTest {
                 autorecId,
                 AutorecRuleUpdate(comment = "$marker-updated", enabled = false),
             ).requireConfirmed()
+            withTimeout(2.minutes) {
+                dvr.autorecRules.first { rules ->
+                    rules.firstOrNull { rule -> rule.id == autorecId }?.comment == "$marker-updated"
+                }
+            }
             assertEquals(
                 "$marker-updated",
                 dvr.autorecRules.value.first { rule -> rule.id == autorecId }.comment,
             )
             dvr.deleteAutorecRule(autorecId).requireConfirmed()
             createdAutorec.remove(autorecId)
-            assertTrue(
-                dvr.autorecRules.value.none { rule -> rule.id == autorecId },
-                "Deleted autorec rule remained visible",
-            )
+            withTimeout(2.minutes) {
+                dvr.autorecRules.first { rules -> rules.none { rule -> rule.id == autorecId } }
+            }
 
             val timerecId = dvr.createTimerecRule(
                 TimerecRuleCreate(
@@ -225,16 +233,20 @@ internal class DvrRealServerVerificationTest {
                 timerecId,
                 TimerecRuleUpdate(comment = "$marker-updated", enabled = false),
             ).requireConfirmed()
+            withTimeout(2.minutes) {
+                dvr.timerecRules.first { rules ->
+                    rules.firstOrNull { rule -> rule.id == timerecId }?.comment == "$marker-updated"
+                }
+            }
             assertEquals(
                 "$marker-updated",
                 dvr.timerecRules.value.first { rule -> rule.id == timerecId }.comment,
             )
             dvr.deleteTimerecRule(timerecId).requireConfirmed()
             createdTimerec.remove(timerecId)
-            assertTrue(
-                dvr.timerecRules.value.none { rule -> rule.id == timerecId },
-                "Deleted timerec rule remained visible",
-            )
+            withTimeout(2.minutes) {
+                dvr.timerecRules.first { rules -> rules.none { rule -> rule.id == timerecId } }
+            }
 
             val liveStart = Instant.fromEpochSeconds(Clock.System.now().epochSeconds)
             val liveId = dvr.scheduleEntry(
@@ -256,11 +268,11 @@ internal class DvrRealServerVerificationTest {
             assertTrue(recording != null, "Live recording did not start")
             dvr.stopEntry(liveId).requireConfirmed()
             val stopped = requireNotNull(
-                dvr.entries.value.firstOrNull { entry -> entry.id == liveId },
-            )
-            assertTrue(
-                stopped.state != DvrEntryState.RECORDING,
-                "Stopped recording remained active",
+                withTimeout(2.minutes) {
+                    dvr.entry(liveId).first { entry ->
+                        entry != null && entry.state != DvrEntryState.RECORDING
+                    }
+                },
             )
             credentials.forbidLeak(DvrProgressPolicy().resumeOffer(stopped).toString())
             val closeProgress = dvr.reportProgress(
@@ -276,10 +288,9 @@ internal class DvrRealServerVerificationTest {
             credentials.forbidLeak(closeProgress.toString())
             dvr.deleteEntry(liveId).requireConfirmed()
             createdEntries.remove(liveId)
-            assertTrue(
-                dvr.entries.value.none { entry -> entry.id == liveId },
-                "Deleted live recording remained visible",
-            )
+            withTimeout(2.minutes) {
+                dvr.entries.first { entries -> entries.none { entry -> entry.id == liveId } }
+            }
 
             val afterWrites = session.state.value
             assertTrue(afterWrites is SessionState.Ready, "Session left ready after DVR writes")

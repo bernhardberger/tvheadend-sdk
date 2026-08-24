@@ -128,6 +128,11 @@ internal class EpgRepositoryTest {
         private val mutableState = MutableStateFlow<EpgRepositoryState>(EpgRepositoryState.Empty)
         override val state: StateFlow<EpgRepositoryState> = mutableState.asStateFlow()
 
+        override fun requestCoverage(
+            channelId: ChannelId,
+            through: Instant,
+        ): EpgCoverageRequestResult = EpgCoverageRequestResult.GENERATION_LOST
+
         fun set(state: EpgRepositoryState) {
             mutableState.value = state
         }

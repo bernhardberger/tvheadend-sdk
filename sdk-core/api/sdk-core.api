@@ -1235,6 +1235,16 @@ public final class at/bernhardberger/tvheadend/sdk/core/EpgCoverage$Companion {
 	public static synthetic fun empty-RL2hoTo$default (Lat/bernhardberger/tvheadend/sdk/core/EpgCoverage$Companion;JLkotlin/time/Instant;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/EpgCoverage;
 }
 
+public final class at/bernhardberger/tvheadend/sdk/core/EpgCoverageRequestResult : java/lang/Enum {
+	public static final field ACCEPTED Lat/bernhardberger/tvheadend/sdk/core/EpgCoverageRequestResult;
+	public static final field GENERATION_LOST Lat/bernhardberger/tvheadend/sdk/core/EpgCoverageRequestResult;
+	public static final field INELIGIBLE Lat/bernhardberger/tvheadend/sdk/core/EpgCoverageRequestResult;
+	public static final field SATISFIED Lat/bernhardberger/tvheadend/sdk/core/EpgCoverageRequestResult;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/EpgCoverageRequestResult;
+	public static fun values ()[Lat/bernhardberger/tvheadend/sdk/core/EpgCoverageRequestResult;
+}
+
 public final class at/bernhardberger/tvheadend/sdk/core/EpgEpisode {
 	public synthetic fun <init> (Lat/bernhardberger/tvheadend/sdk/core/EpgEpisodeId;Lat/bernhardberger/tvheadend/sdk/core/EpgSeriesLinkId;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/String;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun component1-heC5Ni0 ()Lat/bernhardberger/tvheadend/sdk/core/EpgEpisodeId;
@@ -1359,6 +1369,7 @@ public abstract interface class at/bernhardberger/tvheadend/sdk/core/EpgReposito
 	public abstract fun events-9w0kQQ0 (J)Lkotlinx/coroutines/flow/Flow;
 	public abstract fun getEvents ()Lkotlinx/coroutines/flow/StateFlow;
 	public abstract fun getState ()Lkotlinx/coroutines/flow/StateFlow;
+	public abstract fun requestCoverage-RL2hoTo (JLkotlin/time/Instant;)Lat/bernhardberger/tvheadend/sdk/core/EpgCoverageRequestResult;
 }
 
 public abstract interface class at/bernhardberger/tvheadend/sdk/core/EpgRepositoryState {

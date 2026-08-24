@@ -8,6 +8,7 @@ import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.ArtworkFailure
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
+import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
 import at.bernhardberger.tvheadend.sdk.core.DvrCutpoint
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
@@ -19,6 +20,7 @@ import at.bernhardberger.tvheadend.sdk.core.TimerecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailureEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
@@ -80,9 +82,10 @@ class SessionSubscriptionsTest {
     @Test
     fun `children bind admission and teardown one exact generation at a time`() = runTest {
         val gateway = SubscriptionGateway()
+        val metadata = PhaseOneSessionMetadata()
         val children = PlaybackSessionChildren(
             gateway,
-            PhaseOneSessionMetadata(),
+            metadata,
             StandardTestDispatcher(testScheduler),
         )
         val generationA = GatewayGeneration()
@@ -92,13 +95,14 @@ class SessionSubscriptionsTest {
             SubscriptionOpenResult.NotReady,
             children.open(SubscriptionChannelId(1L), SubscriptionEventConsumer {}),
         )
+        metadata.bindKnownChannels(generationA, 1L)
         children.bindGeneration(generationA)
         assertSame(
             SubscriptionOpenResult.NotReady,
             children.open(SubscriptionChannelId(1L), SubscriptionEventConsumer {}),
         )
-        assertFalse(children.startAdmission(generationB))
-        assertTrue(children.startAdmission(generationA))
+        assertFalse(children.startLiveAdmission(generationB, CapabilityAccess.ALLOWED))
+        assertTrue(children.startLiveAdmission(generationA, CapabilityAccess.ALLOWED))
 
         val openA = async {
             children.open(SubscriptionChannelId(1L), SubscriptionEventConsumer {})
@@ -125,8 +129,10 @@ class SessionSubscriptionsTest {
             children.open(SubscriptionChannelId(1L), SubscriptionEventConsumer {}),
         )
 
+        metadata.resetWorkingStateRetainingPublishedSnapshot()
+        metadata.bindKnownChannels(generationB, 1L)
         children.bindGeneration(generationB)
-        assertTrue(children.startAdmission(generationB))
+        assertTrue(children.startLiveAdmission(generationB, CapabilityAccess.ALLOWED))
         val openB = async {
             children.open(SubscriptionChannelId(1L), SubscriptionEventConsumer {})
         }
@@ -143,18 +149,123 @@ class SessionSubscriptionsTest {
     }
 
     @Test
+    fun `early admission rejects cold unknown and denied channels without subscribe rpc`() = runTest {
+        val coldGateway = SubscriptionGateway()
+        val coldMetadata = PhaseOneSessionMetadata()
+        val coldGeneration = GatewayGeneration()
+        coldMetadata.bindGeneration(coldGeneration)
+        val coldChildren = PlaybackSessionChildren(
+            coldGateway,
+            coldMetadata,
+            StandardTestDispatcher(testScheduler),
+        )
+        coldChildren.bindGeneration(coldGeneration)
+        assertTrue(coldChildren.startLiveAdmission(coldGeneration, CapabilityAccess.ALLOWED))
+
+        assertSame(
+            SubscriptionOpenResult.NotReady,
+            coldChildren.open(SubscriptionChannelId(1L), SubscriptionEventConsumer {}),
+        )
+        assertTrue(coldGateway.requestedTimeshiftPeriods.isEmpty())
+        assertTrue(coldGateway.collectedGenerations.isEmpty())
+        coldChildren.closeAndJoinSubscriptions()
+
+        val knownGateway = SubscriptionGateway()
+        val knownMetadata = PhaseOneSessionMetadata()
+        val knownGeneration = GatewayGeneration()
+        knownMetadata.bindKnownChannels(knownGeneration, 1L)
+        val knownChildren = PlaybackSessionChildren(
+            knownGateway,
+            knownMetadata,
+            StandardTestDispatcher(testScheduler),
+        )
+        knownChildren.bindGeneration(knownGeneration)
+        assertTrue(knownChildren.startLiveAdmission(knownGeneration, CapabilityAccess.ALLOWED))
+
+        val unknown = knownChildren.open(
+            SubscriptionChannelId(2L),
+            SubscriptionEventConsumer {},
+        ) as SubscriptionOpenResult.Failed
+        assertSame(
+            SubscriptionOperationFailure.SERVER_REJECTED,
+            (unknown.reason as SubscriptionTerminalReason.OperationFailed).failure,
+        )
+        assertTrue(knownGateway.requestedTimeshiftPeriods.isEmpty())
+        assertTrue(knownGateway.collectedGenerations.isEmpty())
+        knownChildren.closeAndJoinSubscriptions()
+
+        val deniedGateway = SubscriptionGateway()
+        val deniedMetadata = PhaseOneSessionMetadata()
+        val deniedGeneration = GatewayGeneration()
+        deniedMetadata.bindKnownChannels(deniedGeneration, 1L)
+        val deniedChildren = PlaybackSessionChildren(
+            deniedGateway,
+            deniedMetadata,
+            StandardTestDispatcher(testScheduler),
+        )
+        deniedChildren.bindGeneration(deniedGeneration)
+        assertTrue(deniedChildren.startLiveAdmission(deniedGeneration, CapabilityAccess.DENIED))
+
+        val denied = deniedChildren.open(
+            SubscriptionChannelId(1L),
+            SubscriptionEventConsumer {},
+        ) as SubscriptionOpenResult.Failed
+        assertSame(
+            SubscriptionOperationFailure.ACCESS_DENIED,
+            (denied.reason as SubscriptionTerminalReason.OperationFailed).failure,
+        )
+        assertTrue(deniedGateway.requestedTimeshiftPeriods.isEmpty())
+        assertTrue(deniedGateway.collectedGenerations.isEmpty())
+        deniedChildren.closeAndJoinSubscriptions()
+    }
+
+    @Test
+    fun `retained same process catalog admits live channel before replacement sync completes`() =
+        runTest {
+            val gateway = SubscriptionGateway()
+            val metadata = PhaseOneSessionMetadata()
+            val previousGeneration = GatewayGeneration()
+            val currentGeneration = GatewayGeneration()
+            metadata.bindKnownChannels(previousGeneration, 7L)
+            metadata.resetWorkingStateRetainingPublishedSnapshot()
+            metadata.bindGeneration(currentGeneration)
+            val children = PlaybackSessionChildren(
+                gateway,
+                metadata,
+                StandardTestDispatcher(testScheduler),
+            )
+            children.bindGeneration(currentGeneration)
+            assertTrue(
+                children.startLiveAdmission(currentGeneration, CapabilityAccess.ALLOWED),
+            )
+
+            val opening = async {
+                children.open(SubscriptionChannelId(7L), SubscriptionEventConsumer {})
+            }
+            runCurrent()
+            gateway.emitStarted(currentGeneration)
+            runCurrent()
+
+            assertTrue(opening.await() is SubscriptionOpenResult.Opened)
+            assertSame(currentGeneration, gateway.collectedGenerations.single())
+            children.closeAndJoinSubscriptions()
+        }
+
+    @Test
     fun `the session forwards the timeshift request and generation bound seek commands`() =
         runTest {
             val gateway = SubscriptionGateway()
             gateway.grantedTimeshiftSeconds = 600L
+            val metadata = PhaseOneSessionMetadata()
             val children = PlaybackSessionChildren(
                 gateway,
-                PhaseOneSessionMetadata(),
+                metadata,
                 StandardTestDispatcher(testScheduler),
             )
             val generation = GatewayGeneration()
+            metadata.bindKnownChannels(generation, 4L)
             children.bindGeneration(generation)
-            assertTrue(children.startAdmission(generation))
+            assertTrue(children.startLiveAdmission(generation, CapabilityAccess.ALLOWED))
             val opening = async {
                 children.open(
                     SubscriptionChannelId(4L),
@@ -199,14 +310,16 @@ class SessionSubscriptionsTest {
                 releaseNearLiveRequest.await()
                 SubscriptionOperationResult.Ok(Unit)
             }
+            val metadata = PhaseOneSessionMetadata()
             val children = PlaybackSessionChildren(
                 gateway,
-                PhaseOneSessionMetadata(),
+                metadata,
                 StandardTestDispatcher(testScheduler),
             )
             val generation = GatewayGeneration()
+            metadata.bindKnownChannels(generation, 4L)
             children.bindGeneration(generation)
-            assertTrue(children.startAdmission(generation))
+            assertTrue(children.startLiveAdmission(generation, CapabilityAccess.ALLOWED))
             val opening = async {
                 children.open(
                     SubscriptionChannelId(4L),
@@ -289,16 +402,18 @@ class SessionSubscriptionsTest {
     @Test
     fun `cancelled teardown retains the manager until every subscription joins`() = runTest {
         val gateway = SubscriptionGateway()
+        val metadata = PhaseOneSessionMetadata()
         val children = PlaybackSessionChildren(
             gateway,
-            PhaseOneSessionMetadata(),
+            metadata,
             StandardTestDispatcher(testScheduler),
         )
         val generation = GatewayGeneration()
         val consumerEntered = CompletableDeferred<Unit>()
         val releaseConsumer = CompletableDeferred<Unit>()
+        metadata.bindKnownChannels(generation, 2L)
         children.bindGeneration(generation)
-        assertTrue(children.startAdmission(generation))
+        assertTrue(children.startLiveAdmission(generation, CapabilityAccess.ALLOWED))
         val opening = async {
             children.open(
                 SubscriptionChannelId(2L),
@@ -350,9 +465,10 @@ class SessionSubscriptionsTest {
     @Test
     fun `child cancellation clears the old manager before a fresh generation binds`() = runTest {
         val gateway = SubscriptionGateway()
+        val metadata = PhaseOneSessionMetadata()
         val children = PlaybackSessionChildren(
             gateway,
-            PhaseOneSessionMetadata(),
+            metadata,
             StandardTestDispatcher(testScheduler),
         )
         val generationA = GatewayGeneration()
@@ -360,8 +476,9 @@ class SessionSubscriptionsTest {
         val consumerEntered = CompletableDeferred<Unit>()
         val releaseConsumer = CompletableDeferred<Unit>()
         val childCancellation = CancellationException("fixed child cancellation")
+        metadata.bindKnownChannels(generationA, 3L)
         children.bindGeneration(generationA)
-        assertTrue(children.startAdmission(generationA))
+        assertTrue(children.startLiveAdmission(generationA, CapabilityAccess.ALLOWED))
         val opening = async {
             children.open(
                 SubscriptionChannelId(3L),
@@ -395,8 +512,10 @@ class SessionSubscriptionsTest {
         closing.join()
 
         assertSame(childCancellation, observedCancellation)
+        metadata.resetWorkingStateRetainingPublishedSnapshot()
+        metadata.bindKnownChannels(generationB, 3L)
         children.bindGeneration(generationB)
-        assertTrue(children.startAdmission(generationB))
+        assertTrue(children.startLiveAdmission(generationB, CapabilityAccess.ALLOWED))
         val reopened = async {
             children.open(SubscriptionChannelId(3L), SubscriptionEventConsumer {})
         }
@@ -867,6 +986,33 @@ private class SubscriptionGateway : ProtocolGateway {
             ),
         )
     }
+}
+
+private fun PhaseOneSessionMetadata.bindKnownChannels(
+    generation: GatewayGeneration,
+    vararg channelIds: Long,
+) {
+    bindGeneration(generation)
+    channelIds.forEach { channelId ->
+        acceptMetadata(
+            MetadataEvent.ChannelAdded(
+                generation,
+                GatewayChannelMetadata(
+                    id = ChannelId(channelId),
+                    name = null,
+                    uuid = null,
+                    number = null,
+                    numberMinor = null,
+                    icon = null,
+                    currentEventId = null,
+                    nextEventId = null,
+                    services = null,
+                    tagIds = null,
+                ),
+            ),
+        )
+    }
+    acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
 }
 
 private fun stream(): SubscriptionStream = SubscriptionStream(

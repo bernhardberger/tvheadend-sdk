@@ -2,6 +2,7 @@ package at.bernhardberger.tvheadend.sdk.testing
 
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverage
+import at.bernhardberger.tvheadend.sdk.core.EpgCoverageRequestResult
 import at.bernhardberger.tvheadend.sdk.core.EpgEvent
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
@@ -31,6 +32,15 @@ internal class FakeEpgRepositoryTest {
         assertSame(event, repository.event(EventId(8)).first())
         assertEquals(listOf(event), repository.events(channelId).first())
         assertSame(coverage, repository.coverage(channelId).first())
+        assertSame(
+            EpgCoverageRequestResult.GENERATION_LOST,
+            repository.requestCoverage(channelId, Instant.fromEpochSeconds(30)),
+        )
+        repository.setCoverageRequestResult(EpgCoverageRequestResult.ACCEPTED)
+        assertSame(
+            EpgCoverageRequestResult.ACCEPTED,
+            repository.requestCoverage(channelId, Instant.fromEpochSeconds(30)),
+        )
 
         repository.setState(EpgRepositoryState.Current(EpgSnapshot.create()))
 

@@ -264,6 +264,21 @@ public sealed interface EpgRepositoryState {
     }
 }
 
+/** Immediate outcome of requesting prioritized EPG coverage. */
+public enum class EpgCoverageRequestResult {
+    /** The current snapshot already covers the requested whole-second boundary. */
+    SATISFIED,
+
+    /** One deduplicated priority hint was accepted or promoted for background work. */
+    ACCEPTED,
+
+    /** The channel, bounded future window, or server query capability is not eligible. */
+    INELIGIBLE,
+
+    /** No current generation-owned EPG worker can accept the request. A later Ready may be retried. */
+    GENERATION_LOST,
+}
+
 /** Observable EPG metadata and coverage for the selected server profile. */
 public interface EpgRepository {
     /** Authoritative EPG freshness and content. */
@@ -280,6 +295,19 @@ public interface EpgRepository {
 
     /** Observes actual and queried coverage for one channel. */
     public fun coverage(channelId: ChannelId): Flow<EpgCoverage?>
+
+    /**
+     * Prioritizes one channel through [through] without waiting for a query to complete.
+     *
+     * The boundary is floored to the protocol's whole-second precision. An uncovered boundary at
+     * or before the current second, or more than 24 hours ahead, is ineligible. Priority never
+     * bypasses channel cooldown, repeated requests deduplicate, and ordinary catalog work keeps a
+     * fair share of each batch.
+     */
+    public fun requestCoverage(
+        channelId: ChannelId,
+        through: Instant,
+    ): EpgCoverageRequestResult
 }
 
 internal abstract class StateBackedEpgRepository : EpgRepository {

@@ -20,6 +20,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
 import at.bernhardberger.tvheadend.sdk.core.DvrSchedule
 import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
+import at.bernhardberger.tvheadend.sdk.core.EpgCoverageRequestResult
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability
 import at.bernhardberger.tvheadend.sdk.core.ServerAuthentication
@@ -32,6 +33,7 @@ import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleUpdate
+import at.bernhardberger.tvheadend.sdk.core.ChannelId as SdkChannelId
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.gateway.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.gateway.EventId
@@ -66,6 +68,8 @@ import java.util.concurrent.CancellationException
 import java.util.concurrent.CountDownLatch
 import kotlin.time.Clock
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlinx.coroutines.CompletableDeferred
@@ -124,10 +128,17 @@ internal class ConnectionOwnerTest {
 
         assertEquals(SessionState.Synchronizing, owner.state.value)
         assertEquals(
-            listOf("failures.collect", "connect", "generation.bind", "metadata.collect", "enable"),
+            listOf(
+                "failures.collect",
+                "connect",
+                "generation.bind",
+                "metadata.collect",
+                "admission.start",
+                "enable",
+            ),
             order,
         )
-        assertFalse("admission.start" in order, "Admission started before metadata synchronization")
+        assertTrue("admission.start" in order, "Live admission did not start before metadata sync")
         assertTrue(metadata.channelsAndTags.value is ChannelRepositoryState.Synchronizing)
         assertTrue(owner.epgRepository.state.value is EpgRepositoryState.Synchronizing)
         assertTrue(owner.dvrRepository.state.value is DvrRepositoryState.Synchronizing)
@@ -147,7 +158,7 @@ internal class ConnectionOwnerTest {
             SessionState.Ready(
                 ServerCapabilities.create(
                     streaming = CapabilityAccess.ALLOWED,
-                    dvrWrite = CapabilityAccess.ALLOWED,
+                    dvrWrite = CapabilityAccess.DENIED,
                 ),
             ),
             owner.state.value,
@@ -155,14 +166,10 @@ internal class ConnectionOwnerTest {
         assertTrue(metadata.channelsAndTags.value is ChannelRepositoryState.Current)
         assertTrue(owner.epgRepository.state.value is EpgRepositoryState.Current)
         assertTrue(owner.dvrRepository.state.value is DvrRepositoryState.Current)
-        assertEquals(
-            DvrConfigurationsState.Current.create(emptyList()),
-            owner.dvrRepository.configurationsState.value,
+        assertTrue(
+            owner.dvrRepository.configurationsState.value is DvrConfigurationsState.Synchronizing,
         )
-        assertEquals(
-            DvrDiskSpaceState.Current(DvrDiskSpace(1, 2, 3)),
-            owner.dvrRepository.diskSpaceState.value,
-        )
+        assertTrue(owner.dvrRepository.diskSpaceState.value is DvrDiskSpaceState.Synchronizing)
         assertEquals(listOf(1L), owner.channelRepository.channels.value.map { it.id.value })
         assertEquals(listOf(8L), owner.dvrRepository.entries.value.map { it.id.value })
         assertEquals(
@@ -171,10 +178,10 @@ internal class ConnectionOwnerTest {
                 "connect",
                 "generation.bind",
                 "metadata.collect",
-                "enable",
-                "dvr.configs",
-                "dvr.disk",
                 "admission.start",
+                "enable",
+                "background.prepare",
+                "background.start",
             ),
             order,
         )
@@ -182,46 +189,96 @@ internal class ConnectionOwnerTest {
     }
 
     @Test
-    fun `readiness waits for configuration and disk refresh after the metadata fence`() = runTest {
+    fun `EPG requester is bound before ready and network work starts afterward`() = runTest {
+        val order = mutableListOf<String>()
+        val gateway = FakeProtocolGateway(order)
+        val generation = GatewayGeneration()
+        gateway.connectResults += connected(generation)
+        val metadata = PhaseOneSessionMetadata()
+        val children = PlaybackSessionChildren(
+            gateway = gateway,
+            metadata = metadata,
+            dispatcher = StandardTestDispatcher(testScheduler),
+            clock = object : Clock {
+                override fun now(): Instant = Instant.fromEpochSeconds(0)
+            },
+        )
+        lateinit var owner: ConnectionOwner
+        var requestResult: EpgCoverageRequestResult? = null
+        gateway.beforeReadyCommit = {
+            assertEquals(SessionState.Synchronizing, owner.state.value)
+            assertFalse("epg.query" in order, "Background network work started before Ready")
+            requestResult = metadata.epgRepository.requestCoverage(
+                SdkChannelId(1),
+                Instant.fromEpochSeconds(0) + 8.hours,
+            )
+        }
+        owner = owner(gateway, children, metadata)
+
+        try {
+            owner.connect(ServerProfile("server"))
+            runCurrent()
+            gateway.emitMetadata(MetadataEvent.ChannelAdded(generation, channelMetadata(1)))
+            gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+            runCurrent()
+
+            assertEquals(EpgCoverageRequestResult.ACCEPTED, requestResult)
+            assertTrue(owner.state.value is SessionState.Ready)
+            assertTrue("epg.query" in order, "Background network work did not start after Ready")
+        } finally {
+            owner.shutdown()
+        }
+    }
+
+    @Test
+    fun `readiness does not wait for independently supervised configuration and disk refresh`() = runTest {
         val holdConfigs = CompletableDeferred<Unit>()
+        val holdDisk = CompletableDeferred<Unit>()
+        val configFinished = CompletableDeferred<Unit>()
+        val diskFinished = CompletableDeferred<Unit>()
+        val diskStarted = CompletableDeferred<Unit>()
         val gateway = FakeProtocolGateway()
         val generation = GatewayGeneration()
         gateway.connectResults += connected(generation, streaming = true, dvrAccess = true)
         gateway.dvrConfigsBehavior = {
-            holdConfigs.await()
-            GatewayResult.Ok(emptyList())
+            try {
+                holdConfigs.await()
+                GatewayResult.Ok(emptyList())
+            } finally {
+                configFinished.complete(Unit)
+            }
+        }
+        gateway.diskSpaceBehavior = {
+            diskStarted.complete(Unit)
+            try {
+                holdDisk.await()
+                GatewayResult.Ok(DvrDiskSpace(1, 2, 3))
+            } finally {
+                diskFinished.complete(Unit)
+            }
         }
         val metadata = PhaseOneSessionMetadata()
-        val owner = owner(gateway, RecordingSessionChildren(mutableListOf()), metadata)
+        val children = PlaybackSessionChildren(
+            gateway,
+            metadata,
+            StandardTestDispatcher(testScheduler),
+        )
+        val owner = owner(gateway, children, metadata)
 
         owner.connect(ServerProfile("server"))
         runCurrent()
         gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
         runCurrent()
 
-        assertEquals(SessionState.Synchronizing, owner.state.value)
+        assertTrue(owner.state.value is SessionState.Ready)
         assertTrue(
             owner.dvrRepository.configurationsState.value is DvrConfigurationsState.Synchronizing,
         )
+        assertTrue(diskStarted.isCompleted, "Disk enrichment was serialized behind configuration")
         assertTrue(owner.dvrRepository.diskSpaceState.value is DvrDiskSpaceState.Synchronizing)
-
-        holdConfigs.complete(Unit)
-        runCurrent()
-
-        assertTrue(owner.state.value is SessionState.Ready)
-        assertEquals(
-            CapabilityAccess.ALLOWED,
-            (owner.state.value as SessionState.Ready).capabilities.dvrWrite,
-        )
-        assertEquals(
-            DvrConfigurationsState.Current.create(emptyList()),
-            owner.dvrRepository.configurationsState.value,
-        )
-        assertEquals(
-            DvrDiskSpaceState.Current(DvrDiskSpace(1, 2, 3)),
-            owner.dvrRepository.diskSpaceState.value,
-        )
         owner.shutdown()
+        assertTrue(configFinished.isCompleted, "Configuration enrichment was not joined")
+        assertTrue(diskFinished.isCompleted, "Disk enrichment was not joined")
     }
 
     @Test
@@ -232,7 +289,12 @@ internal class ConnectionOwnerTest {
         gateway.dvrConfigsBehavior = { GatewayResult.AccessDenied }
         gateway.diskSpaceBehavior = { GatewayResult.Timeout }
         val metadata = PhaseOneSessionMetadata()
-        val owner = owner(gateway, RecordingSessionChildren(mutableListOf()), metadata)
+        val children = PlaybackSessionChildren(
+            gateway,
+            metadata,
+            StandardTestDispatcher(testScheduler),
+        )
+        val owner = owner(gateway, children, metadata)
 
         owner.connect(ServerProfile("server"))
         runCurrent()
@@ -540,7 +602,7 @@ internal class ConnectionOwnerTest {
     }
 
     @Test
-    fun `production children keep readiness closed until EPG warmup succeeds`() = runTest {
+    fun `hundreds of channels start EPG enrichment without delaying ready`() = runTest {
         val queryStarted = CompletableDeferred<Unit>()
         val releaseQuery = CompletableDeferred<Unit>()
         val gateway = FakeProtocolGateway()
@@ -566,12 +628,16 @@ internal class ConnectionOwnerTest {
         try {
             owner.connect(ServerProfile("server"))
             runCurrent()
-            gateway.emitMetadata(MetadataEvent.ChannelAdded(generation, channelMetadata(1)))
+            (1L..500L).forEach { channelId ->
+                gateway.emitMetadata(
+                    MetadataEvent.ChannelAdded(generation, channelMetadata(channelId)),
+                )
+            }
             gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
             runCurrent()
 
-            assertTrue(queryStarted.isCompleted, "EPG warmup query did not start")
-            assertEquals(SessionState.Synchronizing, owner.state.value)
+            assertTrue(queryStarted.isCompleted, "EPG background query did not start")
+            assertTrue(owner.state.value is SessionState.Ready)
 
             releaseQuery.complete(Unit)
             advanceTimeBy(250)
@@ -616,13 +682,18 @@ internal class ConnectionOwnerTest {
     }
 
     @Test
-    fun `independent EPG query cancellation becomes unavailable and cleans up`() = runTest {
+    fun `independent EPG query cancellation keeps enrichment live and ready`() = runTest {
         val order = mutableListOf<String>()
         val gateway = FakeProtocolGateway(order)
         val generation = GatewayGeneration()
         gateway.connectResults += connected(generation)
+        var queryAttempts = 0
         gateway.queryBehavior = { _, _, _ ->
-            throw CancellationException("fixed independent cancellation")
+            queryAttempts += 1
+            if (queryAttempts == 1) {
+                throw CancellationException("fixed independent cancellation")
+            }
+            GatewayResult.Ok(emptyList())
         }
         val metadata = PhaseOneSessionMetadata()
         val children = PlaybackSessionChildren(
@@ -644,12 +715,20 @@ internal class ConnectionOwnerTest {
             advanceTimeBy(250)
             runCurrent()
 
+            assertTrue(owner.state.value is SessionState.Ready)
+            assertFalse("disconnect" in order, "Cancelled background EPG work tore down transport")
+            assertTrue(metadata.epgRepository.state.value is EpgRepositoryState.Current)
             assertEquals(
-                SessionState.Unavailable(SessionFailure.TransportUnavailable),
-                owner.state.value,
+                EpgCoverageRequestResult.ACCEPTED,
+                metadata.epgRepository.requestCoverage(
+                    SdkChannelId(1),
+                    Instant.fromEpochSeconds(0) + 8.hours,
+                ),
             )
-            assertTrue("disconnect" in order, "Cancelled EPG warmup did not clean up transport")
-            assertTrue(metadata.epgRepository.state.value is EpgRepositoryState.Stale)
+            advanceTimeBy(10.minutes)
+            runCurrent()
+            assertEquals(2, queryAttempts)
+            assertTrue(owner.state.value is SessionState.Ready)
         } finally {
             owner.shutdown()
         }
@@ -729,13 +808,19 @@ internal class ConnectionOwnerTest {
     }
 
     @Test
-    fun `transport failure cancels a pending sync fence before reconnect`() = runTest {
+    fun `failure after early admission joins subscriptions before replacement bind`() = runTest {
         val gateway = FakeProtocolGateway()
         val firstGeneration = GatewayGeneration()
         val secondGeneration = GatewayGeneration()
         gateway.connectResults += connected(firstGeneration)
         gateway.connectResults += connected(secondGeneration)
-        val owner = owner(gateway)
+        val metadata = PhaseOneSessionMetadata()
+        val children = PlaybackSessionChildren(
+            gateway,
+            metadata,
+            StandardTestDispatcher(testScheduler),
+        )
+        val owner = owner(gateway, children, metadata)
 
         owner.connect(ServerProfile("server"))
         runCurrent()
@@ -1418,13 +1503,13 @@ private class FakeProtocolGateway(
     ): T? {
         liveCommitCalls += 1
         val call = liveCommitCalls
-        if (invalidateOnReadyCommit && liveCommitCalls == 2) {
+        if (invalidateOnReadyCommit && liveCommitCalls == 3) {
             liveGenerations.remove(generation)
         }
-        if (call == 2) beforeReadyCommit()
+        if (call == 3) beforeReadyCommit()
         return if (generation in liveGenerations) {
             block().also { result ->
-                if (call == 2 && result is Boolean) readyCommitResult = result
+                if (call == 3 && result is Boolean) readyCommitResult = result
             }
         } else {
             null
@@ -1608,7 +1693,10 @@ private class RecordingSessionChildren(
         order += "generation.bind"
     }
 
-    override fun startAdmission(generation: GatewayGeneration): Boolean {
+    override fun startLiveAdmission(
+        generation: GatewayGeneration,
+        streamingAccess: CapabilityAccess,
+    ): Boolean {
         order += "admission.start"
         return true
     }
@@ -1617,7 +1705,20 @@ private class RecordingSessionChildren(
         order += "admission.stop"
     }
 
-    override suspend fun cancelAndJoinEpgWorker() {
+    override fun prepareBackgroundEnrichment(
+        generation: GatewayGeneration,
+        onDvrCapabilitiesChanged: suspend (SessionCapabilitiesSnapshot) -> Unit,
+    ): Boolean {
+        order += "background.prepare"
+        return true
+    }
+
+    override fun startBackgroundEnrichment(generation: GatewayGeneration): Boolean {
+        order += "background.start"
+        return true
+    }
+
+    override suspend fun cancelAndJoinBackgroundEnrichment() {
         order += "epg.join"
     }
 
@@ -1639,13 +1740,16 @@ private class BlockingSessionChildren(
 
     override fun bindGeneration(generation: GatewayGeneration) = Unit
 
-    override fun startAdmission(generation: GatewayGeneration): Boolean = true
+    override fun startLiveAdmission(
+        generation: GatewayGeneration,
+        streamingAccess: CapabilityAccess,
+    ): Boolean = true
 
     override fun stopAdmission() {
         order += "admission.stop"
     }
 
-    override suspend fun cancelAndJoinEpgWorker() {
+    override suspend fun cancelAndJoinBackgroundEnrichment() {
         order += "epg.join"
         cleanupStarted.complete(Unit)
         releaseCleanup.await()
@@ -1667,13 +1771,16 @@ private class ThrowingSessionChildren(
 
     override fun bindGeneration(generation: GatewayGeneration) = Unit
 
-    override fun startAdmission(generation: GatewayGeneration): Boolean = true
+    override fun startLiveAdmission(
+        generation: GatewayGeneration,
+        streamingAccess: CapabilityAccess,
+    ): Boolean = true
 
     override fun stopAdmission() {
         order += "admission.stop"
     }
 
-    override suspend fun cancelAndJoinEpgWorker() {
+    override suspend fun cancelAndJoinBackgroundEnrichment() {
         order += "epg.join"
         error("fixed cleanup failure")
     }

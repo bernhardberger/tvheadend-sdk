@@ -1,6 +1,7 @@
 package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
+import at.bernhardberger.tvheadend.sdk.core.EpgCoverageRequestResult
 import at.bernhardberger.tvheadend.sdk.core.Channel
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.ChannelService
@@ -599,6 +600,54 @@ internal class PhaseOneSessionMetadataTest {
         assertEquals(listOf(4L), staleEpgSnapshot.events.map { it.id.value })
         assertEquals(listOf(9L), metadata.currentDvrSnapshot().entries.map { it.id.value })
         assertEquals(listOf(8L), staleDvrSnapshot.entries.map { it.id.value })
+    }
+
+    @Test
+    fun `coverage requester is current generation bound and cleared by identity or reset`() {
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        val channelId = ChannelId(7)
+        val through = Instant.fromEpochSeconds(20_000)
+        var observed: Pair<ChannelId, Instant>? = null
+        val requester = EpgCoverageRequester { requestedChannelId, requestedThrough ->
+            observed = requestedChannelId to requestedThrough
+            EpgCoverageRequestResult.ACCEPTED
+        }
+
+        assertEquals(
+            EpgCoverageRequestResult.GENERATION_LOST,
+            metadata.epgRepository.requestCoverage(channelId, through),
+        )
+        metadata.bindGeneration(generation)
+        assertFalse(metadata.bindEpgCoverageRequester(generation, requester))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        assertTrue(metadata.bindEpgCoverageRequester(generation, requester))
+        assertEquals(
+            EpgCoverageRequestResult.ACCEPTED,
+            metadata.epgRepository.requestCoverage(channelId, through),
+        )
+        assertEquals(channelId to through, observed)
+
+        metadata.clearEpgCoverageRequester(
+            generation,
+            EpgCoverageRequester { _, _ -> EpgCoverageRequestResult.INELIGIBLE },
+        )
+        assertEquals(
+            EpgCoverageRequestResult.ACCEPTED,
+            metadata.epgRepository.requestCoverage(channelId, through),
+        )
+        metadata.clearEpgCoverageRequester(generation, requester)
+        assertEquals(
+            EpgCoverageRequestResult.GENERATION_LOST,
+            metadata.epgRepository.requestCoverage(channelId, through),
+        )
+
+        assertTrue(metadata.bindEpgCoverageRequester(generation, requester))
+        metadata.resetWorkingStateRetainingPublishedSnapshot()
+        assertEquals(
+            EpgCoverageRequestResult.GENERATION_LOST,
+            metadata.epgRepository.requestCoverage(channelId, through),
+        )
     }
 
     @Test
