@@ -39,11 +39,15 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationFailure
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionState
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStream
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTerminalReason
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTermination
 import java.util.IdentityHashMap
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -54,6 +58,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runCurrent
@@ -179,6 +184,104 @@ class SessionSubscriptionsTest {
             )
             children.closeAndJoinSubscriptions()
         }
+
+    @Test
+    fun `return live uses ordered status before rpc and preserves attributed termination`() =
+        runTest {
+            val gateway = SubscriptionGateway().apply { grantedTimeshiftSeconds = 600L }
+            val nearLiveRequestEntered = CompletableDeferred<Unit>()
+            val releaseNearLiveRequest = CompletableDeferred<Unit>()
+            gateway.nearLiveAction = {
+                nearLiveRequestEntered.complete(Unit)
+                releaseNearLiveRequest.await()
+                SubscriptionOperationResult.Ok(Unit)
+            }
+            val children = PlaybackSessionChildren(
+                gateway,
+                PhaseOneSessionMetadata(),
+                StandardTestDispatcher(testScheduler),
+            )
+            val generation = GatewayGeneration()
+            children.bindGeneration(generation)
+            assertTrue(children.startAdmission(generation))
+            val opening = async {
+                children.open(
+                    SubscriptionChannelId(4L),
+                    SubscriptionEventConsumer {},
+                    600.seconds,
+                )
+            }
+            runCurrent()
+            gateway.emitStarted(generation)
+            runCurrent()
+            val subscription =
+                (opening.await() as SubscriptionOpenResult.Opened).subscription
+
+            val unavailable = async { subscription.seek(SubscriptionSeekTarget.Live) }
+            runCurrent()
+            val unavailableResult = unavailable.await() as SubscriptionSeekResult.Refused
+            assertSame(SubscriptionOperationFailure.NOT_SUPPORTED, unavailableResult.failure)
+            assertTrue(gateway.nearLiveStatuses.isEmpty())
+            assertTrue(gateway.skippedTargets.isEmpty())
+
+            gateway.emitTimeshift(generation, start = 10_000_000, end = 90_000_000)
+            runCurrent()
+            val seeking = async { subscription.seek(SubscriptionSeekTarget.Live) }
+            nearLiveRequestEntered.await()
+
+            assertSame(generation, gateway.nearLiveGenerations.single())
+            assertEquals(SubscriptionId(0L), gateway.nearLiveIds.single())
+            assertEquals(10_000_000L, gateway.nearLiveStatuses.single().start)
+            assertEquals(90_000_000L, gateway.nearLiveStatuses.single().end)
+            assertEquals(3L, gateway.nearLiveMargins.single())
+            assertFalse(seeking.isCompleted)
+            assertFalse(releaseNearLiveRequest.isCompleted)
+
+            gateway.emitSkipped(generation, SkipOutcome.ACCEPTED)
+            runCurrent()
+            assertSame(
+                SubscriptionSeekResult.Accepted,
+                seeking.await(),
+                "The ordered event is authoritative before the RPC reply",
+            )
+
+            gateway.emitTerminated(generation, SubscriptionTermination.REMOTE_EOF)
+            runCurrent()
+            val terminal = subscription.state.value as SubscriptionState.Terminal
+            assertSame(SubscriptionTerminalReason.RemoteEof, terminal.reason)
+            assertFalse(releaseNearLiveRequest.isCompleted)
+            assertTrue(gateway.skippedTargets.isEmpty(), "Direct live must have no fallback")
+
+            children.closeAndJoinSubscriptions()
+        }
+
+    @Test
+    fun `gateway adapter uses latest ordered status and clears it after collection`() = runTest {
+        val gateway = SubscriptionGateway()
+        val generation = GatewayGeneration()
+        val id = SubscriptionId(7L)
+        val connection = GatewaySubscriptionConnection(gateway, generation)
+        val collected = async { connection.events(id).toList() }
+        runCurrent()
+
+        gateway.emitTimeshift(generation, start = 10_000_000, end = 80_000_000)
+        gateway.emitTimeshift(generation, start = 20_000_000, end = 90_000_000)
+        runCurrent()
+        assertTrue(connection.skip(id, SubscriptionSeekTarget.Live) is SubscriptionOperationResult.Ok)
+        assertSame(generation, gateway.nearLiveGenerations.single())
+        assertEquals(id, gateway.nearLiveIds.single())
+        assertEquals(20_000_000L, gateway.nearLiveStatuses.single().start)
+        assertEquals(90_000_000L, gateway.nearLiveStatuses.single().end)
+        assertEquals(3L, gateway.nearLiveMargins.single())
+
+        gateway.complete(generation)
+        assertEquals(2, collected.await().size)
+        assertSame(
+            SubscriptionOperationResult.NotSupported,
+            connection.skip(id, SubscriptionSeekTarget.Live),
+        )
+        assertEquals(1, gateway.nearLiveStatuses.size, "Completed collection must clear its status")
+    }
 
     @Test
     fun `cancelled teardown retains the manager until every subscription joins`() = runTest {
@@ -403,6 +506,10 @@ private class SubscriptionGateway : ProtocolGateway {
     internal val unsubscribedIds = ArrayList<SubscriptionId>()
     internal val requestedTimeshiftPeriods = ArrayList<Duration>()
     internal val skippedTargets = ArrayList<SubscriptionSeekTarget>()
+    internal val nearLiveGenerations = ArrayList<GatewayGeneration>()
+    internal val nearLiveIds = ArrayList<SubscriptionId>()
+    internal val nearLiveStatuses = ArrayList<SubscriptionEvent.Timeshift>()
+    internal val nearLiveMargins = ArrayList<Long>()
     internal val openedRecordingGenerations = ArrayList<GatewayGeneration>()
     internal val openedRecordingIds = ArrayList<DvrEntryId>()
     internal val seekedRecordingGenerations = ArrayList<GatewayGeneration>()
@@ -411,6 +518,9 @@ private class SubscriptionGateway : ProtocolGateway {
     internal var recordingOpenResult: GatewayResult<GatewayRecordingFile> =
         GatewayResult.Ok(GatewayRecordingFile(handleId = 7L, sizeBytes = 64L, protocolVersion = 27))
     internal var grantedTimeshiftSeconds: Long? = null
+    internal var nearLiveAction: suspend () -> SubscriptionOperationResult<Unit> = {
+        SubscriptionOperationResult.Ok(Unit)
+    }
     internal var unsubscribeCount: Int = 0
         private set
 
@@ -591,6 +701,21 @@ private class SubscriptionGateway : ProtocolGateway {
         return SubscriptionOperationResult.Ok(Unit)
     }
 
+    override suspend fun skipSubscriptionNearLive(
+        generation: GatewayGeneration,
+        id: SubscriptionId,
+        status: SubscriptionEvent.Timeshift,
+        marginSeconds: Long,
+    ): SubscriptionOperationResult<Unit> {
+        synchronized(lock) {
+            nearLiveGenerations += generation
+            nearLiveIds += id
+            nearLiveStatuses += status
+            nearLiveMargins += marginSeconds
+        }
+        return nearLiveAction()
+    }
+
     override suspend fun unsubscribe(
         generation: GatewayGeneration,
         id: SubscriptionId,
@@ -626,6 +751,35 @@ private class SubscriptionGateway : ProtocolGateway {
                 sizeBytes = null,
             ),
         )
+    }
+
+    internal suspend fun emitTimeshift(
+        generation: GatewayGeneration,
+        start: Long,
+        end: Long,
+    ) {
+        val stream = synchronized(lock) { streams.getValue(generation) }
+        stream.send(
+            SubscriptionEvent.Timeshift(
+                full = 1,
+                shift = start - end,
+                start = start,
+                end = end,
+                speed = 100,
+            ),
+        )
+    }
+
+    internal suspend fun emitTerminated(
+        generation: GatewayGeneration,
+        reason: SubscriptionTermination,
+    ) {
+        val stream = synchronized(lock) { streams.getValue(generation) }
+        stream.send(SubscriptionEvent.Terminated(reason))
+    }
+
+    internal fun complete(generation: GatewayGeneration) {
+        synchronized(lock) { streams[generation] }?.close()
     }
 
     internal suspend fun emitPacket(generation: GatewayGeneration) {

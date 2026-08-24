@@ -211,11 +211,7 @@ public sealed interface SubscriptionSeekResult {
     /** An earlier request is still awaiting its ordered acknowledgement. */
     public data object AlreadyPending : SubscriptionSeekResult
 
-    /**
-     * Returning to live produced no ordered acknowledgement; withheld packets were replayed.
-     *
-     * TVHeadend does not acknowledge a live request that changes nothing.
-     */
+    /** Reserved for transports that can prove an unacknowledged request changed no playback state. */
     public data object NotAcknowledged : SubscriptionSeekResult
 
     /** The gate invalidated the subscription instead of mixing uncertain packets. */
@@ -399,7 +395,6 @@ internal fun createSubscriptionManager(
 /** Bounded seek-gate limits kept internal and injectable. */
 internal class SeekGateSettings(
     internal val acknowledgementTimeout: Duration = DEFAULT_SEEK_ACKNOWLEDGEMENT_TIMEOUT,
-    internal val liveAcknowledgementTimeout: Duration = DEFAULT_LIVE_ACKNOWLEDGEMENT_TIMEOUT,
     internal val maximumPendingEvents: Int = DEFAULT_SEEK_PENDING_EVENTS,
     internal val maximumPendingBytes: Long = DEFAULT_SEEK_PENDING_BYTES,
 ) {
@@ -407,26 +402,12 @@ internal class SeekGateSettings(
         require(acknowledgementTimeout > Duration.ZERO) {
             "Seek acknowledgement timeout must be positive"
         }
-        require(liveAcknowledgementTimeout > Duration.ZERO) {
-            "Live acknowledgement timeout must be positive"
-        }
-        require(liveAcknowledgementTimeout <= acknowledgementTimeout) {
-            "Live acknowledgement timeout must not exceed the seek acknowledgement timeout"
-        }
         require(maximumPendingEvents > 0) { "Seek gate capacity must be positive" }
         require(maximumPendingBytes > 0L) { "Seek gate byte capacity must be positive" }
     }
 }
 
 private val DEFAULT_SEEK_ACKNOWLEDGEMENT_TIMEOUT = 5.seconds
-
-/**
- * Shorter bound for return to live, whose acknowledgement is absent whenever nothing changes.
- *
- * Holding the data plane for the full seek deadline on that common request would stall a healthy
- * live stream and can exhaust the byte bound on a high bitrate mux.
- */
-private val DEFAULT_LIVE_ACKNOWLEDGEMENT_TIMEOUT = 1.seconds
 private const val DEFAULT_SEEK_PENDING_EVENTS = 2_048
 private const val DEFAULT_SEEK_PENDING_BYTES = 16L * 1024L * 1024L
 private const val MAXIMUM_TIMESHIFT_PERIOD_SECONDS = 0xffff_ffffL
@@ -934,12 +915,7 @@ private class ActiveSubscriptionImpl(
      */
     private suspend fun driveSeek(pending: PendingSeek) {
         if (synchronized(lock) { pendingSeek !== pending }) return
-        val deadline = if (pending.target is SubscriptionSeekTarget.Live) {
-            seekGate.liveAcknowledgementTimeout
-        } else {
-            seekGate.acknowledgementTimeout
-        }
-        val bounded = withTimeoutOrNull(deadline) {
+        val bounded = withTimeoutOrNull(seekGate.acknowledgementTimeout) {
             when (val result = invokeSkip(pending.target)) {
                 null -> SeekResolution.Invalidate(
                     SubscriptionSeekInvalidation.UNCERTAIN_REQUEST_OUTCOME,
@@ -957,12 +933,8 @@ private class ActiveSubscriptionImpl(
                 )
             }
         }
-        val resolution = bounded ?: if (pending.target is SubscriptionSeekTarget.Live) {
-            // TVHeadend absorbs a live request that changes nothing, so silence is not uncertainty.
-            SeekResolution.Replay(SubscriptionSeekResult.NotAcknowledged)
-        } else {
-            SeekResolution.Invalidate(SubscriptionSeekInvalidation.ACKNOWLEDGEMENT_TIMEOUT)
-        }
+        val resolution = bounded
+            ?: SeekResolution.Invalidate(SubscriptionSeekInvalidation.ACKNOWLEDGEMENT_TIMEOUT)
         when (resolution) {
             SeekResolution.Acknowledged -> Unit
             is SeekResolution.Replay -> replaySeek(pending, resolution.result)

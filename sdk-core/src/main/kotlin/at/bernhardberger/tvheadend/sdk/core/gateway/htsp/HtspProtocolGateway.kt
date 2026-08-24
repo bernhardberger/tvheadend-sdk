@@ -60,6 +60,7 @@ import at.bernhardberger.tvheadend.htsp.requests.HtspDvrMutationResponse
 import at.bernhardberger.tvheadend.htsp.requests.HtspRecordingRuleChannel
 import at.bernhardberger.tvheadend.htsp.requests.SubscribeResponse
 import at.bernhardberger.tvheadend.htsp.requests.SubscriptionSeekPosition
+import at.bernhardberger.tvheadend.htsp.requests.SubscriptionTimestampClock
 import at.bernhardberger.tvheadend.htsp.requests.addAutorecEntry
 import at.bernhardberger.tvheadend.htsp.requests.addDvrEntry
 import at.bernhardberger.tvheadend.htsp.requests.addTimerecEntry
@@ -79,8 +80,8 @@ import at.bernhardberger.tvheadend.htsp.requests.getEvents
 import at.bernhardberger.tvheadend.htsp.requests.getSysTime
 import at.bernhardberger.tvheadend.htsp.requests.stopDvrEntry
 import at.bernhardberger.tvheadend.htsp.requests.subscribe
-import at.bernhardberger.tvheadend.htsp.requests.subscriptionLive
 import at.bernhardberger.tvheadend.htsp.requests.subscriptionSkip
+import at.bernhardberger.tvheadend.htsp.requests.subscriptionSkipNearLive
 import at.bernhardberger.tvheadend.htsp.requests.unsubscribe
 import at.bernhardberger.tvheadend.htsp.requests.updateAutorecEntry
 import at.bernhardberger.tvheadend.htsp.requests.updateDvrEntry
@@ -651,30 +652,59 @@ internal class HtspProtocolGateway internal constructor(
      * Maps one timeshift positioning request onto its exact HTSP command.
      *
      * SDK subscriptions never request the 90 kHz clock, so media coordinates are sent as
-     * microseconds. Returning to live has no coordinate and uses `subscriptionLive`.
+     * microseconds. Near-live positioning requires an ordered timeshift status and uses the
+     * separate bounded command below.
      */
     override suspend fun skipSubscription(
         generation: GatewayGeneration,
         id: SubscriptionId,
         target: SubscriptionSeekTarget,
     ): SubscriptionOperationResult<Unit> = when (target) {
-        SubscriptionSeekTarget.Live -> connection.subscriptionLive(
-            subscriptionId = id.value,
-            expectedGeneration = htspGenerationFor(generation),
-        )
+        SubscriptionSeekTarget.Live -> SubscriptionOperationResult.NotSupported
         is SubscriptionSeekTarget.Absolute -> connection.subscriptionSkip(
             subscriptionId = id.value,
             position = SubscriptionSeekPosition.Time(target.position.inWholeMicroseconds),
             absolute = ABSOLUTE_SKIP_FLAG,
             expectedGeneration = htspGenerationFor(generation),
-        )
+        ).toSubscriptionResult {}
         is SubscriptionSeekTarget.Relative -> connection.subscriptionSkip(
             subscriptionId = id.value,
             position = SubscriptionSeekPosition.Time(target.offset.inWholeMicroseconds),
             absolute = RELATIVE_SKIP_FLAG,
             expectedGeneration = htspGenerationFor(generation),
-        )
-    }.toSubscriptionResult {}
+        ).toSubscriptionResult {}
+    }
+
+    override suspend fun skipSubscriptionNearLive(
+        generation: GatewayGeneration,
+        id: SubscriptionId,
+        status: SubscriptionEvent.Timeshift,
+        marginSeconds: Long,
+    ): SubscriptionOperationResult<Unit> {
+        val expectedGeneration = htspGenerationFor(generation)
+        val sourceStatus = try {
+            HtspTimeshiftStatusMessage(
+                subscriptionId = id.value,
+                full = status.full,
+                shift = status.shift,
+                start = status.start,
+                end = status.end,
+                speed = status.speed,
+            )
+        } catch (_: IllegalArgumentException) {
+            return SubscriptionOperationResult.NotSupported
+        }
+        return try {
+            connection.subscriptionSkipNearLive(
+                status = sourceStatus,
+                clock = SubscriptionTimestampClock.MICROSECONDS,
+                marginSeconds = marginSeconds,
+                expectedGeneration = expectedGeneration,
+            ).toSubscriptionResult {}
+        } catch (_: IllegalArgumentException) {
+            SubscriptionOperationResult.NotSupported
+        }
+    }
 
     override suspend fun unsubscribe(
         generation: GatewayGeneration,

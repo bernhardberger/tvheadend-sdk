@@ -95,7 +95,6 @@ import at.bernhardberger.tvheadend.htsp.requests.StopDvrEntryRequest
 import at.bernhardberger.tvheadend.htsp.requests.StopDvrEntryResponse
 import at.bernhardberger.tvheadend.htsp.requests.SubscribeRequest
 import at.bernhardberger.tvheadend.htsp.requests.SubscribeResponse
-import at.bernhardberger.tvheadend.htsp.requests.SubscriptionLiveRequest
 import at.bernhardberger.tvheadend.htsp.requests.SubscriptionSeekPosition
 import at.bernhardberger.tvheadend.htsp.requests.SubscriptionSkipRequest
 import at.bernhardberger.tvheadend.htsp.requests.UnsubscribeRequest
@@ -1656,8 +1655,32 @@ internal class HtspProtocolGatewayTest {
         assertEquals(SubscriptionSeekPosition.Time(-30_000_000L), relative.position)
         assertEquals(0L, relative.absolute)
 
-        gateway.skipSubscription(generation, SubscriptionId(5), SubscriptionSeekTarget.Live)
-        assertEquals(5L, (fake.lastRequest as SubscriptionLiveRequest).subscriptionId)
+        val requestBeforeLive = fake.lastRequest
+        assertSame(
+            SubscriptionOperationResult.NotSupported,
+            gateway.skipSubscription(generation, SubscriptionId(5), SubscriptionSeekTarget.Live),
+        )
+        assertSame(requestBeforeLive, fake.lastRequest, "Direct live must never be dispatched")
+
+        val nearLiveStatus = SubscriptionEvent.Timeshift(
+            full = 10,
+            shift = -20_000_000,
+            start = 10_000_000,
+            end = 90_000_000,
+            speed = 100,
+        )
+        assertTrue(
+            gateway.skipSubscriptionNearLive(
+                generation = generation,
+                id = SubscriptionId(5),
+                status = nearLiveStatus,
+                marginSeconds = 3,
+            ) is SubscriptionOperationResult.Ok,
+        )
+        val nearLive = fake.lastRequest as SubscriptionSkipRequest
+        assertEquals(5L, nearLive.subscriptionId)
+        assertEquals(SubscriptionSeekPosition.Time(87_000_000L), nearLive.position)
+        assertEquals(1L, nearLive.absolute)
         assertSame(sourceGeneration, fake.lastExpectedGeneration)
 
         listOf(
@@ -1671,22 +1694,46 @@ internal class HtspProtocolGatewayTest {
             fake.executeResult = source
             assertSame(
                 expected,
-                gateway.skipSubscription(
-                    generation,
-                    SubscriptionId(5),
-                    SubscriptionSeekTarget.Live,
+                gateway.skipSubscriptionNearLive(
+                    generation = generation,
+                    id = SubscriptionId(5),
+                    status = nearLiveStatus,
+                    marginSeconds = 3,
                 ),
             )
         }
+
+        fake.executeResult = HtspResult.Ok(HtspEmptyResponse)
+        val requestBeforeInvalidStatus = fake.lastRequest
+        listOf(
+            SubscriptionEvent.Timeshift(1, 0, null, 90_000_000, 100),
+            SubscriptionEvent.Timeshift(1, 0, 88_000_000, 90_000_000, 100),
+        ).forEach { invalidStatus ->
+            assertSame(
+                SubscriptionOperationResult.NotSupported,
+                gateway.skipSubscriptionNearLive(
+                    generation = generation,
+                    id = SubscriptionId(5),
+                    status = invalidStatus,
+                    marginSeconds = 3,
+                ),
+            )
+        }
+        assertSame(
+            requestBeforeInvalidStatus,
+            fake.lastRequest,
+            "Invalid near-live status must fail before dispatch",
+        )
 
         val cancellation = CancellationException("private cancellation")
         fake.executeException = cancellation
         var caught: CancellationException? = null
         try {
-            gateway.skipSubscription(
-                generation,
-                SubscriptionId(5),
-                SubscriptionSeekTarget.Absolute(1.seconds),
+            gateway.skipSubscriptionNearLive(
+                generation = generation,
+                id = SubscriptionId(5),
+                status = nearLiveStatus,
+                marginSeconds = 3,
             )
         } catch (failure: CancellationException) {
             caught = failure

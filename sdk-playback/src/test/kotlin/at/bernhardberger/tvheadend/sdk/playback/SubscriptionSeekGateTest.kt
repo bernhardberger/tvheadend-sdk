@@ -211,29 +211,33 @@ class SubscriptionSeekGateTest {
         }
 
     @Test
-    fun `unacknowledged return to live replays withheld packets and keeps playing`() = runTest {
+    fun `unacknowledged near-live positioning invalidates without replaying packets`() = runTest {
         val fixture = openSeekable()
         val seeking = async { fixture.subscription.seek(SubscriptionSeekTarget.Live) }
         runCurrent()
         fixture.connection.emit(packet(presentationTimeUs = 80L))
         runCurrent()
 
-        advanceTimeBy(LIVE_TIMEOUT - 1.milliseconds)
+        advanceTimeBy(GATE_TIMEOUT - 1.milliseconds)
         runCurrent()
         assertFalse(
             seeking.isCompleted,
-            "Return to live must wait for its own shorter deadline",
+            "Near-live positioning must wait for the normal seek deadline",
         )
         assertEquals(listOf("started"), fixture.received)
 
         advanceTimeBy(2.milliseconds)
         runCurrent()
 
-        assertSame(SubscriptionSeekResult.NotAcknowledged, seeking.await())
-        assertEquals(listOf("started", "packet:80"), fixture.received)
-        assertTrue(fixture.subscription.state.value is SubscriptionState.Playable)
+        val result = seeking.await() as SubscriptionSeekResult.Invalidated
+        assertEquals(SubscriptionSeekInvalidation.ACKNOWLEDGEMENT_TIMEOUT, result.cause)
+        assertEquals(listOf("started"), fixture.received)
+        val terminal = fixture.subscription.state.value as SubscriptionState.Terminal
+        val reason = terminal.reason as SubscriptionTerminalReason.SeekInvalidated
+        assertEquals(SubscriptionSeekInvalidation.ACKNOWLEDGEMENT_TIMEOUT, reason.cause)
         assertEquals(listOf(SubscriptionSeekTarget.Live), fixture.connection.seekTargets)
-        fixture.close()
+        fixture.manager.closeAndJoin()
+        assertEquals(1, fixture.connection.unsubscribeCount)
     }
 
     @Test
@@ -554,7 +558,6 @@ private class SeekFixture(
 }
 
 private val GATE_TIMEOUT = 5.seconds
-private val LIVE_TIMEOUT = 1.seconds
 
 private fun absoluteSeek(): SubscriptionSeekTarget = SubscriptionSeekTarget.Absolute(30.seconds)
 

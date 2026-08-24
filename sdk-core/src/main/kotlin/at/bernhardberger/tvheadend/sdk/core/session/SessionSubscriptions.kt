@@ -32,6 +32,8 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.onCompletion
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.time.Clock
@@ -165,12 +167,23 @@ private class ActiveEpgWorker(
     internal val job: Job,
 )
 
-private class GatewaySubscriptionConnection(
+internal class GatewaySubscriptionConnection(
     private val gateway: ProtocolGateway,
     private val generation: GatewayGeneration,
 ) : SubscriptionConnection {
+    private val lock = Any()
+    private val timeshiftStatuses = HashMap<Long, SubscriptionEvent.Timeshift>()
+
     override fun events(id: SubscriptionId): Flow<SubscriptionEvent> =
         gateway.subscription(generation, id)
+            .onEach { event ->
+                if (event is SubscriptionEvent.Timeshift) {
+                    synchronized(lock) { timeshiftStatuses[id.value] = event }
+                }
+            }
+            .onCompletion {
+                synchronized(lock) { timeshiftStatuses.remove(id.value) }
+            }
 
     override suspend fun subscribe(
         id: SubscriptionId,
@@ -186,10 +199,26 @@ private class GatewaySubscriptionConnection(
     override suspend fun skip(
         id: SubscriptionId,
         target: SubscriptionSeekTarget,
-    ): SubscriptionOperationResult<Unit> = gateway.skipSubscription(generation, id, target)
+    ): SubscriptionOperationResult<Unit> = when (target) {
+        SubscriptionSeekTarget.Live -> synchronized(lock) { timeshiftStatuses[id.value] }
+            ?.let { status ->
+                gateway.skipSubscriptionNearLive(
+                    generation = generation,
+                    id = id,
+                    status = status,
+                    marginSeconds = RETURN_TO_LIVE_MARGIN_SECONDS,
+                )
+            }
+            ?: SubscriptionOperationResult.NotSupported
+        is SubscriptionSeekTarget.Absolute,
+        is SubscriptionSeekTarget.Relative,
+        -> gateway.skipSubscription(generation, id, target)
+    }
 
     override suspend fun unsubscribe(id: SubscriptionId): SubscriptionOperationResult<Unit> =
         gateway.unsubscribe(generation, id)
 
     override fun <T> commitIfLive(block: () -> T): T? = gateway.commitIfLive(generation, block)
 }
+
+private const val RETURN_TO_LIVE_MARGIN_SECONDS = 3L

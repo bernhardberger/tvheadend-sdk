@@ -168,6 +168,13 @@ internal interface ProtocolGateway {
         target: SubscriptionSeekTarget,
     ): SubscriptionOperationResult<Unit>
 
+    public suspend fun skipSubscriptionNearLive(
+        generation: GatewayGeneration,
+        id: SubscriptionId,
+        status: SubscriptionEvent.Timeshift,
+        marginSeconds: Long,
+    ): SubscriptionOperationResult<Unit> = SubscriptionOperationResult.NotSupported
+
     public suspend fun unsubscribe(
         generation: GatewayGeneration,
         id: SubscriptionId,

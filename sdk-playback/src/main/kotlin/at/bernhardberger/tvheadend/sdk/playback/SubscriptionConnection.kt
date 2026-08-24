@@ -287,7 +287,7 @@ public sealed interface SubscriptionSeekTarget {
         override fun toString(): String = "SubscriptionSeekTarget.Relative(<redacted>)"
     }
 
-    /** Returns the subscription to its live edge. */
+    /** Requests a bounded position near the latest observed live edge, not exact live mode. */
     public data object Live : SubscriptionSeekTarget
 }
 
@@ -330,7 +330,7 @@ public sealed interface SubscriptionOperationResult<out T> {
     /** The bound transport generation is unavailable. */
     public data object TransportUnavailable : SubscriptionOperationResult<Nothing>
 
-    /** The server does not support the operation. */
+    /** The bound transport cannot support the operation in its current state. */
     public data object NotSupported : SubscriptionOperationResult<Nothing>
 }
 
