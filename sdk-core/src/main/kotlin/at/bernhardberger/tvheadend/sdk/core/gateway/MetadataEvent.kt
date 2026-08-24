@@ -15,6 +15,11 @@ internal enum class GatewayDvrFailure {
     FILE_MISSING,
     PRESENT,
 }
+
+internal enum class GatewayDvrUpdateProvenance {
+    FULL,
+    STATS_ONLY,
+}
 internal typealias EpgEpisodeId = at.bernhardberger.tvheadend.sdk.core.EpgEpisodeId
 internal typealias EpgSeriesLinkId = at.bernhardberger.tvheadend.sdk.core.EpgSeriesLinkId
 internal typealias EventId = at.bernhardberger.tvheadend.sdk.core.EventId
@@ -103,6 +108,7 @@ internal sealed interface MetadataEvent {
     public class DvrEntryUpdated(
         override val generation: GatewayGeneration,
         internal val entry: GatewayDvrEntry,
+        internal val provenance: GatewayDvrUpdateProvenance,
     ) : MetadataEvent {
         override fun toString(): String = "MetadataEvent.DvrEntryUpdated(<redacted>)"
     }

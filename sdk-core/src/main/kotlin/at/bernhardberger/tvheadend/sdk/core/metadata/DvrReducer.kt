@@ -18,6 +18,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayAutorecRule
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrRecordingFile
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrUpdateProvenance
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayTimerecRule
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.TimerecRuleId
@@ -81,11 +82,16 @@ internal data class ReducedDvrEntry private constructor(
     internal fun mergeFromAdd(entry: GatewayDvrEntry): ReducedDvrEntry? = copyMerged(
         entry = entry,
         resetBrowseScalars = true,
+        preserveOmittedErrors = false,
     )
 
-    internal fun mergeFromUpdate(entry: GatewayDvrEntry): ReducedDvrEntry? = copyMerged(
+    internal fun mergeFromUpdate(
+        entry: GatewayDvrEntry,
+        provenance: GatewayDvrUpdateProvenance,
+    ): ReducedDvrEntry? = copyMerged(
         entry = entry,
         resetBrowseScalars = false,
+        preserveOmittedErrors = provenance == GatewayDvrUpdateProvenance.STATS_ONLY,
     )
 
     internal fun toPublicOrNull(): DvrEntry? {
@@ -133,7 +139,11 @@ internal data class ReducedDvrEntry private constructor(
         )
     }
 
-    private fun copyMerged(entry: GatewayDvrEntry, resetBrowseScalars: Boolean): ReducedDvrEntry? {
+    private fun copyMerged(
+        entry: GatewayDvrEntry,
+        resetBrowseScalars: Boolean,
+        preserveOmittedErrors: Boolean,
+    ): ReducedDvrEntry? {
         val candidate = ReducedDvrEntry(
             id = id,
             uuid = entry.uuid ?: uuid,
@@ -186,11 +196,11 @@ internal data class ReducedDvrEntry private constructor(
             configId = entry.configId ?: configId,
             duplicate = entry.duplicate ?: duplicate,
             state = entry.state ?: state,
-            failure = entry.failure ?: failure,
-            subscriptionError = if (resetBrowseScalars) {
-                entry.subscriptionError
-            } else {
+            failure = if (preserveOmittedErrors) entry.failure ?: failure else entry.failure,
+            subscriptionError = if (preserveOmittedErrors) {
                 entry.subscriptionError ?: subscriptionError
+            } else {
+                entry.subscriptionError
             },
             streamErrors = entry.streamErrors ?: streamErrors,
             dataErrors = entry.dataErrors ?: dataErrors,
@@ -345,38 +355,6 @@ internal data class ReducedAutorecRule private constructor(
 
     internal fun replace(rule: GatewayAutorecRule): ReducedAutorecRule = fromAdd(rule)
 
-    internal fun merge(rule: GatewayAutorecRule): ReducedAutorecRule = ReducedAutorecRule(
-        id = id,
-        enabled = rule.enabled ?: enabled,
-        maxDuration = rule.maxDuration ?: maxDuration,
-        minDuration = rule.minDuration ?: minDuration,
-        retentionDays = rule.retentionDays ?: retentionDays,
-        removalDays = rule.removalDays ?: removalDays,
-        daysOfWeekMask = rule.daysOfWeekMask ?: daysOfWeekMask,
-        approximateStartMinutesSinceMidnight =
-            rule.approximateStartMinutesSinceMidnight ?: approximateStartMinutesSinceMidnight,
-        startMinutesSinceMidnight = rule.startMinutesSinceMidnight ?: startMinutesSinceMidnight,
-        startWindowEndMinutesSinceMidnight =
-            rule.startWindowEndMinutesSinceMidnight ?: startWindowEndMinutesSinceMidnight,
-        priority = rule.priority ?: priority,
-        startExtraMinutes = rule.startExtraMinutes ?: startExtraMinutes,
-        stopExtraMinutes = rule.stopExtraMinutes ?: stopExtraMinutes,
-        duplicateDetection = rule.duplicateDetection ?: duplicateDetection,
-        maximumRecordingCount = rule.maximumRecordingCount ?: maximumRecordingCount,
-        broadcastType = rule.broadcastType ?: broadcastType,
-        comment = rule.comment ?: comment,
-        title = rule.title ?: title,
-        fullText = rule.fullText ?: fullText,
-        mergeText = rule.mergeText ?: mergeText,
-        name = rule.name ?: name,
-        directory = rule.directory ?: directory,
-        owner = rule.owner ?: owner,
-        creator = rule.creator ?: creator,
-        channelId = rule.channelId ?: channelId,
-        seriesLinkUri = rule.seriesLinkUri ?: seriesLinkUri,
-        configId = rule.configId ?: configId,
-    )
-
     internal fun toPublic(): AutorecRule = AutorecRule.create(
         id = id,
         enabled = enabled,
@@ -462,26 +440,6 @@ internal data class ReducedTimerecRule private constructor(
 ) {
     override fun toString(): String = "ReducedTimerecRule(<redacted>)"
 
-    internal fun replace(rule: GatewayTimerecRule): ReducedTimerecRule = fromAdd(rule)
-
-    internal fun merge(rule: GatewayTimerecRule): ReducedTimerecRule = ReducedTimerecRule(
-        id = id,
-        enabled = rule.enabled ?: enabled,
-        name = rule.name ?: name,
-        title = rule.title ?: title,
-        channelId = rule.channelId ?: channelId,
-        startMinutesSinceMidnight = rule.startMinutesSinceMidnight ?: startMinutesSinceMidnight,
-        stopMinutesSinceMidnight = rule.stopMinutesSinceMidnight ?: stopMinutesSinceMidnight,
-        daysOfWeekMask = rule.daysOfWeekMask ?: daysOfWeekMask,
-        priority = rule.priority ?: priority,
-        retentionDays = rule.retentionDays ?: retentionDays,
-        directory = rule.directory ?: directory,
-        owner = rule.owner ?: owner,
-        creator = rule.creator ?: creator,
-        configId = rule.configId ?: configId,
-        comment = rule.comment ?: comment,
-    )
-
     internal fun toPublicOrNull(): TimerecRule? {
         if (hasInvalidMinutes()) return null
         return TimerecRule.create(
@@ -543,7 +501,7 @@ internal class DvrReducer {
 
     internal fun accept(event: MetadataEvent): Boolean = when (event) {
         is MetadataEvent.DvrEntryAdded -> acceptEntryAdd(event.entry)
-        is MetadataEvent.DvrEntryUpdated -> acceptEntryUpdate(event.entry)
+        is MetadataEvent.DvrEntryUpdated -> acceptEntryUpdate(event.entry, event.provenance)
         is MetadataEvent.DvrEntryDeleted -> {
             entries.remove(event.entryId)
             true
@@ -596,12 +554,15 @@ internal class DvrReducer {
         return true
     }
 
-    private fun acceptEntryUpdate(entry: GatewayDvrEntry): Boolean {
+    private fun acceptEntryUpdate(
+        entry: GatewayDvrEntry,
+        provenance: GatewayDvrUpdateProvenance,
+    ): Boolean {
         val current = entries[entry.id]
         val candidate = if (current == null) {
             ReducedDvrEntry.fromUpdate(entry)
         } else {
-            current.mergeFromUpdate(entry)
+            current.mergeFromUpdate(entry, provenance)
         } ?: return false
         entries[entry.id] = candidate
         return true
@@ -612,7 +573,7 @@ internal class DvrReducer {
     }
 
     private fun acceptAutorecUpdate(rule: GatewayAutorecRule) {
-        autorecRules[rule.id] = autorecRules[rule.id]?.merge(rule) ?: ReducedAutorecRule.fromUpdate(rule)
+        autorecRules[rule.id] = ReducedAutorecRule.fromUpdate(rule)
     }
 
     private fun acceptTimerecAdd(rule: GatewayTimerecRule): Boolean {
@@ -623,12 +584,7 @@ internal class DvrReducer {
     }
 
     private fun acceptTimerecUpdate(rule: GatewayTimerecRule): Boolean {
-        val current = timerecRules[rule.id]
-        val candidate = if (current == null) {
-            ReducedTimerecRule.fromUpdate(rule)
-        } else {
-            current.merge(rule).takeUnless { it.toPublicOrNull() == null }
-        } ?: return false
+        val candidate = ReducedTimerecRule.fromUpdate(rule) ?: return false
         timerecRules[rule.id] = candidate
         return true
     }

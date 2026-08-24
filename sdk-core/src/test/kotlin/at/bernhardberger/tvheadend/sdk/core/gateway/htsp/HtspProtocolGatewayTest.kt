@@ -129,6 +129,7 @@ import at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrFailure
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrUpdateProvenance
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayRecordingFile
@@ -643,14 +644,18 @@ internal class HtspProtocolGatewayTest {
             HtspTimerecEntryAddMessage(
                 id = "private-time",
                 enabled = true,
-                name = "Private name",
-                title = "Private timerec",
-                channelId = 13,
-                startMinutesSinceMidnight = 60,
-                stopMinutesSinceMidnight = 120,
+                channelId = null,
+                startMinutesSinceMidnight = null,
+                stopMinutesSinceMidnight = null,
                 configId = "private-time-config",
             ),
-            HtspTimerecEntryUpdateMessage(id = "private-time", title = null),
+            HtspTimerecEntryUpdateMessage(
+                id = "private-time",
+                enabled = false,
+                channelId = null,
+                startMinutesSinceMidnight = null,
+                stopMinutesSinceMidnight = null,
+            ),
             HtspTimerecEntryDeleteMessage("private-time"),
         )
         val fake = FakeHtspConnection().apply {
@@ -696,11 +701,19 @@ internal class HtspProtocolGatewayTest {
         assertEquals(DvrEntryState.COMPLETED, updated.state)
         assertEquals(GatewayDvrFailure.FILE_MISSING, updated.failure)
         assertEquals(DvrSubscriptionError.INVALID_TARGET, updated.subscriptionError)
+        assertEquals(GatewayDvrUpdateProvenance.FULL, (events[1] as MetadataEvent.DvrEntryUpdated).provenance)
         assertEquals("private-auto", (events[3] as MetadataEvent.AutorecRuleAdded).rule.id.value)
         assertEquals(false, (events[4] as MetadataEvent.AutorecRuleUpdated).rule.enabled)
         assertEquals(null, (events[4] as MetadataEvent.AutorecRuleUpdated).rule.title)
-        assertEquals(13L, (events[6] as MetadataEvent.TimerecRuleAdded).rule.channelId?.value)
-        assertEquals(null, (events[7] as MetadataEvent.TimerecRuleUpdated).rule.title)
+        val timerecAdded = (events[6] as MetadataEvent.TimerecRuleAdded).rule
+        assertEquals(null, timerecAdded.channelId)
+        assertEquals(null, timerecAdded.startMinutesSinceMidnight)
+        assertEquals(null, timerecAdded.stopMinutesSinceMidnight)
+        val timerecUpdated = (events[7] as MetadataEvent.TimerecRuleUpdated).rule
+        assertEquals(false, timerecUpdated.enabled)
+        assertEquals(null, timerecUpdated.channelId)
+        assertEquals(null, timerecUpdated.startMinutesSinceMidnight)
+        assertEquals(null, timerecUpdated.stopMinutesSinceMidnight)
         assertTrue(events.all { it.generation === events.first().generation })
         assertFalse(events.toString().contains("Private"), "Gateway DVR rendering exposed metadata")
         assertFalse(events.toString().contains("/private"), "Gateway DVR rendering exposed a path")
@@ -757,6 +770,11 @@ internal class HtspProtocolGatewayTest {
         assertEquals(null, updated.state)
         assertEquals(GatewayDvrFailure.FILE_MISSING, updated.failure)
         assertEquals(DvrSubscriptionError.INVALID_SERVICE, updated.subscriptionError)
+        assertTrue(
+            events.drop(1).all {
+                (it as MetadataEvent.DvrEntryUpdated).provenance == GatewayDvrUpdateProvenance.STATS_ONLY
+            },
+        )
         val invalid = (events[2] as MetadataEvent.DvrEntryUpdated).entry
         assertEquals(DvrEntryState.INVALID, invalid.state)
         assertEquals(DvrSubscriptionError.NO_DISK_SPACE, invalid.subscriptionError)

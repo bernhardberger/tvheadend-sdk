@@ -118,6 +118,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelService
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrRecordingFile
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrUpdateProvenance
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnection
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailure
@@ -874,7 +875,11 @@ private fun HtspServerMessage.toGatewayMetadata(
     is HtspEventUpdateMessage -> MetadataEvent.EventUpdated(generation, toGatewayEpgUpdate())
     is HtspEventDeleteMessage -> MetadataEvent.EventDeleted(generation, EventId(eventId))
     is HtspDvrEntryAddMessage -> MetadataEvent.DvrEntryAdded(generation, toGatewayDvrEntry())
-    is HtspDvrEntryUpdateMessage -> MetadataEvent.DvrEntryUpdated(generation, toGatewayDvrEntry())
+    is HtspDvrEntryUpdateMessage -> MetadataEvent.DvrEntryUpdated(
+        generation = generation,
+        entry = toGatewayDvrEntry(),
+        provenance = toGatewayUpdateProvenance(),
+    )
     is HtspDvrEntryDeleteMessage -> MetadataEvent.DvrEntryDeleted(generation, DvrEntryId(entryId))
     is HtspAutorecEntryAddMessage -> MetadataEvent.AutorecRuleAdded(generation, toGatewayAutorecRule())
     is HtspAutorecEntryUpdateMessage ->
@@ -1181,6 +1186,14 @@ private fun HtspDvrEntryUpdateMessage.toGatewayDvrEntry(): GatewayDvrEntry = Gat
     dataErrors = dataErrors,
     dataSizeBytes = dataSizeBytes,
 )
+
+private fun HtspDvrEntryUpdateMessage.toGatewayUpdateProvenance(): GatewayDvrUpdateProvenance =
+    // Full updates always carry enabled; v26+ stats-only updates omit the full section.
+    if (enabled == null) {
+        GatewayDvrUpdateProvenance.STATS_ONLY
+    } else {
+        GatewayDvrUpdateProvenance.FULL
+    }
 
 private fun HtspDvrRecordingFile.toGatewayFile(): GatewayDvrRecordingFile = GatewayDvrRecordingFile(
     fileId = fileId,

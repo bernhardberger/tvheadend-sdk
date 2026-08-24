@@ -11,6 +11,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayAutorecRule
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrRecordingFile
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrUpdateProvenance
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayTimerecRule
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
@@ -26,7 +27,7 @@ internal class DvrReducerTest {
     private val generation = GatewayGeneration()
 
     @Test
-    fun `dvr add null-baselines browse scalars while update preserves omissions`() {
+    fun `dvr add null-baselines browse scalars while stats update preserves omissions`() {
         val reducer = DvrReducer()
         reducer.accept(
             MetadataEvent.DvrEntryAdded(
@@ -46,12 +47,19 @@ internal class DvrReducerTest {
         reducer.accept(
             MetadataEvent.DvrEntryUpdated(
                 generation,
-                entry(id = 1, title = "new"),
+                GatewayDvrEntry(
+                    id = DvrEntryId(1),
+                    state = DvrEntryState.COMPLETED,
+                    streamErrors = 1,
+                    dataErrors = 2,
+                    dataSizeBytes = 3,
+                ),
+                GatewayDvrUpdateProvenance.STATS_ONLY,
             ),
         )
 
         var snapshot = reducer.snapshot().entries.single()
-        assertEquals("new", snapshot.title)
+        assertEquals("old", snapshot.title)
         assertEquals(true, snapshot.enabled)
         assertEquals(8L, snapshot.contentType)
         assertEquals(2L, snapshot.startExtraMinutes)
@@ -74,7 +82,13 @@ internal class DvrReducerTest {
     @Test
     fun `unknown updates remain visible drafts and invalid timing keeps prior state`() {
         val reducer = DvrReducer()
-        reducer.accept(MetadataEvent.DvrEntryUpdated(generation, entry(id = 10, title = "draft")))
+        reducer.accept(
+            MetadataEvent.DvrEntryUpdated(
+                generation,
+                entry(id = 10, title = "draft"),
+                GatewayDvrUpdateProvenance.FULL,
+            ),
+        )
         assertEquals("draft", reducer.snapshot().entries.single().title)
 
         reducer.accept(
@@ -87,6 +101,7 @@ internal class DvrReducerTest {
             MetadataEvent.DvrEntryUpdated(
                 generation,
                 entry(id = 11, start = 30, stop = 10, title = "invalid"),
+                GatewayDvrUpdateProvenance.FULL,
             ),
         )
         val retained = reducer.snapshot().entries.single { it.id == DvrEntryId(11) }
@@ -117,48 +132,113 @@ internal class DvrReducerTest {
     }
 
     @Test
-    fun `autorec and timerec add replace while update preserves omissions`() {
+    fun `full rule updates clear optional fields and retain all-channel timerec rules`() {
         val reducer = DvrReducer()
         reducer.accept(
             MetadataEvent.AutorecRuleAdded(
                 generation,
-                autorec("auto", enabled = true, title = "old-auto", comment = "keep-auto"),
+                GatewayAutorecRule(
+                    id = AutorecRuleId("auto"),
+                    enabled = true,
+                    maxDuration = 60.seconds,
+                    minDuration = 0.seconds,
+                    comment = "old-comment",
+                    title = "old-title",
+                    fullText = true,
+                    mergeText = true,
+                    name = "old-name",
+                    directory = "old-directory",
+                    owner = "old-owner",
+                    creator = "old-creator",
+                    channelId = ChannelId(1),
+                    seriesLinkUri = "old-series",
+                    configId = DvrConfigId("old-config"),
+                ),
             ),
         )
         reducer.accept(
             MetadataEvent.TimerecRuleAdded(
                 generation,
-                timerec("time", enabled = true, title = "old-time", comment = "keep-time"),
+                GatewayTimerecRule(
+                    id = TimerecRuleId("time"),
+                    enabled = true,
+                    name = "old-name",
+                    title = "old-title",
+                    channelId = ChannelId(1),
+                    startMinutesSinceMidnight = 60,
+                    stopMinutesSinceMidnight = 120,
+                    directory = "old-directory",
+                    owner = "old-owner",
+                    creator = "old-creator",
+                    configId = DvrConfigId("old-config"),
+                    comment = "old-comment",
+                ),
             ),
         )
         reducer.accept(
-            MetadataEvent.AutorecRuleUpdated(generation, GatewayAutorecRule(AutorecRuleId("auto"), title = "new-auto")),
+            MetadataEvent.AutorecRuleUpdated(
+                generation,
+                GatewayAutorecRule(
+                    id = AutorecRuleId("auto"),
+                    enabled = false,
+                    maxDuration = 120.seconds,
+                    minDuration = 0.seconds,
+                    retentionDays = 1,
+                    removalDays = 2,
+                    daysOfWeekMask = 127,
+                    approximateStartMinutesSinceMidnight = -1,
+                    startMinutesSinceMidnight = -1,
+                    startWindowEndMinutesSinceMidnight = -1,
+                    priority = 3,
+                    startExtraMinutes = 4,
+                    stopExtraMinutes = 5,
+                    duplicateDetection = 6,
+                    maximumRecordingCount = 7,
+                    broadcastType = 8,
+                ),
+            ),
         )
         reducer.accept(
-            MetadataEvent.TimerecRuleUpdated(generation, GatewayTimerecRule(TimerecRuleId("time"), title = "new-time")),
+            MetadataEvent.TimerecRuleUpdated(
+                generation,
+                GatewayTimerecRule(
+                    id = TimerecRuleId("time"),
+                    enabled = false,
+                    daysOfWeekMask = 127,
+                    priority = 1,
+                    retentionDays = 2,
+                ),
+            ),
         )
 
-        var snapshot = reducer.snapshot()
-        assertEquals("new-auto", snapshot.autorecRules.single().title)
-        assertEquals(true, snapshot.autorecRules.single().enabled)
-        assertEquals("keep-auto", snapshot.autorecRules.single().comment)
-        assertEquals("new-time", snapshot.timerecRules.single().title)
-        assertEquals(true, snapshot.timerecRules.single().enabled)
-        assertEquals("keep-time", snapshot.timerecRules.single().comment)
+        val snapshot = reducer.snapshot()
+        val autorec = snapshot.autorecRules.single()
+        assertEquals(false, autorec.enabled)
+        assertEquals(120.seconds, autorec.maxDuration)
+        assertEquals(null, autorec.comment)
+        assertEquals(null, autorec.title)
+        assertEquals(null, autorec.fullText)
+        assertEquals(null, autorec.mergeText)
+        assertEquals(null, autorec.name)
+        assertEquals(null, autorec.directory)
+        assertEquals(null, autorec.owner)
+        assertEquals(null, autorec.creator)
+        assertEquals(null, autorec.channelId)
+        assertEquals(null, autorec.seriesLinkUri)
+        assertEquals(null, autorec.configId)
 
-        reducer.accept(
-            MetadataEvent.AutorecRuleAdded(generation, autorec("auto", enabled = false, title = "replaced-auto")),
-        )
-        reducer.accept(
-            MetadataEvent.TimerecRuleAdded(generation, timerec("time", enabled = false, title = "replaced-time")),
-        )
-        snapshot = reducer.snapshot()
-        assertEquals(false, snapshot.autorecRules.single().enabled)
-        assertEquals("replaced-auto", snapshot.autorecRules.single().title)
-        assertEquals(null, snapshot.autorecRules.single().comment)
-        assertEquals(false, snapshot.timerecRules.single().enabled)
-        assertEquals("replaced-time", snapshot.timerecRules.single().title)
-        assertEquals(null, snapshot.timerecRules.single().comment)
+        val timerec = snapshot.timerecRules.single()
+        assertEquals(false, timerec.enabled)
+        assertEquals(null, timerec.name)
+        assertEquals(null, timerec.title)
+        assertEquals(null, timerec.channelId)
+        assertEquals(null, timerec.startMinutesSinceMidnight)
+        assertEquals(null, timerec.stopMinutesSinceMidnight)
+        assertEquals(null, timerec.directory)
+        assertEquals(null, timerec.owner)
+        assertEquals(null, timerec.creator)
+        assertEquals(null, timerec.configId)
+        assertEquals(null, timerec.comment)
     }
 
     @Test
@@ -192,7 +272,7 @@ internal class DvrReducerTest {
     }
 
     @Test
-    fun `error observations derive public state and error-only updates keep the base`() {
+    fun `full DVR updates clear omitted errors while stats updates preserve them`() {
         val reducer = DvrReducer()
         reducer.accept(
             MetadataEvent.DvrEntryAdded(
@@ -201,6 +281,7 @@ internal class DvrReducerTest {
                     id = DvrEntryId(1),
                     state = DvrEntryState.RECORDING,
                     failure = GatewayDvrFailure.PRESENT,
+                    subscriptionError = DvrSubscriptionError.SCRAMBLED,
                 ),
             ),
         )
@@ -211,28 +292,51 @@ internal class DvrReducerTest {
                 generation,
                 GatewayDvrEntry(
                     id = DvrEntryId(1),
-                    state = DvrEntryState.COMPLETED,
-                    failure = GatewayDvrFailure.FILE_MISSING,
+                    state = DvrEntryState.RECORDING,
                 ),
+                GatewayDvrUpdateProvenance.FULL,
             ),
         )
-        assertEquals(DvrEntryState.FILE_MISSING, reducer.snapshot().entries.single().state)
+        var entry = reducer.snapshot().entries.single()
+        assertEquals(DvrEntryState.RECORDING, entry.state)
+        assertEquals(null, entry.subscriptionError)
 
         reducer.accept(
             MetadataEvent.DvrEntryUpdated(
                 generation,
-                GatewayDvrEntry(id = DvrEntryId(1), failure = GatewayDvrFailure.NONE),
+                GatewayDvrEntry(
+                    id = DvrEntryId(1),
+                    failure = GatewayDvrFailure.PRESENT,
+                    subscriptionError = DvrSubscriptionError.INVALID_TARGET,
+                ),
+                GatewayDvrUpdateProvenance.STATS_ONLY,
             ),
         )
-        assertEquals(DvrEntryState.COMPLETED, reducer.snapshot().entries.single().state)
+        entry = reducer.snapshot().entries.single()
+        assertEquals(DvrEntryState.RECORDING_ERROR, entry.state)
+        assertEquals(DvrSubscriptionError.INVALID_TARGET, entry.subscriptionError)
 
         reducer.accept(
             MetadataEvent.DvrEntryUpdated(
                 generation,
-                GatewayDvrEntry(id = DvrEntryId(1), failure = GatewayDvrFailure.PRESENT),
+                GatewayDvrEntry(id = DvrEntryId(1), state = DvrEntryState.COMPLETED),
+                GatewayDvrUpdateProvenance.STATS_ONLY,
             ),
         )
-        assertEquals(DvrEntryState.COMPLETED_ERROR, reducer.snapshot().entries.single().state)
+        entry = reducer.snapshot().entries.single()
+        assertEquals(DvrEntryState.COMPLETED_ERROR, entry.state)
+        assertEquals(DvrSubscriptionError.INVALID_TARGET, entry.subscriptionError)
+
+        reducer.accept(
+            MetadataEvent.DvrEntryUpdated(
+                generation,
+                GatewayDvrEntry(id = DvrEntryId(1), state = DvrEntryState.COMPLETED),
+                GatewayDvrUpdateProvenance.FULL,
+            ),
+        )
+        entry = reducer.snapshot().entries.single()
+        assertEquals(DvrEntryState.COMPLETED, entry.state)
+        assertEquals(null, entry.subscriptionError)
     }
 
     @Test
@@ -252,6 +356,7 @@ internal class DvrReducerTest {
             MetadataEvent.DvrEntryUpdated(
                 generation,
                 entry(id = 1, files = emptyList()),
+                GatewayDvrUpdateProvenance.FULL,
             ),
         )
 

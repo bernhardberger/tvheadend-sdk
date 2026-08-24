@@ -20,6 +20,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.EventId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelService
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrUpdateProvenance
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
@@ -71,7 +72,11 @@ internal class PhaseOneSessionMetadataTest {
         assertFalse(result.isCompleted)
 
         metadata.acceptMetadata(
-            MetadataEvent.DvrEntryUpdated(generation, dvrEntry(1, "new")),
+            MetadataEvent.DvrEntryUpdated(
+                generation,
+                dvrEntry(1, "new"),
+                GatewayDvrUpdateProvenance.FULL,
+            ),
         )
         runCurrent()
 
@@ -104,6 +109,7 @@ internal class PhaseOneSessionMetadataTest {
             MetadataEvent.DvrEntryUpdated(
                 generation,
                 dvrEntry(1, "invalid", start = 20, stop = 10),
+                GatewayDvrUpdateProvenance.FULL,
             ),
         )
         runCurrent()
@@ -112,7 +118,11 @@ internal class PhaseOneSessionMetadataTest {
         assertEquals("old", metadata.currentDvrSnapshot().entries.single().title)
 
         metadata.acceptMetadata(
-            MetadataEvent.DvrEntryUpdated(generation, dvrEntry(1, "new")),
+            MetadataEvent.DvrEntryUpdated(
+                generation,
+                dvrEntry(1, "new"),
+                GatewayDvrUpdateProvenance.FULL,
+            ),
         )
         runCurrent()
         assertTrue(result.await() is DvrMutationResult.Confirmed)
@@ -720,7 +730,13 @@ internal class PhaseOneSessionMetadataTest {
         }
 
         metadata.acceptMetadata(MetadataEvent.ChannelUpdated(generation, channel(id = 2)))
-        metadata.acceptMetadata(MetadataEvent.DvrEntryUpdated(generation, dvrEntry(8, "private-dvr")))
+        metadata.acceptMetadata(
+            MetadataEvent.DvrEntryUpdated(
+                generation,
+                dvrEntry(8, "private-dvr"),
+                GatewayDvrUpdateProvenance.FULL,
+            ),
+        )
         metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
         metadata.acceptMetadata(MetadataEvent.ChannelDeleted(GatewayGeneration(), ChannelId(2)))
         assertSame(state, metadata.channelsAndTags.value)

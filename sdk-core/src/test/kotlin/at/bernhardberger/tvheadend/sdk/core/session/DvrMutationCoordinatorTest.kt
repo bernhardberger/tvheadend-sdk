@@ -23,6 +23,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayAutorecRule
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailureEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrUpdateProvenance
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayRecordingFile
@@ -264,6 +265,41 @@ internal class DvrMutationCoordinatorTest {
         val confirmed = result.await() as DvrMutationResult.Confirmed
         assertEquals(AutorecRuleId("rule"), confirmed.value)
     }
+
+    @Test
+    fun `all-channel timerec metadata confirms matching creation`() = runTest {
+        val generation = GatewayGeneration()
+        val gateway = MutationGateway()
+        val acknowledgement = CompletableDeferred<GatewayResult<TimerecRuleId>>()
+        val coordinator = DvrMutationCoordinator(gateway)
+        gateway.createTimerecBehavior = { _, request ->
+            assertEquals(null, request.channel)
+            acknowledgement.await()
+        }
+        coordinator.bindGeneration(generation)
+        coordinator.startAdmission(generation)
+
+        val result = async { coordinator.createTimerecRule(TimerecRuleCreate("title")) }
+        runCurrent()
+        coordinator.acceptMetadata(
+            MetadataEvent.TimerecRuleAdded(
+                generation,
+                GatewayTimerecRule(
+                    id = TimerecRuleId("rule"),
+                    enabled = true,
+                    title = "title",
+                    channelId = null,
+                    startMinutesSinceMidnight = null,
+                    stopMinutesSinceMidnight = null,
+                ),
+            ),
+        )
+        acknowledgement.complete(GatewayResult.Ok(TimerecRuleId("rule")))
+        runCurrent()
+
+        val confirmed = result.await() as DvrMutationResult.Confirmed
+        assertEquals(TimerecRuleId("rule"), confirmed.value)
+    }
 }
 
 private fun scheduleRequest(): DvrScheduleRequest =
@@ -273,7 +309,11 @@ private fun dvrAdded(generation: GatewayGeneration, id: Long): MetadataEvent.Dvr
     MetadataEvent.DvrEntryAdded(generation, GatewayDvrEntry(DvrEntryId(id)))
 
 private fun dvrUpdated(generation: GatewayGeneration, id: Long): MetadataEvent.DvrEntryUpdated =
-    MetadataEvent.DvrEntryUpdated(generation, GatewayDvrEntry(DvrEntryId(id)))
+    MetadataEvent.DvrEntryUpdated(
+        generation,
+        GatewayDvrEntry(DvrEntryId(id)),
+        GatewayDvrUpdateProvenance.FULL,
+    )
 
 internal class MutationGateway : ProtocolGateway {
     internal var scheduleBehavior: suspend (
