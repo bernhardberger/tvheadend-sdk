@@ -26,7 +26,9 @@ runtime split. The optional decoder fallback's exact source, build, checksums,
 and redistribution requirements are recorded in the
 [FFmpeg contingency notes](docs/ffmpeg-contingency.md). Phase 4 real-device
 acceptance is recorded in the
-[playback verification notes](docs/playback-device-verification.md).
+[playback verification notes](docs/playback-device-verification.md). Phase 5
+process, credential, connectivity, and NSD acceptance is recorded in the
+[Android lifecycle verification notes](docs/android-lifecycle-verification.md).
 
 ## Authenticated artwork
 
