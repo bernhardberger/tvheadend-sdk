@@ -16,11 +16,10 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
 import at.bernhardberger.tvheadend.sdk.playback.RECORDING_END_OF_INPUT
-import at.bernhardberger.tvheadend.sdk.playback.RecordingFile
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
-import at.bernhardberger.tvheadend.sdk.playback.RecordingFileOpener
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.RecordingId
 import java.security.MessageDigest
@@ -112,7 +111,7 @@ internal class GrowingTsSourceInstrumentationTest {
                 )
                 player.setMediaSource(
                     createTvheadendGrowingRecordingMediaSource(
-                        recordings = recording,
+                        lease = recording,
                         recordingId = FIXTURE_RECORDING_ID,
                         readAheadBytes = FIXTURE_READ_AHEAD_BYTES,
                         onSeekMap = { map ->
@@ -217,7 +216,7 @@ private data class FixturePlayerSnapshot(
 private class AppendableGrowingRecording(
     private val bytes: ByteArray,
     initialBytes: Int,
-) : RecordingFileOpener {
+) : GrowingRecordingFileLease {
     private val lock = ReentrantLock()
     private val changed = lock.newCondition()
     private val temporaryEnd = CountDownLatch(1)
@@ -238,14 +237,12 @@ private class AppendableGrowingRecording(
     @Volatile
     private var retryFailureArmed = false
 
-    override suspend fun openRecording(recordingId: RecordingId): RecordingFileResult<RecordingFile> =
-        RecordingFileResult.Failed(RecordingFileFailure.NOT_SUPPORTED)
+    override val isCurrent: Boolean = true
 
-    override suspend fun openGrowingRecording(
-        recordingId: RecordingId,
+    override suspend fun open(
         position: Long,
     ): RecordingFileResult<GrowingRecordingFileReader> {
-        if (recordingId != FIXTURE_RECORDING_ID || position !in 0L..availableBytes.toLong()) {
+        if (position !in 0L..availableBytes.toLong()) {
             return RecordingFileResult.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
         }
         opens += position
@@ -316,7 +313,7 @@ private class AppendableGrowingRecording(
             if (retryFailureArmed && position >= retryFailurePosition()) {
                 retryFailureArmed = false
                 retryFailureDelivered.set(true)
-                return@withLock RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
+                return@withLock RecordingFileResult.Failed(RecordingFileFailure.TIMEOUT)
             }
             val copied = minOf(length, availableBytes - position)
             bytes.copyInto(destination, destinationOffset, position, position + copied)

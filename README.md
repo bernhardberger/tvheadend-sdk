@@ -96,10 +96,11 @@ themselves; the SDK does not persist or replay pending progress.
 
 ## Media3 playback coordination
 
-`sdk-media3` provides a narrow coordinator for live channels and completed
-recordings. The application owns the `ExoPlayer` and the coroutine running the
-coordinator. Source changes, resume registration, recovery, and progress
-observation are serialized on the player's application looper; the coordinator
+`sdk-media3` provides a narrow coordinator for live channels, completed
+recordings, and the bounded growing pass-through MPEG-TS path. The application
+owns the `ExoPlayer` and the coroutine running the coordinator. Source changes,
+resume registration, recovery, and progress observation are serialized on the
+player's application looper; the coordinator
 does not create or release the player or own a service, MediaSession, audio
 focus, notification, surface, autoplay, navigation, or presentation policy.
 
@@ -109,6 +110,7 @@ val owner = applicationScope.launch { coordinator.run() }
 
 coordinator.setLiveTarget(channel.id)
 coordinator.setRecordingTarget(recording.id, RecordingPlaybackStart.RESUME)
+coordinator.setRecordingTarget(activeRecording.id, RecordingPlaybackStart.START_OVER)
 
 coordinator.shutdown(2.seconds)
 owner.join()
@@ -116,10 +118,27 @@ session.shutdown()
 player.release()
 ```
 
-Completed recordings require the current semantic
+All recording targets require the current semantic
 `RecordingProgressCapability.SUPPORTED`; unknown and pre-v27 connections are
-refused before source creation, and growing recordings remain explicitly
-deferred. Progress is best-effort and generation-local with one RPC in flight
-and one latest pending observation. Target replacement never waits for that
-RPC. Explicit shutdown may drain it for a caller-supplied timeout of at most ten
-seconds before the application shuts down the session and releases the player.
+refused before source creation. An active target must have one stable `.ts`
+file and must use explicit `START_OVER`. `RESUME` returns
+`GROWING_RECORDING_RESUME_UNSUPPORTED`; other active containers remain
+`GROWING_RECORDING_DEFERRED`. Growing seek is approximate and becomes available
+only after the maintained `TsExtractor` wrapper has validated MPEG-2 or H.264
+and indexed already parsed keyframes. Other TS codecs remain forward-only.
+
+Temporary EOF stays inside the growth reader and never marks the recording
+watched. Growing progress is best-effort and generation-local with one RPC in
+flight and one latest pending observation. The dynamic indexed horizon is not a
+final duration, so orderly replacement never uses it to infer watched state.
+Natural end may mark watched only after both fresh completion and final EOF are
+proven. One target-scoped growth lease binds the original connection generation,
+DVR incarnation, and physical file across every seek or loader retry. Progress
+RPC admission revalidates that lease after capability and generation selection,
+then uses its original generation rather than whichever generation is current
+later. A continuity change therefore fails through the typed
+`TvheadendRecordingException` path rather than rebinding, following a clone, or
+carrying an offset. Target replacement never waits for a progress RPC. Explicit
+shutdown may drain one pending report for a caller-supplied timeout of at most
+ten seconds before the application shuts down the session and releases the
+player.

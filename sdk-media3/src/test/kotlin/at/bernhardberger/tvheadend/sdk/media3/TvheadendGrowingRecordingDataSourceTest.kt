@@ -6,10 +6,9 @@ package at.bernhardberger.tvheadend.sdk.media3
 import androidx.media3.common.C
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
+import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
-import at.bernhardberger.tvheadend.sdk.playback.RecordingFile
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
-import at.bernhardberger.tvheadend.sdk.playback.RecordingFileOpener
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.RecordingId
 import java.io.InterruptedIOException
@@ -30,12 +29,13 @@ import org.junit.jupiter.api.Test
 class TvheadendGrowingRecordingDataSourceTest {
     @Test
     fun `open is unknown length and partial transport bytes wait for a complete TS packet`() {
-        val opener = ScriptedGrowingOpener(
+        val opener = ScriptedGrowingLease(
             ReadStep.Bytes(ByteArray(100) { 1 }),
             ReadStep.Bytes(ByteArray(88) { 2 }),
             ReadStep.End,
         )
-        val source = dataSource(opener, GROWING_TS_PACKET_BYTES * 2)
+        var finalEnds = 0
+        val source = dataSource(opener, GROWING_TS_PACKET_BYTES * 2) { finalEnds += 1 }
 
         assertEquals(C.LENGTH_UNSET.toLong(), source.open(recordingSpec(position = 0L)))
         assertEquals(listOf(0L), opener.openPositions)
@@ -45,6 +45,8 @@ class TvheadendGrowingRecordingDataSourceTest {
         assertEquals(GROWING_TS_PACKET_BYTES - 50, source.read(destination, 50, destination.size - 50))
         assertArrayEquals(ByteArray(100) { 1 } + ByteArray(88) { 2 }, destination)
         assertEquals(C.RESULT_END_OF_INPUT, source.read(ByteArray(1), 0, 1))
+        assertEquals(C.RESULT_END_OF_INPUT, source.read(ByteArray(1), 0, 1))
+        assertEquals(1, finalEnds)
 
         source.close()
         assertEquals(1, opener.closeCalls)
@@ -52,11 +54,12 @@ class TvheadendGrowingRecordingDataSourceTest {
 
     @Test
     fun `final end with an incomplete TS packet fails closed`() {
-        val opener = ScriptedGrowingOpener(
+        val opener = ScriptedGrowingLease(
             ReadStep.Bytes(ByteArray(GROWING_TS_PACKET_BYTES - 1)),
             ReadStep.End,
         )
-        val source = dataSource(opener, GROWING_TS_PACKET_BYTES)
+        var finalEnds = 0
+        val source = dataSource(opener, GROWING_TS_PACKET_BYTES) { finalEnds += 1 }
         source.open(recordingSpec())
 
         val failure = assertThrows(TvheadendRecordingException::class.java) {
@@ -64,12 +67,34 @@ class TvheadendGrowingRecordingDataSourceTest {
         }
 
         assertSame(RecordingFileFailure.FILE_UNAVAILABLE, failure.failure)
+        assertEquals(0, finalEnds)
         source.close()
     }
 
     @Test
+    fun `final end callback is shared across every data source from one factory`() {
+        val lease = ScriptedGrowingLease(ReadStep.End)
+        var finalEnds = 0
+        val factory = createTvheadendGrowingRecordingDataSourceFactory(
+            lease = lease,
+            readAheadBytes = GROWING_TS_PACKET_BYTES,
+            onFinalEnd = { finalEnds += 1 },
+        )
+
+        repeat(2) {
+            val source = factory.createDataSource()
+            source.open(recordingSpec())
+            assertEquals(C.RESULT_END_OF_INPUT, source.read(ByteArray(1), 0, 1))
+            source.close()
+        }
+
+        assertEquals(1, finalEnds)
+        assertEquals(2, lease.closeCalls)
+    }
+
+    @Test
     fun `every packet-aligned reopen gets a fresh reader at the requested position`() {
-        val opener = ScriptedGrowingOpener(ReadStep.End)
+        val opener = ScriptedGrowingLease(ReadStep.End)
         val source = dataSource(opener, GROWING_TS_PACKET_BYTES)
 
         assertEquals(C.LENGTH_UNSET.toLong(), source.open(recordingSpec(position = 376L)))
@@ -83,7 +108,7 @@ class TvheadendGrowingRecordingDataSourceTest {
 
     @Test
     fun `non-packet offsets and bounded requests fail before opening transport`() {
-        val opener = ScriptedGrowingOpener(ReadStep.End)
+        val opener = ScriptedGrowingLease(ReadStep.End)
 
         listOf(
             recordingSpec(position = 1L),
@@ -100,7 +125,7 @@ class TvheadendGrowingRecordingDataSourceTest {
 
     @Test
     fun `typed open and read failures retain their safe classification`() {
-        val denied = ScriptedGrowingOpener(
+        val denied = ScriptedGrowingLease(
             ReadStep.End,
             openFailure = RecordingFileFailure.ACCESS_DENIED,
         )
@@ -109,7 +134,7 @@ class TvheadendGrowingRecordingDataSourceTest {
         }
         assertSame(RecordingFileFailure.ACCESS_DENIED, openFailure.failure)
 
-        val unavailable = ScriptedGrowingOpener(
+        val unavailable = ScriptedGrowingLease(
             ReadStep.Failed(RecordingFileFailure.FILE_UNAVAILABLE),
         )
         val source = dataSource(unavailable, GROWING_TS_PACKET_BYTES)
@@ -123,7 +148,7 @@ class TvheadendGrowingRecordingDataSourceTest {
 
     @Test
     fun `transport cancellation remains a changed connection`() {
-        val opener = ScriptedGrowingOpener(ReadStep.Cancelled)
+        val opener = ScriptedGrowingLease(ReadStep.Cancelled)
         val source = dataSource(opener, GROWING_TS_PACKET_BYTES)
         source.open(recordingSpec())
 
@@ -137,7 +162,7 @@ class TvheadendGrowingRecordingDataSourceTest {
 
     @Test
     fun `pending loader interrupt prevents read but cleanup consumes and restores it`() {
-        val opener = ScriptedGrowingOpener(ReadStep.Bytes(ByteArray(GROWING_TS_PACKET_BYTES)))
+        val opener = ScriptedGrowingLease(ReadStep.Bytes(ByteArray(GROWING_TS_PACKET_BYTES)))
         val failure = AtomicReference<Throwable?>()
         val interruptAfterRead = AtomicBoolean(false)
         val interruptAfterClose = AtomicBoolean(false)
@@ -172,7 +197,7 @@ class TvheadendGrowingRecordingDataSourceTest {
 
     @Test
     fun `pending interrupt prevents buffered delivery without another transport read`() {
-        val opener = ScriptedGrowingOpener(
+        val opener = ScriptedGrowingLease(
             ReadStep.Bytes(ByteArray(GROWING_TS_PACKET_BYTES * 2) { 7 }),
         )
         val firstByte = ByteArray(1)
@@ -214,7 +239,7 @@ class TvheadendGrowingRecordingDataSourceTest {
 
     @Test
     fun `interrupt during a suspended transport read terminates and preserves cleanup`() {
-        val opener = BlockingGrowingOpener()
+        val opener = BlockingGrowingLease()
         val failure = AtomicReference<Throwable?>()
         val interruptAfterRead = AtomicBoolean(false)
         val interruptAfterClose = AtomicBoolean(false)
@@ -255,8 +280,15 @@ class TvheadendGrowingRecordingDataSourceTest {
         }
     }
 
-    private fun dataSource(opener: RecordingFileOpener, readAheadBytes: Int): DataSource =
-        createTvheadendGrowingRecordingDataSourceFactory(opener, readAheadBytes).createDataSource()
+    private fun dataSource(
+        lease: GrowingRecordingFileLease,
+        readAheadBytes: Int,
+        onFinalEnd: () -> Unit = {},
+    ): DataSource = createTvheadendGrowingRecordingDataSourceFactory(
+        lease = lease,
+        readAheadBytes = readAheadBytes,
+        onFinalEnd = onFinalEnd,
+    ).createDataSource()
 
     private fun recordingSpec(
         position: Long = 0L,
@@ -278,10 +310,10 @@ private sealed interface ReadStep {
     data object Cancelled : ReadStep
 }
 
-private class ScriptedGrowingOpener(
+private class ScriptedGrowingLease(
     vararg steps: ReadStep,
     private val openFailure: RecordingFileFailure? = null,
-) : RecordingFileOpener {
+) : GrowingRecordingFileLease {
     private val template = steps.toList()
     val openPositions = ArrayList<Long>()
     var readCalls = 0
@@ -289,11 +321,9 @@ private class ScriptedGrowingOpener(
     var closeCalls = 0
         private set
 
-    override suspend fun openRecording(recordingId: RecordingId): RecordingFileResult<RecordingFile> =
-        RecordingFileResult.Failed(RecordingFileFailure.NOT_SUPPORTED)
+    override val isCurrent: Boolean = true
 
-    override suspend fun openGrowingRecording(
-        recordingId: RecordingId,
+    override suspend fun open(
         position: Long,
     ): RecordingFileResult<GrowingRecordingFileReader> {
         openFailure?.let { failure -> return RecordingFileResult.Failed(failure) }
@@ -329,16 +359,14 @@ private class ScriptedGrowingOpener(
     }
 }
 
-private class BlockingGrowingOpener : RecordingFileOpener {
+private class BlockingGrowingLease : GrowingRecordingFileLease {
     val readStarted = CountDownLatch(1)
     var closeCalls = 0
         private set
 
-    override suspend fun openRecording(recordingId: RecordingId): RecordingFileResult<RecordingFile> =
-        RecordingFileResult.Failed(RecordingFileFailure.NOT_SUPPORTED)
+    override val isCurrent: Boolean = true
 
-    override suspend fun openGrowingRecording(
-        recordingId: RecordingId,
+    override suspend fun open(
         position: Long,
     ): RecordingFileResult<GrowingRecordingFileReader> = RecordingFileResult.Ok(
         object : GrowingRecordingFileReader {

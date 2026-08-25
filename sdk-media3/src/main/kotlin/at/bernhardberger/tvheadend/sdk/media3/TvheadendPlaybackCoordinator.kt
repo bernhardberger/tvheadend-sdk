@@ -5,6 +5,7 @@ package at.bernhardberger.tvheadend.sdk.media3
 
 import androidx.media3.exoplayer.ExoPlayer
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
+import at.bernhardberger.tvheadend.sdk.core.DvrEntry
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackExit
@@ -15,6 +16,9 @@ import at.bernhardberger.tvheadend.sdk.core.DvrResumeOffer
 import at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability
 import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
+import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
+import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
+import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.RecordingId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
@@ -37,9 +41,10 @@ import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
-/** Whether completed-recording playback starts at zero or uses the current server resume position. */
+/** Whether recording playback starts at zero or requests the current server resume position. */
 public enum class RecordingPlaybackStart {
     START_OVER,
+    /** Completed recordings may resume; active recordings return a typed unsupported outcome. */
     RESUME,
 }
 
@@ -51,6 +56,9 @@ public enum class PlaybackTargetResult {
     NOT_READY,
     RECORDING_PROGRESS_UNSUPPORTED,
     TARGET_UNAVAILABLE,
+    /** An active recording was requested with server-progress resume instead of explicit start-over. */
+    GROWING_RECORDING_RESUME_UNSUPPORTED,
+    /** The active recording is outside the supported single-file pass-through MPEG-TS path. */
     GROWING_RECORDING_DEFERRED,
     PLAYER_UNAVAILABLE,
 }
@@ -130,10 +138,11 @@ public class TvheadendPlaybackCoordinator internal constructor(
     }
 
     /**
-     * Replaces the current target with a current, completed recording.
+     * Replaces the current target with a current completed or supported growing recording.
      *
      * Unknown and unsupported recording-progress capability fail before source creation. Growing
-     * recordings are explicitly deferred to Phase 7.
+     * playback requires an explicit [RecordingPlaybackStart.START_OVER], one stable `.ts` file,
+     * and starts at zero; saved server progress is never reinterpreted as a growing seek.
      */
     public suspend fun setRecordingTarget(
         recordingId: DvrEntryId,
@@ -250,13 +259,18 @@ public fun createTvheadendPlaybackCoordinator(
 internal interface PlaybackCoordinatorEnvironment {
     val sessionState: StateFlow<SessionState>
     val progressCapability: StateFlow<RecordingProgressCapability>
+    val dvrState: StateFlow<DvrRepositoryState>
 
     fun admitRecording(
         recordingId: RecordingId,
         start: RecordingPlaybackStart,
-    ): CompletedRecordingAdmission
+    ): RecordingAdmission
 
-    suspend fun reportProgress(recordingId: DvrEntryId, progress: DvrPlaybackProgress)
+    suspend fun reportProgress(
+        recordingId: DvrEntryId,
+        growingLease: GrowingRecordingFileLease?,
+        progress: DvrPlaybackProgress,
+    )
 }
 
 private class SessionPlaybackCoordinatorEnvironment(
@@ -266,41 +280,126 @@ private class SessionPlaybackCoordinatorEnvironment(
     override val sessionState: StateFlow<SessionState> = session.state
     override val progressCapability: StateFlow<RecordingProgressCapability> =
         session.recordingProgressCapability
+    override val dvrState: StateFlow<DvrRepositoryState> = session.dvrRepository.state
 
     override fun admitRecording(
         recordingId: RecordingId,
         start: RecordingPlaybackStart,
-    ): CompletedRecordingAdmission {
-        if (session.state.value !is SessionState.Ready) return CompletedRecordingAdmission.NotReady
-        when (session.recordingProgressCapability.value) {
-            RecordingProgressCapability.UNKNOWN -> return CompletedRecordingAdmission.NotReady
-            RecordingProgressCapability.UNSUPPORTED ->
-                return CompletedRecordingAdmission.ProgressUnsupported
-            RecordingProgressCapability.SUPPORTED -> Unit
-        }
-        val current = session.dvrRepository.state.value as? DvrRepositoryState.Current
-            ?: return CompletedRecordingAdmission.NotReady
-        val entry = current.snapshot.entries.firstOrNull { candidate ->
-            candidate.id.value == recordingId.value
-        } ?: return CompletedRecordingAdmission.TargetUnavailable
-        return when (entry.state) {
-            DvrEntryState.RECORDING -> CompletedRecordingAdmission.GrowingRecordingDeferred
-            DvrEntryState.COMPLETED -> CompletedRecordingAdmission.Accepted(
-                state = DvrEntryState.COMPLETED,
-                resumePosition = when (start) {
-                    RecordingPlaybackStart.START_OVER -> null
-                    RecordingPlaybackStart.RESUME -> when (val offer = progressPolicy.resumeOffer(entry)) {
-                        is DvrResumeOffer.Resume -> offer.position
-                        DvrResumeOffer.StartOver -> null
-                    }
-                },
-            )
-            else -> CompletedRecordingAdmission.TargetUnavailable
+    ): RecordingAdmission = admitRecordingTarget(
+        sessionState = session.state.value,
+        progressCapability = session.recordingProgressCapability.value,
+        dvrState = dvrState,
+        recordingId = recordingId,
+        start = start,
+        progressPolicy = progressPolicy,
+        bindGrowingRecording = session.recordings::bindGrowingRecording,
+    )
+
+    override suspend fun reportProgress(
+        recordingId: DvrEntryId,
+        growingLease: GrowingRecordingFileLease?,
+        progress: DvrPlaybackProgress,
+    ) {
+        if (growingLease == null) {
+            session.dvrRepository.reportProgress(recordingId, progress)
+        } else {
+            session.dvrRepository.reportProgress(growingLease, progress)
         }
     }
+}
 
-    override suspend fun reportProgress(recordingId: DvrEntryId, progress: DvrPlaybackProgress) {
-        session.dvrRepository.reportProgress(recordingId, progress)
+internal fun admitRecordingTarget(
+    sessionState: SessionState,
+    progressCapability: RecordingProgressCapability,
+    dvrState: StateFlow<DvrRepositoryState>,
+    recordingId: RecordingId,
+    start: RecordingPlaybackStart,
+    progressPolicy: DvrProgressPolicy,
+    bindGrowingRecording: (RecordingId) -> RecordingFileResult<GrowingRecordingFileLease>,
+): RecordingAdmission {
+    if (sessionState !is SessionState.Ready) return RecordingAdmission.NotReady
+    when (progressCapability) {
+        RecordingProgressCapability.UNKNOWN -> return RecordingAdmission.NotReady
+        RecordingProgressCapability.UNSUPPORTED -> return RecordingAdmission.ProgressUnsupported
+        RecordingProgressCapability.SUPPORTED -> Unit
+    }
+    val growingBinding = when (start) {
+        RecordingPlaybackStart.START_OVER -> bindGrowingRecording(recordingId)
+        RecordingPlaybackStart.RESUME -> null
+    }
+    val current = dvrState.value as? DvrRepositoryState.Current ?: return RecordingAdmission.NotReady
+    val entry = current.snapshot.entries.singleOrNull { candidate ->
+        candidate.id.value == recordingId.value
+    }
+        ?: return RecordingAdmission.TargetUnavailable
+    return when (entry.state) {
+        DvrEntryState.RECORDING -> admitGrowingRecording(
+            entry = entry,
+            dvrState = dvrState,
+            start = start,
+            binding = growingBinding,
+        )
+        DvrEntryState.COMPLETED -> RecordingAdmission.Completed(
+            resumePosition = when (start) {
+                RecordingPlaybackStart.START_OVER -> null
+                RecordingPlaybackStart.RESUME -> when (val offer = progressPolicy.resumeOffer(entry)) {
+                    is DvrResumeOffer.Resume -> offer.position
+                    DvrResumeOffer.StartOver -> null
+                }
+            },
+        )
+        DvrEntryState.SCHEDULED,
+        DvrEntryState.MISSED,
+        DvrEntryState.INVALID,
+        DvrEntryState.RECORDING_ERROR,
+        DvrEntryState.COMPLETED_ERROR,
+        DvrEntryState.FILE_MISSING,
+        DvrEntryState.UNKNOWN,
+        null,
+        -> RecordingAdmission.TargetUnavailable
+    }
+}
+
+private fun admitGrowingRecording(
+    entry: DvrEntry,
+    dvrState: StateFlow<DvrRepositoryState>,
+    start: RecordingPlaybackStart,
+    binding: RecordingFileResult<GrowingRecordingFileLease>?,
+): RecordingAdmission {
+    val file = entry.files?.singleOrNull() ?: return RecordingAdmission.TargetUnavailable
+    val containerPath = file.path ?: entry.path ?: return RecordingAdmission.TargetUnavailable
+    if (containerPath.isBlank()) return RecordingAdmission.TargetUnavailable
+    if (!containerPath.endsWith(".ts", ignoreCase = true)) {
+        return RecordingAdmission.GrowingRecordingDeferred
+    }
+    val fence = GrowingRecordingFence.create(entry, dvrState)
+        ?: return RecordingAdmission.TargetUnavailable
+    return when (start) {
+        RecordingPlaybackStart.START_OVER -> when (
+            val acceptedBinding = checkNotNull(binding)
+        ) {
+            is RecordingFileResult.Ok -> {
+                val lease = acceptedBinding.value
+                if (
+                    !lease.isCurrent ||
+                    fence.observe() == GrowingRecordingObservation.INVALID
+                ) {
+                    RecordingAdmission.TargetUnavailable
+                } else {
+                    RecordingAdmission.Growing(fence, lease)
+                }
+            }
+            is RecordingFileResult.Failed -> when (acceptedBinding.failure) {
+                RecordingFileFailure.CONNECTION_CHANGED -> RecordingAdmission.NotReady
+                RecordingFileFailure.ACCESS_DENIED,
+                RecordingFileFailure.FILE_UNAVAILABLE,
+                RecordingFileFailure.CONNECTION_LIMIT,
+                RecordingFileFailure.TIMEOUT,
+                RecordingFileFailure.NOT_SUPPORTED,
+                -> RecordingAdmission.TargetUnavailable
+            }
+        }
+        RecordingPlaybackStart.RESUME -> RecordingAdmission.GrowingResumeUnsupported
     }
 }
 
@@ -409,11 +508,11 @@ private class CoordinatorActor(
             )
             applyRetirement(result.retiredTarget, result.retiredRecording)
             if (result.status == PlaybackPlayerInstallStatus.STARTED) {
-                val state = checkNotNull(result.installedRecordingState)
+                val admission = checkNotNull(result.installedRecording)
                 val target = ActorTarget.Recording(
                     token = token,
                     recordingId = DvrEntryId(command.recordingId.value),
-                    entryState = state,
+                    admission = admission,
                 )
                 activeTarget = target
                 applyReportGate(currentReportGateIsValid(), scope)
@@ -470,7 +569,12 @@ private class CoordinatorActor(
         if (!retiredTarget) return
         val old = activeTarget
         if (old is ActorTarget.Recording && retiredRecording?.token === old.token) {
-            terminalize(old, retiredRecording.snapshot, retiredRecording.exit)
+            terminalize(
+                target = old,
+                snapshot = retiredRecording.snapshot,
+                exit = retiredRecording.exit,
+                growingFinalEndProven = retiredRecording.growingFinalEndProven,
+            )
         }
         ticker?.cancel()
         ticker = null
@@ -495,19 +599,22 @@ private class CoordinatorActor(
                         target,
                         event.snapshot,
                         event.terminalExit,
+                        event.growingFinalEndProven,
                     )
-                    event.paused && !target.terminalized -> target.tracker?.let { tracker ->
-                        target.reportEpoch?.takeIf { epoch -> epoch.isValid() }?.let { epoch ->
-                            mailbox.offer(
-                                PendingPlaybackProgress(
-                                    epoch = epoch,
-                                    recordingId = target.recordingId,
-                                    progress = tracker.onPause(timeSource.now(), event.snapshot.position),
-                                    terminal = false,
-                                ),
-                            )
+                    event.paused && !target.terminalized && refreshGrowingTarget(target) ->
+                        target.tracker?.let { tracker ->
+                            target.reportEpoch?.takeIf { epoch -> epoch.isValid() }?.let { epoch ->
+                                mailbox.offer(
+                                    PendingPlaybackProgress(
+                                        epoch = epoch,
+                                        recordingId = target.recordingId,
+                                        growingLease = target.growingLease,
+                                        progress = tracker.onPause(timeSource.now(), event.snapshot.position),
+                                        terminal = false,
+                                    ),
+                                )
+                            }
                         }
-                    }
                 }
             }
         }
@@ -516,6 +623,7 @@ private class CoordinatorActor(
     private suspend fun observeElapsed(token: PlaybackTargetToken) {
         val target = activeTarget as? ActorTarget.Recording ?: return
         if (target.token !== token || target.terminalized) return
+        if (!refreshGrowingTarget(target)) return
         val tracker = target.tracker ?: return
         val epoch = target.reportEpoch?.takeIf { it.isValid() } ?: return
         val snapshot = player.snapshot(token) ?: return
@@ -524,6 +632,7 @@ private class CoordinatorActor(
                 PendingPlaybackProgress(
                     epoch = epoch,
                     recordingId = target.recordingId,
+                    growingLease = target.growingLease,
                     progress = progress,
                     terminal = false,
                 ),
@@ -535,21 +644,33 @@ private class CoordinatorActor(
         target: ActorTarget.Recording,
         snapshot: PlaybackPlayerSnapshot,
         exit: DvrPlaybackExit,
+        growingFinalEndProven: Boolean = false,
     ) {
         if (target.terminalized) return
         target.terminalized = true
         ticker?.cancel()
         ticker = null
+        if (!refreshGrowingTarget(target)) return
         val tracker = target.tracker ?: return
         val epoch = target.reportEpoch?.takeIf { it.isValid() } ?: return
+        val terminalState = if (
+            target.growingFence != null &&
+            exit == DvrPlaybackExit.NATURAL_END &&
+            !growingFinalEndProven
+        ) {
+            null
+        } else {
+            target.entryState
+        }
         mailbox.offer(
             PendingPlaybackProgress(
                 epoch = epoch,
                 recordingId = target.recordingId,
+                growingLease = target.growingLease,
                 progress = tracker.onTerminal(
                     position = snapshot.position,
-                    duration = snapshot.duration,
-                    state = target.entryState,
+                    duration = snapshot.duration.takeIf { target.growingFence == null },
+                    state = terminalState,
                     exit = exit,
                 ),
                 terminal = true,
@@ -577,9 +698,13 @@ private class CoordinatorActor(
 
     private suspend fun startReporting(target: ActorTarget.Recording, scope: CoroutineScope) {
         val gate = reportGate?.takeIf { it.isValid() } ?: return
+        if (!refreshGrowingTarget(target)) return
         val tracker = progressPolicy.tracker()
         target.tracker = tracker
-        target.reportEpoch = PlaybackReportEpoch(gate)
+        target.reportEpoch = PlaybackReportEpoch(gate) {
+            target.growingLease?.isCurrent != false &&
+                target.growingFence?.observe() != GrowingRecordingObservation.INVALID
+        }
         player.snapshot(target.token)?.let { snapshot ->
             tracker.onElapsed(timeSource.now(), snapshot.position)
         }
@@ -603,12 +728,40 @@ private class CoordinatorActor(
         environment.sessionState.value is SessionState.Ready &&
             environment.progressCapability.value == RecordingProgressCapability.SUPPORTED
 
+    private fun refreshGrowingTarget(target: ActorTarget.Recording): Boolean {
+        if (target.growingLease?.isCurrent == false) return invalidateGrowingTarget(target)
+        return when (target.growingFence?.observe()) {
+            null,
+            GrowingRecordingObservation.RECORDING,
+            -> true
+            GrowingRecordingObservation.COMPLETED -> {
+                target.entryState = DvrEntryState.COMPLETED
+                true
+            }
+            GrowingRecordingObservation.INVALID -> invalidateGrowingTarget(target)
+        }
+    }
+
+    private fun invalidateGrowingTarget(target: ActorTarget.Recording): Boolean {
+        target.reportEpoch?.invalidate()
+        target.reportEpoch = null
+        target.tracker = null
+        ticker?.cancel()
+        ticker = null
+        mailbox.discardInvalid()
+        return false
+    }
+
     private suspend fun runReportWorker() {
         while (true) {
             val report = mailbox.next() ?: return
             if (!report.epoch.isValid() || !currentReportGateIsValid()) continue
             try {
-                environment.reportProgress(report.recordingId, report.progress)
+                environment.reportProgress(
+                    report.recordingId,
+                    report.growingLease,
+                    report.progress,
+                )
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (_: Exception) {
@@ -627,14 +780,23 @@ private class CoordinatorActor(
     private sealed class ActorTarget(open val token: PlaybackTargetToken) {
         data class Live(override val token: PlaybackTargetToken) : ActorTarget(token)
 
-        data class Recording(
+        class Recording(
             override val token: PlaybackTargetToken,
             val recordingId: DvrEntryId,
-            val entryState: DvrEntryState,
-            var tracker: at.bernhardberger.tvheadend.sdk.core.DvrProgressTracker? = null,
-            var reportEpoch: PlaybackReportEpoch? = null,
-            var terminalized: Boolean = false,
-        ) : ActorTarget(token)
+            admission: RecordingAdmission.Accepted,
+        ) : ActorTarget(token) {
+            var entryState: DvrEntryState = when (admission) {
+                is RecordingAdmission.Completed -> DvrEntryState.COMPLETED
+                is RecordingAdmission.Growing -> DvrEntryState.RECORDING
+            }
+            val growingFence: GrowingRecordingFence? =
+                (admission as? RecordingAdmission.Growing)?.fence
+            val growingLease: GrowingRecordingFileLease? =
+                (admission as? RecordingAdmission.Growing)?.lease
+            var tracker: at.bernhardberger.tvheadend.sdk.core.DvrProgressTracker? = null
+            var reportEpoch: PlaybackReportEpoch? = null
+            var terminalized: Boolean = false
+        }
     }
 }
 
@@ -712,6 +874,8 @@ private fun PlaybackPlayerInstallStatus.toPublicTargetResult(): PlaybackTargetRe
     PlaybackPlayerInstallStatus.RECORDING_PROGRESS_UNSUPPORTED ->
         PlaybackTargetResult.RECORDING_PROGRESS_UNSUPPORTED
     PlaybackPlayerInstallStatus.TARGET_UNAVAILABLE -> PlaybackTargetResult.TARGET_UNAVAILABLE
+    PlaybackPlayerInstallStatus.GROWING_RECORDING_RESUME_UNSUPPORTED ->
+        PlaybackTargetResult.GROWING_RECORDING_RESUME_UNSUPPORTED
     PlaybackPlayerInstallStatus.GROWING_RECORDING_DEFERRED ->
         PlaybackTargetResult.GROWING_RECORDING_DEFERRED
     PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE -> PlaybackTargetResult.PLAYER_UNAVAILABLE

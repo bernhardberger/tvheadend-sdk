@@ -1,3 +1,5 @@
+@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class)
+
 package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
@@ -8,6 +10,8 @@ import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
 import at.bernhardberger.tvheadend.sdk.core.DvrProgressResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
+import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
+import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import java.util.concurrent.CancellationException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -169,6 +173,67 @@ internal class DvrProgressCoordinatorTest {
             assertSame(DvrProgressResult.TransportUnavailable, inFlight.await())
             assertEquals(emptyList<GatewayGeneration>(), unsupportedGenerations)
         }
+
+    @Test
+    fun `growing progress cannot rebind between lease validation and RPC admission`() = runTest {
+        val original = GatewayGeneration()
+        val replacement = GatewayGeneration()
+        val gateway = MutationGateway()
+        val coordinator = DvrProgressCoordinator(gateway = gateway)
+        var commandCount = 0
+        gateway.progressBehavior = { generation, id, _ ->
+            assertSame(original, generation)
+            assertEquals(DvrEntryId(7), id)
+            commandCount += 1
+            GatewayResult.Ok(Unit)
+        }
+        coordinator.bindGeneration(original, protocolVersion = 43)
+        coordinator.startAdmission(original)
+        val lease = TestGenerationBoundGrowingLease(original, DvrEntryId(7))
+
+        assertSame(DvrProgressResult.Accepted, coordinator.reportProgress(lease, checkpoint()))
+        lease.validate = {
+            coordinator.bindGeneration(replacement, protocolVersion = 43)
+            coordinator.startAdmission(replacement)
+            true
+        }
+
+        assertSame(
+            DvrProgressResult.TransportUnavailable,
+            coordinator.reportProgress(lease, checkpoint()),
+        )
+        assertEquals(1, commandCount)
+    }
+
+    @Test
+    fun `growing progress revalidates same generation identity at final admission`() = runTest {
+        val generation = GatewayGeneration()
+        val gateway = MutationGateway()
+        var targetCurrent = true
+        var commandCount = 0
+        val coordinator = DvrProgressCoordinator(
+            gateway = gateway,
+            isSessionReady = {
+                targetCurrent = false
+                true
+            },
+        )
+        gateway.progressBehavior = { _, _, _ ->
+            commandCount += 1
+            GatewayResult.Ok(Unit)
+        }
+        coordinator.bindGeneration(generation, protocolVersion = 43)
+        coordinator.startAdmission(generation)
+        val lease = TestGenerationBoundGrowingLease(generation, DvrEntryId(7)).also {
+            it.validate = { targetCurrent }
+        }
+
+        assertSame(
+            DvrProgressResult.TransportUnavailable,
+            coordinator.reportProgress(lease, checkpoint()),
+        )
+        assertEquals(0, commandCount)
+    }
 
     @Test
     fun `access proof runs after the coordinator lock is released`() = runTest {
@@ -352,4 +417,19 @@ internal class DvrProgressCoordinatorTest {
     }
 
     private fun checkpoint(): DvrPlaybackProgress = DvrPlaybackProgress.checkpoint(30.seconds)
+}
+
+private class TestGenerationBoundGrowingLease(
+    override val boundGeneration: GatewayGeneration,
+    override val boundRecordingId: DvrEntryId,
+) : GenerationBoundGrowingRecordingFileLease {
+    var validate: () -> Boolean = { true }
+
+    override val isCurrent: Boolean
+        get() = validate()
+
+    override fun isProgressBindingCurrent(): Boolean = validate()
+
+    override suspend fun open(position: Long): RecordingFileResult<GrowingRecordingFileReader> =
+        error("Test lease does not open recording files")
 }

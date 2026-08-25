@@ -1,3 +1,5 @@
+@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class)
+
 package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.DVR_PROGRESS_MINIMUM_PROTOCOL_VERSION
@@ -11,6 +13,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrProgressResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.ProtocolGateway
+import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -75,8 +78,32 @@ internal class DvrProgressCoordinator(
     override suspend fun reportProgress(
         id: DvrEntryId,
         progress: DvrPlaybackProgress,
+    ): DvrProgressResult = reportProgress(id, progress, expectedGeneration = null)
+
+    override suspend fun reportProgress(
+        lease: GrowingRecordingFileLease,
+        progress: DvrPlaybackProgress,
+    ): DvrProgressResult {
+        val bound = lease as? GenerationBoundGrowingRecordingFileLease
+            ?: return DvrProgressResult.NotReady
+        return reportProgress(
+            id = bound.boundRecordingId,
+            progress = progress,
+            expectedGeneration = bound.boundGeneration,
+            targetIsCurrent = bound::isProgressBindingCurrent,
+        )
+    }
+
+    private suspend fun reportProgress(
+        id: DvrEntryId,
+        progress: DvrPlaybackProgress,
+        expectedGeneration: GatewayGeneration?,
+        targetIsCurrent: (() -> Boolean)? = null,
     ): DvrProgressResult {
         val activeGeneration = synchronized(lock) {
+            if (expectedGeneration != null && generation !== expectedGeneration) {
+                return DvrProgressResult.TransportUnavailable
+            }
             generation.takeIf { admitted }
         } ?: return DvrProgressResult.NotReady
         if (!isSessionReady(activeGeneration)) {
@@ -90,6 +117,14 @@ internal class DvrProgressCoordinator(
         }
         if (unsupported) {
             return DvrProgressResult.NotSupported
+        }
+        if (targetIsCurrent != null) {
+            if (!targetIsCurrent()) return DvrProgressResult.TransportUnavailable
+            synchronized(lock) {
+                if (!admitted || generation !== activeGeneration) {
+                    return DvrProgressResult.TransportUnavailable
+                }
+            }
         }
         val result = try {
             gateway.reportDvrProgress(activeGeneration, id, progress)

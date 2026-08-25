@@ -6,6 +6,11 @@ public abstract interface class at/bernhardberger/tvheadend/sdk/playback/ActiveS
 	public abstract fun seek (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekTarget;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
+public abstract interface class at/bernhardberger/tvheadend/sdk/playback/GrowingRecordingFileLease {
+	public abstract fun isCurrent ()Z
+	public abstract fun open (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
 public abstract interface class at/bernhardberger/tvheadend/sdk/playback/GrowingRecordingFileReader {
 	public abstract fun close (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun read ([BIILkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -41,11 +46,13 @@ public final class at/bernhardberger/tvheadend/sdk/playback/RecordingFileFailure
 }
 
 public abstract interface class at/bernhardberger/tvheadend/sdk/playback/RecordingFileOpener {
+	public fun bindGrowingRecording-J6OnbWw (J)Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileResult;
 	public fun openGrowingRecording-c5QowNY (JJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun openRecording-ISBBIW0 (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/playback/RecordingFileOpener$DefaultImpls {
+	public static fun bindGrowingRecording-J6OnbWw (Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileOpener;J)Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileResult;
 	public static fun openGrowingRecording-c5QowNY (Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileOpener;JJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 

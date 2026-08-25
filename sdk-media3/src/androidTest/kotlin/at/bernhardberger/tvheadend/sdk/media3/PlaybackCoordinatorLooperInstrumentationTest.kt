@@ -6,6 +6,7 @@ package at.bernhardberger.tvheadend.sdk.media3
 import android.os.Looper
 import androidx.media3.common.Player
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.RecordingId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
 import kotlin.time.Duration
@@ -99,6 +100,12 @@ private class MainLooperCoordinatorPlaybackAccess : CoordinatorPlaybackAccess {
 
     override fun createRecordingSource(recordingId: RecordingId): CoordinatorMediaSource =
         error("Recording source is not expected")
+
+    override fun createGrowingRecordingSource(
+        recordingId: RecordingId,
+        lease: GrowingRecordingFileLease,
+        onFinalEnd: () -> Unit,
+    ): CoordinatorMediaSource = error("Growing recording source is not expected")
 
     override fun createRecovery(
         onRecoveryRequired: (PlaybackRecoveryReason) -> Unit,

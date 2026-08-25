@@ -648,6 +648,100 @@ class SessionSubscriptionsTest {
     }
 
     @Test
+    fun `growing lease refuses every reopen after its generation is replaced`() = runTest {
+        val gateway = SubscriptionGateway()
+        val metadata = PhaseOneSessionMetadata()
+        val firstGeneration = GatewayGeneration()
+        metadata.bindCurrentRecording(firstGeneration, id = 5L, sizeBytes = 64L)
+        val children = PlaybackSessionChildren(
+            gateway,
+            metadata,
+            StandardTestDispatcher(testScheduler),
+        )
+        children.bindGeneration(firstGeneration)
+        val lease = (
+            children.bindGrowingRecording(RecordingId(5L)) as RecordingFileResult.Ok
+        ).value
+        assertEquals("GrowingRecordingFileLease(<redacted>)", lease.toString())
+        val firstReader = (lease.open(0L) as RecordingFileResult.Ok).value
+        assertTrue(firstReader.close() is RecordingFileResult.Ok)
+
+        children.closeAndJoinSubscriptions()
+        val secondGeneration = GatewayGeneration()
+        metadata.bindCurrentRecording(secondGeneration, id = 5L, sizeBytes = 64L)
+        children.bindGeneration(secondGeneration)
+
+        assertFalse(lease.isCurrent)
+        assertSame(
+            RecordingFileFailure.CONNECTION_CHANGED,
+            (lease.open(0L) as RecordingFileResult.Failed).failure,
+        )
+        assertEquals(listOf(firstGeneration), gateway.openedRecordingGenerations)
+        children.closeAndJoinSubscriptions()
+    }
+
+    @Test
+    fun `growing lease refuses a restored physical identity after incarnation drift`() = runTest {
+        val gateway = SubscriptionGateway()
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        metadata.bindCurrentRecording(generation, id = 5L, sizeBytes = 64L)
+        val children = PlaybackSessionChildren(
+            gateway,
+            metadata,
+            StandardTestDispatcher(testScheduler),
+        )
+        children.bindGeneration(generation)
+        val lease = (
+            children.bindGrowingRecording(RecordingId(5L)) as RecordingFileResult.Ok
+        ).value
+        val firstReader = (lease.open(0L) as RecordingFileResult.Ok).value
+        assertTrue(firstReader.close() is RecordingFileResult.Ok)
+
+        metadata.updateCurrentRecording(generation, id = 5L, path = "/replacement.ts")
+        metadata.updateCurrentRecording(generation, id = 5L, path = "/recording.ts")
+
+        assertFalse(lease.isCurrent)
+        assertSame(
+            RecordingFileFailure.FILE_UNAVAILABLE,
+            (lease.open(0L) as RecordingFileResult.Failed).failure,
+        )
+        assertEquals(1, gateway.openedRecordingGenerations.size)
+        children.closeAndJoinSubscriptions()
+    }
+
+    @Test
+    fun `growing lease refuses a smaller handle across reader reopens`() = runTest {
+        val gateway = SubscriptionGateway()
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        metadata.bindCurrentRecording(generation, id = 5L, sizeBytes = 64L)
+        val children = PlaybackSessionChildren(
+            gateway,
+            metadata,
+            StandardTestDispatcher(testScheduler),
+        )
+        children.bindGeneration(generation)
+        val lease = (
+            children.bindGrowingRecording(RecordingId(5L)) as RecordingFileResult.Ok
+        ).value
+        val firstReader = (lease.open(0L) as RecordingFileResult.Ok).value
+        assertTrue(firstReader.close() is RecordingFileResult.Ok)
+        gateway.recordingOpenResult = GatewayResult.Ok(
+            GatewayRecordingFile(handleId = 8L, sizeBytes = 32L, protocolVersion = 27),
+        )
+
+        assertSame(
+            RecordingFileFailure.FILE_UNAVAILABLE,
+            (lease.open(0L) as RecordingFileResult.Failed).failure,
+        )
+        assertFalse(lease.isCurrent)
+        assertEquals(2, gateway.openedRecordingGenerations.size)
+        assertEquals(2, gateway.closedRecordingGenerations.size)
+        children.closeAndJoinSubscriptions()
+    }
+
+    @Test
     fun `growing recording open requires fresh current DVR metadata`() = runTest {
         val gateway = SubscriptionGateway()
         val metadata = PhaseOneSessionMetadata()

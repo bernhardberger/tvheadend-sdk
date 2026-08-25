@@ -27,6 +27,7 @@ import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
 import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
 import at.bernhardberger.tvheadend.sdk.core.createTvheadendSession
+import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.RecordingId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
@@ -158,6 +159,12 @@ internal class GrowingTsRealServerInstrumentationTest {
         owned.uuid = requireNotNull(recording.uuid) { "Disposable recording must expose a stable UUID" }
         delay(LIVE_INITIAL_CAPTURE_MS)
         requireCurrentOwnedRecording(session, owned)
+        val lease = when (
+            val binding = session.recordings.bindGrowingRecording(RecordingId(recordingId.value))
+        ) {
+            is RecordingFileResult.Ok -> binding.value
+            is RecordingFileResult.Failed -> error("Growing continuity binding failed: ${binding.failure}")
+        }
 
         val texture = SurfaceTexture(0)
         val surface = Surface(texture)
@@ -201,7 +208,7 @@ internal class GrowingTsRealServerInstrumentationTest {
                 )
                 player.setMediaSource(
                     createTvheadendGrowingRecordingMediaSource(
-                        recordings = session.recordings,
+                        lease = lease,
                         recordingId = RecordingId(recordingId.value),
                         onSeekMap = { map -> if (map is GrowingTsSeekMap) latestMap.set(map) },
                     ),

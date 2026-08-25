@@ -1,5 +1,7 @@
 package at.bernhardberger.tvheadend.sdk.core
 
+import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import java.util.Collections
 import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
 import kotlinx.coroutines.InternalCoroutinesApi
@@ -648,6 +650,21 @@ public interface DvrRepository {
         progress: DvrPlaybackProgress,
     ): DvrProgressResult
 
+    /**
+     * Sends one playback-progress RPC for the exact growing target bound by [lease].
+     *
+     * A real session accepts only its own current lease and uses the lease's original connection
+     * generation and DVR entry. A reconnect therefore fails closed instead of reporting progress
+     * to a replacement generation. Implementations without this low-level binding return
+     * [DvrProgressResult.NotReady]. Local continuity is revalidated at final command admission;
+     * HTSP identifies an admitted update by DVR entry ID and has no file-incarnation precondition.
+     */
+    @SubscriptionInfrastructureApi
+    public suspend fun reportProgress(
+        lease: GrowingRecordingFileLease,
+        progress: DvrPlaybackProgress,
+    ): DvrProgressResult = DvrProgressResult.NotReady
+
     /** Retrieves the selected entry's ordered cutpoint intervals without caching them. */
     public suspend fun cutpoints(id: DvrEntryId): DvrCutpointsResult
 }
@@ -736,6 +753,12 @@ internal abstract class StateBackedDvrRepository(
         id: DvrEntryId,
         progress: DvrPlaybackProgress,
     ): DvrProgressResult = progressCommands.reportProgress(id, progress)
+
+    @SubscriptionInfrastructureApi
+    final override suspend fun reportProgress(
+        lease: GrowingRecordingFileLease,
+        progress: DvrPlaybackProgress,
+    ): DvrProgressResult = progressCommands.reportProgress(lease, progress)
 
     final override suspend fun cutpoints(id: DvrEntryId): DvrCutpointsResult =
         cutpointCommands.getCutpoints(id)

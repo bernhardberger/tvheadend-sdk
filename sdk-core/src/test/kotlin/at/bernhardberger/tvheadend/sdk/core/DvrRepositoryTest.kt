@@ -1,5 +1,10 @@
+@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class)
+
 package at.bernhardberger.tvheadend.sdk.core
 
+import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
+import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
+import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -200,11 +205,20 @@ internal class DvrRepositoryTest {
     @Test
     fun `progress reports stay command-only and do not change repository state`() = runTest {
         val accepted = DvrProgressResult.Accepted
+        var reportedLease: GrowingRecordingFileLease? = null
         val commands = object : DvrProgressCommands {
             override suspend fun reportProgress(
                 id: DvrEntryId,
                 progress: DvrPlaybackProgress,
             ): DvrProgressResult = accepted
+
+            override suspend fun reportProgress(
+                lease: GrowingRecordingFileLease,
+                progress: DvrPlaybackProgress,
+            ): DvrProgressResult {
+                reportedLease = lease
+                return accepted
+            }
         }
         val repository = TestDvrRepository(progressCommands = commands)
         val snapshot = DvrSnapshot.create(listOf(DvrEntry.create(DvrEntryId(1))))
@@ -215,6 +229,12 @@ internal class DvrRepositoryTest {
             repository.reportProgress(DvrEntryId(1), DvrPlaybackProgress.checkpoint(30.seconds)),
         )
         assertSame(snapshot, (repository.state.value as DvrRepositoryState.Current).snapshot)
+        val lease = TestGrowingRecordingLease()
+        assertSame(
+            accepted,
+            repository.reportProgress(lease, DvrPlaybackProgress.checkpoint(30.seconds)),
+        )
+        assertSame(lease, reportedLease)
         assertSame(
             DvrProgressResult.NotReady,
             TestDvrRepository().reportProgress(
@@ -277,4 +297,11 @@ internal class DvrRepositoryTest {
     }
 
     private fun instant(seconds: Long): Instant = Instant.fromEpochSeconds(seconds)
+}
+
+private class TestGrowingRecordingLease : GrowingRecordingFileLease {
+    override val isCurrent: Boolean = true
+
+    override suspend fun open(position: Long): RecordingFileResult<GrowingRecordingFileReader> =
+        error("Test lease does not open recording files")
 }

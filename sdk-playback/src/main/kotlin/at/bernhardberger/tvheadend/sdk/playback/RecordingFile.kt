@@ -120,6 +120,27 @@ public interface GrowingRecordingFileReader {
     public suspend fun close(): RecordingFileResult<Unit>
 }
 
+/**
+ * Target-scoped continuity lease for one growing recording file.
+ *
+ * The lease binds one connection generation, DVR entry incarnation, and physical file identity.
+ * Every [open] validates that original binding, so a seek or loader retry cannot follow a
+ * reconnect, replacement, rollover, or clone. Once [isCurrent] becomes false it stays false.
+ */
+@SubscriptionInfrastructureApi
+public interface GrowingRecordingFileLease {
+    /** Whether the originally bound generation, incarnation, and physical file remain current. */
+    public val isCurrent: Boolean
+
+    /**
+     * Opens a reader at absolute [position] while preserving this lease's original continuity.
+     *
+     * The caller owns the returned reader and must close it. A stale lease returns the safe typed
+     * failure that invalidated its original target rather than establishing a new target.
+     */
+    public suspend fun open(position: Long): RecordingFileResult<GrowingRecordingFileReader>
+}
+
 /** Opens recording files without exposing generation admission or teardown controls. */
 @SubscriptionInfrastructureApi
 public fun interface RecordingFileOpener {
@@ -130,6 +151,17 @@ public fun interface RecordingFileOpener {
      * result is [RecordingFileFailure.CONNECTION_CHANGED].
      */
     public suspend fun openRecording(recordingId: RecordingId): RecordingFileResult<RecordingFile>
+
+    /**
+     * Binds one active recording to its current generation, incarnation, and physical file.
+     *
+     * Binding performs no file transport I/O. Implementations without target-scoped continuity
+     * support return [RecordingFileFailure.NOT_SUPPORTED].
+     */
+    public fun bindGrowingRecording(
+        recordingId: RecordingId,
+    ): RecordingFileResult<GrowingRecordingFileLease> =
+        RecordingFileResult.Failed(RecordingFileFailure.NOT_SUPPORTED)
 
     /**
      * Opens one physical file of an active recording at absolute [position].

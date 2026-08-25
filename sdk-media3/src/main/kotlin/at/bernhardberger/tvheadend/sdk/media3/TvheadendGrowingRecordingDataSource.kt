@@ -13,50 +13,62 @@ import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.extractor.SeekMap
 import at.bernhardberger.tvheadend.sdk.playback.DEFAULT_RECORDING_READ_AHEAD_BYTES
+import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
 import at.bernhardberger.tvheadend.sdk.playback.MAX_RECORDING_READ_BYTES
 import at.bernhardberger.tvheadend.sdk.playback.RECORDING_END_OF_INPUT
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
-import at.bernhardberger.tvheadend.sdk.playback.RecordingFileOpener
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.RecordingId
 import java.io.InterruptedIOException
 import java.util.concurrent.CancellationException
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.runBlocking
 
 internal fun createTvheadendGrowingRecordingDataSourceFactory(
-    recordings: RecordingFileOpener,
+    lease: GrowingRecordingFileLease,
     readAheadBytes: Int = DEFAULT_RECORDING_READ_AHEAD_BYTES,
+    onFinalEnd: () -> Unit = {},
 ): DataSource.Factory {
     require(readAheadBytes in GROWING_TS_PACKET_BYTES..MAX_RECORDING_READ_BYTES) {
         "Growing TS read-ahead must be within $GROWING_TS_PACKET_BYTES..$MAX_RECORDING_READ_BYTES bytes"
     }
     val packetAlignedCapacity = readAheadBytes - readAheadBytes % GROWING_TS_PACKET_BYTES
+    val finalEndSignaled = AtomicBoolean()
     return DataSource.Factory {
-        TvheadendGrowingRecordingDataSource(recordings, packetAlignedCapacity)
+        TvheadendGrowingRecordingDataSource(
+            lease = lease,
+            packetBufferBytes = packetAlignedCapacity,
+            onFinalEnd = {
+                if (finalEndSignaled.compareAndSet(false, true)) onFinalEnd()
+            },
+        )
     }
 }
 
 internal fun createTvheadendGrowingRecordingMediaSource(
-    recordings: RecordingFileOpener,
+    lease: GrowingRecordingFileLease,
     recordingId: RecordingId,
     readAheadBytes: Int = DEFAULT_RECORDING_READ_AHEAD_BYTES,
     onSeekMap: (SeekMap) -> Unit = {},
+    onFinalEnd: () -> Unit = {},
 ): MediaSource = ProgressiveMediaSource.Factory(
-    createTvheadendGrowingRecordingDataSourceFactory(recordings, readAheadBytes),
+    createTvheadendGrowingRecordingDataSourceFactory(lease, readAheadBytes, onFinalEnd),
     createGrowingTsExtractorsFactory(onSeekMap),
 ).createMediaSource(tvheadendRecordingMediaItem(recordingId))
 
 /**
- * Unknown-length Media3 source over P7-F2's generation- and identity-bound growing reader.
+ * Unknown-length Media3 source over P7-F2's target-scoped growing-file continuity lease.
  *
  * A transport read may stop in the middle of a packet while TVHeadend is appending it. Those
  * bytes remain private until the complete 188-byte packet is available, so temporary file
- * boundaries never reach Media3's maintained TS parser as malformed input.
+ * boundaries never reach Media3's maintained TS parser as malformed input. Every reopen uses the
+ * same lease, so Media3 retry and seek cannot rebind to a new generation or physical file.
  */
 private class TvheadendGrowingRecordingDataSource(
-    private val recordings: RecordingFileOpener,
+    private val lease: GrowingRecordingFileLease,
     packetBufferBytes: Int,
+    private val onFinalEnd: () -> Unit,
 ) : BaseDataSource(true) {
     private val packetBuffer = ByteArray(packetBufferBytes)
     private var reader: GrowingRecordingFileReader? = null
@@ -70,8 +82,9 @@ private class TvheadendGrowingRecordingDataSource(
         checkGrowingLoaderThread()
         check(reader == null) { "Growing recording data source is already open" }
         transferInitializing(dataSpec)
-        val recordingId = parseRecordingId(dataSpec.uri.toString())
-            ?: throw TvheadendRecordingException(RecordingFileFailure.FILE_UNAVAILABLE)
+        if (parseRecordingId(dataSpec.uri.toString()) == null) {
+            throw TvheadendRecordingException(RecordingFileFailure.FILE_UNAVAILABLE)
+        }
         if (
             dataSpec.position % GROWING_TS_PACKET_BYTES != 0L ||
             dataSpec.length != C.LENGTH_UNSET.toLong()
@@ -79,7 +92,7 @@ private class TvheadendGrowingRecordingDataSource(
             throw TvheadendRecordingException(RecordingFileFailure.FILE_UNAVAILABLE)
         }
         val openedReader = growingBlockingIo {
-            recordings.openGrowingRecording(recordingId, dataSpec.position)
+            lease.open(dataSpec.position)
         }.orThrowGrowing()
         reader = openedReader
         openUri = dataSpec.uri
@@ -135,6 +148,7 @@ private class TvheadendGrowingRecordingDataSource(
                 if (bufferedLimit != 0) {
                     throw TvheadendRecordingException(RecordingFileFailure.FILE_UNAVAILABLE)
                 }
+                onFinalEnd()
                 return false
             }
             if (read !in 1..writableBytes) {

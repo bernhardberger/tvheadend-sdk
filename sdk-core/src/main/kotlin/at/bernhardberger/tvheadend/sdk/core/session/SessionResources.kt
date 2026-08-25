@@ -40,12 +40,13 @@ import at.bernhardberger.tvheadend.sdk.core.metadata.ChannelTagReducer
 import at.bernhardberger.tvheadend.sdk.core.metadata.DvrReducer
 import at.bernhardberger.tvheadend.sdk.core.metadata.EpgQueryFence
 import at.bernhardberger.tvheadend.sdk.core.metadata.EpgReducer
+import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
+import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFile
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileOpener
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.RecordingId
-import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
@@ -742,6 +743,12 @@ internal interface SessionChildren : ArtworkLoader, SubscriptionOpener, Recordin
     public override suspend fun openRecording(
         recordingId: RecordingId,
     ): RecordingFileResult<RecordingFile> =
+        RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
+
+    /** Reports the changed connection until a child can bind growing-file continuity. */
+    public override fun bindGrowingRecording(
+        recordingId: RecordingId,
+    ): RecordingFileResult<GrowingRecordingFileLease> =
         RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
 
     /** Reports the changed connection until a child can correlate fresh growing-file metadata. */

@@ -8,12 +8,22 @@ package at.bernhardberger.tvheadend.sdk.media3
 
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import at.bernhardberger.tvheadend.sdk.core.DvrEntry
+import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
+import at.bernhardberger.tvheadend.sdk.core.DvrRecordingFile
+import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
+import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
+import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
+import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
+import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.RecordingId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
 import java.io.IOException
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -31,7 +41,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         val events = PlaybackPlayerEventAccumulator()
         val player = Media3PlaybackCoordinatorPlayer(access, events) { _, _ ->
             access.operations += "admit-recording"
-            CompletedRecordingAdmission.Accepted(DvrEntryState.COMPLETED, 12.seconds)
+            RecordingAdmission.Completed(12.seconds)
         }
 
         val live = async {
@@ -91,11 +101,90 @@ internal class Media3PlaybackCoordinatorPlayerTest {
     }
 
     @Test
+    fun `growing recording uses its source without resume and forwards final EOF proof`() = runTest {
+        val access = FakeCoordinatorPlaybackAccess()
+        val events = PlaybackPlayerEventAccumulator()
+        val admission = growingAdmission()
+        val player = Media3PlaybackCoordinatorPlayer(access, events) { _, _ -> admission }
+        val token = PlaybackTargetToken()
+
+        val result = async {
+            player.installRecording(
+                PlayerOperationTicket(),
+                token,
+                RecordingId(9),
+                RecordingPlaybackStart.START_OVER,
+            )
+        }
+        runCurrent()
+        access.looperQueue.runAll()
+        runCurrent()
+
+        assertEquals(PlaybackPlayerInstallStatus.STARTED, result.await().status)
+        assertEquals(
+            listOf("create-growing", "add-listener", "set-growing", "prepare"),
+            access.operations,
+        )
+        assertSame(admission.lease, access.growingLease)
+        access.growingFinalEndCallback?.invoke()
+        access.snapshot = access.snapshot.copy(
+            position = 100.seconds,
+            duration = 100.seconds,
+            playbackState = Player.STATE_ENDED,
+        )
+        access.looperQueue.runOnLooper {
+            access.applicationListener?.onPlaybackStateChanged(Player.STATE_ENDED)
+        }
+
+        val terminal = events.take()
+        assertSame(at.bernhardberger.tvheadend.sdk.core.DvrPlaybackExit.NATURAL_END, terminal?.terminalExit)
+        assertTrue(requireNotNull(terminal).growingFinalEndProven)
+    }
+
+    @Test
+    fun `growing resume refusal preserves the installed target`() = runTest {
+        val access = FakeCoordinatorPlaybackAccess()
+        var admission: RecordingAdmission = RecordingAdmission.Completed(null)
+        val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator()) { _, _ ->
+            admission
+        }
+        val liveToken = PlaybackTargetToken()
+        val live = async {
+            player.installLive(PlayerOperationTicket(), liveToken, SubscriptionChannelId(3))
+        }
+        runCurrent()
+        access.looperQueue.runAll()
+        runCurrent()
+        live.await()
+        access.operations.clear()
+        admission = RecordingAdmission.GrowingResumeUnsupported
+
+        val recording = async {
+            player.installRecording(
+                PlayerOperationTicket(),
+                PlaybackTargetToken(),
+                RecordingId(9),
+                RecordingPlaybackStart.RESUME,
+            )
+        }
+        runCurrent()
+        access.looperQueue.runAll()
+        runCurrent()
+
+        assertEquals(
+            PlaybackPlayerInstallStatus.GROWING_RECORDING_RESUME_UNSUPPORTED,
+            recording.await().status,
+        )
+        assertTrue(access.operations.isEmpty())
+        assertTrue(liveToken.isActive())
+    }
+
+    @Test
     fun `recording refusal happens before source creation and preserves current target`() = runTest {
         val access = FakeCoordinatorPlaybackAccess()
         val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator()) { _, _ ->
             access.operations += "admit-recording"
-            CompletedRecordingAdmission.ProgressUnsupported
+            RecordingAdmission.ProgressUnsupported
         }
         val liveToken = PlaybackTargetToken()
         val live = async {
@@ -178,7 +267,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
     fun `failed source installation rolls back listeners helpers and media`() = runTest {
         val access = FakeCoordinatorPlaybackAccess(failSetMediaSource = true)
         val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator()) { _, _ ->
-            CompletedRecordingAdmission.Accepted(DvrEntryState.COMPLETED, null)
+            RecordingAdmission.Completed(null)
         }
         val token = PlaybackTargetToken()
         val result = async {
@@ -213,7 +302,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         val access = FakeCoordinatorPlaybackAccess()
         val events = PlaybackPlayerEventAccumulator()
         val player = Media3PlaybackCoordinatorPlayer(access, events) { _, _ ->
-            CompletedRecordingAdmission.Accepted(DvrEntryState.COMPLETED, null)
+            RecordingAdmission.Completed(null)
         }
         val token = PlaybackTargetToken()
         val result = async {
@@ -269,7 +358,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         val access = FakeCoordinatorPlaybackAccess()
         val events = PlaybackPlayerEventAccumulator()
         val player = Media3PlaybackCoordinatorPlayer(access, events) { _, _ ->
-            CompletedRecordingAdmission.Accepted(DvrEntryState.COMPLETED, null)
+            RecordingAdmission.Completed(null)
         }
         val liveToken = PlaybackTargetToken()
         val live = async {
@@ -321,6 +410,8 @@ private class FakeCoordinatorPlaybackAccess(
     var snapshot = PlaybackPlayerSnapshot(Duration.ZERO, null, Player.STATE_IDLE, failed = false)
     var applicationListener: Player.Listener? = null
     var recoveryCallback: ((PlaybackRecoveryReason) -> Unit)? = null
+    var growingFinalEndCallback: (() -> Unit)? = null
+    var growingLease: GrowingRecordingFileLease? = null
     private var sourceKind = "none"
 
     override fun requireApplicationLooper() {
@@ -354,6 +445,18 @@ private class FakeCoordinatorPlaybackAccess(
         requireApplicationLooper()
         operations += "create-recording"
         return FakeCoordinatorMediaSource("recording")
+    }
+
+    override fun createGrowingRecordingSource(
+        recordingId: RecordingId,
+        lease: GrowingRecordingFileLease,
+        onFinalEnd: () -> Unit,
+    ): CoordinatorMediaSource {
+        requireApplicationLooper()
+        operations += "create-growing"
+        growingLease = lease
+        growingFinalEndCallback = onFinalEnd
+        return FakeCoordinatorMediaSource("growing")
     }
 
     override fun createRecovery(
@@ -444,4 +547,37 @@ private class TestCoordinatorLooper : CoordinatorLooper {
             current = false
         }
     }
+}
+
+private fun growingAdmission(): RecordingAdmission.Growing {
+    val entry = DvrEntry.create(
+        id = DvrEntryId(9),
+        uuid = "stable-entry",
+        path = "/recording.ts",
+        files = listOf(
+            DvrRecordingFile(
+                fileId = 1,
+                path = "/recording.ts",
+                start = Instant.fromEpochSeconds(1),
+                stop = null,
+                sizeBytes = 1_000,
+            ),
+        ),
+        state = DvrEntryState.RECORDING,
+        dataSizeBytes = 1_000,
+    )
+    val states = kotlinx.coroutines.flow.MutableStateFlow<DvrRepositoryState>(
+        DvrRepositoryState.Current(DvrSnapshot.create(listOf(entry))),
+    )
+    return RecordingAdmission.Growing(
+        checkNotNull(GrowingRecordingFence.create(entry, states)),
+        CurrentGrowingLease,
+    )
+}
+
+private data object CurrentGrowingLease : GrowingRecordingFileLease {
+    override val isCurrent: Boolean = true
+
+    override suspend fun open(position: Long): RecordingFileResult<GrowingRecordingFileReader> =
+        RecordingFileResult.Failed(RecordingFileFailure.NOT_SUPPORTED)
 }

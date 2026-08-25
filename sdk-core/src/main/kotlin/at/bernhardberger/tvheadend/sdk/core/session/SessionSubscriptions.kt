@@ -13,11 +13,12 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.ProtocolGateway
+import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
+import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFile
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.RecordingId
-import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionConnection
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionConfirmation
@@ -49,6 +50,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.time.Clock
 import kotlin.time.Duration
+
+internal interface GenerationBoundGrowingRecordingFileLease : GrowingRecordingFileLease {
+    public val boundGeneration: GatewayGeneration
+    public val boundRecordingId: DvrEntryId
+
+    public fun isProgressBindingCurrent(): Boolean
+}
 
 internal class PlaybackSessionChildren(
     private val gateway: ProtocolGateway,
@@ -114,67 +122,116 @@ internal class PlaybackSessionChildren(
             .toRecordingFileResult { file -> GatewayRecordingFileHandle(gateway, bound, file) }
     }
 
+    override fun bindGrowingRecording(
+        recordingId: RecordingId,
+    ): RecordingFileResult<GrowingRecordingFileLease> {
+        val bound = synchronized(lock) { generation }
+            ?: return RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
+        val dvrEntryId = DvrEntryId(recordingId.value)
+        val tracker = GrowingRecordingMetadataTracker(
+            metadata = metadata,
+            generation = bound,
+            recordingId = dvrEntryId,
+        )
+        return when (val validation = tracker.validate()) {
+            is GrowingMetadataValidation.Failed -> RecordingFileResult.Failed(validation.failure)
+            is GrowingMetadataValidation.Valid -> RecordingFileResult.Ok(
+                BoundGrowingRecordingFileLease(
+                    boundGeneration = bound,
+                    boundRecordingId = dvrEntryId,
+                    tracker = tracker,
+                ),
+            )
+        }
+    }
+
     override suspend fun openGrowingRecording(
         recordingId: RecordingId,
         position: Long,
     ): RecordingFileResult<GrowingRecordingFileReader> {
         require(position >= 0L) { "Growing recording position must not be negative" }
-        currentCoroutineContext().ensureActive()
-        val bound = synchronized(lock) { generation }
-            ?: return RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
-        val tracker = GrowingRecordingMetadataTracker(
-            metadata = metadata,
-            generation = bound,
-            recordingId = DvrEntryId(recordingId.value),
-        )
-        when (val validation = tracker.validate()) {
-            is GrowingMetadataValidation.Failed -> return RecordingFileResult.Failed(validation.failure)
-            is GrowingMetadataValidation.Valid -> Unit
+        return when (val binding = bindGrowingRecording(recordingId)) {
+            is RecordingFileResult.Failed -> binding
+            is RecordingFileResult.Ok -> binding.value.open(position)
         }
+    }
 
-        val opened = when (
-            val opening = gateway.openRecordingFile(bound, DvrEntryId(recordingId.value))
-                .toRecordingFileResult { file -> file }
-        ) {
-            is RecordingFileResult.Failed -> return opening
-            is RecordingFileResult.Ok -> opening.value
-        }
-        val transport = GatewayGrowingRecordingTransport(gateway, bound, opened)
-        var retained = false
-        try {
-            val openSize = opened.sizeBytes
-            if (openSize != null && (openSize < 0L || position > openSize)) {
-                return RecordingFileResult.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
-            }
-            if (openSize == null && position > 0L) {
-                return RecordingFileResult.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
-            }
-            when (
-                val seek = gateway.seekRecordingFile(bound, opened, position)
-                    .toRecordingFileResult { offset -> offset }
-            ) {
-                is RecordingFileResult.Ok -> if (seek.value != position) {
-                    return RecordingFileResult.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
-                }
-                is RecordingFileResult.Failed -> return seek
-            }
+    private inner class BoundGrowingRecordingFileLease(
+        override val boundGeneration: GatewayGeneration,
+        override val boundRecordingId: DvrEntryId,
+        private val tracker: GrowingRecordingMetadataTracker,
+    ) : GenerationBoundGrowingRecordingFileLease {
+        override val isCurrent: Boolean
+            get() = isProgressBindingCurrent()
+
+        override fun isProgressBindingCurrent(): Boolean =
+            tracker.validate() is GrowingMetadataValidation.Valid
+
+        override suspend fun open(
+            position: Long,
+        ): RecordingFileResult<GrowingRecordingFileReader> {
+            require(position >= 0L) { "Growing recording position must not be negative" }
+            currentCoroutineContext().ensureActive()
             when (val validation = tracker.validate()) {
                 is GrowingMetadataValidation.Failed ->
                     return RecordingFileResult.Failed(validation.failure)
                 is GrowingMetadataValidation.Valid -> Unit
             }
-            retained = true
-            return RecordingFileResult.Ok(
-                CoreGrowingRecordingFileReader(
-                    transport = transport,
-                    metadata = tracker,
-                    position = position,
-                    openSizeBytes = openSize,
-                ),
-            )
-        } finally {
-            if (!retained) withContext(NonCancellable) { transport.close() }
+
+            val opened = when (
+                val opening = gateway.openRecordingFile(boundGeneration, boundRecordingId)
+                    .toRecordingFileResult { file -> file }
+            ) {
+                is RecordingFileResult.Failed -> return failed(opening.failure)
+                is RecordingFileResult.Ok -> opening.value
+            }
+            val transport = GatewayGrowingRecordingTransport(gateway, boundGeneration, opened)
+            var retained = false
+            try {
+                val openSize = opened.sizeBytes
+                if (openSize != null && (openSize < 0L || position > openSize)) {
+                    return failed(RecordingFileFailure.FILE_UNAVAILABLE)
+                }
+                if (openSize == null && position > 0L) {
+                    return failed(RecordingFileFailure.FILE_UNAVAILABLE)
+                }
+                if (openSize != null) {
+                    tracker.validateTransportSize(openSize)?.let { failure ->
+                        return RecordingFileResult.Failed(failure)
+                    }
+                }
+                when (
+                    val seek = gateway.seekRecordingFile(boundGeneration, opened, position)
+                        .toRecordingFileResult { offset -> offset }
+                ) {
+                    is RecordingFileResult.Ok -> if (seek.value != position) {
+                        return failed(RecordingFileFailure.FILE_UNAVAILABLE)
+                    }
+                    is RecordingFileResult.Failed -> return failed(seek.failure)
+                }
+                when (val validation = tracker.validate()) {
+                    is GrowingMetadataValidation.Failed ->
+                        return RecordingFileResult.Failed(validation.failure)
+                    is GrowingMetadataValidation.Valid -> Unit
+                }
+                retained = true
+                return RecordingFileResult.Ok(
+                    CoreGrowingRecordingFileReader(
+                        transport = transport,
+                        metadata = tracker,
+                        position = position,
+                        openSizeBytes = openSize,
+                    ),
+                )
+            } finally {
+                if (!retained) withContext(NonCancellable) { transport.close() }
+            }
         }
+
+        private fun failed(failure: RecordingFileFailure): RecordingFileResult.Failed =
+            RecordingFileResult.Failed(tracker.fenceFailure(failure))
+
+        override fun toString(): String = "GrowingRecordingFileLease(<redacted>)"
     }
 
     override suspend fun loadArtwork(artworkId: ArtworkId): ArtworkLoadResult {

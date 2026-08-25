@@ -1,5 +1,7 @@
 package at.bernhardberger.tvheadend.sdk.core
 
+import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
@@ -212,6 +214,12 @@ internal interface DvrProgressCommands {
         id: DvrEntryId,
         progress: DvrPlaybackProgress,
     ): DvrProgressResult
+
+    @SubscriptionInfrastructureApi
+    public suspend fun reportProgress(
+        lease: GrowingRecordingFileLease,
+        progress: DvrPlaybackProgress,
+    ): DvrProgressResult = DvrProgressResult.NotReady
 
     data object None : DvrProgressCommands {
         override suspend fun reportProgress(

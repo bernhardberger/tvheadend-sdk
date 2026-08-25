@@ -63,6 +63,7 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeDvrRepository : a
 	public final fun getUpdateAutorecRuleResult ()Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;
 	public final fun getUpdateEntryResult ()Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;
 	public final fun getUpdateTimerecRuleResult ()Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;
+	public fun reportProgress (Lat/bernhardberger/tvheadend/sdk/playback/GrowingRecordingFileLease;Lat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun reportProgress-c8JLQRw (JLat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun scheduleEntry (Lat/bernhardberger/tvheadend/sdk/core/DvrScheduleRequest;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun setCancelEntryResult (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V

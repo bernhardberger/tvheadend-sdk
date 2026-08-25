@@ -1,4 +1,7 @@
-@file:OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+@file:OptIn(
+    at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class,
+    kotlinx.coroutines.ExperimentalCoroutinesApi::class,
+)
 
 package at.bernhardberger.tvheadend.sdk.media3
 
@@ -136,6 +139,7 @@ internal class PlaybackCoordinatorInternalsTest {
     ): PendingPlaybackProgress = PendingPlaybackProgress(
         epoch = epoch,
         recordingId = DvrEntryId(1),
+        growingLease = null,
         progress = DvrPlaybackProgress(positionSeconds.seconds, watched),
         terminal = terminal,
     )

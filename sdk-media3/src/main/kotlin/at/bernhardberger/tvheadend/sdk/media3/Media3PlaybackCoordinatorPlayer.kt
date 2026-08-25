@@ -8,8 +8,8 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.MediaSource
-import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackExit
+import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileOpener
 import at.bernhardberger.tvheadend.sdk.playback.RecordingId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
@@ -23,6 +23,7 @@ internal enum class PlaybackPlayerInstallStatus {
     NOT_READY,
     RECORDING_PROGRESS_UNSUPPORTED,
     TARGET_UNAVAILABLE,
+    GROWING_RECORDING_RESUME_UNSUPPORTED,
     GROWING_RECORDING_DEFERRED,
     PLAYER_UNAVAILABLE,
     CANCELLED,
@@ -32,7 +33,7 @@ internal data class PlaybackPlayerInstallResult(
     val status: PlaybackPlayerInstallStatus,
     val retiredTarget: Boolean = false,
     val retiredRecording: RetiredRecordingTarget? = null,
-    val installedRecordingState: DvrEntryState? = null,
+    val installedRecording: RecordingAdmission.Accepted? = null,
 )
 
 internal data class PlaybackPlayerStopResult(
@@ -46,21 +47,32 @@ internal data class RetiredRecordingTarget(
     val token: PlaybackTargetToken,
     val snapshot: PlaybackPlayerSnapshot,
     val exit: DvrPlaybackExit,
+    val growingFinalEndProven: Boolean,
 )
 
-internal sealed interface CompletedRecordingAdmission {
-    data class Accepted(
-        val state: DvrEntryState,
+internal sealed interface RecordingAdmission {
+    sealed interface Accepted : RecordingAdmission
+
+    data class Completed(
         val resumePosition: Duration?,
-    ) : CompletedRecordingAdmission
+    ) : Accepted
 
-    data object NotReady : CompletedRecordingAdmission
+    class Growing(
+        val fence: GrowingRecordingFence,
+        val lease: GrowingRecordingFileLease,
+    ) : Accepted {
+        override fun toString(): String = "RecordingAdmission.Growing(<redacted>)"
+    }
 
-    data object ProgressUnsupported : CompletedRecordingAdmission
+    data object NotReady : RecordingAdmission
 
-    data object TargetUnavailable : CompletedRecordingAdmission
+    data object ProgressUnsupported : RecordingAdmission
 
-    data object GrowingRecordingDeferred : CompletedRecordingAdmission
+    data object TargetUnavailable : RecordingAdmission
+
+    data object GrowingResumeUnsupported : RecordingAdmission
+
+    data object GrowingRecordingDeferred : RecordingAdmission
 }
 
 internal interface PlaybackCoordinatorPlayer {
@@ -109,6 +121,12 @@ internal interface CoordinatorPlaybackAccess {
 
     fun createRecordingSource(recordingId: RecordingId): CoordinatorMediaSource
 
+    fun createGrowingRecordingSource(
+        recordingId: RecordingId,
+        lease: GrowingRecordingFileLease,
+        onFinalEnd: () -> Unit,
+    ): CoordinatorMediaSource
+
     fun createRecovery(onRecoveryRequired: (PlaybackRecoveryReason) -> Unit): CoordinatorPlaybackRecovery
 
     fun createResume(): CoordinatorRecordingResume
@@ -125,7 +143,7 @@ internal interface CoordinatorPlaybackAccess {
 internal class Media3PlaybackCoordinatorPlayer(
     private val access: CoordinatorPlaybackAccess,
     private val events: PlaybackPlayerEventAccumulator,
-    private val admitRecording: (RecordingId, RecordingPlaybackStart) -> CompletedRecordingAdmission,
+    private val admitRecording: (RecordingId, RecordingPlaybackStart) -> RecordingAdmission,
 ) : PlaybackCoordinatorPlayer {
     private val executor = PlayerLooperExecutor(access.looper)
     private var active: InstalledPlayerTarget? = null
@@ -236,22 +254,34 @@ internal class Media3PlaybackCoordinatorPlayer(
         access.requireApplicationLooper()
         val admission = admitRecording(recordingId, start)
         val accepted = when (admission) {
-            is CompletedRecordingAdmission.Accepted -> admission
-            CompletedRecordingAdmission.NotReady ->
+            is RecordingAdmission.Accepted -> admission
+            RecordingAdmission.NotReady ->
                 return PlaybackPlayerInstallResult(PlaybackPlayerInstallStatus.NOT_READY)
-            CompletedRecordingAdmission.ProgressUnsupported ->
+            RecordingAdmission.ProgressUnsupported ->
                 return PlaybackPlayerInstallResult(
                     PlaybackPlayerInstallStatus.RECORDING_PROGRESS_UNSUPPORTED,
                 )
-            CompletedRecordingAdmission.TargetUnavailable ->
+            RecordingAdmission.TargetUnavailable ->
                 return PlaybackPlayerInstallResult(PlaybackPlayerInstallStatus.TARGET_UNAVAILABLE)
-            CompletedRecordingAdmission.GrowingRecordingDeferred ->
+            RecordingAdmission.GrowingResumeUnsupported ->
+                return PlaybackPlayerInstallResult(
+                    PlaybackPlayerInstallStatus.GROWING_RECORDING_RESUME_UNSUPPORTED,
+                )
+            RecordingAdmission.GrowingRecordingDeferred ->
                 return PlaybackPlayerInstallResult(
                     PlaybackPlayerInstallStatus.GROWING_RECORDING_DEFERRED,
                 )
         }
+        val finality = (accepted as? RecordingAdmission.Growing)?.let { GrowingFinalitySignal() }
         val source = try {
-            access.createRecordingSource(recordingId)
+            when (accepted) {
+                is RecordingAdmission.Completed -> access.createRecordingSource(recordingId)
+                is RecordingAdmission.Growing -> access.createGrowingRecordingSource(
+                    recordingId = recordingId,
+                    lease = accepted.lease,
+                    onFinalEnd = checkNotNull(finality)::prove,
+                )
+            }
         } catch (_: Exception) {
             return PlaybackPlayerInstallResult(PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE)
         }
@@ -259,21 +289,23 @@ internal class Media3PlaybackCoordinatorPlayer(
         if (!retirement.playerAvailable) return retirement.failedInstall()
 
         val listener = targetListener(token, recording = true)
-        val installed = InstalledPlayerTarget.Recording(token, listener, accepted.state)
+        val installed = InstalledPlayerTarget.Recording(token, listener, finality)
         active = installed
         return try {
             installed.listenerAttached = true
             access.addListener(listener)
             installed.sourceInstalled = true
             access.setMediaSource(source)
-            installed.resume = access.createResume()
-            installed.resume?.beginPlaybackTarget(recordingId, accepted.resumePosition)
+            if (accepted is RecordingAdmission.Completed) {
+                installed.resume = access.createResume()
+                installed.resume?.beginPlaybackTarget(recordingId, accepted.resumePosition)
+            }
             access.prepare()
             PlaybackPlayerInstallResult(
                 status = PlaybackPlayerInstallStatus.STARTED,
                 retiredTarget = retirement.retiredTarget,
                 retiredRecording = retirement.retiredRecording,
-                installedRecordingState = accepted.state,
+                installedRecording = accepted,
             )
         } catch (_: Exception) {
             rollbackInstalledOnLooper(installed)
@@ -305,11 +337,13 @@ internal class Media3PlaybackCoordinatorPlayer(
         override fun onPlaybackStateChanged(playbackState: Int) {
             access.requireApplicationLooper()
             if (recording && playbackState == Player.STATE_ENDED && active?.token === token) {
+                val installed = active as? InstalledPlayerTarget.Recording
                 events.publish(
                     PlaybackPlayerEvent(
                         token = token,
                         snapshot = access.snapshot(),
                         terminalExit = DvrPlaybackExit.NATURAL_END,
+                        growingFinalEndProven = installed?.finality?.isProven() == true,
                     ),
                 )
             }
@@ -404,6 +438,7 @@ internal class Media3PlaybackCoordinatorPlayer(
                     snapshot.playbackState == Player.STATE_ENDED -> DvrPlaybackExit.NATURAL_END
                     else -> DvrPlaybackExit.ORDERLY
                 },
+                growingFinalEndProven = installed.finality?.isProven() == true,
             )
         }
         return PlayerRetirement(
@@ -430,7 +465,7 @@ internal class Media3PlaybackCoordinatorPlayer(
         class Recording(
             token: PlaybackTargetToken,
             listener: Player.Listener,
-            val state: DvrEntryState,
+            val finality: GrowingFinalitySignal?,
         ) : InstalledPlayerTarget(token, listener) {
             var resume: CoordinatorRecordingResume? = null
         }
@@ -495,6 +530,18 @@ internal class ExoPlayerCoordinatorPlaybackAccess(
         Media3CoordinatorMediaSource(
             createTvheadendRecordingMediaSource(recordings, recordingId),
         )
+
+    override fun createGrowingRecordingSource(
+        recordingId: RecordingId,
+        lease: GrowingRecordingFileLease,
+        onFinalEnd: () -> Unit,
+    ): CoordinatorMediaSource = Media3CoordinatorMediaSource(
+        createTvheadendGrowingRecordingMediaSource(
+            lease = lease,
+            recordingId = recordingId,
+            onFinalEnd = onFinalEnd,
+        ),
+    )
 
     override fun createRecovery(
         onRecoveryRequired: (PlaybackRecoveryReason) -> Unit,

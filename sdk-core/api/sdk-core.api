@@ -1045,6 +1045,7 @@ public abstract interface class at/bernhardberger/tvheadend/sdk/core/DvrReposito
 	public abstract fun getEntries ()Lkotlinx/coroutines/flow/StateFlow;
 	public abstract fun getState ()Lkotlinx/coroutines/flow/StateFlow;
 	public abstract fun getTimerecRules ()Lkotlinx/coroutines/flow/StateFlow;
+	public fun reportProgress (Lat/bernhardberger/tvheadend/sdk/playback/GrowingRecordingFileLease;Lat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun reportProgress-c8JLQRw (JLat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun scheduleEntry (Lat/bernhardberger/tvheadend/sdk/core/DvrScheduleRequest;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun stopEntry-LuN5gl8 (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -1052,6 +1053,10 @@ public abstract interface class at/bernhardberger/tvheadend/sdk/core/DvrReposito
 	public abstract fun updateAutorecRule-UbZ1jNk (Ljava/lang/String;Lat/bernhardberger/tvheadend/sdk/core/AutorecRuleUpdate;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun updateEntry-c8JLQRw (JLat/bernhardberger/tvheadend/sdk/core/DvrEntryUpdate;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun updateTimerecRule-fyK67Z0 (Ljava/lang/String;Lat/bernhardberger/tvheadend/sdk/core/TimerecRuleUpdate;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrRepository$DefaultImpls {
+	public static fun reportProgress (Lat/bernhardberger/tvheadend/sdk/core/DvrRepository;Lat/bernhardberger/tvheadend/sdk/playback/GrowingRecordingFileLease;Lat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
 public abstract interface class at/bernhardberger/tvheadend/sdk/core/DvrRepositoryState {

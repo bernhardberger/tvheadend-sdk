@@ -397,6 +397,10 @@ class RecordingFileReaderTest {
 
         assertFailed(
             RecordingFileFailure.NOT_SUPPORTED,
+            opener.bindGrowingRecording(RECORDING),
+        )
+        assertFailed(
+            RecordingFileFailure.NOT_SUPPORTED,
             opener.openGrowingRecording(RECORDING, position = 0L),
         )
         assertThrows(IllegalArgumentException::class.java) {

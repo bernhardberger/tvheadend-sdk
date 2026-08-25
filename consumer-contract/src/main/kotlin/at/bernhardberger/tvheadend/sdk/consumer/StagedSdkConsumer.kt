@@ -25,4 +25,10 @@ public class StagedSdkConsumer(
 
     public suspend fun resume(recordingId: DvrEntryId): PlaybackTargetResult =
         coordinator.setRecordingTarget(recordingId, RecordingPlaybackStart.RESUME)
+
+    public suspend fun startGrowing(recordingId: DvrEntryId): PlaybackTargetResult =
+        coordinator.setRecordingTarget(recordingId, RecordingPlaybackStart.START_OVER)
+
+    public fun isGrowingResumeUnsupported(result: PlaybackTargetResult): Boolean =
+        result == PlaybackTargetResult.GROWING_RECORDING_RESUME_UNSUPPORTED
 }

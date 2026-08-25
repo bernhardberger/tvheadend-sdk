@@ -4,8 +4,14 @@ Date: 2026-08-25
 
 ## Decision
 
-**GO candidate for one separately approved pass-through MPEG-TS path; P7-2
-remains blocked on the explicit operator decision.**
+**GO accepted for one bounded pass-through MPEG-TS path.**
+
+The operator accepted the P7-F1 result on 2026-08-25 and authorized P7-F2
+through P7-F5. P7-F2 now owns generation-bound growth transport and finality,
+P7-F3 owns the unknown-length source and maintained-`TsExtractor` index, and
+P7-F4 integrates that path with the application-owned playback coordinator.
+P7-F5 retains real active-recording server/device acceptance. The evaluation,
+options, and estimates below remain the historical evidence for that decision.
 
 P7-F1 proved that exact Media3 1.11.0 can provide an approximate nonzero seek
 over already parsed bytes without a parser fork or custom `MediaPeriod`. A thin
@@ -20,7 +26,33 @@ MPEG-2/MP2 pass-through transport stream. It does not
 prove H.264, arbitrary TS programme layouts or bitrates, built-in Matroska,
 av-lib MP4, exact seek, active-server finality, reconnect, rollover, or product
 integration. The stock `TsExtractor` remains unseekable without the wrapper.
-P7-2 and P7-3 therefore remain behind the explicit operator decision gate.
+No other container or inferred codec support was authorized by that decision.
+
+## P7-F4 Coordination Contract
+
+- Active playback is admitted only from fresh current DVR state for one stable
+  `.ts` file and only with explicit `RecordingPlaybackStart.START_OVER`.
+  Growing `RESUME` returns `GROWING_RECORDING_RESUME_UNSUPPORTED`; non-TS active
+  targets retain `GROWING_RECORDING_DEFERRED`.
+- The coordinator selects the growth-specific source without installing the
+  completed-recording resume helper. The application still owns the Player,
+  autoplay, presentation, and interactive seek requests.
+- Approximate seeking remains limited by P7-F3's estimated map to validated,
+  already parsed MPEG-2 or H.264 points. Unvalidated TS codecs remain
+  forward-only and no indexed horizon becomes recording duration.
+- One target-scoped core lease binds the current generation, DVR incarnation,
+  and physical file before the coordinator classifies its DVR snapshot. Every
+  seek or loader retry and every progress epoch validates that same lease. Final
+  progress RPC admission revalidates it after capability and generation selection,
+  then uses its original generation rather than a later current generation.
+  Reconnect, clone, or rollover therefore cannot establish a new baseline. A
+  coordinator fence rejects
+  non-current DVR state, visible identity drift, and monotonic-size regression;
+  the P7-F2 reader surfaces the corresponding typed runtime file failure.
+- Temporary EOF cannot reach Media3. For growing playback, orderly retirement
+  always ignores the dynamic map duration for watched policy. Natural end may
+  mark watched only when fresh completion and the growth source's final-EOF
+  signal are both present.
 
 ## P7-F1 Feasibility Result
 
