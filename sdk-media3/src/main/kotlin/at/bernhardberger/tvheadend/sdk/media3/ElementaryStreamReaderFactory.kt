@@ -5,6 +5,7 @@ package at.bernhardberger.tvheadend.sdk.media3
 
 import androidx.media3.common.MimeTypes
 import androidx.media3.extractor.ts.Ac3Reader
+import androidx.media3.extractor.ts.AdtsReader
 import androidx.media3.extractor.ts.DvbSubtitleReader
 import androidx.media3.extractor.ts.ElementaryStreamReader
 import androidx.media3.extractor.ts.H262Reader
@@ -40,8 +41,10 @@ internal fun createElementaryStreamReader(stream: SubscriptionStream): ReaderRes
         SubscriptionStreamType.MPEG2_AUDIO -> ReaderResult.Supported(
             MpegAudioReader(stream.language, 0, MimeTypes.VIDEO_MP2T),
         )
+        SubscriptionStreamType.AAC -> ReaderResult.Supported(
+            AdtsReader(false, stream.language, 0, MimeTypes.VIDEO_MP2T),
+        )
         SubscriptionStreamType.DVB_SUBTITLE -> createDvbReader(stream)
-        SubscriptionStreamType.AAC,
         SubscriptionStreamType.TEXT_SUBTITLE,
         SubscriptionStreamType.TELETEXT,
         SubscriptionStreamType.UNKNOWN,

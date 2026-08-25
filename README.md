@@ -118,6 +118,13 @@ session.shutdown()
 player.release()
 ```
 
+Direct live playback feeds TVHeadend's packet-level `AAC` stream to Media3's
+maintained `AdtsReader`. TVHeadend normalizes AAC-LATM packets to ADTS before
+HTSP delivery, so the SDK does not infer the source transport framing or expose
+a separate LATM codec type. This path has deterministic packet-fixture coverage;
+the current acceptance server has no AAC service, so it is not a live-server AAC
+claim.
+
 All recording targets require the current semantic
 `RecordingProgressCapability.SUPPORTED`; unknown and pre-v27 connections are
 refused before source creation. An active target must have one stable `.ts`

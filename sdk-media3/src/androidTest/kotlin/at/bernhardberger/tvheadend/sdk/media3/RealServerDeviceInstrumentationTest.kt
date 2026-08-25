@@ -605,12 +605,12 @@ private val VIDEO_STREAMS = setOf(
     SubscriptionStreamType.H265,
 )
 private val AUDIO_VIDEO_STREAMS = VIDEO_STREAMS + setOf(
+    SubscriptionStreamType.AAC,
     SubscriptionStreamType.AC3,
     SubscriptionStreamType.EAC3,
     SubscriptionStreamType.MPEG2_AUDIO,
 )
 private val UNSUPPORTED_STREAMS = setOf(
-    SubscriptionStreamType.AAC,
     SubscriptionStreamType.TEXT_SUBTITLE,
     SubscriptionStreamType.TELETEXT,
     SubscriptionStreamType.UNKNOWN,
@@ -643,6 +643,7 @@ private fun SubscriptionStreamType.videoMimeType(): String = when (this) {
 }
 
 private fun SubscriptionStreamType.audioMimeType(): String = when (this) {
+    SubscriptionStreamType.AAC -> MimeTypes.AUDIO_AAC
     SubscriptionStreamType.AC3 -> MimeTypes.AUDIO_AC3
     SubscriptionStreamType.EAC3 -> MimeTypes.AUDIO_E_AC3
     SubscriptionStreamType.MPEG2_AUDIO -> MimeTypes.AUDIO_MPEG_L2

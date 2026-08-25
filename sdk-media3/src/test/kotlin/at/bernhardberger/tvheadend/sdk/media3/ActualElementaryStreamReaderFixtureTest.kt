@@ -60,6 +60,78 @@ class ActualElementaryStreamReaderFixtureTest {
     }
 
     @Test
+    fun `ADTS AAC emits exact format and sample metadata`() {
+        assertRecordedAudio(
+            type = SubscriptionStreamType.AAC,
+            resource = "/recorded-mux/aac-adts.bin",
+            presentationTimeUs = 421_000L,
+            expectedMimeType = MimeTypes.AUDIO_AAC,
+            expectedSize = 288,
+            expectedSha256 = "aa381944d998c57e5f56ce4a44ceeeb587d3ff6726647869cec75f38d8c4dbfa",
+            expectedChannelCount = 1,
+            expectedInitializationData = listOf("1188"),
+            expectedPayloadOffset = 7,
+        )
+    }
+
+    @Test
+    fun `malformed AAC emits no format or sample`() {
+        val result = createElementaryStreamReader(stream(SubscriptionStreamType.AAC))
+        assertTrue(result is ReaderResult.Supported)
+        val output = CapturingExtractorOutput()
+        val adapter = SubscriptionElementaryStreamAdapter(
+            (result as ReaderResult.Supported).reader,
+            output,
+            7,
+        )
+
+        adapter.accept(
+            SubscriptionEvent.Packet(
+                frameType = MuxFrameType.UNKNOWN,
+                streamIndex = StreamIndex(0L),
+                decodingTimeUs = 421_000L,
+                presentationTimeUs = 421_000L,
+                durationUs = 21_333L,
+                payload = ByteArrayBinary(byteArrayOf(0x56, 0xe0.toByte(), 0x00, 0x01, 0x02)),
+            ),
+        )
+        adapter.end()
+
+        assertEquals(7, output.trackId)
+        assertEquals(C.TRACK_TYPE_AUDIO, output.trackType)
+        assertNull(output.trackOutput.format)
+        assertTrue(output.trackOutput.metadata.isEmpty())
+        assertTrue(output.trackOutput.bytes.isEmpty())
+    }
+
+    @Test
+    fun `every stream type has an explicit reader classification`() {
+        val supported = SubscriptionStreamType.entries.filterTo(mutableSetOf()) { type ->
+            createElementaryStreamReader(
+                stream(
+                    type = type,
+                    compositionId = if (type == SubscriptionStreamType.DVB_SUBTITLE) 1L else null,
+                    ancillaryId = if (type == SubscriptionStreamType.DVB_SUBTITLE) 2L else null,
+                ),
+            ) is ReaderResult.Supported
+        }
+
+        assertEquals(
+            setOf(
+                SubscriptionStreamType.MPEG2_VIDEO,
+                SubscriptionStreamType.H264,
+                SubscriptionStreamType.H265,
+                SubscriptionStreamType.AAC,
+                SubscriptionStreamType.AC3,
+                SubscriptionStreamType.EAC3,
+                SubscriptionStreamType.MPEG2_AUDIO,
+                SubscriptionStreamType.DVB_SUBTITLE,
+            ),
+            supported,
+        )
+    }
+
+    @Test
     fun `recorded H264 emits exact format initialization data and sample metadata`() {
         assertEquals(
             VideoOracle(
@@ -180,6 +252,9 @@ class ActualElementaryStreamReaderFixtureTest {
         expectedMimeType: String,
         expectedSize: Int,
         expectedSha256: String,
+        expectedChannelCount: Int? = null,
+        expectedInitializationData: List<String> = emptyList(),
+        expectedPayloadOffset: Int = 0,
     ) {
         val bytes = checkNotNull(javaClass.getResourceAsStream(resource)).use { it.readBytes() }
         assertEquals(expectedSha256, bytes.sha256())
@@ -212,8 +287,12 @@ class ActualElementaryStreamReaderFixtureTest {
         assertEquals(expectedMimeType, format.sampleMimeType)
         assertEquals("de", format.language)
         assertEquals(48_000, format.sampleRate)
-        assertTrue(format.channelCount > 0)
-        assertTrue(format.initializationData.isEmpty())
+        if (expectedChannelCount == null) {
+            assertTrue(format.channelCount > 0)
+        } else {
+            assertEquals(expectedChannelCount, format.channelCount)
+        }
+        assertEquals(expectedInitializationData, format.initializationData.map { it.toHex() })
 
         val metadata = output.trackOutput.metadata.single()
         assertEquals(presentationTimeUs, metadata.timeUs)
@@ -221,15 +300,19 @@ class ActualElementaryStreamReaderFixtureTest {
         assertEquals(expectedSize, metadata.size)
         assertEquals(0, metadata.offset)
         assertNull(metadata.cryptoData)
-        assertArrayEquals(bytes, output.trackOutput.bytes.toByteArray())
+        assertArrayEquals(bytes.copyOfRange(expectedPayloadOffset, bytes.size), output.trackOutput.bytes.toByteArray())
     }
 
-    private fun stream(type: SubscriptionStreamType): SubscriptionStream = SubscriptionStream(
+    private fun stream(
+        type: SubscriptionStreamType,
+        compositionId: Long? = null,
+        ancillaryId: Long? = null,
+    ): SubscriptionStream = SubscriptionStream(
         index = StreamIndex(0L),
         type = type,
         language = "ger",
-        compositionId = null,
-        ancillaryId = null,
+        compositionId = compositionId,
+        ancillaryId = ancillaryId,
         width = null,
         height = null,
         frameDuration = null,
