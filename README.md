@@ -51,8 +51,8 @@ process, credential, connectivity, and NSD acceptance is recorded in the
 [Android lifecycle verification notes](docs/android-lifecycle-verification.md).
 Phase 6 end-to-end SDK, staged-consumer, and cross-process recording acceptance
 is recorded in the [SDK acceptance notes](docs/sdk-acceptance.md). The Phase 7
-evidence and no-go for growing-recording playback with safe active-recording
-seek are in the [growing-recording evaluation](docs/growing-recording-evaluation.md).
+initial no-go and bounded pass-through MPEG-TS wrapper feasibility result are in
+the [growing-recording evaluation](docs/growing-recording-evaluation.md).
 
 ## Authenticated artwork
 
