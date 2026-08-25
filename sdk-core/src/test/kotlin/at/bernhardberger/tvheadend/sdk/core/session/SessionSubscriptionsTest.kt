@@ -13,6 +13,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
 import at.bernhardberger.tvheadend.sdk.core.DvrCutpoint
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
+import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
 import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
@@ -24,6 +25,9 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailureEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrRecordingFile
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrUpdateProvenance
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayRecordingFile
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
@@ -615,6 +619,114 @@ class SessionSubscriptionsTest {
     }
 
     @Test
+    fun `growing recording reader binds file metadata and operations to one generation`() = runTest {
+        val gateway = SubscriptionGateway()
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        metadata.bindCurrentRecording(generation, id = 5L, sizeBytes = 64L)
+        val children = PlaybackSessionChildren(
+            gateway,
+            metadata,
+            StandardTestDispatcher(testScheduler),
+        )
+        children.bindGeneration(generation)
+
+        val reader = (
+            children.openGrowingRecording(RecordingId(5L), position = 4L)
+                as RecordingFileResult.Ok
+        ).value
+        assertEquals(2, (reader.read(ByteArray(2), 0, 2) as RecordingFileResult.Ok).value)
+        assertTrue(reader.close() is RecordingFileResult.Ok)
+        assertTrue(reader.close() is RecordingFileResult.Ok)
+
+        assertEquals(listOf(generation), gateway.openedRecordingGenerations)
+        assertEquals(listOf(generation), gateway.seekedRecordingGenerations)
+        assertEquals(listOf(4L), gateway.seekedRecordingPositions)
+        assertEquals(listOf(generation), gateway.readRecordingGenerations)
+        assertEquals(listOf(generation), gateway.closedRecordingGenerations)
+        children.closeAndJoinSubscriptions()
+    }
+
+    @Test
+    fun `growing recording open requires fresh current DVR metadata`() = runTest {
+        val gateway = SubscriptionGateway()
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        val children = PlaybackSessionChildren(
+            gateway,
+            metadata,
+            StandardTestDispatcher(testScheduler),
+        )
+        children.bindGeneration(generation)
+
+        assertSame(
+            RecordingFileFailure.FILE_UNAVAILABLE,
+            (
+                children.openGrowingRecording(RecordingId(5L), position = 0L)
+                    as RecordingFileResult.Failed
+            ).failure,
+        )
+        assertTrue(gateway.openedRecordingGenerations.isEmpty())
+        children.closeAndJoinSubscriptions()
+    }
+
+    @Test
+    fun `failed growing setup closes its generation-bound handle`() = runTest {
+        val gateway = SubscriptionGateway()
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        metadata.bindCurrentRecording(generation, id = 5L, sizeBytes = 64L)
+        val children = PlaybackSessionChildren(
+            gateway,
+            metadata,
+            StandardTestDispatcher(testScheduler),
+        )
+        children.bindGeneration(generation)
+
+        assertSame(
+            RecordingFileFailure.FILE_UNAVAILABLE,
+            (
+                children.openGrowingRecording(RecordingId(5L), position = 65L)
+                    as RecordingFileResult.Failed
+            ).failure,
+        )
+        assertEquals(listOf(generation), gateway.openedRecordingGenerations)
+        assertTrue(gateway.seekedRecordingGenerations.isEmpty())
+        assertEquals(listOf(generation), gateway.closedRecordingGenerations)
+        children.closeAndJoinSubscriptions()
+    }
+
+    @Test
+    fun `transient identity drift during growing open closes the handle`() = runTest {
+        val gateway = SubscriptionGateway()
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        metadata.bindCurrentRecording(generation, id = 5L, sizeBytes = 64L)
+        val children = PlaybackSessionChildren(
+            gateway,
+            metadata,
+            StandardTestDispatcher(testScheduler),
+        )
+        children.bindGeneration(generation)
+        gateway.beforeRecordingOpenResult = {
+            metadata.updateCurrentRecording(generation, id = 5L, path = "/replacement.ts")
+            metadata.updateCurrentRecording(generation, id = 5L, path = "/recording.ts")
+        }
+
+        assertSame(
+            RecordingFileFailure.FILE_UNAVAILABLE,
+            (
+                children.openGrowingRecording(RecordingId(5L), position = 0L)
+                    as RecordingFileResult.Failed
+            ).failure,
+        )
+        assertEquals(listOf(generation), gateway.openedRecordingGenerations)
+        assertEquals(listOf(generation), gateway.closedRecordingGenerations)
+        children.closeAndJoinSubscriptions()
+    }
+
+    @Test
     fun `artwork loads bind one generation and publish only safe typed results`() = runTest {
         val gateway = SubscriptionGateway()
         val children = PlaybackSessionChildren(
@@ -688,12 +800,14 @@ private class SubscriptionGateway : ProtocolGateway {
     internal val openedRecordingGenerations = ArrayList<GatewayGeneration>()
     internal val openedRecordingIds = ArrayList<DvrEntryId>()
     internal val seekedRecordingGenerations = ArrayList<GatewayGeneration>()
+    internal val seekedRecordingPositions = ArrayList<Long>()
     internal val readRecordingGenerations = ArrayList<GatewayGeneration>()
     internal val closedRecordingGenerations = ArrayList<GatewayGeneration>()
     internal val loadedArtworkGenerations = ArrayList<GatewayGeneration>()
     internal val loadedArtworkIds = ArrayList<ArtworkId>()
     internal var recordingOpenResult: GatewayResult<GatewayRecordingFile> =
         GatewayResult.Ok(GatewayRecordingFile(handleId = 7L, sizeBytes = 64L, protocolVersion = 27))
+    internal var beforeRecordingOpenResult: (() -> Unit)? = null
     internal var artworkLoadResult: GatewayResult<ByteArray> = GatewayResult.NotSupported
     internal var grantedTimeshiftSeconds: Long? = null
     internal var nearLiveAction: suspend () -> SubscriptionOperationResult<Unit> = {
@@ -821,6 +935,7 @@ private class SubscriptionGateway : ProtocolGateway {
     ): GatewayResult<GatewayRecordingFile> {
         openedRecordingGenerations += generation
         openedRecordingIds += id
+        beforeRecordingOpenResult?.invoke()
         return recordingOpenResult
     }
 
@@ -830,6 +945,7 @@ private class SubscriptionGateway : ProtocolGateway {
         position: Long,
     ): GatewayResult<Long> {
         seekedRecordingGenerations += generation
+        seekedRecordingPositions += position
         return GatewayResult.Ok(position)
     }
 
@@ -1013,6 +1129,65 @@ private fun PhaseOneSessionMetadata.bindKnownChannels(
         )
     }
     acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+}
+
+private fun PhaseOneSessionMetadata.bindCurrentRecording(
+    generation: GatewayGeneration,
+    id: Long,
+    sizeBytes: Long,
+) {
+    bindGeneration(generation)
+    acceptMetadata(
+        MetadataEvent.DvrEntryAdded(
+            generation,
+            GatewayDvrEntry(
+                id = DvrEntryId(id),
+                uuid = "recording-uuid",
+                files = listOf(
+                    GatewayDvrRecordingFile(
+                        fileId = 11L,
+                        path = "/recording.ts",
+                        start = Instant.fromEpochSeconds(1L),
+                        stop = null,
+                        sizeBytes = sizeBytes,
+                    ),
+                ),
+                path = "/recording.ts",
+                state = DvrEntryState.RECORDING,
+                dataSizeBytes = sizeBytes,
+            ),
+        ),
+    )
+    acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+}
+
+private fun PhaseOneSessionMetadata.updateCurrentRecording(
+    generation: GatewayGeneration,
+    id: Long,
+    path: String,
+) {
+    acceptMetadata(
+        MetadataEvent.DvrEntryUpdated(
+            generation,
+            GatewayDvrEntry(
+                id = DvrEntryId(id),
+                uuid = "recording-uuid",
+                files = listOf(
+                    GatewayDvrRecordingFile(
+                        fileId = 11L,
+                        path = path,
+                        start = Instant.fromEpochSeconds(1L),
+                        stop = null,
+                        sizeBytes = 64L,
+                    ),
+                ),
+                path = path,
+                state = DvrEntryState.RECORDING,
+                dataSizeBytes = 64L,
+            ),
+            GatewayDvrUpdateProvenance.FULL,
+        ),
+    )
 }
 
 private fun stream(): SubscriptionStream = SubscriptionStream(

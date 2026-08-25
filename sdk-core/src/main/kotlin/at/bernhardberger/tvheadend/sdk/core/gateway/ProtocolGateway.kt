@@ -151,6 +151,11 @@ internal interface ProtocolGateway {
         length: Int,
     ): GatewayResult<Int>
 
+    public suspend fun statRecordingFile(
+        generation: GatewayGeneration,
+        file: GatewayRecordingFile,
+    ): GatewayResult<GatewayRecordingFileStat> = GatewayResult.NotSupported
+
     public suspend fun closeRecordingFile(
         generation: GatewayGeneration,
         file: GatewayRecordingFile,
@@ -253,6 +258,14 @@ internal class GatewayRecordingFile(
     internal val protocolVersion: Int?,
 ) {
     override fun toString(): String = "GatewayRecordingFile(<redacted>)"
+}
+
+/** Optional size and modification time observed from one still-open recording handle. */
+internal class GatewayRecordingFileStat(
+    internal val sizeBytes: Long?,
+    internal val modifiedAtUnixSeconds: Long?,
+) {
+    override fun toString(): String = "GatewayRecordingFileStat(<redacted>)"
 }
 
 internal class GatewayServerFacts(

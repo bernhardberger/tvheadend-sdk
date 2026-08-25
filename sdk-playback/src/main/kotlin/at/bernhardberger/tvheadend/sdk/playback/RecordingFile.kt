@@ -93,6 +93,33 @@ public interface RecordingFile {
     public suspend fun close(): RecordingFileResult<Unit>
 }
 
+/**
+ * Sequential reader that follows one growing recording file until its final end.
+ *
+ * A temporary empty transport read is kept inside [read]. It suspends until more bytes arrive,
+ * fresh recording metadata proves final end, or a typed failure occurs. Implementations are not
+ * safe for concurrent use. The caller owns the reader and must [close] it.
+ */
+@SubscriptionInfrastructureApi
+public interface GrowingRecordingFileReader {
+    /**
+     * Reads into [destination], waiting across temporary end of file when necessary.
+     *
+     * Returns [RECORDING_END_OF_INPUT] only after fresh current-generation metadata and an
+     * open-handle stat corroborate finality. A pending thread interrupt is surfaced as
+     * [InterruptedException] without being cleared. One call may request at most
+     * [MAX_RECORDING_READ_BYTES].
+     */
+    public suspend fun read(
+        destination: ByteArray,
+        destinationOffset: Int,
+        length: Int,
+    ): RecordingFileResult<Int>
+
+    /** Releases the server-side handle. Closing an already closed reader succeeds. */
+    public suspend fun close(): RecordingFileResult<Unit>
+}
+
 /** Opens recording files without exposing generation admission or teardown controls. */
 @SubscriptionInfrastructureApi
 public fun interface RecordingFileOpener {
@@ -103,4 +130,19 @@ public fun interface RecordingFileOpener {
      * result is [RecordingFileFailure.CONNECTION_CHANGED].
      */
     public suspend fun openRecording(recordingId: RecordingId): RecordingFileResult<RecordingFile>
+
+    /**
+     * Opens one physical file of an active recording at absolute [position].
+     *
+     * The returned reader withholds temporary end of file and follows only that exact file and
+     * connection generation. Implementations that do not correlate fresh DVR state with
+     * open-handle stats return [RecordingFileFailure.NOT_SUPPORTED].
+     */
+    public suspend fun openGrowingRecording(
+        recordingId: RecordingId,
+        position: Long,
+    ): RecordingFileResult<GrowingRecordingFileReader> {
+        require(position >= 0L) { "Growing recording position must not be negative" }
+        return RecordingFileResult.Failed(RecordingFileFailure.NOT_SUPPORTED)
+    }
 }

@@ -74,6 +74,8 @@ import at.bernhardberger.tvheadend.htsp.requests.FileReadResponse
 import at.bernhardberger.tvheadend.htsp.requests.FileSeekRequest
 import at.bernhardberger.tvheadend.htsp.requests.FileSeekResponse
 import at.bernhardberger.tvheadend.htsp.requests.FileSeekWhence
+import at.bernhardberger.tvheadend.htsp.requests.FileStatRequest
+import at.bernhardberger.tvheadend.htsp.requests.FileStatResponse
 import at.bernhardberger.tvheadend.htsp.requests.GetDiskSpaceRequest
 import at.bernhardberger.tvheadend.htsp.requests.GetDiskSpaceResponse
 import at.bernhardberger.tvheadend.htsp.requests.GetDvrConfigsRequest
@@ -1812,6 +1814,32 @@ internal class HtspProtocolGatewayTest {
         )
         assertArrayEquals(byteArrayOf(7, 7, 7, 7), guarded)
 
+        fake.executeResult = HtspResult.Ok(
+            FileStatResponse(sizeBytes = 4_100, modifiedAtUnixSeconds = -7),
+        )
+        val stat = gateway.statRecordingFile(generation, file) as GatewayResult.Ok
+        assertEquals(4_100L, stat.value.sizeBytes)
+        assertEquals(-7L, stat.value.modifiedAtUnixSeconds)
+        assertEquals("GatewayRecordingFileStat(<redacted>)", stat.value.toString())
+        assertEquals(12L, (fake.lastRequest as FileStatRequest).id)
+        assertSame(sourceGeneration, fake.lastExpectedGeneration)
+
+        fake.executeResult = HtspResult.Ok(
+            FileStatResponse(sizeBytes = null, modifiedAtUnixSeconds = null),
+        )
+        val omittedStat = gateway.statRecordingFile(generation, file) as GatewayResult.Ok
+        assertEquals(null, omittedStat.value.sizeBytes)
+        assertEquals(null, omittedStat.value.modifiedAtUnixSeconds)
+
+        fake.executeResult = HtspResult.Ok(
+            FileStatResponse(sizeBytes = 4_100, modifiedAtUnixSeconds = null),
+        )
+        assertSame(
+            GatewayResult.ServerRejected,
+            gateway.statRecordingFile(generation, file),
+            "A partial stat pair must fail closed even if a test transport bypasses decoding",
+        )
+
         fake.executeResult = HtspResult.Ok(FileCloseResponse)
         assertTrue(gateway.closeRecordingFile(generation, file) is GatewayResult.Ok)
         val close = fake.lastRequest as FileCloseRequest
@@ -1836,6 +1864,7 @@ internal class HtspProtocolGatewayTest {
             assertSame(expected, gateway.openRecordingFile(generation, DvrEntryId(7)))
             assertSame(expected, gateway.seekRecordingFile(generation, file, 0))
             assertSame(expected, gateway.readRecordingFile(generation, file, 0, destination, 0, 4))
+            assertSame(expected, gateway.statRecordingFile(generation, file))
             assertSame(expected, gateway.closeRecordingFile(generation, file))
         }
 
@@ -1857,6 +1886,13 @@ internal class HtspProtocolGatewayTest {
         var cancelled: CancellationException? = null
         try {
             gateway.readRecordingFile(generation, file, 0, destination, 0, 4)
+        } catch (failure: CancellationException) {
+            cancelled = failure
+        }
+        assertSame(cancellation, cancelled)
+        cancelled = null
+        try {
+            gateway.statRecordingFile(generation, file)
         } catch (failure: CancellationException) {
             cancelled = failure
         }

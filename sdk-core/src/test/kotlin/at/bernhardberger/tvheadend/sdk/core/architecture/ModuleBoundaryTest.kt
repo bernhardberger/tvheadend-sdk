@@ -317,6 +317,7 @@ internal class ModuleBoundaryTest {
             "RecordingFileResult",
             "RecordingFile",
             "RecordingFileOpener",
+            "GrowingRecordingFileReader",
             "RecordingFileReader",
             "createRecordingFileReader",
             "MAX_RECORDING_READ_BYTES",

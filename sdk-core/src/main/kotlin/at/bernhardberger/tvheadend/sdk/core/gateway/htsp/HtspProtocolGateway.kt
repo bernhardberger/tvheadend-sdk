@@ -73,6 +73,7 @@ import at.bernhardberger.tvheadend.htsp.requests.fileClose
 import at.bernhardberger.tvheadend.htsp.requests.fileOpen
 import at.bernhardberger.tvheadend.htsp.requests.fileRead
 import at.bernhardberger.tvheadend.htsp.requests.fileSeek
+import at.bernhardberger.tvheadend.htsp.requests.fileStat
 import at.bernhardberger.tvheadend.htsp.requests.getDiskSpace
 import at.bernhardberger.tvheadend.htsp.requests.getDvrCutpoints
 import at.bernhardberger.tvheadend.htsp.requests.getDvrConfigs
@@ -130,6 +131,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgUpdate
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayRecordingFile
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayRecordingFileStat
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayServerFacts
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayState
@@ -708,6 +710,20 @@ internal class HtspProtocolGateway internal constructor(
             response.data
                 .takeIf { data -> data.size <= length }
                 ?.copyInto(destination, destinationOffset)
+        }
+    }
+
+    override suspend fun statRecordingFile(
+        generation: GatewayGeneration,
+        file: GatewayRecordingFile,
+    ): GatewayResult<GatewayRecordingFileStat> = connection.fileStat(
+        id = file.handleId,
+        expectedGeneration = htspGenerationFor(generation),
+    ).toCheckedGatewayResult { response ->
+        val size = response.sizeBytes
+        val modified = response.modifiedAtUnixSeconds
+        GatewayRecordingFileStat(size, modified).takeIf {
+            (size == null) == (modified == null) && (size == null || size >= 0L)
         }
     }
 

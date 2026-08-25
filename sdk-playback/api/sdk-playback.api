@@ -6,6 +6,11 @@ public abstract interface class at/bernhardberger/tvheadend/sdk/playback/ActiveS
 	public abstract fun seek (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekTarget;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
+public abstract interface class at/bernhardberger/tvheadend/sdk/playback/GrowingRecordingFileReader {
+	public abstract fun close (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun read ([BIILkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
 public final class at/bernhardberger/tvheadend/sdk/playback/MuxFrameType : java/lang/Enum {
 	public static final field B Lat/bernhardberger/tvheadend/sdk/playback/MuxFrameType;
 	public static final field I Lat/bernhardberger/tvheadend/sdk/playback/MuxFrameType;
@@ -36,7 +41,12 @@ public final class at/bernhardberger/tvheadend/sdk/playback/RecordingFileFailure
 }
 
 public abstract interface class at/bernhardberger/tvheadend/sdk/playback/RecordingFileOpener {
+	public fun openGrowingRecording-c5QowNY (JJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun openRecording-ISBBIW0 (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/RecordingFileOpener$DefaultImpls {
+	public static fun openGrowingRecording-c5QowNY (Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileOpener;JJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
 public abstract interface class at/bernhardberger/tvheadend/sdk/playback/RecordingFileReader {

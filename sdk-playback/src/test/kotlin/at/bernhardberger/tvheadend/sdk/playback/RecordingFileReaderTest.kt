@@ -390,6 +390,21 @@ class RecordingFileReaderTest {
     }
 
     @Test
+    fun `existing opener implementations default growing access to unsupported`() = runTest {
+        val opener = RecordingFileOpener {
+            RecordingFileResult.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+        }
+
+        assertFailed(
+            RecordingFileFailure.NOT_SUPPORTED,
+            opener.openGrowingRecording(RECORDING, position = 0L),
+        )
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking { opener.openGrowingRecording(RECORDING, position = -1L) }
+        }
+    }
+
+    @Test
     fun `identifiers and failures never expose their payload`() {
         assertEquals("RecordingId(<redacted>)", RECORDING.toString())
         assertEquals(
