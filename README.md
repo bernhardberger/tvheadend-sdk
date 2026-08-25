@@ -131,8 +131,8 @@ refused before source creation. An active target must have one stable `.ts`
 file and must use explicit `START_OVER`. `RESUME` returns
 `GROWING_RECORDING_RESUME_UNSUPPORTED`; other active containers remain
 `GROWING_RECORDING_DEFERRED`. Growing seek is approximate and becomes available
-only after the maintained `TsExtractor` wrapper has validated MPEG-2 or H.264
-and indexed already parsed keyframes. Other TS codecs remain forward-only.
+only after the maintained `TsExtractor` wrapper has validated MPEG-2, H.264, or
+HEVC and indexed already parsed keyframes. Other TS codecs remain forward-only.
 
 Temporary EOF stays inside the growth reader and never marks the recording
 watched. Growing progress is best-effort and generation-local with one RPC in

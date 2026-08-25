@@ -37,8 +37,8 @@ No other container or inferred codec support was authorized by that decision.
 - The coordinator selects the growth-specific source without installing the
   completed-recording resume helper. The application still owns the Player,
   autoplay, presentation, and interactive seek requests.
-- Approximate seeking remains limited by P7-F3's estimated map to validated,
-  already parsed MPEG-2 or H.264 points. Unvalidated TS codecs remain
+- Approximate seeking remains limited by the estimated map to validated,
+  already parsed MPEG-2, H.264, or HEVC points. Unvalidated TS codecs remain
   forward-only and no indexed horizon becomes recording duration.
 - One target-scoped core lease binds the current generation, DVR incarnation,
   and physical file before the coordinator classifies its DVR snapshot. Every
@@ -405,7 +405,8 @@ Deterministic JVM and Android coverage must include:
 - explicit refusal of growing `RESUME` unless separate evidence later proves a
   safe rule;
 - explicit wrapper selection plus real Media3 extractor append/seek fixtures
-  for every supported TS codec and programme-layout variant; and
+  where redistributable fixtures exist, and source/coordinator device/server
+  evidence for supported codecs whose broadcast bytes cannot be committed; and
 - coordinator races among state updates, player error/end, cancellation,
   reconnect, and target replacement.
 

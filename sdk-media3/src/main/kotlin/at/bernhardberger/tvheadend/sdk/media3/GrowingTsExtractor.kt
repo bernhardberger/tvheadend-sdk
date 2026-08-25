@@ -154,7 +154,7 @@ private class GrowingTsTrackOutput(
  * Bounded evidence index for one validated video track.
  *
  * A seek point starts at the preceding observed keyframe rather than subtracting a fixture-sized
- * byte constant. This retains one complete observed GOP of parser and decoder pre-roll for both
+ * byte constant. This retains one complete observed GOP of parser and decoder pre-roll for
  * validated codecs and naturally scales with stream bitrate and GOP size.
  */
 internal class GrowingTsIndex(
@@ -374,4 +374,5 @@ private const val MINIMUM_GROWING_TS_SEEKABLE_POINTS: Int = 3
 private val SEEK_VALIDATED_TS_VIDEO_MIME_TYPES = setOf(
     MimeTypes.VIDEO_MPEG2,
     MimeTypes.VIDEO_H264,
+    MimeTypes.VIDEO_H265,
 )

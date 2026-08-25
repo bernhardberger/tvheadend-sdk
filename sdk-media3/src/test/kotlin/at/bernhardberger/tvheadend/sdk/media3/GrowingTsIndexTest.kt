@@ -23,8 +23,8 @@ import org.junit.jupiter.api.Test
 
 class GrowingTsIndexTest {
     @Test
-    fun `MPEG2 and H264 publish estimated maps from preceding observed keyframes`() {
-        listOf(MimeTypes.VIDEO_MPEG2, MimeTypes.VIDEO_H264).forEach { mimeType ->
+    fun `validated video codecs publish estimated maps from preceding observed keyframes`() {
+        listOf(MimeTypes.VIDEO_MPEG2, MimeTypes.VIDEO_H264, MimeTypes.VIDEO_H265).forEach { mimeType ->
             val index = GrowingTsIndex(minimumMapAdvanceUs = 5_000_000L)
             index.onVideoFormat(VIDEO_TRACK, mimeType)
             addKeyframes(index, count = 4, intervalUs = 2_000_000L)
@@ -47,7 +47,7 @@ class GrowingTsIndexTest {
     @Test
     fun `unvalidated codec and ambiguous video layout remain non-seekable`() {
         val unsupported = GrowingTsIndex()
-        unsupported.onVideoFormat(VIDEO_TRACK, MimeTypes.VIDEO_H265)
+        unsupported.onVideoFormat(VIDEO_TRACK, MimeTypes.VIDEO_AV1)
         addKeyframes(unsupported, count = 8)
         assertNull(unsupported.nextSeekMap())
 
@@ -63,7 +63,7 @@ class GrowingTsIndexTest {
     }
 
     @Test
-    fun `codec drift retracts a previously seekable estimate`() {
+    fun `validated codec drift retracts a previously seekable estimate`() {
         val index = GrowingTsIndex(minimumMapAdvanceUs = 1L)
         index.onVideoFormat(VIDEO_TRACK, MimeTypes.VIDEO_H264)
         addKeyframes(index, count = 4)
