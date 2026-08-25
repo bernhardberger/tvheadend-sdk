@@ -243,6 +243,7 @@ internal class ModuleBoundaryTest {
         val publicApi = listOf(
             "src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/TvheadendSession.kt",
             "src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/DvrRepository.kt",
+            "../sdk-media3/src/main/kotlin/at/bernhardberger/tvheadend/sdk/media3/TvheadendPlaybackCoordinator.kt",
         ).joinToString(" ") { path -> File(path).readText() }.replace(Regex("\\s+"), " ")
         val expectedSignatures = setOf(
             "public suspend fun connect(profile: ServerProfile): SessionCommandResult",
@@ -262,6 +263,11 @@ internal class ModuleBoundaryTest {
             "public suspend fun deleteTimerecRule(id: TimerecRuleId): DvrMutationResult<Unit>",
             "public suspend fun reportProgress( id: DvrEntryId, progress: DvrPlaybackProgress, ): DvrProgressResult",
             "public suspend fun cutpoints(id: DvrEntryId): DvrCutpointsResult",
+            "public suspend fun run()",
+            "public suspend fun setLiveTarget(channelId: ChannelId): PlaybackTargetResult",
+            "public suspend fun setRecordingTarget( recordingId: DvrEntryId, start: RecordingPlaybackStart = RecordingPlaybackStart.RESUME, ): PlaybackTargetResult",
+            "public suspend fun stop(): PlaybackStopResult",
+            "public suspend fun shutdown(drainTimeout: Duration): PlaybackShutdownResult",
         )
 
         assertEquals(expectedSignatures.size, Regex("public suspend fun ").findAll(publicApi).count())
@@ -328,13 +334,19 @@ internal class ModuleBoundaryTest {
             "SubscriptionBinaryFixture",
         )
         val expectedMedia3 = setOf(
+            "PlaybackShutdownResult",
             "PlaybackRecoveryPolicy",
             "PlaybackRecoveryReason",
+            "PlaybackStopResult",
+            "PlaybackTargetResult",
+            "RecordingPlaybackStart",
             "TvheadendPlaybackRecovery",
+            "TvheadendPlaybackCoordinator",
             "TvheadendRecordingException",
             "TvheadendRecordingResume",
             "createTvheadendLiveMediaSource",
             "createTvheadendPlaybackRecovery",
+            "createTvheadendPlaybackCoordinator",
             "createTvheadendRenderersFactory",
             "createTvheadendRecordingDataSourceFactory",
             "createTvheadendRecordingMediaSource",
@@ -358,7 +370,7 @@ internal class ModuleBoundaryTest {
         assertPublicInfrastructure("sdk-android", expectedAndroid, unannotatedCount = expectedAndroid.size)
         assertPublicInfrastructure("sdk-playback", expectedPlayback, unannotatedCount = 1)
         assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 4)
-        assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 5)
+        assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 11)
 
         val sessionApi = java.io.File(
             "src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/TvheadendSession.kt",
@@ -425,6 +437,7 @@ internal class ModuleBoundaryTest {
                         "createRecordingFileReader",
                         "createTvheadendLiveMediaSource",
                         "createTvheadendPlaybackRecovery",
+                        "createTvheadendPlaybackCoordinator",
                         "createTvheadendRenderersFactory",
                         "createTvheadendRecordingDataSourceFactory",
                         "createTvheadendRecordingMediaSource",

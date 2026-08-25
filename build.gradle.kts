@@ -268,13 +268,19 @@ val productionGraphs = sdkModules.associateWith {
     )
     this["sdk-media3"] = ProductionGraph(
         direct = setOf(
+            "project::sdk-core",
             "project::sdk-playback",
             "androidx.media3:media3-exoplayer:1.11.0",
             "androidx.media3:media3-extractor:1.11.0",
             "file:media3-decoder-ffmpeg-1.11.0.jar",
             "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
         ),
-        resolved = setOf(
+        resolved = (if (useHtspComposite) {
+            (coreResolved - "at.bernhardberger.tvheadend:htsp:0.7.0") +
+                "project::tvheadend-htsp"
+        } else {
+            coreResolved
+        }) + setOf(
             "androidx.annotation:annotation-experimental:1.3.1",
             "androidx.annotation:annotation-jvm:1.6.0",
             "androidx.annotation:annotation:1.6.0",
@@ -294,6 +300,7 @@ val productionGraphs = sdkModules.associateWith {
             "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.10.2",
             "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
             "org.jetbrains:annotations:23.0.0",
+            "project::sdk-core",
             "project::sdk-playback",
         ),
     )
@@ -323,6 +330,7 @@ val scopedDirectDependencies = sdkModules.associateWith { emptySet<String>() }.t
         "api=org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
     )
     this["sdk-media3"] = setOf(
+        "api=project::sdk-core",
         "api=project::sdk-playback",
         "api=androidx.media3:media3-exoplayer:1.11.0",
         "implementation=androidx.media3:media3-extractor:1.11.0",

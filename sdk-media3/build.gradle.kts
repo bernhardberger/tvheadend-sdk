@@ -60,12 +60,14 @@ kotlin {
 }
 
 dependencies {
+    api(project(":sdk-core"))
     api(project(":sdk-playback"))
     api(libs.media3.exoplayer)
     implementation(libs.media3.extractor)
     implementation(libs.kotlinx.coroutines.core)
     implementation(files("libs/media3-decoder-ffmpeg-1.11.0.jar"))
     testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
     testRuntimeOnly(libs.junit.platform.launcher)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)

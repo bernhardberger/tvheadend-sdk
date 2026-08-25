@@ -40,8 +40,9 @@ automatically. CI (`.github/workflows/ci.yml`) is the authoritative gate.
   metadata, EPG, and DVR workflows. It is pure JVM.
 - `sdk-playback` owns subscription, seek, timeshift, and timestamp state
   machines. It is pure JVM.
-- `sdk-media3` owns Android Media3 source, period, and elementary-stream
-  adapters.
+- `sdk-media3` owns Android Media3 source, period, elementary-stream adapters,
+  and the narrow TVHeadend playback coordinator. It has an explicit API
+  dependency on `sdk-core`; do not duplicate core models behind a mirror API.
 - `sdk-android` owns Android discovery, connectivity, credentials, and artwork
   integration.
 - `sdk-testing` supplies JVM-only fakes, repositories, scripted events, and
@@ -52,6 +53,10 @@ automatically. CI (`.github/workflows/ci.yml`) is the authoritative gate.
   may appear in a public SDK signature.
 - The SDK contains no UI and does not own `Player`, `MediaSession`,
   notifications, ViewModels, navigation, or product recommendation policy.
+- The playback coordinator borrows an application-owned `Player`. It may install
+  and retire TVHeadend sources and listeners, but never constructs or releases
+  the Player or owns MediaSession, service, audio focus, notifications, surfaces,
+  autoplay, navigation, or presentation policy.
 
 ## API and runtime invariants
 

@@ -89,3 +89,33 @@ completion.
 `DvrRepository.reportProgress` is an uncoordinated low-level RPC. Direct callers
 must serialize reports and preserve observation and terminal ordering
 themselves; the SDK does not persist or replay pending progress.
+
+## Media3 playback coordination
+
+`sdk-media3` provides a narrow coordinator for live channels and completed
+recordings. The application owns the `ExoPlayer` and the coroutine running the
+coordinator. Source changes, resume registration, recovery, and progress
+observation are serialized on the player's application looper; the coordinator
+does not create or release the player or own a service, MediaSession, audio
+focus, notification, surface, autoplay, navigation, or presentation policy.
+
+```kotlin
+val coordinator = createTvheadendPlaybackCoordinator(session, player)
+val owner = applicationScope.launch { coordinator.run() }
+
+coordinator.setLiveTarget(channel.id)
+coordinator.setRecordingTarget(recording.id, RecordingPlaybackStart.RESUME)
+
+coordinator.shutdown(2.seconds)
+owner.join()
+session.shutdown()
+player.release()
+```
+
+Completed recordings require the current semantic
+`RecordingProgressCapability.SUPPORTED`; unknown and pre-v27 connections are
+refused before source creation, and growing recordings remain explicitly
+deferred. Progress is best-effort and generation-local with one RPC in flight
+and one latest pending observation. Target replacement never waits for that
+RPC. Explicit shutdown may drain it for a caller-supplied timeout of at most ten
+seconds before the application shuts down the session and releases the player.
