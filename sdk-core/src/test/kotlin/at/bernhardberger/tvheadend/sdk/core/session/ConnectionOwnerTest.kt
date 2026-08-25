@@ -1128,7 +1128,7 @@ internal class ConnectionOwnerTest {
     }
 
     @Test
-    fun `profile replacement and explicit disconnect clear the prior server catalog`() = runTest {
+    fun `profile replacement and a different post-disconnect profile clear the prior catalog`() = runTest {
         val gateway = FakeProtocolGateway()
         val firstGeneration = GatewayGeneration()
         val secondGeneration = GatewayGeneration()
@@ -1173,15 +1173,114 @@ internal class ConnectionOwnerTest {
         assertEquals(listOf(2L), owner.epgRepository.events.value.map { it.id.value })
 
         owner.disconnect()
-        assertEquals(ChannelRepositoryState.Empty, owner.channelRepository.state.value)
-        assertEquals(EpgRepositoryState.Empty, owner.epgRepository.state.value)
-        assertEquals(DvrRepositoryState.Empty, owner.dvrRepository.state.value)
+        assertTrue(owner.channelRepository.state.value is ChannelRepositoryState.Stale)
+        assertTrue(owner.epgRepository.state.value is EpgRepositoryState.Stale)
+        assertTrue(owner.dvrRepository.state.value is DvrRepositoryState.Stale)
         owner.connect(ServerProfile("third"))
         runCurrent()
         assertEquals(SessionState.Unavailable(SessionFailure.NoChannels), owner.state.value)
         assertEquals(ChannelRepositoryState.Empty, owner.channelRepository.state.value)
         assertEquals(EpgRepositoryState.Empty, owner.epgRepository.state.value)
         assertEquals(DvrRepositoryState.Empty, owner.dvrRepository.state.value)
+        owner.shutdown()
+    }
+
+    @Test
+    fun `explicit disconnect retains snapshots only for the same normalized profile`() = runTest {
+        val gateway = FakeProtocolGateway()
+        val firstGeneration = GatewayGeneration()
+        val secondGeneration = GatewayGeneration()
+        gateway.connectResults += connected(firstGeneration)
+        gateway.connectResults += connected(secondGeneration)
+        val owner = owner(gateway)
+        val initialProfile = ServerProfile(
+            host = " server ",
+            authentication = ServerAuthentication.Password(" user ", "secret"),
+        )
+
+        owner.connect(initialProfile)
+        runCurrent()
+        gateway.emitMetadata(MetadataEvent.ChannelAdded(firstGeneration, channelMetadata(id = 1)))
+        gateway.emitMetadata(MetadataEvent.EventAdded(firstGeneration, epgMetadata(1, 1)))
+        gateway.emitMetadata(MetadataEvent.DvrEntryAdded(firstGeneration, dvrMetadata(1)))
+        gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(firstGeneration))
+        runCurrent()
+
+        owner.disconnect()
+
+        assertEquals(SessionState.Disconnected, owner.state.value)
+        assertTrue(owner.channelRepository.state.value is ChannelRepositoryState.Stale)
+        assertTrue(owner.epgRepository.state.value is EpgRepositoryState.Stale)
+        assertTrue(owner.dvrRepository.state.value is DvrRepositoryState.Stale)
+        assertEquals(RecordingProgressCapability.UNKNOWN, owner.recordingProgressCapability.value)
+
+        assertEquals(
+            SessionCommandResult.STARTED,
+            owner.connect(
+                ServerProfile(
+                    host = "server",
+                    authentication = ServerAuthentication.Password("user", "secret"),
+                ),
+            ),
+        )
+        runCurrent()
+
+        assertEquals(SessionState.Synchronizing, owner.state.value)
+        assertTrue(owner.channelRepository.state.value is ChannelRepositoryState.Synchronizing)
+        assertTrue(owner.epgRepository.state.value is EpgRepositoryState.Synchronizing)
+        assertTrue(owner.dvrRepository.state.value is DvrRepositoryState.Synchronizing)
+        assertTrue(owner.dvrRepository.configurationsState.value is DvrConfigurationsState.Synchronizing)
+        assertTrue(owner.dvrRepository.diskSpaceState.value is DvrDiskSpaceState.Synchronizing)
+        assertEquals(listOf(1L), owner.channelRepository.channels.value.map { channel -> channel.id.value })
+        assertEquals(listOf(1L), owner.epgRepository.events.value.map { event -> event.id.value })
+        assertEquals(listOf(1L), owner.dvrRepository.entries.value.map { entry -> entry.id.value })
+
+        owner.shutdown()
+        assertEquals(ChannelRepositoryState.Empty, owner.channelRepository.state.value)
+        assertEquals(EpgRepositoryState.Empty, owner.epgRepository.state.value)
+        assertEquals(DvrRepositoryState.Empty, owner.dvrRepository.state.value)
+        assertEquals(DvrConfigurationsState.Unknown, owner.dvrRepository.configurationsState.value)
+        assertEquals(DvrDiskSpaceState.Unknown, owner.dvrRepository.diskSpaceState.value)
+    }
+
+    @Test
+    fun `credential change after disconnect clears retained snapshots`() = runTest {
+        val gateway = FakeProtocolGateway()
+        val generation = GatewayGeneration()
+        gateway.connectResults += connected(generation)
+        gateway.connectResults += failed(GatewayConnectionFailure.NO_CHANNELS)
+        val owner = owner(gateway)
+        val original = ServerProfile(
+            host = "server",
+            authentication = ServerAuthentication.Password("user", "secret"),
+        )
+
+        owner.connect(original)
+        runCurrent()
+        gateway.emitMetadata(MetadataEvent.ChannelAdded(generation, channelMetadata(id = 1)))
+        gateway.emitMetadata(MetadataEvent.EventAdded(generation, epgMetadata(1, 1)))
+        gateway.emitMetadata(MetadataEvent.DvrEntryAdded(generation, dvrMetadata(1)))
+        gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        runCurrent()
+        owner.disconnect()
+
+        assertEquals(
+            SessionCommandResult.STARTED,
+            owner.connect(
+                ServerProfile(
+                    host = "server",
+                    authentication = ServerAuthentication.Password("user", "different"),
+                ),
+            ),
+        )
+        runCurrent()
+
+        assertEquals(SessionState.Unavailable(SessionFailure.NoChannels), owner.state.value)
+        assertEquals(ChannelRepositoryState.Empty, owner.channelRepository.state.value)
+        assertEquals(EpgRepositoryState.Empty, owner.epgRepository.state.value)
+        assertEquals(DvrRepositoryState.Empty, owner.dvrRepository.state.value)
+        assertEquals(DvrConfigurationsState.Unknown, owner.dvrRepository.configurationsState.value)
+        assertEquals(DvrDiskSpaceState.Unknown, owner.dvrRepository.diskSpaceState.value)
         owner.shutdown()
     }
 

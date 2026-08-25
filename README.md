@@ -49,6 +49,8 @@ acceptance is recorded in the
 [playback verification notes](docs/playback-device-verification.md). Phase 5
 process, credential, connectivity, and NSD acceptance is recorded in the
 [Android lifecycle verification notes](docs/android-lifecycle-verification.md).
+Phase 6 end-to-end SDK, staged-consumer, and cross-process recording acceptance
+is recorded in the [SDK acceptance notes](docs/sdk-acceptance.md).
 
 ## Authenticated artwork
 

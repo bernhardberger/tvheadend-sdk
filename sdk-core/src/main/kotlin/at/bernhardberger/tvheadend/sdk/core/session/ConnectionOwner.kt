@@ -69,6 +69,7 @@ internal class ConnectionOwner(
         MutableStateFlow(RecordingProgressCapability.UNKNOWN)
 
     private var selectedProfile: ServerProfile? = null
+    private var retainedProfile: ServerProfile? = null
     private var worker: Job? = null
     private var activeToken: SessionToken? = null
     private var activeGeneration: GatewayGeneration? = null
@@ -101,9 +102,16 @@ internal class ConnectionOwner(
             withContext(NonCancellable) {
                 if (selectedProfile != null || worker != null) {
                     selectedProfile = null
+                    retainedProfile = null
                     tearDownReusableSession(retainPublishedCatalog = false)
+                } else if (retainedProfile?.hasSameConfigurationAs(profile) != true) {
+                    retainedProfile = null
+                    synchronized(stateLock) {
+                        metadata.clearAllState()
+                    }
                 }
                 selectedProfile = profile
+                retainedProfile = null
                 startWorker(profile)
             }
             currentCoroutineContext().ensureActive()
@@ -146,8 +154,9 @@ internal class ConnectionOwner(
                 return@withLock
             }
             withContext(NonCancellable) {
+                retainedProfile = selectedProfile
                 selectedProfile = null
-                tearDownReusableSession(retainPublishedCatalog = false)
+                tearDownReusableSession(retainPublishedCatalog = true)
             }
             currentCoroutineContext().ensureActive()
         }
@@ -164,6 +173,7 @@ internal class ConnectionOwner(
                 terminal = true,
             )
             selectedProfile = null
+            retainedProfile = null
             ShutdownPlan.Run(completion, invalidated.worker, invalidated.admissionFailure)
         }
 

@@ -796,7 +796,7 @@ private data class AvSamples(
     val videoPresentationTimeUs: Long,
 )
 
-private class RenderObservation {
+internal class RenderObservation {
     private val failed = AtomicBoolean()
     private val failureCategory = AtomicReference("none")
     private val selectedAudio = AtomicBoolean()
@@ -902,7 +902,7 @@ private class RenderObservation {
     fun failureCategory(): String = failureCategory.get()
 }
 
-private data class PlayerSnapshot(
+internal data class PlayerSnapshot(
     val positionMs: Long,
     val durationMs: Long,
     val isPlaying: Boolean,
@@ -910,7 +910,7 @@ private data class PlayerSnapshot(
     val playbackState: Int,
 )
 
-private data class PlaybackSurface(
+internal data class PlaybackSurface(
     val activity: PlaybackSurfaceActivity,
     val surface: Surface,
 ) {
@@ -920,7 +920,7 @@ private data class PlaybackSurface(
     }
 }
 
-private suspend fun launchPlaybackSurface(
+internal suspend fun launchPlaybackSurface(
     instrumentation: android.app.Instrumentation,
 ): PlaybackSurface {
     val intent = Intent(instrumentation.context, PlaybackSurfaceActivity::class.java)
@@ -938,7 +938,7 @@ private suspend fun launchPlaybackSurface(
     }
 }
 
-private fun playerSnapshot(
+internal fun playerSnapshot(
     instrumentation: android.app.Instrumentation,
     player: ExoPlayer,
 ): PlayerSnapshot {
@@ -957,7 +957,7 @@ private fun playerSnapshot(
     return checkNotNull(snapshot.get())
 }
 
-private fun consumePrivateProfile(filesDirectory: File): ServerProfile {
+internal fun consumePrivateProfile(filesDirectory: File): ServerProfile {
     val configurationFile = File(filesDirectory, PRIVATE_CONFIGURATION_FILE_NAME)
     assumeTrue("Private real-server verification is not provisioned", configurationFile.isFile)
     val configurationText = try {
@@ -1138,9 +1138,9 @@ private fun JSONObject.boundedString(name: String, maximumLength: Int): String =
 }
 
 private const val PRIVATE_CONFIGURATION_FILE_NAME = "p4-5-real-server.json"
-private const val RENDER_TIMEOUT_MS = 45_000L
-private const val SURFACE_TIMEOUT_MS = 10_000L
-private const val POLL_INTERVAL_MS = 100L
+internal const val RENDER_TIMEOUT_MS = 45_000L
+internal const val SURFACE_TIMEOUT_MS = 10_000L
+internal const val POLL_INTERVAL_MS = 100L
 private const val SESSION_STATE_OBSERVATION_MS = 500L
 private const val NANOSECONDS_PER_MILLISECOND = 1_000_000L
 private const val MAX_DIAGNOSTIC_TOKEN_LENGTH = 96

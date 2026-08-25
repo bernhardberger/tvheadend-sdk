@@ -65,7 +65,12 @@ public interface TvheadendSession {
     /** Immediately retries the selected profile when its failure policy permits. */
     public suspend fun retry(): SessionCommandResult
 
-    /** Completes reusable connection teardown and leaves this session available for reconnect. */
+    /**
+     * Completes reusable connection teardown and leaves this session available for reconnect.
+     *
+     * Repository snapshots remain stale for a same-profile reconnect. A different profile or
+     * terminal [shutdown] discards them before new synchronization begins.
+     */
     public suspend fun disconnect()
 
     /** Completes terminal, ordered, and idempotent lifecycle shutdown. */

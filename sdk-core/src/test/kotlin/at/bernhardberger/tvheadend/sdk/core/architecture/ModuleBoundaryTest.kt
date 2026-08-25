@@ -368,7 +368,8 @@ internal class ModuleBoundaryTest {
         )
 
         assertPublicInfrastructure("sdk-android", expectedAndroid, unannotatedCount = expectedAndroid.size)
-        assertPublicInfrastructure("sdk-playback", expectedPlayback, unannotatedCount = 1)
+        // The codec classification is intentionally stable for sdk-media3 application callbacks.
+        assertPublicInfrastructure("sdk-playback", expectedPlayback, unannotatedCount = 2)
         assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 4)
         assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 11)
 

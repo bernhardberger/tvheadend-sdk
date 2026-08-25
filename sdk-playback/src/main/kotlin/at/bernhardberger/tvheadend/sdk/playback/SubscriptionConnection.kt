@@ -226,7 +226,6 @@ public data class SubscriptionStream(
 }
 
 /** SDK-authored stream codec classification. */
-@SubscriptionInfrastructureApi
 public enum class SubscriptionStreamType {
     MPEG2_VIDEO,
     H264,
