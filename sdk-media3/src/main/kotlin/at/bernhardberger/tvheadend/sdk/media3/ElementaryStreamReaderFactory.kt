@@ -4,6 +4,8 @@
 package at.bernhardberger.tvheadend.sdk.media3
 
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.util.ParsableByteArray
+import androidx.media3.extractor.ExtractorOutput
 import androidx.media3.extractor.ts.Ac3Reader
 import androidx.media3.extractor.ts.AdtsReader
 import androidx.media3.extractor.ts.DvbSubtitleReader
@@ -66,9 +68,82 @@ private fun createDvbReader(stream: SubscriptionStream): ReaderResult {
         ancillaryId.toByte(),
     )
     return ReaderResult.Supported(
-        DvbSubtitleReader(
-            listOf(TsPayloadReader.DvbSubtitleInfo(stream.language ?: "und", 0, initializationData)),
-            MimeTypes.VIDEO_MP2T,
+        HtspDvbSubtitleReader(
+            DvbSubtitleReader(
+                listOf(TsPayloadReader.DvbSubtitleInfo(stream.language ?: "und", 0, initializationData)),
+                MimeTypes.VIDEO_MP2T,
+            ),
         ),
     )
+}
+
+private class HtspDvbSubtitleReader(
+    private val delegate: ElementaryStreamReader,
+) : ElementaryStreamReader {
+    private var packetPending = false
+    private var packetInspected = false
+    private var packetAccepted = false
+    private var packetTimeUs = 0L
+    private var packetFlags = 0
+
+    override fun seek() {
+        resetPacket()
+        delegate.seek()
+    }
+
+    override fun createTracks(output: ExtractorOutput, idGenerator: TsPayloadReader.TrackIdGenerator) {
+        delegate.createTracks(output, idGenerator)
+    }
+
+    override fun packetStarted(pesTimeUs: Long, flags: Int) {
+        packetPending = true
+        packetInspected = false
+        packetAccepted = false
+        packetTimeUs = pesTimeUs
+        packetFlags = flags
+    }
+
+    override fun consume(data: ParsableByteArray) {
+        check(packetPending) { "DVB subtitle data arrived outside a packet" }
+        if (!packetInspected) {
+            if (data.bytesLeft() == 0) return
+            packetInspected = true
+            if (data.peekUnsignedByte() != DVB_SEGMENT_SYNC_BYTE) {
+                data.skipBytes(data.bytesLeft())
+                return
+            }
+            packetAccepted = true
+            delegate.packetStarted(packetTimeUs, packetFlags)
+            // TVHeadend strips these PES bytes before publishing HTSP DVB subtitle segments.
+            delegate.consume(ParsableByteArray(DVB_PES_PREFIX))
+        }
+        if (packetAccepted) {
+            delegate.consume(data)
+        } else {
+            data.skipBytes(data.bytesLeft())
+        }
+    }
+
+    override fun packetFinished() {
+        try {
+            if (packetAccepted) delegate.packetFinished()
+        } finally {
+            resetPacket()
+        }
+    }
+
+    override fun endOfInputReached() {
+        delegate.endOfInputReached()
+    }
+
+    private fun resetPacket() {
+        packetPending = false
+        packetInspected = false
+        packetAccepted = false
+    }
+
+    private companion object {
+        const val DVB_SEGMENT_SYNC_BYTE = 0x0f
+        val DVB_PES_PREFIX = byteArrayOf(0x20, 0x00)
+    }
 }

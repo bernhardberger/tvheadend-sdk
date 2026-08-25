@@ -22,6 +22,8 @@ import androidx.media3.exoplayer.upstream.Allocator
 import androidx.media3.extractor.ExtractorOutput
 import androidx.media3.extractor.SeekMap
 import androidx.media3.extractor.TrackOutput
+import androidx.media3.extractor.text.DefaultSubtitleParserFactory
+import androidx.media3.extractor.text.SubtitleTranscodingExtractorOutput
 import at.bernhardberger.tvheadend.sdk.playback.ActiveSubscription
 import at.bernhardberger.tvheadend.sdk.playback.StreamIndex
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
@@ -227,9 +229,19 @@ internal class TvheadendLiveMediaPeriod(
                 when (val result = createElementaryStreamReader(stream)) {
                     is ReaderResult.Supported -> {
                         val output = QueueExtractorOutput(allocator, ::maybeFinishPreparation)
+                        val subtitleOutput = if (stream.type == SubscriptionStreamType.DVB_SUBTITLE) {
+                            SubtitleTranscodingExtractorOutput(output, DefaultSubtitleParserFactory())
+                        } else {
+                            null
+                        }
                         outputs += output
                         adapters[stream.index] = ReaderBinding(
-                            SubscriptionElementaryStreamAdapter(result.reader, output, nextTrackId),
+                            SubscriptionElementaryStreamAdapter(
+                                reader = result.reader,
+                                output = subtitleOutput ?: output,
+                                firstTrackId = nextTrackId,
+                                onDiscontinuity = subtitleOutput?.let { it::resetSubtitleParsers },
+                            ),
                             output,
                         )
                         nextTrackId += 1

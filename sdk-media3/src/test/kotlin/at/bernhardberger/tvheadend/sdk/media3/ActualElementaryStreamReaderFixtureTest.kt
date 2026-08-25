@@ -105,6 +105,88 @@ class ActualElementaryStreamReaderFixtureTest {
     }
 
     @Test
+    fun `HTSP DVB segments retain descriptor ids and emit a Media3 sample`() {
+        val payload = dvbSubtitleSegments()
+        val result = createElementaryStreamReader(
+            stream(
+                type = SubscriptionStreamType.DVB_SUBTITLE,
+                compositionId = 0x1234L,
+                ancillaryId = 0xabcdL,
+            ),
+        )
+        assertTrue(result is ReaderResult.Supported)
+        val output = CapturingExtractorOutput()
+        val adapter = SubscriptionElementaryStreamAdapter(
+            (result as ReaderResult.Supported).reader,
+            output,
+            7,
+        )
+
+        adapter.accept(
+            SubscriptionEvent.Packet(
+                frameType = MuxFrameType.UNKNOWN,
+                streamIndex = StreamIndex(0L),
+                decodingTimeUs = 500_000L,
+                presentationTimeUs = 500_000L,
+                durationUs = 1L,
+                payload = ByteArrayBinary(payload),
+            ),
+        )
+        adapter.end()
+
+        assertEquals(7, output.trackId)
+        assertEquals(C.TRACK_TYPE_TEXT, output.trackType)
+        val format = checkNotNull(output.trackOutput.format)
+        assertEquals(MimeTypes.VIDEO_MP2T, format.containerMimeType)
+        assertEquals(MimeTypes.APPLICATION_DVBSUBS, format.sampleMimeType)
+        assertEquals("de", format.language)
+        assertArrayEquals(
+            byteArrayOf(0x12, 0x34, 0xab.toByte(), 0xcd.toByte()),
+            format.initializationData.single(),
+        )
+        assertArrayEquals(payload, output.trackOutput.bytes.toByteArray())
+        assertEquals(
+            listOf(CapturedSampleMetadata(500_000L, C.BUFFER_FLAG_KEY_FRAME, payload.size, 0, null)),
+            output.trackOutput.metadata,
+        )
+    }
+
+    @Test
+    fun `empty non-segment and already framed DVB payloads emit no sample`() {
+        listOf(
+            byteArrayOf(),
+            byteArrayOf(0x0e, 0x10, 0x00),
+            byteArrayOf(0x20, 0x00, 0x0f),
+        ).forEach { payload ->
+            val result = createElementaryStreamReader(
+                stream(SubscriptionStreamType.DVB_SUBTITLE, compositionId = 1L, ancillaryId = 2L),
+            )
+            assertTrue(result is ReaderResult.Supported)
+            val output = CapturingExtractorOutput()
+            val adapter = SubscriptionElementaryStreamAdapter(
+                (result as ReaderResult.Supported).reader,
+                output,
+                7,
+            )
+
+            adapter.accept(
+                SubscriptionEvent.Packet(
+                    frameType = MuxFrameType.UNKNOWN,
+                    streamIndex = StreamIndex(0L),
+                    decodingTimeUs = 500_000L,
+                    presentationTimeUs = 500_000L,
+                    durationUs = 1L,
+                    payload = ByteArrayBinary(payload),
+                ),
+            )
+            adapter.end()
+
+            assertTrue(output.trackOutput.bytes.isEmpty())
+            assertTrue(output.trackOutput.metadata.isEmpty())
+        }
+    }
+
+    @Test
     fun `every stream type has an explicit reader classification`() {
         val supported = SubscriptionStreamType.entries.filterTo(mutableSetOf()) { type ->
             createElementaryStreamReader(
@@ -326,6 +408,11 @@ class ActualElementaryStreamReaderFixtureTest {
         codecMetadata = null,
     )
 }
+
+private fun dvbSubtitleSegments(): ByteArray = byteArrayOf(
+    0x0f, 0x10, 0x00, 0x01, 0x00, 0x08, 0x05, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x0f, 0x11, 0x00, 0x01, 0x00, 0x0a, 0x01, 0x08, 0x00, 0x02, 0x00, 0x02, 0x24, 0x00, 0x00, 0x04,
+)
 
 private fun ByteArray.sha256(): String = MessageDigest.getInstance("SHA-256")
     .digest(this)

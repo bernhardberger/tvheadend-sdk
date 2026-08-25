@@ -2165,6 +2165,23 @@ internal class HtspProtocolGatewayTest {
                             sampleRate = null,
                             rdsUecp = null,
                         ),
+                        HtspSubscriptionStream(
+                            streamIndex = 3,
+                            streamType = "DVBSUB",
+                            language = "ger",
+                            compositionId = 0x1234,
+                            ancillaryId = 0xabcd,
+                            width = null,
+                            height = null,
+                            frameDuration = null,
+                            aspectNumerator = null,
+                            aspectDenominator = null,
+                            audioType = null,
+                            audioVersion = null,
+                            channelCount = null,
+                            sampleRate = null,
+                            rdsUecp = null,
+                        ),
                     ),
                     codecMetadata = HtspBinary(codecBytes),
                     status = "private status",
@@ -2250,6 +2267,10 @@ internal class HtspProtocolGatewayTest {
         assertEquals(SubscriptionCondition.STATUS_REPORTED, started.condition)
         assertEquals(SubscriptionStreamType.H264, started.streams?.get(0)?.type)
         assertEquals(SubscriptionStreamType.UNKNOWN, started.streams?.get(1)?.type)
+        val dvbSubtitle = started.streams?.get(2)
+        assertEquals(SubscriptionStreamType.DVB_SUBTITLE, dvbSubtitle?.type)
+        assertEquals(0x1234L, dvbSubtitle?.compositionId)
+        assertEquals(0xabcdL, dvbSubtitle?.ancillaryId)
         assertEquals(2, started.codecMetadata?.size)
         val codecDestination = ByteArray(4) { -1 }
         assertEquals(2, started.streams?.first()?.codecMetadata?.copyInto(codecDestination, 1))

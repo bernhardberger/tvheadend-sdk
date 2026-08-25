@@ -65,7 +65,13 @@ class SubscriptionElementaryStreamAdapterTest {
     @Test
     fun `only accepted skip and dropped markers reset reader state`() {
         val reader = RecordingReader()
-        val adapter = SubscriptionElementaryStreamAdapter(reader, EmptyExtractorOutput, 0)
+        var outputResetCount = 0
+        val adapter = SubscriptionElementaryStreamAdapter(
+            reader,
+            EmptyExtractorOutput,
+            0,
+            onDiscontinuity = { outputResetCount += 1 },
+        )
 
         adapter.accept(SubscriptionEvent.Skipped(null, SkipOutcome.REJECTED, null, null))
         adapter.accept(SubscriptionEvent.Skipped(null, SkipOutcome.UNKNOWN, null, null))
@@ -73,6 +79,7 @@ class SubscriptionElementaryStreamAdapterTest {
         adapter.accept(SubscriptionEvent.Dropped(3L))
 
         assertEquals(2, reader.seekCount)
+        assertEquals(2, outputResetCount)
     }
 
     @Test

@@ -16,6 +16,7 @@ internal class SubscriptionElementaryStreamAdapter(
     private val reader: ElementaryStreamReader,
     output: ExtractorOutput,
     firstTrackId: Int,
+    private val onDiscontinuity: (() -> Unit)? = null,
     private val payloadAllocator: (Int) -> ByteArray = ::ByteArray,
 ) {
     private var ended = false
@@ -28,8 +29,8 @@ internal class SubscriptionElementaryStreamAdapter(
         check(!ended) { "Elementary stream is already terminal" }
         when (event) {
             is SubscriptionEvent.Packet -> consume(event)
-            is SubscriptionEvent.Skipped -> if (event.outcome == SkipOutcome.ACCEPTED) reader.seek()
-            is SubscriptionEvent.Dropped -> reader.seek()
+            is SubscriptionEvent.Skipped -> if (event.outcome == SkipOutcome.ACCEPTED) resetForDiscontinuity()
+            is SubscriptionEvent.Dropped -> resetForDiscontinuity()
             is SubscriptionEvent.Stopped,
             is SubscriptionEvent.Terminated,
             -> end()
@@ -49,6 +50,11 @@ internal class SubscriptionElementaryStreamAdapter(
         if (ended) return
         ended = true
         reader.endOfInputReached()
+    }
+
+    private fun resetForDiscontinuity() {
+        reader.seek()
+        onDiscontinuity?.invoke()
     }
 
     private fun consume(packet: SubscriptionEvent.Packet) {

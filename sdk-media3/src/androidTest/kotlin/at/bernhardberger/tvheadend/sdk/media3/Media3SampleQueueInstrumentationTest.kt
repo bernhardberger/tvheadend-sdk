@@ -10,7 +10,9 @@ import androidx.media3.common.C
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
+import androidx.media3.common.text.CueGroup
 import androidx.media3.decoder.DecoderInputBuffer
 import androidx.media3.decoder.ffmpeg.FfmpegLibrary
 import androidx.media3.exoplayer.DecoderCounters
@@ -122,6 +124,142 @@ internal class Media3SampleQueueInstrumentationTest {
             capture.channel(4, 1, 3),
             MimeTypes.AUDIO_AC3,
         )
+    }
+
+    @Test
+    fun stripped_DVB_subtitle_segments_are_explicitly_selected_decoded_and_unsubscribed() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val connection = ScriptedSubscriptionConnection()
+        val subscriptions = createSubscriptionManager(connection, Dispatchers.Default).apply { startAdmission() }
+        val overrideApplied = AtomicBoolean()
+        val selected = CountDownLatch(1)
+        val cueDelivered = CountDownLatch(1)
+        val track = AtomicReference<DvbTrackObservation?>()
+        val failure = AtomicReference<PlaybackException?>()
+        lateinit var player: ExoPlayer
+        var playerInitialized = false
+        var subscriptionsClosed = false
+
+        try {
+            instrumentation.runOnMainSync {
+                player = ExoPlayer.Builder(
+                    instrumentation.targetContext,
+                    createTvheadendRenderersFactory(instrumentation.targetContext),
+                )
+                    .setLoadControl(
+                        DefaultLoadControl.Builder()
+                            .setBufferDurationsMs(100, 2_000, 50, 50)
+                            .build(),
+                    )
+                    .build()
+                playerInitialized = true
+                player.volume = 0f
+                player.addListener(
+                    object : Player.Listener {
+                        override fun onTracksChanged(tracks: Tracks) {
+                            tracks.groups.forEach { group ->
+                                for (index in 0 until group.length) {
+                                    val format = group.getTrackFormat(index)
+                                    if (
+                                        format.sampleMimeType != MimeTypes.APPLICATION_MEDIA3_CUES ||
+                                        format.codecs != MimeTypes.APPLICATION_DVBSUBS
+                                    ) {
+                                        continue
+                                    }
+                                    val observation = DvbTrackObservation(
+                                        supported = group.isTrackSupported(index),
+                                        selected = group.isTrackSelected(index),
+                                    )
+                                    track.set(observation)
+                                    if (observation.supported && overrideApplied.compareAndSet(false, true)) {
+                                        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                                            .setOverrideForType(
+                                                TrackSelectionOverride(group.mediaTrackGroup, index),
+                                            )
+                                            .build()
+                                    }
+                                    if (observation.selected) selected.countDown()
+                                }
+                            }
+                        }
+
+                        override fun onCues(cueGroup: CueGroup) {
+                            if (
+                                cueGroup.cues.any { cue ->
+                                    cue.bitmap?.let { bitmap -> bitmap.width > 0 && bitmap.height > 0 } == true
+                                }
+                            ) {
+                                cueDelivered.countDown()
+                            }
+                        }
+
+                        override fun onPlayerError(error: PlaybackException) {
+                            failure.compareAndSet(null, error)
+                            selected.countDown()
+                            cueDelivered.countDown()
+                        }
+                    },
+                )
+                player.setMediaSource(
+                    createTvheadendLiveMediaSource(subscriptions, SubscriptionChannelId(1L)),
+                )
+                player.prepare()
+                player.play()
+            }
+
+            val registration = runBlocking {
+                val registered = withTimeout(10_000L) { connection.awaitCollectionRegistered() }
+                connection.emit(
+                    registered,
+                    SubscriptionEvent.Started(
+                        listOf(syntheticDvbStream()),
+                        null,
+                        SubscriptionCondition.NO_DETAIL,
+                    ),
+                )
+                registered
+            }
+            assertTrue("DVB subtitle track must become explicitly selected", selected.await(10L, TimeUnit.SECONDS))
+            assertNull("Playback must not fail while selecting DVB subtitles", failure.get())
+            assertTrue("DVB subtitle selection override must be applied", overrideApplied.get())
+            assertEquals(DvbTrackObservation(supported = true, selected = true), track.get())
+
+            runBlocking {
+                connection.emit(
+                    registration,
+                    SubscriptionEvent.Packet(
+                        frameType = MuxFrameType.UNKNOWN,
+                        streamIndex = StreamIndex(0L),
+                        decodingTimeUs = 500_000L,
+                        presentationTimeUs = 500_000L,
+                        durationUs = 1L,
+                        payload = FixtureBinary(syntheticDvbSubtitleSegments()),
+                    ),
+                )
+            }
+            assertTrue("Maintained DVB decoder must emit a non-empty bitmap cue", cueDelivered.await(15L, TimeUnit.SECONDS))
+            assertNull("DVB subtitle playback must not fail", failure.get())
+            assertEquals(0, connection.unsubscribeCount)
+
+            instrumentation.runOnMainSync {
+                player.release()
+                playerInitialized = false
+            }
+            runBlocking {
+                withTimeout(10_000L) {
+                    while (connection.unsubscribeCount == 0) delay(10L)
+                }
+            }
+            assertEquals("Media-period release must unsubscribe exactly once", 1, connection.unsubscribeCount)
+            runBlocking { subscriptions.closeAndJoin() }
+            subscriptionsClosed = true
+            assertEquals("Manager teardown must not unsubscribe again", 1, connection.unsubscribeCount)
+        } finally {
+            instrumentation.runOnMainSync {
+                if (playerInitialized) player.release()
+            }
+            if (!subscriptionsClosed) runBlocking { subscriptions.closeAndJoin() }
+        }
     }
 
     private fun assertChannelRenders(
@@ -435,6 +573,11 @@ private data class AudioTrackObservation(
     val selected: Boolean,
 )
 
+private data class DvbTrackObservation(
+    val supported: Boolean,
+    val selected: Boolean,
+)
+
 private data class ReaderFixture(
     val channelOrdinal: Int,
     val streamOrdinal: Int,
@@ -601,6 +744,30 @@ private class QueueOutput(private val queue: SampleQueue) : ExtractorOutput {
     override fun endTracks(): Unit = Unit
     override fun seekMap(seekMap: SeekMap): Unit = Unit
 }
+
+private fun syntheticDvbStream(): SubscriptionStream = SubscriptionStream(
+    index = StreamIndex(0L),
+    type = SubscriptionStreamType.DVB_SUBTITLE,
+    language = "eng",
+    compositionId = 1L,
+    ancillaryId = 2L,
+    width = null,
+    height = null,
+    frameDuration = null,
+    aspectNumerator = null,
+    aspectDenominator = null,
+    audioType = null,
+    audioVersion = null,
+    channelCount = null,
+    rate = null,
+    rdsUecp = null,
+    codecMetadata = null,
+)
+
+private fun syntheticDvbSubtitleSegments(): ByteArray = byteArrayOf(
+    0x0f, 0x10, 0x00, 0x01, 0x00, 0x08, 0x05, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x0f, 0x11, 0x00, 0x01, 0x00, 0x0a, 0x01, 0x08, 0x00, 0x02, 0x00, 0x02, 0x24, 0x00, 0x00, 0x04,
+)
 
 private class FixtureBinary(private val bytes: ByteArray) : SubscriptionBinary {
     override val size: Int = bytes.size
