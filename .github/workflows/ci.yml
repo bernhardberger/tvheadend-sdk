@@ -25,5 +25,15 @@ jobs:
           java-version: '21'
       - name: Install pinned Android SDK packages
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+      - name: Verify release tool self-tests
+        run: |
+          ./tools/check-staged-publication --self-test
+          ./tools/publish-central-release --self-test
       - name: Build, check, and stage all SDK modules
         run: ./gradlew --no-daemon clean build check stageLocalPublication
+      - name: Verify staged SDK publication
+        run: ./tools/check-staged-publication
+      - name: Verify staged consumer contract
+        run: ./gradlew --no-daemon -p consumer-contract clean test verifyConsumerDependencyGraph
+      - name: Check release setup
+        run: ./tools/publish-central-release --check-setup

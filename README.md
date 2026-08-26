@@ -11,9 +11,22 @@ The repository is split into five libraries:
 - `sdk-android`: Android discovery, connectivity, credentials, and artwork.
 - `sdk-testing`: JVM-only SDK test fakes and fixtures.
 
-The initial development version is `0.1.0-SNAPSHOT`. Nothing is published by
-the normal build. `./gradlew clean build check stageLocalPublication` verifies
-the repository and stages all five modules under `build/local-maven`.
+The configured release candidate is `0.1.0`. Nothing is published by the normal
+build. `./gradlew clean build check stageLocalPublication` verifies the
+repository and stages all five modules under `build/local-maven`. Local staging
+does not establish Maven Central availability.
+
+After independently verified publication, applications can select the modules
+they need from Maven Central. For example:
+
+```kotlin
+dependencies {
+    implementation("at.bernhardberger.tvheadend:sdk-media3:0.1.0")
+}
+```
+
+See [versioning](docs/versioning.md) for the provisional 0.x compatibility
+policy and [releasing](docs/releasing.md) for the publication trust boundary.
 
 The default build resolves
 `at.bernhardberger.tvheadend:htsp:0.7.0` from Maven Central. Maintainers working
