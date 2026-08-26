@@ -20,12 +20,14 @@ import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
 import at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability
 import at.bernhardberger.tvheadend.sdk.core.ServerCapabilities
 import at.bernhardberger.tvheadend.sdk.core.SessionState
+import at.bernhardberger.tvheadend.sdk.core.StreamProfileId
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.RecordingId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import java.io.IOException
 import java.util.concurrent.CancellationException
 import kotlin.time.Duration
@@ -255,6 +257,31 @@ internal class TvheadendPlaybackCoordinatorTest {
         val secondRunFailure = runCatching { fixture.coordinator.run() }.exceptionOrNull()
         assertTrue(secondRunFailure is IllegalStateException)
     }
+
+    @Test
+    fun `live target options carry profile and timeshift while legacy overload keeps defaults`() =
+        runTest {
+            val fixture = CoordinatorFixture()
+            val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+            val profileId = StreamProfileId("0123456789abcdef0123456789abcdef")
+
+            assertEquals(
+                PlaybackTargetResult.STARTED,
+                fixture.coordinator.setLiveTarget(
+                    ChannelId(4),
+                    LivePlaybackOptions(profileId, 600.seconds),
+                ),
+            )
+            assertEquals(profileId.value, fixture.player.liveOptions?.streamProfileUuid)
+            assertEquals(600.seconds, fixture.player.liveOptions?.timeshiftPeriod)
+
+            assertEquals(PlaybackTargetResult.STARTED, fixture.coordinator.setLiveTarget(ChannelId(5)))
+            assertEquals(null, fixture.player.liveOptions?.streamProfileUuid)
+            assertEquals(Duration.ZERO, fixture.player.liveOptions?.timeshiftPeriod)
+
+            fixture.coordinator.shutdown(1.seconds)
+            owner.join()
+        }
 
     @Test
     fun `concurrent target intents are processed in admission order`() = runTest {
@@ -786,6 +813,7 @@ private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
     var growingFinalEndProven = false
     var recordingAdmission: RecordingAdmission.Accepted = RecordingAdmission.Completed(null)
     var installFailure: Exception? = null
+    var liveOptions: SubscriptionOptions? = null
     var abandonCalls = 0
     var released = false
     val operations = mutableListOf<String>()
@@ -797,11 +825,13 @@ private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
         ticket: PlayerOperationTicket,
         token: PlaybackTargetToken,
         channelId: SubscriptionChannelId,
+        options: SubscriptionOptions,
     ): PlaybackPlayerInstallResult {
         installFailure?.let { failure -> throw failure }
         if (!ticket.claim()) return PlaybackPlayerInstallResult(PlaybackPlayerInstallStatus.CANCELLED)
         val retirement = retire()
         active = FakeTarget.Live(token)
+        liveOptions = options
         operations += "live:${channelId.value}"
         ticket.complete()
         return PlaybackPlayerInstallResult(

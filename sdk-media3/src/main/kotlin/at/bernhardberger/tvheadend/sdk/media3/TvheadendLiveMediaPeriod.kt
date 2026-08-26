@@ -31,6 +31,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTracks
 import java.io.IOException
@@ -47,6 +48,7 @@ import kotlinx.coroutines.withContext
 internal class TvheadendLiveMediaPeriod(
     private val subscriptions: SubscriptionOpener,
     private val channelId: SubscriptionChannelId,
+    private val options: SubscriptionOptions,
     private val allocator: Allocator,
     private val onUnsupportedStream: (SubscriptionStreamType) -> Unit,
 ) : MediaPeriod, SubscriptionEventConsumer {
@@ -77,7 +79,9 @@ internal class TvheadendLiveMediaPeriod(
         }
         openJob = scope.launch {
             try {
-                when (val result = subscriptions.open(channelId, this@TvheadendLiveMediaPeriod)) {
+                when (
+                    val result = openSubscription()
+                ) {
                     is SubscriptionOpenResult.Opened -> {
                         synchronized(lock) {
                             activeSubscription = result.subscription
@@ -87,6 +91,7 @@ internal class TvheadendLiveMediaPeriod(
                     }
                     SubscriptionOpenResult.NotReady,
                     SubscriptionOpenResult.IdExhausted,
+                    SubscriptionOpenResult.ProfileUnavailable,
                     is SubscriptionOpenResult.Failed,
                     -> failPeriod()
                 }
@@ -98,6 +103,12 @@ internal class TvheadendLiveMediaPeriod(
             }
         }
     }
+
+    internal suspend fun openSubscription(): SubscriptionOpenResult = subscriptions.open(
+        channelId,
+        this,
+        options,
+    )
 
     override fun maybeThrowPrepareError() {
         prepareError?.let { throw it }

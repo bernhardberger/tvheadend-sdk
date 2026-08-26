@@ -1700,6 +1700,100 @@ public final class at/bernhardberger/tvheadend/sdk/core/SessionState$Unavailable
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class at/bernhardberger/tvheadend/sdk/core/StreamProfile {
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1-dDFQyyM ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun copy-qZbAhRM (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/StreamProfile;
+	public static synthetic fun copy-qZbAhRM$default (Lat/bernhardberger/tvheadend/sdk/core/StreamProfile;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/StreamProfile;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getComment ()Ljava/lang/String;
+	public final fun getId-dDFQyyM ()Ljava/lang/String;
+	public final fun getName ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/StreamProfileId {
+	public static final synthetic fun box-impl (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/StreamProfileId;
+	public static fun constructor-impl (Ljava/lang/String;)Ljava/lang/String;
+	public fun equals (Ljava/lang/Object;)Z
+	public static fun equals-impl (Ljava/lang/String;Ljava/lang/Object;)Z
+	public static final fun equals-impl0 (Ljava/lang/String;Ljava/lang/String;)Z
+	public final fun getValue ()Ljava/lang/String;
+	public fun hashCode ()I
+	public static fun hashCode-impl (Ljava/lang/String;)I
+	public fun toString ()Ljava/lang/String;
+	public static fun toString-impl (Ljava/lang/String;)Ljava/lang/String;
+	public final synthetic fun unbox-impl ()Ljava/lang/String;
+}
+
+public abstract interface class at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult {
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$AccessDenied : at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$AccessDenied;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$Available : at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult {
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$Available$Companion;
+	public final fun component1 ()Ljava/util/List;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getProfiles ()Ljava/util/List;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$Available$Companion {
+	public final fun create (Ljava/util/List;)Lat/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$Available;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$ConnectionLimit : at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$ConnectionLimit;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$NotReady : at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$NotReady;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$NotSupported : at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$NotSupported;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$ServerRejected : at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$ServerRejected;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$Timeout : at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$Timeout;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$TransportUnavailable : at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$TransportUnavailable;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class at/bernhardberger/tvheadend/sdk/core/TimerecRule {
 	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/TimerecRule$Companion;
 	public final fun component1-bdPwwM0 ()Ljava/lang/String;
@@ -1838,9 +1932,14 @@ public abstract interface class at/bernhardberger/tvheadend/sdk/core/TvheadendSe
 	public abstract fun getRecordingProgressCapability ()Lkotlinx/coroutines/flow/StateFlow;
 	public abstract fun getRecordings ()Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileOpener;
 	public abstract fun getState ()Lkotlinx/coroutines/flow/StateFlow;
+	public fun getStreamProfiles (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun getSubscriptions ()Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOpener;
 	public abstract fun retry (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun shutdown (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/TvheadendSession$DefaultImpls {
+	public static fun getStreamProfiles (Lat/bernhardberger/tvheadend/sdk/core/TvheadendSession;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/TvheadendSessionKt {

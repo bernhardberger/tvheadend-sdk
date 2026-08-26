@@ -14,6 +14,7 @@ import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
 import at.bernhardberger.tvheadend.sdk.core.SessionFailure
 import at.bernhardberger.tvheadend.sdk.core.SessionOperationFailure
 import at.bernhardberger.tvheadend.sdk.core.SessionState
+import at.bernhardberger.tvheadend.sdk.core.StreamProfilesResult
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailure
@@ -85,6 +86,7 @@ internal class ConnectionOwner(
     override val epgRepository: EpgRepository = metadata.epgRepository
     override val dvrRepository: DvrRepository = metadata.dvrRepository
     override val artwork: ArtworkLoader = children
+    override suspend fun getStreamProfiles(): StreamProfilesResult = children.getStreamProfiles()
     override val subscriptions: SubscriptionOpener = children
     override val recordings: RecordingFileOpener = children
 

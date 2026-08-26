@@ -20,6 +20,9 @@ import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleUpdate
+import at.bernhardberger.tvheadend.sdk.core.StreamProfile
+import at.bernhardberger.tvheadend.sdk.core.StreamProfileId
+import at.bernhardberger.tvheadend.sdk.core.StreamProfilesResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectResult
@@ -50,6 +53,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationFailure
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionState
@@ -302,6 +306,120 @@ class SessionSubscriptionsTest {
             )
             children.closeAndJoinSubscriptions()
         }
+
+    @Test
+    fun `profile discovery validates the current generation before subscribe`() = runTest {
+        val profileId = StreamProfileId("0123456789abcdef0123456789abcdef")
+        val unknownId = StreamProfileId("abcdef0123456789abcdef0123456789")
+        val gateway = SubscriptionGateway().apply {
+            streamProfilesAction = {
+                GatewayResult.Ok(listOf(StreamProfile(profileId, "Pass", "Original streams")))
+            }
+        }
+        val metadata = PhaseOneSessionMetadata()
+        val children = PlaybackSessionChildren(
+            gateway,
+            metadata,
+            StandardTestDispatcher(testScheduler),
+        )
+        val generation = GatewayGeneration()
+
+        assertSame(StreamProfilesResult.NotReady, children.getStreamProfiles())
+        metadata.bindKnownChannels(generation, 4L)
+        children.bindGeneration(generation)
+        assertTrue(children.startLiveAdmission(generation, CapabilityAccess.ALLOWED))
+
+        val available = children.getStreamProfiles() as StreamProfilesResult.Available
+        assertEquals(listOf(StreamProfile(profileId, "Pass", "Original streams")), available.profiles)
+        assertEquals(listOf(generation), gateway.profileDiscoveryGenerations)
+
+        assertSame(
+            SubscriptionOpenResult.ProfileUnavailable,
+            children.open(
+                SubscriptionChannelId(4L),
+                SubscriptionEventConsumer {},
+                SubscriptionOptions(unknownId.value, 600.seconds),
+            ),
+        )
+        assertTrue(gateway.collectedGenerations.isEmpty())
+
+        val opening = async {
+            children.open(
+                SubscriptionChannelId(4L),
+                SubscriptionEventConsumer {},
+                SubscriptionOptions(profileId.value, 600.seconds),
+            )
+        }
+        runCurrent()
+        gateway.emitStarted(generation)
+        runCurrent()
+        assertTrue(opening.await() is SubscriptionOpenResult.Opened)
+        assertEquals(listOf(profileId.value), gateway.requestedStreamProfileUuids)
+        assertEquals(listOf(600.seconds), gateway.requestedTimeshiftPeriods)
+        children.closeAndJoinSubscriptions()
+
+        val replacementGeneration = GatewayGeneration()
+        metadata.bindKnownChannels(replacementGeneration, 4L)
+        children.bindGeneration(replacementGeneration)
+        assertTrue(children.startLiveAdmission(replacementGeneration, CapabilityAccess.ALLOWED))
+        assertSame(
+            SubscriptionOpenResult.NotReady,
+            children.open(
+                SubscriptionChannelId(4L),
+                SubscriptionEventConsumer {},
+                SubscriptionOptions(profileId.value, 600.seconds),
+            ),
+        )
+        assertEquals(listOf(profileId.value), gateway.requestedStreamProfileUuids)
+        children.closeAndJoinSubscriptions()
+    }
+
+    @Test
+    fun `profile discovery rejects stale completion and propagates cancellation`() = runTest {
+        val gateway = SubscriptionGateway()
+        val metadata = PhaseOneSessionMetadata()
+        val children = PlaybackSessionChildren(
+            gateway,
+            metadata,
+            StandardTestDispatcher(testScheduler),
+        )
+        val generationA = GatewayGeneration()
+        val generationB = GatewayGeneration()
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        gateway.streamProfilesAction = {
+            entered.complete(Unit)
+            release.await()
+            GatewayResult.Ok(
+                listOf(
+                    StreamProfile(
+                        StreamProfileId("0123456789abcdef0123456789abcdef"),
+                        "Pass",
+                        "",
+                    ),
+                ),
+            )
+        }
+        children.bindGeneration(generationA)
+
+        val stale = async { children.getStreamProfiles() }
+        entered.await()
+        children.closeAndJoinSubscriptions()
+        children.bindGeneration(generationB)
+        release.complete(Unit)
+        assertSame(StreamProfilesResult.TransportUnavailable, stale.await())
+
+        val cancellation = CancellationException("private cancellation")
+        gateway.streamProfilesAction = { throw cancellation }
+        val caught = try {
+            children.getStreamProfiles()
+            null
+        } catch (failure: CancellationException) {
+            failure
+        }
+        assertSame(cancellation, caught)
+        children.closeAndJoinSubscriptions()
+    }
 
     @Test
     fun `return live uses ordered status before rpc and preserves attributed termination`() =
@@ -886,6 +1004,8 @@ private class SubscriptionGateway : ProtocolGateway {
     internal val unsubscribedGenerations = ArrayList<GatewayGeneration>()
     internal val unsubscribedIds = ArrayList<SubscriptionId>()
     internal val requestedTimeshiftPeriods = ArrayList<Duration>()
+    internal val requestedStreamProfileUuids = ArrayList<String?>()
+    internal val profileDiscoveryGenerations = ArrayList<GatewayGeneration>()
     internal val skippedTargets = ArrayList<SubscriptionSeekTarget>()
     internal val nearLiveGenerations = ArrayList<GatewayGeneration>()
     internal val nearLiveIds = ArrayList<SubscriptionId>()
@@ -903,6 +1023,9 @@ private class SubscriptionGateway : ProtocolGateway {
         GatewayResult.Ok(GatewayRecordingFile(handleId = 7L, sizeBytes = 64L, protocolVersion = 27))
     internal var beforeRecordingOpenResult: (() -> Unit)? = null
     internal var artworkLoadResult: GatewayResult<ByteArray> = GatewayResult.NotSupported
+    internal var streamProfilesAction: suspend (GatewayGeneration) -> GatewayResult<List<StreamProfile>> = {
+        GatewayResult.NotSupported
+    }
     internal var grantedTimeshiftSeconds: Long? = null
     internal var nearLiveAction: suspend () -> SubscriptionOperationResult<Unit> = {
         SubscriptionOperationResult.Ok(Unit)
@@ -944,6 +1067,13 @@ private class SubscriptionGateway : ProtocolGateway {
     override suspend fun getDiskSpace(
         generation: GatewayGeneration,
     ): GatewayResult<DvrDiskSpace> = GatewayResult.Ok(DvrDiskSpace(0, 0, 0))
+
+    override suspend fun getStreamProfiles(
+        generation: GatewayGeneration,
+    ): GatewayResult<List<StreamProfile>> {
+        profileDiscoveryGenerations += generation
+        return streamProfilesAction(generation)
+    }
 
     override suspend fun getDvrCutpoints(
         generation: GatewayGeneration,
@@ -1087,6 +1217,17 @@ private class SubscriptionGateway : ProtocolGateway {
         return SubscriptionOperationResult.Ok(
             SubscriptionConfirmation(null, null, null, grantedTimeshiftSeconds),
         )
+    }
+
+    override suspend fun subscribe(
+        generation: GatewayGeneration,
+        id: SubscriptionId,
+        channelId: ChannelId,
+        streamProfileUuid: String?,
+        timeshiftPeriod: Duration,
+    ): SubscriptionOperationResult<SubscriptionConfirmation> {
+        requestedStreamProfileUuids += streamProfileUuid
+        return subscribe(generation, id, channelId, timeshiftPeriod)
     }
 
     override suspend fun skipSubscription(

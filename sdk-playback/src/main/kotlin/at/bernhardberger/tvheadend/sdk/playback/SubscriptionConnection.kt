@@ -351,6 +351,31 @@ public class SubscriptionConfirmation(
     override fun toString(): String = "SubscriptionConfirmation(<redacted>)"
 }
 
+/** Optional server profile and requested timeshift buffer for one live subscription. */
+@SubscriptionInfrastructureApi
+public class SubscriptionOptions(
+    public val streamProfileUuid: String? = null,
+    public val timeshiftPeriod: Duration = Duration.ZERO,
+) {
+    init {
+        require(
+            streamProfileUuid == null ||
+                streamProfileUuid.length == STREAM_PROFILE_UUID_LENGTH &&
+                streamProfileUuid.all(::isLowercaseHexDigit),
+        ) {
+            "Stream profile UUID must be a canonical lowercase 128-bit UUID"
+        }
+        require(timeshiftPeriod.isFinite() && !timeshiftPeriod.isNegative()) {
+            "Requested timeshift period must be finite and not negative"
+        }
+        require(timeshiftPeriod.inWholeSeconds <= MAXIMUM_TIMESHIFT_PERIOD_SECONDS) {
+            "Requested timeshift period must be an unsigned 32-bit second count"
+        }
+    }
+
+    override fun toString(): String = "SubscriptionOptions(<redacted>)"
+}
+
 /**
  * Generation-bound transport used by one subscription manager.
  *
@@ -375,6 +400,18 @@ public interface SubscriptionConnection {
         timeshiftPeriod: Duration,
     ): SubscriptionOperationResult<SubscriptionConfirmation>
 
+    /** Issues subscribe with optional profile selection while preserving legacy adapters. */
+    public suspend fun subscribe(
+        id: SubscriptionId,
+        channelId: SubscriptionChannelId,
+        options: SubscriptionOptions,
+    ): SubscriptionOperationResult<SubscriptionConfirmation> =
+        if (options.streamProfileUuid == null) {
+            subscribe(id, channelId, options.timeshiftPeriod)
+        } else {
+            SubscriptionOperationResult.NotSupported
+        }
+
     /**
      * Issues one generation-bound timeshift positioning request for [id].
      *
@@ -395,3 +432,9 @@ public interface SubscriptionConnection {
 
 internal fun <T> List<T>.toImmutableList(): List<T> =
     Collections.unmodifiableList(ArrayList(this))
+
+private const val STREAM_PROFILE_UUID_LENGTH = 32
+private const val MAXIMUM_TIMESHIFT_PERIOD_SECONDS = 0xffff_ffffL
+
+private fun isLowercaseHexDigit(character: Char): Boolean =
+    character in '0'..'9' || character in 'a'..'f'

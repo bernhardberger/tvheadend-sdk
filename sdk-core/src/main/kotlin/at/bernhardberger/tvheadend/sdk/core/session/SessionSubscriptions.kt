@@ -8,6 +8,8 @@ import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.ChannelId as SdkChannelId
+import at.bernhardberger.tvheadend.sdk.core.StreamProfileId
+import at.bernhardberger.tvheadend.sdk.core.StreamProfilesResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.gateway.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
@@ -30,6 +32,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationFailure
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTerminalReason
 import at.bernhardberger.tvheadend.sdk.playback.createSubscriptionManager
@@ -70,18 +73,35 @@ internal class PlaybackSessionChildren(
     private var backgroundEnrichment: ActiveBackgroundEnrichment? = null
     private var subscriptions: SubscriptionManager? = null
     private var streamingAccess: CapabilityAccess? = null
+    private var discoveredStreamProfiles: Set<StreamProfileId>? = null
 
     override suspend fun open(
         channelId: SubscriptionChannelId,
         consumer: SubscriptionEventConsumer,
         timeshiftPeriod: Duration,
+    ): SubscriptionOpenResult = open(
+        channelId,
+        consumer,
+        SubscriptionOptions(timeshiftPeriod = timeshiftPeriod),
+    )
+
+    override suspend fun open(
+        channelId: SubscriptionChannelId,
+        consumer: SubscriptionEventConsumer,
+        options: SubscriptionOptions,
     ): SubscriptionOpenResult {
         currentCoroutineContext().ensureActive()
         val admission = synchronized(lock) {
             val boundGeneration = generation ?: return SubscriptionOpenResult.NotReady
             val manager = subscriptions ?: return SubscriptionOpenResult.NotReady
             val access = streamingAccess ?: return SubscriptionOpenResult.NotReady
-            LiveAdmission(boundGeneration, manager, access)
+            LiveAdmission(boundGeneration, manager, access, discoveredStreamProfiles)
+        }
+        options.streamProfileUuid?.let { uuid ->
+            val discovered = admission.streamProfiles ?: return SubscriptionOpenResult.NotReady
+            if (StreamProfileId(uuid) !in discovered) {
+                return SubscriptionOpenResult.ProfileUnavailable
+            }
         }
         if (admission.streamingAccess == CapabilityAccess.DENIED) {
             if (!isCurrent(admission)) return SubscriptionOpenResult.NotReady
@@ -102,7 +122,29 @@ internal class PlaybackSessionChildren(
             } else {
                 SubscriptionOpenResult.NotReady
             }
-            true -> admission.manager.open(channelId, consumer, timeshiftPeriod)
+            true -> admission.manager.open(channelId, consumer, options)
+        }
+    }
+
+    override suspend fun getStreamProfiles(): StreamProfilesResult {
+        currentCoroutineContext().ensureActive()
+        val discovery = synchronized(lock) {
+            ProfileDiscovery(
+                generation ?: return StreamProfilesResult.NotReady,
+                subscriptions ?: return StreamProfilesResult.NotReady,
+            )
+        }
+        val result = gateway.getStreamProfiles(discovery.generation)
+        return synchronized(lock) {
+            if (generation !== discovery.generation || subscriptions !== discovery.manager) {
+                StreamProfilesResult.TransportUnavailable
+            } else {
+                result.toStreamProfilesResult().also { mapped ->
+                    if (mapped is StreamProfilesResult.Available) {
+                        discoveredStreamProfiles = mapped.profiles.mapTo(LinkedHashSet()) { it.id }
+                    }
+                }
+            }
         }
     }
 
@@ -247,6 +289,7 @@ internal class PlaybackSessionChildren(
             check(subscriptions == null) { "Previous subscription generation is still active" }
             this.generation = generation
             streamingAccess = null
+            discoveredStreamProfiles = null
             subscriptions = createSubscriptionManager(
                 GatewaySubscriptionConnection(gateway, generation),
                 dispatcher,
@@ -368,6 +411,7 @@ internal class PlaybackSessionChildren(
                         generation = null
                         subscriptions = null
                         streamingAccess = null
+                        discoveredStreamProfiles = null
                     }
                 }
             }
@@ -387,6 +431,12 @@ private class LiveAdmission(
     internal val generation: GatewayGeneration,
     internal val manager: SubscriptionManager,
     internal val streamingAccess: CapabilityAccess,
+    internal val streamProfiles: Set<StreamProfileId>?,
+)
+
+private class ProfileDiscovery(
+    internal val generation: GatewayGeneration,
+    internal val manager: SubscriptionManager,
 )
 
 private class ActiveBackgroundEnrichment(
@@ -435,6 +485,18 @@ internal class GatewaySubscriptionConnection(
         timeshiftPeriod = timeshiftPeriod,
     )
 
+    override suspend fun subscribe(
+        id: SubscriptionId,
+        channelId: SubscriptionChannelId,
+        options: SubscriptionOptions,
+    ): SubscriptionOperationResult<SubscriptionConfirmation> = gateway.subscribe(
+        generation = generation,
+        id = id,
+        channelId = ChannelId(channelId.value),
+        streamProfileUuid = options.streamProfileUuid,
+        timeshiftPeriod = options.timeshiftPeriod,
+    )
+
     override suspend fun skip(
         id: SubscriptionId,
         target: SubscriptionSeekTarget,
@@ -471,4 +533,15 @@ private fun GatewayResult<ByteArray>.toArtworkLoadResult(): ArtworkLoadResult = 
     GatewayResult.TransportUnavailable ->
         ArtworkLoadResult.Unavailable(ArtworkFailure.CONNECTION_CHANGED)
     GatewayResult.NotSupported -> ArtworkLoadResult.Unavailable(ArtworkFailure.NOT_SUPPORTED)
+}
+
+private fun GatewayResult<List<at.bernhardberger.tvheadend.sdk.core.StreamProfile>>.toStreamProfilesResult():
+    StreamProfilesResult = when (this) {
+    is GatewayResult.Ok -> StreamProfilesResult.Available.create(value)
+    GatewayResult.ServerRejected -> StreamProfilesResult.ServerRejected
+    GatewayResult.AccessDenied -> StreamProfilesResult.AccessDenied
+    GatewayResult.ConnectionLimit -> StreamProfilesResult.ConnectionLimit
+    GatewayResult.Timeout -> StreamProfilesResult.Timeout
+    GatewayResult.TransportUnavailable -> StreamProfilesResult.TransportUnavailable
+    GatewayResult.NotSupported -> StreamProfilesResult.NotSupported
 }

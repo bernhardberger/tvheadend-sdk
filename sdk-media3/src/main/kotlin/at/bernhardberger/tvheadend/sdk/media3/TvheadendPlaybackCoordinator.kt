@@ -15,12 +15,14 @@ import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.DvrResumeOffer
 import at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability
 import at.bernhardberger.tvheadend.sdk.core.SessionState
+import at.bernhardberger.tvheadend.sdk.core.StreamProfileId
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.RecordingId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.time.Duration
@@ -46,6 +48,19 @@ public enum class RecordingPlaybackStart {
     START_OVER,
     /** Completed recordings may resume; active recordings return a typed unsupported outcome. */
     RESUME,
+}
+
+/** Optional stream profile and requested timeshift buffer for one live target. */
+public class LivePlaybackOptions(
+    public val streamProfileId: StreamProfileId? = null,
+    public val timeshiftPeriod: Duration = Duration.ZERO,
+) {
+    internal val subscriptionOptions: SubscriptionOptions = SubscriptionOptions(
+        streamProfileUuid = streamProfileId?.value,
+        timeshiftPeriod = timeshiftPeriod,
+    )
+
+    override fun toString(): String = "LivePlaybackOptions(<redacted>)"
 }
 
 /** Typed outcome of installing a live or completed-recording playback target. */
@@ -127,10 +142,18 @@ public class TvheadendPlaybackCoordinator internal constructor(
     }
 
     /** Replaces the current target with live playback for [channelId]. */
-    public suspend fun setLiveTarget(channelId: ChannelId): PlaybackTargetResult {
+    public suspend fun setLiveTarget(channelId: ChannelId): PlaybackTargetResult =
+        setLiveTarget(channelId, LivePlaybackOptions())
+
+    /** Replaces the current live target with explicit profile and timeshift [options]. */
+    public suspend fun setLiveTarget(
+        channelId: ChannelId,
+        options: LivePlaybackOptions,
+    ): PlaybackTargetResult {
         val reply = CompletableDeferred<PlaybackTargetResult>()
         val command = CoordinatorCommand.Live(
             channelId = SubscriptionChannelId(channelId.value),
+            options = options.subscriptionOptions,
             ticket = PlayerOperationTicket(),
             reply = reply,
         )
@@ -485,6 +508,7 @@ private class CoordinatorActor(
                 ticket = command.ticket,
                 token = token,
                 channelId = command.channelId,
+                options = command.options,
             )
             applyRetirement(result.retiredTarget, result.retiredRecording)
             if (result.status == PlaybackPlayerInstallStatus.STARTED) {
@@ -805,6 +829,7 @@ private sealed class CoordinatorCommand(
 ) {
     data class Live(
         val channelId: SubscriptionChannelId,
+        val options: SubscriptionOptions,
         override val ticket: PlayerOperationTicket,
         val reply: CompletableDeferred<PlaybackTargetResult>,
     ) : CoordinatorCommand(ticket)

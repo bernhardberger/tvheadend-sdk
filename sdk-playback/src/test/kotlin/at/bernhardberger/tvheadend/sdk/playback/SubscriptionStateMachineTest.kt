@@ -13,6 +13,8 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertSame
@@ -22,6 +24,30 @@ import org.junit.jupiter.api.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SubscriptionStateMachineTest {
+    @Test
+    fun `subscription options validate profile UUID and wire timeshift domain`() {
+        val options = SubscriptionOptions(
+            streamProfileUuid = "0123456789abcdef0123456789abcdef",
+            timeshiftPeriod = 600.seconds,
+        )
+
+        assertEquals("0123456789abcdef0123456789abcdef", options.streamProfileUuid)
+        assertEquals(600.seconds, options.timeshiftPeriod)
+        assertEquals("SubscriptionOptions(<redacted>)", options.toString())
+        assertThrows(IllegalArgumentException::class.java) {
+            SubscriptionOptions(streamProfileUuid = "0123456789ABCDEF0123456789ABCDEF")
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            SubscriptionOptions(timeshiftPeriod = (-1).seconds)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            SubscriptionOptions(timeshiftPeriod = Duration.INFINITE)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            SubscriptionOptions(timeshiftPeriod = 0x1_0000_0000L.seconds)
+        }
+    }
+
     @Test
     fun `validated tracks callback completes before playable and later packets`() = runTest {
         val connection = RecordingSubscriptionConnection()

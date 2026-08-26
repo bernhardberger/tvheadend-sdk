@@ -31,6 +31,7 @@ import at.bernhardberger.tvheadend.sdk.core.ServerCapabilities
 import at.bernhardberger.tvheadend.sdk.core.StateBackedChannelRepository
 import at.bernhardberger.tvheadend.sdk.core.StateBackedDvrRepository
 import at.bernhardberger.tvheadend.sdk.core.StateBackedEpgRepository
+import at.bernhardberger.tvheadend.sdk.core.StreamProfilesResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
@@ -735,6 +736,9 @@ private fun MetadataEvent.isDvrMutationConfirmation(): Boolean = when (this) {
 }
 
 internal interface SessionChildren : ArtworkLoader, SubscriptionOpener, RecordingFileOpener {
+    /** Reports no active generation until a child binds profile discovery. */
+    public suspend fun getStreamProfiles(): StreamProfilesResult = StreamProfilesResult.NotReady
+
     /** Reports the changed connection until a child actually binds a generation to artwork. */
     public override suspend fun loadArtwork(artworkId: ArtworkId): ArtworkLoadResult =
         ArtworkLoadResult.Unavailable(ArtworkFailure.CONNECTION_CHANGED)

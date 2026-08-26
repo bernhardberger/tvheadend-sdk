@@ -9,6 +9,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.RecordingId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import kotlin.time.Duration
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
@@ -92,8 +93,12 @@ private class MainLooperCoordinatorPlaybackAccess : CoordinatorPlaybackAccess {
         if (this.listener === listener) this.listener = null
     }
 
-    override fun createLiveSource(channelId: SubscriptionChannelId): CoordinatorMediaSource {
+    override fun createLiveSource(
+        channelId: SubscriptionChannelId,
+        options: SubscriptionOptions,
+    ): CoordinatorMediaSource {
         requireApplicationLooper()
+        check(options.streamProfileUuid == null && options.timeshiftPeriod == Duration.ZERO)
         operations += "create-live"
         return MainLooperMediaSource
     }

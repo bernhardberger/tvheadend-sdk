@@ -20,6 +20,7 @@ import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.RecordingId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import java.io.IOException
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -43,18 +44,24 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             access.operations += "admit-recording"
             RecordingAdmission.Completed(12.seconds)
         }
+        val liveOptions = SubscriptionOptions(
+            streamProfileUuid = "0123456789abcdef0123456789abcdef",
+            timeshiftPeriod = 600.seconds,
+        )
 
         val live = async {
             player.installLive(
                 PlayerOperationTicket(),
                 PlaybackTargetToken(),
                 SubscriptionChannelId(3),
+                liveOptions,
             )
         }
         runCurrent()
         access.looperQueue.runAll()
         runCurrent()
         assertEquals(PlaybackPlayerInstallStatus.STARTED, live.await().status)
+        assertSame(liveOptions, access.liveOptions)
         assertEquals(
             listOf(
                 "create-live",
@@ -412,6 +419,7 @@ private class FakeCoordinatorPlaybackAccess(
     var recoveryCallback: ((PlaybackRecoveryReason) -> Unit)? = null
     var growingFinalEndCallback: (() -> Unit)? = null
     var growingLease: GrowingRecordingFileLease? = null
+    var liveOptions: SubscriptionOptions? = null
     private var sourceKind = "none"
 
     override fun requireApplicationLooper() {
@@ -435,9 +443,13 @@ private class FakeCoordinatorPlaybackAccess(
         if (applicationListener === listener) applicationListener = null
     }
 
-    override fun createLiveSource(channelId: SubscriptionChannelId): CoordinatorMediaSource {
+    override fun createLiveSource(
+        channelId: SubscriptionChannelId,
+        options: SubscriptionOptions,
+    ): CoordinatorMediaSource {
         requireApplicationLooper()
         operations += "create-live"
+        liveOptions = options
         return FakeCoordinatorMediaSource("live")
     }
 

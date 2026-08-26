@@ -15,6 +15,8 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener
 import java.util.Collections
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.StateFlow
 import kotlin.jvm.JvmSynthetic
 import kotlin.random.Random
@@ -45,6 +47,12 @@ public interface TvheadendSession {
 
     /** Generation-bound authenticated artwork loader used by platform image integrations. */
     public val artwork: ArtworkLoader
+
+    /** Discovers immutable stream profiles on the currently bound connection generation. */
+    public suspend fun getStreamProfiles(): StreamProfilesResult {
+        currentCoroutineContext().ensureActive()
+        return StreamProfilesResult.NotReady
+    }
 
     /** Generation-bound subscription entry point used by SDK playback adapters. */
     @SubscriptionInfrastructureApi

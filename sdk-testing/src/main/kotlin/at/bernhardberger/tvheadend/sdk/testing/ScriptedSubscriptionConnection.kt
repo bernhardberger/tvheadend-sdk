@@ -10,6 +10,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.channels.Channel
@@ -65,6 +66,11 @@ public class ScriptedSubscriptionConnection : SubscriptionConnection {
 
     /** Requested timeshift period in whole seconds, or null before subscribe. */
     public var requestedTimeshiftSeconds: Long? = null
+        get() = synchronized(lock) { field }
+        private set
+
+    /** Requested canonical stream-profile UUID, or null for the server default. */
+    public var requestedStreamProfileUuid: String? = null
         get() = synchronized(lock) { field }
         private set
 
@@ -157,11 +163,32 @@ public class ScriptedSubscriptionConnection : SubscriptionConnection {
         id: SubscriptionId,
         channelId: SubscriptionChannelId,
         timeshiftPeriod: Duration,
+    ): SubscriptionOperationResult<SubscriptionConfirmation> = recordSubscribe(
+        id = id,
+        streamProfileUuid = null,
+        timeshiftPeriod = timeshiftPeriod,
+    )
+
+    override suspend fun subscribe(
+        id: SubscriptionId,
+        channelId: SubscriptionChannelId,
+        options: SubscriptionOptions,
+    ): SubscriptionOperationResult<SubscriptionConfirmation> = recordSubscribe(
+        id = id,
+        streamProfileUuid = options.streamProfileUuid,
+        timeshiftPeriod = options.timeshiftPeriod,
+    )
+
+    private suspend fun recordSubscribe(
+        id: SubscriptionId,
+        streamProfileUuid: String?,
+        timeshiftPeriod: Duration,
     ): SubscriptionOperationResult<SubscriptionConfirmation> {
         currentCoroutineContext().ensureActive()
         return synchronized(lock) {
             check(streams.containsKey(id.value)) { "Collector must register before subscribe" }
             mutableCalls += ScriptedSubscriptionCall.SUBSCRIBE
+            requestedStreamProfileUuid = streamProfileUuid
             requestedTimeshiftSeconds = timeshiftPeriod.inWholeSeconds
             subscribeResult
         }

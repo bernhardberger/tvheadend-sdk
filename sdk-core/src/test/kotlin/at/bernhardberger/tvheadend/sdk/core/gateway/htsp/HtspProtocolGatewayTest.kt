@@ -84,6 +84,8 @@ import at.bernhardberger.tvheadend.htsp.requests.GetDvrCutpointsRequest
 import at.bernhardberger.tvheadend.htsp.requests.GetDvrCutpointsResponse
 import at.bernhardberger.tvheadend.htsp.requests.GetEventsRequest
 import at.bernhardberger.tvheadend.htsp.requests.GetEventsResponse
+import at.bernhardberger.tvheadend.htsp.requests.GetProfilesRequest
+import at.bernhardberger.tvheadend.htsp.requests.GetProfilesResponse
 import at.bernhardberger.tvheadend.htsp.requests.GetSysTimeRequest
 import at.bernhardberger.tvheadend.htsp.requests.GetSysTimeResponse
 import at.bernhardberger.tvheadend.htsp.requests.HtspDvrConfig
@@ -93,6 +95,7 @@ import at.bernhardberger.tvheadend.htsp.requests.HtspEmptyResponse
 import at.bernhardberger.tvheadend.htsp.requests.HtspEvent
 import at.bernhardberger.tvheadend.htsp.requests.HtspRequest
 import at.bernhardberger.tvheadend.htsp.requests.HtspRecordingRuleChannel
+import at.bernhardberger.tvheadend.htsp.requests.HtspProfile
 import at.bernhardberger.tvheadend.htsp.requests.StopDvrEntryRequest
 import at.bernhardberger.tvheadend.htsp.requests.StopDvrEntryResponse
 import at.bernhardberger.tvheadend.htsp.requests.SubscribeRequest
@@ -126,6 +129,8 @@ import at.bernhardberger.tvheadend.sdk.core.AutorecRuleId
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.RecordingRuleChannel
+import at.bernhardberger.tvheadend.sdk.core.StreamProfile
+import at.bernhardberger.tvheadend.sdk.core.StreamProfileId
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleUpdate
@@ -1035,6 +1040,82 @@ internal class HtspProtocolGatewayTest {
     }
 
     @Test
+    fun `stream profiles map exact generation immutable UUIDs failures and cancellation`() = runTest {
+        val sourceGeneration = HtspConnectionGeneration()
+        val fake = FakeHtspConnection().apply {
+            liveConnectionValue.value = liveConnection(sourceGeneration)
+            connectOutcome = HtspConnectOutcome.Connected(requireNotNull(liveConnectionValue.value))
+            executeResult = HtspResult.Ok(
+                GetProfilesResponse(
+                    listOf(
+                        HtspProfile(
+                            profileUuid = "0123456789abcdef0123456789abcdef",
+                            name = "Pass",
+                            comment = "Original streams",
+                        ),
+                    ),
+                ),
+            )
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+
+        val available = gateway.getStreamProfiles(generation) as GatewayResult.Ok
+        assertSame(sourceGeneration, fake.lastExpectedGeneration)
+        assertTrue(fake.lastRequest is GetProfilesRequest)
+        assertEquals(
+            listOf(
+                StreamProfile(
+                    StreamProfileId("0123456789abcdef0123456789abcdef"),
+                    "Pass",
+                    "Original streams",
+                ),
+            ),
+            available.value,
+        )
+        assertThrows(UnsupportedOperationException::class.java) {
+            (available.value as MutableList<*>).clear()
+        }
+
+        fake.executeResult = HtspResult.Ok(GetProfilesResponse(null))
+        assertSame(GatewayResult.ServerRejected, gateway.getStreamProfiles(generation))
+        fake.executeResult = HtspResult.Ok(
+            GetProfilesResponse(listOf(HtspProfile("INVALID", "", ""))),
+        )
+        assertSame(GatewayResult.ServerRejected, gateway.getStreamProfiles(generation))
+        fake.executeResult = HtspResult.Ok(
+            GetProfilesResponse(
+                List(2) { HtspProfile("0123456789abcdef0123456789abcdef", "", "") },
+            ),
+        )
+        assertSame(GatewayResult.ServerRejected, gateway.getStreamProfiles(generation))
+
+        val failures = listOf(
+            HtspResult.ServerError to GatewayResult.ServerRejected,
+            HtspResult.AccessDenied to GatewayResult.AccessDenied,
+            HtspResult.ConnectionLimit to GatewayResult.ConnectionLimit,
+            HtspResult.Timeout to GatewayResult.Timeout,
+            HtspResult.TransportUnavailable to GatewayResult.TransportUnavailable,
+            HtspResult.NotSupported to GatewayResult.NotSupported,
+        )
+        failures.forEach { (source, expected) ->
+            fake.executeResult = source
+            assertSame(expected, gateway.getStreamProfiles(generation))
+        }
+
+        val cancellation = CancellationException("private cancellation")
+        fake.executeException = cancellation
+        val caught = try {
+            gateway.getStreamProfiles(generation)
+            null
+        } catch (failure: CancellationException) {
+            failure
+        }
+        assertSame(cancellation, caught)
+    }
+
+    @Test
     fun `DVR entry mutations map complete requests and require semantic acceptance`() = runTest {
         val sourceGeneration = HtspConnectionGeneration()
         val fake = FakeHtspConnection().apply {
@@ -1624,10 +1705,21 @@ internal class HtspProtocolGatewayTest {
                 timeshiftPeriodSeconds = 300,
             ),
         )
-        gateway.subscribe(generation, SubscriptionId(5), ChannelId(6), 300.seconds)
+        gateway.subscribe(
+            generation,
+            SubscriptionId(5),
+            ChannelId(6),
+            "0123456789abcdef0123456789abcdef",
+            300.seconds,
+        )
         assertEquals(300L, (fake.lastRequest as SubscribeRequest).timeshiftPeriodSeconds)
+        assertEquals(
+            "0123456789abcdef0123456789abcdef",
+            (fake.lastRequest as SubscribeRequest).profile,
+        )
         gateway.subscribe(generation, SubscriptionId(5), ChannelId(6), Duration.ZERO)
         assertEquals(null, (fake.lastRequest as SubscribeRequest).timeshiftPeriodSeconds)
+        assertEquals(null, (fake.lastRequest as SubscribeRequest).profile)
         gateway.subscribe(generation, SubscriptionId(5), ChannelId(6), 900.milliseconds)
         assertEquals(
             null,

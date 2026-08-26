@@ -9,6 +9,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
 import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
+import at.bernhardberger.tvheadend.sdk.core.StreamProfile
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionConfirmation
@@ -56,6 +57,10 @@ internal interface ProtocolGateway {
     public suspend fun getDiskSpace(
         generation: GatewayGeneration,
     ): GatewayResult<DvrDiskSpace>
+
+    public suspend fun getStreamProfiles(
+        generation: GatewayGeneration,
+    ): GatewayResult<List<StreamProfile>> = GatewayResult.NotSupported
 
     public suspend fun getDvrCutpoints(
         generation: GatewayGeneration,
@@ -172,6 +177,19 @@ internal interface ProtocolGateway {
         channelId: ChannelId,
         timeshiftPeriod: Duration,
     ): SubscriptionOperationResult<SubscriptionConfirmation>
+
+    public suspend fun subscribe(
+        generation: GatewayGeneration,
+        id: SubscriptionId,
+        channelId: ChannelId,
+        streamProfileUuid: String?,
+        timeshiftPeriod: Duration,
+    ): SubscriptionOperationResult<SubscriptionConfirmation> =
+        if (streamProfileUuid == null) {
+            subscribe(generation, id, channelId, timeshiftPeriod)
+        } else {
+            SubscriptionOperationResult.NotSupported
+        }
 
     public suspend fun skipSubscription(
         generation: GatewayGeneration,

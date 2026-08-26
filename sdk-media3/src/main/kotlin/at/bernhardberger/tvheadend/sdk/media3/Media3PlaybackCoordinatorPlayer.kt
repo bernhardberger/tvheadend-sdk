@@ -14,6 +14,7 @@ import at.bernhardberger.tvheadend.sdk.playback.RecordingFileOpener
 import at.bernhardberger.tvheadend.sdk.playback.RecordingId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -80,6 +81,7 @@ internal interface PlaybackCoordinatorPlayer {
         ticket: PlayerOperationTicket,
         token: PlaybackTargetToken,
         channelId: SubscriptionChannelId,
+        options: SubscriptionOptions = SubscriptionOptions(),
     ): PlaybackPlayerInstallResult
 
     suspend fun installRecording(
@@ -117,7 +119,10 @@ internal interface CoordinatorPlaybackAccess {
 
     fun removeListener(listener: Player.Listener)
 
-    fun createLiveSource(channelId: SubscriptionChannelId): CoordinatorMediaSource
+    fun createLiveSource(
+        channelId: SubscriptionChannelId,
+        options: SubscriptionOptions,
+    ): CoordinatorMediaSource
 
     fun createRecordingSource(recordingId: RecordingId): CoordinatorMediaSource
 
@@ -152,8 +157,9 @@ internal class Media3PlaybackCoordinatorPlayer(
         ticket: PlayerOperationTicket,
         token: PlaybackTargetToken,
         channelId: SubscriptionChannelId,
+        options: SubscriptionOptions,
     ): PlaybackPlayerInstallResult = when (
-        val operation = executor.execute(ticket) { installLiveOnLooper(token, channelId) }
+        val operation = executor.execute(ticket) { installLiveOnLooper(token, channelId, options) }
     ) {
         is LooperOperationResult.Success -> operation.value
         LooperOperationResult.Cancelled -> PlaybackPlayerInstallResult(PlaybackPlayerInstallStatus.CANCELLED)
@@ -214,10 +220,11 @@ internal class Media3PlaybackCoordinatorPlayer(
     private fun installLiveOnLooper(
         token: PlaybackTargetToken,
         channelId: SubscriptionChannelId,
+        options: SubscriptionOptions,
     ): PlaybackPlayerInstallResult {
         access.requireApplicationLooper()
         val source = try {
-            access.createLiveSource(channelId)
+            access.createLiveSource(channelId, options)
         } catch (_: Exception) {
             return PlaybackPlayerInstallResult(PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE)
         }
@@ -521,9 +528,17 @@ internal class ExoPlayerCoordinatorPlaybackAccess(
         player.removeListener(listener)
     }
 
-    override fun createLiveSource(channelId: SubscriptionChannelId): CoordinatorMediaSource =
+    override fun createLiveSource(
+        channelId: SubscriptionChannelId,
+        options: SubscriptionOptions,
+    ): CoordinatorMediaSource =
         Media3CoordinatorMediaSource(
-            createTvheadendLiveMediaSource(subscriptions, channelId, onUnsupportedStream),
+            createTvheadendLiveMediaSource(
+                subscriptions,
+                channelId,
+                options,
+                onUnsupportedStream,
+            ),
         )
 
     override fun createRecordingSource(recordingId: RecordingId): CoordinatorMediaSource =

@@ -8,12 +8,17 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -21,13 +26,64 @@ import kotlin.time.Duration.Companion.seconds
 
 class ScriptedSubscriptionConnectionTest {
     @Test
+    fun `subscribe observations change only after cancellation and collector checks`() = runTest {
+        val profileUuid = "0123456789abcdef0123456789abcdef"
+        val connection = ScriptedSubscriptionConnection()
+        val id = SubscriptionId(0L)
+        val cancelled = launch(start = CoroutineStart.UNDISPATCHED) {
+            cancel()
+            connection.subscribe(
+                id,
+                SubscriptionChannelId(4L),
+                SubscriptionOptions(profileUuid, 120.seconds),
+            )
+        }
+        cancelled.join()
+        assertTrue(cancelled.isCancelled)
+        assertNull(connection.requestedStreamProfileUuid)
+        assertEquals(0, connection.subscribeCount)
+
+        val failure = try {
+            connection.subscribe(
+                id,
+                SubscriptionChannelId(4L),
+                SubscriptionOptions(profileUuid, 120.seconds),
+            )
+            null
+        } catch (exception: IllegalStateException) {
+            exception
+        }
+        assertEquals("Collector must register before subscribe", failure?.message)
+        assertNull(connection.requestedStreamProfileUuid)
+        assertEquals(0, connection.subscribeCount)
+
+        val collected = async { connection.events(id).toList() }
+        connection.awaitCollectionRegistered()
+        connection.subscribe(
+            id,
+            SubscriptionChannelId(4L),
+            SubscriptionOptions(profileUuid, 120.seconds),
+        )
+        connection.subscribe(id, SubscriptionChannelId(4L), 60.seconds)
+        assertNull(connection.requestedStreamProfileUuid)
+        assertEquals(60L, connection.requestedTimeshiftSeconds)
+        assertEquals(2, connection.subscribeCount)
+        connection.unsubscribe(id)
+        collected.await()
+    }
+
+    @Test
     fun `scripted connection preserves registration command event and completion order`() = runTest {
         val connection = ScriptedSubscriptionConnection()
         val id = SubscriptionId(0L)
         val collected = async { connection.events(id).toList() }
 
         connection.awaitCollectionRegistered()
-        val subscribe = connection.subscribe(id, SubscriptionChannelId(4L), 120.seconds)
+        val subscribe = connection.subscribe(
+            id,
+            SubscriptionChannelId(4L),
+            SubscriptionOptions("0123456789abcdef0123456789abcdef", 120.seconds),
+        )
         val status = SubscriptionEvent.Status(SubscriptionCondition.STATUS_REPORTED)
         connection.emit(status)
         val skip = connection.skip(id, SubscriptionSeekTarget.Absolute(30.seconds))
@@ -49,6 +105,10 @@ class ScriptedSubscriptionConnectionTest {
         assertEquals(1, connection.subscribeCount)
         assertEquals(1, connection.unsubscribeCount)
         assertEquals(120L, connection.requestedTimeshiftSeconds)
+        assertEquals(
+            "0123456789abcdef0123456789abcdef",
+            connection.requestedStreamProfileUuid,
+        )
         assertEquals(
             30.seconds,
             (connection.seekTargets.single() as SubscriptionSeekTarget.Absolute).position,

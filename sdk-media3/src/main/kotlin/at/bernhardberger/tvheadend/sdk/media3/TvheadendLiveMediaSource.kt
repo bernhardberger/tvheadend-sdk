@@ -14,6 +14,7 @@ import androidx.media3.exoplayer.upstream.Allocator
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 
 /**
@@ -28,11 +29,27 @@ public fun createTvheadendLiveMediaSource(
     subscriptions: SubscriptionOpener,
     channelId: SubscriptionChannelId,
     onUnsupportedStream: (SubscriptionStreamType) -> Unit = {},
-): MediaSource = TvheadendLiveMediaSource(subscriptions, channelId, onUnsupportedStream)
+): MediaSource = TvheadendLiveMediaSource(
+    subscriptions,
+    channelId,
+    SubscriptionOptions(),
+    onUnsupportedStream,
+)
+
+/** Creates a live Media3 source with explicit subscription [options]. */
+@SubscriptionInfrastructureApi
+@androidx.media3.common.util.UnstableApi
+public fun createTvheadendLiveMediaSource(
+    subscriptions: SubscriptionOpener,
+    channelId: SubscriptionChannelId,
+    options: SubscriptionOptions,
+    onUnsupportedStream: (SubscriptionStreamType) -> Unit = {},
+): MediaSource = TvheadendLiveMediaSource(subscriptions, channelId, options, onUnsupportedStream)
 
 private class TvheadendLiveMediaSource(
     private val subscriptions: SubscriptionOpener,
     private val channelId: SubscriptionChannelId,
+    private val options: SubscriptionOptions,
     private val onUnsupportedStream: (SubscriptionStreamType) -> Unit,
 ) : BaseMediaSource() {
     private val mediaItem = MediaItem.Builder()
@@ -63,6 +80,7 @@ private class TvheadendLiveMediaSource(
     ): MediaPeriod = TvheadendLiveMediaPeriod(
         subscriptions = subscriptions,
         channelId = channelId,
+        options = options,
         allocator = allocator,
         onUnsupportedStream = onUnsupportedStream,
     )

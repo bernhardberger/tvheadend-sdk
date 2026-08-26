@@ -233,6 +233,9 @@ internal class ModuleBoundaryTest {
             "ServerCapabilities",
             "CapabilityAccess",
             "RecordingProgressCapability",
+            "StreamProfileId",
+            "StreamProfile",
+            "StreamProfilesResult",
         )
 
         assertEquals(expected, actual)
@@ -250,6 +253,7 @@ internal class ModuleBoundaryTest {
             "public suspend fun retry(): SessionCommandResult",
             "public suspend fun disconnect()",
             "public suspend fun shutdown()",
+            "public suspend fun getStreamProfiles(): StreamProfilesResult",
             "public suspend fun scheduleEntry(request: DvrScheduleRequest): DvrMutationResult<DvrEntryId>",
             "public suspend fun updateEntry( id: DvrEntryId, update: DvrEntryUpdate, ): DvrMutationResult<Unit>",
             "public suspend fun stopEntry(id: DvrEntryId): DvrMutationResult<Unit>",
@@ -266,6 +270,7 @@ internal class ModuleBoundaryTest {
             "public suspend fun cutpoints(id: DvrEntryId): DvrCutpointsResult",
             "public suspend fun run()",
             "public suspend fun setLiveTarget(channelId: ChannelId): PlaybackTargetResult",
+            "public suspend fun setLiveTarget( channelId: ChannelId, options: LivePlaybackOptions, ): PlaybackTargetResult",
             "public suspend fun setRecordingTarget( recordingId: DvrEntryId, start: RecordingPlaybackStart = RecordingPlaybackStart.RESUME, ): PlaybackTargetResult",
             "public suspend fun stop(): PlaybackStopResult",
             "public suspend fun shutdown(drainTimeout: Duration): PlaybackShutdownResult",
@@ -297,6 +302,7 @@ internal class ModuleBoundaryTest {
             "SubscriptionTermination",
             "SubscriptionOperationResult",
             "SubscriptionConfirmation",
+            "SubscriptionOptions",
             "SubscriptionSeekTarget",
             "SubscriptionConnection",
             "SubscriptionEventConsumer",
@@ -343,6 +349,7 @@ internal class ModuleBoundaryTest {
             "PlaybackStopResult",
             "PlaybackTargetResult",
             "RecordingPlaybackStart",
+            "LivePlaybackOptions",
             "TvheadendPlaybackRecovery",
             "TvheadendPlaybackCoordinator",
             "TvheadendRecordingException",

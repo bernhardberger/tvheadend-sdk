@@ -281,6 +281,9 @@ public sealed interface SubscriptionOpenResult {
     /** Every unsigned 32-bit identifier has been consumed by this generation. */
     public data object IdExhausted : SubscriptionOpenResult
 
+    /** The selected profile was not discovered on this connection generation. */
+    public data object ProfileUnavailable : SubscriptionOpenResult
+
     /** Startup reached a typed terminal result before becoming playable. */
     public class Failed(public val reason: SubscriptionTerminalReason) : SubscriptionOpenResult {
         override fun toString(): String = "SubscriptionOpenResult.Failed(<redacted>)"
@@ -349,6 +352,17 @@ public fun interface SubscriptionOpener {
         timeshiftPeriod: Duration,
     ): SubscriptionOpenResult
 
+    /** Opens a live subscription with explicit profile and timeshift options. */
+    public suspend fun open(
+        channelId: SubscriptionChannelId,
+        consumer: SubscriptionEventConsumer,
+        options: SubscriptionOptions,
+    ): SubscriptionOpenResult = if (options.streamProfileUuid == null) {
+        open(channelId, consumer, options.timeshiftPeriod)
+    } else {
+        SubscriptionOpenResult.ProfileUnavailable
+    }
+
     /**
      * Opens a live subscription without requesting a timeshift buffer.
      *
@@ -415,8 +429,6 @@ internal class SeekGateSettings(
 private val DEFAULT_SEEK_ACKNOWLEDGEMENT_TIMEOUT = 5.seconds
 private const val DEFAULT_SEEK_PENDING_EVENTS = 2_048
 private const val DEFAULT_SEEK_PENDING_BYTES = 16L * 1024L * 1024L
-private const val MAXIMUM_TIMESHIFT_PERIOD_SECONDS = 0xffff_ffffL
-
 internal class SubscriptionIdAllocator(private var next: Long = 0L) {
     internal fun allocate(): SubscriptionId? = if (next > 0xffff_ffffL) {
         null
@@ -459,13 +471,17 @@ private class SubscriptionManagerImpl(
         channelId: SubscriptionChannelId,
         consumer: SubscriptionEventConsumer,
         timeshiftPeriod: Duration,
+    ): SubscriptionOpenResult = open(
+        channelId,
+        consumer,
+        SubscriptionOptions(timeshiftPeriod = timeshiftPeriod),
+    )
+
+    override suspend fun open(
+        channelId: SubscriptionChannelId,
+        consumer: SubscriptionEventConsumer,
+        options: SubscriptionOptions,
     ): SubscriptionOpenResult {
-        require(timeshiftPeriod.isFinite() && !timeshiftPeriod.isNegative()) {
-            "Requested timeshift period must be finite and not negative"
-        }
-        require(timeshiftPeriod.inWholeSeconds <= MAXIMUM_TIMESHIFT_PERIOD_SECONDS) {
-            "Requested timeshift period must be an unsigned 32-bit second count"
-        }
         currentCoroutineContext().ensureActive()
         val token = Any()
         val handle = synchronized(lock) {
@@ -479,7 +495,7 @@ private class SubscriptionManagerImpl(
                 scope = scope,
                 seekGate = seekGate,
                 rebase = rebase,
-                timeshiftPeriod = timeshiftPeriod,
+                options = options,
                 tryCommitPlayable = { candidate, publication ->
                     connection.commitIfLive {
                         synchronized(lock) {
@@ -554,7 +570,7 @@ private class ActiveSubscriptionImpl(
     private val scope: CoroutineScope,
     private val seekGate: SeekGateSettings,
     rebase: TimestampRebaseSettings,
-    private val timeshiftPeriod: Duration,
+    private val options: SubscriptionOptions,
     private val tryCommitPlayable: (
         ActiveSubscriptionImpl,
         publication: () -> Unit,
@@ -820,7 +836,7 @@ private class ActiveSubscriptionImpl(
     }
 
     private suspend fun invokeSubscribe(): CommandOutcome = try {
-        CommandOutcome.Result(connection.subscribe(id, channelId, timeshiftPeriod))
+        CommandOutcome.Result(connection.subscribe(id, channelId, options))
     } catch (cancellation: CancellationException) {
         CommandOutcome.Cancelled(cancellation)
     } catch (_: Exception) {

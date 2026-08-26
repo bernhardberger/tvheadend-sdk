@@ -78,6 +78,7 @@ import at.bernhardberger.tvheadend.htsp.requests.getDiskSpace
 import at.bernhardberger.tvheadend.htsp.requests.getDvrCutpoints
 import at.bernhardberger.tvheadend.htsp.requests.getDvrConfigs
 import at.bernhardberger.tvheadend.htsp.requests.getEvents
+import at.bernhardberger.tvheadend.htsp.requests.getProfiles
 import at.bernhardberger.tvheadend.htsp.requests.getSysTime
 import at.bernhardberger.tvheadend.htsp.requests.stopDvrEntry
 import at.bernhardberger.tvheadend.htsp.requests.subscribe
@@ -103,6 +104,8 @@ import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
 import at.bernhardberger.tvheadend.sdk.core.DvrSchedule
 import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
 import at.bernhardberger.tvheadend.sdk.core.RecordingRuleChannel
+import at.bernhardberger.tvheadend.sdk.core.StreamProfile
+import at.bernhardberger.tvheadend.sdk.core.StreamProfileId
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.toDvrMutationSeconds
@@ -289,6 +292,26 @@ internal class HtspProtocolGateway internal constructor(
         Collections.unmodifiableList(
             response.events.mapTo(ArrayList(), HtspEvent::toGatewayEpgQueryEvent),
         )
+    }
+
+    override suspend fun getStreamProfiles(
+        generation: GatewayGeneration,
+    ): GatewayResult<List<StreamProfile>> = connection.getProfiles(
+        expectedGeneration = htspGenerationFor(generation),
+    ).toCheckedGatewayResult { response ->
+        val profiles = response.profiles ?: return@toCheckedGatewayResult null
+        val ids = HashSet<StreamProfileId>(profiles.size)
+        val mapped = ArrayList<StreamProfile>(profiles.size)
+        profiles.forEach { profile ->
+            val id = try {
+                StreamProfileId(profile.profileUuid)
+            } catch (_: IllegalArgumentException) {
+                return@toCheckedGatewayResult null
+            }
+            if (!ids.add(id)) return@toCheckedGatewayResult null
+            mapped += StreamProfile(id, profile.name, profile.comment)
+        }
+        Collections.unmodifiableList(mapped)
     }
 
     override suspend fun getDvrConfigs(
@@ -769,9 +792,24 @@ internal class HtspProtocolGateway internal constructor(
         id: SubscriptionId,
         channelId: ChannelId,
         timeshiftPeriod: Duration,
+    ): SubscriptionOperationResult<SubscriptionConfirmation> = subscribe(
+        generation = generation,
+        id = id,
+        channelId = channelId,
+        streamProfileUuid = null,
+        timeshiftPeriod = timeshiftPeriod,
+    )
+
+    override suspend fun subscribe(
+        generation: GatewayGeneration,
+        id: SubscriptionId,
+        channelId: ChannelId,
+        streamProfileUuid: String?,
+        timeshiftPeriod: Duration,
     ): SubscriptionOperationResult<SubscriptionConfirmation> = connection.subscribe(
         subscriptionId = id.value,
         channelId = channelId.value,
+        profile = streamProfileUuid,
         timeshiftPeriodSeconds = timeshiftPeriod.inWholeSeconds.takeIf { seconds -> seconds > 0L },
         expectedGeneration = htspGenerationFor(generation),
     ).toSubscriptionResult(SubscribeResponse::toGatewayConfirmation)

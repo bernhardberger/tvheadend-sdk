@@ -123,6 +123,7 @@ public final class at/bernhardberger/tvheadend/sdk/testing/ScriptedSubscriptionC
 	public final fun emit (Lat/bernhardberger/tvheadend/sdk/testing/ScriptedSubscriptionRegistration;Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionEvent;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun events-QsRD2oE (J)Lkotlinx/coroutines/flow/Flow;
 	public final fun getCalls ()Ljava/util/List;
+	public final fun getRequestedStreamProfileUuid ()Ljava/lang/String;
 	public final fun getRequestedTimeshiftSeconds ()Ljava/lang/Long;
 	public final fun getSeekTargets ()Ljava/util/List;
 	public final fun getSubscribeCount ()I
@@ -133,6 +134,7 @@ public final class at/bernhardberger/tvheadend/sdk/testing/ScriptedSubscriptionC
 	public final fun scriptUnsubscribe (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult;)V
 	public final fun setLive (Z)V
 	public fun skip-BrKCP9I (JLat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekTarget;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun subscribe-GERwZ60 (JJLat/bernhardberger/tvheadend/sdk/playback/SubscriptionOptions;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun subscribe-kDjujcg (JJJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun toString ()Ljava/lang/String;
 	public fun unsubscribe--aUbMvU (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
