@@ -35,7 +35,7 @@ MODULE_EXTENSIONS = {
     "sdk-playback": "jar",
     "sdk-testing": "jar",
 }
-FINGERPRINT = "EAB02E488E7B944EAA6D65814BF0412FD2A3B741"
+FINGERPRINT = "C20177505D8D21CE86DEF715889A6266E5504130"
 EXPECTED_UID = "Bernhard Berger <bernhard.berger@gmail.com>"
 UPLOAD_URL = "https://central.sonatype.com/api/v1/publisher/upload"
 MAVEN_URL = "https://repo1.maven.org/maven2"
@@ -625,14 +625,14 @@ def expect_error(errors: list[str], label: str, action: Callable[[], object]) ->
 
 def self_test() -> list[str]:
     errors = check_setup()
-    build = f'group = "{GROUP}"\nversion = "0.1.1"\n'
-    identity = configured_identity(build, "v0.1.1")
+    build = f'group = "{GROUP}"\nversion = "0.1.2"\n'
+    identity = configured_identity(build, "v0.1.2")
     if len(expected_paths(identity)) != 26:
         errors.append("self-test release inventory is not 26 originals")
-    expect_error(errors, "snapshot version", lambda: configured_identity(build.replace("0.1.1", "0.1.1-SNAPSHOT")))
-    expect_error(errors, "major-one version", lambda: configured_identity(build.replace("0.1.1", "1.0.0")))
+    expect_error(errors, "snapshot version", lambda: configured_identity(build.replace("0.1.2", "0.1.2-SNAPSHOT")))
+    expect_error(errors, "major-one version", lambda: configured_identity(build.replace("0.1.2", "1.0.0")))
     expect_error(errors, "wrong group", lambda: configured_identity(build.replace(GROUP, "invalid.example")))
-    expect_error(errors, "wrong tag", lambda: configured_identity(build, "v0.1.2"))
+    expect_error(errors, "wrong tag", lambda: configured_identity(build, "v0.1.3"))
     token = base64.b64encode(b"user:password").decode("ascii")
     try:
         validate_portal_token(token)
@@ -641,19 +641,19 @@ def self_test() -> list[str]:
     expect_error(errors, "malformed token", lambda: validate_portal_token("not base64"))
     tag_object = "1" * 40
     tagged_commit = "2" * 40
-    if parse_remote_tag(f"{tag_object}\trefs/tags/v0.1.1\n".encode(), "v0.1.1") != tag_object:
+    if parse_remote_tag(f"{tag_object}\trefs/tags/v0.1.2\n".encode(), "v0.1.2") != tag_object:
         errors.append("self-test rejected an exact remote tag object")
-    expect_error(errors, "wrong remote tag", lambda: parse_remote_tag(f"{tag_object}\trefs/tags/v0.1.2\n".encode(), "v0.1.1"))
+    expect_error(errors, "wrong remote tag", lambda: parse_remote_tag(f"{tag_object}\trefs/tags/v0.1.3\n".encode(), "v0.1.2"))
     expect_error(errors, "lightweight tag", lambda: require_local_tag("commit", tagged_commit, tagged_commit))
     expect_error(errors, "wrong tag commit", lambda: require_local_tag("tag", "3" * 40, tagged_commit))
-    context = {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "push", "GITHUB_REF_TYPE": "tag", "GITHUB_REPOSITORY": REPOSITORY, "GITHUB_REF": "refs/tags/v0.1.1", "GITHUB_REF_NAME": "v0.1.1", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_SHA": tagged_commit}
+    context = {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "push", "GITHUB_REF_TYPE": "tag", "GITHUB_REPOSITORY": REPOSITORY, "GITHUB_REF": "refs/tags/v0.1.2", "GITHUB_REF_NAME": "v0.1.2", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_SHA": tagged_commit}
     try:
         require_action_context(identity, tagged_commit, context)
     except ReleaseError as error:
         errors.append(f"self-test rejected exact action context: {error}")
-    for label, name, value in (("wrong repository", "GITHUB_REPOSITORY", "other/repo"), ("tag object instead of commit", "GITHUB_SHA", tag_object), ("wrong action tag", "GITHUB_REF_NAME", "v0.1.2"), ("duplicate attempt", "GITHUB_RUN_ATTEMPT", "2")):
+    for label, name, value in (("wrong repository", "GITHUB_REPOSITORY", "other/repo"), ("tag object instead of commit", "GITHUB_SHA", tag_object), ("wrong action tag", "GITHUB_REF_NAME", "v0.1.3"), ("duplicate attempt", "GITHUB_RUN_ATTEMPT", "2")):
         expect_error(errors, label, lambda name=name, value=value: require_action_context(identity, tagged_commit, {**context, name: value}))
-    originals = tuple(Original(f"group/module/0.1.1/file-{index}", f"file-{index}", f"original-{index}".encode(), digest("sha256", f"original-{index}".encode())) for index in range(26))
+    originals = tuple(Original(f"group/module/0.1.2/file-{index}", f"file-{index}", f"original-{index}".encode(), digest("sha256", f"original-{index}".encode())) for index in range(26))
     signatures = {item.relative_path + ".asc": b"signature" for item in originals}
     bundle = zip_bytes(release_assets(originals, signatures))
     verifier = lambda _name, signature, _data: signature == b"signature"

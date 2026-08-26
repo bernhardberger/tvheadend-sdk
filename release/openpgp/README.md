@@ -6,7 +6,7 @@ The dedicated Maven key is separate from every Android signing key.
 - `public-key.asc` is one public-only, signing-capable, non-expiring primary key
   with no subkeys.
 - `primary-fingerprint.txt` contains
-  `EAB02E488E7B944EAA6D65814BF0412FD2A3B741` and one newline.
+  `C20177505D8D21CE86DEF715889A6266E5504130` and one newline.
 - The sole approved UID is
   `Bernhard Berger <bernhard.berger@gmail.com>`.
 

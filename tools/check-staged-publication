@@ -433,10 +433,10 @@ def expect_error(errors: list[str], label: str, action: Callable[[], object]) ->
 
 def self_test() -> list[str]:
     errors: list[str] = []
-    build = f'group = "{GROUP}"\nversion = "0.1.1"\n'
-    if configured_version(build) != "0.1.1" or len(expected_originals("0.1.1")) != 26:
+    build = f'group = "{GROUP}"\nversion = "0.1.2"\n'
+    if configured_version(build) != "0.1.2" or len(expected_originals("0.1.2")) != 26:
         errors.append("self-test rejected the exact five-module release identity")
-    expect_error(errors, "snapshot version", lambda: configured_version(build.replace("0.1.1", "0.1.1-SNAPSHOT")))
+    expect_error(errors, "snapshot version", lambda: configured_version(build.replace("0.1.2", "0.1.2-SNAPSHOT")))
     expect_error(errors, "wrong group", lambda: configured_version(build.replace(GROUP, "invalid.example")))
     legal = {
         "META-INF/LICENSE": b"GNU GENERAL PUBLIC LICENSE Version 3",

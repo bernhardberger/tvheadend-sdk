@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.1.1]
+## [0.1.2]
 
 Initial provisional release of the independently maintained TVHeadend SDK. It
 provides five focused libraries for HTSP-backed session and metadata workflows,
@@ -18,9 +18,13 @@ The Media3 module includes the corresponding FFmpeg 6.0 source archive for its
 optional GPL decoder fallback. The source, binary, and redistribution evidence
 is recorded in `docs/ffmpeg-contingency.md`.
 
-The signed `v0.1.0` tag is retained as historical evidence after its workflow
-stopped before signed-bundle retention or publication. No `0.1.0` Maven
-artifacts or GitHub release were created.
+This recovery aligns the tracked Maven OpenPGP public key and approved
+fingerprint with the protected release environment. It does not change SDK
+runtime behavior or API.
+
+The signed `v0.1.0` and `v0.1.1` tags are retained as historical evidence after
+their workflows stopped before signed-bundle retention or publication. No
+`0.1.0` or `0.1.1` Maven artifacts or GitHub releases were created.
 
 This is a major-zero baseline. It does not promise source, binary, or behavioral
 compatibility or support. Publication and availability are independently

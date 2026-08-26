@@ -11,7 +11,7 @@ The repository is split into five libraries:
 - `sdk-android`: Android discovery, connectivity, credentials, and artwork.
 - `sdk-testing`: JVM-only SDK test fakes and fixtures.
 
-The configured release candidate is `0.1.1`. Nothing is published by the normal
+The configured release candidate is `0.1.2`. Nothing is published by the normal
 build. `./gradlew clean build check stageLocalPublication` verifies the
 repository and stages all five modules under `build/local-maven`. Local staging
 does not establish Maven Central availability.
@@ -21,7 +21,7 @@ they need from Maven Central. For example:
 
 ```kotlin
 dependencies {
-    implementation("at.bernhardberger.tvheadend:sdk-media3:0.1.1")
+    implementation("at.bernhardberger.tvheadend:sdk-media3:0.1.2")
 }
 ```
 
