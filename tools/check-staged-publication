@@ -1,47 +1,30 @@
 #!/usr/bin/env python3
-"""Verify the exact checkout-local publication for all five SDK modules."""
+"""Verify the staged five-module SDK publication and record its exact bytes."""
 
 from __future__ import annotations
 
-import copy
 import hashlib
 import io
 import json
 import re
-import shutil
 import stat
-import struct
 import sys
-import tempfile
 import zipfile
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable
 
 
 ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = ROOT / "build/local-maven"
 GROUP = "at.bernhardberger.tvheadend"
-STRICT_RELEASE_VERSION = re.compile(r"0\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)")
+VERSION_PATTERN = re.compile(r"0\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)")
+CHECKSUM_SUFFIXES = (".md5", ".sha1", ".sha256", ".sha512")
+LEGAL_ENTRIES = ("META-INF/LICENSE", "META-INF/NOTICE")
 PROJECT_URL = "https://github.com/bernhardberger/tvheadend-sdk"
-ISSUES_URL = f"{PROJECT_URL}/issues"
-SCM = f"scm:git:{PROJECT_URL}.git"
-SCM_DEVELOPER = "scm:git:ssh://git@github.com/bernhardberger/tvheadend-sdk.git"
-GPL_NAME = "GNU General Public License v3.0"
-GPL_URL = "https://www.gnu.org/licenses/gpl-3.0.html"
-DEVELOPER = {
-    "id": "bernhardberger",
-    "name": "Bernhard Berger",
-    "url": "https://github.com/bernhardberger",
-}
-PROPERTIES = {"tvheadend.sdk.notice.path": "NOTICE.md"}
-JVM_VERSION = 17
-CLASS_MAJOR = 61
-FFMPEG_CLASS_MAJOR = 52
-GRADLE_VERSION = "9.7.0"
-FFMPEG_SHA256 = "9eeca8490f794574185986c0df7800d65ccca2980f57dc26b630a398581d7929"
-FFMPEG_LIBRARY = "libs/media3-decoder-ffmpeg-1.11.0.jar"
+FFMPEG_JAR = ROOT / "sdk-media3/libs/media3-decoder-ffmpeg-1.11.0.jar"
+FFMPEG_SOURCE = ROOT / "third_party/ffmpeg/ffmpeg-6.0-3f92512f-sources.tar.xz"
 FFMPEG_CLASSES = {
     "androidx/media3/decoder/ffmpeg/ExperimentalFfmpegVideoRenderer.class",
     "androidx/media3/decoder/ffmpeg/FfmpegAudioDecoder.class",
@@ -51,326 +34,91 @@ FFMPEG_CLASSES = {
     "androidx/media3/decoder/ffmpeg/FfmpegLibrary.class",
     "androidx/media3/decoder/ffmpeg/package-info.class",
 }
-CHECKSUM_SUFFIXES = (".md5", ".sha1", ".sha256", ".sha512")
-
-
-@dataclass(frozen=True)
-class Kind:
-    label: str
-    extension: str
-    classifier: str | None = None
-
-
-@dataclass(frozen=True)
-class ModuleSpec:
-    main_extension: str
-    description: str
-    android: bool = False
-    ffmpeg_sources: bool = False
-
-
-@dataclass(frozen=True)
-class ResolvedModule:
-    files: dict[str, Path]
-    value: str
-
-
-MODULES = {
-    "sdk-android": ModuleSpec(
-        "aar",
-        "Android discovery, connectivity, credentials, and artwork integration for TVHeadend.",
-        android=True,
-    ),
-    "sdk-core": ModuleSpec(
-        "jar",
-        "TVHeadend SDK protocol integration, lifecycle, models, metadata, EPG, and DVR workflows.",
-    ),
-    "sdk-media3": ModuleSpec(
-        "aar",
-        "Android Media3 playback integration for the TVHeadend SDK.",
-        android=True,
-        ffmpeg_sources=True,
-    ),
-    "sdk-playback": ModuleSpec(
-        "jar",
-        "TVHeadend subscription, seek, timeshift, and timestamp state machines.",
-    ),
-    "sdk-testing": ModuleSpec(
-        "jar",
-        "JVM test fakes, scripted events, repositories, and packet fixtures for the TVHeadend SDK.",
-    ),
+FFMPEG_NATIVES = {
+    f"jni/{abi}/libffmpegJNI.so"
+    for abi in ("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
 }
 
 
-def configured_version(root: Path = ROOT) -> str:
+class VerificationError(RuntimeError):
+    """A staged published-byte invariant failed."""
+
+
+@dataclass(frozen=True)
+class Module:
+    main_extension: str
+    android: bool = False
+    ffmpeg: bool = False
+
+
+MODULES = {
+    "sdk-android": Module("aar", android=True),
+    "sdk-core": Module("jar"),
+    "sdk-media3": Module("aar", android=True, ffmpeg=True),
+    "sdk-playback": Module("jar"),
+    "sdk-testing": Module("jar"),
+}
+
+
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise VerificationError(message)
+
+
+def read_regular(path: Path, label: str) -> bytes:
     try:
-        text = (root / "build.gradle.kts").read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
-        return ""
-    matches = re.findall(r'^version = "([^"]+)"[ \t]*$', text, re.M)
-    return matches[0] if len(matches) == 1 else ""
+        require(stat.S_ISREG(path.lstat().st_mode), f"{label} is not a regular file")
+        return path.read_bytes()
+    except FileNotFoundError as error:
+        raise VerificationError(f"{label} is missing") from error
+    except OSError as error:
+        raise VerificationError(f"{label} cannot be read") from error
 
 
-VERSION = configured_version()
-RELEASE_BASE = VERSION.removesuffix("-SNAPSHOT")
-ALLOWED_VERSIONS = (
-    {RELEASE_BASE, f"{RELEASE_BASE}-SNAPSHOT"}
-    if STRICT_RELEASE_VERSION.fullmatch(RELEASE_BASE)
-    else set()
-)
+def sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
 
 
-def kinds(module: str) -> tuple[Kind, ...]:
+def configured_version(build_text: str | None = None) -> str:
+    if build_text is None:
+        build_text = read_regular(ROOT / "build.gradle.kts", "build configuration").decode("utf-8")
+    groups = re.findall(r'(?m)^group\s*=\s*"([^"]+)"\s*$', build_text)
+    versions = re.findall(r'(?m)^version\s*=\s*"([^"]+)"\s*$', build_text)
+    require(groups == [GROUP], f"publication group must be exactly {GROUP}")
+    require(len(versions) == 1, "publication version must be one literal assignment")
+    require(VERSION_PATTERN.fullmatch(versions[0]) is not None, "publication version must be a strict major-zero release")
+    return versions[0]
+
+
+def artifact_names(module: str, version: str) -> dict[str, str]:
     spec = MODULES[module]
-    result = [
-        Kind("main", spec.main_extension),
-        Kind("sources", "jar", "sources"),
-        Kind("javadoc", "jar", "javadoc"),
-        Kind("pom", "pom"),
-        Kind("module", "module"),
-    ]
-    if spec.ffmpeg_sources:
-        result.append(Kind("ffmpeg-sources", "tar.xz", "ffmpeg-sources"))
-    return tuple(result)
+    names = {
+        "main": f"{module}-{version}.{spec.main_extension}",
+        "sources": f"{module}-{version}-sources.jar",
+        "javadoc": f"{module}-{version}-javadoc.jar",
+        "pom": f"{module}-{version}.pom",
+        "module": f"{module}-{version}.module",
+    }
+    if spec.ffmpeg:
+        names["ffmpeg-sources"] = f"{module}-{version}-ffmpeg-sources.tar.xz"
+    return names
 
 
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
-def digest_bytes(name: str, data: bytes) -> str:
-    return hashlib.new(name, data).hexdigest()
-
-
-def local_name(tag: str) -> str:
-    return tag.rsplit("}", 1)[-1]
-
-
-def children(parent: ET.Element, name: str) -> list[ET.Element]:
-    return [child for child in parent if local_name(child.tag) == name]
-
-
-def one_child(parent: ET.Element, name: str, label: str, errors: list[str]) -> ET.Element | None:
-    found = children(parent, name)
-    if len(found) != 1:
-        errors.append(f"{label}: expected exactly one <{name}>, found {len(found)}")
-        return None
-    return found[0]
-
-
-def one_text(parent: ET.Element, name: str, label: str, errors: list[str]) -> str | None:
-    node = one_child(parent, name, label, errors)
-    if node is None:
-        return None
-    value = (node.text or "").strip()
-    if not value:
-        errors.append(f"{label}: <{name}> is empty")
-        return None
-    return value
-
-
-def parse_xml(path: Path, label: str, errors: list[str]) -> ET.Element | None:
-    try:
-        return ET.parse(path).getroot()
-    except (OSError, ET.ParseError) as error:
-        errors.append(f"{label}: malformed XML: {error}")
-        return None
-
-
-def canonical_xml(element: ET.Element) -> tuple[object, ...]:
-    nested = [canonical_xml(child) for child in element]
-    if local_name(element.tag) == "dependencies":
-        nested.sort(key=repr)
-    return (
-        element.tag,
-        tuple(sorted(element.attrib.items())),
-        (element.text or "").strip(),
-        tuple(nested),
-    )
-
-
-def canonical_module_model(model: dict[str, Any]) -> dict[str, Any]:
-    result = copy.deepcopy(model)
-    variants = result.get("variants")
-    if isinstance(variants, list):
-        for variant in variants:
-            if not isinstance(variant, dict) or not isinstance(variant.get("dependencies"), list):
-                continue
-            variant["dependencies"].sort(
-                key=lambda dependency: json.dumps(dependency, sort_keys=True, separators=(",", ":"))
-            )
+def expected_originals(version: str) -> dict[str, tuple[str, str]]:
+    base = GROUP.replace(".", "/")
+    result = {
+        f"{base}/{module}/{version}/{name}": (module, label)
+        for module in sorted(MODULES)
+        for label, name in artifact_names(module, version).items()
+    }
+    require(len(result) == 26, "publication inventory must contain exactly 26 originals")
     return result
 
 
-def reject_symlinks(root: Path, errors: list[str]) -> None:
-    if root.is_symlink():
-        errors.append(f"publication repository must not be a symlink: {root}")
-        return
-    if not root.is_dir():
-        return
-    for path in root.rglob("*"):
-        if path.is_symlink():
-            errors.append(f"publication repository contains symlink/escape: {path.relative_to(root)}")
-
-
-def expected_name(module: str, value: str, kind: Kind) -> str:
-    classifier = f"-{kind.classifier}" if kind.classifier else ""
-    return f"{module}-{value}{classifier}.{kind.extension}"
-
-
-def resolve_module(repository: Path, module: str, errors: list[str]) -> ResolvedModule | None:
-    version_dir = repository.joinpath(*GROUP.split("."), module, VERSION)
-    if not version_dir.is_dir() or version_dir.is_symlink():
-        errors.append(f"{module}: published version directory is missing or unsafe")
-        return None
-    files: dict[str, Path] = {}
-    values: set[str] = set()
-    for kind in kinds(module):
-        if VERSION.endswith("-SNAPSHOT"):
-            classifier = f"-{re.escape(kind.classifier)}" if kind.classifier else ""
-            pattern = re.compile(
-                rf"^{re.escape(module)}-({re.escape(RELEASE_BASE)}-\d{{8}}\.\d{{6}}-\d+)"
-                rf"{classifier}\.{re.escape(kind.extension)}$"
-            )
-            matches = [entry for entry in version_dir.iterdir() if entry.is_file() and pattern.fullmatch(entry.name)]
-            if len(matches) == 1:
-                match = pattern.fullmatch(matches[0].name)
-                assert match is not None
-                values.add(match.group(1))
-        else:
-            matches = [version_dir / expected_name(module, VERSION, kind)]
-            matches = [entry for entry in matches if entry.is_file() and not entry.is_symlink()]
-            values.add(VERSION)
-        if len(matches) != 1:
-            errors.append(f"{module} {kind.label}: expected one regular artifact, found {[entry.name for entry in matches]}")
-        else:
-            files[kind.label] = matches[0]
-    if len(values) != 1:
-        errors.append(f"{module}: snapshot artifacts do not share one timestamped value: {sorted(values)}")
-        value = ""
-    else:
-        value = next(iter(values))
-
-    primary = {path.name for path in files.values()}
-    if VERSION.endswith("-SNAPSHOT"):
-        primary.add("maven-metadata.xml")
-    allowed = primary | {name + suffix for name in primary for suffix in CHECKSUM_SUFFIXES}
-    actual_files = {entry.name for entry in version_dir.iterdir() if entry.is_file()}
-    extra = actual_files - allowed
-    missing = primary - actual_files
-    directories = [entry.name for entry in version_dir.iterdir() if entry.is_dir()]
-    if extra or missing or directories:
-        errors.append(
-            f"{module}: version inventory mismatch; missing={sorted(missing)}, "
-            f"extra={sorted(extra)}, directories={sorted(directories)}"
-        )
-    return ResolvedModule(files, value)
-
-
-def metadata_errors(path: Path, module: str) -> list[str]:
-    errors: list[str] = []
-    root = parse_xml(path, f"{module} Maven metadata", errors)
-    if root is None:
-        return errors
-    for name, expected in (("groupId", GROUP), ("artifactId", module)):
-        actual = one_text(root, name, f"{module} Maven metadata", errors)
-        if actual is not None and actual != expected:
-            errors.append(f"{module} Maven metadata: {name} is {actual!r}, expected {expected!r}")
-    versioning = one_child(root, "versioning", f"{module} Maven metadata", errors)
-    if versioning is not None:
-        versions = one_child(versioning, "versions", f"{module} Maven metadata", errors)
-        actual_versions = [] if versions is None else [(node.text or "").strip() for node in children(versions, "version")]
-        if actual_versions != [VERSION]:
-            errors.append(f"{module} Maven metadata: versions are {actual_versions}, expected {[VERSION]}")
-        latest = one_text(versioning, "latest", f"{module} Maven metadata", errors)
-        if latest is not None and latest != VERSION:
-            errors.append(f"{module} Maven metadata: latest is {latest!r}, expected {VERSION!r}")
-        release_nodes = children(versioning, "release")
-        expected_release = None if VERSION.endswith("-SNAPSHOT") else VERSION
-        actual_release = (release_nodes[0].text or "").strip() if len(release_nodes) == 1 else None
-        if len(release_nodes) > 1 or actual_release != expected_release:
-            errors.append(f"{module} Maven metadata: release is {actual_release!r}, expected {expected_release!r}")
-        updated = one_text(versioning, "lastUpdated", f"{module} Maven metadata", errors)
-        if updated is not None and not re.fullmatch(r"\d{14}", updated):
-            errors.append(f"{module} Maven metadata: invalid lastUpdated {updated!r}")
-    return errors
-
-
-def topology_errors(repository: Path) -> list[str]:
-    errors: list[str] = []
-    expected_repository = REPOSITORY.absolute()
-    if repository.absolute() != expected_repository:
-        errors.append(f"publication repository must be exactly {expected_repository}")
-        return errors
-    if VERSION not in ALLOWED_VERSIONS:
-        errors.append(f"publication version must be exactly one of {sorted(ALLOWED_VERSIONS)}: {VERSION!r}")
-        return errors
-    if not repository.is_dir():
-        errors.append(f"publication repository is missing: {repository}")
-        return errors
-    reject_symlinks(repository, errors)
-    current = repository
-    for component in GROUP.split("."):
-        directories = {entry.name for entry in current.iterdir() if entry.is_dir()} if current.is_dir() else set()
-        files = {entry.name for entry in current.iterdir() if entry.is_file()} if current.is_dir() else set()
-        if directories != {component} or files:
-            errors.append(
-                f"publication group path {current}: expected only {component!r}, "
-                f"found directories={sorted(directories)}, files={sorted(files)}"
-            )
-        current /= component
-    group_dir = repository.joinpath(*GROUP.split("."))
-    modules = {entry.name for entry in group_dir.iterdir() if entry.is_dir()} if group_dir.is_dir() else set()
-    if modules != set(MODULES):
-        errors.append(f"publication group modules are {sorted(modules)}, expected {sorted(MODULES)}")
-    for module in sorted(MODULES):
-        module_dir = group_dir / module
-        if not module_dir.is_dir():
-            continue
-        entries = list(module_dir.iterdir())
-        directories = {entry.name for entry in entries if entry.is_dir()}
-        files = {entry.name for entry in entries if entry.is_file()}
-        expected_files = {"maven-metadata.xml"} | {
-            "maven-metadata.xml" + suffix for suffix in CHECKSUM_SUFFIXES
-        }
-        if directories != {VERSION} or files != expected_files:
-            errors.append(
-                f"{module}: module topology mismatch; directories={sorted(directories)}, files={sorted(files)}"
-            )
-        errors.extend(metadata_errors(module_dir / "maven-metadata.xml", module))
-    return errors
-
-
-def checksum_errors(module: str, resolved: ResolvedModule) -> list[str]:
-    errors: list[str] = []
-    for label, artifact in resolved.files.items():
-        sidecar = artifact.with_name(artifact.name + ".sha256")
-        try:
-            actual = sidecar.read_bytes() if sidecar.is_file() and not sidecar.is_symlink() else b""
-        except OSError:
-            actual = b""
-        expected = (sha256(artifact) + "\n").encode("ascii")
-        if actual == expected:
-            continue
-        try:
-            text = actual.decode("ascii")
-        except UnicodeError:
-            text = ""
-        if not re.fullmatch(r"[0-9a-f]{64}\n", text):
-            errors.append(f"{module} {label}: malformed or missing exact SHA-256 sidecar")
-        else:
-            errors.append(f"{module} {label}: SHA-256 sidecar does not match artifact bytes")
-    return errors
-
-
-def pom_dependencies(module: str) -> set[tuple[str, str, str, str]]:
-    values = {
+def pom_dependencies(module: str, version: str) -> set[tuple[str, str, str, str]]:
+    return {
         "sdk-android": {
-            (GROUP, "sdk-core", VERSION, "compile"),
+            (GROUP, "sdk-core", version, "compile"),
             ("io.coil-kt.coil3", "coil-core", "3.5.0", "compile"),
             ("org.jetbrains.kotlinx", "kotlinx-coroutines-core", "1.10.2", "compile"),
             ("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.10", "compile"),
@@ -379,13 +127,13 @@ def pom_dependencies(module: str) -> set[tuple[str, str, str, str]]:
         },
         "sdk-core": {
             ("org.jetbrains.kotlinx", "kotlinx-coroutines-core-jvm", "1.10.2", "compile"),
-            (GROUP, "sdk-playback", VERSION, "compile"),
+            (GROUP, "sdk-playback", version, "compile"),
             ("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.10", "compile"),
             (GROUP, "htsp", "0.7.0", "runtime"),
         },
         "sdk-media3": {
-            (GROUP, "sdk-core", VERSION, "compile"),
-            (GROUP, "sdk-playback", VERSION, "compile"),
+            (GROUP, "sdk-core", version, "compile"),
+            (GROUP, "sdk-playback", version, "compile"),
             ("androidx.media3", "media3-exoplayer", "1.11.0", "compile"),
             ("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.10", "compile"),
             ("androidx.media3", "media3-extractor", "1.11.0", "runtime"),
@@ -396,869 +144,375 @@ def pom_dependencies(module: str) -> set[tuple[str, str, str, str]]:
             ("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.10", "compile"),
         },
         "sdk-testing": {
-            (GROUP, "sdk-core", VERSION, "compile"),
-            (GROUP, "sdk-playback", VERSION, "compile"),
+            (GROUP, "sdk-core", version, "compile"),
+            (GROUP, "sdk-playback", version, "compile"),
             ("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.10", "compile"),
         },
+    }[module]
+
+
+def module_variants(module: str, version: str) -> dict[str, tuple[str, set[tuple[str, str, str]]]]:
+    pom = pom_dependencies(module, version)
+    api = {
+        (group, "kotlinx-coroutines-core" if artifact == "kotlinx-coroutines-core-jvm" else artifact, dependency_version)
+        for group, artifact, dependency_version, scope in pom
+        if scope == "compile"
     }
-    return values[module]
-
-
-def pom_errors(module: str, path: Path) -> list[str]:
-    errors: list[str] = []
-    root = parse_xml(path, f"{module} POM", errors)
-    if root is None:
-        return errors
-    spec = MODULES[module]
-    expected_root = ET.fromstring(pom_fixture(module))
-    if canonical_xml(root) != canonical_xml(expected_root):
-        errors.append(f"{module} POM: exact XML structure or dependency semantics mismatch")
-    expected_text = {
-        "modelVersion": "4.0.0",
-        "groupId": GROUP,
-        "artifactId": module,
-        "version": VERSION,
-        "name": module,
-        "description": spec.description,
-        "url": PROJECT_URL,
+    runtime = api | {
+        (group, artifact, dependency_version)
+        for group, artifact, dependency_version, scope in pom
+        if scope == "runtime"
     }
-    for name, expected in expected_text.items():
-        actual = one_text(root, name, f"{module} POM", errors)
-        if actual is not None and actual != expected:
-            errors.append(f"{module} POM: {name} is {actual!r}, expected {expected!r}")
-    packaging = children(root, "packaging")
-    expected_packaging = "aar" if spec.android else None
-    actual_packaging = (packaging[0].text or "").strip() if len(packaging) == 1 else None
-    if len(packaging) > 1 or actual_packaging != expected_packaging:
-        errors.append(f"{module} POM: packaging is {actual_packaging!r}, expected {expected_packaging!r}")
-    licenses = one_child(root, "licenses", f"{module} POM", errors)
-    if licenses is not None:
-        entries = children(licenses, "license")
-        actual = {} if len(entries) != 1 else {
-            name: one_text(entries[0], name, f"{module} POM license", errors)
-            for name in ("name", "url", "distribution")
+    if MODULES[module].android:
+        return {
+            "releaseVariantReleaseApiPublication": ("main", api),
+            "releaseVariantReleaseRuntimePublication": ("main", runtime),
+            "releaseVariantReleaseSourcePublication": ("sources", set()),
         }
-        if actual != {"name": GPL_NAME, "url": GPL_URL, "distribution": "repo"}:
-            errors.append(f"{module} POM: GPLv3 license metadata mismatch")
-    developers = one_child(root, "developers", f"{module} POM", errors)
-    if developers is not None:
-        entries = children(developers, "developer")
-        actual = {} if len(entries) != 1 else {
-            name: one_text(entries[0], name, f"{module} POM developer", errors)
-            for name in DEVELOPER
-        }
-        if actual != DEVELOPER:
-            errors.append(f"{module} POM: developer metadata mismatch")
-    scm = one_child(root, "scm", f"{module} POM", errors)
-    if scm is not None:
-        actual = {
-            name: one_text(scm, name, f"{module} POM SCM", errors)
-            for name in ("connection", "developerConnection", "url")
-        }
-        tags = children(scm, "tag")
-        tag = "HEAD" if not tags else (tags[0].text or "").strip()
-        if len(tags) > 1 or actual != {
-            "connection": SCM,
-            "developerConnection": SCM_DEVELOPER,
-            "url": PROJECT_URL,
-        } or tag != "HEAD":
-            errors.append(f"{module} POM: SCM metadata mismatch")
-    issues = one_child(root, "issueManagement", f"{module} POM", errors)
-    if issues is not None:
-        actual = {
-            name: one_text(issues, name, f"{module} POM issues", errors)
-            for name in ("system", "url")
-        }
-        if actual != {"system": "GitHub Issues", "url": ISSUES_URL}:
-            errors.append(f"{module} POM: issue-management metadata mismatch")
-    properties = one_child(root, "properties", f"{module} POM", errors)
-    if properties is not None:
-        actual = {local_name(child.tag): (child.text or "").strip() for child in properties}
-        if actual != PROPERTIES:
-            errors.append(f"{module} POM: properties mismatch: {actual}")
-    dependency_root = one_child(root, "dependencies", f"{module} POM", errors)
-    actual_dependencies: list[tuple[str, str, str, str]] = []
-    if dependency_root is not None:
-        for dependency in children(dependency_root, "dependency"):
-            actual_dependencies.append(tuple(
-                one_text(dependency, name, f"{module} POM dependency", errors) or ""
-                for name in ("groupId", "artifactId", "version", "scope")
-            ))
-    if len(actual_dependencies) != len(set(actual_dependencies)):
-        errors.append(f"{module} POM: duplicate dependencies")
-    if set(actual_dependencies) != pom_dependencies(module):
-        errors.append(
-            f"{module} POM: dependencies {sorted(actual_dependencies)} do not match "
-            f"{sorted(pom_dependencies(module))}"
-        )
-    return errors
-
-
-def module_dependencies(module: str, runtime: bool) -> set[tuple[str, str, str]]:
-    pom = pom_dependencies(module)
-    if runtime:
-        selected = pom
-    else:
-        selected = {item for item in pom if item[3] == "compile"}
     return {
-        (group, artifact.removesuffix("-jvm") if artifact == "kotlinx-coroutines-core-jvm" else artifact, version)
-        for group, artifact, version, _scope in selected
+        "apiElements": ("main", api),
+        "runtimeElements": ("main", runtime),
+        "sourcesElements": ("sources", set()),
+        "javadocElements": ("javadoc", set()),
     }
 
 
-def mapping(value: Any, label: str, errors: list[str]) -> dict[str, Any] | None:
-    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
-        errors.append(f"{label}: expected JSON object with string keys")
-        return None
+def xml_children(parent: ET.Element, name: str) -> list[ET.Element]:
+    return [child for child in parent if child.tag.rsplit("}", 1)[-1] == name]
+
+
+def xml_one(parent: ET.Element, name: str, label: str) -> ET.Element:
+    found = xml_children(parent, name)
+    require(len(found) == 1, f"{label} must contain exactly one {name}")
+    return found[0]
+
+
+def xml_text(parent: ET.Element, name: str, label: str) -> str:
+    value = (xml_one(parent, name, label).text or "").strip()
+    require(bool(value), f"{label} {name} must not be empty")
     return value
 
 
-def module_metadata_errors(module: str, path: Path, resolved: ResolvedModule) -> list[str]:
-    errors: list[str] = []
+def verify_pom(data: bytes, module: str, version: str) -> None:
     try:
-        model = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
-        return [f"{module} module metadata: malformed JSON: {error}"]
-    root = mapping(model, f"{module} module metadata", errors)
-    if root is None:
-        return errors
-    module_labels = {"main", "sources"} if MODULES[module].android else {"main", "sources", "javadoc"}
-    if module_labels <= set(resolved.files):
-        try:
-            expected_model = module_fixture(
-                module,
-                {label: staged.name for label, staged in resolved.files.items()},
-                {label: staged.read_bytes() for label, staged in resolved.files.items()},
-            )
-        except OSError as error:
-            return errors + [f"{module} module metadata: staged files cannot be read: {error}"]
-        if canonical_module_model(root) != canonical_module_model(expected_model):
-            errors.append(f"{module} module metadata: exact Gradle metadata semantics mismatch")
-    if root.get("formatVersion") != "1.1":
-        errors.append(f"{module} module metadata: formatVersion must be 1.1")
-    component = mapping(root.get("component"), f"{module} module component", errors)
-    if component is not None:
-        actual = {name: component.get(name) for name in ("group", "module", "version")}
-        if actual != {"group": GROUP, "module": module, "version": VERSION}:
-            errors.append(f"{module} module metadata: wrong component {actual}")
-        if component.get("attributes") != {"org.gradle.status": "release" if not VERSION.endswith("-SNAPSHOT") else "integration"}:
-            errors.append(f"{module} module metadata: wrong component status")
-    created = mapping(root.get("createdBy"), f"{module} module createdBy", errors)
-    gradle = mapping(created.get("gradle"), f"{module} module Gradle creator", errors) if created else None
-    if gradle is not None and gradle != {"version": GRADLE_VERSION}:
-        errors.append(f"{module} module metadata: creator must be Gradle {GRADLE_VERSION}")
-    variants = root.get("variants")
-    if not isinstance(variants, list):
-        return errors + [f"{module} module metadata: variants must be an array"]
-    by_name: dict[str, dict[str, Any]] = {}
-    for index, value in enumerate(variants):
-        variant = mapping(value, f"{module} module variant {index}", errors)
-        if variant is None:
-            continue
-        name = variant.get("name")
-        if not isinstance(name, str) or name in by_name:
-            errors.append(f"{module} module metadata: missing or duplicate variant name {name!r}")
-            continue
-        by_name[name] = variant
-    if MODULES[module].android:
-        api_name = "releaseVariantReleaseApiPublication"
-        runtime_name = "releaseVariantReleaseRuntimePublication"
-        sources_name = "releaseVariantReleaseSourcePublication"
-        expected_names = {api_name, runtime_name, sources_name}
-    else:
-        api_name = "apiElements"
-        runtime_name = "runtimeElements"
-        sources_name = "sourcesElements"
-        expected_names = {api_name, runtime_name, sources_name, "javadocElements"}
-    if set(by_name) != expected_names:
-        errors.append(f"{module} module metadata: variants {sorted(by_name)} do not match {sorted(expected_names)}")
-    for name in expected_names & set(by_name):
-        variant = by_name[name]
-        attributes = mapping(variant.get("attributes"), f"{module} variant {name} attributes", errors)
-        if attributes is None:
-            continue
-        documentation = name in {sources_name, "javadocElements"}
-        if documentation:
-            expected_type = "sources" if name == sources_name else "javadoc"
-            if attributes.get("org.gradle.category") != "documentation" or attributes.get("org.gradle.docstype") != expected_type:
-                errors.append(f"{module} variant {name}: documentation attributes mismatch")
-            expected_label = expected_type
-            expected_dependencies: set[tuple[str, str, str]] = set()
+        root = ET.fromstring(data)
+    except ET.ParseError as error:
+        raise VerificationError(f"{module} POM is malformed") from error
+    label = f"{module} POM"
+    expected = {
+        "modelVersion": "4.0.0",
+        "groupId": GROUP,
+        "artifactId": module,
+        "version": version,
+        "name": module,
+        "url": PROJECT_URL,
+    }
+    for name, value in expected.items():
+        require(xml_text(root, name, label) == value, f"{label} has the wrong {name}")
+    require(bool(xml_text(root, "description", label)), f"{label} description is missing")
+    license_node = xml_one(xml_one(root, "licenses", label), "license", label)
+    require(
+        tuple(xml_text(license_node, name, label) for name in ("name", "url", "distribution")) ==
+        ("GNU General Public License v3.0", "https://www.gnu.org/licenses/gpl-3.0.html", "repo"),
+        f"{label} GPLv3 metadata differs",
+    )
+    developer = xml_one(xml_one(root, "developers", label), "developer", label)
+    require(
+        tuple(xml_text(developer, name, label) for name in ("id", "name", "url")) ==
+        ("bernhardberger", "Bernhard Berger", "https://github.com/bernhardberger"),
+        f"{label} developer metadata differs",
+    )
+    scm = xml_one(root, "scm", label)
+    require(
+        tuple(xml_text(scm, name, label) for name in ("connection", "developerConnection", "url")) ==
+        ("scm:git:https://github.com/bernhardberger/tvheadend-sdk.git", "scm:git:ssh://git@github.com/bernhardberger/tvheadend-sdk.git", PROJECT_URL),
+        f"{label} SCM metadata differs",
+    )
+    issues = xml_one(root, "issueManagement", label)
+    require(
+        (xml_text(issues, "system", label), xml_text(issues, "url", label)) ==
+        ("GitHub Issues", f"{PROJECT_URL}/issues"),
+        f"{label} issue metadata differs",
+    )
+    dependencies = xml_children(xml_one(root, "dependencies", label), "dependency")
+    coordinates: list[tuple[str, str, str, str]] = []
+    for dependency in dependencies:
+        require(
+            {child.tag.rsplit("}", 1)[-1] for child in dependency} == {"groupId", "artifactId", "version", "scope"},
+            f"{label} dependency contains unsupported metadata",
+        )
+        coordinates.append(tuple(xml_text(dependency, name, label) for name in ("groupId", "artifactId", "version", "scope")))
+    require(len(coordinates) == len(set(coordinates)), f"{label} contains duplicate dependencies")
+    require(set(coordinates) == pom_dependencies(module, version), f"{label} dependencies differ")
+
+
+def verify_module_metadata(data: bytes, module: str, version: str, artifacts: dict[str, bytes]) -> None:
+    try:
+        model = json.loads(data.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise VerificationError(f"{module} Gradle metadata is malformed") from error
+    require(isinstance(model, dict), f"{module} Gradle metadata must be an object")
+    require(model.get("formatVersion") == "1.1", f"{module} Gradle metadata format is not 1.1")
+    component = model.get("component")
+    require(isinstance(component, dict), f"{module} Gradle metadata component is missing")
+    require(
+        {name: component.get(name) for name in ("group", "module", "version")} ==
+        {"group": GROUP, "module": module, "version": version},
+        f"{module} Gradle metadata has the wrong component identity",
+    )
+    require(component.get("attributes") == {"org.gradle.status": "release"}, f"{module} Gradle metadata has the wrong status")
+    names = artifact_names(module, version)
+    by_name = {names[label]: data for label, data in artifacts.items() if label in names}
+    variants = model.get("variants")
+    require(isinstance(variants, list) and all(isinstance(value, dict) for value in variants), f"{module} Gradle metadata variants are malformed")
+    require(all(isinstance(value.get("name"), str) for value in variants), f"{module} Gradle metadata has an unnamed variant")
+    by_variant = {value["name"]: value for value in variants}
+    specs = module_variants(module, version)
+    require(len(by_variant) == len(variants) and set(by_variant) == set(specs), f"{module} Gradle metadata variants differ")
+    for variant_name, (label, expected_dependencies) in specs.items():
+        variant = by_variant[variant_name]
+        attributes = variant.get("attributes")
+        require(isinstance(attributes, dict), f"{module} {variant_name} attributes are malformed")
+        if label in {"sources", "javadoc"}:
+            require(attributes.get("org.gradle.category") == "documentation" and attributes.get("org.gradle.docstype") == label, f"{module} {variant_name} documentation attributes differ")
         else:
-            if attributes.get("org.gradle.category") != "library" or attributes.get("org.gradle.libraryelements") != MODULES[module].main_extension:
-                errors.append(f"{module} variant {name}: library attributes mismatch")
-            if not MODULES[module].android and attributes.get("org.gradle.jvm.version") != JVM_VERSION:
-                errors.append(f"{module} variant {name}: must advertise JVM {JVM_VERSION}")
-            expected_label = "main"
-            expected_dependencies = module_dependencies(module, name == runtime_name)
+            require(attributes.get("org.gradle.category") == "library" and attributes.get("org.gradle.libraryelements") == MODULES[module].main_extension, f"{module} {variant_name} library attributes differ")
+            require(MODULES[module].android or attributes.get("org.gradle.jvm.version") == 17, f"{module} {variant_name} JVM target differs")
         dependencies = variant.get("dependencies", [])
-        actual_dependencies: set[tuple[str, str, str]] = set()
-        if not isinstance(dependencies, list):
-            errors.append(f"{module} variant {name}: dependencies must be an array")
-        else:
-            for dependency in dependencies:
-                item = mapping(dependency, f"{module} variant {name} dependency", errors)
-                version = mapping(item.get("version"), f"{module} variant {name} dependency version", errors) if item else None
-                if item is not None and version is not None:
-                    if set(version) != {"requires"}:
-                        errors.append(f"{module} variant {name}: dependency version must use only requires")
-                    actual_dependencies.add((str(item.get("group")), str(item.get("module")), str(version.get("requires"))))
-        if actual_dependencies != expected_dependencies:
-            errors.append(
-                f"{module} variant {name}: dependencies {sorted(actual_dependencies)} do not match "
-                f"{sorted(expected_dependencies)}"
-            )
+        require(isinstance(dependencies, list), f"{module} {variant_name} dependencies are malformed")
+        actual_dependencies: list[tuple[str, str, str]] = []
+        for dependency in dependencies:
+            require(isinstance(dependency, dict) and set(dependency) == {"group", "module", "version"}, f"{module} {variant_name} dependency shape differs")
+            dependency_version = dependency.get("version")
+            require(isinstance(dependency_version, dict) and set(dependency_version) == {"requires"}, f"{module} {variant_name} dependency version differs")
+            coordinate = (dependency.get("group"), dependency.get("module"), dependency_version.get("requires"))
+            require(all(isinstance(value, str) for value in coordinate), f"{module} {variant_name} dependency coordinate is malformed")
+            actual_dependencies.append(coordinate)
+        require(len(actual_dependencies) == len(set(actual_dependencies)) and set(actual_dependencies) == expected_dependencies, f"{module} {variant_name} dependencies differ")
         files = variant.get("files")
-        expected_file = resolved.files.get(expected_label)
-        if not isinstance(files, list) or len(files) != 1 or not isinstance(files[0], dict) or expected_file is None:
-            errors.append(f"{module} variant {name}: expected exactly one staged file")
-            continue
-        file_model = files[0]
-        data = expected_file.read_bytes()
-        expected_hashes = {
-            "size": len(data),
-            "sha512": digest_bytes("sha512", data),
-            "sha256": digest_bytes("sha256", data),
-            "sha1": digest_bytes("sha1", data),
-            "md5": digest_bytes("md5", data),
-        }
-        if file_model.get("name") != expected_file.name or file_model.get("url") != expected_file.name:
-            errors.append(f"{module} variant {name}: file name or URL differs from staged artifact")
-        if {key: file_model.get(key) for key in expected_hashes} != expected_hashes:
-            errors.append(f"{module} variant {name}: file size or digest metadata mismatch")
-    return errors
+        require(isinstance(files, list) and len(files) == 1 and isinstance(files[0], dict), f"{module} {variant_name} file metadata differs")
+        entry = files[0]
+        name = names[label]
+        current = by_name[name]
+        require(entry.get("name") == name and entry.get("url") == name and entry.get("size") == len(current) and entry.get("sha256") == sha256(current), f"{module} {variant_name} file identity differs")
 
 
-def safe_archive_entries(entries: list[zipfile.ZipInfo], label: str) -> list[str]:
-    errors: list[str] = []
+def safe_zip(archive: zipfile.ZipFile, label: str) -> list[str]:
+    entries = archive.infolist()
     names = [entry.filename for entry in entries]
-    if len(names) != len(set(names)):
-        errors.append(f"{label}: archive contains duplicate entries")
+    require(len(names) == len(set(names)), f"{label} contains duplicate entries")
     for entry in entries:
         name = entry.filename
-        parts = Path(name).parts
         unix_type = stat.S_IFMT(entry.external_attr >> 16)
-        unsafe_type = (
-            unix_type not in {0, stat.S_IFDIR}
-            if entry.is_dir()
-            else unix_type not in {0, stat.S_IFREG}
+        require(
+            not name.startswith("/") and ".." not in Path(name).parts and "\\" not in name and re.match(r"^[A-Za-z]:", name) is None and
+            (entry.create_system != 3 or unix_type in {0, stat.S_IFREG, stat.S_IFDIR}),
+            f"{label} contains an unsafe archive entry",
         )
-        if (
-            name.startswith("/")
-            or re.match(r"^[A-Za-z]:", name) is not None
-            or ".." in parts
-            or "\\" in name
-            or unsafe_type
-        ):
-            errors.append(f"{label}: archive contains unsafe path {name!r}")
-    return errors
+    return names
 
 
-def class_errors(data: bytes, name: str, module: str) -> list[str]:
-    if len(data) < 8 or data[:4] != b"\xca\xfe\xba\xbe":
-        return [f"{module} main: malformed class header: {name}"]
-    major = struct.unpack(">H", data[6:8])[0]
-    errors = [] if major == CLASS_MAJOR else [f"{module} main: {name} is class major {major}, expected {CLASS_MAJOR}"]
-    if not name.startswith("at/bernhardberger/tvheadend/sdk/"):
-        errors.append(f"{module} main: class lies outside the SDK package root: {name}")
-    return errors
+def verify_legal(archive: zipfile.ZipFile, names: list[str], label: str) -> None:
+    for name in LEGAL_ENTRIES:
+        require(names.count(name) == 1, f"{label} must contain exactly one {name}")
+    require("META-INF/NOTICE.md" not in names, f"{label} contains the nonstandard NOTICE.md entry")
+    require(b"GNU GENERAL PUBLIC LICENSE" in archive.read("META-INF/LICENSE"), f"{label} lacks GPLv3 evidence")
+    require(b"Preclikos/tvhstream" in archive.read("META-INF/NOTICE"), f"{label} lacks predecessor attribution")
 
 
-def legal_errors(archive: zipfile.ZipFile, names: list[str], label: str) -> list[str]:
-    errors: list[str] = []
-    for required in ("META-INF/LICENSE", "META-INF/NOTICE"):
-        if names.count(required) != 1:
-            errors.append(f"{label}: archive must contain exactly one {required}")
-    if names.count("META-INF/LICENSE") == 1:
-        if "GNU GENERAL PUBLIC LICENSE" not in archive.read("META-INF/LICENSE").decode("utf-8", "replace"):
-            errors.append(f"{label}: archived LICENSE lacks GPLv3 evidence")
-    if names.count("META-INF/NOTICE") == 1:
-        if "Preclikos/tvhstream" not in archive.read("META-INF/NOTICE").decode("utf-8", "replace"):
-            errors.append(f"{label}: archived NOTICE lacks predecessor evidence")
-    return errors
-
-
-def jar_errors(module: str, kind: str, path: Path) -> list[str]:
-    label = f"{module} {kind}"
-    errors: list[str] = []
+def verify_jar(data: bytes, kind: str, label: str) -> None:
     try:
-        with zipfile.ZipFile(path) as archive:
-            names = archive.namelist()
-            errors.extend(safe_archive_entries(archive.infolist(), label))
-            errors.extend(legal_errors(archive, names, label))
-            classes = [name for name in names if name.endswith(".class")]
-            sources = [name for name in names if name.endswith(".kt")]
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            names = safe_zip(archive, label)
+            verify_legal(archive, names, label)
             if kind == "main":
-                if not classes:
-                    errors.append(f"{label}: archive contains no JVM classes")
-                for name in classes:
-                    errors.extend(class_errors(archive.read(name), name, module))
-            elif classes:
-                errors.append(f"{label}: documentation/source archive contains class files")
-            if kind == "sources" and not sources:
-                errors.append(f"{label}: archive contains no Kotlin sources")
-            if kind == "javadoc":
-                if sources:
-                    errors.append(f"{label}: documentation archive contains Kotlin sources")
-                if names.count("index.html") != 1:
-                    errors.append(f"{label}: Dokka index.html is missing")
-    except (OSError, zipfile.BadZipFile) as error:
-        errors.append(f"{label}: malformed ZIP/JAR: {error}")
-    return errors
+                require(any(name.endswith(".class") for name in names), f"{label} contains no classes")
+            elif kind == "sources":
+                require(any(name.endswith(".kt") for name in names), f"{label} contains no Kotlin sources")
+            elif kind == "javadoc":
+                require(names.count("index.html") == 1, f"{label} lacks Dokka index.html")
+    except zipfile.BadZipFile as error:
+        raise VerificationError(f"{label} is not a valid ZIP archive") from error
 
 
-def aar_errors(module: str, path: Path) -> list[str]:
-    label = f"{module} main"
-    errors: list[str] = []
-    expected_native = (
-        {
-            "jni/arm64-v8a/libffmpegJNI.so",
-            "jni/armeabi-v7a/libffmpegJNI.so",
-            "jni/x86/libffmpegJNI.so",
-            "jni/x86_64/libffmpegJNI.so",
-        }
-        if module == "sdk-media3"
-        else set()
-    )
-    expected_libraries = {FFMPEG_LIBRARY} if module == "sdk-media3" else set()
+def verify_ffmpeg_jar(data: bytes, label: str) -> None:
     try:
-        with zipfile.ZipFile(path) as archive:
-            names = archive.namelist()
-            errors.extend(safe_archive_entries(archive.infolist(), label))
-            native = {name for name in names if name.endswith(".so")}
-            if native != expected_native:
-                errors.append(f"{label}: native inventory {sorted(native)} does not match {sorted(expected_native)}")
-            libraries = {name for name in names if name.startswith("libs/") and name.endswith(".jar")}
-            if libraries != expected_libraries:
-                errors.append(
-                    f"{label}: embedded library inventory {sorted(libraries)} "
-                    f"does not match {sorted(expected_libraries)}"
-                )
-            if FFMPEG_LIBRARY in libraries:
-                try:
-                    with zipfile.ZipFile(io.BytesIO(archive.read(FFMPEG_LIBRARY))) as ffmpeg:
-                        errors.extend(safe_archive_entries(ffmpeg.infolist(), f"{label} FFmpeg JAR"))
-                        classes = {name for name in ffmpeg.namelist() if name.endswith(".class")}
-                        if classes != FFMPEG_CLASSES:
-                            errors.append(
-                                f"{label}: embedded FFmpeg class inventory {sorted(classes)} "
-                                f"does not match {sorted(FFMPEG_CLASSES)}"
-                            )
-                        for name in classes:
-                            data = ffmpeg.read(name)
-                            if len(data) < 8 or data[:4] != b"\xca\xfe\xba\xbe":
-                                errors.append(f"{label}: malformed embedded FFmpeg class: {name}")
-                                continue
-                            major = struct.unpack(">H", data[6:8])[0]
-                            if major != FFMPEG_CLASS_MAJOR:
-                                errors.append(
-                                    f"{label}: embedded FFmpeg class {name} is class major {major}, "
-                                    f"expected {FFMPEG_CLASS_MAJOR}"
-                                )
-                except (OSError, zipfile.BadZipFile) as error:
-                    errors.append(f"{label}: malformed embedded FFmpeg JAR: {error}")
-            if names.count("classes.jar") != 1:
-                errors.append(f"{label}: AAR must contain exactly one classes.jar")
-            else:
-                with zipfile.ZipFile(io.BytesIO(archive.read("classes.jar"))) as classes_jar:
-                    class_names = classes_jar.namelist()
-                    errors.extend(safe_archive_entries(classes_jar.infolist(), f"{label} classes.jar"))
-                    errors.extend(legal_errors(classes_jar, class_names, f"{label} classes.jar"))
-                    classes = [name for name in class_names if name.endswith(".class")]
-                    if not classes:
-                        errors.append(f"{label}: classes.jar contains no JVM classes")
-                    for name in classes:
-                        errors.extend(class_errors(classes_jar.read(name), name, module))
-    except (OSError, zipfile.BadZipFile) as error:
-        errors.append(f"{label}: malformed AAR: {error}")
-    return errors
+        with zipfile.ZipFile(io.BytesIO(data)) as archive, zipfile.ZipFile(FFMPEG_JAR) as approved:
+            names = safe_zip(archive, f"{label} embedded FFmpeg JAR")
+            require({name for name in names if not name.endswith("/")} == FFMPEG_CLASSES, f"{label} embeds an unexpected FFmpeg payload")
+            classes = {name: archive.read(name) for name in names if name.endswith(".class")}
+            expected = {name: approved.read(name) for name in FFMPEG_CLASSES}
+            require(set(classes) == FFMPEG_CLASSES and classes == expected, f"{label} embeds different FFmpeg classes")
+            require(all(len(value) >= 8 and value[:4] == b"\xca\xfe\xba\xbe" and int.from_bytes(value[6:8], "big") == 52 for value in classes.values()), f"{label} embeds a non-Java-8 FFmpeg class")
+    except (KeyError, zipfile.BadZipFile) as error:
+        raise VerificationError(f"{label} has a malformed FFmpeg JAR") from error
 
 
-def verify(
-    repository: Path = REPOSITORY,
-    *,
-    enforce_path: bool = True,
-    ffmpeg_source: Path | None = None,
-) -> tuple[list[str], dict[str, str]]:
-    errors = topology_errors(repository) if enforce_path else []
-    if not enforce_path:
-        if VERSION not in ALLOWED_VERSIONS:
-            errors.append(f"publication version must be exactly one of {sorted(ALLOWED_VERSIONS)}: {VERSION!r}")
-        reject_symlinks(repository, errors)
-    resolved_modules: dict[str, ResolvedModule] = {}
+def verify_ffmpeg_source(data: bytes) -> None:
+    require(data == read_regular(FFMPEG_SOURCE, "approved FFmpeg source archive"), "sdk-media3 staged FFmpeg source bytes differ")
+
+
+def verify_aar(data: bytes, module: str) -> None:
+    label = f"{module} AAR"
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            names = safe_zip(archive, label)
+            require(names.count("classes.jar") == 1, f"{label} must contain exactly one classes.jar")
+            verify_jar(archive.read("classes.jar"), "main", f"{label} classes.jar")
+            if module != "sdk-media3":
+                return
+            embedded = "libs/media3-decoder-ffmpeg-1.11.0.jar"
+            require(names.count(embedded) == 1, f"{label} lacks the exact embedded FFmpeg JAR")
+            verify_ffmpeg_jar(archive.read(embedded), label)
+            natives = {name for name in names if name.endswith(".so")}
+            require(natives == FFMPEG_NATIVES, f"{label} has the wrong FFmpeg native inventory")
+            for name in sorted(FFMPEG_NATIVES):
+                local = ROOT / "sdk-media3/src/main/jniLibs" / Path(name).relative_to("jni")
+                require(archive.read(name) == read_regular(local, f"approved {Path(name).name}"), f"{label} embeds different FFmpeg native bytes")
+    except zipfile.BadZipFile as error:
+        raise VerificationError(f"{label} is not a valid ZIP archive") from error
+
+
+def verify(repository: Path = REPOSITORY) -> dict[str, str]:
+    version = configured_version()
+    require(repository.is_dir() and not repository.is_symlink(), "staged Maven repository is missing or unsafe")
+    expected = expected_originals(version)
+    group_directory = repository.joinpath(*GROUP.split("."))
+    try:
+        modules = {entry.name for entry in group_directory.iterdir() if entry.is_dir() and not entry.is_symlink()}
+    except OSError as error:
+        raise VerificationError("staged Maven group cannot be inspected") from error
+    require(modules == set(MODULES), "staged Maven repository does not contain exactly the five SDK modules")
+    manifest: dict[str, str] = {}
     for module in sorted(MODULES):
-        resolved = resolve_module(repository, module, errors)
-        if resolved is None:
-            continue
-        resolved_modules[module] = resolved
-        errors.extend(checksum_errors(module, resolved))
-        if "pom" in resolved.files:
-            errors.extend(pom_errors(module, resolved.files["pom"]))
-        if "module" in resolved.files:
-            errors.extend(module_metadata_errors(module, resolved.files["module"], resolved))
-        if "main" in resolved.files:
-            if MODULES[module].android:
-                errors.extend(aar_errors(module, resolved.files["main"]))
-            else:
-                errors.extend(jar_errors(module, "main", resolved.files["main"]))
-        for label in ("sources", "javadoc"):
-            if label in resolved.files:
-                errors.extend(jar_errors(module, label, resolved.files[label]))
-    originals = {
-        str(path.relative_to(repository)): sha256(path)
-        for resolved in resolved_modules.values()
-        for path in resolved.files.values()
-    }
-    if len(originals) != 26:
-        errors.append(f"publication contains {len(originals)} originals, expected 26")
-    media3 = resolved_modules.get("sdk-media3")
-    if media3 is not None and "ffmpeg-sources" in media3.files:
-        source = ffmpeg_source or ROOT / "third_party/ffmpeg/ffmpeg-6.0-3f92512f-sources.tar.xz"
+        names = artifact_names(module, version)
+        directory = group_directory / module / version
         try:
-            staged = media3.files["ffmpeg-sources"]
-            if sha256(staged) != FFMPEG_SHA256 or staged.read_bytes() != source.read_bytes():
-                errors.append("sdk-media3 ffmpeg-sources: staged bytes differ from the approved GPL source archive")
+            entries = list(directory.iterdir())
         except OSError as error:
-            errors.append(f"sdk-media3 ffmpeg-sources: source comparison failed: {error}")
-    return sorted(set(errors)), dict(sorted(originals.items()))
-
-
-def pom_fixture(module: str) -> str:
-    spec = MODULES[module]
-    packaging = "<packaging>aar</packaging>" if spec.android else ""
-    dependencies = "".join(
-        f"<dependency><groupId>{group}</groupId><artifactId>{artifact}</artifactId>"
-        f"<version>{version}</version><scope>{scope}</scope></dependency>"
-        for group, artifact, version, scope in sorted(pom_dependencies(module))
-    )
-    return (
-        '<project xmlns="http://maven.apache.org/POM/4.0.0" '
-        'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
-        'xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 '
-        'https://maven.apache.org/xsd/maven-4.0.0.xsd">'
-        f"<modelVersion>4.0.0</modelVersion><groupId>{GROUP}</groupId>"
-        f"<artifactId>{module}</artifactId><version>{VERSION}</version>{packaging}"
-        f"<name>{module}</name><description>{spec.description}</description><url>{PROJECT_URL}</url>"
-        f"<licenses><license><name>{GPL_NAME}</name><url>{GPL_URL}</url><distribution>repo</distribution></license></licenses>"
-        f"<developers><developer><id>{DEVELOPER['id']}</id><name>{DEVELOPER['name']}</name>"
-        f"<url>{DEVELOPER['url']}</url></developer></developers>"
-        f"<scm><connection>{SCM}</connection><developerConnection>{SCM_DEVELOPER}</developerConnection>"
-        f"<url>{PROJECT_URL}</url></scm><issueManagement><system>GitHub Issues</system><url>{ISSUES_URL}</url>"
-        f"</issueManagement><properties><tvheadend.sdk.notice.path>NOTICE.md</tvheadend.sdk.notice.path></properties>"
-        f"<dependencies>{dependencies}</dependencies></project>"
-    )
-
-
-def zip_bytes(entries: dict[str, bytes]) -> bytes:
-    output = io.BytesIO()
-    with zipfile.ZipFile(output, "w") as archive:
-        for name, data in entries.items():
-            archive.writestr(name, data)
-    return output.getvalue()
-
-
-def class_bytes(major: int = CLASS_MAJOR) -> bytes:
-    return b"\xca\xfe\xba\xbe\x00\x00" + struct.pack(">H", major)
-
-
-def archive_fixture(module: str, kind: str, wrong_major: bool = False) -> bytes:
-    legal = {
-        "META-INF/LICENSE": b"GNU GENERAL PUBLIC LICENSE Version 3",
-        "META-INF/NOTICE": b"Derived from Preclikos/tvhstream",
-    }
-    if kind == "sources":
-        return zip_bytes({**legal, f"at/bernhardberger/tvheadend/sdk/{module}/Synthetic.kt": b"package synthetic"})
-    if kind == "javadoc":
-        return zip_bytes({**legal, "index.html": b"documentation"})
-    class_entry = {f"at/bernhardberger/tvheadend/sdk/{module}/Synthetic.class": class_bytes(60 if wrong_major else CLASS_MAJOR)}
-    if MODULES[module].android:
-        entries = {"classes.jar": zip_bytes({**legal, **class_entry})}
-        if module == "sdk-media3":
-            entries.update({
-                FFMPEG_LIBRARY: zip_bytes({
-                    name: class_bytes(FFMPEG_CLASS_MAJOR)
-                    for name in sorted(FFMPEG_CLASSES)
-                }),
-                "jni/arm64-v8a/libffmpegJNI.so": b"a",
-                "jni/armeabi-v7a/libffmpegJNI.so": b"b",
-                "jni/x86/libffmpegJNI.so": b"c",
-                "jni/x86_64/libffmpegJNI.so": b"d",
-            })
-        return zip_bytes(entries)
-    return zip_bytes({**legal, **class_entry})
-
-
-def module_fixture(module: str, resolved_names: dict[str, str], files: dict[str, bytes]) -> dict[str, Any]:
-    spec = MODULES[module]
-    if spec.android:
-        variants = (
-            ("releaseVariantReleaseApiPublication", "main", False),
-            ("releaseVariantReleaseRuntimePublication", "main", True),
-            ("releaseVariantReleaseSourcePublication", "sources", False),
-        )
-    else:
-        variants = (
-            ("apiElements", "main", False),
-            ("runtimeElements", "main", True),
-            ("sourcesElements", "sources", False),
-            ("javadocElements", "javadoc", False),
-        )
-    models: list[dict[str, Any]] = []
-    for name, label, runtime in variants:
-        documentation = label in {"sources", "javadoc"}
-        attributes: dict[str, Any] = {
-            "org.gradle.category": "documentation" if documentation else "library",
-            "org.gradle.dependency.bundling": "external",
-            "org.gradle.usage": "java-runtime" if documentation or runtime else "java-api",
-        }
-        if documentation:
-            attributes["org.gradle.docstype"] = label
+            raise VerificationError(f"{module} staged directory cannot be inspected") from error
+        actual = {entry.name for entry in entries if entry.is_file() and not entry.is_symlink()}
+        allowed = set(names.values()) | {name + suffix for name in names.values() for suffix in CHECKSUM_SUFFIXES}
+        require(set(names.values()) <= actual, f"{module} staged publication omits a required original")
+        require(actual <= allowed and all(entry.is_file() and not entry.is_symlink() for entry in entries), f"{module} staged publication contains an unexpected entry")
+        artifacts = {label: read_regular(directory / name, f"{module} {label}") for label, name in names.items()}
+        verify_pom(artifacts["pom"], module, version)
+        verify_module_metadata(artifacts["module"], module, version, artifacts)
+        if MODULES[module].android:
+            verify_aar(artifacts["main"], module)
         else:
-            attributes["org.gradle.libraryelements"] = spec.main_extension
-            if not spec.android:
-                attributes["org.gradle.jvm.environment"] = "standard-jvm"
-                attributes["org.gradle.jvm.version"] = JVM_VERSION
-                attributes["org.jetbrains.kotlin.platform.type"] = "jvm"
-        name_value = resolved_names[label]
-        data = files[label]
-        model: dict[str, Any] = {
-            "name": name,
-            "attributes": attributes,
-            "files": [{
-                "name": name_value,
-                "url": name_value,
-                "size": len(data),
-                "sha512": digest_bytes("sha512", data),
-                "sha256": digest_bytes("sha256", data),
-                "sha1": digest_bytes("sha1", data),
-                "md5": digest_bytes("md5", data),
-            }],
-        }
-        dependencies = module_dependencies(module, runtime) if not documentation else set()
-        if dependencies:
-            model["dependencies"] = [
-                {"group": group, "module": artifact, "version": {"requires": version}}
-                for group, artifact, version in sorted(dependencies)
-            ]
-        models.append(model)
-    return {
-        "formatVersion": "1.1",
-        "component": {
-            "group": GROUP,
-            "module": module,
-            "version": VERSION,
-            "attributes": {"org.gradle.status": "release"},
-        },
-        "createdBy": {"gradle": {"version": GRADLE_VERSION}},
-        "variants": models,
-    }
-
-
-def create_fixture(root: Path, wrong_major_module: str | None = None) -> tuple[Path, Path]:
-    root.mkdir(parents=True, exist_ok=True)
-    repository = root / "build/local-maven"
-    group_dir = repository.joinpath(*GROUP.split("."))
-    source = root / "ffmpeg-sources.tar.xz"
-    source.write_bytes(b"synthetic-ffmpeg-source")
-    global FFMPEG_SHA256
-    FFMPEG_SHA256 = sha256(source)
-    for module in MODULES:
-        module_dir = group_dir / module
-        version_dir = module_dir / VERSION
-        version_dir.mkdir(parents=True)
-        metadata = (
-            f"<metadata><groupId>{GROUP}</groupId><artifactId>{module}</artifactId><versioning>"
-            f"<latest>{VERSION}</latest><release>{VERSION}</release><versions><version>{VERSION}</version>"
-            f"</versions><lastUpdated>20260826120000</lastUpdated></versioning></metadata>"
-        ).encode()
-        (module_dir / "maven-metadata.xml").write_bytes(metadata)
-        for suffix in CHECKSUM_SUFFIXES:
-            (module_dir / ("maven-metadata.xml" + suffix)).write_bytes(b"fixture")
-        names = {kind.label: expected_name(module, VERSION, kind) for kind in kinds(module)}
-        file_bytes: dict[str, bytes] = {
-            "main": archive_fixture(module, "main", wrong_major_module == module),
-            "sources": archive_fixture(module, "sources"),
-            "javadoc": archive_fixture(module, "javadoc"),
-            "pom": pom_fixture(module).encode(),
-        }
-        if MODULES[module].ffmpeg_sources:
-            file_bytes["ffmpeg-sources"] = source.read_bytes()
-        module_model = module_fixture(module, names, file_bytes)
-        file_bytes["module"] = json.dumps(module_model, sort_keys=True).encode()
-        for label, data in file_bytes.items():
-            path = version_dir / names[label]
-            path.write_bytes(data)
-            for suffix in CHECKSUM_SUFFIXES:
-                value = (hashlib.new(suffix[1:], data).hexdigest() + "\n").encode()
-                path.with_name(path.name + suffix).write_bytes(value)
-    return repository, source
-
-
-def self_test() -> list[str]:
-    errors: list[str] = []
-    if VERSION not in ALLOWED_VERSIONS or not STRICT_RELEASE_VERSION.fullmatch(RELEASE_BASE):
-        return ["self-test requires a strict configured major-zero release or snapshot"]
-    with tempfile.TemporaryDirectory() as temporary:
-        root = Path(temporary)
-        repository, source = create_fixture(root)
-        baseline, manifest = verify(repository, enforce_path=False, ffmpeg_source=source)
-        if baseline:
-            errors.append("self-test rejected valid five-module publication: " + "; ".join(baseline))
-        if len(manifest) != 26:
-            errors.append(f"self-test manifest has {len(manifest)} originals instead of 26")
-
-        def mutate_and_check(label: str, mutate: Callable[[Path, Path], None], expected: str) -> None:
-            case = root / label.replace(" ", "-")
-            repo, fixture_source = create_fixture(case)
-            mutate(repo, fixture_source)
-            actual, _ = verify(repo, enforce_path=False, ffmpeg_source=fixture_source)
-            if not any(expected in item for item in actual):
-                errors.append(f"self-test accepted {label} without {expected!r}: {actual}")
-
-        def version_dir(repo: Path, module: str) -> Path:
-            return repo.joinpath(*GROUP.split("."), module, VERSION)
-
-        def artifact(repo: Path, module: str, label: str) -> Path:
-            kind = next(item for item in kinds(module) if item.label == label)
-            return version_dir(repo, module) / expected_name(module, VERSION, kind)
-
-        def rewrite(path: Path, data: bytes) -> None:
-            path.write_bytes(data)
-            path.with_name(path.name + ".sha256").write_text(hashlib.sha256(data).hexdigest() + "\n", encoding="ascii")
-
-        mutate_and_check(
-            "missing original",
-            lambda repo, _source: artifact(repo, "sdk-core", "main").unlink(),
-            "expected one regular artifact",
-        )
-        mutate_and_check(
-            "extra original",
-            lambda repo, _source: (version_dir(repo, "sdk-core") / "unexpected.jar").write_bytes(b"x"),
-            "version inventory mismatch",
-        )
-        mutate_and_check(
-            "wrong checksum",
-            lambda repo, _source: artifact(repo, "sdk-core", "pom").with_name(
-                artifact(repo, "sdk-core", "pom").name + ".sha256"
-            ).write_text("0" * 64 + "\n"),
-            "does not match artifact bytes",
-        )
-
-        def wrong_pom(repo: Path, _source: Path) -> None:
-            path = artifact(repo, "sdk-core", "pom")
-            rewrite(path, path.read_bytes().replace(GROUP.encode(), b"invalid.group", 1))
-        mutate_and_check("wrong POM coordinate", wrong_pom, "POM: groupId")
-
-        def optional_pom_dependency(repo: Path, _source: Path) -> None:
-            path = artifact(repo, "sdk-core", "pom")
-            rewrite(path, path.read_bytes().replace(b"</scope>", b"</scope><optional>true</optional>", 1))
-        mutate_and_check("optional POM dependency", optional_pom_dependency, "exact XML structure")
-
-        def excluded_pom_dependency(repo: Path, _source: Path) -> None:
-            path = artifact(repo, "sdk-core", "pom")
-            exclusion = b"<exclusions><exclusion><groupId>x</groupId><artifactId>y</artifactId></exclusion></exclusions>"
-            rewrite(path, path.read_bytes().replace(b"</dependency>", exclusion + b"</dependency>", 1))
-        mutate_and_check("excluded POM dependency", excluded_pom_dependency, "exact XML structure")
-
-        def unexpected_pom_element(repo: Path, _source: Path) -> None:
-            path = artifact(repo, "sdk-core", "pom")
-            rewrite(path, path.read_bytes().replace(b"</project>", b"<repositories/></project>", 1))
-        mutate_and_check("unexpected POM element", unexpected_pom_element, "exact XML structure")
-
-        def wrong_module_dependency(repo: Path, _source: Path) -> None:
-            path = artifact(repo, "sdk-core", "module")
-            model = json.loads(path.read_text())
-            model["variants"][0]["dependencies"][0]["version"]["requires"] = "9.9.9"
-            rewrite(path, json.dumps(model, sort_keys=True).encode())
-        mutate_and_check("wrong module dependency", wrong_module_dependency, "dependencies")
-
-        def wrong_module_usage(repo: Path, _source: Path) -> None:
-            path = artifact(repo, "sdk-core", "module")
-            model = json.loads(path.read_text())
-            model["variants"][0]["attributes"]["org.gradle.usage"] = "java-runtime"
-            rewrite(path, json.dumps(model, sort_keys=True).encode())
-        mutate_and_check("wrong module usage", wrong_module_usage, "exact Gradle metadata semantics")
-
-        def extra_module_dependency_field(repo: Path, _source: Path) -> None:
-            path = artifact(repo, "sdk-core", "module")
-            model = json.loads(path.read_text())
-            model["variants"][0]["dependencies"][0]["reason"] = "unexpected"
-            rewrite(path, json.dumps(model, sort_keys=True).encode())
-        mutate_and_check("extra module dependency field", extra_module_dependency_field, "exact Gradle metadata semantics")
-
-        def extra_module_file_field(repo: Path, _source: Path) -> None:
-            path = artifact(repo, "sdk-core", "module")
-            model = json.loads(path.read_text())
-            model["variants"][0]["files"][0]["unexpected"] = True
-            rewrite(path, json.dumps(model, sort_keys=True).encode())
-        mutate_and_check("extra module file field", extra_module_file_field, "exact Gradle metadata semantics")
-
-        mutate_and_check(
-            "wrong class major",
-            lambda repo, _source: rewrite(artifact(repo, "sdk-core", "main"), archive_fixture("sdk-core", "main", True)),
-            "class major 60",
-        )
-        mutate_and_check(
-            "wrong FFmpeg source",
-            lambda repo, _source: rewrite(artifact(repo, "sdk-media3", "ffmpeg-sources"), b"changed"),
-            "approved GPL source archive",
-        )
-
-        def missing_ffmpeg_library(repo: Path, _source: Path) -> None:
-            path = artifact(repo, "sdk-media3", "main")
-            output = io.BytesIO()
-            with zipfile.ZipFile(path) as source_archive, zipfile.ZipFile(output, "w") as target_archive:
-                for info in source_archive.infolist():
-                    if info.filename != FFMPEG_LIBRARY:
-                        target_archive.writestr(info, source_archive.read(info.filename))
-            rewrite(path, output.getvalue())
-        mutate_and_check("missing embedded FFmpeg JAR", missing_ffmpeg_library, "embedded library inventory")
-
-        def missing_ffmpeg_renderer(repo: Path, _source: Path) -> None:
-            path = artifact(repo, "sdk-media3", "main")
-            output = io.BytesIO()
-            renderer = "androidx/media3/decoder/ffmpeg/FfmpegAudioRenderer.class"
-            with zipfile.ZipFile(path) as source_archive, zipfile.ZipFile(output, "w") as target_archive:
-                for info in source_archive.infolist():
-                    data = source_archive.read(info.filename)
-                    if info.filename == FFMPEG_LIBRARY:
-                        data = zip_bytes({
-                            name: class_bytes(FFMPEG_CLASS_MAJOR)
-                            for name in sorted(FFMPEG_CLASSES - {renderer})
-                        })
-                    target_archive.writestr(info, data)
-            rewrite(path, output.getvalue())
-        mutate_and_check(
-            "missing embedded FFmpeg renderer",
-            missing_ffmpeg_renderer,
-            "embedded FFmpeg class inventory",
-        )
-
-        def unsafe_outer_aar(repo: Path, _source: Path) -> None:
-            path = artifact(repo, "sdk-android", "main")
-            output = io.BytesIO()
-            with zipfile.ZipFile(path) as source_archive, zipfile.ZipFile(output, "w") as target_archive:
-                for name in source_archive.namelist():
-                    target_archive.writestr(name, source_archive.read(name))
-                target_archive.writestr("../escape", b"unsafe")
-            rewrite(path, output.getvalue())
-        mutate_and_check("unsafe outer AAR path", unsafe_outer_aar, "archive contains unsafe path")
-
-        def drive_qualified_outer_aar(repo: Path, _source: Path) -> None:
-            path = artifact(repo, "sdk-android", "main")
-            output = io.BytesIO()
-            with zipfile.ZipFile(path) as source_archive, zipfile.ZipFile(output, "w") as target_archive:
-                for info in source_archive.infolist():
-                    target_archive.writestr(info, source_archive.read(info.filename))
-                target_archive.writestr("C:/escape", b"unsafe")
-            rewrite(path, output.getvalue())
-        mutate_and_check("drive-qualified outer AAR path", drive_qualified_outer_aar, "archive contains unsafe path")
-
-        def symlink_outer_aar(repo: Path, _source: Path) -> None:
-            path = artifact(repo, "sdk-android", "main")
-            output = io.BytesIO()
-            with zipfile.ZipFile(path) as source_archive, zipfile.ZipFile(output, "w") as target_archive:
-                for info in source_archive.infolist():
-                    target_archive.writestr(info, source_archive.read(info.filename))
-                link = zipfile.ZipInfo("linked-entry")
-                link.create_system = 3
-                link.external_attr = (stat.S_IFLNK | 0o777) << 16
-                target_archive.writestr(link, b"classes.jar")
-            rewrite(path, output.getvalue())
-        mutate_and_check("symlink outer AAR entry", symlink_outer_aar, "archive contains unsafe path")
-
-        def symlink_case(repo: Path, _source: Path) -> None:
-            target = version_dir(repo, "sdk-core") / "target"
-            target.write_text("x")
-            (version_dir(repo, "sdk-core") / "escape").symlink_to(target)
-        mutate_and_check("symlink escape", symlink_case, "symlink/escape")
-    try:
-        manifest_path("build/../README.md")
-    except ValueError:
-        pass
-    else:
-        errors.append("manifest path accepted parent traversal outside build/")
-    original_root = globals()["ROOT"]
-    with tempfile.TemporaryDirectory() as temporary:
-        try:
-            test_root = Path(temporary)
-            globals()["ROOT"] = test_root
-            build = test_root / "build"
-            build.mkdir()
-
-            def expect_manifest_error(label: str, argument: str) -> None:
-                try:
-                    manifest_path(argument)
-                except ValueError:
-                    return
-                errors.append(f"manifest path accepted {label}")
-
-            expect_manifest_error("an absolute escape", str(test_root.parent / "outside-manifest.json"))
-            (build / "manifest.json").symlink_to("missing.json")
-            expect_manifest_error("a dangling final symlink", "build/manifest.json")
-            (build / "target").mkdir()
-            (build / "link").symlink_to("target", target_is_directory=True)
-            expect_manifest_error("an intermediate symlink", "build/link/manifest.json")
-        finally:
-            globals()["ROOT"] = original_root
-    return errors
+            verify_jar(artifacts["main"], "main", f"{module} main JAR")
+        verify_jar(artifacts["sources"], "sources", f"{module} sources JAR")
+        verify_jar(artifacts["javadoc"], "javadoc", f"{module} Javadoc JAR")
+        if MODULES[module].ffmpeg:
+            verify_ffmpeg_source(artifacts["ffmpeg-sources"])
+        for label, name in names.items():
+            relative = f"{GROUP.replace('.', '/')}/{module}/{version}/{name}"
+            require(expected.get(relative) == (module, label), "internal staged inventory differs")
+            manifest[relative] = sha256(artifacts[label])
+    require(set(manifest) == set(expected), "staged publication does not contain the exact 26 originals")
+    return dict(sorted(manifest.items()))
 
 
 def manifest_path(argument: str) -> Path:
     path = Path(argument)
-    if ".." in path.parts:
-        raise ValueError("manifest path must not contain parent traversal")
-    if not path.is_absolute():
-        path = ROOT / path
-    try:
-        relative = path.relative_to(ROOT)
-    except ValueError as error:
-        raise ValueError("manifest path must be below checkout build/") from error
-    absolute = path.resolve(strict=False)
+    path = path if path.is_absolute() else ROOT / path
+    resolved = path.resolve(strict=False)
     build = (ROOT / "build").resolve(strict=False)
-    if absolute == build or build not in absolute.parents:
-        raise ValueError("manifest path must be below checkout build/")
-    current = ROOT
-    for part in relative.parts:
-        current /= part
-        if current.is_symlink():
-            raise ValueError("manifest path must not traverse symlinks")
-    return absolute
+    require(resolved != build and build in resolved.parents, "manifest path must be below checkout build")
+    return resolved
+
+
+def expect_error(errors: list[str], label: str, action: Callable[[], object]) -> None:
+    try:
+        action()
+    except VerificationError:
+        return
+    errors.append(f"self-test accepted {label}")
+
+
+def self_test() -> list[str]:
+    errors: list[str] = []
+    build = f'group = "{GROUP}"\nversion = "0.1.0"\n'
+    if configured_version(build) != "0.1.0" or len(expected_originals("0.1.0")) != 26:
+        errors.append("self-test rejected the exact five-module release identity")
+    expect_error(errors, "snapshot version", lambda: configured_version(build.replace("0.1.0", "0.1.0-SNAPSHOT")))
+    expect_error(errors, "wrong group", lambda: configured_version(build.replace(GROUP, "invalid.example")))
+    legal = {
+        "META-INF/LICENSE": b"GNU GENERAL PUBLIC LICENSE Version 3",
+        "META-INF/NOTICE": b"Derived from Preclikos/tvhstream",
+        "example/Test.class": b"class",
+    }
+
+    def archive(entries: dict[str, bytes]) -> bytes:
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, "w") as target:
+            for name, data in entries.items():
+                target.writestr(name, data)
+        return output.getvalue()
+
+    try:
+        verify_jar(archive(legal), "main", "synthetic JAR")
+    except VerificationError as error:
+        errors.append(f"self-test rejected a valid synthetic JAR: {error}")
+    expect_error(errors, "missing standard notice", lambda: verify_jar(archive({key: value for key, value in legal.items() if key != "META-INF/NOTICE"}), "main", "synthetic JAR"))
+    expect_error(errors, "nonstandard notice", lambda: verify_jar(archive({**legal, "META-INF/NOTICE.md": b"duplicate"}), "main", "synthetic JAR"))
+    approved_source = read_regular(FFMPEG_SOURCE, "approved FFmpeg source archive")
+    try:
+        verify_ffmpeg_source(approved_source)
+        approved_jar = read_regular(FFMPEG_JAR, "approved FFmpeg JAR")
+        verify_ffmpeg_jar(approved_jar, "approved FFmpeg JAR")
+        with zipfile.ZipFile(io.BytesIO(approved_jar)) as ffmpeg:
+            classes = {name: ffmpeg.read(name) for name in FFMPEG_CLASSES}
+        classes[next(iter(sorted(classes)))] = b"changed"
+        expect_error(errors, "altered FFmpeg class", lambda: verify_ffmpeg_jar(archive(classes), "synthetic FFmpeg JAR"))
+        classes.pop(next(iter(sorted(classes))))
+        expect_error(errors, "missing FFmpeg class", lambda: verify_ffmpeg_jar(archive(classes), "synthetic FFmpeg JAR"))
+        expect_error(errors, "altered FFmpeg source", lambda: verify_ffmpeg_source(approved_source + b"changed"))
+    except (VerificationError, zipfile.BadZipFile) as error:
+        errors.append(f"self-test rejected approved FFmpeg inputs: {error}")
+    try:
+        manifest_path("build/publication-manifest.json")
+    except VerificationError as error:
+        errors.append(f"self-test rejected a build-local manifest: {error}")
+    expect_error(errors, "manifest escape", lambda: manifest_path("../publication-manifest.json"))
+    return errors
 
 
 def main() -> int:
-    args = sys.argv[1:]
-    if args == ["--self-test"]:
-        errors = self_test()
-        manifest: dict[str, str] = {}
-        success = "Staged publication hostile self-tests passed"
-    elif not args or (len(args) == 2 and args[0] in {"--write-manifest", "--compare-manifest"}):
-        errors, manifest = verify()
-        success = "Staged SDK publication passed"
-        if not errors and args:
-            try:
-                path = manifest_path(args[1])
-                if args[0] == "--write-manifest":
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-                else:
-                    expected = json.loads(path.read_text(encoding="utf-8"))
-                    if expected != manifest:
-                        errors.append(f"recreated publication bytes differ: expected {expected}, actual {manifest}")
-            except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as error:
-                errors.append(f"publication manifest operation failed: {error}")
-    else:
-        print(
-            "usage: check-staged-publication [--self-test|--write-manifest PATH|--compare-manifest PATH]",
-            file=sys.stderr,
-        )
-        return 2
-    for error in errors:
+    arguments = sys.argv[1:]
+    try:
+        if arguments == ["--self-test"]:
+            errors = self_test()
+            for error in errors:
+                print(f"error: {error}", file=sys.stderr)
+            if errors:
+                return 1
+            print("Staged publication focused self-tests passed")
+            return 0
+        if arguments and (len(arguments) != 2 or arguments[0] not in {"--write-manifest", "--compare-manifest"}):
+            print("usage: check-staged-publication [--self-test|--write-manifest PATH|--compare-manifest PATH]", file=sys.stderr)
+            return 2
+        manifest = verify()
+        if arguments:
+            path = manifest_path(arguments[1])
+            if arguments[0] == "--write-manifest":
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            else:
+                try:
+                    expected = json.loads(read_regular(path, "comparison manifest").decode("utf-8"))
+                except (UnicodeError, json.JSONDecodeError) as error:
+                    raise VerificationError("comparison manifest is malformed") from error
+                require(expected == manifest, "recreated publication bytes differ from the recorded manifest")
+        print("Staged SDK publication passed: five modules, 26 originals, metadata, legal notices, and FFmpeg payload/source")
+        return 0
+    except (VerificationError, UnicodeError) as error:
         print(f"error: {error}", file=sys.stderr)
-    if errors:
         return 1
-    print(success + ": five modules, 26 checksummed originals, exact POM/module metadata, JVM 17, and approved native/source contents")
-    return 0
+    except OSError:
+        print("error: staged publication output could not be written", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

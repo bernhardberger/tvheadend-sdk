@@ -1,5 +1,3 @@
-import java.security.MessageDigest
-import java.util.HexFormat
 import org.gradle.api.artifacts.ExternalModuleDependency
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier
 import org.gradle.api.artifacts.component.ProjectComponentIdentifier
@@ -153,28 +151,9 @@ tasks.register("verifyConsumerDependencyGraph") {
             val stagedDirectory = rootDir.resolve(
                 "../build/local-maven/${sdkGroup.replace('.', '/')}/$module/$sdkVersion",
             )
-            val candidates = if (sdkVersion.endsWith("-SNAPSHOT")) {
-                val baseVersion = sdkVersion.removeSuffix("-SNAPSHOT")
-                val artifactName = Regex(
-                    "${Regex.escape(module)}-${Regex.escape(baseVersion)}-" +
-                        "\\d{8}\\.\\d{6}-\\d+\\.${Regex.escape(extension)}",
-                )
-                stagedDirectory.listFiles().orEmpty().filter { file -> artifactName.matches(file.name) }
-            } else {
-                listOf(stagedDirectory.resolve("$module-$sdkVersion.$extension"))
-            }
-            val staged = candidates
-                .filter { candidate ->
-                    candidate.isFile && resolved.readBytes().contentEquals(candidate.readBytes())
-                }
-                .maxByOrNull { candidate -> candidate.name }
-                ?: error("The resolved $module bytes do not match one staged artifact")
-            val stagedDigest = HexFormat.of().formatHex(
-                MessageDigest.getInstance("SHA-256").digest(staged.readBytes()),
-            )
-            val sidecar = staged.parentFile.resolve("${staged.name}.sha256")
-            check(sidecar.isFile && sidecar.readText().trim() == stagedDigest) {
-                "The staged $module checksum differs from its sidecar"
+            val staged = stagedDirectory.resolve("$module-$sdkVersion.$extension")
+            check(staged.isFile && resolved.readBytes().contentEquals(staged.readBytes())) {
+                "The resolved $module bytes do not match the staged artifact"
             }
         }
 

@@ -32,7 +32,7 @@ jobs:
       - name: Build, check, and stage all SDK modules
         run: ./gradlew --no-daemon clean build check stageLocalPublication
       - name: Verify staged SDK publication
-        run: ./tools/check-staged-publication
+        run: ./tools/check-staged-publication --write-manifest build/staged-publication.json
       - name: Verify staged consumer contract
         run: ./gradlew --no-daemon -p consumer-contract clean test verifyConsumerDependencyGraph
       - name: Check release setup

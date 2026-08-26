@@ -19,7 +19,6 @@ import org.gradle.kotlin.dsl.register
 import org.gradle.kotlin.dsl.withType
 import org.jetbrains.kotlin.gradle.plugin.KotlinBasePlugin
 import org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile
-import java.security.MessageDigest
 
 plugins {
     base
@@ -32,18 +31,6 @@ plugins {
 group = "at.bernhardberger.tvheadend"
 version = "0.1.0"
 
-val releaseVersion = version.toString().removeSuffix("-SNAPSHOT")
-val allowedPublicationVersions = setOf(
-    "$releaseVersion-SNAPSHOT",
-    releaseVersion,
-)
-check(
-    Regex("0\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)").matches(releaseVersion) &&
-        version.toString() in allowedPublicationVersions,
-) {
-    "Publication version must be a strict major-zero release or snapshot: $version"
-}
-
 val sdkModules = setOf(
     "sdk-android",
     "sdk-core",
@@ -52,24 +39,6 @@ val sdkModules = setOf(
     "sdk-testing",
 )
 val androidModules = setOf("sdk-android", "sdk-media3")
-data class PublicationArtifactKind(
-    val extension: String,
-    val classifier: String? = null,
-)
-
-val publicationArtifactKinds = sdkModules.associateWith { moduleName ->
-    listOf(
-        PublicationArtifactKind(if (moduleName in androidModules) "aar" else "jar"),
-        PublicationArtifactKind("jar", "sources"),
-        PublicationArtifactKind("jar", "javadoc"),
-        PublicationArtifactKind("pom"),
-        PublicationArtifactKind("module"),
-    ) + if (moduleName == "sdk-media3") {
-        listOf(PublicationArtifactKind("tar.xz", "ffmpeg-sources"))
-    } else {
-        emptyList()
-    }
-}
 val publicationDescriptions = mapOf(
     "sdk-android" to "Android discovery, connectivity, credentials, and artwork integration for TVHeadend.",
     "sdk-core" to "TVHeadend SDK protocol integration, lifecycle, models, metadata, EPG, and DVR workflows.",
@@ -80,9 +49,6 @@ val publicationDescriptions = mapOf(
 
 check(subprojects.map(Project::getName).toSet() == sdkModules) {
     "The SDK build must contain exactly $sdkModules"
-}
-check(publicationArtifactKinds.values.sumOf { kinds -> kinds.size } == 26) {
-    "The SDK release inventory must contain exactly 26 Maven originals"
 }
 
 allprojects {
@@ -477,8 +443,6 @@ fun Project.registerProductionDependencyVerification(
     }
 }
 
-val checkoutLocalMavenRepository = layout.buildDirectory.dir("local-maven")
-
 subprojects {
     val moduleName = project.name
 
@@ -590,7 +554,7 @@ subprojects {
             repositories {
                 maven {
                     name = "checkoutLocal"
-                    url = checkoutLocalMavenRepository.get().asFile.toURI()
+                    url = rootProject.layout.buildDirectory.dir("local-maven").get().asFile.toURI()
                 }
             }
             publications.withType<MavenPublication>().configureEach {
@@ -623,7 +587,6 @@ subprojects {
                         system.set("GitHub Issues")
                         url.set("https://github.com/bernhardberger/tvheadend-sdk/issues")
                     }
-                    properties.put("tvheadend.sdk.notice.path", "NOTICE.md")
                 }
             }
         }
@@ -645,101 +608,8 @@ tasks.named("check") {
     dependsOn(subprojects.map { module -> "${module.path}:check" })
 }
 
-val publicationVersion = version.toString()
-val publicationGroupPath = group.toString().replace('.', '/')
-val writePublicationChecksums = tasks.register("writePublicationChecksums") {
-    group = "publishing"
-    description = "Writes SHA-256 sidecars for the 26 staged SDK publication artifacts."
-    dependsOn(subprojects.map { module -> "${module.path}:publishAllPublicationsToCheckoutLocalRepository" })
-    inputs.property("publicationVersion", publicationVersion)
-    inputs.property("releaseVersion", releaseVersion)
-    inputs.property("allowedPublicationVersions", allowedPublicationVersions.toList())
-    inputs.property("publicationRepository", checkoutLocalMavenRepository.map { directory ->
-        directory.asFile.absolutePath
-    })
-    inputs.property("publicationGroupPath", publicationGroupPath)
-    inputs.property(
-        "publicationArtifactKinds",
-        publicationArtifactKinds.mapValues { (_, kinds) ->
-            kinds.map { kind -> "${kind.classifier.orEmpty()}:${kind.extension}" }
-        },
-    )
-    doLast {
-        val values = inputs.properties
-        val publicationVersion = values.getValue("publicationVersion") as String
-        val releaseVersion = values.getValue("releaseVersion") as String
-        val allowedPublicationVersions = (values.getValue("allowedPublicationVersions") as List<*>)
-            .filterIsInstance<String>()
-        check(publicationVersion in allowedPublicationVersions) {
-            "Unsupported publication version: $publicationVersion"
-        }
-        val repository = File(values.getValue("publicationRepository") as String)
-        val groupPath = values.getValue("publicationGroupPath") as String
-        val artifactKinds = (values.getValue("publicationArtifactKinds") as Map<*, *>)
-            .map { (module, kinds) ->
-                module.toString() to (kinds as List<*>).map { encoded ->
-                    val parts = encoded.toString().split(':', limit = 2)
-                    parts[1] to parts[0].ifEmpty { null }
-                }
-            }
-            .toMap()
-        val snapshot = publicationVersion.endsWith("-SNAPSHOT")
-        artifactKinds.toSortedMap().forEach { (moduleName, kinds) ->
-            val versionDirectory = repository.resolve("$groupPath/$moduleName/$publicationVersion")
-            check(versionDirectory.isDirectory) {
-                "Staged publication directory is missing: $versionDirectory"
-            }
-            val originals = kinds.map { (extension, classifierValue) ->
-                val classifier = classifierValue?.let { value -> "-${Regex.escape(value)}" }.orEmpty()
-                val pattern = if (snapshot) {
-                    Regex(
-                        "^${Regex.escape(moduleName)}-${Regex.escape(releaseVersion)}-" +
-                            "\\d{8}\\.\\d{6}-\\d+$classifier\\.${Regex.escape(extension)}$",
-                    )
-                } else {
-                    Regex(
-                        "^${Regex.escape(moduleName)}-${Regex.escape(publicationVersion)}" +
-                            "$classifier\\.${Regex.escape(extension)}$",
-                    )
-                }
-                val matches = versionDirectory.listFiles()
-                    .orEmpty()
-                    .filter { file -> file.isFile && pattern.matches(file.name) }
-                check(matches.size == 1) {
-                    "Expected one staged $moduleName ${classifierValue ?: "main"} $extension, " +
-                        "found ${matches.map { file -> file.name }}"
-                }
-                matches.single()
-            }
-            check(originals.toSet().size == kinds.size) {
-                "Staged publication artifact kinds collided for $moduleName"
-            }
-            val originalNames = originals.mapTo(mutableSetOf()) { file -> file.name }
-            val unexpected = versionDirectory.listFiles()
-                .orEmpty()
-                .filter { file ->
-                    file.isFile &&
-                        file.name != "maven-metadata.xml" &&
-                        !listOf(".md5", ".sha1", ".sha256", ".sha512").any(file.name::endsWith) &&
-                        file.name !in originalNames
-                }
-                .map { file -> file.name }
-                .sorted()
-            check(unexpected.isEmpty()) {
-                "Unexpected staged publication artifacts for $moduleName: $unexpected"
-            }
-            originals.forEach { artifact ->
-                val digest = MessageDigest.getInstance("SHA-256")
-                    .digest(artifact.readBytes())
-                    .joinToString("") { byte -> "%02x".format(byte) }
-                artifact.parentFile.resolve("${artifact.name}.sha256").writeText("$digest\n")
-            }
-        }
-    }
-}
-
 tasks.register("stageLocalPublication") {
     group = "publishing"
     description = "Stages all five SDK publications under build/local-maven."
-    dependsOn(writePublicationChecksums)
+    dependsOn(subprojects.map { module -> "${module.path}:publishAllPublicationsToCheckoutLocalRepository" })
 }
