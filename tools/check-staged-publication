@@ -38,8 +38,19 @@ DEVELOPER = {
 PROPERTIES = {"tvheadend.sdk.notice.path": "NOTICE.md"}
 JVM_VERSION = 17
 CLASS_MAJOR = 61
+FFMPEG_CLASS_MAJOR = 52
 GRADLE_VERSION = "9.7.0"
 FFMPEG_SHA256 = "9eeca8490f794574185986c0df7800d65ccca2980f57dc26b630a398581d7929"
+FFMPEG_LIBRARY = "libs/media3-decoder-ffmpeg-1.11.0.jar"
+FFMPEG_CLASSES = {
+    "androidx/media3/decoder/ffmpeg/ExperimentalFfmpegVideoRenderer.class",
+    "androidx/media3/decoder/ffmpeg/FfmpegAudioDecoder.class",
+    "androidx/media3/decoder/ffmpeg/FfmpegAudioRenderer.class",
+    "androidx/media3/decoder/ffmpeg/FfmpegDecoderException.class",
+    "androidx/media3/decoder/ffmpeg/FfmpegLibrary$1.class",
+    "androidx/media3/decoder/ffmpeg/FfmpegLibrary.class",
+    "androidx/media3/decoder/ffmpeg/package-info.class",
+}
 CHECKSUM_SUFFIXES = (".md5", ".sha1", ".sha256", ".sha512")
 
 
@@ -655,14 +666,14 @@ def class_errors(data: bytes, name: str, module: str) -> list[str]:
 
 def legal_errors(archive: zipfile.ZipFile, names: list[str], label: str) -> list[str]:
     errors: list[str] = []
-    for required in ("META-INF/LICENSE", "META-INF/NOTICE.md"):
+    for required in ("META-INF/LICENSE", "META-INF/NOTICE"):
         if names.count(required) != 1:
             errors.append(f"{label}: archive must contain exactly one {required}")
     if names.count("META-INF/LICENSE") == 1:
         if "GNU GENERAL PUBLIC LICENSE" not in archive.read("META-INF/LICENSE").decode("utf-8", "replace"):
             errors.append(f"{label}: archived LICENSE lacks GPLv3 evidence")
-    if names.count("META-INF/NOTICE.md") == 1:
-        if "Preclikos/tvhstream" not in archive.read("META-INF/NOTICE.md").decode("utf-8", "replace"):
+    if names.count("META-INF/NOTICE") == 1:
+        if "Preclikos/tvhstream" not in archive.read("META-INF/NOTICE").decode("utf-8", "replace"):
             errors.append(f"{label}: archived NOTICE lacks predecessor evidence")
     return errors
 
@@ -709,6 +720,7 @@ def aar_errors(module: str, path: Path) -> list[str]:
         if module == "sdk-media3"
         else set()
     )
+    expected_libraries = {FFMPEG_LIBRARY} if module == "sdk-media3" else set()
     try:
         with zipfile.ZipFile(path) as archive:
             names = archive.namelist()
@@ -716,6 +728,35 @@ def aar_errors(module: str, path: Path) -> list[str]:
             native = {name for name in names if name.endswith(".so")}
             if native != expected_native:
                 errors.append(f"{label}: native inventory {sorted(native)} does not match {sorted(expected_native)}")
+            libraries = {name for name in names if name.startswith("libs/") and name.endswith(".jar")}
+            if libraries != expected_libraries:
+                errors.append(
+                    f"{label}: embedded library inventory {sorted(libraries)} "
+                    f"does not match {sorted(expected_libraries)}"
+                )
+            if FFMPEG_LIBRARY in libraries:
+                try:
+                    with zipfile.ZipFile(io.BytesIO(archive.read(FFMPEG_LIBRARY))) as ffmpeg:
+                        errors.extend(safe_archive_entries(ffmpeg.infolist(), f"{label} FFmpeg JAR"))
+                        classes = {name for name in ffmpeg.namelist() if name.endswith(".class")}
+                        if classes != FFMPEG_CLASSES:
+                            errors.append(
+                                f"{label}: embedded FFmpeg class inventory {sorted(classes)} "
+                                f"does not match {sorted(FFMPEG_CLASSES)}"
+                            )
+                        for name in classes:
+                            data = ffmpeg.read(name)
+                            if len(data) < 8 or data[:4] != b"\xca\xfe\xba\xbe":
+                                errors.append(f"{label}: malformed embedded FFmpeg class: {name}")
+                                continue
+                            major = struct.unpack(">H", data[6:8])[0]
+                            if major != FFMPEG_CLASS_MAJOR:
+                                errors.append(
+                                    f"{label}: embedded FFmpeg class {name} is class major {major}, "
+                                    f"expected {FFMPEG_CLASS_MAJOR}"
+                                )
+                except (OSError, zipfile.BadZipFile) as error:
+                    errors.append(f"{label}: malformed embedded FFmpeg JAR: {error}")
             if names.count("classes.jar") != 1:
                 errors.append(f"{label}: AAR must contain exactly one classes.jar")
             else:
@@ -823,7 +864,7 @@ def class_bytes(major: int = CLASS_MAJOR) -> bytes:
 def archive_fixture(module: str, kind: str, wrong_major: bool = False) -> bytes:
     legal = {
         "META-INF/LICENSE": b"GNU GENERAL PUBLIC LICENSE Version 3",
-        "META-INF/NOTICE.md": b"Derived from Preclikos/tvhstream",
+        "META-INF/NOTICE": b"Derived from Preclikos/tvhstream",
     }
     if kind == "sources":
         return zip_bytes({**legal, f"at/bernhardberger/tvheadend/sdk/{module}/Synthetic.kt": b"package synthetic"})
@@ -834,6 +875,10 @@ def archive_fixture(module: str, kind: str, wrong_major: bool = False) -> bytes:
         entries = {"classes.jar": zip_bytes({**legal, **class_entry})}
         if module == "sdk-media3":
             entries.update({
+                FFMPEG_LIBRARY: zip_bytes({
+                    name: class_bytes(FFMPEG_CLASS_MAJOR)
+                    for name in sorted(FFMPEG_CLASSES)
+                }),
                 "jni/arm64-v8a/libffmpegJNI.so": b"a",
                 "jni/armeabi-v7a/libffmpegJNI.so": b"b",
                 "jni/x86/libffmpegJNI.so": b"c",
@@ -1057,6 +1102,36 @@ def self_test() -> list[str]:
             "wrong FFmpeg source",
             lambda repo, _source: rewrite(artifact(repo, "sdk-media3", "ffmpeg-sources"), b"changed"),
             "approved GPL source archive",
+        )
+
+        def missing_ffmpeg_library(repo: Path, _source: Path) -> None:
+            path = artifact(repo, "sdk-media3", "main")
+            output = io.BytesIO()
+            with zipfile.ZipFile(path) as source_archive, zipfile.ZipFile(output, "w") as target_archive:
+                for info in source_archive.infolist():
+                    if info.filename != FFMPEG_LIBRARY:
+                        target_archive.writestr(info, source_archive.read(info.filename))
+            rewrite(path, output.getvalue())
+        mutate_and_check("missing embedded FFmpeg JAR", missing_ffmpeg_library, "embedded library inventory")
+
+        def missing_ffmpeg_renderer(repo: Path, _source: Path) -> None:
+            path = artifact(repo, "sdk-media3", "main")
+            output = io.BytesIO()
+            renderer = "androidx/media3/decoder/ffmpeg/FfmpegAudioRenderer.class"
+            with zipfile.ZipFile(path) as source_archive, zipfile.ZipFile(output, "w") as target_archive:
+                for info in source_archive.infolist():
+                    data = source_archive.read(info.filename)
+                    if info.filename == FFMPEG_LIBRARY:
+                        data = zip_bytes({
+                            name: class_bytes(FFMPEG_CLASS_MAJOR)
+                            for name in sorted(FFMPEG_CLASSES - {renderer})
+                        })
+                    target_archive.writestr(info, data)
+            rewrite(path, output.getvalue())
+        mutate_and_check(
+            "missing embedded FFmpeg renderer",
+            missing_ffmpeg_renderer,
+            "embedded FFmpeg class inventory",
         )
 
         def unsafe_outer_aar(repo: Path, _source: Path) -> None:

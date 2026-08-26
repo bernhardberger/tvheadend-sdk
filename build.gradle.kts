@@ -495,6 +495,7 @@ subprojects {
         }
         from(rootProject.file("NOTICE.md")) {
             into("META-INF")
+            rename { "NOTICE" }
         }
     }
 

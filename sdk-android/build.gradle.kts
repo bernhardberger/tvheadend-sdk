@@ -33,8 +33,9 @@ extensions.configure<LibraryExtension> {
     }
     packaging {
         resources.excludes.remove("/META-INF/LICENSE")
+        resources.excludes.remove("/META-INF/NOTICE")
         resources.pickFirsts.add("/META-INF/LICENSE")
-        resources.pickFirsts.add("/META-INF/NOTICE.md")
+        resources.pickFirsts.add("/META-INF/NOTICE")
     }
     publishing {
         singleVariant("release") {

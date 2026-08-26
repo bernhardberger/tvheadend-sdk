@@ -5,7 +5,7 @@ import org.gradle.api.artifacts.component.ModuleComponentIdentifier
 import org.gradle.api.artifacts.component.ProjectComponentIdentifier
 
 plugins {
-    alias(libs.plugins.android.library)
+    alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.jvm) apply false
 }
 
@@ -15,7 +15,11 @@ android {
     buildToolsVersion = libs.versions.buildTools.get()
 
     defaultConfig {
+        applicationId = "at.bernhardberger.tvheadend.sdk.consumer"
         minSdk = libs.versions.minSdk.get().toInt()
+        targetSdk = libs.versions.targetSdk.get().toInt()
+        versionCode = 1
+        versionName = "1"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -49,9 +53,11 @@ configurations.configureEach {
 }
 
 val sdkArtifactExtensions = mapOf(
+    "sdk-android" to "aar",
     "sdk-core" to "jar",
     "sdk-media3" to "aar",
     "sdk-playback" to "jar",
+    "sdk-testing" to "jar",
 )
 val stagedArtifactIdentity = sdkArtifactExtensions.mapValues { (module, extension) ->
     configurations.create("${module.replace("-", "")}StagedArtifact") {
@@ -131,7 +137,7 @@ tasks.register("verifyConsumerDependencyGraph") {
             "The staged runtime graph must retain the SDK's HTSP implementation dependency"
         }
 
-        expectedSdkModules.forEach { module ->
+        sdkArtifactExtensions.keys.forEach { module ->
             val identityConfiguration = stagedArtifactIdentity.getValue(module)
             val identityCoordinate = identityConfiguration.incoming.resolutionResult.allComponents
                 .mapNotNull { component -> component.id as? ModuleComponentIdentifier }
