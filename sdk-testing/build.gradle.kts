@@ -12,6 +12,12 @@ plugins {
     alias(libs.plugins.dokka)
 }
 
+dokka {
+    dokkaPublications.html {
+        moduleName.set("TVHeadend Kotlin SDK: Testing")
+    }
+}
+
 kotlin {
     jvmToolchain(libs.versions.jdk.get().toInt())
     explicitApi()

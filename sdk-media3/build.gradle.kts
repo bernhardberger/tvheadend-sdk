@@ -13,6 +13,12 @@ plugins {
     alias(libs.plugins.dokka)
 }
 
+dokka {
+    dokkaPublications.html {
+        moduleName.set("TVHeadend Kotlin SDK: Media3")
+    }
+}
+
 extensions.configure<LibraryExtension> {
     namespace = "at.bernhardberger.tvheadend.sdk.media3"
     compileSdk = libs.versions.compileSdk.get().toInt()

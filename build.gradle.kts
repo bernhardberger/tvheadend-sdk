@@ -39,12 +39,19 @@ val sdkModules = setOf(
     "sdk-testing",
 )
 val androidModules = setOf("sdk-android", "sdk-media3")
+val publicationNames = mapOf(
+    "sdk-android" to "TVHeadend Kotlin SDK: Android",
+    "sdk-core" to "TVHeadend Kotlin SDK: Core",
+    "sdk-media3" to "TVHeadend Kotlin SDK: Media3",
+    "sdk-playback" to "TVHeadend Kotlin SDK: Playback",
+    "sdk-testing" to "TVHeadend Kotlin SDK: Testing",
+)
 val publicationDescriptions = mapOf(
-    "sdk-android" to "Android discovery, connectivity, credentials, and artwork integration for TVHeadend.",
-    "sdk-core" to "TVHeadend SDK protocol integration, lifecycle, models, metadata, EPG, and DVR workflows.",
-    "sdk-media3" to "Android Media3 playback integration for the TVHeadend SDK.",
-    "sdk-playback" to "TVHeadend subscription, seek, timeshift, and timestamp state machines.",
-    "sdk-testing" to "JVM test fakes, scripted events, repositories, and packet fixtures for the TVHeadend SDK.",
+    "sdk-android" to "Android discovery, connectivity, credential storage, and authenticated artwork for TVHeadend applications.",
+    "sdk-core" to "Kotlin/JVM protocol integration, session lifecycle, metadata, EPG, and DVR workflows for TVHeadend applications.",
+    "sdk-media3" to "Android Media3 sources, stream readers, and playback coordination for TVHeadend applications.",
+    "sdk-playback" to "Kotlin/JVM subscription, seek, timeshift, and timestamp state machines for TVHeadend playback.",
+    "sdk-testing" to "Kotlin/JVM fakes, scripted events, repositories, and packet fixtures for testing TVHeadend SDK integrations.",
 )
 
 check(subprojects.map(Project::getName).toSet() == sdkModules) {
@@ -560,7 +567,7 @@ subprojects {
             publications.withType<MavenPublication>().configureEach {
                 artifactId = project.name
                 pom {
-                    name.set(project.name)
+                    name.set(publicationNames.getValue(project.name))
                     description.set(publicationDescriptions.getValue(project.name))
                     url.set("https://github.com/bernhardberger/tvheadend-sdk")
                     licenses {

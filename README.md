@@ -1,23 +1,29 @@
-# TVHeadend SDK
+# TVHeadend Kotlin SDK
 
-An independently maintained GPLv3 Kotlin SDK for applications that communicate
-with TVHeadend. This project is not official TVHeadend software.
+[![CI](https://github.com/bernhardberger/tvheadend-sdk/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/bernhardberger/tvheadend-sdk/actions/workflows/ci.yml)
+[![Maven Central](https://img.shields.io/maven-central/v/at.bernhardberger.tvheadend/sdk-core)](https://central.sonatype.com/artifact/at.bernhardberger.tvheadend/sdk-core)
+[![License: GPLv3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 
-The repository is split into five libraries:
+This independently maintained GPLv3 Kotlin SDK provides JVM and Android
+libraries for applications that connect to TVHeadend. It is not official
+TVHeadend software.
 
-- `sdk-core`: protocol integration, lifecycle, models, metadata, EPG, and DVR.
-- `sdk-playback`: subscription, seek, timeshift, and timestamp state machines.
-- `sdk-media3`: Android Media3 playback adapters.
-- `sdk-android`: Android discovery, connectivity, credentials, and artwork.
-- `sdk-testing`: JVM-only SDK test fakes and fixtures.
+The SDK is split into five libraries:
 
-The configured release candidate is `0.1.2`. Nothing is published by the normal
-build. `./gradlew clean build check stageLocalPublication` verifies the
-repository and stages all five modules under `build/local-maven`. Local staging
+| Artifact | Platform | Purpose |
+|---|---|---|
+| `sdk-core` | Kotlin/JVM | Protocol integration, session lifecycle, models, metadata, EPG, and DVR |
+| `sdk-playback` | Kotlin/JVM | Subscription, seek, timeshift, and timestamp state machines |
+| `sdk-media3` | Android | Media3 sources, stream readers, and playback coordination |
+| `sdk-android` | Android | Discovery, connectivity, credential storage, and authenticated artwork |
+| `sdk-testing` | Kotlin/JVM | Fakes, repositories, scripted events, and packet fixtures |
+
+Release `0.1.2` is available from Maven Central. The normal build never
+publishes. `./gradlew clean build check stageLocalPublication` verifies the
+repository and stages all five modules under `build/local-maven`; local staging
 does not establish Maven Central availability.
 
-After independently verified publication, applications can select the modules
-they need from Maven Central. For example:
+Applications can select only the modules they need. For example:
 
 ```kotlin
 dependencies {

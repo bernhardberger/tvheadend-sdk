@@ -12,6 +12,12 @@ plugins {
     alias(libs.plugins.dokka)
 }
 
+dokka {
+    dokkaPublications.html {
+        moduleName.set("TVHeadend Kotlin SDK: Android")
+    }
+}
+
 extensions.configure<LibraryExtension> {
     namespace = "at.bernhardberger.tvheadend.sdk.android"
     compileSdk = libs.versions.compileSdk.get().toInt()

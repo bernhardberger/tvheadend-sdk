@@ -1,6 +1,7 @@
 # Versioning and compatibility
 
-The configured release candidate is `0.1.2` for these Maven coordinates:
+The immutable `0.1.2` release is available from Maven Central under these
+coordinates:
 
 - `at.bernhardberger.tvheadend:sdk-android:0.1.2`
 - `at.bernhardberger.tvheadend:sdk-core:0.1.2`
@@ -11,10 +12,10 @@ The configured release candidate is `0.1.2` for these Maven coordinates:
 The signed `v0.1.0` and `v0.1.1` tags stopped before publication and are retained
 as historical evidence. They did not create Maven artifacts or GitHub releases.
 
-Local source, CI, and staged-publication checks do not establish that these
-coordinates have been published or are available. Publication and availability
-are independently verified external state for every release. Published release
-bytes are immutable and must never be replaced.
+Publication and availability are independently verified external state for
+every release. Local source, CI, and staged-publication checks do not establish
+that a new coordinate is available. Published release bytes are immutable and
+must never be replaced.
 
 ## Provisional 0.x policy
 
