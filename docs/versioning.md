@@ -1,12 +1,15 @@
 # Versioning and compatibility
 
-The configured release candidate is `0.1.0` for these Maven coordinates:
+The configured release candidate is `0.1.1` for these Maven coordinates:
 
-- `at.bernhardberger.tvheadend:sdk-android:0.1.0`
-- `at.bernhardberger.tvheadend:sdk-core:0.1.0`
-- `at.bernhardberger.tvheadend:sdk-media3:0.1.0`
-- `at.bernhardberger.tvheadend:sdk-playback:0.1.0`
-- `at.bernhardberger.tvheadend:sdk-testing:0.1.0`
+- `at.bernhardberger.tvheadend:sdk-android:0.1.1`
+- `at.bernhardberger.tvheadend:sdk-core:0.1.1`
+- `at.bernhardberger.tvheadend:sdk-media3:0.1.1`
+- `at.bernhardberger.tvheadend:sdk-playback:0.1.1`
+- `at.bernhardberger.tvheadend:sdk-testing:0.1.1`
+
+The signed `v0.1.0` tag stopped before publication and is retained as historical
+evidence. It did not create Maven artifacts or a GitHub release.
 
 Local source, CI, and staged-publication checks do not establish that these
 coordinates have been published or are available. Publication and availability
