@@ -303,10 +303,11 @@ def require_public_key_listing(records: list[list[str]]) -> None:
 
 
 def inspect_public_key(public_key: bytes) -> None:
-    result = run_process((
-        "gpg", "--batch", "--with-colons", "--fingerprint",
-        "--import-options", "show-only", "--dry-run", "--import",
-    ), public_key)
+    with tempfile.TemporaryDirectory() as directory:
+        result = run_process((
+            "gpg", "--batch", "--with-colons", "--fingerprint",
+            "--import-options", "show-only", "--dry-run", "--import",
+        ), public_key, Path(directory))
     require(result.returncode == 0, "tracked public key cannot be inspected")
     require_public_key_listing(colon_records(result.stdout, "public"))
 
@@ -794,7 +795,6 @@ def main() -> int:
     except OSError:
         print("error: release output operation failed", file=sys.stderr)
         return 1
-
 
 if __name__ == "__main__":
     raise SystemExit(main())
