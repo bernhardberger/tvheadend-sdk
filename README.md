@@ -18,16 +18,16 @@ The SDK is split into five libraries:
 | `sdk-android` | Android | Discovery, connectivity, atomic server-profile storage, and authenticated artwork |
 | `sdk-testing` | Kotlin/JVM | Fakes, repositories, scripted events, and packet fixtures |
 
-Release `0.1.2` is available from Maven Central. The normal build never
-publishes. `./gradlew clean build check stageLocalPublication` verifies the
-repository and stages all five modules under `build/local-maven`; local staging
-does not establish Maven Central availability.
+The source is configured for release `0.2.0`. The normal build never publishes.
+`./gradlew clean build check stageLocalPublication` verifies the repository and
+stages all five modules under `build/local-maven`; the Maven Central badge, not
+local source or staging, reports public availability.
 
 Applications can select only the modules they need. For example:
 
 ```kotlin
 dependencies {
-    implementation("at.bernhardberger.tvheadend:sdk-media3:0.1.2")
+    implementation("at.bernhardberger.tvheadend:sdk-media3:0.2.0")
 }
 ```
 
@@ -67,6 +67,35 @@ The default build resolves
 across adjacent checkouts may explicitly opt into source substitution with
 `-Ptvheadend.htsp.composite=true`; CI and release builds do not use that
 property.
+
+## Live stream profiles
+
+`TvheadendSession.getStreamProfiles()` discovers the current connection
+generation's ordered stream profiles. Pass a returned ID through
+`LivePlaybackOptions` to select that server profile for one live target. Unknown
+IDs fail closed, and a connection-generation change clears the discovered
+allowlist until the new generation discovers the requested UUID:
+
+```kotlin
+val selected = when (val result = session.getStreamProfiles()) {
+    is StreamProfilesResult.Available -> result.profiles.firstOrNull()
+    else -> null
+}
+
+if (selected != null) {
+    coordinator.setLiveTarget(
+        channel.id,
+        LivePlaybackOptions(
+            streamProfileId = selected.id,
+            timeshiftPeriod = 30.minutes,
+        ),
+    )
+}
+```
+
+The listed name and comment are presentation metadata. Profile IDs are opaque,
+redacted from string rendering, and selected only from the current generation's
+discovered allowlist. Omitting the profile keeps TVHeadend's default selection.
 
 ## Staged session readiness
 

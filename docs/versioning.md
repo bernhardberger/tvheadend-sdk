@@ -1,13 +1,17 @@
 # Versioning and compatibility
 
-The immutable `0.1.2` release is available from Maven Central under these
+The source is configured for the provisional `0.2.0` release under these
 coordinates:
 
-- `at.bernhardberger.tvheadend:sdk-android:0.1.2`
-- `at.bernhardberger.tvheadend:sdk-core:0.1.2`
-- `at.bernhardberger.tvheadend:sdk-media3:0.1.2`
-- `at.bernhardberger.tvheadend:sdk-playback:0.1.2`
-- `at.bernhardberger.tvheadend:sdk-testing:0.1.2`
+- `at.bernhardberger.tvheadend:sdk-android:0.2.0`
+- `at.bernhardberger.tvheadend:sdk-core:0.2.0`
+- `at.bernhardberger.tvheadend:sdk-media3:0.2.0`
+- `at.bernhardberger.tvheadend:sdk-playback:0.2.0`
+- `at.bernhardberger.tvheadend:sdk-testing:0.2.0`
+
+The immutable `0.1.2` release remains available from Maven Central. Source,
+local staging, and CI do not establish that the configured `0.2.0` coordinates
+are publicly available; check Maven Central before selecting them.
 
 The signed `v0.1.0` and `v0.1.1` tags stopped before publication and are retained
 as historical evidence. They did not create Maven artifacts or GitHub releases.

@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.2.0]
+
+This provisional feature release adds generation-bound discovery and selection
+of TVHeadend stream profiles for live playback. Live targets can request a
+server timeshift period, and the Media3 coordinator now exposes app-safe
+timeshift state plus signed seek, bounded return-live, and server pause and
+resume controls without taking ownership of ordinary player controls.
+
+Live playback also reports the current target's canonical TVHeadend
+subscription issue through a safe enum. Unknown or localized values map to
+`UNKNOWN`; raw server text and stale target state are not exposed.
+
+On Android, `TvheadendServerProfileStore` atomically persists one normalized
+endpoint and anonymous or password authentication. Password fields are
+encrypted with endpoint-bound associated data and are returned only through an
+opaque connectable profile. The deprecated credential store remains binary
+compatible over the same record.
+
+This remains a major-zero release. Source, binary, and behavioral compatibility
+are provisional, and local or CI verification does not establish Maven Central
+availability.
+
 ## [0.1.2]
 
 Initial provisional release of the independently maintained TVHeadend SDK. It

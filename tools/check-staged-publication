@@ -58,6 +58,13 @@ MODULES = {
     "sdk-playback": Module("jar"),
     "sdk-testing": Module("jar"),
 }
+PUBLICATION_NAMES = {
+    "sdk-android": "TVHeadend Kotlin SDK: Android",
+    "sdk-core": "TVHeadend Kotlin SDK: Core",
+    "sdk-media3": "TVHeadend Kotlin SDK: Media3",
+    "sdk-playback": "TVHeadend Kotlin SDK: Playback",
+    "sdk-testing": "TVHeadend Kotlin SDK: Testing",
+}
 
 
 def require(condition: bool, message: str) -> None:
@@ -193,6 +200,13 @@ def xml_text(parent: ET.Element, name: str, label: str) -> str:
     return value
 
 
+def verify_pom_name(root: ET.Element, module: str, label: str) -> None:
+    require(
+        xml_text(root, "name", label) == PUBLICATION_NAMES[module],
+        f"{label} has the wrong name",
+    )
+
+
 def verify_pom(data: bytes, module: str, version: str) -> None:
     try:
         root = ET.fromstring(data)
@@ -204,11 +218,11 @@ def verify_pom(data: bytes, module: str, version: str) -> None:
         "groupId": GROUP,
         "artifactId": module,
         "version": version,
-        "name": module,
         "url": PROJECT_URL,
     }
     for name, value in expected.items():
         require(xml_text(root, name, label) == value, f"{label} has the wrong {name}")
+    verify_pom_name(root, module, label)
     require(bool(xml_text(root, "description", label)), f"{label} description is missing")
     license_node = xml_one(xml_one(root, "licenses", label), "license", label)
     require(
@@ -433,10 +447,31 @@ def expect_error(errors: list[str], label: str, action: Callable[[], object]) ->
 
 def self_test() -> list[str]:
     errors: list[str] = []
-    build = f'group = "{GROUP}"\nversion = "0.1.2"\n'
-    if configured_version(build) != "0.1.2" or len(expected_originals("0.1.2")) != 26:
+    build = f'group = "{GROUP}"\nversion = "0.2.0"\n'
+    if configured_version(build) != "0.2.0" or len(expected_originals("0.2.0")) != 26:
         errors.append("self-test rejected the exact five-module release identity")
-    expect_error(errors, "snapshot version", lambda: configured_version(build.replace("0.1.2", "0.1.2-SNAPSHOT")))
+    expected_publication_names = {
+        "sdk-android": "TVHeadend Kotlin SDK: Android",
+        "sdk-core": "TVHeadend Kotlin SDK: Core",
+        "sdk-media3": "TVHeadend Kotlin SDK: Media3",
+        "sdk-playback": "TVHeadend Kotlin SDK: Playback",
+        "sdk-testing": "TVHeadend Kotlin SDK: Testing",
+    }
+    if PUBLICATION_NAMES != expected_publication_names:
+        errors.append("self-test rejected the configured human-readable publication names")
+    for module, name in expected_publication_names.items():
+        root = ET.fromstring(f"<project><name>{name}</name></project>")
+        try:
+            verify_pom_name(root, module, "synthetic POM")
+        except VerificationError as error:
+            errors.append(f"self-test rejected {module} publication name: {error}")
+        obsolete = ET.fromstring(f"<project><name>{module}</name></project>")
+        expect_error(
+            errors,
+            f"obsolete {module} POM name",
+            lambda root=obsolete, module=module: verify_pom_name(root, module, "synthetic POM"),
+        )
+    expect_error(errors, "snapshot version", lambda: configured_version(build.replace("0.2.0", "0.2.0-SNAPSHOT")))
     expect_error(errors, "wrong group", lambda: configured_version(build.replace(GROUP, "invalid.example")))
     legal = {
         "META-INF/LICENSE": b"GNU GENERAL PUBLIC LICENSE Version 3",
