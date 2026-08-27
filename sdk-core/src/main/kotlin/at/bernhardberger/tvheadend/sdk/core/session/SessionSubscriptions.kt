@@ -516,6 +516,11 @@ internal class GatewaySubscriptionConnection(
         -> gateway.skipSubscription(generation, id, target)
     }
 
+    override suspend fun speed(
+        id: SubscriptionId,
+        speed: Int,
+    ): SubscriptionOperationResult<Unit> = gateway.speedSubscription(generation, id, speed)
+
     override suspend fun unsubscribe(id: SubscriptionId): SubscriptionOperationResult<Unit> =
         gateway.unsubscribe(generation, id)
 

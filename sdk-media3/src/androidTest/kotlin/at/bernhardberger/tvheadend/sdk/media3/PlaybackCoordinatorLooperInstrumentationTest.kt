@@ -32,10 +32,12 @@ internal class PlaybackCoordinatorLooperInstrumentationTest {
         )
 
         val install = withContext(Dispatchers.Default) {
+            val token = PlaybackTargetToken()
             player.installLive(
                 PlayerOperationTicket(),
-                PlaybackTargetToken(),
+                token,
                 SubscriptionChannelId(4),
+                timeshiftControls = LiveTimeshiftControlBridge(token) {},
             )
         }
         val stop = withContext(Dispatchers.Default) {
@@ -96,6 +98,7 @@ private class MainLooperCoordinatorPlaybackAccess : CoordinatorPlaybackAccess {
     override fun createLiveSource(
         channelId: SubscriptionChannelId,
         options: SubscriptionOptions,
+        timeshiftControls: LiveTimeshiftControlBridge,
     ): CoordinatorMediaSource {
         requireApplicationLooper()
         check(options.streamProfileUuid == null && options.timeshiftPeriod == Duration.ZERO)

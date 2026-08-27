@@ -26,6 +26,7 @@ public enum class ScriptedSubscriptionCall {
     COLLECTION_REGISTERED,
     SUBSCRIBE,
     SKIP,
+    SPEED,
     UNSUBSCRIBE,
     LIVE_COMMIT,
 }
@@ -43,10 +44,13 @@ public class ScriptedSubscriptionConnection : SubscriptionConnection {
         SubscriptionOperationResult.Ok(SubscriptionConfirmation(null, null, null, null))
     private var skipResult: SubscriptionOperationResult<Unit> =
         SubscriptionOperationResult.Ok(Unit)
+    private var speedResult: SubscriptionOperationResult<Unit> =
+        SubscriptionOperationResult.Ok(Unit)
     private var unsubscribeResult: SubscriptionOperationResult<Unit> =
         SubscriptionOperationResult.Ok(Unit)
     private var live = true
     private val mutableSeekTargets = ArrayList<SubscriptionSeekTarget>()
+    private val mutableSpeeds = ArrayList<Int>()
 
     /** Snapshot of value-free invocation order. */
     public val calls: List<ScriptedSubscriptionCall>
@@ -63,6 +67,10 @@ public class ScriptedSubscriptionConnection : SubscriptionConnection {
     /** Ordered timeshift positioning requests issued through this connection. */
     public val seekTargets: List<SubscriptionSeekTarget>
         get() = synchronized(lock) { mutableSeekTargets.toImmutableList() }
+
+    /** Ordered server playback-speed requests issued through this connection. */
+    public val speeds: List<Int>
+        get() = synchronized(lock) { mutableSpeeds.toImmutableList() }
 
     /** Requested timeshift period in whole seconds, or null before subscribe. */
     public var requestedTimeshiftSeconds: Long? = null
@@ -82,6 +90,11 @@ public class ScriptedSubscriptionConnection : SubscriptionConnection {
     /** Scripts the next and subsequent skip result. */
     public fun scriptSkip(result: SubscriptionOperationResult<Unit>) {
         synchronized(lock) { skipResult = result }
+    }
+
+    /** Scripts the next and subsequent speed result. */
+    public fun scriptSpeed(result: SubscriptionOperationResult<Unit>) {
+        synchronized(lock) { speedResult = result }
     }
 
     /** Scripts the next and subsequent unsubscribe result. */
@@ -204,6 +217,19 @@ public class ScriptedSubscriptionConnection : SubscriptionConnection {
             mutableCalls += ScriptedSubscriptionCall.SKIP
             mutableSeekTargets += target
             skipResult
+        }
+    }
+
+    override suspend fun speed(
+        id: SubscriptionId,
+        speed: Int,
+    ): SubscriptionOperationResult<Unit> {
+        currentCoroutineContext().ensureActive()
+        return synchronized(lock) {
+            check(streams.containsKey(id.value)) { "Subscription stream is not active" }
+            mutableCalls += ScriptedSubscriptionCall.SPEED
+            mutableSpeeds += speed
+            speedResult
         }
     }
 

@@ -107,6 +107,7 @@ public final class at/bernhardberger/tvheadend/sdk/testing/ScriptedSubscriptionC
 	public static final field COLLECTION_REGISTERED Lat/bernhardberger/tvheadend/sdk/testing/ScriptedSubscriptionCall;
 	public static final field LIVE_COMMIT Lat/bernhardberger/tvheadend/sdk/testing/ScriptedSubscriptionCall;
 	public static final field SKIP Lat/bernhardberger/tvheadend/sdk/testing/ScriptedSubscriptionCall;
+	public static final field SPEED Lat/bernhardberger/tvheadend/sdk/testing/ScriptedSubscriptionCall;
 	public static final field SUBSCRIBE Lat/bernhardberger/tvheadend/sdk/testing/ScriptedSubscriptionCall;
 	public static final field UNSUBSCRIBE Lat/bernhardberger/tvheadend/sdk/testing/ScriptedSubscriptionCall;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
@@ -126,14 +127,17 @@ public final class at/bernhardberger/tvheadend/sdk/testing/ScriptedSubscriptionC
 	public final fun getRequestedStreamProfileUuid ()Ljava/lang/String;
 	public final fun getRequestedTimeshiftSeconds ()Ljava/lang/Long;
 	public final fun getSeekTargets ()Ljava/util/List;
+	public final fun getSpeeds ()Ljava/util/List;
 	public final fun getSubscribeCount ()I
 	public final fun getUnsubscribeCount ()I
 	public final fun loseGeneration (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun scriptSkip (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult;)V
+	public final fun scriptSpeed (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult;)V
 	public final fun scriptSubscribe (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult;)V
 	public final fun scriptUnsubscribe (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult;)V
 	public final fun setLive (Z)V
 	public fun skip-BrKCP9I (JLat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekTarget;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun speed-BrKCP9I (JILkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun subscribe-GERwZ60 (JJLat/bernhardberger/tvheadend/sdk/playback/SubscriptionOptions;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun subscribe-kDjujcg (JJJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun toString ()Ljava/lang/String;

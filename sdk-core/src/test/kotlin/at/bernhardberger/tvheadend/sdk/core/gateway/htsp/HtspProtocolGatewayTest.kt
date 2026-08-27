@@ -102,6 +102,7 @@ import at.bernhardberger.tvheadend.htsp.requests.SubscribeRequest
 import at.bernhardberger.tvheadend.htsp.requests.SubscribeResponse
 import at.bernhardberger.tvheadend.htsp.requests.SubscriptionSeekPosition
 import at.bernhardberger.tvheadend.htsp.requests.SubscriptionSkipRequest
+import at.bernhardberger.tvheadend.htsp.requests.SubscriptionSpeedRequest
 import at.bernhardberger.tvheadend.htsp.requests.UnsubscribeRequest
 import at.bernhardberger.tvheadend.htsp.requests.UpdateAutorecEntryRequest
 import at.bernhardberger.tvheadend.htsp.requests.UpdateAutorecEntryResponse
@@ -1777,6 +1778,20 @@ internal class HtspProtocolGatewayTest {
         assertEquals(SubscriptionSeekPosition.Time(87_000_000L), nearLive.position)
         assertEquals(1L, nearLive.absolute)
         assertSame(sourceGeneration, fake.lastExpectedGeneration)
+
+        assertTrue(
+            gateway.speedSubscription(
+                generation = generation,
+                id = SubscriptionId(5),
+                speed = 0,
+            ) is SubscriptionOperationResult.Ok,
+        )
+        val pause = fake.lastRequest as SubscriptionSpeedRequest
+        assertEquals(5L, pause.subscriptionId)
+        assertEquals(0, pause.speed)
+        assertSame(sourceGeneration, fake.lastExpectedGeneration)
+        gateway.speedSubscription(generation, SubscriptionId(5), 100)
+        assertEquals(100, (fake.lastRequest as SubscriptionSpeedRequest).speed)
 
         listOf(
             HtspResult.ServerError to SubscriptionOperationResult.ServerRejected,

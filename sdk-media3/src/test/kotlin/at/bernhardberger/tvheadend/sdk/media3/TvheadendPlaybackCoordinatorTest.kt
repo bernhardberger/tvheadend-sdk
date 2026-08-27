@@ -27,7 +27,16 @@ import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.RecordingId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
+import at.bernhardberger.tvheadend.sdk.playback.ActiveSubscription
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionDiagnostics
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekResult
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekInvalidation
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionState
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTerminalReason
 import java.io.IOException
 import java.util.concurrent.CancellationException
 import kotlin.time.Duration
@@ -282,6 +291,319 @@ internal class TvheadendPlaybackCoordinatorTest {
             fixture.coordinator.shutdown(1.seconds)
             owner.join()
         }
+
+    @Test
+    fun `timeshift state and commands use ordered subscription authority without player controls`() =
+        runTest {
+            val fixture = CoordinatorFixture()
+            assertSame(LiveTimeshiftState.Unavailable, fixture.coordinator.timeshiftState.value)
+            assertSame(TimeshiftCommandResult.NOT_RUNNING, fixture.coordinator.seekTimeshift((-10).seconds))
+            val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+            fixture.coordinator.setLiveTarget(
+                ChannelId(4),
+                LivePlaybackOptions(timeshiftPeriod = 120.seconds),
+            )
+            val subscription = FakeTimeshiftSubscription(120.seconds)
+            fixture.player.attachTimeshift(subscription)
+
+            var available = fixture.coordinator.timeshiftState.value as LiveTimeshiftState.Available
+            assertEquals(120.seconds, available.grantedPeriod)
+            assertEquals(null, available.bufferedDuration)
+            assertEquals(null, available.positionBehindLive)
+            assertEquals(null, available.serverPaused)
+
+            fixture.player.emitTimeshift(
+                SubscriptionEvent.Timeshift(
+                    full = 0,
+                    shift = 40_000_000,
+                    start = 10_000_000,
+                    end = 100_000_000,
+                    speed = null,
+                ),
+            )
+            fixture.player.emitTimeshift(SubscriptionEvent.Speed(0))
+            available = fixture.coordinator.timeshiftState.value as LiveTimeshiftState.Available
+            assertEquals(90.seconds, available.bufferedDuration)
+            assertEquals(40.seconds, available.positionBehindLive)
+            assertEquals(true, available.serverPaused)
+
+            assertSame(TimeshiftCommandResult.ACCEPTED, fixture.coordinator.seekTimeshift((-10).seconds))
+            assertSame(TimeshiftCommandResult.ACCEPTED, fixture.coordinator.seekTimeshift(5.seconds))
+            assertSame(TimeshiftCommandResult.ACCEPTED, fixture.coordinator.seekTimeshift(Duration.ZERO))
+            assertSame(TimeshiftCommandResult.ACCEPTED, fixture.coordinator.returnToLive())
+            assertSame(TimeshiftCommandResult.ACCEPTED, fixture.coordinator.pauseTimeshift())
+            assertSame(TimeshiftCommandResult.ACCEPTED, fixture.coordinator.resumeTimeshift())
+            assertEquals(
+                listOf((-10).seconds, 5.seconds, Duration.ZERO),
+                subscription.seekTargets.filterIsInstance<SubscriptionSeekTarget.Relative>()
+                    .map { it.offset },
+            )
+            assertSame(SubscriptionSeekTarget.Live, subscription.seekTargets.last())
+            assertEquals(listOf(0, 100), subscription.speeds)
+            assertEquals(listOf("live:4"), fixture.player.operations)
+
+            assertSame(PlaybackStopResult.STOPPED, fixture.coordinator.stop())
+            assertSame(LiveTimeshiftState.Unavailable, fixture.coordinator.timeshiftState.value)
+            assertSame(TimeshiftCommandResult.UNAVAILABLE, fixture.coordinator.resumeTimeshift())
+            fixture.coordinator.shutdown(1.seconds)
+            owner.join()
+        }
+
+    @Test
+    fun `timeshift status rejects invalid bounds and caps position at the observed buffer`() = runTest {
+        val fixture = CoordinatorFixture()
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+        fixture.coordinator.setLiveTarget(ChannelId(4))
+        fixture.player.emitTimeshift(
+            SubscriptionEvent.Timeshift(0, 10_000_000, 0, 30_000_000, null),
+        )
+        fixture.player.attachTimeshift(FakeTimeshiftSubscription(60.seconds))
+        var available = fixture.coordinator.timeshiftState.value as LiveTimeshiftState.Available
+        assertEquals(30.seconds, available.bufferedDuration)
+        assertEquals(10.seconds, available.positionBehindLive)
+
+        fixture.player.emitTimeshift(
+            SubscriptionEvent.Timeshift(0, 90_000_000, 20_000_000, 10_000_000, 50),
+        )
+        available = fixture.coordinator.timeshiftState.value as LiveTimeshiftState.Available
+        assertEquals(null, available.bufferedDuration)
+        assertEquals(null, available.positionBehindLive)
+        assertEquals(null, available.serverPaused)
+
+        fixture.player.emitTimeshift(
+            SubscriptionEvent.Timeshift(0, 90_000_000, 10_000_000, 30_000_000, null),
+        )
+        available = fixture.coordinator.timeshiftState.value as LiveTimeshiftState.Available
+        assertEquals(20.seconds, available.bufferedDuration)
+        assertEquals(20.seconds, available.positionBehindLive)
+
+        fixture.player.emitTimeshift(
+            SubscriptionEvent.Timeshift(0, -1, 10_000_000, 30_000_000, null),
+        )
+        available = fixture.coordinator.timeshiftState.value as LiveTimeshiftState.Available
+        assertEquals(null, available.positionBehindLive)
+        fixture.coordinator.shutdown(1.seconds)
+        owner.join()
+    }
+
+    @Test
+    fun `failed replacement preserves timeshift while successful replacement fences stale callbacks`() =
+        runTest {
+            val fixture = CoordinatorFixture()
+            val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+            fixture.coordinator.setLiveTarget(ChannelId(1))
+            fixture.player.attachTimeshift(FakeTimeshiftSubscription(60.seconds))
+            fixture.player.emitTimeshift(
+                SubscriptionEvent.Timeshift(0, 10_000_000, 0, 30_000_000, 100),
+            )
+            val originalState = fixture.coordinator.timeshiftState.value
+            val staleBridge = fixture.player.requireTimeshiftControls()
+
+            fixture.player.liveInstallStatus = PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE
+            assertSame(
+                PlaybackTargetResult.PLAYER_UNAVAILABLE,
+                fixture.coordinator.setLiveTarget(ChannelId(2)),
+            )
+            assertEquals(originalState, fixture.coordinator.timeshiftState.value)
+
+            fixture.player.liveInstallStatus = PlaybackPlayerInstallStatus.STARTED
+            assertSame(PlaybackTargetResult.STARTED, fixture.coordinator.setLiveTarget(ChannelId(3)))
+            assertSame(LiveTimeshiftState.Unavailable, fixture.coordinator.timeshiftState.value)
+            fixture.player.attachTimeshift(FakeTimeshiftSubscription(90.seconds))
+            val replacementState = fixture.coordinator.timeshiftState.value
+            staleBridge.accept(SubscriptionEvent.Speed(0))
+            assertEquals(replacementState, fixture.coordinator.timeshiftState.value)
+
+            fixture.coordinator.shutdown(1.seconds)
+            owner.join()
+            assertSame(LiveTimeshiftState.Unavailable, fixture.coordinator.timeshiftState.value)
+            assertSame(TimeshiftCommandResult.SHUT_DOWN, fixture.coordinator.pauseTimeshift())
+        }
+
+    @Test
+    fun `timeshift commands map operation and seek gate failures without transport detail`() = runTest {
+        val fixture = CoordinatorFixture()
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+        fixture.coordinator.setLiveTarget(ChannelId(1))
+        val subscription = FakeTimeshiftSubscription(60.seconds)
+        fixture.player.attachTimeshift(subscription)
+
+        val operationFailures = listOf(
+            SubscriptionOperationResult.ServerRejected to TimeshiftCommandResult.SERVER_REJECTED,
+            SubscriptionOperationResult.AccessDenied to TimeshiftCommandResult.ACCESS_DENIED,
+            SubscriptionOperationResult.ConnectionLimit to TimeshiftCommandResult.CONNECTION_LIMIT,
+            SubscriptionOperationResult.Timeout to TimeshiftCommandResult.TIMEOUT,
+            SubscriptionOperationResult.TransportUnavailable to
+                TimeshiftCommandResult.TRANSPORT_UNAVAILABLE,
+            SubscriptionOperationResult.NotSupported to TimeshiftCommandResult.NOT_SUPPORTED,
+        )
+        operationFailures.forEach { (source, expected) ->
+            subscription.speedAction = { source }
+            assertSame(expected, fixture.coordinator.pauseTimeshift())
+        }
+
+        val seekResults = listOf(
+            SubscriptionSeekResult.Rejected to TimeshiftCommandResult.REJECTED,
+            SubscriptionSeekResult.NotSeekable to TimeshiftCommandResult.UNAVAILABLE,
+            SubscriptionSeekResult.AlreadyPending to TimeshiftCommandResult.ALREADY_PENDING,
+            SubscriptionSeekResult.NotAcknowledged to TimeshiftCommandResult.NOT_ACKNOWLEDGED,
+            SubscriptionSeekResult.SubscriptionEnded to TimeshiftCommandResult.SUBSCRIPTION_ENDED,
+            SubscriptionSeekResult.Invalidated(
+                SubscriptionSeekInvalidation.ACKNOWLEDGEMENT_TIMEOUT,
+            ) to TimeshiftCommandResult.ACKNOWLEDGEMENT_TIMEOUT,
+            SubscriptionSeekResult.Invalidated(
+                SubscriptionSeekInvalidation.PENDING_QUEUE_OVERFLOW,
+            ) to TimeshiftCommandResult.PENDING_QUEUE_OVERFLOW,
+            SubscriptionSeekResult.Invalidated(
+                SubscriptionSeekInvalidation.UNCERTAIN_REQUEST_OUTCOME,
+            ) to TimeshiftCommandResult.UNCERTAIN_REQUEST_OUTCOME,
+            SubscriptionSeekResult.Invalidated(
+                SubscriptionSeekInvalidation.UNRECOGNIZED_ACKNOWLEDGEMENT,
+            ) to TimeshiftCommandResult.UNRECOGNIZED_ACKNOWLEDGEMENT,
+            SubscriptionSeekResult.Invalidated(
+                SubscriptionSeekInvalidation.RESUMED_SEGMENT_UNANCHORABLE,
+            ) to TimeshiftCommandResult.RESUMED_SEGMENT_UNANCHORABLE,
+        )
+        seekResults.forEach { (source, expected) ->
+            val currentSubscription = FakeTimeshiftSubscription(60.seconds)
+            currentSubscription.seekAction = { source }
+            fixture.player.replaceTimeshiftPeriod(currentSubscription)
+            assertSame(expected, fixture.coordinator.seekTimeshift((-1).seconds))
+        }
+
+        fixture.coordinator.shutdown(1.seconds)
+        owner.join()
+    }
+
+    @Test
+    fun `claimed seek survives caller cancellation but queued command performs no work`() = runTest {
+        val fixture = CoordinatorFixture()
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+        fixture.coordinator.setLiveTarget(ChannelId(1))
+        val subscription = FakeTimeshiftSubscription(60.seconds)
+        fixture.player.attachTimeshift(subscription)
+        val seekRelease = CompletableDeferred<SubscriptionSeekResult>()
+        subscription.seekAction = { seekRelease.await() }
+
+        val claimed = async { fixture.coordinator.seekTimeshift((-10).seconds) }
+        runCurrent()
+        assertEquals(
+            (-10).seconds,
+            (subscription.seekTargets.single() as SubscriptionSeekTarget.Relative).offset,
+        )
+        claimed.cancel()
+        assertTrue(claimed.isCancelled)
+        seekRelease.complete(SubscriptionSeekResult.Accepted)
+        runCurrent()
+
+        val installEntered = CompletableDeferred<Unit>()
+        val installRelease = CompletableDeferred<Unit>()
+        fixture.player.liveInstallEntered = installEntered
+        fixture.player.liveInstallRelease = installRelease
+        val replacement = async { fixture.coordinator.setLiveTarget(ChannelId(2)) }
+        installEntered.await()
+        val queued = async { fixture.coordinator.pauseTimeshift() }
+        runCurrent()
+        queued.cancel()
+        installRelease.complete(Unit)
+        assertSame(PlaybackTargetResult.STARTED, replacement.await())
+        assertTrue(queued.isCancelled)
+        assertTrue(subscription.speeds.isEmpty())
+
+        owner.cancelAndJoin()
+        assertSame(LiveTimeshiftState.Unavailable, fixture.coordinator.timeshiftState.value)
+    }
+
+    @Test
+    fun `operation cancellation reaches the command caller and tears down the actor owner`() =
+        runTest {
+            suspend fun verify(
+                configure: (FakeTimeshiftSubscription, CancellationException) -> Unit,
+                command: suspend (TvheadendPlaybackCoordinator) -> TimeshiftCommandResult,
+            ) {
+                val fixture = CoordinatorFixture()
+                val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+                fixture.coordinator.setLiveTarget(ChannelId(1))
+                val subscription = FakeTimeshiftSubscription(60.seconds)
+                fixture.player.attachTimeshift(subscription)
+                val cancellation = CancellationException("scripted operation cancellation")
+                configure(subscription, cancellation)
+
+                val caught = try {
+                    command(fixture.coordinator)
+                    null
+                } catch (failure: CancellationException) {
+                    failure
+                }
+                assertEquals(cancellation.message, caught?.message)
+                assertTrue(caught === cancellation || caught?.cause === cancellation)
+                owner.join()
+                assertTrue(owner.isCancelled)
+                assertSame(LiveTimeshiftState.Unavailable, fixture.coordinator.timeshiftState.value)
+            }
+
+            verify(
+                configure = { subscription, cancellation ->
+                    subscription.seekAction = { throw cancellation }
+                },
+                command = { coordinator -> coordinator.seekTimeshift((-1).seconds) },
+            )
+            verify(
+                configure = { subscription, cancellation ->
+                    subscription.speedAction = { throw cancellation }
+                },
+                command = { coordinator -> coordinator.pauseTimeshift() },
+            )
+        }
+
+    @Test
+    fun `period attachments supersede stale periods and terminal state detaches controls`() = runTest {
+        val token = PlaybackTargetToken()
+        val published = mutableListOf<LiveTimeshiftState>()
+        val bridge = LiveTimeshiftControlBridge(token, published::add)
+        val first = bridge.newAttachment()
+        val firstSubscription = FakeTimeshiftSubscription(60.seconds)
+        first.bind(firstSubscription)
+        first.accept(SubscriptionEvent.Timeshift(0, 5_000_000, 0, 20_000_000, 100))
+        val second = bridge.newAttachment()
+        val secondSubscription = FakeTimeshiftSubscription(90.seconds)
+        second.accept(SubscriptionEvent.Timeshift(0, 7_000_000, 0, 30_000_000, 0))
+        second.bind(secondSubscription)
+
+        var available = published.last() as LiveTimeshiftState.Available
+        assertEquals(90.seconds, available.grantedPeriod)
+        assertEquals(30.seconds, available.bufferedDuration)
+        assertEquals(true, available.serverPaused)
+        first.accept(SubscriptionEvent.Speed(0))
+        first.detach()
+        assertEquals(available, published.last())
+        assertEquals(0, firstSubscription.closeCount)
+
+        secondSubscription.mutableState.value = SubscriptionState.Terminal(
+            SubscriptionTerminalReason.ConsumerFailed,
+        )
+        second.terminal(secondSubscription)
+        assertSame(LiveTimeshiftState.Unavailable, published.last())
+        assertSame(null, bridge.setSpeed(100))
+        assertEquals(0, secondSubscription.closeCount)
+
+        val third = bridge.newAttachment()
+        val thirdSubscription = FakeTimeshiftSubscription(120.seconds)
+        third.bind(thirdSubscription)
+        available = published.last() as LiveTimeshiftState.Available
+        assertEquals(120.seconds, available.grantedPeriod)
+        thirdSubscription.seekAction = {
+            SubscriptionSeekResult.Invalidated(
+                SubscriptionSeekInvalidation.ACKNOWLEDGEMENT_TIMEOUT,
+            )
+        }
+        assertTrue(bridge.seek(SubscriptionSeekTarget.Live) is SubscriptionSeekResult.Invalidated)
+        assertSame(LiveTimeshiftState.Unavailable, published.last())
+        second.accept(SubscriptionEvent.Speed(100))
+        second.detach()
+        assertSame(LiveTimeshiftState.Unavailable, published.last())
+        third.detach()
+    }
 
     @Test
     fun `concurrent target intents are processed in admission order`() = runTest {
@@ -814,6 +1136,11 @@ private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
     var recordingAdmission: RecordingAdmission.Accepted = RecordingAdmission.Completed(null)
     var installFailure: Exception? = null
     var liveOptions: SubscriptionOptions? = null
+    var liveInstallStatus: PlaybackPlayerInstallStatus = PlaybackPlayerInstallStatus.STARTED
+    var liveInstallEntered: CompletableDeferred<Unit>? = null
+    var liveInstallRelease: CompletableDeferred<Unit>? = null
+    private var timeshiftControls: LiveTimeshiftControlBridge? = null
+    private var timeshiftAttachment: LiveTimeshiftControlBridge.Attachment? = null
     var abandonCalls = 0
     var released = false
     val operations = mutableListOf<String>()
@@ -826,11 +1153,22 @@ private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
         token: PlaybackTargetToken,
         channelId: SubscriptionChannelId,
         options: SubscriptionOptions,
+        timeshiftControls: LiveTimeshiftControlBridge,
     ): PlaybackPlayerInstallResult {
         installFailure?.let { failure -> throw failure }
         if (!ticket.claim()) return PlaybackPlayerInstallResult(PlaybackPlayerInstallStatus.CANCELLED)
+        liveInstallEntered?.complete(Unit)
+        liveInstallRelease?.await()
+        liveInstallEntered = null
+        liveInstallRelease = null
+        if (liveInstallStatus != PlaybackPlayerInstallStatus.STARTED) {
+            ticket.complete()
+            return PlaybackPlayerInstallResult(liveInstallStatus)
+        }
         val retirement = retire()
         active = FakeTarget.Live(token)
+        this.timeshiftControls = timeshiftControls
+        timeshiftAttachment = timeshiftControls.newAttachment()
         liveOptions = options
         operations += "live:${channelId.value}"
         ticket.complete()
@@ -881,10 +1219,28 @@ private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
 
     fun requireActiveToken(): PlaybackTargetToken = checkNotNull(active).token
 
+    fun requireTimeshiftControls(): LiveTimeshiftControlBridge.Attachment =
+        checkNotNull(timeshiftAttachment)
+
+    fun attachTimeshift(subscription: ActiveSubscription) {
+        requireTimeshiftControls().bind(subscription)
+    }
+
+    fun replaceTimeshiftPeriod(subscription: ActiveSubscription) {
+        timeshiftAttachment = checkNotNull(timeshiftControls).newAttachment()
+        attachTimeshift(subscription)
+    }
+
+    fun emitTimeshift(event: SubscriptionEvent) {
+        requireTimeshiftControls().accept(event)
+    }
+
     private fun retire(): Pair<Boolean, RetiredRecordingTarget?> {
         val previous = active ?: return false to null
         previous.token.retire()
         active = null
+        if (previous is FakeTarget.Live) timeshiftControls = null
+        if (previous is FakeTarget.Live) timeshiftAttachment = null
         return true to if (previous is FakeTarget.Recording) {
             RetiredRecordingTarget(
                 previous.token,
@@ -900,6 +1256,42 @@ private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
     private sealed class FakeTarget(open val token: PlaybackTargetToken) {
         data class Live(override val token: PlaybackTargetToken) : FakeTarget(token)
         data class Recording(override val token: PlaybackTargetToken) : FakeTarget(token)
+    }
+}
+
+private class FakeTimeshiftSubscription(
+    override val grantedTimeshiftPeriod: Duration?,
+) : ActiveSubscription {
+    val seekTargets = mutableListOf<SubscriptionSeekTarget>()
+    val speeds = mutableListOf<Int>()
+    var seekAction: suspend (SubscriptionSeekTarget) -> SubscriptionSeekResult = {
+        SubscriptionSeekResult.Accepted
+    }
+    var speedAction: suspend (Int) -> SubscriptionOperationResult<Unit> = {
+        SubscriptionOperationResult.Ok(Unit)
+    }
+    val mutableState = kotlinx.coroutines.flow.MutableStateFlow<SubscriptionState>(
+        SubscriptionState.Starting,
+    )
+    var closeCount = 0
+
+    override val state: kotlinx.coroutines.flow.StateFlow<SubscriptionState> = mutableState
+    override val diagnostics: kotlinx.coroutines.flow.StateFlow<SubscriptionDiagnostics>
+        get() = error("Timeshift diagnostics are not used by this coordinator fixture")
+
+    override suspend fun seek(target: SubscriptionSeekTarget): SubscriptionSeekResult {
+        seekTargets += target
+        return seekAction(target)
+    }
+
+    override suspend fun setSpeed(speed: Int): SubscriptionOperationResult<Unit> {
+        speeds += speed
+        return speedAction(speed)
+    }
+
+    override suspend fun close(): at.bernhardberger.tvheadend.sdk.playback.SubscriptionCloseResult {
+        closeCount += 1
+        return at.bernhardberger.tvheadend.sdk.playback.SubscriptionCloseResult.CLOSED
     }
 }
 

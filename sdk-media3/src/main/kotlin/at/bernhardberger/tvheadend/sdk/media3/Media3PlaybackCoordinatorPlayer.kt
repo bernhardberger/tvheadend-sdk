@@ -82,6 +82,7 @@ internal interface PlaybackCoordinatorPlayer {
         token: PlaybackTargetToken,
         channelId: SubscriptionChannelId,
         options: SubscriptionOptions = SubscriptionOptions(),
+        timeshiftControls: LiveTimeshiftControlBridge,
     ): PlaybackPlayerInstallResult
 
     suspend fun installRecording(
@@ -122,6 +123,7 @@ internal interface CoordinatorPlaybackAccess {
     fun createLiveSource(
         channelId: SubscriptionChannelId,
         options: SubscriptionOptions,
+        timeshiftControls: LiveTimeshiftControlBridge,
     ): CoordinatorMediaSource
 
     fun createRecordingSource(recordingId: RecordingId): CoordinatorMediaSource
@@ -158,8 +160,11 @@ internal class Media3PlaybackCoordinatorPlayer(
         token: PlaybackTargetToken,
         channelId: SubscriptionChannelId,
         options: SubscriptionOptions,
+        timeshiftControls: LiveTimeshiftControlBridge,
     ): PlaybackPlayerInstallResult = when (
-        val operation = executor.execute(ticket) { installLiveOnLooper(token, channelId, options) }
+        val operation = executor.execute(ticket) {
+            installLiveOnLooper(token, channelId, options, timeshiftControls)
+        }
     ) {
         is LooperOperationResult.Success -> operation.value
         LooperOperationResult.Cancelled -> PlaybackPlayerInstallResult(PlaybackPlayerInstallStatus.CANCELLED)
@@ -221,10 +226,11 @@ internal class Media3PlaybackCoordinatorPlayer(
         token: PlaybackTargetToken,
         channelId: SubscriptionChannelId,
         options: SubscriptionOptions,
+        timeshiftControls: LiveTimeshiftControlBridge,
     ): PlaybackPlayerInstallResult {
         access.requireApplicationLooper()
         val source = try {
-            access.createLiveSource(channelId, options)
+            access.createLiveSource(channelId, options, timeshiftControls)
         } catch (_: Exception) {
             return PlaybackPlayerInstallResult(PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE)
         }
@@ -531,12 +537,14 @@ internal class ExoPlayerCoordinatorPlaybackAccess(
     override fun createLiveSource(
         channelId: SubscriptionChannelId,
         options: SubscriptionOptions,
+        timeshiftControls: LiveTimeshiftControlBridge,
     ): CoordinatorMediaSource =
         Media3CoordinatorMediaSource(
             createTvheadendLiveMediaSource(
                 subscriptions,
                 channelId,
                 options,
+                timeshiftControls,
                 onUnsupportedStream,
             ),
         )

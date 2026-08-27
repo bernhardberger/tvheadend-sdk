@@ -423,6 +423,12 @@ public interface SubscriptionConnection {
         target: SubscriptionSeekTarget,
     ): SubscriptionOperationResult<Unit>
 
+    /** Issues a generation-bound server playback-speed request for [id]. */
+    public suspend fun speed(
+        id: SubscriptionId,
+        speed: Int,
+    ): SubscriptionOperationResult<Unit> = SubscriptionOperationResult.NotSupported
+
     /** Issues generation-bound unsubscribe whose success drains and then completes [events]. */
     public suspend fun unsubscribe(id: SubscriptionId): SubscriptionOperationResult<Unit>
 

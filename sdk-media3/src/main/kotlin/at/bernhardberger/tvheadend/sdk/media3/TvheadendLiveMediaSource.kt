@@ -33,6 +33,7 @@ public fun createTvheadendLiveMediaSource(
     subscriptions,
     channelId,
     SubscriptionOptions(),
+    null,
     onUnsupportedStream,
 )
 
@@ -44,12 +45,33 @@ public fun createTvheadendLiveMediaSource(
     channelId: SubscriptionChannelId,
     options: SubscriptionOptions,
     onUnsupportedStream: (SubscriptionStreamType) -> Unit = {},
-): MediaSource = TvheadendLiveMediaSource(subscriptions, channelId, options, onUnsupportedStream)
+): MediaSource = TvheadendLiveMediaSource(
+    subscriptions,
+    channelId,
+    options,
+    null,
+    onUnsupportedStream,
+)
+
+internal fun createTvheadendLiveMediaSource(
+    subscriptions: SubscriptionOpener,
+    channelId: SubscriptionChannelId,
+    options: SubscriptionOptions,
+    timeshiftControls: LiveTimeshiftControlBridge,
+    onUnsupportedStream: (SubscriptionStreamType) -> Unit,
+): MediaSource = TvheadendLiveMediaSource(
+    subscriptions,
+    channelId,
+    options,
+    timeshiftControls,
+    onUnsupportedStream,
+)
 
 private class TvheadendLiveMediaSource(
     private val subscriptions: SubscriptionOpener,
     private val channelId: SubscriptionChannelId,
     private val options: SubscriptionOptions,
+    private val timeshiftControls: LiveTimeshiftControlBridge?,
     private val onUnsupportedStream: (SubscriptionStreamType) -> Unit,
 ) : BaseMediaSource() {
     private val mediaItem = MediaItem.Builder()
@@ -82,6 +104,7 @@ private class TvheadendLiveMediaSource(
         channelId = channelId,
         options = options,
         allocator = allocator,
+        timeshiftControls = timeshiftControls?.newAttachment(),
         onUnsupportedStream = onUnsupportedStream,
     )
 

@@ -304,6 +304,9 @@ class SessionSubscriptionsTest {
                 target.position,
                 "The absolute media position must reach the gateway unchanged",
             )
+            assertTrue(subscription.setSpeed(0) is SubscriptionOperationResult.Ok)
+            assertTrue(subscription.setSpeed(100) is SubscriptionOperationResult.Ok)
+            assertEquals(listOf(0, 100), gateway.subscriptionSpeeds)
             children.closeAndJoinSubscriptions()
         }
 
@@ -1011,6 +1014,7 @@ private class SubscriptionGateway : ProtocolGateway {
     internal val nearLiveIds = ArrayList<SubscriptionId>()
     internal val nearLiveStatuses = ArrayList<SubscriptionEvent.Timeshift>()
     internal val nearLiveMargins = ArrayList<Long>()
+    internal val subscriptionSpeeds = ArrayList<Int>()
     internal val openedRecordingGenerations = ArrayList<GatewayGeneration>()
     internal val openedRecordingIds = ArrayList<DvrEntryId>()
     internal val seekedRecordingGenerations = ArrayList<GatewayGeneration>()
@@ -1252,6 +1256,15 @@ private class SubscriptionGateway : ProtocolGateway {
             nearLiveMargins += marginSeconds
         }
         return nearLiveAction()
+    }
+
+    override suspend fun speedSubscription(
+        generation: GatewayGeneration,
+        id: SubscriptionId,
+        speed: Int,
+    ): SubscriptionOperationResult<Unit> {
+        subscriptionSpeeds += speed
+        return SubscriptionOperationResult.Ok(Unit)
     }
 
     override suspend fun unsubscribe(

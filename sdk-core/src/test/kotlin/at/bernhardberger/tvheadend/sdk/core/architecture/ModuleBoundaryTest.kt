@@ -272,6 +272,10 @@ internal class ModuleBoundaryTest {
             "public suspend fun setLiveTarget(channelId: ChannelId): PlaybackTargetResult",
             "public suspend fun setLiveTarget( channelId: ChannelId, options: LivePlaybackOptions, ): PlaybackTargetResult",
             "public suspend fun setRecordingTarget( recordingId: DvrEntryId, start: RecordingPlaybackStart = RecordingPlaybackStart.RESUME, ): PlaybackTargetResult",
+            "public suspend fun seekTimeshift(offset: Duration): TimeshiftCommandResult",
+            "public suspend fun returnToLive(): TimeshiftCommandResult",
+            "public suspend fun pauseTimeshift(): TimeshiftCommandResult",
+            "public suspend fun resumeTimeshift(): TimeshiftCommandResult",
             "public suspend fun stop(): PlaybackStopResult",
             "public suspend fun shutdown(drainTimeout: Duration): PlaybackShutdownResult",
         )
@@ -343,6 +347,8 @@ internal class ModuleBoundaryTest {
             "SubscriptionBinaryFixture",
         )
         val expectedMedia3 = setOf(
+            "LiveTimeshiftState",
+            "TimeshiftCommandResult",
             "PlaybackShutdownResult",
             "PlaybackRecoveryPolicy",
             "PlaybackRecoveryReason",
@@ -381,7 +387,7 @@ internal class ModuleBoundaryTest {
         // The codec classification is intentionally stable for sdk-media3 application callbacks.
         assertPublicInfrastructure("sdk-playback", expectedPlayback, unannotatedCount = 2)
         assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 4)
-        assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 11)
+        assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 13)
 
         val sessionApi = java.io.File(
             "src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/TvheadendSession.kt",

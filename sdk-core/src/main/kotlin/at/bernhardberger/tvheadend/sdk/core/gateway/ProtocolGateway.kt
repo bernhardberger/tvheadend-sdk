@@ -204,6 +204,12 @@ internal interface ProtocolGateway {
         marginSeconds: Long,
     ): SubscriptionOperationResult<Unit> = SubscriptionOperationResult.NotSupported
 
+    public suspend fun speedSubscription(
+        generation: GatewayGeneration,
+        id: SubscriptionId,
+        speed: Int,
+    ): SubscriptionOperationResult<Unit> = SubscriptionOperationResult.NotSupported
+
     public suspend fun unsubscribe(
         generation: GatewayGeneration,
         id: SubscriptionId,

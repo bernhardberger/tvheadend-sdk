@@ -84,6 +84,7 @@ import at.bernhardberger.tvheadend.htsp.requests.stopDvrEntry
 import at.bernhardberger.tvheadend.htsp.requests.subscribe
 import at.bernhardberger.tvheadend.htsp.requests.subscriptionSkip
 import at.bernhardberger.tvheadend.htsp.requests.subscriptionSkipNearLive
+import at.bernhardberger.tvheadend.htsp.requests.subscriptionSpeed
 import at.bernhardberger.tvheadend.htsp.requests.unsubscribe
 import at.bernhardberger.tvheadend.htsp.requests.updateAutorecEntry
 import at.bernhardberger.tvheadend.htsp.requests.updateDvrEntry
@@ -871,6 +872,16 @@ internal class HtspProtocolGateway internal constructor(
             SubscriptionOperationResult.NotSupported
         }
     }
+
+    override suspend fun speedSubscription(
+        generation: GatewayGeneration,
+        id: SubscriptionId,
+        speed: Int,
+    ): SubscriptionOperationResult<Unit> = connection.subscriptionSpeed(
+        subscriptionId = id.value,
+        speed = speed,
+        expectedGeneration = htspGenerationFor(generation),
+    ).toSubscriptionResult {}
 
     override suspend fun unsubscribe(
         generation: GatewayGeneration,

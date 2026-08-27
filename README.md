@@ -127,7 +127,14 @@ focus, notification, surface, autoplay, navigation, or presentation policy.
 val coordinator = createTvheadendPlaybackCoordinator(session, player)
 val owner = applicationScope.launch { coordinator.run() }
 
-coordinator.setLiveTarget(channel.id)
+coordinator.setLiveTarget(
+    channel.id,
+    LivePlaybackOptions(timeshiftPeriod = 30.minutes),
+)
+coordinator.seekTimeshift((-30).seconds)
+coordinator.returnToLive() // bounded near-live position, not exact live mode
+coordinator.pauseTimeshift() // pauses server delivery only
+coordinator.resumeTimeshift()
 coordinator.setRecordingTarget(recording.id, RecordingPlaybackStart.RESUME)
 coordinator.setRecordingTarget(activeRecording.id, RecordingPlaybackStart.START_OVER)
 
@@ -136,6 +143,12 @@ owner.join()
 session.shutdown()
 player.release()
 ```
+
+`TvheadendPlaybackCoordinator.timeshiftState` reports only the current live
+target's positive server grant and ordered server observations. Buffered
+duration, position behind live, and server pause state remain `null` until valid
+status events arrive. Timeshift pause and resume send server speeds `0` and
+`100`; ordinary Media3 play/pause remains application-owned.
 
 Direct live playback feeds TVHeadend's packet-level `AAC` stream to Media3's
 maintained `AdtsReader`. TVHeadend normalizes AAC-LATM packets to ADTS before

@@ -33,6 +33,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionState
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTracks
 import java.io.IOException
 import kotlinx.coroutines.CoroutineScope
@@ -43,6 +44,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
 internal class TvheadendLiveMediaPeriod(
@@ -50,6 +52,7 @@ internal class TvheadendLiveMediaPeriod(
     private val channelId: SubscriptionChannelId,
     private val options: SubscriptionOptions,
     private val allocator: Allocator,
+    private val timeshiftControls: LiveTimeshiftControlBridge.Attachment? = null,
     private val onUnsupportedStream: (SubscriptionStreamType) -> Unit,
 ) : MediaPeriod, SubscriptionEventConsumer {
     private val lock = Any()
@@ -86,6 +89,13 @@ internal class TvheadendLiveMediaPeriod(
                         synchronized(lock) {
                             activeSubscription = result.subscription
                             subscriptionOpened = true
+                        }
+                        timeshiftControls?.bind(result.subscription)
+                        scope.launch {
+                            result.subscription.state.first { state ->
+                                state is SubscriptionState.Terminal
+                            }
+                            timeshiftControls?.terminal(result.subscription)
                         }
                         maybeFinishPreparation()
                     }
@@ -209,6 +219,7 @@ internal class TvheadendLiveMediaPeriod(
                 is SubscriptionEvent.Descramble,
                 -> Unit
             }
+            timeshiftControls?.accept(event)
         } catch (cancellation: CancellationException) {
             failPeriod()
             throw cancellation
@@ -275,6 +286,7 @@ internal class TvheadendLiveMediaPeriod(
             released = true
             openJob
         }
+        timeshiftControls?.detach()
         job?.cancel()
         scope.launch {
             try {

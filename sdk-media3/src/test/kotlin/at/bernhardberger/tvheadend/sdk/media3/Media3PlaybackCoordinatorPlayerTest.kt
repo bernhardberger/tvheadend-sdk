@@ -50,11 +50,13 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         )
 
         val live = async {
+            val token = PlaybackTargetToken()
             player.installLive(
                 PlayerOperationTicket(),
-                PlaybackTargetToken(),
+                token,
                 SubscriptionChannelId(3),
                 liveOptions,
+                controls(token),
             )
         }
         runCurrent()
@@ -157,7 +159,12 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         }
         val liveToken = PlaybackTargetToken()
         val live = async {
-            player.installLive(PlayerOperationTicket(), liveToken, SubscriptionChannelId(3))
+            player.installLive(
+                PlayerOperationTicket(),
+                liveToken,
+                SubscriptionChannelId(3),
+                timeshiftControls = controls(liveToken),
+            )
         }
         runCurrent()
         access.looperQueue.runAll()
@@ -195,7 +202,12 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         }
         val liveToken = PlaybackTargetToken()
         val live = async {
-            player.installLive(PlayerOperationTicket(), liveToken, SubscriptionChannelId(3))
+            player.installLive(
+                PlayerOperationTicket(),
+                liveToken,
+                SubscriptionChannelId(3),
+                timeshiftControls = controls(liveToken),
+            )
         }
         runCurrent()
         access.looperQueue.runAll()
@@ -369,7 +381,12 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         }
         val liveToken = PlaybackTargetToken()
         val live = async {
-            player.installLive(PlayerOperationTicket(), liveToken, SubscriptionChannelId(3))
+            player.installLive(
+                PlayerOperationTicket(),
+                liveToken,
+                SubscriptionChannelId(3),
+                timeshiftControls = controls(liveToken),
+            )
         }
         runCurrent()
         access.looperQueue.runAll()
@@ -446,6 +463,7 @@ private class FakeCoordinatorPlaybackAccess(
     override fun createLiveSource(
         channelId: SubscriptionChannelId,
         options: SubscriptionOptions,
+        timeshiftControls: LiveTimeshiftControlBridge,
     ): CoordinatorMediaSource {
         requireApplicationLooper()
         operations += "create-live"
@@ -593,3 +611,6 @@ private data object CurrentGrowingLease : GrowingRecordingFileLease {
     override suspend fun open(position: Long): RecordingFileResult<GrowingRecordingFileReader> =
         RecordingFileResult.Failed(RecordingFileFailure.NOT_SUPPORTED)
 }
+
+private fun controls(token: PlaybackTargetToken): LiveTimeshiftControlBridge =
+    LiveTimeshiftControlBridge(token) {}

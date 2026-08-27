@@ -87,10 +87,12 @@ class ScriptedSubscriptionConnectionTest {
         val status = SubscriptionEvent.Status(SubscriptionCondition.STATUS_REPORTED)
         connection.emit(status)
         val skip = connection.skip(id, SubscriptionSeekTarget.Absolute(30.seconds))
+        val speed = connection.speed(id, 0)
         val unsubscribe = connection.unsubscribe(id)
 
         assertTrue(subscribe is SubscriptionOperationResult.Ok)
         assertTrue(skip is SubscriptionOperationResult.Ok)
+        assertTrue(speed is SubscriptionOperationResult.Ok)
         assertTrue(unsubscribe is SubscriptionOperationResult.Ok)
         assertEquals(listOf(status), collected.await())
         assertEquals(
@@ -98,6 +100,7 @@ class ScriptedSubscriptionConnectionTest {
                 ScriptedSubscriptionCall.COLLECTION_REGISTERED,
                 ScriptedSubscriptionCall.SUBSCRIBE,
                 ScriptedSubscriptionCall.SKIP,
+                ScriptedSubscriptionCall.SPEED,
                 ScriptedSubscriptionCall.UNSUBSCRIBE,
             ),
             connection.calls,
@@ -113,6 +116,7 @@ class ScriptedSubscriptionConnectionTest {
             30.seconds,
             (connection.seekTargets.single() as SubscriptionSeekTarget.Absolute).position,
         )
+        assertEquals(listOf(0), connection.speeds)
         assertTrue(connection.toString().contains("<redacted>"))
     }
 

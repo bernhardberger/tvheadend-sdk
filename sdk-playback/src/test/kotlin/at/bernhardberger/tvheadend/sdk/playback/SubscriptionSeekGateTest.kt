@@ -2,6 +2,7 @@
 
 package at.bernhardberger.tvheadend.sdk.playback
 
+import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
@@ -388,6 +389,40 @@ class SubscriptionSeekGateTest {
         assertEquals(90.seconds, fixture.subscription.grantedTimeshiftPeriod)
         fixture.close()
     }
+
+    @Test
+    fun `server pause and resume require a live positive grant and propagate typed outcomes`() =
+        runTest {
+            val fixture = openSeekable()
+
+            assertTrue(fixture.subscription.setSpeed(0) is SubscriptionOperationResult.Ok)
+            assertTrue(fixture.subscription.setSpeed(100) is SubscriptionOperationResult.Ok)
+            assertEquals(listOf(0, 100), fixture.connection.speeds)
+
+            fixture.connection.speedAction = { SubscriptionOperationResult.ServerRejected }
+            assertSame(
+                SubscriptionOperationResult.ServerRejected,
+                fixture.subscription.setSpeed(0),
+            )
+            val cancellation = CancellationException("scripted")
+            fixture.connection.speedAction = { throw cancellation }
+            val caught = try {
+                fixture.subscription.setSpeed(100)
+                null
+            } catch (failure: CancellationException) {
+                failure
+            }
+            assertSame(cancellation, caught)
+
+            assertSame(SubscriptionCloseResult.CLOSED, fixture.subscription.close())
+            assertSame(SubscriptionCloseResult.CLOSED, fixture.subscription.close())
+            assertSame(
+                SubscriptionOperationResult.TransportUnavailable,
+                fixture.subscription.setSpeed(100),
+            )
+            fixture.manager.closeAndJoin()
+            assertEquals(1, fixture.connection.calls.count { it == Call.UNSUBSCRIBE })
+        }
 
     @Test
     fun `a stream terminal resolves a pending request without a seek terminal reason`() = runTest {

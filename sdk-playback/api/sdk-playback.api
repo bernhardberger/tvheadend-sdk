@@ -4,6 +4,11 @@ public abstract interface class at/bernhardberger/tvheadend/sdk/playback/ActiveS
 	public abstract fun getGrantedTimeshiftPeriod-FghU774 ()Lkotlin/time/Duration;
 	public abstract fun getState ()Lkotlinx/coroutines/flow/StateFlow;
 	public abstract fun seek (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekTarget;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun setSpeed (ILkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/ActiveSubscription$DefaultImpls {
+	public static fun setSpeed (Lat/bernhardberger/tvheadend/sdk/playback/ActiveSubscription;ILkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
 public abstract interface class at/bernhardberger/tvheadend/sdk/playback/GrowingRecordingFileLease {
@@ -177,12 +182,14 @@ public abstract interface class at/bernhardberger/tvheadend/sdk/playback/Subscri
 	public abstract fun commitIfLive (Lkotlin/jvm/functions/Function0;)Ljava/lang/Object;
 	public abstract fun events-QsRD2oE (J)Lkotlinx/coroutines/flow/Flow;
 	public abstract fun skip-BrKCP9I (JLat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekTarget;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun speed-BrKCP9I (JILkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun subscribe-GERwZ60 (JJLat/bernhardberger/tvheadend/sdk/playback/SubscriptionOptions;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun subscribe-kDjujcg (JJJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun unsubscribe--aUbMvU (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionConnection$DefaultImpls {
+	public static fun speed-BrKCP9I (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionConnection;JILkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static fun subscribe-GERwZ60 (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionConnection;JJLat/bernhardberger/tvheadend/sdk/playback/SubscriptionOptions;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 

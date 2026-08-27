@@ -328,6 +328,14 @@ public interface ActiveSubscription {
      */
     public suspend fun seek(target: SubscriptionSeekTarget): SubscriptionSeekResult
 
+    /**
+     * Requests server-side pause (`0`) or normal delivery (`100`).
+     *
+     * The ordered [SubscriptionEvent.Speed] event remains authoritative for observed state.
+     */
+    public suspend fun setSpeed(speed: Int): SubscriptionOperationResult<Unit> =
+        SubscriptionOperationResult.NotSupported
+
     /** Closes, unsubscribes, and joins this subscription exactly once. */
     public suspend fun close(): SubscriptionCloseResult
 }
@@ -429,6 +437,8 @@ internal class SeekGateSettings(
 private val DEFAULT_SEEK_ACKNOWLEDGEMENT_TIMEOUT = 5.seconds
 private const val DEFAULT_SEEK_PENDING_EVENTS = 2_048
 private const val DEFAULT_SEEK_PENDING_BYTES = 16L * 1024L * 1024L
+private const val PAUSED_SUBSCRIPTION_SPEED = 0
+private const val NORMAL_SUBSCRIPTION_SPEED = 100
 internal class SubscriptionIdAllocator(private var next: Long = 0L) {
     internal fun allocate(): SubscriptionId? = if (next > 0xffff_ffffL) {
         null
@@ -674,6 +684,28 @@ private class ActiveSubscriptionImpl(
         } catch (cancellation: CancellationException) {
             currentCoroutineContext().ensureActive()
             throw cancellation
+        }
+    }
+
+    override suspend fun setSpeed(speed: Int): SubscriptionOperationResult<Unit> {
+        require(speed == PAUSED_SUBSCRIPTION_SPEED || speed == NORMAL_SUBSCRIPTION_SPEED) {
+            "Subscription speed must be 0 or 100"
+        }
+        currentCoroutineContext().ensureActive()
+        val available = synchronized(lock) {
+            terminal == null &&
+                !closeRequestedFlag &&
+                !seekAdmissionClosed &&
+                playablePublished &&
+                (grantedTimeshiftSeconds ?: 0L) > 0L
+        }
+        if (!available) return SubscriptionOperationResult.TransportUnavailable
+        return try {
+            connection.speed(id, speed)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Exception) {
+            SubscriptionOperationResult.TransportUnavailable
         }
     }
 
