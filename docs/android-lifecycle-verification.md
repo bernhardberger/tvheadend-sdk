@@ -1,5 +1,19 @@
 # Android lifecycle verification
 
+`TvheadendServerProfileStore` now owns the single atomic selected-profile record.
+Its format stores normalized host, validated port, and authentication mode in the
+existing private Preferences DataStore. Password fields remain opaque inside a
+connectable `ServerProfile` and are encrypted with format-, field-, endpoint-,
+port-, and mode-bound associated data. Anonymous records contain no ciphertext
+and do not consult the Keystore. The deprecated `TvheadendCredentialStore`
+shares the same record and process mutex for compatibility.
+
+Focused JVM tests cover strict record decoding, v1 compatibility, failed-write
+preservation, cancellation, old/new concurrency, and associated-data mismatch.
+The instrumentation contract covers production DataStore, Tink, Keystore, and
+recreated-store round trips. The process-restart evidence below predates format 2;
+new format-2 process-restart device evidence was explicitly outside this change.
+
 Phase 5 Android acceptance was run on 2026-08-24 using a TCL Smart TV Pro on
 Android API 31, firmware increment `AS50`.
 

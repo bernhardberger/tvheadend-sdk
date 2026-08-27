@@ -41,6 +41,9 @@ val sdkVersion = Regex("""(?m)^version = "([^"]+)"[ \t]*$""")
     ?: error("The root project must declare exactly one literal version")
 
 dependencies {
+    implementation("at.bernhardberger.tvheadend:sdk-android") {
+        version { strictly(sdkVersion) }
+    }
     implementation("at.bernhardberger.tvheadend:sdk-media3") {
         version { strictly(sdkVersion) }
     }
@@ -77,21 +80,22 @@ tasks.register("verifyConsumerDependencyGraph") {
 
     doLast {
         val sdkGroup = "at.bernhardberger.tvheadend"
-        val expectedSdkModules = setOf("sdk-core", "sdk-media3", "sdk-playback")
+        val expectedSdkModules = setOf("sdk-android", "sdk-core", "sdk-media3", "sdk-playback")
         val expectedSdkCoordinates = expectedSdkModules.mapTo(mutableSetOf()) { module ->
             "$sdkGroup:$module:$sdkVersion"
         }
         val implementationDependencies = configurations.getByName("implementation").dependencies
             .filterIsInstance<ExternalModuleDependency>()
-        check(implementationDependencies.size == 1) {
-            "The consumer must declare exactly one external dependency"
+        check(implementationDependencies.size == 2) {
+            "The consumer must declare exactly two external dependencies"
         }
-        check(implementationDependencies.single().let { dependency ->
-            dependency.group == sdkGroup &&
-                dependency.name == "sdk-media3" &&
-                dependency.versionConstraint.strictVersion == sdkVersion
-        }) {
-            "The consumer must depend strictly and directly on staged sdk-media3"
+        check(
+            implementationDependencies.mapTo(mutableSetOf()) { dependency ->
+                check(dependency.group == sdkGroup && dependency.versionConstraint.strictVersion == sdkVersion)
+                dependency.name
+            } == setOf("sdk-android", "sdk-media3"),
+        ) {
+            "The consumer must depend strictly and directly on staged sdk-android and sdk-media3"
         }
 
         fun moduleIds(configurationName: String): Set<String> {

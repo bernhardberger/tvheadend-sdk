@@ -18,6 +18,7 @@ import com.lemonappdev.konsist.api.verify.assertTrue
 import java.io.File
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 internal class ModuleBoundaryTest {
@@ -373,6 +374,9 @@ internal class ModuleBoundaryTest {
         val expectedAndroid = setOf(
             "CredentialOperationResult",
             "CredentialReadResult",
+            "ServerProfileAuthenticationMode",
+            "ServerProfileOperationResult",
+            "ServerProfileReadResult",
             "TvheadendDiscovery",
             "DiscoveredTvheadendServer",
             "TvheadendDiscoveryState",
@@ -380,11 +384,25 @@ internal class ModuleBoundaryTest {
             "TvheadendConnectivity",
             "TvheadendConnectivityStatus",
             "TvheadendCredentialStore",
+            "TvheadendServerProfileStore",
             "TvheadendArtwork",
             "createTvheadendArtworkFetcherFactory",
         )
 
         assertPublicInfrastructure("sdk-android", expectedAndroid, unannotatedCount = expectedAndroid.size)
+        val credentialStoreSource = File(
+            repositoryRoot,
+            "sdk-android/src/main/kotlin/at/bernhardberger/tvheadend/sdk/android/" +
+                "TvheadendCredentialStore.kt",
+        ).readText()
+        assertTrue(
+            Regex(
+                """@Deprecated\(\s*message = \"Use TvheadendServerProfileStore\",\s*""" +
+                    """level = DeprecationLevel\.WARNING,\s*\)\s*""" +
+                    """public class TvheadendCredentialStore""",
+            ).containsMatchIn(credentialStoreSource),
+            "The compatibility credential store must be warning-deprecated without ReplaceWith",
+        )
         // The codec classification is intentionally stable for sdk-media3 application callbacks.
         assertPublicInfrastructure("sdk-playback", expectedPlayback, unannotatedCount = 3)
         assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 4)
@@ -467,6 +485,7 @@ internal class ModuleBoundaryTest {
         setOf(
             "at.bernhardberger.tvheadend.sdk.android.TvheadendConnectivity",
             "at.bernhardberger.tvheadend.sdk.android.TvheadendCredentialStore",
+            "at.bernhardberger.tvheadend.sdk.android.TvheadendServerProfileStore",
             "at.bernhardberger.tvheadend.sdk.android.TvheadendDiscovery",
             "at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi",
             "at.bernhardberger.tvheadend.sdk.media3.PlaybackRecoveryReason",

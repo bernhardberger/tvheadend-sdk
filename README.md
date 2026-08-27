@@ -15,7 +15,7 @@ The SDK is split into five libraries:
 | `sdk-core` | Kotlin/JVM | Protocol integration, session lifecycle, models, metadata, EPG, and DVR |
 | `sdk-playback` | Kotlin/JVM | Subscription, seek, timeshift, and timestamp state machines |
 | `sdk-media3` | Android | Media3 sources, stream readers, and playback coordination |
-| `sdk-android` | Android | Discovery, connectivity, credential storage, and authenticated artwork |
+| `sdk-android` | Android | Discovery, connectivity, atomic server-profile storage, and authenticated artwork |
 | `sdk-testing` | Kotlin/JVM | Fakes, repositories, scripted events, and packet fixtures |
 
 Release `0.1.2` is available from Maven Central. The normal build never
@@ -33,6 +33,34 @@ dependencies {
 
 See [versioning](docs/versioning.md) for the provisional 0.x compatibility
 policy and [releasing](docs/releasing.md) for the publication trust boundary.
+
+## Server profile storage
+
+`sdk-android` persists one selected server profile through the application-scoped
+`TvheadendServerProfileStore`. Host, port, and authentication mode remain
+readable for settings screens; password authentication is returned only inside
+an opaque, connectable `ServerProfile`:
+
+```kotlin
+val profiles = TvheadendServerProfileStore(context)
+profiles.storePassword(
+    host = enteredHost,
+    port = enteredPort,
+    username = enteredUsername,
+    password = enteredPassword,
+)
+
+when (val stored = profiles.loadProfile()) {
+    ServerProfileReadResult.Missing -> showSetup()
+    ServerProfileReadResult.Unavailable -> showStorageUnavailable()
+    is ServerProfileReadResult.Available -> session.connect(stored.profile)
+}
+```
+
+Anonymous profiles do not use the Android Keystore. Password fields are
+encrypted with endpoint-bound associated data and must be entered in full when
+editing a password profile. The deprecated `TvheadendCredentialStore` remains
+binary compatible for existing applications and shares the same atomic record.
 
 The default build resolves
 `at.bernhardberger.tvheadend:htsp:0.7.0` from Maven Central. Maintainers working

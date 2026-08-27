@@ -2,7 +2,11 @@
 
 package at.bernhardberger.tvheadend.sdk.consumer
 
+import android.content.Context
 import androidx.media3.exoplayer.ExoPlayer
+import at.bernhardberger.tvheadend.sdk.android.ServerProfileOperationResult
+import at.bernhardberger.tvheadend.sdk.android.ServerProfileReadResult
+import at.bernhardberger.tvheadend.sdk.android.TvheadendServerProfileStore
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.StreamProfileId
@@ -20,11 +24,20 @@ import kotlin.time.Duration
 import kotlinx.coroutines.flow.StateFlow
 
 public class StagedSdkConsumer(
+    context: Context,
     private val session: TvheadendSession,
     player: ExoPlayer,
 ) {
+    private val profileStore: TvheadendServerProfileStore = TvheadendServerProfileStore(context)
     private val coordinator: TvheadendPlaybackCoordinator =
         createTvheadendPlaybackCoordinator(session, player)
+
+    public suspend fun loadServerProfile(): ServerProfileReadResult = profileStore.loadProfile()
+
+    public suspend fun storeAnonymousServerProfile(
+        host: String,
+        port: Int,
+    ): ServerProfileOperationResult = profileStore.storeAnonymous(host, port)
 
     public suspend fun run(): Unit = coordinator.run()
 

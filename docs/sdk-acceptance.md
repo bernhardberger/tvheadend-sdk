@@ -90,11 +90,12 @@ player application looper.
 
 The standalone `consumer-contract` build is intentionally excluded from the
 root settings, so the repository still contains exactly five SDK modules. It
-compiles a normal Android consumer with one strict direct dependency on the
-staged `sdk-media3` coordinate. Its check requires the expected transitive SDK
-and HTSP runtime graph, no project substitution, no raw HTSP or infrastructure
-opt-in in consumer source, byte identity with staged artifacts, and matching
-SHA-256 sidecars.
+compiles a normal Android consumer with strict direct dependencies on the staged
+`sdk-media3` and `sdk-android` coordinates. The source exercises the atomic
+server-profile API as well as playback coordination. Its check requires the
+expected Android, core, Media3, playback, and HTSP runtime graph, no project
+substitution, no raw HTSP or infrastructure opt-in in consumer source, byte
+identity with staged artifacts, and matching SHA-256 sidecars.
 
 ## Reproduction protocol
 

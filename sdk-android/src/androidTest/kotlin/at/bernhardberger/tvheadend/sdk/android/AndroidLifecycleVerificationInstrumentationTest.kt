@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package at.bernhardberger.tvheadend.sdk.android
 
 import android.content.Context

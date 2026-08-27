@@ -47,7 +47,7 @@ val publicationNames = mapOf(
     "sdk-testing" to "TVHeadend Kotlin SDK: Testing",
 )
 val publicationDescriptions = mapOf(
-    "sdk-android" to "Android discovery, connectivity, credential storage, and authenticated artwork for TVHeadend applications.",
+    "sdk-android" to "Android discovery, connectivity, atomic server-profile storage, and authenticated artwork for TVHeadend applications.",
     "sdk-core" to "Kotlin/JVM protocol integration, session lifecycle, metadata, EPG, and DVR workflows for TVHeadend applications.",
     "sdk-media3" to "Android Media3 sources, stream readers, and playback coordination for TVHeadend applications.",
     "sdk-playback" to "Kotlin/JVM subscription, seek, timeshift, and timestamp state machines for TVHeadend playback.",
