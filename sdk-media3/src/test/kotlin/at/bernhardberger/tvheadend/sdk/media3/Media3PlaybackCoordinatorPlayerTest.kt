@@ -94,15 +94,13 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             listOf(
                 "admit-recording",
                 "create-recording",
-                "close-recovery",
-                "remove-listener",
-                "stop",
-                "clear",
                 "add-listener",
                 "set-recording",
                 "create-resume",
                 "begin-resume:12",
                 "prepare",
+                "close-recovery",
+                "remove-listener",
             ),
             access.operations,
         )
@@ -317,6 +315,145 @@ internal class Media3PlaybackCoordinatorPlayerTest {
     }
 
     @Test
+    fun `failed replacement restores the previous source and target`() = runTest {
+        val access = FakeCoordinatorPlaybackAccess()
+        val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator()) { _, _ ->
+            RecordingAdmission.Completed(null)
+        }
+        val liveToken = PlaybackTargetToken()
+        val live = async {
+            player.installLive(
+                PlayerOperationTicket(),
+                liveToken,
+                SubscriptionChannelId(3),
+                timeshiftControls = controls(liveToken),
+            )
+        }
+        runCurrent()
+        access.looperQueue.runAll()
+        runCurrent()
+        assertEquals(PlaybackPlayerInstallStatus.STARTED, live.await().status)
+        access.operations.clear()
+        access.failNextSetMediaSource = true
+
+        val recordingToken = PlaybackTargetToken()
+        val recording = async {
+            player.installRecording(
+                PlayerOperationTicket(),
+                recordingToken,
+                RecordingId(9),
+                RecordingPlaybackStart.START_OVER,
+            )
+        }
+        runCurrent()
+        access.looperQueue.runAll()
+        runCurrent()
+
+        val result = recording.await()
+        assertEquals(PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE, result.status)
+        assertFalse(result.retiredTarget)
+        assertTrue(liveToken.isActive())
+        assertFalse(recordingToken.isActive())
+        assertEquals("live", access.currentSourceKind)
+        assertEquals(
+            listOf(
+                "create-recording",
+                "add-listener",
+                "set-recording",
+                "remove-listener",
+                "set-live",
+                "prepare",
+            ),
+            access.operations,
+        )
+    }
+
+    @Test
+    fun `successful replacement cleanup failure retires both targets`() = runTest {
+        val access = FakeCoordinatorPlaybackAccess()
+        val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator()) { _, _ ->
+            RecordingAdmission.Completed(null)
+        }
+        val liveToken = PlaybackTargetToken()
+        val live = async {
+            player.installLive(
+                PlayerOperationTicket(),
+                liveToken,
+                SubscriptionChannelId(3),
+                timeshiftControls = controls(liveToken),
+            )
+        }
+        runCurrent()
+        access.looperQueue.runAll()
+        runCurrent()
+        live.await()
+        access.failRecoveryClose = true
+
+        val recordingToken = PlaybackTargetToken()
+        val recording = async {
+            player.installRecording(
+                PlayerOperationTicket(),
+                recordingToken,
+                RecordingId(9),
+                RecordingPlaybackStart.START_OVER,
+            )
+        }
+        runCurrent()
+        access.looperQueue.runAll()
+        runCurrent()
+
+        val result = recording.await()
+        assertEquals(PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE, result.status)
+        assertTrue(result.retiredTarget)
+        assertFalse(liveToken.isActive())
+        assertFalse(recordingToken.isActive())
+        assertEquals("none", access.currentSourceKind)
+    }
+
+    @Test
+    fun `rollback cleanup failure retires the previous target`() = runTest {
+        val access = FakeCoordinatorPlaybackAccess()
+        val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator()) { _, _ ->
+            RecordingAdmission.Completed(null)
+        }
+        val liveToken = PlaybackTargetToken()
+        val live = async {
+            player.installLive(
+                PlayerOperationTicket(),
+                liveToken,
+                SubscriptionChannelId(3),
+                timeshiftControls = controls(liveToken),
+            )
+        }
+        runCurrent()
+        access.looperQueue.runAll()
+        runCurrent()
+        live.await()
+        access.failNextSetMediaSource = true
+        access.failNextRemoveListener = true
+
+        val recordingToken = PlaybackTargetToken()
+        val recording = async {
+            player.installRecording(
+                PlayerOperationTicket(),
+                recordingToken,
+                RecordingId(9),
+                RecordingPlaybackStart.START_OVER,
+            )
+        }
+        runCurrent()
+        access.looperQueue.runAll()
+        runCurrent()
+
+        val result = recording.await()
+        assertEquals(PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE, result.status)
+        assertTrue(result.retiredTarget)
+        assertFalse(liveToken.isActive())
+        assertFalse(recordingToken.isActive())
+        assertEquals("none", access.currentSourceKind)
+    }
+
+    @Test
     fun `callbacks capture explicit pause and recording terminals but not buffering`() = runTest {
         val access = FakeCoordinatorPlaybackAccess()
         val events = PlaybackPlayerEventAccumulator()
@@ -432,12 +569,19 @@ private class FakeCoordinatorPlaybackAccess(
     override val looper: CoordinatorLooper = looperQueue
     val operations = mutableListOf<String>()
     var snapshot = PlaybackPlayerSnapshot(Duration.ZERO, null, Player.STATE_IDLE, failed = false)
-    var applicationListener: Player.Listener? = null
+    private val listeners = mutableListOf<Player.Listener>()
+    val applicationListener: Player.Listener?
+        get() = listeners.lastOrNull()
     var recoveryCallback: ((PlaybackRecoveryReason) -> Unit)? = null
     var growingFinalEndCallback: (() -> Unit)? = null
     var growingLease: GrowingRecordingFileLease? = null
     var liveOptions: SubscriptionOptions? = null
     private var sourceKind = "none"
+    val currentSourceKind: String
+        get() = sourceKind
+    var failNextSetMediaSource = failSetMediaSource
+    var failRecoveryClose = false
+    var failNextRemoveListener = false
 
     override fun requireApplicationLooper() {
         check(looperQueue.isCurrent())
@@ -451,13 +595,17 @@ private class FakeCoordinatorPlaybackAccess(
     override fun addListener(listener: Player.Listener) {
         requireApplicationLooper()
         operations += "add-listener"
-        applicationListener = listener
+        listeners += listener
     }
 
     override fun removeListener(listener: Player.Listener) {
         requireApplicationLooper()
         operations += "remove-listener"
-        if (applicationListener === listener) applicationListener = null
+        if (failNextRemoveListener) {
+            failNextRemoveListener = false
+            throw IOException("scripted listener removal failure")
+        }
+        listeners.remove(listener)
     }
 
     override fun createLiveSource(
@@ -504,6 +652,7 @@ private class FakeCoordinatorPlaybackAccess(
             override fun close() {
                 requireApplicationLooper()
                 operations += "close-recovery"
+                if (failRecoveryClose) throw IOException("scripted recovery close failure")
             }
         }
     }
@@ -528,7 +677,10 @@ private class FakeCoordinatorPlaybackAccess(
         requireApplicationLooper()
         sourceKind = (source as FakeCoordinatorMediaSource).kind
         operations += "set-$sourceKind"
-        if (failSetMediaSource) throw IOException("scripted")
+        if (failNextSetMediaSource) {
+            failNextSetMediaSource = false
+            throw IOException("scripted")
+        }
     }
 
     override fun prepare() {

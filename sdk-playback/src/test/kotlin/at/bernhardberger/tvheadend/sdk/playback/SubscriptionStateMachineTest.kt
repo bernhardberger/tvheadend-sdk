@@ -263,18 +263,28 @@ class SubscriptionStateMachineTest {
         runCurrent()
         val active = (opened.await() as SubscriptionOpenResult.Opened).subscription
 
-        val status = SubscriptionEvent.Status(SubscriptionCondition.STATUS_REPORTED)
+        val status = SubscriptionEvent.Status(
+            SubscriptionCondition.STATUS_REPORTED,
+            SubscriptionIssue.BAD_SIGNAL,
+        )
         connection.emit(status)
         connection.emit(status)
         connection.emit(SubscriptionEvent.Grace(12L))
         connection.emit(SubscriptionEvent.Dropped(Long.MAX_VALUE))
         connection.emit(SubscriptionEvent.Dropped(1L))
-        connection.emit(SubscriptionEvent.Stopped(SubscriptionCondition.ERROR_REPORTED))
+        connection.emit(
+            SubscriptionEvent.Stopped(
+                SubscriptionCondition.ERROR_REPORTED,
+                SubscriptionIssue.NO_DISK_SPACE,
+            ),
+        )
         runCurrent()
 
         assertEquals(7, received.size)
         assertSame(status, received[1])
         assertSame(status, received[2])
+        assertSame(SubscriptionIssue.BAD_SIGNAL, (received[1] as SubscriptionEvent.Status).issue)
+        assertSame(SubscriptionIssue.NO_DISK_SPACE, (received.last() as SubscriptionEvent.Stopped).issue)
         assertEquals(SubscriptionCondition.ERROR_REPORTED, active.diagnostics.value.condition)
         assertEquals(12L, active.diagnostics.value.graceTimeoutSeconds)
         assertEquals(Long.MAX_VALUE, active.diagnostics.value.droppedPacketCount)

@@ -15,6 +15,7 @@ import at.bernhardberger.tvheadend.sdk.media3.RecordingPlaybackStart
 import at.bernhardberger.tvheadend.sdk.media3.TvheadendPlaybackCoordinator
 import at.bernhardberger.tvheadend.sdk.media3.TimeshiftCommandResult
 import at.bernhardberger.tvheadend.sdk.media3.createTvheadendPlaybackCoordinator
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionIssue
 import kotlin.time.Duration
 import kotlinx.coroutines.flow.StateFlow
 
@@ -49,6 +50,9 @@ public class StagedSdkConsumer(
 
     public val timeshiftState: StateFlow<LiveTimeshiftState>
         get() = coordinator.timeshiftState
+
+    public val subscriptionIssue: StateFlow<SubscriptionIssue?>
+        get() = coordinator.subscriptionIssue
 
     public suspend fun seekTimeshift(offset: Duration): TimeshiftCommandResult =
         coordinator.seekTimeshift(offset)

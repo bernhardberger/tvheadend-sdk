@@ -150,6 +150,12 @@ duration, position behind live, and server pause state remain `null` until valid
 status events arrive. Timeshift pause and resume send server speeds `0` and
 `100`; ordinary Media3 play/pause remains application-owned.
 
+`TvheadendPlaybackCoordinator.subscriptionIssue` reports only the current live
+target's canonical TVHeadend issue. Known server codes map to the safe
+`SubscriptionIssue` enum; unknown or localized values become `UNKNOWN`, and raw
+server text is never exposed. The state clears on period retry, target
+replacement, recording playback, stop, and shutdown.
+
 Direct live playback feeds TVHeadend's packet-level `AAC` stream to Media3's
 maintained `AdtsReader`. TVHeadend normalizes AAC-LATM packets to ADTS before
 HTSP delivery, so the SDK does not infer the source transport framing or expose

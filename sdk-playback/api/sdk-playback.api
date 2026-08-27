@@ -281,21 +281,27 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionEvent$Sp
 
 public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionEvent$Started : at/bernhardberger/tvheadend/sdk/playback/SubscriptionEvent {
 	public fun <init> (Ljava/util/List;Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionBinary;Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionCondition;)V
+	public fun <init> (Ljava/util/List;Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionBinary;Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionCondition;Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;)V
 	public final fun getCodecMetadata ()Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionBinary;
 	public final fun getCondition ()Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionCondition;
+	public final fun getIssue ()Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;
 	public final fun getStreams ()Ljava/util/List;
 	public fun toString ()Ljava/lang/String;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionEvent$Status : at/bernhardberger/tvheadend/sdk/playback/SubscriptionEvent {
 	public fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionCondition;)V
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionCondition;Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;)V
 	public final fun getCondition ()Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionCondition;
+	public final fun getIssue ()Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;
 	public fun toString ()Ljava/lang/String;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionEvent$Stopped : at/bernhardberger/tvheadend/sdk/playback/SubscriptionEvent {
 	public fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionCondition;)V
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionCondition;Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;)V
 	public final fun getCondition ()Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionCondition;
+	public final fun getIssue ()Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;
 	public fun toString ()Ljava/lang/String;
 }
 
@@ -339,6 +345,24 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionId {
 }
 
 public abstract interface annotation class at/bernhardberger/tvheadend/sdk/playback/SubscriptionInfrastructureApi : java/lang/annotation/Annotation {
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue : java/lang/Enum {
+	public static final field BAD_SIGNAL Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;
+	public static final field INVALID_TARGET Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;
+	public static final field MUX_NOT_ENABLED Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;
+	public static final field NO_DISK_SPACE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;
+	public static final field NO_FREE_ADAPTER Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;
+	public static final field SCRAMBLED Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;
+	public static final field SUBSCRIPTION_OVERRIDDEN Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;
+	public static final field TUNING_FAILED Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;
+	public static final field UNKNOWN Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;
+	public static final field USER_ACCESS Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;
+	public static final field USER_LIMIT Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;
+	public static final field WEAK_STREAM Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;
+	public static fun values ()[Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;
 }
 
 public abstract interface class at/bernhardberger/tvheadend/sdk/playback/SubscriptionManager : at/bernhardberger/tvheadend/sdk/playback/SubscriptionOpener {

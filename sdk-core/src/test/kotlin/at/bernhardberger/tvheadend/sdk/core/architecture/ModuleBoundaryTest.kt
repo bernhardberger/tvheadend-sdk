@@ -300,6 +300,7 @@ internal class ModuleBoundaryTest {
             "SubscriptionEvent",
             "SubscriptionStream",
             "SubscriptionStreamType",
+            "SubscriptionIssue",
             "SubscriptionCondition",
             "MuxFrameType",
             "SkipOutcome",
@@ -385,7 +386,7 @@ internal class ModuleBoundaryTest {
 
         assertPublicInfrastructure("sdk-android", expectedAndroid, unannotatedCount = expectedAndroid.size)
         // The codec classification is intentionally stable for sdk-media3 application callbacks.
-        assertPublicInfrastructure("sdk-playback", expectedPlayback, unannotatedCount = 2)
+        assertPublicInfrastructure("sdk-playback", expectedPlayback, unannotatedCount = 3)
         assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 4)
         assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 13)
 

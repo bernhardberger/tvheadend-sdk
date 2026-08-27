@@ -22,6 +22,7 @@ import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.RecordingId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionIssue
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationFailure
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
@@ -126,9 +127,14 @@ public class TvheadendPlaybackCoordinator internal constructor(
     private val mutableTimeshiftState = MutableStateFlow<LiveTimeshiftState>(
         LiveTimeshiftState.Unavailable,
     )
+    private val mutableSubscriptionIssue = MutableStateFlow<SubscriptionIssue?>(null)
 
     /** Current app-safe timeshift state for the active live target. */
     public val timeshiftState: StateFlow<LiveTimeshiftState> = mutableTimeshiftState.asStateFlow()
+
+    /** Canonical issue reported for the current live target, or null when none is current. */
+    public val subscriptionIssue: StateFlow<SubscriptionIssue?> =
+        mutableSubscriptionIssue.asStateFlow()
 
     /** Runs the coordinator until [shutdown] completes or the caller cancels this boundary. */
     public suspend fun run() {
@@ -146,6 +152,7 @@ public class TvheadendPlaybackCoordinator internal constructor(
                 timeSource = timeSource,
                 onShutdownClaimed = { lifecycle.set(CoordinatorLifecycle.SHUTTING_DOWN) },
                 publishTimeshiftState = ::publishTimeshiftState,
+                publishSubscriptionIssue = ::publishSubscriptionIssue,
                 activateTimeshift = ::activateTimeshift,
                 deactivateTimeshift = ::deactivateTimeshift,
             ).run()
@@ -296,6 +303,13 @@ public class TvheadendPlaybackCoordinator internal constructor(
         if (activeTimeshiftToken.get() === token) mutableTimeshiftState.value = state
     }
 
+    private fun publishSubscriptionIssue(
+        token: PlaybackTargetToken,
+        issue: SubscriptionIssue?,
+    ) {
+        if (activeTimeshiftToken.get() === token) mutableSubscriptionIssue.value = issue
+    }
+
     private fun activateTimeshift(
         token: PlaybackTargetToken,
         bridge: LiveTimeshiftControlBridge,
@@ -307,6 +321,7 @@ public class TvheadendPlaybackCoordinator internal constructor(
     private fun deactivateTimeshift(token: PlaybackTargetToken) {
         if (activeTimeshiftToken.compareAndSet(token, null)) {
             mutableTimeshiftState.value = LiveTimeshiftState.Unavailable
+            mutableSubscriptionIssue.value = null
         }
     }
 
@@ -512,6 +527,7 @@ private class CoordinatorActor(
     private val timeSource: PlaybackCoordinatorTimeSource,
     private val onShutdownClaimed: () -> Unit,
     private val publishTimeshiftState: (PlaybackTargetToken, LiveTimeshiftState) -> Unit,
+    private val publishSubscriptionIssue: (PlaybackTargetToken, SubscriptionIssue?) -> Unit,
     private val activateTimeshift: (PlaybackTargetToken, LiveTimeshiftControlBridge) -> Unit,
     private val deactivateTimeshift: (PlaybackTargetToken) -> Unit,
 ) {
@@ -587,9 +603,11 @@ private class CoordinatorActor(
     ): Boolean = when (command) {
         is CoordinatorCommand.Live -> {
             val token = PlaybackTargetToken()
-            val timeshiftControls = LiveTimeshiftControlBridge(token) { state ->
-                publishTimeshiftState(token, state)
-            }
+            val timeshiftControls = LiveTimeshiftControlBridge(
+                token = token,
+                publish = { state -> publishTimeshiftState(token, state) },
+                publishIssue = { issue -> publishSubscriptionIssue(token, issue) },
+            )
             val result = player.installLive(
                 ticket = command.ticket,
                 token = token,

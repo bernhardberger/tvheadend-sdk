@@ -27,9 +27,11 @@ import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.RecordingId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionCondition
 import at.bernhardberger.tvheadend.sdk.playback.ActiveSubscription
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionDiagnostics
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionIssue
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekResult
@@ -37,6 +39,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekInvalidation
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionState
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTerminalReason
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTermination
 import java.io.IOException
 import java.util.concurrent.CancellationException
 import kotlin.time.Duration
@@ -348,6 +351,302 @@ internal class TvheadendPlaybackCoordinatorTest {
             fixture.coordinator.shutdown(1.seconds)
             owner.join()
         }
+
+    @Test
+    fun `subscription issue follows ordered period retry and remains separate from termination`() =
+        runTest {
+            val fixture = CoordinatorFixture()
+            assertEquals(null, fixture.coordinator.subscriptionIssue.value)
+            val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+            fixture.coordinator.setLiveTarget(ChannelId(4))
+            val firstAttachment = fixture.player.requireTimeshiftControls()
+            fixture.player.emitTimeshift(
+                SubscriptionEvent.Started(
+                    streams = null,
+                    codecMetadata = null,
+                    condition = SubscriptionCondition.ERROR_REPORTED,
+                    issue = SubscriptionIssue.BAD_SIGNAL,
+                ),
+            )
+            assertEquals(null, fixture.coordinator.subscriptionIssue.value)
+            fixture.player.attachTimeshift(FakeTimeshiftSubscription(60.seconds))
+            assertSame(SubscriptionIssue.BAD_SIGNAL, fixture.coordinator.subscriptionIssue.value)
+
+            fixture.player.emitTimeshift(
+                SubscriptionEvent.Status(
+                    SubscriptionCondition.NO_DETAIL,
+                    null,
+                ),
+            )
+            assertEquals(null, fixture.coordinator.subscriptionIssue.value)
+            fixture.player.emitTimeshift(
+                SubscriptionEvent.Stopped(
+                    SubscriptionCondition.ERROR_REPORTED,
+                    SubscriptionIssue.NO_DISK_SPACE,
+                ),
+            )
+            assertSame(SubscriptionIssue.NO_DISK_SPACE, fixture.coordinator.subscriptionIssue.value)
+            assertSame(LiveTimeshiftState.Unavailable, fixture.coordinator.timeshiftState.value)
+
+            fixture.player.replaceTimeshiftPeriod(FakeTimeshiftSubscription(60.seconds))
+            assertEquals(null, fixture.coordinator.subscriptionIssue.value)
+            firstAttachment.accept(
+                SubscriptionEvent.Status(
+                    SubscriptionCondition.ERROR_REPORTED,
+                    SubscriptionIssue.SCRAMBLED,
+                ),
+            )
+            assertEquals(null, fixture.coordinator.subscriptionIssue.value)
+
+            fixture.player.emitTimeshift(
+                SubscriptionEvent.Status(
+                    SubscriptionCondition.ERROR_REPORTED,
+                    SubscriptionIssue.USER_ACCESS,
+                ),
+            )
+            assertSame(SubscriptionIssue.USER_ACCESS, fixture.coordinator.subscriptionIssue.value)
+            val secondAttachment = fixture.player.requireTimeshiftControls()
+            val terminalSubscription = FakeTimeshiftSubscription(60.seconds)
+            fixture.player.replaceTimeshiftPeriod(terminalSubscription)
+            fixture.player.emitTimeshift(
+                SubscriptionEvent.Status(
+                    SubscriptionCondition.ERROR_REPORTED,
+                    SubscriptionIssue.USER_ACCESS,
+                ),
+            )
+            terminalSubscription.mutableState.value = SubscriptionState.Terminal(
+                SubscriptionTerminalReason.ConsumerFailed,
+            )
+            fixture.player.requireTimeshiftControls().terminal(terminalSubscription)
+            assertEquals(null, fixture.coordinator.subscriptionIssue.value)
+            secondAttachment.accept(
+                SubscriptionEvent.Status(
+                    SubscriptionCondition.ERROR_REPORTED,
+                    SubscriptionIssue.SCRAMBLED,
+                ),
+            )
+            assertEquals(null, fixture.coordinator.subscriptionIssue.value)
+
+            fixture.player.replaceTimeshiftPeriod(FakeTimeshiftSubscription(60.seconds))
+            fixture.player.emitTimeshift(
+                SubscriptionEvent.Status(
+                    SubscriptionCondition.ERROR_REPORTED,
+                    SubscriptionIssue.USER_ACCESS,
+                ),
+            )
+            fixture.player.emitTimeshift(
+                SubscriptionEvent.Terminated(SubscriptionTermination.GENERATION_LOST),
+            )
+            assertEquals(null, fixture.coordinator.subscriptionIssue.value)
+
+            fixture.coordinator.shutdown(1.seconds)
+            owner.join()
+        }
+
+    @Test
+    fun `subscription issue is fenced by target replacement stop and shutdown`() = runTest {
+        val fixture = CoordinatorFixture()
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+        fixture.coordinator.setLiveTarget(ChannelId(1))
+        fixture.player.attachTimeshift(FakeTimeshiftSubscription(60.seconds))
+        val staleAttachment = fixture.player.requireTimeshiftControls()
+        fixture.player.emitTimeshift(
+            SubscriptionEvent.Status(
+                SubscriptionCondition.ERROR_REPORTED,
+                SubscriptionIssue.SCRAMBLED,
+            ),
+        )
+
+        fixture.player.liveInstallStatus = PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE
+        fixture.player.simulateFailedReplacementPeriodTurnover = true
+        assertSame(
+            PlaybackTargetResult.PLAYER_UNAVAILABLE,
+            fixture.coordinator.setLiveTarget(ChannelId(2)),
+        )
+        assertSame(SubscriptionIssue.SCRAMBLED, fixture.coordinator.subscriptionIssue.value)
+
+        fixture.player.liveInstallStatus = PlaybackPlayerInstallStatus.STARTED
+        assertSame(PlaybackTargetResult.STARTED, fixture.coordinator.setLiveTarget(ChannelId(3)))
+        assertEquals(null, fixture.coordinator.subscriptionIssue.value)
+        staleAttachment.accept(
+            SubscriptionEvent.Status(
+                SubscriptionCondition.ERROR_REPORTED,
+                SubscriptionIssue.BAD_SIGNAL,
+            ),
+        )
+        assertEquals(null, fixture.coordinator.subscriptionIssue.value)
+
+        fixture.player.attachTimeshift(FakeTimeshiftSubscription(60.seconds))
+        fixture.player.emitTimeshift(
+            SubscriptionEvent.Status(
+                SubscriptionCondition.ERROR_REPORTED,
+                SubscriptionIssue.USER_LIMIT,
+            ),
+        )
+        fixture.coordinator.setRecordingTarget(DvrEntryId(7))
+        assertEquals(null, fixture.coordinator.subscriptionIssue.value)
+
+        fixture.coordinator.setLiveTarget(ChannelId(4))
+        fixture.player.attachTimeshift(FakeTimeshiftSubscription(60.seconds))
+        fixture.player.emitTimeshift(
+            SubscriptionEvent.Status(
+                SubscriptionCondition.ERROR_REPORTED,
+                SubscriptionIssue.WEAK_STREAM,
+            ),
+        )
+        fixture.coordinator.stop()
+        assertEquals(null, fixture.coordinator.subscriptionIssue.value)
+
+        fixture.coordinator.setLiveTarget(ChannelId(5))
+        fixture.player.attachTimeshift(FakeTimeshiftSubscription(60.seconds))
+        fixture.player.emitTimeshift(
+            SubscriptionEvent.Status(
+                SubscriptionCondition.ERROR_REPORTED,
+                SubscriptionIssue.NO_FREE_ADAPTER,
+            ),
+        )
+        fixture.coordinator.shutdown(1.seconds)
+        owner.join()
+        assertEquals(null, fixture.coordinator.subscriptionIssue.value)
+    }
+
+    @Test
+    fun `replacement rollback keeps newer status observations`() {
+        listOf(
+            null,
+            SubscriptionIssue.BAD_SIGNAL,
+        ).forEach { observedIssue ->
+            var publishedIssue: SubscriptionIssue? = null
+            val token = PlaybackTargetToken()
+            val bridge = LiveTimeshiftControlBridge(token, {}, { publishedIssue = it })
+            val original = bridge.newAttachment()
+            original.bind(FakeTimeshiftSubscription(60.seconds))
+            original.accept(
+                SubscriptionEvent.Status(
+                    SubscriptionCondition.ERROR_REPORTED,
+                    SubscriptionIssue.SCRAMBLED,
+                ),
+            )
+            val replacement = bridge.beginIssueReplacement()
+            original.detach()
+            val restored = bridge.newAttachment()
+            restored.accept(
+                SubscriptionEvent.Status(
+                    SubscriptionCondition.ERROR_REPORTED,
+                    observedIssue,
+                ),
+            )
+            restored.bind(FakeTimeshiftSubscription(60.seconds))
+
+            bridge.rollbackIssueReplacement(replacement)
+
+            assertEquals(observedIssue, publishedIssue)
+        }
+    }
+
+    @Test
+    fun `pre-bind replacement termination consumes the restored issue`() {
+        fun rollbackBeforeBind(): Triple<
+            LiveTimeshiftControlBridge,
+            LiveTimeshiftControlBridge.Attachment,
+            () -> SubscriptionIssue?,
+            > {
+            var publishedIssue: SubscriptionIssue? = null
+            val token = PlaybackTargetToken()
+            val bridge = LiveTimeshiftControlBridge(token, {}, { publishedIssue = it })
+            val original = bridge.newAttachment()
+            original.bind(FakeTimeshiftSubscription(60.seconds))
+            original.accept(
+                SubscriptionEvent.Status(
+                    SubscriptionCondition.ERROR_REPORTED,
+                    SubscriptionIssue.SCRAMBLED,
+                ),
+            )
+            val replacement = bridge.beginIssueReplacement()
+            original.detach()
+            val restored = bridge.newAttachment()
+            bridge.rollbackIssueReplacement(replacement)
+            assertSame(SubscriptionIssue.SCRAMBLED, publishedIssue)
+            return Triple(bridge, restored) { publishedIssue }
+        }
+
+        rollbackBeforeBind().let { (_, attachment, publishedIssue) ->
+            attachment.accept(SubscriptionEvent.Terminated(SubscriptionTermination.GENERATION_LOST))
+            assertEquals(null, publishedIssue())
+        }
+        rollbackBeforeBind().let { (_, attachment, publishedIssue) ->
+            attachment.accept(
+                SubscriptionEvent.Stopped(
+                    SubscriptionCondition.ERROR_REPORTED,
+                    SubscriptionIssue.BAD_SIGNAL,
+                ),
+            )
+            assertSame(SubscriptionIssue.BAD_SIGNAL, publishedIssue())
+        }
+        rollbackBeforeBind().let { (_, attachment, publishedIssue) ->
+            val terminalSubscription = FakeTimeshiftSubscription(60.seconds)
+            terminalSubscription.mutableState.value = SubscriptionState.Terminal(
+                SubscriptionTerminalReason.TransportClosed,
+            )
+            attachment.bind(terminalSubscription)
+            assertEquals(null, publishedIssue())
+        }
+    }
+
+    @Test
+    fun `pre-bind terminal event during replacement supersedes the snapshot`() {
+        listOf(
+            SubscriptionEvent.Terminated(SubscriptionTermination.GENERATION_LOST) to null,
+            SubscriptionEvent.Stopped(
+                SubscriptionCondition.ERROR_REPORTED,
+                SubscriptionIssue.BAD_SIGNAL,
+            ) to SubscriptionIssue.BAD_SIGNAL,
+        ).forEach { (event, expectedIssue) ->
+            var publishedIssue: SubscriptionIssue? = null
+            val token = PlaybackTargetToken()
+            val bridge = LiveTimeshiftControlBridge(token, {}, { publishedIssue = it })
+            val original = bridge.newAttachment()
+            original.bind(FakeTimeshiftSubscription(60.seconds))
+            original.accept(
+                SubscriptionEvent.Status(
+                    SubscriptionCondition.ERROR_REPORTED,
+                    SubscriptionIssue.SCRAMBLED,
+                ),
+            )
+            val replacement = bridge.beginIssueReplacement()
+            original.detach()
+            bridge.newAttachment().accept(event)
+
+            bridge.rollbackIssueReplacement(replacement)
+
+            assertEquals(expectedIssue, publishedIssue)
+        }
+    }
+
+    @Test
+    fun `active predecessor payload-free terminal supersedes replacement snapshot`() {
+        var publishedIssue: SubscriptionIssue? = null
+        val token = PlaybackTargetToken()
+        val bridge = LiveTimeshiftControlBridge(token, {}, { publishedIssue = it })
+        val subscription = FakeTimeshiftSubscription(60.seconds)
+        val original = bridge.newAttachment()
+        original.bind(subscription)
+        original.accept(
+            SubscriptionEvent.Status(
+                SubscriptionCondition.ERROR_REPORTED,
+                SubscriptionIssue.SCRAMBLED,
+            ),
+        )
+        val replacement = bridge.beginIssueReplacement()
+        subscription.mutableState.value = SubscriptionState.Terminal(
+            SubscriptionTerminalReason.ConsumerFailed,
+        )
+
+        original.terminal(subscription)
+        bridge.rollbackIssueReplacement(replacement)
+
+        assertEquals(null, publishedIssue)
+    }
 
     @Test
     fun `timeshift status rejects invalid bounds and caps position at the observed buffer`() = runTest {
@@ -1137,6 +1436,7 @@ private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
     var installFailure: Exception? = null
     var liveOptions: SubscriptionOptions? = null
     var liveInstallStatus: PlaybackPlayerInstallStatus = PlaybackPlayerInstallStatus.STARTED
+    var simulateFailedReplacementPeriodTurnover = false
     var liveInstallEntered: CompletableDeferred<Unit>? = null
     var liveInstallRelease: CompletableDeferred<Unit>? = null
     private var timeshiftControls: LiveTimeshiftControlBridge? = null
@@ -1162,6 +1462,16 @@ private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
         liveInstallEntered = null
         liveInstallRelease = null
         if (liveInstallStatus != PlaybackPlayerInstallStatus.STARTED) {
+            if (simulateFailedReplacementPeriodTurnover) {
+                val currentControls = checkNotNull(this.timeshiftControls)
+                val replacement = currentControls.beginIssueReplacement()
+                checkNotNull(timeshiftAttachment).detach()
+                val restoredSubscription = FakeTimeshiftSubscription(60.seconds)
+                timeshiftAttachment = currentControls.newAttachment()
+                checkNotNull(timeshiftAttachment).bind(restoredSubscription)
+                currentControls.rollbackIssueReplacement(replacement)
+                simulateFailedReplacementPeriodTurnover = false
+            }
             ticket.complete()
             return PlaybackPlayerInstallResult(liveInstallStatus)
         }

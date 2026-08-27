@@ -152,6 +152,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionCondition
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionIssue
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
@@ -2228,6 +2229,48 @@ internal class HtspProtocolGatewayTest {
     }
 
     @Test
+    fun `subscription issues exhaustively preserve canonical values and redact fallbacks`() = runTest {
+        val cases = listOf(
+            null to null,
+            "noFreeAdapter" to SubscriptionIssue.NO_FREE_ADAPTER,
+            "scrambled" to SubscriptionIssue.SCRAMBLED,
+            "badSignal" to SubscriptionIssue.BAD_SIGNAL,
+            "tuningFailed" to SubscriptionIssue.TUNING_FAILED,
+            "subscriptionOverridden" to SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN,
+            "muxNotEnabled" to SubscriptionIssue.MUX_NOT_ENABLED,
+            "invalidTarget" to SubscriptionIssue.INVALID_TARGET,
+            "userAccess" to SubscriptionIssue.USER_ACCESS,
+            "userLimit" to SubscriptionIssue.USER_LIMIT,
+            "weakStream" to SubscriptionIssue.WEAK_STREAM,
+            "noDiskSpace" to SubscriptionIssue.NO_DISK_SPACE,
+            "futureCanonicalValue" to SubscriptionIssue.UNKNOWN,
+            "Localized subscription failure" to SubscriptionIssue.UNKNOWN,
+        )
+        val sourceGeneration = HtspConnectionGeneration()
+        val fake = FakeHtspConnection().apply {
+            subscriptionFlow = flowOf(
+                *cases.map { (raw, _) ->
+                    HtspSubscriptionEvent.Status(
+                        HtspSubscriptionStatusMessage(77, null, raw),
+                    )
+                }.toTypedArray(),
+            )
+            liveConnectionValue.value = liveConnection(sourceGeneration)
+            connectOutcome = HtspConnectOutcome.Connected(requireNotNull(liveConnectionValue.value))
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+
+        val events = gateway.subscription(generation, SubscriptionId(77)).toList()
+
+        assertEquals(cases.map { it.second }, events.map { (it as SubscriptionEvent.Status).issue })
+        assertTrue(events.all { it.toString() == "SubscriptionEvent.Status(<redacted>)" })
+        assertFalse(events.toString().contains("Localized subscription failure"))
+        gateway.shutdown()
+    }
+
+    @Test
     fun `subscription mapping retains complete event order and delegates bounded payload copies`() = runTest {
         val sourceGeneration = HtspConnectionGeneration()
         val payloadBytes = byteArrayOf(1, 2, 3, 4)
@@ -2400,10 +2443,12 @@ internal class HtspProtocolGatewayTest {
             SubscriptionCondition.STATUS_AND_ERROR_REPORTED,
             (events[3] as SubscriptionEvent.Stopped).condition,
         )
+        assertSame(SubscriptionIssue.UNKNOWN, (events[3] as SubscriptionEvent.Stopped).issue)
         assertEquals(
             SubscriptionCondition.ERROR_REPORTED,
             (events[4] as SubscriptionEvent.Status).condition,
         )
+        assertSame(SubscriptionIssue.UNKNOWN, (events[4] as SubscriptionEvent.Status).issue)
         assertEquals(true, (events[9] as SubscriptionEvent.Signal).frontendStatusReported)
         assertEquals(9L, (events[11] as SubscriptionEvent.Dropped).count)
         assertEquals(

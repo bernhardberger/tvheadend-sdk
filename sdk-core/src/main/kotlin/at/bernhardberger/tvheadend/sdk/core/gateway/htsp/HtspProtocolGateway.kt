@@ -157,6 +157,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionConfirmation
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionIssue
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStream
@@ -1527,20 +1528,24 @@ private fun String?.toDvrFailure(): GatewayDvrFailure? = when (this) {
 
 private fun String?.toDvrSubscriptionError(): DvrSubscriptionError? = when (this) {
     null -> null
-    "noFreeAdapter" -> DvrSubscriptionError.NO_FREE_ADAPTER
-    "scrambled" -> DvrSubscriptionError.SCRAMBLED
-    "badSignal" -> DvrSubscriptionError.BAD_SIGNAL
-    "tuningFailed" -> DvrSubscriptionError.TUNING_FAILED
-    "subscriptionOverridden" -> DvrSubscriptionError.SUBSCRIPTION_OVERRIDDEN
-    "muxNotEnabled" -> DvrSubscriptionError.MUX_NOT_ENABLED
-    "invalidTarget" -> DvrSubscriptionError.INVALID_TARGET
     "No service assigned to channel" -> DvrSubscriptionError.NO_SERVICE
     "Invalid service" -> DvrSubscriptionError.INVALID_SERVICE
-    "userAccess" -> DvrSubscriptionError.USER_ACCESS
-    "userLimit" -> DvrSubscriptionError.USER_LIMIT
-    "weakStream" -> DvrSubscriptionError.WEAK_STREAM
-    "noDiskSpace" -> DvrSubscriptionError.NO_DISK_SPACE
-    else -> DvrSubscriptionError.UNKNOWN
+    else -> toSubscriptionIssue().toDvrSubscriptionError()
+}
+
+private fun SubscriptionIssue?.toDvrSubscriptionError(): DvrSubscriptionError = when (this) {
+    SubscriptionIssue.NO_FREE_ADAPTER -> DvrSubscriptionError.NO_FREE_ADAPTER
+    SubscriptionIssue.SCRAMBLED -> DvrSubscriptionError.SCRAMBLED
+    SubscriptionIssue.BAD_SIGNAL -> DvrSubscriptionError.BAD_SIGNAL
+    SubscriptionIssue.TUNING_FAILED -> DvrSubscriptionError.TUNING_FAILED
+    SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN -> DvrSubscriptionError.SUBSCRIPTION_OVERRIDDEN
+    SubscriptionIssue.MUX_NOT_ENABLED -> DvrSubscriptionError.MUX_NOT_ENABLED
+    SubscriptionIssue.INVALID_TARGET -> DvrSubscriptionError.INVALID_TARGET
+    SubscriptionIssue.USER_ACCESS -> DvrSubscriptionError.USER_ACCESS
+    SubscriptionIssue.USER_LIMIT -> DvrSubscriptionError.USER_LIMIT
+    SubscriptionIssue.WEAK_STREAM -> DvrSubscriptionError.WEAK_STREAM
+    SubscriptionIssue.NO_DISK_SPACE -> DvrSubscriptionError.NO_DISK_SPACE
+    SubscriptionIssue.UNKNOWN, null -> DvrSubscriptionError.UNKNOWN
 }
 
 private fun HtspSubscriptionEvent.toGatewayEvent(): SubscriptionEvent = when (this) {
@@ -1549,9 +1554,11 @@ private fun HtspSubscriptionEvent.toGatewayEvent(): SubscriptionEvent = when (th
     is HtspSubscriptionEvent.Skipped -> message.toGatewayEvent()
     is HtspSubscriptionEvent.Stopped -> SubscriptionEvent.Stopped(
         condition = subscriptionCondition(message.status, message.subscriptionError),
+        issue = message.subscriptionError.toSubscriptionIssue(),
     )
     is HtspSubscriptionEvent.Status -> SubscriptionEvent.Status(
         condition = subscriptionCondition(message.status, message.subscriptionError),
+        issue = message.subscriptionError.toSubscriptionIssue(),
     )
     is HtspSubscriptionEvent.Grace -> SubscriptionEvent.Grace(message.graceTimeoutSeconds)
     is HtspSubscriptionEvent.Speed -> SubscriptionEvent.Speed(message.speed)
@@ -1591,6 +1598,7 @@ private fun HtspSubscriptionStartMessage.toGatewayEvent(): SubscriptionEvent.Sta
         streams = streams?.map(HtspSubscriptionStream::toGatewayStream),
         codecMetadata = codecMetadata?.let(::HtspGatewayBinary),
         condition = subscriptionCondition(status, subscriptionError),
+        issue = subscriptionError.toSubscriptionIssue(),
     )
 
 private fun HtspSubscriptionStream.toGatewayStream(): SubscriptionStream = SubscriptionStream(
@@ -1683,6 +1691,22 @@ private fun subscriptionCondition(
     status != null -> SubscriptionCondition.STATUS_REPORTED
     error != null -> SubscriptionCondition.ERROR_REPORTED
     else -> SubscriptionCondition.NO_DETAIL
+}
+
+private fun String?.toSubscriptionIssue(): SubscriptionIssue? = when (this) {
+    null -> null
+    "noFreeAdapter" -> SubscriptionIssue.NO_FREE_ADAPTER
+    "scrambled" -> SubscriptionIssue.SCRAMBLED
+    "badSignal" -> SubscriptionIssue.BAD_SIGNAL
+    "tuningFailed" -> SubscriptionIssue.TUNING_FAILED
+    "subscriptionOverridden" -> SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN
+    "muxNotEnabled" -> SubscriptionIssue.MUX_NOT_ENABLED
+    "invalidTarget" -> SubscriptionIssue.INVALID_TARGET
+    "userAccess" -> SubscriptionIssue.USER_ACCESS
+    "userLimit" -> SubscriptionIssue.USER_LIMIT
+    "weakStream" -> SubscriptionIssue.WEAK_STREAM
+    "noDiskSpace" -> SubscriptionIssue.NO_DISK_SPACE
+    else -> SubscriptionIssue.UNKNOWN
 }
 
 private const val RECORDING_FILE_SELECTOR_PREFIX = "dvr/"

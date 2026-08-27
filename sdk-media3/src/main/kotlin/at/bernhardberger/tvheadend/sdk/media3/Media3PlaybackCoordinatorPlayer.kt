@@ -234,11 +234,14 @@ internal class Media3PlaybackCoordinatorPlayer(
         } catch (_: Exception) {
             return PlaybackPlayerInstallResult(PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE)
         }
-        val retirement = retireActiveOnLooper()
-        if (!retirement.playerAvailable) return retirement.failedInstall()
-
+        val previous = active
+        val previousSnapshot = snapshotForReplacement(previous)
+            ?: return PlaybackPlayerInstallResult(PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE)
+        val issueReplacement = (previous as? InstalledPlayerTarget.Live)
+            ?.timeshiftControls
+            ?.beginIssueReplacement()
         val listener = targetListener(token, recording = false)
-        val installed = InstalledPlayerTarget.Live(token, listener)
+        val installed = InstalledPlayerTarget.Live(token, listener, source, timeshiftControls)
         active = installed
         return try {
             installed.listenerAttached = true
@@ -248,14 +251,24 @@ internal class Media3PlaybackCoordinatorPlayer(
             installed.sourceInstalled = true
             access.setMediaSource(source)
             access.prepare()
+            val retirement = retireReplacedOnLooper(previous, previousSnapshot)
+            if (!retirement.playerAvailable) {
+                issueReplacement?.let {
+                    previous.timeshiftControls.commitIssueReplacement(it)
+                }
+                retireActiveOnLooper()
+                return retirement.failedInstall()
+            }
+            issueReplacement?.let {
+                previous.timeshiftControls.commitIssueReplacement(it)
+            }
             PlaybackPlayerInstallResult(
                 status = PlaybackPlayerInstallStatus.STARTED,
                 retiredTarget = retirement.retiredTarget,
                 retiredRecording = retirement.retiredRecording,
             )
         } catch (_: Exception) {
-            rollbackInstalledOnLooper(installed)
-            retirement.failedInstall()
+            rollbackReplacementOnLooper(installed, previous, issueReplacement)
         }
     }
 
@@ -298,11 +311,14 @@ internal class Media3PlaybackCoordinatorPlayer(
         } catch (_: Exception) {
             return PlaybackPlayerInstallResult(PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE)
         }
-        val retirement = retireActiveOnLooper()
-        if (!retirement.playerAvailable) return retirement.failedInstall()
-
+        val previous = active
+        val previousSnapshot = snapshotForReplacement(previous)
+            ?: return PlaybackPlayerInstallResult(PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE)
+        val issueReplacement = (previous as? InstalledPlayerTarget.Live)
+            ?.timeshiftControls
+            ?.beginIssueReplacement()
         val listener = targetListener(token, recording = true)
-        val installed = InstalledPlayerTarget.Recording(token, listener, finality)
+        val installed = InstalledPlayerTarget.Recording(token, listener, source, finality)
         active = installed
         return try {
             installed.listenerAttached = true
@@ -314,6 +330,17 @@ internal class Media3PlaybackCoordinatorPlayer(
                 installed.resume?.beginPlaybackTarget(recordingId, accepted.resumePosition)
             }
             access.prepare()
+            val retirement = retireReplacedOnLooper(previous, previousSnapshot)
+            if (!retirement.playerAvailable) {
+                issueReplacement?.let {
+                    previous.timeshiftControls.commitIssueReplacement(it)
+                }
+                retireActiveOnLooper()
+                return retirement.failedInstall()
+            }
+            issueReplacement?.let {
+                previous.timeshiftControls.commitIssueReplacement(it)
+            }
             PlaybackPlayerInstallResult(
                 status = PlaybackPlayerInstallStatus.STARTED,
                 retiredTarget = retirement.retiredTarget,
@@ -321,8 +348,7 @@ internal class Media3PlaybackCoordinatorPlayer(
                 installedRecording = accepted,
             )
         } catch (_: Exception) {
-            rollbackInstalledOnLooper(installed)
-            retirement.failedInstall()
+            rollbackReplacementOnLooper(installed, previous, issueReplacement)
         }
     }
 
@@ -388,9 +414,77 @@ internal class Media3PlaybackCoordinatorPlayer(
         )
     }
 
-    private fun rollbackInstalledOnLooper(installed: InstalledPlayerTarget) {
-        if (active !== installed) return
-        retireActiveOnLooper()
+    private fun snapshotForReplacement(installed: InstalledPlayerTarget?): PlaybackPlayerSnapshot? {
+        if (installed == null) {
+            return PlaybackPlayerSnapshot(Duration.ZERO, null, Player.STATE_IDLE, failed = false)
+        }
+        return try {
+            access.snapshot()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun retireReplacedOnLooper(
+        installed: InstalledPlayerTarget?,
+        snapshot: PlaybackPlayerSnapshot,
+    ): PlayerRetirement = installed?.let {
+        retireInstalledOnLooper(it, snapshot, clearPlayer = false)
+    } ?: PlayerRetirement()
+
+    private fun rollbackReplacementOnLooper(
+        installed: InstalledPlayerTarget,
+        previous: InstalledPlayerTarget?,
+        issueReplacement: LiveTimeshiftControlBridge.IssueReplacement?,
+    ): PlaybackPlayerInstallResult {
+        if (active !== installed) {
+            return PlaybackPlayerInstallResult(PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE)
+        }
+        active = previous
+        val stagedRetirement = retireInstalledOnLooper(
+            installed = installed,
+            snapshot = PlaybackPlayerSnapshot(Duration.ZERO, null, Player.STATE_IDLE, failed = true),
+            clearPlayer = previous == null,
+        )
+        if (!stagedRetirement.playerAvailable) {
+            commitIssueReplacement(previous, issueReplacement)
+            val retirement = retireActiveOnLooper()
+            return retirement.failedInstall()
+        }
+        if (previous == null) {
+            return PlaybackPlayerInstallResult(PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE)
+        }
+        if (!installed.sourceInstalled) {
+            rollbackIssueReplacement(previous, issueReplacement)
+            return PlaybackPlayerInstallResult(PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE)
+        }
+        return try {
+            access.setMediaSource(previous.source)
+            access.prepare()
+            rollbackIssueReplacement(previous, issueReplacement)
+            PlaybackPlayerInstallResult(PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE)
+        } catch (_: Exception) {
+            commitIssueReplacement(previous, issueReplacement)
+            retireActiveOnLooper().failedInstall()
+        }
+    }
+
+    private fun commitIssueReplacement(
+        previous: InstalledPlayerTarget?,
+        replacement: LiveTimeshiftControlBridge.IssueReplacement?,
+    ) {
+        if (replacement != null) {
+            (previous as InstalledPlayerTarget.Live).timeshiftControls.commitIssueReplacement(replacement)
+        }
+    }
+
+    private fun rollbackIssueReplacement(
+        previous: InstalledPlayerTarget,
+        replacement: LiveTimeshiftControlBridge.IssueReplacement?,
+    ) {
+        if (replacement != null) {
+            (previous as InstalledPlayerTarget.Live).timeshiftControls.rollbackIssueReplacement(replacement)
+        }
     }
 
     private fun retireActiveOnLooper(): PlayerRetirement {
@@ -403,8 +497,18 @@ internal class Media3PlaybackCoordinatorPlayer(
             available = false
             PlaybackPlayerSnapshot(Duration.ZERO, null, Player.STATE_IDLE, failed = true)
         }
-        installed.token.retire()
         active = null
+        return retireInstalledOnLooper(installed, snapshot, clearPlayer = true, available = available)
+    }
+
+    private fun retireInstalledOnLooper(
+        installed: InstalledPlayerTarget,
+        snapshot: PlaybackPlayerSnapshot,
+        clearPlayer: Boolean,
+        available: Boolean = true,
+    ): PlayerRetirement {
+        var playerAvailable = available
+        installed.token.retire()
         events.retire(installed.token)
 
         when (installed) {
@@ -412,14 +516,14 @@ internal class Media3PlaybackCoordinatorPlayer(
                 try {
                     recovery.close()
                 } catch (_: Exception) {
-                    available = false
+                    playerAvailable = false
                 }
             }
             is InstalledPlayerTarget.Recording -> installed.resume?.let { resume ->
                 try {
                     resume.close()
                 } catch (_: Exception) {
-                    available = false
+                    playerAvailable = false
                 }
             }
         }
@@ -427,19 +531,19 @@ internal class Media3PlaybackCoordinatorPlayer(
             try {
                 access.removeListener(installed.listener)
             } catch (_: Exception) {
-                available = false
+                playerAvailable = false
             }
         }
-        if (installed.sourceInstalled) {
+        if (clearPlayer && installed.sourceInstalled) {
             try {
                 access.stop()
             } catch (_: Exception) {
-                available = false
+                playerAvailable = false
             }
             try {
                 access.clearMediaItems()
             } catch (_: Exception) {
-                available = false
+                playerAvailable = false
             }
         }
         val retiredRecording = (installed as? InstalledPlayerTarget.Recording)?.let {
@@ -455,7 +559,7 @@ internal class Media3PlaybackCoordinatorPlayer(
             )
         }
         return PlayerRetirement(
-            playerAvailable = available,
+            playerAvailable = playerAvailable,
             retiredTarget = true,
             retiredRecording = retiredRecording,
         )
@@ -464,6 +568,7 @@ internal class Media3PlaybackCoordinatorPlayer(
     private sealed class InstalledPlayerTarget(
         val token: PlaybackTargetToken,
         val listener: Player.Listener,
+        val source: CoordinatorMediaSource,
     ) {
         var listenerAttached: Boolean = false
         var sourceInstalled: Boolean = false
@@ -471,15 +576,18 @@ internal class Media3PlaybackCoordinatorPlayer(
         class Live(
             token: PlaybackTargetToken,
             listener: Player.Listener,
-        ) : InstalledPlayerTarget(token, listener) {
+            source: CoordinatorMediaSource,
+            val timeshiftControls: LiveTimeshiftControlBridge,
+        ) : InstalledPlayerTarget(token, listener, source) {
             var recovery: CoordinatorPlaybackRecovery? = null
         }
 
         class Recording(
             token: PlaybackTargetToken,
             listener: Player.Listener,
+            source: CoordinatorMediaSource,
             val finality: GrowingFinalitySignal?,
-        ) : InstalledPlayerTarget(token, listener) {
+        ) : InstalledPlayerTarget(token, listener, source) {
             var resume: CoordinatorRecordingResume? = null
         }
     }

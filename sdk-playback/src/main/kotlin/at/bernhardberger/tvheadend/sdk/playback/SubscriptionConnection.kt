@@ -74,7 +74,14 @@ public sealed interface SubscriptionEvent {
         streams: List<SubscriptionStream>?,
         public val codecMetadata: SubscriptionBinary?,
         public val condition: SubscriptionCondition,
+        public val issue: SubscriptionIssue?,
     ) : SubscriptionEvent {
+        public constructor(
+            streams: List<SubscriptionStream>?,
+            codecMetadata: SubscriptionBinary?,
+            condition: SubscriptionCondition,
+        ) : this(streams, codecMetadata, condition, null)
+
         /** Ordered stream descriptions, or null when omitted. */
         public val streams: List<SubscriptionStream>? = streams?.toImmutableList()
 
@@ -116,12 +123,22 @@ public sealed interface SubscriptionEvent {
     }
 
     /** Server-reported graceful stop. */
-    public class Stopped(public val condition: SubscriptionCondition) : SubscriptionEvent {
+    public class Stopped(
+        public val condition: SubscriptionCondition,
+        public val issue: SubscriptionIssue?,
+    ) : SubscriptionEvent {
+        public constructor(condition: SubscriptionCondition) : this(condition, null)
+
         override fun toString(): String = "SubscriptionEvent.Stopped(<redacted>)"
     }
 
     /** Nonterminal server status. */
-    public class Status(public val condition: SubscriptionCondition) : SubscriptionEvent {
+    public class Status(
+        public val condition: SubscriptionCondition,
+        public val issue: SubscriptionIssue?,
+    ) : SubscriptionEvent {
+        public constructor(condition: SubscriptionCondition) : this(condition, null)
+
         override fun toString(): String = "SubscriptionEvent.Status(<redacted>)"
     }
 
@@ -237,6 +254,22 @@ public enum class SubscriptionStreamType {
     DVB_SUBTITLE,
     TEXT_SUBTITLE,
     TELETEXT,
+    UNKNOWN,
+}
+
+/** Canonical safe issue reported for a live TVHeadend subscription. */
+public enum class SubscriptionIssue {
+    NO_FREE_ADAPTER,
+    SCRAMBLED,
+    BAD_SIGNAL,
+    TUNING_FAILED,
+    SUBSCRIPTION_OVERRIDDEN,
+    MUX_NOT_ENABLED,
+    INVALID_TARGET,
+    USER_ACCESS,
+    USER_LIMIT,
+    WEAK_STREAM,
+    NO_DISK_SPACE,
     UNKNOWN,
 }
 
