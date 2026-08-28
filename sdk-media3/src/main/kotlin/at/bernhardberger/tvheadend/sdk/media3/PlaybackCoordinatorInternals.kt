@@ -211,7 +211,9 @@ internal class PlayerLooperExecutor(
             complete(LooperOperationResult.Cancelled)
         }
         continuation.invokeOnCancellation { ticket.cancel() }
-        if (!looper.post(runnable)) {
+        if (looper.isCurrent()) {
+            runnable.run()
+        } else if (!looper.post(runnable)) {
             when {
                 ticket.failBeforeClaim() -> complete(LooperOperationResult.Unavailable)
                 ticket.isCancelled() -> complete(LooperOperationResult.Cancelled)

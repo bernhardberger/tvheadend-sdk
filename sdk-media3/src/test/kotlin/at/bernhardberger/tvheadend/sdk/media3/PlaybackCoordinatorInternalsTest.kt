@@ -19,6 +19,21 @@ import org.junit.jupiter.api.Test
 
 internal class PlaybackCoordinatorInternalsTest {
     @Test
+    fun `cancellation before current looper claim prevents inline mutation`() = runTest {
+        val executor = PlayerLooperExecutor(CurrentCoordinatorLooper)
+        val ticket = PlayerOperationTicket()
+        var mutations = 0
+
+        assertTrue(ticket.cancel())
+        val result = executor.execute(ticket) {
+            mutations += 1
+        }
+
+        assertSame(LooperOperationResult.Cancelled, result)
+        assertEquals(0, mutations)
+    }
+
+    @Test
     fun `cancellation before looper claim prevents mutation`() = runTest {
         val looper = QueuedCoordinatorLooper()
         val executor = PlayerLooperExecutor(looper)
@@ -140,6 +155,14 @@ internal class PlaybackCoordinatorInternalsTest {
         progress = DvrPlaybackProgress(positionSeconds.seconds, watched),
         terminal = terminal,
     )
+}
+
+private data object CurrentCoordinatorLooper : CoordinatorLooper {
+    override fun post(runnable: Runnable): Boolean = error("current-looper work must not post")
+
+    override fun remove(runnable: Runnable) = Unit
+
+    override fun isCurrent(): Boolean = true
 }
 
 internal class QueuedCoordinatorLooper : CoordinatorLooper {

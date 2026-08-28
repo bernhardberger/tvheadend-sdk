@@ -9,6 +9,7 @@ package at.bernhardberger.tvheadend.sdk.media3
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
+import at.bernhardberger.tvheadend.sdk.core.DvrProgressPolicy
 import at.bernhardberger.tvheadend.sdk.core.DvrProgressResult
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
@@ -21,7 +22,9 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import java.io.IOException
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -32,6 +35,56 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 internal class Media3PlaybackCoordinatorPlayerTest {
+    @Test
+    fun `public live target completes when coordinator owns application looper`() = runTest {
+        val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
+        val events = PlaybackPlayerEventAccumulator()
+        val player = Media3PlaybackCoordinatorPlayer(access, events) { _, _ ->
+            RecordingAdmission.Completed(Duration.ZERO)
+        }
+        val coordinator = TvheadendPlaybackCoordinator(
+            player = player,
+            playerEvents = events,
+            progressPolicy = DvrProgressPolicy(),
+            onRecoveryRequired = {},
+            timeSource = SystemPlaybackCoordinatorTimeSource,
+        )
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { coordinator.run() }
+
+        val result = async {
+            coordinator.setLiveTarget(PlaybackBindingTestFactory.currentLive())
+        }
+        runCurrent()
+
+        val completedWithoutPosting = result.isCompleted
+        val postsBeforeDrain = access.looperQueue.posts
+        if (!completedWithoutPosting) {
+            access.looperQueue.runAll()
+            runCurrent()
+        }
+        assertEquals(PlaybackTargetResult.STARTED, result.await())
+        assertEquals(
+            listOf(
+                "create-live",
+                "add-listener",
+                "create-recovery",
+                "begin-recovery",
+                "set-live",
+                "prepare",
+            ),
+            access.operations,
+        )
+
+        owner.cancel()
+        runCurrent()
+        access.looperQueue.runAll()
+        runCurrent()
+        owner.join()
+
+        assertTrue(completedWithoutPosting, "public live-target command did not complete inline")
+        assertEquals(0, postsBeforeDrain)
+    }
+
     @Test
     fun `live and recording transitions use exact helper order and never release player`() = runTest {
         val access = FakeCoordinatorPlaybackAccess()
@@ -560,8 +613,9 @@ internal class Media3PlaybackCoordinatorPlayerTest {
 
 private class FakeCoordinatorPlaybackAccess(
     private val failSetMediaSource: Boolean = false,
+    looperInitiallyCurrent: Boolean = false,
 ) : CoordinatorPlaybackAccess {
-    val looperQueue = TestCoordinatorLooper()
+    val looperQueue = TestCoordinatorLooper(looperInitiallyCurrent)
     override val looper: CoordinatorLooper = looperQueue
     val operations = mutableListOf<String>()
     var snapshot = PlaybackPlayerSnapshot(Duration.ZERO, null, Player.STATE_IDLE, failed = false)
@@ -701,11 +755,14 @@ private class FakeCoordinatorPlaybackAccess(
     private data class FakeCoordinatorMediaSource(val kind: String) : CoordinatorMediaSource
 }
 
-private class TestCoordinatorLooper : CoordinatorLooper {
+private class TestCoordinatorLooper(initiallyCurrent: Boolean = false) : CoordinatorLooper {
     private val queue = ArrayDeque<Runnable>()
-    private var current = false
+    private var current = initiallyCurrent
+    var posts: Int = 0
+        private set
 
     override fun post(runnable: Runnable): Boolean {
+        posts += 1
         queue += runnable
         return true
     }
@@ -721,11 +778,12 @@ private class TestCoordinatorLooper : CoordinatorLooper {
     }
 
     fun runOnLooper(block: () -> Unit) {
+        val wasCurrent = current
         current = true
         try {
             block()
         } finally {
-            current = false
+            current = wasCurrent
         }
     }
 }
