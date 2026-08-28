@@ -6,6 +6,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrEntry
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.SessionObservation
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayRecordingFile
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayRecordingFileStat
@@ -45,7 +46,7 @@ internal class GrowingRecordingMetadataTracker(
     private val recordingId: DvrEntryId,
 ) {
     private val lock = Any()
-    internal val states: StateFlow<DvrRepositoryState> = metadata.dvrRepository.state
+    internal val states: StateFlow<SessionObservation> = metadata.observation
 
     private var identity: GrowingRecordingIdentity? = null
     private var incarnation: DvrEntryIncarnation? = null
@@ -256,7 +257,7 @@ internal interface GrowingRecordingRuntime {
     public fun nowNanos(): Long
 
     public suspend fun awaitStateUpdate(
-        states: StateFlow<DvrRepositoryState>,
+        states: StateFlow<SessionObservation>,
         observed: DvrRepositoryState,
         waitNanos: Long,
     )
@@ -268,13 +269,13 @@ private class SystemGrowingRecordingRuntime : GrowingRecordingRuntime {
     override fun nowNanos(): Long = origin.elapsedNow().inWholeNanoseconds
 
     override suspend fun awaitStateUpdate(
-        states: StateFlow<DvrRepositoryState>,
+        states: StateFlow<SessionObservation>,
         observed: DvrRepositoryState,
         waitNanos: Long,
     ) {
         if (waitNanos <= 0L) return
         withTimeoutOrNull(waitNanos.nanoseconds) {
-            states.first { state -> state !== observed }
+            states.first { observation -> observation.dvrState !== observed }
         }
     }
 }

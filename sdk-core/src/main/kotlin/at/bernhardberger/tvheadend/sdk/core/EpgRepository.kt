@@ -1,13 +1,6 @@
 package at.bernhardberger.tvheadend.sdk.core
 
 import java.util.Collections
-import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
-import kotlinx.coroutines.InternalCoroutinesApi
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.FlowCollector
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 import kotlin.time.Instant
 
 private const val EPG_U32_MAX: Long = 0xffff_ffffL
@@ -237,7 +230,7 @@ public data class EpgSnapshot private constructor(
     }
 }
 
-/** Freshness and synchronization state of an [EpgRepository]. */
+/** Freshness and synchronization state of programme-guide metadata. */
 public sealed interface EpgRepositoryState {
     /** No EPG snapshot has been synchronized. */
     public data object Empty : EpgRepositoryState
@@ -279,23 +272,8 @@ public enum class EpgCoverageRequestResult {
     GENERATION_LOST,
 }
 
-/** Observable EPG metadata and coverage for the selected server profile. */
+/** Programme-guide commands for the selected server profile. */
 public interface EpgRepository {
-    /** Authoritative EPG freshness and content. */
-    public val state: StateFlow<EpgRepositoryState>
-
-    /** Events from the current or retained stale snapshot. */
-    public val events: StateFlow<List<EpgEvent>>
-
-    /** Observes one event from the current or retained stale snapshot. */
-    public fun event(id: EventId): Flow<EpgEvent?>
-
-    /** Observes events for one channel in retained server order. */
-    public fun events(channelId: ChannelId): Flow<List<EpgEvent>>
-
-    /** Observes actual and queried coverage for one channel. */
-    public fun coverage(channelId: ChannelId): Flow<EpgCoverage?>
-
     /**
      * Prioritizes one channel through [through] without waiting for a query to complete.
      *
@@ -309,61 +287,6 @@ public interface EpgRepository {
         through: Instant,
     ): EpgCoverageRequestResult
 }
-
-internal abstract class StateBackedEpgRepository : EpgRepository {
-    final override val events: StateFlow<List<EpgEvent>> by lazy {
-        MappedEpgStateFlow(state, EpgRepositoryState::events)
-    }
-
-    final override fun event(id: EventId): Flow<EpgEvent?> =
-        events.map { events -> events.firstOrNull { event -> event.id == id } }
-            .distinctUntilChanged()
-
-    final override fun events(channelId: ChannelId): Flow<List<EpgEvent>> =
-        events.map { events -> events.filter { event -> event.channelId == channelId } }
-            .distinctUntilChanged()
-
-    final override fun coverage(channelId: ChannelId): Flow<EpgCoverage?> =
-        state.map { state ->
-            state.snapshotOrNull()?.coverages?.firstOrNull { coverage ->
-                coverage.channelId == channelId
-            }
-        }.distinctUntilChanged()
-}
-
-@OptIn(ExperimentalForInheritanceCoroutinesApi::class, InternalCoroutinesApi::class)
-private class MappedEpgStateFlow<T, R>(
-    private val source: StateFlow<T>,
-    private val transform: (T) -> R,
-) : StateFlow<R> {
-    override val value: R
-        get() = transform(source.value)
-
-    override val replayCache: List<R>
-        get() = listOf(value)
-
-    override suspend fun collect(collector: FlowCollector<R>): Nothing {
-        var previous: Any? = UnsetEpgState
-        source.collect { value ->
-            val mapped = transform(value)
-            if (previous === UnsetEpgState || previous != mapped) {
-                previous = mapped
-                collector.emit(mapped)
-            }
-        }
-    }
-
-    private data object UnsetEpgState
-}
-
-private fun EpgRepositoryState.snapshotOrNull(): EpgSnapshot? = when (this) {
-    EpgRepositoryState.Empty -> null
-    is EpgRepositoryState.Synchronizing -> staleSnapshot
-    is EpgRepositoryState.Current -> snapshot
-    is EpgRepositoryState.Stale -> snapshot
-}
-
-private fun EpgRepositoryState.events(): List<EpgEvent> = snapshotOrNull()?.events.orEmpty()
 
 private fun requireEpgU32(name: String, value: Long) {
     require(value in 0L..EPG_U32_MAX) { "$name must be an unsigned 32-bit value" }

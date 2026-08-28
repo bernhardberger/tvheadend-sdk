@@ -1,10 +1,5 @@
 package at.bernhardberger.tvheadend.sdk.core
 
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertSame
@@ -97,44 +92,6 @@ internal class EpgRepositoryTest {
         assertEquals(instant(30), queryAhead.knownTo)
         assertThrows(IllegalArgumentException::class.java) {
             EpgCoverage.create(ChannelId(1), instant(20), instant(10))
-        }
-    }
-
-    @Test
-    fun `all projections derive from one freshness state`() = runTest {
-        val repository = TestEpgRepository()
-        val first = event(1, 10, 20, channelId = 7)
-        val second = event(2, 20, 30, channelId = 8)
-        val coverage = EpgCoverage.create(ChannelId(7), first.start, first.stop)
-        val snapshot = EpgSnapshot.create(listOf(first, second), listOf(coverage))
-
-        assertEquals(EpgRepositoryState.Empty, repository.state.value)
-        assertEquals(emptyList<EpgEvent>(), repository.events.value)
-        assertEquals(null, repository.event(EventId(1)).first())
-
-        repository.set(EpgRepositoryState.Synchronizing(snapshot))
-        assertSame(snapshot.events, repository.events.value)
-        assertSame(first, repository.event(EventId(1)).first())
-        assertEquals(listOf(first), repository.events(ChannelId(7)).first())
-        assertSame(coverage, repository.coverage(ChannelId(7)).first())
-        assertEquals(null, repository.coverage(ChannelId(9)).first())
-
-        repository.set(EpgRepositoryState.Current(EpgSnapshot.create()))
-        assertEquals(emptyList<EpgEvent>(), repository.events.value)
-        assertEquals(null, repository.event(EventId(1)).first())
-    }
-
-    private class TestEpgRepository : StateBackedEpgRepository() {
-        private val mutableState = MutableStateFlow<EpgRepositoryState>(EpgRepositoryState.Empty)
-        override val state: StateFlow<EpgRepositoryState> = mutableState.asStateFlow()
-
-        override fun requestCoverage(
-            channelId: ChannelId,
-            through: Instant,
-        ): EpgCoverageRequestResult = EpgCoverageRequestResult.GENERATION_LOST
-
-        fun set(state: EpgRepositoryState) {
-            mutableState.value = state
         }
     }
 

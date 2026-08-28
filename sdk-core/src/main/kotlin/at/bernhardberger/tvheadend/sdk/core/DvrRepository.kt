@@ -3,13 +3,6 @@ package at.bernhardberger.tvheadend.sdk.core
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import java.util.Collections
-import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
-import kotlinx.coroutines.InternalCoroutinesApi
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.FlowCollector
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 import kotlin.time.Duration
 import kotlin.time.Instant
 
@@ -448,7 +441,7 @@ public data class DvrSnapshot private constructor(
     }
 }
 
-/** Freshness and synchronization state of a [DvrRepository]. */
+/** Freshness and synchronization state of DVR entries and recording rules. */
 public sealed interface DvrRepositoryState {
     /** No DVR snapshot has been synchronized. */
     public data object Empty : DvrRepositoryState
@@ -554,44 +547,8 @@ public sealed interface DvrDiskSpaceState {
     }
 }
 
-/** Observable DVR entries and recording rules for the selected server profile. */
+/** DVR commands for the selected server profile. */
 public interface DvrRepository {
-    /** Authoritative DVR freshness and content. */
-    public val state: StateFlow<DvrRepositoryState>
-
-    /** Entries from the current or retained stale snapshot. */
-    public val entries: StateFlow<List<DvrEntry>>
-
-    /** Automatic-recording rules from the current or retained stale snapshot. */
-    public val autorecRules: StateFlow<List<AutorecRule>>
-
-    /** Time-based recording rules from the current or retained stale snapshot. */
-    public val timerecRules: StateFlow<List<TimerecRule>>
-
-    /** Authoritative DVR configuration freshness. */
-    public val configurationsState: StateFlow<DvrConfigurationsState>
-
-    /** Configurations from the current or retained stale snapshot. */
-    public val configurations: StateFlow<List<DvrConfiguration>>
-
-    /** Authoritative recording-storage freshness. */
-    public val diskSpaceState: StateFlow<DvrDiskSpaceState>
-
-    /** Disk space from the current or retained stale snapshot. */
-    public val diskSpace: StateFlow<DvrDiskSpace?>
-
-    /** Observes one entry from the current or retained stale snapshot. */
-    public fun entry(id: DvrEntryId): Flow<DvrEntry?>
-
-    /** Observes one automatic-recording rule from the current or retained stale snapshot. */
-    public fun autorecRule(id: AutorecRuleId): Flow<AutorecRule?>
-
-    /** Observes one time-based recording rule from the current or retained stale snapshot. */
-    public fun timerecRule(id: TimerecRuleId): Flow<TimerecRule?>
-
-    /** Observes one configuration from the current or retained stale snapshot. */
-    public fun configuration(id: DvrConfigId): Flow<DvrConfiguration?>
-
     /** Schedules one DVR entry and waits for authoritative stream confirmation. */
     public suspend fun scheduleEntry(request: DvrScheduleRequest): DvrMutationResult<DvrEntryId>
 
@@ -669,44 +626,11 @@ public interface DvrRepository {
     public suspend fun cutpoints(id: DvrEntryId): DvrCutpointsResult
 }
 
-internal abstract class StateBackedDvrRepository(
+internal abstract class CommandBackedDvrRepository(
     private val mutations: DvrMutationCommands = DvrMutationCommands.None,
     private val progressCommands: DvrProgressCommands = DvrProgressCommands.None,
     private val cutpointCommands: DvrCutpointCommands = DvrCutpointCommands.None,
 ) : DvrRepository {
-    final override val entries: StateFlow<List<DvrEntry>> by lazy {
-        MappedDvrStateFlow(state, DvrRepositoryState::entries)
-    }
-    final override val autorecRules: StateFlow<List<AutorecRule>> by lazy {
-        MappedDvrStateFlow(state, DvrRepositoryState::autorecRules)
-    }
-    final override val timerecRules: StateFlow<List<TimerecRule>> by lazy {
-        MappedDvrStateFlow(state, DvrRepositoryState::timerecRules)
-    }
-    final override val configurations: StateFlow<List<DvrConfiguration>> by lazy {
-        MappedDvrStateFlow(configurationsState, DvrConfigurationsState::configurations)
-    }
-    final override val diskSpace: StateFlow<DvrDiskSpace?> by lazy {
-        MappedDvrStateFlow(diskSpaceState, DvrDiskSpaceState::diskSpace)
-    }
-
-    final override fun entry(id: DvrEntryId): Flow<DvrEntry?> =
-        entries.map { entries -> entries.firstOrNull { entry -> entry.id == id } }
-            .distinctUntilChanged()
-
-    final override fun autorecRule(id: AutorecRuleId): Flow<AutorecRule?> =
-        autorecRules.map { rules -> rules.firstOrNull { rule -> rule.id == id } }
-            .distinctUntilChanged()
-
-    final override fun timerecRule(id: TimerecRuleId): Flow<TimerecRule?> =
-        timerecRules.map { rules -> rules.firstOrNull { rule -> rule.id == id } }
-            .distinctUntilChanged()
-
-    final override fun configuration(id: DvrConfigId): Flow<DvrConfiguration?> =
-        configurations.map { configurations ->
-            configurations.firstOrNull { configuration -> configuration.id == id }
-        }.distinctUntilChanged()
-
     final override suspend fun scheduleEntry(
         request: DvrScheduleRequest,
     ): DvrMutationResult<DvrEntryId> = mutations.scheduleEntry(request)
@@ -762,62 +686,6 @@ internal abstract class StateBackedDvrRepository(
 
     final override suspend fun cutpoints(id: DvrEntryId): DvrCutpointsResult =
         cutpointCommands.getCutpoints(id)
-}
-
-@OptIn(ExperimentalForInheritanceCoroutinesApi::class, InternalCoroutinesApi::class)
-private class MappedDvrStateFlow<T, R>(
-    private val source: StateFlow<T>,
-    private val transform: (T) -> R,
-) : StateFlow<R> {
-    override val value: R
-        get() = transform(source.value)
-
-    override val replayCache: List<R>
-        get() = listOf(value)
-
-    override suspend fun collect(collector: FlowCollector<R>): Nothing {
-        var previous: Any? = UnsetDvrState
-        source.collect { value ->
-            val mapped = transform(value)
-            if (previous === UnsetDvrState || previous != mapped) {
-                previous = mapped
-                collector.emit(mapped)
-            }
-        }
-    }
-
-    private data object UnsetDvrState
-}
-
-private fun DvrRepositoryState.snapshotOrNull(): DvrSnapshot? = when (this) {
-    DvrRepositoryState.Empty -> null
-    is DvrRepositoryState.Synchronizing -> staleSnapshot
-    is DvrRepositoryState.Current -> snapshot
-    is DvrRepositoryState.Stale -> snapshot
-}
-
-private fun DvrRepositoryState.entries(): List<DvrEntry> = snapshotOrNull()?.entries.orEmpty()
-
-private fun DvrRepositoryState.autorecRules(): List<AutorecRule> =
-    snapshotOrNull()?.autorecRules.orEmpty()
-
-private fun DvrRepositoryState.timerecRules(): List<TimerecRule> =
-    snapshotOrNull()?.timerecRules.orEmpty()
-
-private fun DvrConfigurationsState.configurations(): List<DvrConfiguration> = when (this) {
-    DvrConfigurationsState.Unknown,
-    DvrConfigurationsState.Denied,
-    -> emptyList()
-    is DvrConfigurationsState.Synchronizing -> staleConfigurations.orEmpty()
-    is DvrConfigurationsState.Current -> configurations
-    is DvrConfigurationsState.Stale -> configurations
-}
-
-private fun DvrDiskSpaceState.diskSpace(): DvrDiskSpace? = when (this) {
-    DvrDiskSpaceState.Unknown -> null
-    is DvrDiskSpaceState.Synchronizing -> staleDiskSpace
-    is DvrDiskSpaceState.Current -> diskSpace
-    is DvrDiskSpaceState.Stale -> diskSpace
 }
 
 private fun requireDvrU32(name: String, value: Long) {

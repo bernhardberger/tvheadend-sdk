@@ -16,7 +16,7 @@ The SDK is split into five libraries:
 | `sdk-playback` | Kotlin/JVM | Subscription, seek, timeshift, and timestamp state machines |
 | `sdk-media3` | Android | Media3 sources, stream readers, and playback coordination |
 | `sdk-android` | Android | Discovery, connectivity, atomic server-profile storage, and authenticated artwork |
-| `sdk-testing` | Kotlin/JVM | Fakes, repositories, scripted events, and packet fixtures |
+| `sdk-testing` | Kotlin/JVM | Aggregate observation fakes, scripted events, and packet fixtures |
 
 The source is configured for release `0.2.0`. The normal build never publishes.
 `./gradlew clean build check stageLocalPublication` verifies the repository and
@@ -97,7 +97,26 @@ The listed name and comment are presentation metadata. Profile IDs are opaque,
 redacted from string rendering, and selected only from the current generation's
 discovered allowlist. Omitting the profile keeps TVHeadend's default selection.
 
-## Staged session readiness
+## Atomic session observation
+
+`TvheadendSession.observation` is the single atomic `StateFlow` for lifecycle,
+channel, EPG, DVR, DVR configuration and disk-space freshness, server
+capabilities, and recording-progress capability. Read related values and call
+selectors from one captured observation rather than collecting independent
+flows:
+
+```kotlin
+val observed = session.observation.value
+val channel = observed.channel(channelId)
+val current = observed.eventAt(channelId, now)
+val next = observed.nextEvent(channelId, now)
+```
+
+`currentSession` is an opaque proof that the lifecycle and primary channel,
+EPG, and DVR snapshots are current for one session-owned generation. It becomes
+`null` in the same publication that retires that generation. Retained stale
+snapshots remain selectable from that retired observation without being
+mistaken for current data.
 
 `SessionState.Synchronizing` admits live playback only for channel IDs from a
 retained same-process catalog when the server has not denied streaming. A cold
@@ -154,7 +173,7 @@ authenticated file API; otherwise loads report `ACCESS_DENIED`.
 
 ## Recording progress
 
-`TvheadendSession.recordingProgressCapability` is `SUPPORTED` only when the
+`SessionObservation.recordingProgressCapability` is `SUPPORTED` only when the
 current ready generation can close recording files without changing play count
 and can report position and watched state separately. Unknown and pre-v27
 connections fail closed; there is no degraded fallback.

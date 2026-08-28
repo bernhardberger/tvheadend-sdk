@@ -173,7 +173,7 @@ internal class EpgWorker(
             started = true
         }
         val stateObserver = launch(start = CoroutineStart.UNDISPATCHED) {
-            metadata.epgRepository.state.drop(1).collect { wake.trySend(Unit) }
+            metadata.observation.drop(1).collect { wake.trySend(Unit) }
         }
         try {
             while (currentCoroutineContext().isActive) {

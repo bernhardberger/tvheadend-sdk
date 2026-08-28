@@ -15,6 +15,7 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
 import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
@@ -61,8 +62,11 @@ internal class DvbSubtitleRealServerInstrumentationTest {
         val verification = try {
             assertEquals(SessionCommandResult.STARTED, session.connect(profile))
             val ready = withTimeout(CONNECTION_TIMEOUT_MS) {
-                session.state.first { state -> state is SessionState.Ready || state is SessionState.Unavailable }
-            }
+                session.observation.first { observation ->
+                    observation.sessionState is SessionState.Ready ||
+                        observation.sessionState is SessionState.Unavailable
+                }
+            }.sessionState
             assertTrue("P7-C3 real-server session must become Ready", ready is SessionState.Ready)
             val probe = discoverDvbTargets(session)
             val attempts = ArrayList<DvbAttempt>()
@@ -118,7 +122,9 @@ internal class DvbSubtitleRealServerInstrumentationTest {
 private suspend fun discoverDvbTargets(session: TvheadendSession): DvbProbe {
     val targets = ArrayList<DvbTarget>()
     var channelsProbed = 0
-    for (channel in session.channelRepository.channels.value.take(MAXIMUM_PROBE_CHANNELS)) {
+    val channels = (session.observation.value.channelState as ChannelRepositoryState.Current)
+        .catalog.channels
+    for (channel in channels.take(MAXIMUM_PROBE_CHANNELS)) {
         channelsProbed += 1
         val counter = DvbProbePacketCounter()
         val opened = withTimeoutOrNull(PROBE_OPEN_TIMEOUT_MS) {

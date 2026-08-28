@@ -96,8 +96,10 @@ internal class RealServerDeviceInstrumentationTest {
                 session.connect(configuration.profile),
             )
             val sessionState = withTimeout(CONNECTION_TIMEOUT_MS) {
-                session.state.first(SessionState::isTerminalForVerification)
-            }
+                session.observation.first { observation ->
+                    observation.sessionState.isTerminalForVerification()
+                }
+            }.sessionState
             val unavailableReason = (sessionState as? SessionState.Unavailable)?.reason
             assertTrue(
                 "Real-server session must become ready; failure=$unavailableReason",

@@ -14,6 +14,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrProgressPolicy
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.DvrResumeOffer
 import at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability
+import at.bernhardberger.tvheadend.sdk.core.SessionObservation
 import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.StreamProfileId
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
@@ -42,7 +43,6 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ClosedSendChannelException
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -371,9 +371,7 @@ public fun createTvheadendPlaybackCoordinator(
 }
 
 internal interface PlaybackCoordinatorEnvironment {
-    val sessionState: StateFlow<SessionState>
-    val progressCapability: StateFlow<RecordingProgressCapability>
-    val dvrState: StateFlow<DvrRepositoryState>
+    val observation: StateFlow<SessionObservation>
 
     fun admitRecording(
         recordingId: RecordingId,
@@ -391,18 +389,13 @@ private class SessionPlaybackCoordinatorEnvironment(
     private val session: TvheadendSession,
     private val progressPolicy: DvrProgressPolicy,
 ) : PlaybackCoordinatorEnvironment {
-    override val sessionState: StateFlow<SessionState> = session.state
-    override val progressCapability: StateFlow<RecordingProgressCapability> =
-        session.recordingProgressCapability
-    override val dvrState: StateFlow<DvrRepositoryState> = session.dvrRepository.state
+    override val observation: StateFlow<SessionObservation> = session.observation
 
     override fun admitRecording(
         recordingId: RecordingId,
         start: RecordingPlaybackStart,
     ): RecordingAdmission = admitRecordingTarget(
-        sessionState = session.state.value,
-        progressCapability = session.recordingProgressCapability.value,
-        dvrState = dvrState,
+        observation = observation,
         recordingId = recordingId,
         start = start,
         progressPolicy = progressPolicy,
@@ -423,16 +416,15 @@ private class SessionPlaybackCoordinatorEnvironment(
 }
 
 internal fun admitRecordingTarget(
-    sessionState: SessionState,
-    progressCapability: RecordingProgressCapability,
-    dvrState: StateFlow<DvrRepositoryState>,
+    observation: StateFlow<SessionObservation>,
     recordingId: RecordingId,
     start: RecordingPlaybackStart,
     progressPolicy: DvrProgressPolicy,
     bindGrowingRecording: (RecordingId) -> RecordingFileResult<GrowingRecordingFileLease>,
 ): RecordingAdmission {
-    if (sessionState !is SessionState.Ready) return RecordingAdmission.NotReady
-    when (progressCapability) {
+    val initial = observation.value
+    if (initial.sessionState !is SessionState.Ready) return RecordingAdmission.NotReady
+    when (initial.recordingProgressCapability) {
         RecordingProgressCapability.UNKNOWN -> return RecordingAdmission.NotReady
         RecordingProgressCapability.UNSUPPORTED -> return RecordingAdmission.ProgressUnsupported
         RecordingProgressCapability.SUPPORTED -> Unit
@@ -441,7 +433,15 @@ internal fun admitRecordingTarget(
         RecordingPlaybackStart.START_OVER -> bindGrowingRecording(recordingId)
         RecordingPlaybackStart.RESUME -> null
     }
-    val current = dvrState.value as? DvrRepositoryState.Current ?: return RecordingAdmission.NotReady
+    val observed = observation.value
+    if (observed.sessionState !is SessionState.Ready) return RecordingAdmission.NotReady
+    when (observed.recordingProgressCapability) {
+        RecordingProgressCapability.UNKNOWN -> return RecordingAdmission.NotReady
+        RecordingProgressCapability.UNSUPPORTED -> return RecordingAdmission.ProgressUnsupported
+        RecordingProgressCapability.SUPPORTED -> Unit
+    }
+    val current = observed.dvrState as? DvrRepositoryState.Current
+        ?: return RecordingAdmission.NotReady
     val entry = current.snapshot.entries.singleOrNull { candidate ->
         candidate.id.value == recordingId.value
     }
@@ -449,7 +449,7 @@ internal fun admitRecordingTarget(
     return when (entry.state) {
         DvrEntryState.RECORDING -> admitGrowingRecording(
             entry = entry,
-            dvrState = dvrState,
+            observation = observation,
             start = start,
             binding = growingBinding,
         )
@@ -476,7 +476,7 @@ internal fun admitRecordingTarget(
 
 private fun admitGrowingRecording(
     entry: DvrEntry,
-    dvrState: StateFlow<DvrRepositoryState>,
+    observation: StateFlow<SessionObservation>,
     start: RecordingPlaybackStart,
     binding: RecordingFileResult<GrowingRecordingFileLease>?,
 ): RecordingAdmission {
@@ -486,7 +486,7 @@ private fun admitGrowingRecording(
     if (!containerPath.endsWith(".ts", ignoreCase = true)) {
         return RecordingAdmission.GrowingRecordingDeferred
     }
-    val fence = GrowingRecordingFence.create(entry, dvrState)
+    val fence = GrowingRecordingFence.create(entry, observation)
         ?: return RecordingAdmission.TargetUnavailable
     return when (start) {
         RecordingPlaybackStart.START_OVER -> when (
@@ -542,9 +542,9 @@ private class CoordinatorActor(
     suspend fun run(): Unit = coroutineScope {
         val reportWorker = launch { runReportWorker() }
         val gateObserver = launch {
-            combine(environment.sessionState, environment.progressCapability) { state, capability ->
-                state is SessionState.Ready && capability == RecordingProgressCapability.SUPPORTED
-            }.collect { valid ->
+            environment.observation.collect { observation ->
+                val valid = observation.sessionState is SessionState.Ready &&
+                    observation.recordingProgressCapability == RecordingProgressCapability.SUPPORTED
                 if (!valid) reportGate?.invalidate()
                 gateEvents.send(valid)
             }
@@ -892,9 +892,11 @@ private class CoordinatorActor(
         }
     }
 
-    private fun currentReportGateIsValid(): Boolean =
-        environment.sessionState.value is SessionState.Ready &&
-            environment.progressCapability.value == RecordingProgressCapability.SUPPORTED
+    private fun currentReportGateIsValid(): Boolean {
+        val observation = environment.observation.value
+        return observation.sessionState is SessionState.Ready &&
+            observation.recordingProgressCapability == RecordingProgressCapability.SUPPORTED
+    }
 
     private fun refreshGrowingTarget(target: ActorTarget.Recording): Boolean {
         if (target.growingLease?.isCurrent == false) return invalidateGrowingTarget(target)

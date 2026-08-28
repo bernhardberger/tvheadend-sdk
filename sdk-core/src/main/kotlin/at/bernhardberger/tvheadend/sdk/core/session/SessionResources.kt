@@ -9,8 +9,8 @@ import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoader
 import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
-import at.bernhardberger.tvheadend.sdk.core.ChannelRepository
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.CommandBackedDvrRepository
 import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
 import at.bernhardberger.tvheadend.sdk.core.DvrConfigurationsState
 import at.bernhardberger.tvheadend.sdk.core.DvrCutpointCommands
@@ -27,10 +27,11 @@ import at.bernhardberger.tvheadend.sdk.core.EpgCoverageRequestResult
 import at.bernhardberger.tvheadend.sdk.core.EpgRepository
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
+import at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability
 import at.bernhardberger.tvheadend.sdk.core.ServerCapabilities
-import at.bernhardberger.tvheadend.sdk.core.StateBackedChannelRepository
-import at.bernhardberger.tvheadend.sdk.core.StateBackedDvrRepository
-import at.bernhardberger.tvheadend.sdk.core.StateBackedEpgRepository
+import at.bernhardberger.tvheadend.sdk.core.SessionObservation
+import at.bernhardberger.tvheadend.sdk.core.SessionObservationStore
+import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.StreamProfilesResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
@@ -61,13 +62,20 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlin.time.Duration
 import kotlin.time.Instant
 
-internal interface SessionMetadata : ChannelRepository {
+internal interface SessionMetadata {
+    public val observation: StateFlow<SessionObservation>
+
     public val channelsAndTags: StateFlow<ChannelRepositoryState>
-        get() = state
 
     public val epgRepository: EpgRepository
 
     public val dvrRepository: DvrRepository
+
+    public fun publishSessionState(
+        state: SessionState,
+        progressCapability: RecordingProgressCapability,
+        generation: GatewayGeneration?,
+    )
 
     public fun resetWorkingStateRetainingPublishedSnapshot()
 
@@ -183,7 +191,8 @@ internal class PhaseOneSessionMetadata(
     progressCommands: DvrProgressCommands = DvrProgressCommands.None,
     cutpointCommands: DvrCutpointCommands = DvrCutpointCommands.None,
     private val onDvrMetadataAccepted: (MetadataEvent) -> Unit = {},
-) : StateBackedChannelRepository(), SessionMetadata {
+    private val observationStore: SessionObservationStore = SessionObservationStore(),
+) : SessionMetadata {
     private val lock = Any()
     private val reducer = ChannelTagReducer()
     private val epgReducer = EpgReducer()
@@ -197,24 +206,17 @@ internal class PhaseOneSessionMetadata(
         DvrConfigurationsState.Unknown,
     )
     private val mutableDiskSpace = MutableStateFlow<DvrDiskSpaceState>(DvrDiskSpaceState.Unknown)
-    private val stateBackedEpgRepository = object : StateBackedEpgRepository() {
-        override val state: StateFlow<EpgRepositoryState> = mutableEpg.asStateFlow()
-
+    private val stateBackedEpgRepository = object : EpgRepository {
         override fun requestCoverage(
             channelId: ChannelId,
             through: Instant,
         ): EpgCoverageRequestResult = requestEpgCoverage(channelId, through)
     }
-    private val stateBackedDvrRepository = object : StateBackedDvrRepository(
+    private val stateBackedDvrRepository = object : CommandBackedDvrRepository(
         mutations = mutationCommands,
         progressCommands = progressCommands,
         cutpointCommands = cutpointCommands,
-    ) {
-        override val state: StateFlow<DvrRepositoryState> = mutableDvr.asStateFlow()
-        override val configurationsState: StateFlow<DvrConfigurationsState> =
-            mutableConfigurations.asStateFlow()
-        override val diskSpaceState: StateFlow<DvrDiskSpaceState> = mutableDiskSpace.asStateFlow()
-    }
+    ) {}
     private var generation: GatewayGeneration? = null
     private var initialSync = CompletableDeferred<Unit>()
     private var publishedCatalog: ChannelCatalog? = null
@@ -229,10 +231,19 @@ internal class PhaseOneSessionMetadata(
     private var epgCoverageRequester: EpgCoverageRequester? = null
     private val dvrEntryIncarnations = HashMap<DvrEntryId, DvrEntryIncarnation>()
 
-    override val state: StateFlow<ChannelRepositoryState> =
+    override val observation: StateFlow<SessionObservation> = observationStore.observation
+    override val channelsAndTags: StateFlow<ChannelRepositoryState> =
         mutableChannelsAndTags.asStateFlow()
     override val epgRepository: EpgRepository = stateBackedEpgRepository
     override val dvrRepository: DvrRepository = stateBackedDvrRepository
+
+    override fun publishSessionState(
+        state: SessionState,
+        progressCapability: RecordingProgressCapability,
+        generation: GatewayGeneration?,
+    ) {
+        observationStore.publishSessionState(state, progressCapability, generation)
+    }
 
     override fun resetWorkingStateRetainingPublishedSnapshot() {
         resetState(retainPublishedCatalog = true)
@@ -273,6 +284,7 @@ internal class PhaseOneSessionMetadata(
             mutableConfigurations.value = publishedConfigurationsState()
             mutableDiskSpace.value = publishedDiskSpace?.let(DvrDiskSpaceState::Stale)
                 ?: DvrDiskSpaceState.Unknown
+            publishMetadataObservation()
             previousFence
         }
         retiredFence.cancel(CancellationException("Session generation is no longer current"))
@@ -297,6 +309,7 @@ internal class PhaseOneSessionMetadata(
             mutableDvr.value = DvrRepositoryState.Synchronizing(publishedDvrSnapshot)
             mutableConfigurations.value = DvrConfigurationsState.Synchronizing.create(publishedConfigurations)
             mutableDiskSpace.value = DvrDiskSpaceState.Synchronizing(publishedDiskSpace)
+            publishMetadataObservation()
             previousFence
         }
         retiredFence.cancel(CancellationException("Session generation is no longer current"))
@@ -358,6 +371,7 @@ internal class PhaseOneSessionMetadata(
                 GatewayResult.NotSupported,
                 -> mutableConfigurations.value = publishedConfigurationsState()
             }
+            publishMetadataObservation()
             if (synchronizedCurrent && capabilityRevision != previousRevision) {
                 capabilitySnapshotLocked(generation)
             } else {
@@ -387,6 +401,7 @@ internal class PhaseOneSessionMetadata(
                 -> mutableDiskSpace.value = publishedDiskSpace?.let(DvrDiskSpaceState::Stale)
                     ?: DvrDiskSpaceState.Unknown
             }
+            publishMetadataObservation()
         }
     }
 
@@ -677,18 +692,27 @@ internal class PhaseOneSessionMetadata(
     ) {
         mutableChannelsAndTags.value = ChannelRepositoryState.Current(catalog)
         publishedCatalog = (mutableChannelsAndTags.value as ChannelRepositoryState.Current).catalog
-        publishCurrentEpg(epgSnapshot)
-        publishCurrentDvr(dvrSnapshot)
-    }
-
-    private fun publishCurrentDvr(snapshot: DvrSnapshot) {
-        mutableDvr.value = DvrRepositoryState.Current(snapshot)
+        mutableEpg.value = EpgRepositoryState.Current(epgSnapshot)
+        publishedEpgSnapshot = (mutableEpg.value as EpgRepositoryState.Current).snapshot
+        mutableDvr.value = DvrRepositoryState.Current(dvrSnapshot)
         publishedDvrSnapshot = (mutableDvr.value as DvrRepositoryState.Current).snapshot
+        publishMetadataObservation()
     }
 
     private fun publishCurrentEpg(snapshot: EpgSnapshot) {
         mutableEpg.value = EpgRepositoryState.Current(snapshot)
         publishedEpgSnapshot = (mutableEpg.value as EpgRepositoryState.Current).snapshot
+        publishMetadataObservation()
+    }
+
+    private fun publishMetadataObservation() {
+        observationStore.publishMetadata(
+            channelState = mutableChannelsAndTags.value,
+            epgState = mutableEpg.value,
+            dvrState = mutableDvr.value,
+            configurationsState = mutableConfigurations.value,
+            diskSpaceState = mutableDiskSpace.value,
+        )
     }
 
     private fun publishedConfigurationsState(): DvrConfigurationsState =

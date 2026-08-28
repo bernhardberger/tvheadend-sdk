@@ -1,106 +1,11 @@
-public final class at/bernhardberger/tvheadend/sdk/testing/FakeChannelRepository : at/bernhardberger/tvheadend/sdk/core/ChannelRepository {
+public final class at/bernhardberger/tvheadend/sdk/testing/FakeSessionObservation {
 	public fun <init> ()V
-	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState;)V
-	public synthetic fun <init> (Lat/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
-	public fun channel-9w0kQQ0 (J)Lkotlinx/coroutines/flow/Flow;
-	public fun getChannels ()Lkotlinx/coroutines/flow/StateFlow;
-	public fun getState ()Lkotlinx/coroutines/flow/StateFlow;
-	public fun getTags ()Lkotlinx/coroutines/flow/StateFlow;
-	public final fun setState (Lat/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState;)V
-	public fun tag-tZzeWiw (J)Lkotlinx/coroutines/flow/Flow;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/testing/FakeDvrProgressCall {
-	public synthetic fun <init> (JLat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
-	public final fun component1-YcJ-2to ()J
-	public final fun component2 ()Lat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress;
-	public final fun copy-LuN5gl8 (JLat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress;)Lat/bernhardberger/tvheadend/sdk/testing/FakeDvrProgressCall;
-	public static synthetic fun copy-LuN5gl8$default (Lat/bernhardberger/tvheadend/sdk/testing/FakeDvrProgressCall;JLat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/testing/FakeDvrProgressCall;
-	public fun equals (Ljava/lang/Object;)Z
-	public final fun getId-YcJ-2to ()J
-	public final fun getProgress ()Lat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress;
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/testing/FakeDvrRepository : at/bernhardberger/tvheadend/sdk/core/DvrRepository {
-	public fun <init> ()V
-	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState;)V
-	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState;Lat/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState;)V
-	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState;Lat/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState;Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpaceState;)V
-	public synthetic fun <init> (Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState;Lat/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState;Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpaceState;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
-	public fun autorecRule-K-0Ra0w (Ljava/lang/String;)Lkotlinx/coroutines/flow/Flow;
-	public fun cancelEntry-LuN5gl8 (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public final fun clearProgressCalls ()V
-	public fun configuration-5XLS7Ck (Ljava/lang/String;)Lkotlinx/coroutines/flow/Flow;
-	public fun createAutorecRule (Lat/bernhardberger/tvheadend/sdk/core/AutorecRuleCreate;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public fun createTimerecRule (Lat/bernhardberger/tvheadend/sdk/core/TimerecRuleCreate;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public fun cutpoints-LuN5gl8 (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public fun deleteAutorecRule-8LEu20c (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public fun deleteEntry-LuN5gl8 (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public fun deleteTimerecRule-kEPY2d4 (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public final fun enqueueProgressResult (Lat/bernhardberger/tvheadend/sdk/core/DvrProgressResult;)V
-	public fun entry-lyT0IZA (J)Lkotlinx/coroutines/flow/Flow;
-	public fun getAutorecRules ()Lkotlinx/coroutines/flow/StateFlow;
-	public final fun getCancelEntryResult ()Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;
-	public fun getConfigurations ()Lkotlinx/coroutines/flow/StateFlow;
-	public fun getConfigurationsState ()Lkotlinx/coroutines/flow/StateFlow;
-	public final fun getCreateAutorecRuleResult ()Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;
-	public final fun getCreateTimerecRuleResult ()Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;
-	public final fun getCutpointsResult ()Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult;
-	public final fun getDeleteAutorecRuleResult ()Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;
-	public final fun getDeleteEntryResult ()Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;
-	public final fun getDeleteTimerecRuleResult ()Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;
-	public fun getDiskSpace ()Lkotlinx/coroutines/flow/StateFlow;
-	public fun getDiskSpaceState ()Lkotlinx/coroutines/flow/StateFlow;
-	public fun getEntries ()Lkotlinx/coroutines/flow/StateFlow;
-	public final fun getProgressCalls ()Ljava/util/List;
-	public final fun getReportProgressResult ()Lat/bernhardberger/tvheadend/sdk/core/DvrProgressResult;
-	public final fun getScheduleEntryResult ()Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;
-	public fun getState ()Lkotlinx/coroutines/flow/StateFlow;
-	public final fun getStopEntryResult ()Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;
-	public fun getTimerecRules ()Lkotlinx/coroutines/flow/StateFlow;
-	public final fun getUpdateAutorecRuleResult ()Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;
-	public final fun getUpdateEntryResult ()Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;
-	public final fun getUpdateTimerecRuleResult ()Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;
-	public fun reportProgress (Lat/bernhardberger/tvheadend/sdk/playback/GrowingRecordingFileLease;Lat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public fun reportProgress-c8JLQRw (JLat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public fun scheduleEntry (Lat/bernhardberger/tvheadend/sdk/core/DvrScheduleRequest;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public final fun setCancelEntryResult (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
-	public final fun setConfigurationsState (Lat/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState;)V
-	public final fun setCreateAutorecRuleResult (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
-	public final fun setCreateTimerecRuleResult (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
-	public final fun setCutpointsResult (Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult;)V
-	public final fun setDeleteAutorecRuleResult (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
-	public final fun setDeleteEntryResult (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
-	public final fun setDeleteTimerecRuleResult (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
-	public final fun setDiskSpaceState (Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpaceState;)V
-	public final fun setReportProgressResult (Lat/bernhardberger/tvheadend/sdk/core/DvrProgressResult;)V
-	public final fun setScheduleEntryResult (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
-	public final fun setState (Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState;)V
-	public final fun setStopEntryResult (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
-	public final fun setUpdateAutorecRuleResult (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
-	public final fun setUpdateEntryResult (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
-	public final fun setUpdateTimerecRuleResult (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
-	public fun stopEntry-LuN5gl8 (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public fun timerecRule-OXQAzx4 (Ljava/lang/String;)Lkotlinx/coroutines/flow/Flow;
-	public fun updateAutorecRule-UbZ1jNk (Ljava/lang/String;Lat/bernhardberger/tvheadend/sdk/core/AutorecRuleUpdate;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public fun updateEntry-c8JLQRw (JLat/bernhardberger/tvheadend/sdk/core/DvrEntryUpdate;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public fun updateTimerecRule-fyK67Z0 (Ljava/lang/String;Lat/bernhardberger/tvheadend/sdk/core/TimerecRuleUpdate;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/testing/FakeEpgRepository : at/bernhardberger/tvheadend/sdk/core/EpgRepository {
-	public fun <init> ()V
-	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/EpgRepositoryState;)V
-	public synthetic fun <init> (Lat/bernhardberger/tvheadend/sdk/core/EpgRepositoryState;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
-	public fun coverage-9w0kQQ0 (J)Lkotlinx/coroutines/flow/Flow;
-	public fun event-eg3kBS8 (J)Lkotlinx/coroutines/flow/Flow;
-	public fun events-9w0kQQ0 (J)Lkotlinx/coroutines/flow/Flow;
-	public fun getEvents ()Lkotlinx/coroutines/flow/StateFlow;
-	public fun getState ()Lkotlinx/coroutines/flow/StateFlow;
-	public fun requestCoverage-RL2hoTo (JLkotlin/time/Instant;)Lat/bernhardberger/tvheadend/sdk/core/EpgCoverageRequestResult;
-	public final fun setCoverageRequestResult (Lat/bernhardberger/tvheadend/sdk/core/EpgCoverageRequestResult;)V
-	public final fun setState (Lat/bernhardberger/tvheadend/sdk/core/EpgRepositoryState;)V
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;)V
+	public synthetic fun <init> (Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getObservation ()Lkotlinx/coroutines/flow/StateFlow;
+	public final fun publish (Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;)V
+	public final fun retire (Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;)V
+	public static synthetic fun retire$default (Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionObservation;Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;ILjava/lang/Object;)V
 }
 
 public final class at/bernhardberger/tvheadend/sdk/testing/ScriptedSubscriptionCall : java/lang/Enum {

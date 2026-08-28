@@ -5,10 +5,6 @@ package at.bernhardberger.tvheadend.sdk.core
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -144,65 +140,6 @@ internal class DvrRepositoryTest {
     }
 
     @Test
-    fun `all projections derive from one freshness state`() = runTest {
-        val repository = TestDvrRepository()
-        val entry = DvrEntry.create(id = DvrEntryId(1), title = "one")
-        val autorec = AutorecRule.create(id = AutorecRuleId("auto"), title = "auto")
-        val timerec = TimerecRule.create(id = TimerecRuleId("time"), title = "time")
-        val snapshot = DvrSnapshot.create(listOf(entry), listOf(autorec), listOf(timerec))
-
-        assertEquals(DvrRepositoryState.Empty, repository.state.value)
-        assertEquals(emptyList<DvrEntry>(), repository.entries.value)
-
-        repository.set(DvrRepositoryState.Synchronizing(snapshot))
-        assertSame(snapshot.entries, repository.entries.value)
-        assertSame(entry, repository.entry(DvrEntryId(1)).first())
-        assertSame(autorec, repository.autorecRule(AutorecRuleId("auto")).first())
-        assertSame(timerec, repository.timerecRule(TimerecRuleId("time")).first())
-
-        repository.set(DvrRepositoryState.Current(DvrSnapshot.create()))
-        assertEquals(emptyList<DvrEntry>(), repository.entries.value)
-        assertEquals(null, repository.entry(DvrEntryId(1)).first())
-        assertEquals(null, repository.autorecRule(AutorecRuleId("auto")).first())
-        assertEquals(null, repository.timerecRule(TimerecRuleId("time")).first())
-    }
-
-    @Test
-    fun `configuration and disk projections derive from independent freshness states`() = runTest {
-        val repository = TestDvrRepository()
-        val configuration = DvrConfiguration(DvrConfigId("private-config"), "Default", "comment")
-        val diskSpace = DvrDiskSpace(freeBytes = 10, usedBytes = 4, totalBytes = 14)
-
-        assertEquals(DvrConfigurationsState.Unknown, repository.configurationsState.value)
-        assertEquals(emptyList<DvrConfiguration>(), repository.configurations.value)
-        assertEquals(DvrDiskSpaceState.Unknown, repository.diskSpaceState.value)
-        assertEquals(null, repository.diskSpace.value)
-
-        repository.setConfigurations(DvrConfigurationsState.Synchronizing.create(listOf(configuration)))
-        repository.setDiskSpace(DvrDiskSpaceState.Synchronizing(diskSpace))
-        assertSame(configuration, repository.configuration(DvrConfigId("private-config")).first())
-        assertEquals(diskSpace, repository.diskSpace.value)
-        assertFalse(
-            repository.configurations.value.toString().contains("private"),
-            "Configuration rendering exposed a configuration identifier",
-        )
-
-        repository.setConfigurations(DvrConfigurationsState.Denied)
-        repository.setDiskSpace(DvrDiskSpaceState.Unknown)
-        assertEquals(emptyList<DvrConfiguration>(), repository.configurations.value)
-        assertEquals(null, repository.configuration(DvrConfigId("private-config")).first())
-        assertEquals(null, repository.diskSpace.value)
-
-        val source = mutableListOf(configuration)
-        val current = DvrConfigurationsState.Current.create(source)
-        source.clear()
-        assertEquals(listOf(configuration), current.configurations)
-        assertThrows(UnsupportedOperationException::class.java) {
-            (current.configurations as MutableList<DvrConfiguration>).clear()
-        }
-    }
-
-    @Test
     fun `progress reports stay command-only and do not change repository state`() = runTest {
         val accepted = DvrProgressResult.Accepted
         var reportedLease: GrowingRecordingFileLease? = null
@@ -221,14 +158,10 @@ internal class DvrRepositoryTest {
             }
         }
         val repository = TestDvrRepository(progressCommands = commands)
-        val snapshot = DvrSnapshot.create(listOf(DvrEntry.create(DvrEntryId(1))))
-        repository.set(DvrRepositoryState.Current(snapshot))
-
         assertSame(
             accepted,
             repository.reportProgress(DvrEntryId(1), DvrPlaybackProgress.checkpoint(30.seconds)),
         )
-        assertSame(snapshot, (repository.state.value as DvrRepositoryState.Current).snapshot)
         val lease = TestGrowingRecordingLease()
         assertSame(
             accepted,
@@ -259,42 +192,17 @@ internal class DvrRepositoryTest {
             override suspend fun getCutpoints(id: DvrEntryId): DvrCutpointsResult = expected
         }
         val repository = TestDvrRepository(cutpointCommands = commands)
-        val snapshot = DvrSnapshot.create(listOf(DvrEntry.create(DvrEntryId(1))))
-        repository.set(DvrRepositoryState.Current(snapshot))
-
         assertSame(expected, repository.cutpoints(DvrEntryId(1)))
-        assertSame(snapshot, (repository.state.value as DvrRepositoryState.Current).snapshot)
         assertSame(DvrCutpointsResult.NotReady, TestDvrRepository().cutpoints(DvrEntryId(1)))
     }
 
     private class TestDvrRepository(
         progressCommands: DvrProgressCommands = DvrProgressCommands.None,
         cutpointCommands: DvrCutpointCommands = DvrCutpointCommands.None,
-    ) : StateBackedDvrRepository(
+    ) : CommandBackedDvrRepository(
         progressCommands = progressCommands,
         cutpointCommands = cutpointCommands,
-    ) {
-        private val mutableState = MutableStateFlow<DvrRepositoryState>(DvrRepositoryState.Empty)
-        private val mutableConfigurations =
-            MutableStateFlow<DvrConfigurationsState>(DvrConfigurationsState.Unknown)
-        private val mutableDiskSpace = MutableStateFlow<DvrDiskSpaceState>(DvrDiskSpaceState.Unknown)
-        override val state: StateFlow<DvrRepositoryState> = mutableState.asStateFlow()
-        override val configurationsState: StateFlow<DvrConfigurationsState> =
-            mutableConfigurations.asStateFlow()
-        override val diskSpaceState: StateFlow<DvrDiskSpaceState> = mutableDiskSpace.asStateFlow()
-
-        fun set(state: DvrRepositoryState) {
-            mutableState.value = state
-        }
-
-        fun setConfigurations(state: DvrConfigurationsState) {
-            mutableConfigurations.value = state
-        }
-
-        fun setDiskSpace(state: DvrDiskSpaceState) {
-            mutableDiskSpace.value = state
-        }
-    }
+    )
 
     private fun instant(seconds: Long): Instant = Instant.fromEpochSeconds(seconds)
 }

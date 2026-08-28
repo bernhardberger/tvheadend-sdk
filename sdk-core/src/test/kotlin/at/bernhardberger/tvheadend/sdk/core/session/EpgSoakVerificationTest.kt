@@ -58,20 +58,26 @@ internal class EpgSoakVerificationTest {
         try {
             owner.connect(profile)
             val connected = withTimeout(12.minutes) {
-                owner.state.first { state ->
-                    state is SessionState.Ready || state is SessionState.Unavailable
+                owner.observation.first { observation ->
+                    observation.sessionState is SessionState.Ready ||
+                        observation.sessionState is SessionState.Unavailable
                 }
             }
-            assertTrue(connected is SessionState.Ready, "Live EPG soak never reached ready")
+            assertTrue(
+                connected.sessionState is SessionState.Ready,
+                "Live EPG soak never reached ready",
+            )
             val origin = clock.now()
             val warmed = withTimeout(12.minutes) {
-                owner.epgRepository.state.first { state ->
-                    val snapshot = (state as? EpgRepositoryState.Current)?.snapshot
+                owner.observation.first { observation ->
+                    val snapshot = (observation.epgState as? EpgRepositoryState.Current)?.snapshot
                     snapshot != null &&
                         snapshot.coverages.isNotEmpty() &&
                         snapshot.coverages.all { coverage -> coverage.queriedTo != null }
                 }
-            }.let { state -> (state as EpgRepositoryState.Current).snapshot }
+            }.let { observation ->
+                (observation.epgState as EpgRepositoryState.Current).snapshot
+            }
             assertTrue(warmed.coverages.isNotEmpty(), "Live EPG soak published no channel coverage")
             assertTrue(
                 warmed.coverages.all { coverage -> coverage.queriedTo != null },
@@ -92,22 +98,18 @@ internal class EpgSoakVerificationTest {
 
             val lostHorizon = AtomicBoolean(false)
             val monitor = launch(start = CoroutineStart.UNDISPATCHED) {
-                launch(start = CoroutineStart.UNDISPATCHED) {
-                    owner.state.collect { state ->
-                        if (state !is SessionState.Ready) lostHorizon.set(true)
+                owner.observation.collect { observation ->
+                    val current = observation.epgState as? EpgRepositoryState.Current
+                    val coverages = current?.snapshot?.coverages.orEmpty()
+                    val missingHorizon = warmedChannels.any { channelId ->
+                        coverages.firstOrNull { coverage -> coverage.channelId == channelId }
+                            ?.knownTo == null
                     }
-                }
-                launch(start = CoroutineStart.UNDISPATCHED) {
-                    owner.epgRepository.state.collect { state ->
-                        val current = state as? EpgRepositoryState.Current
-                        val coverages = current?.snapshot?.coverages.orEmpty()
-                        val missingHorizon = warmedChannels.any { channelId ->
-                            coverages.firstOrNull { coverage -> coverage.channelId == channelId }
-                                ?.knownTo == null
-                        }
-                        if (current == null || missingHorizon) {
-                            lostHorizon.set(true)
-                        }
+                    if (observation.sessionState !is SessionState.Ready ||
+                        current == null ||
+                        missingHorizon
+                    ) {
+                        lostHorizon.set(true)
                     }
                 }
             }
@@ -120,7 +122,10 @@ internal class EpgSoakVerificationTest {
             }
 
             assertFalse(lostHorizon.get(), "Live EPG soak published a transient unknown horizon")
-            assertTrue(owner.state.value is SessionState.Ready, "Live EPG soak left ready after drain")
+            assertTrue(
+                owner.observation.value.sessionState is SessionState.Ready,
+                "Live EPG soak left ready after drain",
+            )
             val drained = currentSnapshot(owner)
             val drainedChannels = drained.coverages.map { coverage -> coverage.channelId }.toSet()
             assertTrue(
@@ -176,7 +181,7 @@ private fun soakProfile(): ServerProfile {
 }
 
 private fun currentSnapshot(owner: ConnectionOwner) =
-    (owner.epgRepository.state.value as EpgRepositoryState.Current).snapshot
+    (owner.observation.value.epgState as EpgRepositoryState.Current).snapshot
 
 private fun jsonString(text: String, name: String): String {
     val match = Regex(""""$name"\s*:\s*"((?:\\.|[^"\\])*)"""").find(text)

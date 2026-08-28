@@ -1,13 +1,6 @@
 package at.bernhardberger.tvheadend.sdk.core
 
 import java.util.Collections
-import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
-import kotlinx.coroutines.InternalCoroutinesApi
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.FlowCollector
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 
 private const val U32_MAX: Long = 0xffff_ffffL
 
@@ -164,7 +157,7 @@ public data class ChannelCatalog private constructor(
     }
 }
 
-/** Freshness and synchronization state of a [ChannelRepository]. */
+/** Freshness and synchronization state of channel and channel-tag metadata. */
 public sealed interface ChannelRepositoryState {
     /** No catalog has been synchronized. */
     public data object Empty : ChannelRepositoryState
@@ -190,77 +183,6 @@ public sealed interface ChannelRepositoryState {
         override fun toString(): String = "ChannelRepositoryState.Stale(<redacted>)"
     }
 }
-
-/** Observable channel and tag metadata for the selected server profile. */
-public interface ChannelRepository {
-    /** Authoritative catalog freshness and content. */
-    public val state: StateFlow<ChannelRepositoryState>
-
-    /** Channels from the current or retained stale catalog. */
-    public val channels: StateFlow<List<Channel>>
-
-    /** Channel tags from the current or retained stale catalog. */
-    public val tags: StateFlow<List<ChannelTag>>
-
-    /** Observes one channel from the current or retained stale catalog. */
-    public fun channel(id: ChannelId): Flow<Channel?>
-
-    /** Observes one channel tag from the current or retained stale catalog. */
-    public fun tag(id: ChannelTagId): Flow<ChannelTag?>
-}
-
-internal abstract class StateBackedChannelRepository : ChannelRepository {
-    final override val channels: StateFlow<List<Channel>> by lazy {
-        MappedStateFlow(state, ChannelRepositoryState::channels)
-    }
-    final override val tags: StateFlow<List<ChannelTag>> by lazy {
-        MappedStateFlow(state, ChannelRepositoryState::tags)
-    }
-
-    final override fun channel(id: ChannelId): Flow<Channel?> =
-        channels.map { channels -> channels.firstOrNull { channel -> channel.id == id } }
-            .distinctUntilChanged()
-
-    final override fun tag(id: ChannelTagId): Flow<ChannelTag?> =
-        tags.map { tags -> tags.firstOrNull { tag -> tag.id == id } }
-            .distinctUntilChanged()
-}
-
-@OptIn(ExperimentalForInheritanceCoroutinesApi::class, InternalCoroutinesApi::class)
-private class MappedStateFlow<T, R>(
-    private val source: StateFlow<T>,
-    private val transform: (T) -> R,
-) : StateFlow<R> {
-    override val value: R
-        get() = transform(source.value)
-
-    override val replayCache: List<R>
-        get() = listOf(value)
-
-    override suspend fun collect(collector: FlowCollector<R>): Nothing {
-        var previous: Any? = UnsetState
-        source.collect { value ->
-            val mapped = transform(value)
-            if (previous === UnsetState || previous != mapped) {
-                previous = mapped
-                collector.emit(mapped)
-            }
-        }
-    }
-
-    private data object UnsetState
-}
-
-private fun ChannelRepositoryState.catalogOrNull(): ChannelCatalog? = when (this) {
-    ChannelRepositoryState.Empty -> null
-    is ChannelRepositoryState.Synchronizing -> staleCatalog
-    is ChannelRepositoryState.Current -> catalog
-    is ChannelRepositoryState.Stale -> catalog
-}
-
-private fun ChannelRepositoryState.channels(): List<Channel> = catalogOrNull()?.channels.orEmpty()
-
-private fun ChannelRepositoryState.tags(): List<ChannelTag> = catalogOrNull()?.tags.orEmpty()
 
 private fun requireUnsignedU32(name: String, value: Long) {
     require(value in 0L..U32_MAX) { "$name must be an unsigned 32-bit value" }

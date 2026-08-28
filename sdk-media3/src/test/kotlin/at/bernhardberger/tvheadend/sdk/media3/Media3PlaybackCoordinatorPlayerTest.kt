@@ -14,6 +14,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
 import at.bernhardberger.tvheadend.sdk.core.DvrRecordingFile
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
+import at.bernhardberger.tvheadend.sdk.core.SessionObservation
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
@@ -748,8 +749,10 @@ private fun growingAdmission(): RecordingAdmission.Growing {
         state = DvrEntryState.RECORDING,
         dataSizeBytes = 1_000,
     )
-    val states = kotlinx.coroutines.flow.MutableStateFlow<DvrRepositoryState>(
-        DvrRepositoryState.Current(DvrSnapshot.create(listOf(entry))),
+    val states = kotlinx.coroutines.flow.MutableStateFlow(
+        SessionObservation.create(
+            dvrState = DvrRepositoryState.Current(DvrSnapshot.create(listOf(entry))),
+        ),
     )
     return RecordingAdmission.Growing(
         checkNotNull(GrowingRecordingFence.create(entry, states)),

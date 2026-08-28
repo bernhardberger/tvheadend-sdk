@@ -20,10 +20,12 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import at.bernhardberger.tvheadend.sdk.core.DvrEntry
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
+import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.ServerAuthentication
 import at.bernhardberger.tvheadend.sdk.core.ServerProfile
 import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
 import at.bernhardberger.tvheadend.sdk.core.SessionState
+import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
 import at.bernhardberger.tvheadend.sdk.core.createTvheadendSession
 import at.bernhardberger.tvheadend.sdk.playback.ActiveSubscription
 import at.bernhardberger.tvheadend.sdk.playback.RecordingId
@@ -102,14 +104,16 @@ internal class PlaybackDeviceVerificationInstrumentationTest {
         try {
             assertEquals(SessionCommandResult.STARTED, session.connect(profile))
             val ready = withTimeout(CONNECTION_TIMEOUT_MS) {
-                session.state.first(SessionState::isTerminalForP45Verification)
-            }
+                session.observation.first { observation ->
+                    observation.sessionState.isTerminalForP45Verification()
+                }
+            }.sessionState
             assertTrue(
                 "Real-server session must become ready; failure=${(ready as? SessionState.Unavailable)?.reason}",
                 ready is SessionState.Ready,
             )
             val serverVersion = (ready as SessionState.Ready).capabilities.serverVersion ?: "unknown"
-            val recording = selectRecording(session.dvrRepository.entries.value)
+            val recording = selectRecording(currentDvrEntries(session))
 
             instrumentation.runOnMainSync {
                 player = ExoPlayer.Builder(
@@ -158,7 +162,7 @@ internal class PlaybackDeviceVerificationInstrumentationTest {
                 active = active,
                 target = SubscriptionSeekTarget.Relative(-TIMESHIFT_REWIND),
                 label = "timeshift rewind",
-                sessionState = { session.state.value },
+                sessionState = { session.observation.value.sessionState },
                 onClosure = { evidence ->
                     instrumentation.reportTimeshiftClosure(evidence, serverVersion, timeshift.observedStreamTypes())
                 },
@@ -171,7 +175,7 @@ internal class PlaybackDeviceVerificationInstrumentationTest {
                 active = active,
                 target = SubscriptionSeekTarget.Live,
                 label = "return to live",
-                sessionState = { session.state.value },
+                sessionState = { session.observation.value.sessionState },
                 onClosure = { evidence ->
                     instrumentation.reportTimeshiftClosure(evidence, serverVersion, timeshift.observedStreamTypes())
                 },
@@ -251,13 +255,15 @@ internal class TimeshiftClosureIsolationInstrumentationTest {
         try {
             assertEquals(SessionCommandResult.STARTED, session.connect(profile))
             val ready = withTimeout(ISOLATION_CONNECTION_TIMEOUT_MS) {
-                session.state.first(SessionState::isTerminalForP45Verification)
-            }
+                session.observation.first { observation ->
+                    observation.sessionState.isTerminalForP45Verification()
+                }
+            }.sessionState
             assertTrue(
                 "Real-server session must become ready; failure=${(ready as? SessionState.Unavailable)?.reason}",
                 ready is SessionState.Ready,
             )
-            val recording = selectRecording(session.dvrRepository.entries.value)
+            val recording = selectRecording(currentDvrEntries(session))
             val observation = TimeshiftIsolationObservation()
             val opened = session.subscriptions.open(
                 channelId = SubscriptionChannelId(checkNotNull(recording.channelId).value),
@@ -283,8 +289,8 @@ internal class TimeshiftClosureIsolationInstrumentationTest {
                     anchorBefore = subscription.diagnostics.value.timestampAnchorCount,
                     rewindResult = null,
                     returnToLiveResult = null,
-                    sessionAtOutcome = session.state.value,
-                    sessionAfterObservation = session.state.value,
+                    sessionAtOutcome = session.observation.value.sessionState,
+                    sessionAfterObservation = session.observation.value.sessionState,
                 )
                 return@runBlocking
             }
@@ -296,7 +302,7 @@ internal class TimeshiftClosureIsolationInstrumentationTest {
                 subscription.state.first { state -> state is SubscriptionState.Terminal } as SubscriptionState.Terminal
             }
             if (rewindTerminal != null) {
-                val sessionAtOutcome = session.state.value
+                val sessionAtOutcome = session.observation.value.sessionState
                 delay(SESSION_STATE_OBSERVATION_MS)
                 instrumentation.reportTimeshiftIsolation(
                     phase = "post-rewind-terminal",
@@ -307,7 +313,7 @@ internal class TimeshiftClosureIsolationInstrumentationTest {
                     rewindResult = rewindResult,
                     returnToLiveResult = null,
                     sessionAtOutcome = sessionAtOutcome,
-                    sessionAfterObservation = session.state.value,
+                    sessionAfterObservation = session.observation.value.sessionState,
                 )
                 return@runBlocking
             }
@@ -317,7 +323,7 @@ internal class TimeshiftClosureIsolationInstrumentationTest {
             val returnToLiveTerminal = withTimeoutOrNull(ISOLATION_OUTCOME_MS) {
                 subscription.state.first { state -> state is SubscriptionState.Terminal } as SubscriptionState.Terminal
             }
-            val sessionAtOutcome = session.state.value
+            val sessionAtOutcome = session.observation.value.sessionState
             if (returnToLiveTerminal != null) delay(SESSION_STATE_OBSERVATION_MS)
             instrumentation.reportTimeshiftIsolation(
                 phase = if (returnToLiveTerminal == null) {
@@ -332,7 +338,7 @@ internal class TimeshiftClosureIsolationInstrumentationTest {
                 rewindResult = rewindResult,
                 returnToLiveResult = returnToLiveResult,
                 sessionAtOutcome = sessionAtOutcome,
-                sessionAfterObservation = session.state.value,
+                sessionAfterObservation = session.observation.value.sessionState,
             )
         } finally {
             try {
@@ -989,6 +995,9 @@ private fun selectRecording(entries: List<DvrEntry>): DvrEntry = entries
     .filter { entry -> entry.durationMillis()?.let { it > MINIMUM_RECORDING_DURATION_MS } == true }
     .maxByOrNull { entry -> entry.stop ?: kotlin.time.Instant.DISTANT_PAST }
     ?: throw AssertionError("A playable completed recording is required")
+
+private fun currentDvrEntries(session: TvheadendSession): List<DvrEntry> =
+    (session.observation.value.dvrState as DvrRepositoryState.Current).snapshot.entries
 
 private fun DvrEntry.durationMillis(): Long? {
     val start = start ?: return null

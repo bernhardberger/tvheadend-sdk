@@ -3,6 +3,7 @@ package at.bernhardberger.tvheadend.sdk.core.session
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleId
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
+import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.DvrConfigurationsState
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
@@ -10,6 +11,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
 import at.bernhardberger.tvheadend.sdk.core.DvrProgressResult
 import at.bernhardberger.tvheadend.sdk.core.DvrRepository
+import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.DvrSchedule
 import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
 import at.bernhardberger.tvheadend.sdk.core.RecordingRuleChannel
@@ -18,6 +20,7 @@ import at.bernhardberger.tvheadend.sdk.core.ServerProfile
 import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
 import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
+import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
 import at.bernhardberger.tvheadend.sdk.core.createTvheadendSession
 import java.io.File
 import java.util.UUID
@@ -56,11 +59,13 @@ internal class DvrRealServerDenialVerificationTest {
         var failed = false
         try {
             assertEquals(SessionCommandResult.STARTED, session.connect(credentials.profile))
-            val ready = withTimeout(12.minutes) {
-                session.state.first { state ->
-                    state is SessionState.Ready || state is SessionState.Unavailable
+            val readyObservation = withTimeout(12.minutes) {
+                session.observation.first { observation ->
+                    observation.sessionState is SessionState.Ready ||
+                        observation.sessionState is SessionState.Unavailable
                 }
             }
+            val ready = readyObservation.sessionState
             assertTrue(ready is SessionState.Ready, "Denial verification never reached ready")
             val capabilities = (ready as SessionState.Ready).capabilities
             assertEquals(
@@ -73,17 +78,21 @@ internal class DvrRealServerDenialVerificationTest {
 
             val dvr = session.dvrRepository
             withTimeout(2.minutes) {
-                dvr.configurationsState.first { state -> state == DvrConfigurationsState.Denied }
+                session.observation.first { observation ->
+                    observation.dvrConfigurationsState == DvrConfigurationsState.Denied
+                }
             }
             assertEquals(
                 DvrConfigurationsState.Denied,
-                dvr.configurationsState.value,
+                session.observation.value.dvrConfigurationsState,
                 "Configuration retrieval did not prove recorder denial",
             )
-            credentials.forbidLeak(dvr.configurationsState.value.toString())
-            credentials.forbidLeak(dvr.state.value.toString())
+            credentials.forbidLeak(session.observation.value.dvrConfigurationsState.toString())
+            credentials.forbidLeak(session.observation.value.dvrState.toString())
 
-            val channelId = session.channelRepository.channels.value.firstOrNull()?.id
+            val channelId =
+                (session.observation.value.channelState as ChannelRepositoryState.Current)
+                    .catalog.channels.firstOrNull()?.id
             assertTrue(channelId != null, "Denial verification published no channel")
             val now = Instant.fromEpochSeconds(Clock.System.now().epochSeconds)
 
@@ -98,7 +107,7 @@ internal class DvrRealServerDenialVerificationTest {
                 ),
             ).remembered(createdEntries).requireAccessDenied()
             assertTrue(
-                dvr.entries.value.none { entry -> entry.title == marker },
+                currentDenialDvrSnapshot(session).entries.none { entry -> entry.title == marker },
                 "Denied schedule published a recording",
             )
 
@@ -119,11 +128,13 @@ internal class DvrRealServerDenialVerificationTest {
                 ),
             ).remembered(createdAutorec).requireAccessDenied()
             assertTrue(
-                dvr.autorecRules.value.none { rule -> rule.name == marker || rule.title == marker },
+                currentDenialDvrSnapshot(session).autorecRules.none { rule ->
+                    rule.name == marker || rule.title == marker
+                },
                 "Denied autorec create published a rule",
             )
 
-            val afterDenials = session.state.value
+            val afterDenials = session.observation.value.sessionState
             assertTrue(afterDenials is SessionState.Ready, "Session left ready after denied writes")
             assertEquals(
                 CapabilityAccess.DENIED,
@@ -137,12 +148,7 @@ internal class DvrRealServerDenialVerificationTest {
             try {
                 withContext(NonCancellable) {
                     try {
-                        cleanupDeniedLeftovers(
-                            session.dvrRepository,
-                            createdEntries,
-                            createdAutorec,
-                            createdTimerec,
-                        )
+                        cleanupDeniedLeftovers(session, createdEntries, createdAutorec, createdTimerec)
                     } finally {
                         session.shutdown()
                     }
@@ -223,36 +229,40 @@ private fun DvrMutationResult<*>.requireAccessDenied() {
 }
 
 private suspend fun cleanupDeniedLeftovers(
-    dvr: DvrRepository,
+    session: TvheadendSession,
     entries: Set<DvrEntryId>,
     autorec: Set<AutorecRuleId>,
     timerec: Set<TimerecRuleId>,
 ) {
+    val dvr: DvrRepository = session.dvrRepository
     var leftover = false
     entries.forEach { id ->
-        val existing = dvr.entries.value.firstOrNull { entry -> entry.id == id }
+        val existing = currentDenialDvrSnapshot(session).entries.firstOrNull { entry -> entry.id == id }
         if (existing?.state == DvrEntryState.RECORDING) {
             dvr.stopEntry(id)
         }
         dvr.deleteEntry(id)
-        if (dvr.entries.value.any { entry -> entry.id == id }) {
+        if (currentDenialDvrSnapshot(session).entries.any { entry -> entry.id == id }) {
             leftover = true
         }
     }
     autorec.forEach { id ->
         dvr.deleteAutorecRule(id)
-        if (dvr.autorecRules.value.any { rule -> rule.id == id }) {
+        if (currentDenialDvrSnapshot(session).autorecRules.any { rule -> rule.id == id }) {
             leftover = true
         }
     }
     timerec.forEach { id ->
         dvr.deleteTimerecRule(id)
-        if (dvr.timerecRules.value.any { rule -> rule.id == id }) {
+        if (currentDenialDvrSnapshot(session).timerecRules.any { rule -> rule.id == id }) {
             leftover = true
         }
     }
     assertFalse(leftover, "Denial verification left created objects")
 }
+
+private fun currentDenialDvrSnapshot(session: TvheadendSession) =
+    (session.observation.value.dvrState as DvrRepositoryState.Current).snapshot
 
 private fun jsonString(text: String, name: String): String {
     val match = Regex(""""$name"\s*:\s*"((?:\\.|[^"\\])*)"""").find(text)

@@ -1,20 +1,10 @@
 package at.bernhardberger.tvheadend.sdk.core
 
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.async
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.test.runCurrent
-import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 
-@OptIn(ExperimentalCoroutinesApi::class)
 internal class ChannelRepositoryTest {
     @Test
     fun `identifier values enforce the unsigned wire domain`() {
@@ -132,49 +122,6 @@ internal class ChannelRepositoryTest {
             listOf(channel, tag, catalog, service("private-service")).joinToString().contains("private"),
             "Public metadata rendering exposed private values",
         )
-    }
-
-    @Test
-    fun `all projections derive atomically from one freshness state`() = runTest {
-        val repository = TestChannelRepository()
-        val channel = Channel.create(ChannelId(1), name = "one")
-        val tag = ChannelTag.create(ChannelTagId(2), name = "two", titledIcon = false)
-        val catalog = ChannelCatalog.create(channels = listOf(channel), tags = listOf(tag))
-
-        assertEquals(ChannelRepositoryState.Empty, repository.state.value)
-        assertEquals(emptyList<Channel>(), repository.channels.value)
-        assertEquals(emptyList<ChannelTag>(), repository.tags.value)
-        assertEquals(null, repository.channel(ChannelId(1)).first())
-        assertEquals(null, repository.tag(ChannelTagId(2)).first())
-
-        repository.set(ChannelRepositoryState.Synchronizing(catalog))
-        assertSame(catalog.channels, repository.channels.value)
-        assertSame(catalog.tags, repository.tags.value)
-        assertSame(channel, repository.channel(ChannelId(1)).first())
-        assertSame(tag, repository.tag(ChannelTagId(2)).first())
-
-        val replayed = async { repository.channels.first() }
-        runCurrent()
-        assertSame(catalog.channels, replayed.await())
-
-        repository.set(ChannelRepositoryState.Current(ChannelCatalog.create()))
-        assertEquals(emptyList<Channel>(), repository.channels.value)
-        assertEquals(emptyList<ChannelTag>(), repository.tags.value)
-        assertEquals(null, repository.channel(ChannelId(1)).first())
-        assertEquals(null, repository.tag(ChannelTagId(2)).first())
-        assertEquals(
-            ChannelRepositoryState.Current(ChannelCatalog.create()),
-            repository.state.value,
-        )
-    }
-
-    private class TestChannelRepository : StateBackedChannelRepository() {
-        private val mutableState = MutableStateFlow<ChannelRepositoryState>(ChannelRepositoryState.Empty)
-        override val state: StateFlow<ChannelRepositoryState> = mutableState.asStateFlow()
-
-        fun set(state: ChannelRepositoryState) {
-            mutableState.value = state
-        }
     }
 
     private fun service(name: String): ChannelService = ChannelService(

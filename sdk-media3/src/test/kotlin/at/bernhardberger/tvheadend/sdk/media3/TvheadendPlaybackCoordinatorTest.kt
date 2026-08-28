@@ -7,7 +7,9 @@
 package at.bernhardberger.tvheadend.sdk.media3
 
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
+import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
+import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.DvrEntry
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
@@ -17,8 +19,11 @@ import at.bernhardberger.tvheadend.sdk.core.DvrProgressPolicy
 import at.bernhardberger.tvheadend.sdk.core.DvrRecordingFile
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
+import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability
 import at.bernhardberger.tvheadend.sdk.core.ServerCapabilities
+import at.bernhardberger.tvheadend.sdk.core.SessionObservation
 import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.StreamProfileId
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
@@ -63,15 +68,13 @@ import org.junit.jupiter.api.Test
 internal class TvheadendPlaybackCoordinatorTest {
     @Test
     fun `active TS requires explicit start over and unsupported containers remain deferred`() {
-        val dvrState = kotlinx.coroutines.flow.MutableStateFlow<DvrRepositoryState>(
-            currentDvr(growingEntry()),
+        val observation = kotlinx.coroutines.flow.MutableStateFlow(
+            testObservation(dvrState = currentDvr(growingEntry())),
         )
         val lease = MutableGrowingLease()
 
         val startOver = admitRecordingTarget(
-            sessionState = readyState(),
-            progressCapability = RecordingProgressCapability.SUPPORTED,
-            dvrState = dvrState,
+            observation = observation,
             recordingId = RecordingId(7),
             start = RecordingPlaybackStart.START_OVER,
             progressPolicy = DvrProgressPolicy(),
@@ -82,9 +85,7 @@ internal class TvheadendPlaybackCoordinatorTest {
         assertSame(
             RecordingAdmission.GrowingResumeUnsupported,
             admitRecordingTarget(
-                sessionState = readyState(),
-                progressCapability = RecordingProgressCapability.SUPPORTED,
-                dvrState = dvrState,
+                observation = observation,
                 recordingId = RecordingId(7),
                 start = RecordingPlaybackStart.RESUME,
                 progressPolicy = DvrProgressPolicy(),
@@ -92,13 +93,13 @@ internal class TvheadendPlaybackCoordinatorTest {
             ),
         )
 
-        dvrState.value = currentDvr(growingEntry(filePath = "/recording.mkv"))
+        observation.value = testObservation(
+            dvrState = currentDvr(growingEntry(filePath = "/recording.mkv")),
+        )
         assertSame(
             RecordingAdmission.GrowingRecordingDeferred,
             admitRecordingTarget(
-                sessionState = readyState(),
-                progressCapability = RecordingProgressCapability.SUPPORTED,
-                dvrState = dvrState,
+                observation = observation,
                 recordingId = RecordingId(7),
                 start = RecordingPlaybackStart.START_OVER,
                 progressPolicy = DvrProgressPolicy(),
@@ -106,13 +107,11 @@ internal class TvheadendPlaybackCoordinatorTest {
             ),
         )
 
-        dvrState.value = currentDvr(growingEntry(extraFile = true))
+        observation.value = testObservation(dvrState = currentDvr(growingEntry(extraFile = true)))
         assertSame(
             RecordingAdmission.TargetUnavailable,
             admitRecordingTarget(
-                sessionState = readyState(),
-                progressCapability = RecordingProgressCapability.SUPPORTED,
-                dvrState = dvrState,
+                observation = observation,
                 recordingId = RecordingId(7),
                 start = RecordingPlaybackStart.START_OVER,
                 progressPolicy = DvrProgressPolicy(),
@@ -120,13 +119,11 @@ internal class TvheadendPlaybackCoordinatorTest {
             ),
         )
 
-        dvrState.value = currentDvr(growingEntry())
+        observation.value = testObservation(dvrState = currentDvr(growingEntry()))
         assertSame(
             RecordingAdmission.NotReady,
             admitRecordingTarget(
-                sessionState = readyState(),
-                progressCapability = RecordingProgressCapability.SUPPORTED,
-                dvrState = dvrState,
+                observation = observation,
                 recordingId = RecordingId(7),
                 start = RecordingPlaybackStart.START_OVER,
                 progressPolicy = DvrProgressPolicy(),
@@ -138,9 +135,7 @@ internal class TvheadendPlaybackCoordinatorTest {
         assertSame(
             RecordingAdmission.TargetUnavailable,
             admitRecordingTarget(
-                sessionState = readyState(),
-                progressCapability = RecordingProgressCapability.SUPPORTED,
-                dvrState = dvrState,
+                observation = observation,
                 recordingId = RecordingId(7),
                 start = RecordingPlaybackStart.START_OVER,
                 progressPolicy = DvrProgressPolicy(),
@@ -150,13 +145,13 @@ internal class TvheadendPlaybackCoordinatorTest {
             ),
         )
 
-        dvrState.value = currentDvr(growingEntry(state = DvrEntryState.COMPLETED))
+        observation.value = testObservation(
+            dvrState = currentDvr(growingEntry(state = DvrEntryState.COMPLETED)),
+        )
         assertEquals(
             RecordingAdmission.Completed(resumePosition = null),
             admitRecordingTarget(
-                sessionState = readyState(),
-                progressCapability = RecordingProgressCapability.SUPPORTED,
-                dvrState = dvrState,
+                observation = observation,
                 recordingId = RecordingId(7),
                 start = RecordingPlaybackStart.START_OVER,
                 progressPolicy = DvrProgressPolicy(),
@@ -169,32 +164,30 @@ internal class TvheadendPlaybackCoordinatorTest {
 
     @Test
     fun `growing lease binding precedes classification and stale bindings fail closed`() {
-        val dvrState = kotlinx.coroutines.flow.MutableStateFlow<DvrRepositoryState>(
-            currentDvr(growingEntry()),
+        val observation = kotlinx.coroutines.flow.MutableStateFlow(
+            testObservation(dvrState = currentDvr(growingEntry())),
         )
         val lease = MutableGrowingLease()
         val reclassified = admitRecordingTarget(
-            sessionState = readyState(),
-            progressCapability = RecordingProgressCapability.SUPPORTED,
-            dvrState = dvrState,
+            observation = observation,
             recordingId = RecordingId(7),
             start = RecordingPlaybackStart.START_OVER,
             progressPolicy = DvrProgressPolicy(),
             bindGrowingRecording = {
-                dvrState.value = currentDvr(growingEntry(filePath = "/replacement.mkv"))
+                observation.value = testObservation(
+                    dvrState = currentDvr(growingEntry(filePath = "/replacement.mkv")),
+                )
                 RecordingFileResult.Ok(lease)
             },
         )
         assertSame(RecordingAdmission.GrowingRecordingDeferred, reclassified)
 
-        dvrState.value = currentDvr(growingEntry())
+        observation.value = testObservation(dvrState = currentDvr(growingEntry()))
         lease.current = false
         assertSame(
             RecordingAdmission.TargetUnavailable,
             admitRecordingTarget(
-                sessionState = readyState(),
-                progressCapability = RecordingProgressCapability.SUPPORTED,
-                dvrState = dvrState,
+                observation = observation,
                 recordingId = RecordingId(7),
                 start = RecordingPlaybackStart.START_OVER,
                 progressPolicy = DvrProgressPolicy(),
@@ -205,37 +198,41 @@ internal class TvheadendPlaybackCoordinatorTest {
 
     @Test
     fun `growing fence rejects size and completion regression permanently`() {
-        val sizeStates = kotlinx.coroutines.flow.MutableStateFlow<DvrRepositoryState>(
-            currentDvr(growingEntry(fileSizeBytes = 1_000)),
+        val sizeStates = kotlinx.coroutines.flow.MutableStateFlow(
+            testObservation(dvrState = currentDvr(growingEntry(fileSizeBytes = 1_000))),
         )
         val sizeFence = checkNotNull(
             GrowingRecordingFence.create(growingEntry(fileSizeBytes = 1_000), sizeStates),
         )
-        sizeStates.value = currentDvr(growingEntry(fileSizeBytes = 2_000))
+        sizeStates.value = testObservation(dvrState = currentDvr(growingEntry(fileSizeBytes = 2_000)))
         assertSame(GrowingRecordingObservation.RECORDING, sizeFence.observe())
-        sizeStates.value = currentDvr(growingEntry(fileSizeBytes = 1_500))
+        sizeStates.value = testObservation(dvrState = currentDvr(growingEntry(fileSizeBytes = 1_500)))
         assertSame(GrowingRecordingObservation.INVALID, sizeFence.observe())
-        sizeStates.value = currentDvr(growingEntry(fileSizeBytes = 3_000))
+        sizeStates.value = testObservation(dvrState = currentDvr(growingEntry(fileSizeBytes = 3_000)))
         assertSame(GrowingRecordingObservation.INVALID, sizeFence.observe())
 
-        val completionStates = kotlinx.coroutines.flow.MutableStateFlow<DvrRepositoryState>(
-            currentDvr(growingEntry()),
+        val completionStates = kotlinx.coroutines.flow.MutableStateFlow(
+            testObservation(dvrState = currentDvr(growingEntry())),
         )
         val completionFence = checkNotNull(
             GrowingRecordingFence.create(growingEntry(), completionStates),
         )
-        completionStates.value = currentDvr(growingEntry(state = DvrEntryState.COMPLETED))
+        completionStates.value = testObservation(
+            dvrState = currentDvr(growingEntry(state = DvrEntryState.COMPLETED)),
+        )
         assertSame(GrowingRecordingObservation.COMPLETED, completionFence.observe())
-        completionStates.value = currentDvr(growingEntry(fileSizeBytes = 2_000))
+        completionStates.value = testObservation(
+            dvrState = currentDvr(growingEntry(fileSizeBytes = 2_000)),
+        )
         assertSame(GrowingRecordingObservation.INVALID, completionFence.observe())
 
-        val disappearanceStates = kotlinx.coroutines.flow.MutableStateFlow<DvrRepositoryState>(
-            currentDvr(growingEntry()),
+        val disappearanceStates = kotlinx.coroutines.flow.MutableStateFlow(
+            testObservation(dvrState = currentDvr(growingEntry())),
         )
         val disappearanceFence = checkNotNull(
             GrowingRecordingFence.create(growingEntry(), disappearanceStates),
         )
-        disappearanceStates.value = currentDvr()
+        disappearanceStates.value = testObservation(dvrState = currentDvr())
         assertSame(GrowingRecordingObservation.INVALID, disappearanceFence.observe())
     }
 
@@ -990,9 +987,9 @@ internal class TvheadendPlaybackCoordinatorTest {
             fixture.coordinator.setRecordingTarget(DvrEntryId(7), RecordingPlaybackStart.START_OVER),
         )
 
-        fixture.environment.dvrState.value = currentDvr(
+        fixture.environment.publishDvrState(currentDvr(
             growingEntry(state = DvrEntryState.COMPLETED),
-        )
+        ))
         fixture.events.publish(
             PlaybackPlayerEvent(
                 token = fixture.player.requireActiveToken(),
@@ -1017,9 +1014,9 @@ internal class TvheadendPlaybackCoordinatorTest {
         fixture.player.snapshot = snapshot(position = 0, duration = 100)
         fixture.coordinator.setRecordingTarget(DvrEntryId(7), RecordingPlaybackStart.START_OVER)
 
-        fixture.environment.dvrState.value = currentDvr(
+        fixture.environment.publishDvrState(currentDvr(
             growingEntry(state = DvrEntryState.COMPLETED),
-        )
+        ))
         fixture.player.snapshot = snapshot(position = 95, duration = 100)
         fixture.coordinator.setLiveTarget(ChannelId(1))
         runCurrent()
@@ -1036,9 +1033,9 @@ internal class TvheadendPlaybackCoordinatorTest {
         val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
         fixture.player.snapshot = snapshot(position = 0, duration = 100)
         fixture.coordinator.setRecordingTarget(DvrEntryId(7), RecordingPlaybackStart.START_OVER)
-        fixture.environment.dvrState.value = currentDvr(
+        fixture.environment.publishDvrState(currentDvr(
             growingEntry(state = DvrEntryState.COMPLETED),
-        )
+        ))
 
         fixture.events.publish(
             PlaybackPlayerEvent(
@@ -1071,9 +1068,9 @@ internal class TvheadendPlaybackCoordinatorTest {
             ),
         )
         runCurrent()
-        fixture.environment.dvrState.value = currentDvr(
+        fixture.environment.publishDvrState(currentDvr(
             growingEntry(state = DvrEntryState.COMPLETED),
-        )
+        ))
 
         assertProgress(fixture.environment.calls.single(), 7, 100, watched = false)
         fixture.coordinator.shutdown(1.seconds)
@@ -1093,9 +1090,9 @@ internal class TvheadendPlaybackCoordinatorTest {
         runCurrent()
         fixture.events.publish(pause(fixture, 20))
         runCurrent()
-        fixture.environment.dvrState.value = currentDvr(
+        fixture.environment.publishDvrState(currentDvr(
             growingEntry(fileId = 2, filePath = "/replacement.ts"),
-        )
+        ))
         blocker.complete(Unit)
         runCurrent()
         fixture.events.publish(
@@ -1213,7 +1210,7 @@ internal class TvheadendPlaybackCoordinatorTest {
         runCurrent()
         fixture.events.publish(pause(fixture, 20))
         runCurrent()
-        fixture.environment.sessionState.value = SessionState.Disconnected
+        fixture.environment.publishSessionState(SessionState.Disconnected)
         runCurrent()
         assertTrue(fixture.player.hasActiveTarget)
 
@@ -1221,8 +1218,7 @@ internal class TvheadendPlaybackCoordinatorTest {
         runCurrent()
         assertEquals(1, fixture.environment.calls.size)
 
-        fixture.environment.sessionState.value = readyState()
-        fixture.environment.progressCapability.value = RecordingProgressCapability.SUPPORTED
+        fixture.environment.publishSessionState(readyState())
         runCurrent()
         assertEquals(1, fixture.environment.calls.size)
 
@@ -1247,10 +1243,10 @@ internal class TvheadendPlaybackCoordinatorTest {
         runCurrent()
         assertEquals(1, fixture.environment.calls.size)
 
-        fixture.environment.sessionState.value = SessionState.Disconnected
+        fixture.environment.publishSessionState(SessionState.Disconnected)
         fixture.growingLease.current = false
         runCurrent()
-        fixture.environment.sessionState.value = readyState()
+        fixture.environment.publishSessionState(readyState())
         runCurrent()
         fixture.events.publish(pause(fixture, 30))
         fixture.events.publish(
@@ -1373,10 +1369,10 @@ private class CoordinatorFixture {
     )
 
     fun admitGrowing(entry: DvrEntry) {
-        environment.dvrState.value = currentDvr(entry)
+        environment.publishDvrState(currentDvr(entry))
         growingLease.current = true
         player.recordingAdmission = RecordingAdmission.Growing(
-            checkNotNull(GrowingRecordingFence.create(entry, environment.dvrState)),
+            checkNotNull(GrowingRecordingFence.create(entry, environment.observation)),
             growingLease,
         )
     }
@@ -1389,11 +1385,8 @@ private data class CapturedProgress(
 )
 
 private class FakeCoordinatorEnvironment : PlaybackCoordinatorEnvironment {
-    override val sessionState = kotlinx.coroutines.flow.MutableStateFlow<SessionState>(readyState())
-    override val progressCapability =
-        kotlinx.coroutines.flow.MutableStateFlow(RecordingProgressCapability.SUPPORTED)
-    override val dvrState = kotlinx.coroutines.flow.MutableStateFlow<DvrRepositoryState>(
-        currentDvr(),
+    override val observation = kotlinx.coroutines.flow.MutableStateFlow(
+        testObservation(dvrState = currentDvr()),
     )
     val calls = mutableListOf<CapturedProgress>()
     var cancelledReports = 0
@@ -1425,6 +1418,24 @@ private class FakeCoordinatorEnvironment : PlaybackCoordinatorEnvironment {
     }
 
     fun blockNextReport(): CompletableDeferred<Unit> = CompletableDeferred<Unit>().also(blockers::addLast)
+
+    fun publishSessionState(sessionState: SessionState) {
+        val current = observation.value
+        observation.value = testObservation(
+            sessionState = sessionState,
+            progressCapability = current.recordingProgressCapability,
+            dvrState = current.dvrState,
+        )
+    }
+
+    fun publishDvrState(dvrState: DvrRepositoryState) {
+        val current = observation.value
+        observation.value = testObservation(
+            sessionState = current.sessionState,
+            progressCapability = current.recordingProgressCapability,
+            dvrState = dvrState,
+        )
+    }
 }
 
 private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
@@ -1641,6 +1652,18 @@ private fun readyState(): SessionState.Ready = SessionState.Ready(
         streaming = CapabilityAccess.ALLOWED,
         dvrWrite = CapabilityAccess.ALLOWED,
     ),
+)
+
+private fun testObservation(
+    sessionState: SessionState = readyState(),
+    progressCapability: RecordingProgressCapability = RecordingProgressCapability.SUPPORTED,
+    dvrState: DvrRepositoryState = currentDvr(),
+): SessionObservation = SessionObservation.create(
+    sessionState = sessionState,
+    channelState = ChannelRepositoryState.Current(ChannelCatalog.create()),
+    epgState = EpgRepositoryState.Current(EpgSnapshot.create()),
+    dvrState = dvrState,
+    recordingProgressCapability = progressCapability,
 )
 
 private fun currentDvr(vararg entries: DvrEntry): DvrRepositoryState.Current =

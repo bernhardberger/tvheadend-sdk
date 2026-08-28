@@ -7,8 +7,11 @@ import androidx.media3.exoplayer.ExoPlayer
 import at.bernhardberger.tvheadend.sdk.android.ServerProfileOperationResult
 import at.bernhardberger.tvheadend.sdk.android.ServerProfileReadResult
 import at.bernhardberger.tvheadend.sdk.android.TvheadendServerProfileStore
+import at.bernhardberger.tvheadend.sdk.core.Channel
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
+import at.bernhardberger.tvheadend.sdk.core.EpgEvent
+import at.bernhardberger.tvheadend.sdk.core.SessionObservation
 import at.bernhardberger.tvheadend.sdk.core.StreamProfileId
 import at.bernhardberger.tvheadend.sdk.core.StreamProfilesResult
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
@@ -21,6 +24,7 @@ import at.bernhardberger.tvheadend.sdk.media3.TimeshiftCommandResult
 import at.bernhardberger.tvheadend.sdk.media3.createTvheadendPlaybackCoordinator
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionIssue
 import kotlin.time.Duration
+import kotlin.time.Instant
 import kotlinx.coroutines.flow.StateFlow
 
 public class StagedSdkConsumer(
@@ -40,6 +44,17 @@ public class StagedSdkConsumer(
     ): ServerProfileOperationResult = profileStore.storeAnonymous(host, port)
 
     public suspend fun run(): Unit = coordinator.run()
+
+    public val observation: StateFlow<SessionObservation>
+        get() = session.observation
+
+    public fun channel(id: ChannelId): Channel? = observation.value.channel(id)
+
+    public fun eventAt(channelId: ChannelId, at: Instant): EpgEvent? =
+        observation.value.eventAt(channelId, at)
+
+    public fun nextEvent(channelId: ChannelId, at: Instant): EpgEvent? =
+        observation.value.nextEvent(channelId, at)
 
     public suspend fun playLive(channelId: ChannelId): PlaybackTargetResult =
         coordinator.setLiveTarget(channelId)

@@ -10,6 +10,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackExit
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.SessionObservation
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -232,7 +233,7 @@ internal enum class GrowingRecordingObservation {
 
 internal class GrowingRecordingFence private constructor(
     private val recordingId: DvrEntryId,
-    private val states: StateFlow<DvrRepositoryState>,
+    private val observations: StateFlow<SessionObservation>,
     private val identity: CoordinatorGrowingIdentity,
     initialFileSizeBytes: Long?,
     initialDataSizeBytes: Long?,
@@ -244,7 +245,8 @@ internal class GrowingRecordingFence private constructor(
 
     fun observe(): GrowingRecordingObservation = synchronized(this) {
         if (!valid) return@synchronized GrowingRecordingObservation.INVALID
-        val current = states.value as? DvrRepositoryState.Current ?: return@synchronized invalidate()
+        val current = observations.value.dvrState as? DvrRepositoryState.Current
+            ?: return@synchronized invalidate()
         val entry = current.snapshot.entries.singleOrNull { candidate -> candidate.id == recordingId }
             ?: return@synchronized invalidate()
         if (entry.coordinatorGrowingIdentity() != identity) return@synchronized invalidate()
@@ -291,7 +293,7 @@ internal class GrowingRecordingFence private constructor(
     companion object {
         fun create(
             entry: DvrEntry,
-            states: StateFlow<DvrRepositoryState>,
+            observations: StateFlow<SessionObservation>,
         ): GrowingRecordingFence? {
             if (entry.state != DvrEntryState.RECORDING) return null
             val identity = entry.coordinatorGrowingIdentity() ?: return null
@@ -301,7 +303,7 @@ internal class GrowingRecordingFence private constructor(
             if (dataSize != null && dataSize < 0L) return null
             return GrowingRecordingFence(
                 recordingId = entry.id,
-                states = states,
+                observations = observations,
                 identity = identity,
                 initialFileSizeBytes = fileSize,
                 initialDataSizeBytes = dataSize,

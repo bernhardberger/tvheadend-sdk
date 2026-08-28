@@ -164,8 +164,8 @@ internal class PhaseOneSessionMetadataTest {
         metadata.acceptMetadata(MetadataEvent.EventAdded(current, epgEvent(4, 1, -1, 10)))
         metadata.acceptMetadata(MetadataEvent.DvrEntryAdded(current, dvrEntry(8, "one")))
         assertTrue(metadata.channelsAndTags.value is ChannelRepositoryState.Synchronizing)
-        assertTrue(metadata.epgRepository.state.value is EpgRepositoryState.Synchronizing)
-        assertTrue(metadata.dvrRepository.state.value is DvrRepositoryState.Synchronizing)
+        assertTrue(metadata.observation.value.epgState is EpgRepositoryState.Synchronizing)
+        assertTrue(metadata.observation.value.dvrState is DvrRepositoryState.Synchronizing)
 
         metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(current))
         runCurrent()
@@ -274,7 +274,7 @@ internal class PhaseOneSessionMetadataTest {
 
         assertEquals(CapabilityAccess.UNKNOWN, metadata.capabilities(current).dvrWrite)
         assertTrue(
-            metadata.dvrRepository.configurationsState.value is DvrConfigurationsState.Synchronizing,
+            metadata.observation.value.dvrConfigurationsState is DvrConfigurationsState.Synchronizing,
         )
 
         metadata.applyDvrConfigurations(current, GatewayResult.Timeout)
@@ -284,14 +284,14 @@ internal class PhaseOneSessionMetadataTest {
         metadata.applyDvrConfigurations(current, GatewayResult.NotSupported)
         metadata.applyDvrConfigurations(stale, GatewayResult.Ok(listOf(configuration)))
         assertEquals(CapabilityAccess.UNKNOWN, metadata.capabilities(current).dvrWrite)
-        assertEquals(DvrConfigurationsState.Unknown, metadata.dvrRepository.configurationsState.value)
+        assertEquals(DvrConfigurationsState.Unknown, metadata.observation.value.dvrConfigurationsState)
 
         metadata.applyDvrAccess(current, false)
         assertEquals(CapabilityAccess.DENIED, metadata.capabilities(current).dvrWrite)
         metadata.applyDvrConfigurations(current, GatewayResult.Ok(listOf(configuration)))
         assertEquals(CapabilityAccess.ALLOWED, metadata.capabilities(current).dvrWrite)
         val currentConfigs =
-            metadata.dvrRepository.configurationsState.value as DvrConfigurationsState.Current
+            metadata.observation.value.dvrConfigurationsState as DvrConfigurationsState.Current
         assertEquals(listOf(configuration), currentConfigs.configurations)
         assertThrows(UnsupportedOperationException::class.java) {
             (currentConfigs.configurations as MutableList<DvrConfiguration>).clear()
@@ -303,8 +303,7 @@ internal class PhaseOneSessionMetadataTest {
 
         metadata.applyDvrConfigurations(current, GatewayResult.AccessDenied)
         assertEquals(CapabilityAccess.DENIED, metadata.capabilities(current).dvrWrite)
-        assertEquals(DvrConfigurationsState.Denied, metadata.dvrRepository.configurationsState.value)
-        assertEquals(emptyList<DvrConfiguration>(), metadata.dvrRepository.configurations.value)
+        assertEquals(DvrConfigurationsState.Denied, metadata.observation.value.dvrConfigurationsState)
     }
 
     @Test
@@ -324,47 +323,50 @@ internal class PhaseOneSessionMetadataTest {
         metadata.resetWorkingStateRetainingPublishedSnapshot()
         assertEquals(
             listOf(configuration),
-            (metadata.dvrRepository.configurationsState.value as DvrConfigurationsState.Stale)
+            (metadata.observation.value.dvrConfigurationsState as DvrConfigurationsState.Stale)
                 .configurations,
         )
         assertEquals(
             diskSpace,
-            (metadata.dvrRepository.diskSpaceState.value as DvrDiskSpaceState.Stale).diskSpace,
+            (metadata.observation.value.dvrDiskSpaceState as DvrDiskSpaceState.Stale).diskSpace,
         )
 
         metadata.bindGeneration(second)
         assertEquals(
             listOf(configuration),
-            (metadata.dvrRepository.configurationsState.value as DvrConfigurationsState.Synchronizing)
+            (metadata.observation.value.dvrConfigurationsState as DvrConfigurationsState.Synchronizing)
                 .staleConfigurations,
         )
         assertEquals(
             diskSpace,
-            (metadata.dvrRepository.diskSpaceState.value as DvrDiskSpaceState.Synchronizing)
+            (metadata.observation.value.dvrDiskSpaceState as DvrDiskSpaceState.Synchronizing)
                 .staleDiskSpace,
         )
 
         metadata.applyDvrDiskSpace(first, GatewayResult.Ok(DvrDiskSpace(1, 1, 2)))
         assertEquals(
             diskSpace,
-            (metadata.dvrRepository.diskSpaceState.value as DvrDiskSpaceState.Synchronizing)
+            (metadata.observation.value.dvrDiskSpaceState as DvrDiskSpaceState.Synchronizing)
                 .staleDiskSpace,
         )
         metadata.applyDvrDiskSpace(second, GatewayResult.Timeout)
         assertEquals(
             DvrDiskSpaceState.Stale(diskSpace),
-            metadata.dvrRepository.diskSpaceState.value,
+            metadata.observation.value.dvrDiskSpaceState,
         )
-        assertEquals(diskSpace, metadata.dvrRepository.diskSpace.value)
+        assertEquals(
+            diskSpace,
+            (metadata.observation.value.dvrDiskSpaceState as DvrDiskSpaceState.Stale).diskSpace,
+        )
         metadata.applyDvrDiskSpace(second, GatewayResult.Ok(DvrDiskSpace(3, 1, 4)))
         assertEquals(
             DvrDiskSpace(3, 1, 4),
-            (metadata.dvrRepository.diskSpaceState.value as DvrDiskSpaceState.Current).diskSpace,
+            (metadata.observation.value.dvrDiskSpaceState as DvrDiskSpaceState.Current).diskSpace,
         )
 
         metadata.clearAllState()
-        assertEquals(DvrConfigurationsState.Unknown, metadata.dvrRepository.configurationsState.value)
-        assertEquals(DvrDiskSpaceState.Unknown, metadata.dvrRepository.diskSpaceState.value)
+        assertEquals(DvrConfigurationsState.Unknown, metadata.observation.value.dvrConfigurationsState)
+        assertEquals(DvrDiskSpaceState.Unknown, metadata.observation.value.dvrDiskSpaceState)
     }
 
     @Test
@@ -549,22 +551,22 @@ internal class PhaseOneSessionMetadataTest {
         assertSame(staleSnapshot, staleState.catalog)
         assertSame(
             staleEpgSnapshot,
-            (metadata.epgRepository.state.value as EpgRepositoryState.Stale).snapshot,
+            (metadata.observation.value.epgState as EpgRepositoryState.Stale).snapshot,
         )
         assertSame(
             staleDvrSnapshot,
-            (metadata.dvrRepository.state.value as DvrRepositoryState.Stale).snapshot,
+            (metadata.observation.value.dvrState as DvrRepositoryState.Stale).snapshot,
         )
         metadata.bindGeneration(second)
         val synchronizing = metadata.channelsAndTags.value as ChannelRepositoryState.Synchronizing
         assertSame(staleSnapshot, synchronizing.staleCatalog)
         assertSame(
             staleEpgSnapshot,
-            (metadata.epgRepository.state.value as EpgRepositoryState.Synchronizing).staleSnapshot,
+            (metadata.observation.value.epgState as EpgRepositoryState.Synchronizing).staleSnapshot,
         )
         assertSame(
             staleDvrSnapshot,
-            (metadata.dvrRepository.state.value as DvrRepositoryState.Synchronizing).staleSnapshot,
+            (metadata.observation.value.dvrState as DvrRepositoryState.Synchronizing).staleSnapshot,
         )
 
         metadata.acceptMetadata(
@@ -691,7 +693,7 @@ internal class PhaseOneSessionMetadataTest {
         metadata.acceptMetadata(MetadataEvent.ChannelAdded(current, channel(id = 1)))
         assertNull(metadata.beginEpgQuery(current, ChannelId(1)))
         metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(current))
-        val original = metadata.epgRepository.state.value
+        val original = metadata.observation.value.epgState
         val event = GatewayEpgQueryEvent(
             id = EventId(10),
             channelId = ChannelId(1),
@@ -701,7 +703,7 @@ internal class PhaseOneSessionMetadataTest {
         )
 
         assertNull(metadata.beginEpgQuery(stale, ChannelId(1)))
-        assertSame(original, metadata.epgRepository.state.value)
+        assertSame(original, metadata.observation.value.epgState)
 
         val currentQuery = requireNotNull(metadata.beginEpgQuery(current, ChannelId(1)))
         metadata.acceptMetadata(MetadataEvent.ChannelUpdated(current, channel(id = 1)))
@@ -729,7 +731,7 @@ internal class PhaseOneSessionMetadataTest {
         assertTrue(requireNotNull(snapshot).coverages.single().isEmpty)
         assertNull(snapshot.coverages.single().queriedTo)
         assertFalse(
-            metadata.epgRepository.state.value.toString().contains("private"),
+            metadata.observation.value.epgState.toString().contains("private"),
             "Query publication rendering exposed programme data",
         )
     }
@@ -799,7 +801,7 @@ internal class PhaseOneSessionMetadataTest {
             snapshot.channels.first(),
             snapshot.channels.first().services?.first(),
             snapshot.tags.first(),
-            metadata.dvrRepository.state.value,
+            metadata.observation.value.dvrState,
         ).joinToString()
         assertFalse(rendering.contains("private"), "Catalog rendering exposed metadata")
     }
@@ -842,10 +844,10 @@ internal class PhaseOneSessionMetadataTest {
         (channelsAndTags.value as ChannelRepositoryState.Current).catalog
 
     private fun PhaseOneSessionMetadata.currentEpgSnapshot() =
-        (epgRepository.state.value as EpgRepositoryState.Current).snapshot
+        (observation.value.epgState as EpgRepositoryState.Current).snapshot
 
     private fun PhaseOneSessionMetadata.currentDvrSnapshot() =
-        (dvrRepository.state.value as DvrRepositoryState.Current).snapshot
+        (observation.value.dvrState as DvrRepositoryState.Current).snapshot
 
     private fun dvrEntry(
         id: Long,

@@ -5,6 +5,7 @@ package at.bernhardberger.tvheadend.sdk.core.session
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.SessionObservation
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrRecordingFile
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrUpdateProvenance
@@ -661,7 +662,7 @@ private class ManualGrowingRuntime : GrowingRecordingRuntime {
     override fun nowNanos(): Long = now
 
     override suspend fun awaitStateUpdate(
-        states: kotlinx.coroutines.flow.StateFlow<DvrRepositoryState>,
+        states: kotlinx.coroutines.flow.StateFlow<SessionObservation>,
         observed: DvrRepositoryState,
         waitNanos: Long,
     ) {
@@ -684,7 +685,7 @@ private data object CancellingGrowingRuntime : GrowingRecordingRuntime {
     override fun nowNanos(): Long = 0L
 
     override suspend fun awaitStateUpdate(
-        states: kotlinx.coroutines.flow.StateFlow<DvrRepositoryState>,
+        states: kotlinx.coroutines.flow.StateFlow<SessionObservation>,
         observed: DvrRepositoryState,
         waitNanos: Long,
     ): Unit = awaitCancellation()

@@ -19,6 +19,8 @@ import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
+import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.DvrConfigurationsState
 import at.bernhardberger.tvheadend.sdk.core.DvrEntry
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
@@ -118,13 +120,22 @@ private object GrowingTsRealServerVerifier {
         try {
             assertEquals(SessionCommandResult.STARTED, session.connect(profile))
             val ready = withTimeout(LIVE_CONNECTION_TIMEOUT_MS) {
-                session.state.first { state -> state is SessionState.Ready || state is SessionState.Unavailable }
-            }
+                session.observation.first { observation ->
+                    observation.sessionState is SessionState.Ready ||
+                        observation.sessionState is SessionState.Unavailable
+                }
+            }.sessionState
             assertTrue("$readyLabel real-server session must become Ready", ready is SessionState.Ready)
             val recoveredFixtureCount = cleanupStaleOwnedRecordings(session, fixturePrefix)
             val targets = discoverTargets(session)
             val configId = withTimeout(LIVE_DVR_CONFIG_TIMEOUT_MS) {
-                session.dvrRepository.configurations.first { configurations -> configurations.isNotEmpty() }.first().id
+                session.observation.first { observation ->
+                    (observation.dvrConfigurationsState as? DvrConfigurationsState.Current)
+                        ?.configurations?.isNotEmpty() == true
+                }
+            }.let { observation ->
+                (observation.dvrConfigurationsState as DvrConfigurationsState.Current)
+                    .configurations.first().id
             }
 
             val results = targets.map { target ->
@@ -271,9 +282,9 @@ private object GrowingTsRealServerVerifier {
         val owned = OwnedLiveRecording(recordingId, marker)
         ownedRecordings += owned
         val recording = withTimeout(LIVE_RECORDING_START_TIMEOUT_MS) {
-            session.dvrRepository.entry(recordingId).first { entry ->
-                entry?.state == DvrEntryState.RECORDING
-            }
+            session.observation.first { observation ->
+                observation.dvrEntry(recordingId)?.state == DvrEntryState.RECORDING
+            }.dvrEntry(recordingId)
         }
         requireNotNull(recording).requireOwnedBy(owned)
         owned.uuid = requireNotNull(recording.uuid) { "Disposable recording must expose a stable UUID" }
@@ -604,10 +615,13 @@ private class OwnedLiveRecording(
     var uuid: String? = null,
 )
 
+private fun currentChannels(session: TvheadendSession) =
+    (session.observation.value.channelState as ChannelRepositoryState.Current).catalog.channels
+
 private suspend fun discoverLiveTargets(session: TvheadendSession): List<LiveTarget> {
     val found = LinkedHashMap<SubscriptionStreamType, LiveTarget>()
     val desired = setOf(SubscriptionStreamType.MPEG2_VIDEO, SubscriptionStreamType.H264)
-    for (channel in session.channelRepository.channels.value.take(MAXIMUM_CODEC_PROBE_CHANNELS)) {
+    for (channel in currentChannels(session).take(MAXIMUM_CODEC_PROBE_CHANNELS)) {
         val result = withTimeoutOrNull(CODEC_PROBE_TIMEOUT_MS) {
             session.subscriptions.open(
                 SubscriptionChannelId(channel.id.value),
@@ -645,7 +659,7 @@ private suspend fun discoverLiveTargets(session: TvheadendSession): List<LiveTar
 }
 
 private suspend fun discoverHevcTarget(session: TvheadendSession): LiveTarget {
-    val channel = session.channelRepository.channels.value.singleOrNull { candidate ->
+    val channel = currentChannels(session).singleOrNull { candidate ->
         candidate.number == HEVC_CHANNEL_NUMBER
     } ?: throw AssertionError("The configured HEVC verification channel is unavailable")
     val opened = withTimeout(CODEC_PROBE_TIMEOUT_MS) {
@@ -692,8 +706,11 @@ private suspend fun reconnectReadySession(
 ) {
     assertEquals(SessionCommandResult.STARTED, session.connect(profile))
     val ready = withTimeout(LIVE_CONNECTION_TIMEOUT_MS) {
-        session.state.first { state -> state is SessionState.Ready || state is SessionState.Unavailable }
-    }
+        session.observation.first { observation ->
+            observation.sessionState is SessionState.Ready ||
+                observation.sessionState is SessionState.Unavailable
+        }
+    }.sessionState
     assertTrue("$readyLabel replacement generation must become Ready", ready is SessionState.Ready)
 }
 
@@ -743,12 +760,13 @@ private suspend fun awaitLiveCompletion(
     playCountBefore: Long,
 ): LiveCompletion {
     val progress = requireNotNull(withTimeout(LIVE_PROGRESS_PUBLICATION_TIMEOUT_MS) {
-        session.dvrRepository.entry(owned.id).first { entry ->
+        session.observation.first { observation ->
+            val entry = observation.dvrEntry(owned.id)
             entry?.title == owned.marker &&
                 entry.uuid == owned.uuid &&
                 (entry.playPosition?.inWholeMilliseconds ?: 0L) > 0L &&
                 (entry.playCount ?: 0L) == playCountBefore
-        }
+        }.dvrEntry(owned.id)
     }).requireOwnedBy(owned)
     val progressPositionMs = requireNotNull(progress.playPosition).inWholeMilliseconds
 
@@ -759,19 +777,21 @@ private suspend fun awaitLiveCompletion(
     )
     session.dvrRepository.stopEntry(owned.id).requireConfirmedMutation()
     requireNotNull(withTimeout(LIVE_RECORDING_COMPLETION_TIMEOUT_MS) {
-        session.dvrRepository.entry(owned.id).first { entry ->
+        session.observation.first { observation ->
+            val entry = observation.dvrEntry(owned.id)
             entry?.title == owned.marker && entry.uuid == owned.uuid && entry.state == DvrEntryState.COMPLETED
-        }
+        }.dvrEntry(owned.id)
     }).requireOwnedBy(owned)
     awaitLivePlayer(instrumentation, player, failure) { snapshot ->
         snapshot.playbackState == Player.STATE_ENDED
     }
     val watched = requireNotNull(withTimeout(LIVE_PROGRESS_PUBLICATION_TIMEOUT_MS) {
-        session.dvrRepository.entry(owned.id).first { entry ->
+        session.observation.first { observation ->
+            val entry = observation.dvrEntry(owned.id)
             entry?.title == owned.marker &&
                 entry.uuid == owned.uuid &&
                 (entry.playCount ?: 0L) >= playCountBefore + 1L
-        }
+        }.dvrEntry(owned.id)
     }).requireOwnedBy(owned)
     val watchedIncrement = (watched.playCount ?: 0L) - playCountBefore
     assertEquals("Orderly growing completion must mark watched exactly once", 1L, watchedIncrement)
@@ -811,8 +831,10 @@ private suspend fun cleanupOwnedRecordings(
         ownedRecordings.removeAt(ownedRecordings.lastIndex)
     }
     val current = withTimeout(LIVE_CLEANUP_CURRENT_TIMEOUT_MS) {
-        session.dvrRepository.state.first { state -> state is DvrRepositoryState.Current }
-    } as DvrRepositoryState.Current
+        session.observation.first { observation ->
+            observation.dvrState is DvrRepositoryState.Current
+        }
+    }.dvrState as DvrRepositoryState.Current
     assertTrue(
         "Package-owned recordings remained after cleanup",
         current.snapshot.entries.none { entry -> entry.title?.let(markers::contains) == true },
@@ -821,8 +843,10 @@ private suspend fun cleanupOwnedRecordings(
 
 private suspend fun cleanupOwnedRecording(session: TvheadendSession, owned: OwnedLiveRecording) {
     val current = withTimeout(LIVE_CLEANUP_CURRENT_TIMEOUT_MS) {
-        session.dvrRepository.state.first { state -> state is DvrRepositoryState.Current }
-    } as DvrRepositoryState.Current
+        session.observation.first { observation ->
+            observation.dvrState is DvrRepositoryState.Current
+        }
+    }.dvrState as DvrRepositoryState.Current
     val existing = current.snapshot.entries.firstOrNull { entry -> entry.id == owned.id } ?: return
     if (owned.uuid == null) {
         throw AssertionError("Refusing disposable recording cleanup before UUID capture")
@@ -831,22 +855,27 @@ private suspend fun cleanupOwnedRecording(session: TvheadendSession, owned: Owne
     if (existing.state == DvrEntryState.RECORDING) {
         session.dvrRepository.stopEntry(owned.id).requireConfirmedMutation()
         withTimeout(LIVE_RECORDING_STOP_TIMEOUT_MS) {
-            session.dvrRepository.entry(owned.id).first { entry -> entry?.state != DvrEntryState.RECORDING }
+            session.observation.first { observation ->
+                observation.dvrEntry(owned.id)?.state != DvrEntryState.RECORDING
+            }
         }
     }
     requireCurrentOwnedRecording(session, owned)
     session.dvrRepository.deleteEntry(owned.id).requireConfirmedMutation()
     withTimeout(LIVE_RECORDING_DELETE_TIMEOUT_MS) {
-        session.dvrRepository.state.first { state ->
-            state is DvrRepositoryState.Current && state.snapshot.entries.none { entry -> entry.id == owned.id }
+        session.observation.first { observation ->
+            observation.dvrState is DvrRepositoryState.Current &&
+                observation.dvrEntry(owned.id) == null
         }
     }
 }
 
 private suspend fun cleanupStaleOwnedRecordings(session: TvheadendSession, fixturePrefix: String): Int {
     val current = withTimeout(LIVE_CLEANUP_CURRENT_TIMEOUT_MS) {
-        session.dvrRepository.state.first { state -> state is DvrRepositoryState.Current }
-    } as DvrRepositoryState.Current
+        session.observation.first { observation ->
+            observation.dvrState is DvrRepositoryState.Current
+        }
+    }.dvrState as DvrRepositoryState.Current
     val stale = current.snapshot.entries.filter { entry ->
         entry.title?.isOwnedLiveFixtureMarker(fixturePrefix) == true
     }
@@ -876,7 +905,7 @@ private fun String.isOwnedLiveFixtureMarker(fixturePrefix: String): Boolean {
 }
 
 private fun requireCurrentOwnedRecording(session: TvheadendSession, owned: OwnedLiveRecording): DvrEntry {
-    val current = session.dvrRepository.state.value as? DvrRepositoryState.Current
+    val current = session.observation.value.dvrState as? DvrRepositoryState.Current
         ?: throw AssertionError("DVR repository is not current during fixture verification")
     return requireNotNull(current.snapshot.entries.firstOrNull { entry -> entry.id == owned.id }) {
         "Owned disposable recording is absent"

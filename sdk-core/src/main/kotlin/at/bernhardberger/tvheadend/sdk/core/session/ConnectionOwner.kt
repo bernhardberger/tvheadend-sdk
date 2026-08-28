@@ -4,7 +4,6 @@ package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoader
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
-import at.bernhardberger.tvheadend.sdk.core.ChannelRepository
 import at.bernhardberger.tvheadend.sdk.core.DVR_PROGRESS_MINIMUM_PROTOCOL_VERSION
 import at.bernhardberger.tvheadend.sdk.core.DvrRepository
 import at.bernhardberger.tvheadend.sdk.core.EpgRepository
@@ -13,6 +12,7 @@ import at.bernhardberger.tvheadend.sdk.core.ServerProfile
 import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
 import at.bernhardberger.tvheadend.sdk.core.SessionFailure
 import at.bernhardberger.tvheadend.sdk.core.SessionOperationFailure
+import at.bernhardberger.tvheadend.sdk.core.SessionObservation
 import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.StreamProfilesResult
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
@@ -39,9 +39,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -65,10 +63,6 @@ internal class ConnectionOwner(
     private val scope = CoroutineScope(defaultDispatcher + rootJob)
     private val commandMutex = Mutex()
     private val stateLock = Any()
-    private val mutableState = MutableStateFlow<SessionState>(SessionState.Disconnected)
-    private val mutableRecordingProgressCapability =
-        MutableStateFlow(RecordingProgressCapability.UNKNOWN)
-
     private var selectedProfile: ServerProfile? = null
     private var retainedProfile: ServerProfile? = null
     private var worker: Job? = null
@@ -79,10 +73,7 @@ internal class ConnectionOwner(
     private var closed = false
     private var shutdownCompletion: CompletableDeferred<Unit>? = null
 
-    override val state: StateFlow<SessionState> = mutableState.asStateFlow()
-    override val recordingProgressCapability: StateFlow<RecordingProgressCapability> =
-        mutableRecordingProgressCapability.asStateFlow()
-    override val channelRepository: ChannelRepository = metadata
+    override val observation: StateFlow<SessionObservation> = metadata.observation
     override val epgRepository: EpgRepository = metadata.epgRepository
     override val dvrRepository: DvrRepository = metadata.dvrRepository
     override val artwork: ArtworkLoader = children
@@ -199,7 +190,6 @@ internal class ConnectionOwner(
                                     { metadata.clearAllState() },
                                 ),
                             )
-                            mutableState.value = SessionState.Disconnected
                         } finally {
                             try {
                                 rootJob.cancelAndJoin()
@@ -261,8 +251,11 @@ internal class ConnectionOwner(
             } else {
                 metadata.clearAllState()
             }
-            mutableRecordingProgressCapability.value = RecordingProgressCapability.UNKNOWN
-            mutableState.value = SessionState.Disconnected
+            metadata.publishSessionState(
+                state = SessionState.Disconnected,
+                progressCapability = RecordingProgressCapability.UNKNOWN,
+                generation = null,
+            )
             failure
         }
         return InvalidatedSession(activeWorker, admissionFailure)
@@ -484,8 +477,11 @@ internal class ConnectionOwner(
             if (activeToken !== token || closed) {
                 throw CancellationException("Session generation is no longer active")
             }
-            mutableRecordingProgressCapability.value = RecordingProgressCapability.UNKNOWN
-            mutableState.value = state
+            metadata.publishSessionState(
+                state = state,
+                progressCapability = RecordingProgressCapability.UNKNOWN,
+                generation = null,
+            )
         }
     }
 
@@ -516,8 +512,11 @@ internal class ConnectionOwner(
             activeGeneration = generation
             latestDvrCapabilityRevision = capabilities.revision
             retryDisposition = null
-            mutableState.value = SessionState.Ready(capabilities.capabilities)
-            mutableRecordingProgressCapability.value = progressCapability
+            metadata.publishSessionState(
+                state = SessionState.Ready(capabilities.capabilities),
+                progressCapability = progressCapability,
+                generation = generation,
+            )
             true
         }
     }
@@ -555,8 +554,11 @@ internal class ConnectionOwner(
             admissionFailure = captureFailure(admissionFailure) { dvrProgress.stopAdmission() }
             admissionFailure = captureFailure(admissionFailure) { children.stopAdmission() }
             metadata.resetWorkingStateRetainingPublishedSnapshot()
-            mutableRecordingProgressCapability.value = RecordingProgressCapability.UNKNOWN
-            mutableState.value = SessionState.Unavailable(failure)
+            metadata.publishSessionState(
+                state = SessionState.Unavailable(failure),
+                progressCapability = RecordingProgressCapability.UNKNOWN,
+                generation = null,
+            )
             UnavailableCommit(committed = true, admissionFailure = admissionFailure)
         }
     }
@@ -570,7 +572,7 @@ internal class ConnectionOwner(
             if (
                 closed ||
                 activeGeneration !== generation ||
-                mutableState.value !is SessionState.Ready
+                observation.value.sessionState !is SessionState.Ready
             ) {
                 null
             } else {
@@ -586,7 +588,7 @@ internal class ConnectionOwner(
             if (
                 closed ||
                 activeGeneration !== snapshot.generation ||
-                mutableState.value !is SessionState.Ready ||
+                observation.value.sessionState !is SessionState.Ready ||
                 snapshot.revision <= (latestDvrCapabilityRevision ?: Long.MIN_VALUE)
             ) {
                 false
@@ -603,9 +605,13 @@ internal class ConnectionOwner(
                 !closed &&
                 activeGeneration === snapshot.generation &&
                 latestDvrCapabilityRevision == snapshot.revision &&
-                mutableState.value is SessionState.Ready
+                observation.value.sessionState is SessionState.Ready
             ) {
-                mutableState.value = SessionState.Ready(snapshot.capabilities)
+                metadata.publishSessionState(
+                    state = SessionState.Ready(snapshot.capabilities),
+                    progressCapability = observation.value.recordingProgressCapability,
+                    generation = snapshot.generation,
+                )
             }
         }
     }
@@ -615,15 +621,21 @@ internal class ConnectionOwner(
             if (
                 !closed &&
                 activeGeneration === generation &&
-                mutableState.value is SessionState.Ready
+                observation.value.sessionState is SessionState.Ready
             ) {
-                mutableRecordingProgressCapability.value = RecordingProgressCapability.UNSUPPORTED
+                metadata.publishSessionState(
+                    state = observation.value.sessionState,
+                    progressCapability = RecordingProgressCapability.UNSUPPORTED,
+                    generation = generation,
+                )
             }
         }
     }
 
     internal fun isDvrMutationReady(generation: GatewayGeneration): Boolean = synchronized(stateLock) {
-        !closed && activeGeneration === generation && mutableState.value is SessionState.Ready
+        !closed &&
+            activeGeneration === generation &&
+            observation.value.sessionState is SessionState.Ready
     }
 
     private class SessionToken

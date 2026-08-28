@@ -317,7 +317,7 @@ internal class EpgWorkerTest {
         advanceTimeBy(250.milliseconds)
         runCurrent()
 
-        val snapshot = (metadata.epgRepository.state.value as EpgRepositoryState.Current).snapshot
+        val snapshot = (metadata.observation.value.epgState as EpgRepositoryState.Current).snapshot
         assertEquals(target, snapshot.coverages.single { it.channelId == ChannelId(1) }.queriedTo)
         assertEquals(
             EpgCoverageRequestResult.SATISFIED,
@@ -399,7 +399,7 @@ internal class EpgWorkerTest {
         release.complete(Unit)
         runCurrent()
 
-        val snapshot = (metadata.epgRepository.state.value as EpgRepositoryState.Current).snapshot
+        val snapshot = (metadata.observation.value.epgState as EpgRepositoryState.Current).snapshot
         assertEquals(emptyList<Any>(), snapshot.events)
         assertTrue(snapshot.coverages.single().queriedTo != null)
         job.cancelAndJoin()
@@ -441,7 +441,7 @@ internal class EpgWorkerTest {
         release.complete(Unit)
         runCurrent()
 
-        val snapshot = (metadata.epgRepository.state.value as EpgRepositoryState.Current).snapshot
+        val snapshot = (metadata.observation.value.epgState as EpgRepositoryState.Current).snapshot
         assertEquals("new", snapshot.events.single().title)
         assertTrue(snapshot.coverages.single().queriedTo != null)
         job.cancelAndJoin()
@@ -581,7 +581,7 @@ internal class EpgWorkerTest {
 
         runCurrent()
 
-        val snapshot = (metadata.epgRepository.state.value as EpgRepositoryState.Current).snapshot
+        val snapshot = (metadata.observation.value.epgState as EpgRepositoryState.Current).snapshot
         assertEquals(listOf(1L), snapshot.events.map { it.id.value })
         job.cancelAndJoin()
     }
@@ -622,7 +622,7 @@ internal class EpgWorkerTest {
         runCurrent()
         advanceTimeBy(1.seconds)
         runCurrent()
-        val warmed = (metadata.epgRepository.state.value as EpgRepositoryState.Current).snapshot
+        val warmed = (metadata.observation.value.epgState as EpgRepositoryState.Current).snapshot
         assertEquals(setOf(1L, 2L, 3L), warmed.events.map { it.id.value }.toSet())
         val queried = warmed.coverages.associate { coverage ->
             coverage.channelId to coverage.queriedTo
@@ -633,7 +633,7 @@ internal class EpgWorkerTest {
         advanceTimeBy(10.minutes)
         runCurrent()
 
-        val drained = (metadata.epgRepository.state.value as EpgRepositoryState.Current).snapshot
+        val drained = (metadata.observation.value.epgState as EpgRepositoryState.Current).snapshot
         assertEquals(listOf(2L), drained.events.map { it.id.value })
         val retained = drained.coverages.single { coverage -> coverage.channelId == ChannelId(1) }
         val emptied = drained.coverages.single { coverage -> coverage.channelId == ChannelId(2) }

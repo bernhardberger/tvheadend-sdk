@@ -244,10 +244,11 @@ private suspend fun connectToServer(
             ),
         )
         val state = withTimeout(CONNECTION_TIMEOUT_MS) {
-            session.state.first { current ->
-                current is SessionState.Ready || current is SessionState.Unavailable
+            session.observation.first { current ->
+                current.sessionState is SessionState.Ready ||
+                    current.sessionState is SessionState.Unavailable
             }
-        }
+        }.sessionState
         assertTrue(
             "The real server must become ready; state=${state.safeCategory()}",
             state is SessionState.Ready,

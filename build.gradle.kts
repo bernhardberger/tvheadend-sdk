@@ -51,7 +51,7 @@ val publicationDescriptions = mapOf(
     "sdk-core" to "Kotlin/JVM protocol integration, session lifecycle, metadata, EPG, and DVR workflows for TVHeadend applications.",
     "sdk-media3" to "Android Media3 sources, stream readers, and playback coordination for TVHeadend applications.",
     "sdk-playback" to "Kotlin/JVM subscription, seek, timeshift, and timestamp state machines for TVHeadend playback.",
-    "sdk-testing" to "Kotlin/JVM fakes, scripted events, repositories, and packet fixtures for testing TVHeadend SDK integrations.",
+    "sdk-testing" to "Kotlin/JVM aggregate observation fakes, scripted events, and packet fixtures for testing TVHeadend SDK integrations.",
 )
 
 check(subprojects.map(Project::getName).toSet() == sdkModules) {

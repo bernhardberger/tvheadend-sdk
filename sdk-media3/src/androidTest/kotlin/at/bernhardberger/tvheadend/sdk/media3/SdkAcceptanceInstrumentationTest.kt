@@ -16,11 +16,11 @@ import androidx.test.platform.app.InstrumentationRegistry
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.DvrConfigurationsState
 import at.bernhardberger.tvheadend.sdk.core.DvrEntry
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
 import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult
-import at.bernhardberger.tvheadend.sdk.core.DvrRepository
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.DvrSchedule
 import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
@@ -82,11 +82,15 @@ internal class SdkAcceptanceInstrumentationTest {
 
         try {
             val synchronizingAt = async(start = CoroutineStart.UNDISPATCHED) {
-                session.state.first { state -> state is SessionState.Synchronizing }
+                session.observation.first { observation ->
+                    observation.sessionState is SessionState.Synchronizing
+                }
                 elapsedSince(startedAt)
             }
             val firstRepositoryContentAt = async(start = CoroutineStart.UNDISPATCHED) {
-                session.channelRepository.channels.first(List<*>::isNotEmpty)
+                session.observation.first { observation ->
+                    observation.channelState.catalogOrNull()?.channels?.isNotEmpty() == true
+                }
                 elapsedSince(startedAt)
             }
             val readyAt = async(start = CoroutineStart.UNDISPATCHED) {
@@ -101,13 +105,16 @@ internal class SdkAcceptanceInstrumentationTest {
             assertEquals(CapabilityAccess.ALLOWED, coldReady.capabilities.dvrWrite)
             awaitProgressSupport(session)
 
-            val channels = session.channelRepository.channels.value
+            val initialObservation = session.observation.value
+            val initialChannelState = initialObservation.channelState as ChannelRepositoryState.Current
+            val channels = initialChannelState.catalog.channels
             assertTrue("Acceptance requires two live channels for target replacement", channels.size >= 2)
             val firstChannel = channels[0].id
             val replacementChannel = channels.first { channel -> channel.id != firstChannel }.id
-            val initialEpg = session.epgRepository.state.value as? EpgRepositoryState.Current
+            val initialEpg = initialObservation.epgState as? EpgRepositoryState.Current
             assertNotNull("Ready must expose a current EPG snapshot", initialEpg)
-            val initialDvrCount = session.dvrRepository.entries.value.size
+            val initialDvrCount =
+                (initialObservation.dvrState as DvrRepositoryState.Current).snapshot.entries.size
             val horizon = wholeSecondNow() + EPG_OBSERVATION_HORIZON
             val epgRequest = session.epgRepository.requestCoverage(firstChannel, horizon)
             assertTrue(
@@ -116,12 +123,14 @@ internal class SdkAcceptanceInstrumentationTest {
                     epgRequest == EpgCoverageRequestResult.SATISFIED,
             )
             withTimeout(EPG_TIMEOUT_MS) {
-                session.epgRepository.coverage(firstChannel).first { coverage ->
-                    coverage?.knownTo?.let { knownTo -> knownTo >= horizon } == true
+                session.observation.first { observation ->
+                    observation.coverage(firstChannel)?.knownTo?.let { knownTo ->
+                        knownTo >= horizon
+                    } == true
                 }
             }
             val queriedCoverageCount =
-                (session.epgRepository.state.value as EpgRepositoryState.Current)
+                (session.observation.value.epgState as EpgRepositoryState.Current)
                     .snapshot.coverages.count { coverage -> coverage.queriedTo != null }
 
             val activePlayer = createAcceptancePlayer(instrumentation, surface, render)
@@ -147,19 +156,21 @@ internal class SdkAcceptanceInstrumentationTest {
             assertEquals(PlaybackStopResult.STOPPED, activeCoordinator.stop())
 
             session.disconnect()
-            assertEquals(SessionState.Disconnected, session.state.value)
+            assertEquals(SessionState.Disconnected, session.observation.value.sessionState)
             assertTrue(
                 "Disconnect must retain the same-process channel catalog",
-                session.channelRepository.state.value is ChannelRepositoryState.Stale,
+                session.observation.value.channelState is ChannelRepositoryState.Stale,
             )
             val reconnectStartedAt = SystemClock.elapsedRealtime()
             val reconnectSynchronizing = async(start = CoroutineStart.UNDISPATCHED) {
-                session.state.first { state -> state is SessionState.Synchronizing }
+                session.observation.first { observation ->
+                    observation.sessionState is SessionState.Synchronizing
+                }
                 elapsedSince(reconnectStartedAt)
             }
             assertEquals(SessionCommandResult.STARTED, session.connect(profile))
             val reconnectSynchronizingMs = reconnectSynchronizing.await()
-            assertTrue(session.channelRepository.channels.value.any { channel -> channel.id == firstChannel })
+            assertNotNull(session.observation.value.channel(firstChannel))
             val reconnectBaseline = playerSnapshot(instrumentation, activePlayer)
             assertEquals(
                 "A retained known channel must be admitted while synchronizing",
@@ -187,7 +198,10 @@ internal class SdkAcceptanceInstrumentationTest {
                         start = recordingStart,
                         stop = recordingStart + RECORDING_DURATION,
                     ),
-                    configId = session.dvrRepository.configurations.value.firstOrNull()?.id,
+                    configId = (
+                        session.observation.value.dvrConfigurationsState as?
+                            DvrConfigurationsState.Current
+                        )?.configurations?.firstOrNull()?.id,
                     title = marker,
                 ),
             )
@@ -217,7 +231,7 @@ internal class SdkAcceptanceInstrumentationTest {
             fixtureState = recoveryState
             writeAcceptanceState(context, recoveryState)
             val scheduledEntry = requireNotNull(
-                session.dvrRepository.entries.value.firstOrNull { entry -> entry.id == recordingId },
+                session.observation.value.dvrEntry(recordingId),
             )
             assertEquals(marker, scheduledEntry.title)
             val recordingUuid = requireNotNull(scheduledEntry.uuid) {
@@ -227,18 +241,18 @@ internal class SdkAcceptanceInstrumentationTest {
             fixtureState = ownedState
             writeAcceptanceState(context, ownedState)
             withTimeout(RECORDING_START_TIMEOUT_MS) {
-                session.dvrRepository.entry(recordingId).first { entry ->
-                    entry?.state == DvrEntryState.RECORDING
+                session.observation.first { observation ->
+                    observation.dvrEntry(recordingId)?.state == DvrEntryState.RECORDING
                 }
             }
             delay(RECORDING_CAPTURE_MS)
-            requireOwnedEntry(session.dvrRepository, ownedState)
+            requireOwnedEntry(session, ownedState)
             session.dvrRepository.stopEntry(recordingId).requireConfirmed()
             val completed = requireNotNull(
                 withTimeout(RECORDING_COMPLETION_TIMEOUT_MS) {
-                    session.dvrRepository.entry(recordingId).first { entry ->
-                        entry?.state == DvrEntryState.COMPLETED
-                    }
+                    session.observation.first { observation ->
+                        observation.dvrEntry(recordingId)?.state == DvrEntryState.COMPLETED
+                    }.dvrEntry(recordingId)
                 },
             )
             completed.requireOwnedBy(ownedState)
@@ -261,7 +275,7 @@ internal class SdkAcceptanceInstrumentationTest {
                     putLong("p6_4_reconnect_synchronizing_ms", reconnectSynchronizingMs)
                     putLong("p6_4_reconnect_ready_ms", warmReadyMs)
                     putInt("p6_4_initial_channel_count", channels.size)
-                    putInt("p6_4_initial_tag_count", session.channelRepository.tags.value.size)
+                    putInt("p6_4_initial_tag_count", initialChannelState.catalog.tags.size)
                     putInt("p6_4_initial_epg_event_count", requireNotNull(initialEpg).snapshot.events.size)
                     putInt("p6_4_initial_dvr_count", initialDvrCount)
                     putInt("p6_4_queried_coverage_count", queriedCoverageCount)
@@ -289,7 +303,7 @@ internal class SdkAcceptanceInstrumentationTest {
                     {
                         if (!retainFixture) {
                             fixtureState?.let { state ->
-                                if (cleanupRecording(session.dvrRepository, state) && stateFile.exists()) {
+                                if (cleanupRecording(session, state) && stateFile.exists()) {
                                     check(stateFile.delete()) { "Acceptance process state could not be removed" }
                                 }
                             }
@@ -326,7 +340,7 @@ internal class SdkAcceptanceInstrumentationTest {
             awaitReady(session)
             awaitProgressSupport(session)
             val recordingId = DvrEntryId(priorState.recordingId)
-            requireOwnedEntry(session.dvrRepository, priorState)
+            requireOwnedEntry(session, priorState)
             assertEquals(
                 PlaybackTargetResult.STARTED,
                 coordinator.setRecordingTarget(recordingId, RecordingPlaybackStart.START_OVER),
@@ -340,9 +354,10 @@ internal class SdkAcceptanceInstrumentationTest {
                 }
             }
             val checkpoint = withTimeout(PROGRESS_PUBLICATION_TIMEOUT_MS) {
-                session.dvrRepository.entry(recordingId).first { entry ->
-                    entry?.playPosition?.inWholeMilliseconds?.let { position -> position > 0L } == true
-                }
+                session.observation.first { observation ->
+                    observation.dvrEntry(recordingId)?.playPosition?.inWholeMilliseconds
+                        ?.let { position -> position > 0L } == true
+                }.dvrEntry(recordingId)
             }
             val checkpointMs = requireNotNull(checkpoint).playPosition?.inWholeMilliseconds
             requireNotNull(checkpointMs)
@@ -416,7 +431,7 @@ internal class SdkAcceptanceInstrumentationTest {
             assertEquals(SessionCommandResult.STARTED, session.connect(profile))
             awaitReady(session)
             awaitProgressSupport(session)
-            val serverEntry = requireOwnedEntry(session.dvrRepository, priorState)
+            val serverEntry = requireOwnedEntry(session, priorState)
             val serverPositionMs = requireNotNull(serverEntry.playPosition).inWholeMilliseconds
             assertTrue(
                 "The new process must observe the last accepted server checkpoint",
@@ -456,17 +471,18 @@ internal class SdkAcceptanceInstrumentationTest {
                 label = "explicit pause setup",
             )
             instrumentation.runOnMainSync { activePlayer.pause() }
-            val pauseEntry = awaitServerPosition(session.dvrRepository, recordingId, pausePositionMs)
+            val pauseEntry = awaitServerPosition(session, recordingId, pausePositionMs)
             assertEquals("Explicit pause must not mark watched", playCountBefore, pauseEntry.playCount ?: 0L)
 
             instrumentation.runOnMainSync { activePlayer.play() }
             delay(GENERIC_EXIT_PLAYBACK_MS)
-            requireOwnedEntry(session.dvrRepository, priorState)
+            requireOwnedEntry(session, priorState)
             assertEquals(PlaybackStopResult.STOPPED, activeCoordinator.stop())
             val genericExitEntry = withTimeout(PROGRESS_PUBLICATION_TIMEOUT_MS) {
-                session.dvrRepository.entry(recordingId).first { entry ->
+                session.observation.first { observation ->
+                    val entry = observation.dvrEntry(recordingId)
                     entry != null && (entry.playPosition?.inWholeMilliseconds ?: 0L) > pausePositionMs
-                }
+                }.dvrEntry(recordingId)
             }
             assertEquals(
                 "An orderly exit below 95 percent must remain unwatched",
@@ -474,7 +490,7 @@ internal class SdkAcceptanceInstrumentationTest {
                 requireNotNull(genericExitEntry).playCount ?: 0L,
             )
 
-            requireOwnedEntry(session.dvrRepository, priorState)
+            requireOwnedEntry(session, priorState)
             assertEquals(
                 PlaybackTargetResult.STARTED,
                 activeCoordinator.setRecordingTarget(recordingId, RecordingPlaybackStart.START_OVER),
@@ -486,9 +502,9 @@ internal class SdkAcceptanceInstrumentationTest {
                 activePlayer.seekTo((naturalDurationMs - NATURAL_END_LEAD_MS).coerceAtLeast(0L))
             }
             awaitPlayerEnded(instrumentation, activePlayer, render, "natural completion")
-            val naturalEntry = awaitExactPlayCount(session.dvrRepository, recordingId, playCountBefore + 1L)
+            val naturalEntry = awaitExactPlayCount(session, recordingId, playCountBefore + 1L)
 
-            requireOwnedEntry(session.dvrRepository, priorState)
+            requireOwnedEntry(session, priorState)
             assertEquals(
                 PlaybackTargetResult.STARTED,
                 activeCoordinator.setRecordingTarget(recordingId, RecordingPlaybackStart.START_OVER),
@@ -519,11 +535,11 @@ internal class SdkAcceptanceInstrumentationTest {
             assertEquals(
                 "Play count must remain unchanged until the orderly stop",
                 naturalPlayCount,
-                requireOwnedEntry(session.dvrRepository, priorState).playCount ?: 0L,
+                requireOwnedEntry(session, priorState).playCount ?: 0L,
             )
             assertEquals(PlaybackStopResult.STOPPED, activeCoordinator.stop())
             val orderlyEntry = awaitExactPlayCount(
-                session.dvrRepository,
+                session,
                 recordingId,
                 naturalPlayCount + 1L,
             )
@@ -533,13 +549,13 @@ internal class SdkAcceptanceInstrumentationTest {
             assertEquals(
                 "No late progress event may duplicate the orderly completion",
                 naturalPlayCount + 1L,
-                requireOwnedEntry(session.dvrRepository, priorState).playCount ?: 0L,
+                requireOwnedEntry(session, priorState).playCount ?: 0L,
             )
             session.dvrRepository.deleteEntry(recordingId).requireConfirmed()
             withTimeout(FIXTURE_CLEANUP_TIMEOUT_MS) {
-                session.dvrRepository.state.first { repositoryState ->
-                    repositoryState is DvrRepositoryState.Current &&
-                        repositoryState.snapshot.entries.none { entry -> entry.id == recordingId }
+                session.observation.first { observation ->
+                    observation.dvrState is DvrRepositoryState.Current &&
+                        observation.dvrEntry(recordingId) == null
                 }
             }
             check(File(context.filesDir, ACCEPTANCE_STATE_FILE_NAME).delete()) {
@@ -582,7 +598,7 @@ internal class SdkAcceptanceInstrumentationTest {
                     {
                         if (!fixtureRemoved) {
                             val stateFile = File(context.filesDir, ACCEPTANCE_STATE_FILE_NAME)
-                            if (cleanupRecording(session.dvrRepository, priorState) && stateFile.exists()) {
+                            if (cleanupRecording(session, priorState) && stateFile.exists()) {
                                 check(stateFile.delete()) { "Acceptance process state could not be removed" }
                             }
                         }
@@ -612,7 +628,7 @@ internal class SdkAcceptanceInstrumentationTest {
             assertEquals(SessionCommandResult.STARTED, session.connect(profile))
             awaitReady(session)
             awaitProgressSupport(session)
-            val current = session.dvrRepository.state.value as? DvrRepositoryState.Current
+            val current = session.observation.value.dvrState as? DvrRepositoryState.Current
                 ?: throw AssertionError("DVR repository is not authoritative for fixture recovery")
             val candidate = current.snapshot.entries.firstOrNull { entry ->
                 entry.id.value == priorState.recordingId
@@ -633,7 +649,7 @@ internal class SdkAcceptanceInstrumentationTest {
             }
             assertTrue(
                 "Recovery requires authoritative deletion or absence",
-                cleanupRecording(session.dvrRepository, recoveredState),
+                cleanupRecording(session, recoveredState),
             )
             check(stateFile.delete()) { "Acceptance process state could not be removed" }
             instrumentation.sendStatus(
@@ -688,18 +704,21 @@ private fun createAcceptancePlayer(
 
 private suspend fun awaitReady(session: TvheadendSession): SessionState.Ready {
     val state = withTimeout(CONNECTION_TIMEOUT_MS) {
-        session.state.first { candidate ->
-            candidate is SessionState.Ready || candidate is SessionState.Unavailable
+        session.observation.first { observation ->
+            observation.sessionState is SessionState.Ready ||
+                observation.sessionState is SessionState.Unavailable
         }
-    }
+    }.sessionState
     return state as? SessionState.Ready
         ?: throw AssertionError("Real-server session did not become ready")
 }
 
 private suspend fun awaitProgressSupport(session: TvheadendSession) {
     val capability = withTimeout(PROGRESS_CAPABILITY_TIMEOUT_MS) {
-        session.recordingProgressCapability.first { value -> value != RecordingProgressCapability.UNKNOWN }
-    }
+        session.observation.first { observation ->
+            observation.recordingProgressCapability != RecordingProgressCapability.UNKNOWN
+        }
+    }.recordingProgressCapability
     assertEquals(
         "P6-4 requires the complete semantic HTSP v27+ recording-progress contract",
         RecordingProgressCapability.SUPPORTED,
@@ -732,28 +751,28 @@ private suspend fun runAcceptanceCleanup(
     }
 }
 
-private suspend fun cleanupRecording(dvr: DvrRepository, state: AcceptanceState): Boolean {
-    if (dvr.state.value !is DvrRepositoryState.Current) return false
+private suspend fun cleanupRecording(session: TvheadendSession, state: AcceptanceState): Boolean {
+    if (session.observation.value.dvrState !is DvrRepositoryState.Current) return false
+    val dvr = session.dvrRepository
     val id = DvrEntryId(state.recordingId)
-    val existing = dvr.entries.value.firstOrNull { entry -> entry.id == id } ?: return true
+    val existing = session.observation.value.dvrEntry(id) ?: return true
     if (state.recordingUuid == null) return false
     existing.requireOwnedBy(state)
     if (existing.state == DvrEntryState.RECORDING) {
         dvr.stopEntry(id).requireConfirmed()
-        requireOwnedEntry(dvr, state)
+        requireOwnedEntry(session, state)
     }
     dvr.deleteEntry(id).requireConfirmed()
     withTimeout(FIXTURE_CLEANUP_TIMEOUT_MS) {
-        dvr.state.first { repositoryState ->
-            repositoryState is DvrRepositoryState.Current &&
-                repositoryState.snapshot.entries.none { entry -> entry.id == id }
+        session.observation.first { observation ->
+            observation.dvrState is DvrRepositoryState.Current && observation.dvrEntry(id) == null
         }
     }
     return true
 }
 
-private fun requireOwnedEntry(dvr: DvrRepository, state: AcceptanceState): DvrEntry {
-    val current = dvr.state.value as? DvrRepositoryState.Current
+private fun requireOwnedEntry(session: TvheadendSession, state: AcceptanceState): DvrEntry {
+    val current = session.observation.value.dvrState as? DvrRepositoryState.Current
         ?: throw AssertionError("DVR repository is not authoritative for fixture ownership")
     return requireNotNull(current.snapshot.entries.firstOrNull { entry -> entry.id.value == state.recordingId }) {
         "The owned acceptance recording is absent"
@@ -771,29 +790,39 @@ private fun DvrEntry.requireOwnedBy(state: AcceptanceState): DvrEntry {
 }
 
 private suspend fun awaitServerPosition(
-    dvr: DvrRepository,
+    session: TvheadendSession,
     id: DvrEntryId,
     expectedMs: Long,
 ): DvrEntry = requireNotNull(
     withTimeout(PROGRESS_PUBLICATION_TIMEOUT_MS) {
-        dvr.entry(id).first { entry ->
+        session.observation.first { observation ->
+            val entry = observation.dvrEntry(id)
             entry?.playPosition?.inWholeMilliseconds?.let { position ->
                 position >= expectedMs - SERVER_POSITION_TOLERANCE_MS
             } == true
-        }
+        }.dvrEntry(id)
     },
 )
 
 private suspend fun awaitExactPlayCount(
-    dvr: DvrRepository,
+    session: TvheadendSession,
     id: DvrEntryId,
     expected: Long,
 ): DvrEntry {
     val entry = requireNotNull(withTimeout(PROGRESS_PUBLICATION_TIMEOUT_MS) {
-        dvr.entry(id).first { entry -> (entry?.playCount ?: 0L) >= expected }
+        session.observation.first { observation ->
+            (observation.dvrEntry(id)?.playCount ?: 0L) >= expected
+        }.dvrEntry(id)
     })
     assertEquals("Play count changed by more than one policy event", expected, entry.playCount ?: 0L)
     return entry
+}
+
+private fun ChannelRepositoryState.catalogOrNull() = when (this) {
+    ChannelRepositoryState.Empty -> null
+    is ChannelRepositoryState.Synchronizing -> staleCatalog
+    is ChannelRepositoryState.Current -> catalog
+    is ChannelRepositoryState.Stale -> catalog
 }
 
 private suspend fun awaitPlayerPosition(

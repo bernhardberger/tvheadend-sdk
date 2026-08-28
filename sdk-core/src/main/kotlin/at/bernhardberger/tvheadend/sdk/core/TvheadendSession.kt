@@ -24,25 +24,13 @@ import kotlin.time.Clock
 
 /** Owns one TVHeadend connection lifecycle. */
 public interface TvheadendSession {
-    /** Current durable connection and synchronization state. */
-    public val state: StateFlow<SessionState>
+    /** Atomic lifecycle, metadata, storage, and capability state for the selected server profile. */
+    public val observation: StateFlow<SessionObservation>
 
-    /**
-     * Safe recording close and separate progress/watch support for the current ready generation.
-     *
-     * A ready transition can precede the generation's non-[RecordingProgressCapability.UNKNOWN]
-     * value so positive support is never exposed outside ready. Treat unknown as fail-closed and
-     * keep observing this flow rather than caching its value at the ready transition.
-     */
-    public val recordingProgressCapability: StateFlow<RecordingProgressCapability>
-
-    /** Channel and channel-tag metadata for the selected server profile. */
-    public val channelRepository: ChannelRepository
-
-    /** Programme-guide metadata and retained coverage for the selected server profile. */
+    /** Programme-guide coverage commands for the selected server profile. */
     public val epgRepository: EpgRepository
 
-    /** Recording entries, rules, configurations, and disk space for the selected server profile. */
+    /** Recording mutation, progress, and cutpoint commands for the selected server profile. */
     public val dvrRepository: DvrRepository
 
     /** Generation-bound authenticated artwork loader used by platform image integrations. */
@@ -65,8 +53,8 @@ public interface TvheadendSession {
     /**
      * Selects [profile] and starts connection work.
      *
-     * Completion reports command admission, not connection readiness. Observe [state] for the
-     * durable outcome.
+     * Completion reports command admission, not connection readiness. Observe [observation] for
+     * the durable outcome.
      */
     public suspend fun connect(profile: ServerProfile): SessionCommandResult
 
@@ -76,7 +64,7 @@ public interface TvheadendSession {
     /**
      * Completes reusable connection teardown and leaves this session available for reconnect.
      *
-     * Repository snapshots remain stale for a same-profile reconnect. A different profile or
+     * Metadata snapshots remain stale for a same-profile reconnect. A different profile or
      * terminal [shutdown] discards them before new synchronization begins.
      */
     public suspend fun disconnect()

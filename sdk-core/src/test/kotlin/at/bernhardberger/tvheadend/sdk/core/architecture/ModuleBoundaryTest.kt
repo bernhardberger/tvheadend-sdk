@@ -199,7 +199,8 @@ internal class ModuleBoundaryTest {
             "Synchronizing",
             "Current",
             "Stale",
-            "ChannelRepository",
+            "SessionObservation",
+            "CurrentSessionObservation",
             "EpgRating",
             "EpgEpisode",
             "EpgEvent",
@@ -339,10 +340,7 @@ internal class ModuleBoundaryTest {
             "RECORDING_END_OF_INPUT",
         )
         val expectedTesting = setOf(
-            "FakeChannelRepository",
-            "FakeEpgRepository",
-            "FakeDvrRepository",
-            "FakeDvrProgressCall",
+            "FakeSessionObservation",
             "ScriptedSubscriptionCall",
             "ScriptedSubscriptionConnection",
             "ScriptedSubscriptionRegistration",
@@ -405,7 +403,7 @@ internal class ModuleBoundaryTest {
         )
         // The codec classification is intentionally stable for sdk-media3 application callbacks.
         assertPublicInfrastructure("sdk-playback", expectedPlayback, unannotatedCount = 3)
-        assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 4)
+        assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 1)
         assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 13)
 
         val sessionApi = java.io.File(
@@ -424,8 +422,8 @@ internal class ModuleBoundaryTest {
             "Missing opted-in recording file opener on the public session",
         )
         org.junit.jupiter.api.Assertions.assertTrue(
-            sessionApi.contains("public val channelRepository: ChannelRepository"),
-            "Missing channel repository on the public session",
+            sessionApi.contains("public val observation: StateFlow<SessionObservation>"),
+            "Missing aggregate observation on the public session",
         )
         org.junit.jupiter.api.Assertions.assertTrue(
             sessionApi.contains("public val epgRepository: EpgRepository"),
@@ -436,10 +434,10 @@ internal class ModuleBoundaryTest {
             "Missing DVR repository on the public session",
         )
         org.junit.jupiter.api.Assertions.assertTrue(
-            sessionApi.contains(
-                "public val recordingProgressCapability: StateFlow<RecordingProgressCapability>",
-            ),
-            "Missing recording progress capability on the public session",
+            !sessionApi.contains("public val state: StateFlow<SessionState>") &&
+                !sessionApi.contains("public val channelRepository:") &&
+                !sessionApi.contains("public val recordingProgressCapability:"),
+            "Independent public session observation flows were not removed",
         )
     }
 
@@ -490,14 +488,15 @@ internal class ModuleBoundaryTest {
             "at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi",
             "at.bernhardberger.tvheadend.sdk.media3.PlaybackRecoveryReason",
             "at.bernhardberger.tvheadend.sdk.media3.TvheadendRecordingException",
+            "at.bernhardberger.tvheadend.sdk.core.TvheadendSession",
+            "at.bernhardberger.tvheadend.sdk.core.EpgRepository",
+            "at.bernhardberger.tvheadend.sdk.core.DvrRepository",
             "at.bernhardberger.tvheadend.sdk.core.ChannelService",
             "at.bernhardberger.tvheadend.sdk.core.DvrRecordingFile",
             "at.bernhardberger.tvheadend.sdk.core.DvrProgressPolicy",
             "at.bernhardberger.tvheadend.sdk.testing.ScriptedSubscriptionConnection",
             "at.bernhardberger.tvheadend.sdk.testing.SubscriptionBinaryFixture",
-            "at.bernhardberger.tvheadend.sdk.testing.FakeChannelRepository",
-            "at.bernhardberger.tvheadend.sdk.testing.FakeEpgRepository",
-            "at.bernhardberger.tvheadend.sdk.testing.FakeDvrRepository",
+            "at.bernhardberger.tvheadend.sdk.testing.FakeSessionObservation",
         ).forEach { name -> enqueue(publicTypes[name]) }
 
         while (pending.isNotEmpty()) {
