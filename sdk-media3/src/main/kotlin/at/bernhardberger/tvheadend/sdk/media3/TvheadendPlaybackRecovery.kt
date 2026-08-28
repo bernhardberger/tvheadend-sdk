@@ -25,7 +25,7 @@ public data class PlaybackRecoveryPolicy public constructor(
 
 /** The application action required after SDK-owned live playback recovery is exhausted. */
 public enum class PlaybackRecoveryReason {
-    /** Buffering continued after the selected audio track was disabled. */
+    /** Buffering continued without selected audio or after selected audio was disabled. */
     AUDIO_RECOVERY_EXHAUSTED,
 
     /** A live source ended and must be replaced rather than treated as completed media. */
@@ -174,10 +174,8 @@ internal class PlaybackRecoveryStateMachine(
     private fun evaluateBuffering() {
         if (audioDisabled) {
             schedule(TimerStage.POST_AUDIO_DISABLE)
-        } else if (hasSelectedAudio()) {
-            schedule(TimerStage.INITIAL_BUFFERING)
         } else {
-            cancelTimer()
+            schedule(TimerStage.INITIAL_BUFFERING)
         }
     }
 
@@ -202,7 +200,7 @@ internal class PlaybackRecoveryStateMachine(
                 timer = null
                 timerStage = null
                 when (stage) {
-                    TimerStage.INITIAL_BUFFERING -> disableStuckAudio()
+                    TimerStage.INITIAL_BUFFERING -> completeInitialRecovery()
                     TimerStage.POST_AUDIO_DISABLE -> {
                         escalate(PlaybackRecoveryReason.AUDIO_RECOVERY_EXHAUSTED)
                     }
@@ -211,8 +209,12 @@ internal class PlaybackRecoveryStateMachine(
         }
     }
 
-    private fun disableStuckAudio() {
-        if (audioDisabled || !hasSelectedAudio()) return
+    private fun completeInitialRecovery() {
+        if (audioDisabled) return
+        if (!hasSelectedAudio()) {
+            escalate(PlaybackRecoveryReason.AUDIO_RECOVERY_EXHAUSTED)
+            return
+        }
         audioDisabled = true
         setAudioDisabled(true)
         schedule(TimerStage.POST_AUDIO_DISABLE)

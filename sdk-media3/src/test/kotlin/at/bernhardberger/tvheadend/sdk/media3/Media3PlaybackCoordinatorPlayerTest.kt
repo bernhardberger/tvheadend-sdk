@@ -86,6 +86,48 @@ internal class Media3PlaybackCoordinatorPlayerTest {
     }
 
     @Test
+    fun `current live recovery reaches application and replacement fences stale callback`() = runTest {
+        val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
+        val events = PlaybackPlayerEventAccumulator()
+        val reasons = mutableListOf<PlaybackRecoveryReason>()
+        val player = Media3PlaybackCoordinatorPlayer(access, events) { _, _ ->
+            RecordingAdmission.Completed(Duration.ZERO)
+        }
+        val coordinator = TvheadendPlaybackCoordinator(
+            player = player,
+            playerEvents = events,
+            progressPolicy = DvrProgressPolicy(),
+            onRecoveryRequired = reasons::add,
+            timeSource = SystemPlaybackCoordinatorTimeSource,
+        )
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { coordinator.run() }
+
+        assertEquals(
+            PlaybackTargetResult.STARTED,
+            coordinator.setLiveTarget(PlaybackBindingTestFactory.currentLive()),
+        )
+        val staleRecovery = requireNotNull(access.recoveryCallback)
+        access.looperQueue.runOnLooper {
+            staleRecovery(PlaybackRecoveryReason.AUDIO_RECOVERY_EXHAUSTED)
+        }
+        runCurrent()
+        assertEquals(listOf(PlaybackRecoveryReason.AUDIO_RECOVERY_EXHAUSTED), reasons)
+
+        assertEquals(
+            PlaybackTargetResult.STARTED,
+            coordinator.setLiveTarget(PlaybackBindingTestFactory.currentLive()),
+        )
+        access.looperQueue.runOnLooper {
+            staleRecovery(PlaybackRecoveryReason.AUDIO_RECOVERY_EXHAUSTED)
+        }
+        runCurrent()
+        assertEquals(listOf(PlaybackRecoveryReason.AUDIO_RECOVERY_EXHAUSTED), reasons)
+
+        coordinator.shutdown(1.seconds)
+        owner.join()
+    }
+
+    @Test
     fun `live and recording transitions use exact helper order and never release player`() = runTest {
         val access = FakeCoordinatorPlaybackAccess()
         val events = PlaybackPlayerEventAccumulator()
