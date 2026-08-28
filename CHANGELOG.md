@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.3.0]
+
+This provisional minor release intentionally replaces the SDK's public session
+and playback authority. `TvheadendSession.observation` now publishes lifecycle,
+channel, EPG, DVR, capability, and freshness state together in one immutable
+`SessionObservation`. Its `CurrentSessionObservation` is the generation-owned
+capability for current operations, while retained stale data remains selectable
+without becoming current again.
+
+EPG acquisition, DVR mutations, recording progress and cutpoints, stream
+profile discovery, and authenticated artwork now use the captured current
+session. Delayed operations return typed expiration outcomes instead of
+resolving colliding identifiers against a later connection generation.
+
+Live and recording playback now start from an observation-bound
+`PlaybackBinding`. The binding carries the exact generation and target identity
+through queued coordinator work, delayed opens, extractor reopens, resume,
+cutpoints, and progress reporting. Recording bindings also retain the DVR
+incarnation, and completed recordings remain playable from the beginning when
+progress support is unavailable.
+
+Applications must migrate from the removed independent session flows, bare-ID
+operations, and public raw playback routes to the aggregate observation and
+binding-based API. This remains a major-zero release: source, binary, and
+behavioral compatibility are provisional, and local or CI verification does
+not establish Maven Central availability.
+
 ## [0.2.0]
 
 This provisional feature release adds generation-bound discovery and selection
