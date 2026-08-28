@@ -8,6 +8,10 @@ import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
 import at.bernhardberger.tvheadend.sdk.core.DVR_PROGRESS_MINIMUM_PROTOCOL_VERSION
 import at.bernhardberger.tvheadend.sdk.core.DvrRepository
 import at.bernhardberger.tvheadend.sdk.core.EpgRepository
+import at.bernhardberger.tvheadend.sdk.core.ChannelId
+import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
+import at.bernhardberger.tvheadend.sdk.core.PlaybackBinding
+import at.bernhardberger.tvheadend.sdk.core.PlaybackBindingResult
 import at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability
 import at.bernhardberger.tvheadend.sdk.core.ServerProfile
 import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
@@ -16,15 +20,14 @@ import at.bernhardberger.tvheadend.sdk.core.SessionOperationFailure
 import at.bernhardberger.tvheadend.sdk.core.SessionObservation
 import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.StreamProfilesResult
+import at.bernhardberger.tvheadend.sdk.core.SessionPlaybackBindingFactory
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.ProtocolGateway
-import at.bernhardberger.tvheadend.sdk.playback.RecordingFileOpener
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
-import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
@@ -73,6 +76,7 @@ internal class ConnectionOwner(
     private var retryDisposition: RetryDisposition? = null
     private var closed = false
     private var shutdownCompletion: CompletableDeferred<Unit>? = null
+    private val playbackBindings = SessionPlaybackBindingFactory(metadata, children)
 
     override val observation: StateFlow<SessionObservation> = metadata.observation
     override val epgRepository: EpgRepository = metadata.epgRepository
@@ -85,8 +89,17 @@ internal class ConnectionOwner(
             ?: return StreamProfilesResult.ObservationExpired
         return children.getStreamProfiles(generation)
     }
-    override val subscriptions: SubscriptionOpener = children
-    override val recordings: RecordingFileOpener = children
+    override fun bindLivePlayback(
+        currentSession: CurrentSessionObservation,
+        channelId: ChannelId,
+    ): PlaybackBindingResult<PlaybackBinding.Live> =
+        playbackBindings.bindLive(currentSession, channelId)
+
+    override fun bindRecordingPlayback(
+        currentSession: CurrentSessionObservation,
+        recordingId: DvrEntryId,
+    ): PlaybackBindingResult<PlaybackBinding.Recording> =
+        playbackBindings.bindRecording(currentSession, recordingId)
 
     override suspend fun connect(profile: ServerProfile): SessionCommandResult {
         currentCoroutineContext().ensureActive()

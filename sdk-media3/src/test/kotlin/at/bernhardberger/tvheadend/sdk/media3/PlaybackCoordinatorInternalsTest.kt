@@ -5,7 +5,6 @@
 
 package at.bernhardberger.tvheadend.sdk.media3
 
-import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
 import java.io.IOException
 import kotlin.time.Duration.Companion.seconds
@@ -87,8 +86,7 @@ internal class PlaybackCoordinatorInternalsTest {
 
     @Test
     fun `mailbox keeps latest observation and sticky terminal state in constant space`() = runTest {
-        val gate = ReportingGateEpoch()
-        val epoch = PlaybackReportEpoch(gate)
+        val epoch = PlaybackReportEpoch()
         val mailbox = PlaybackProgressMailbox()
 
         mailbox.offer(report(epoch, 90, terminal = false, watched = false))
@@ -103,9 +101,8 @@ internal class PlaybackCoordinatorInternalsTest {
 
     @Test
     fun `mailbox replaces stale ordinary work but preserves an earlier terminal barrier`() = runTest {
-        val gate = ReportingGateEpoch()
-        val first = PlaybackReportEpoch(gate)
-        val second = PlaybackReportEpoch(gate)
+        val first = PlaybackReportEpoch()
+        val second = PlaybackReportEpoch()
         val mailbox = PlaybackProgressMailbox()
 
         mailbox.offer(report(first, 10, terminal = false, watched = false))
@@ -119,12 +116,12 @@ internal class PlaybackCoordinatorInternalsTest {
 
     @Test
     fun `mailbox drops invalid generation work and seals without replay`() = runTest {
-        val gate = ReportingGateEpoch()
-        val epoch = PlaybackReportEpoch(gate)
+        var current = true
+        val epoch = PlaybackReportEpoch { current }
         val mailbox = PlaybackProgressMailbox()
         mailbox.offer(report(epoch, 10, terminal = false, watched = false))
 
-        gate.invalidate()
+        current = false
         mailbox.discardInvalid()
         mailbox.seal()
 
@@ -138,7 +135,7 @@ internal class PlaybackCoordinatorInternalsTest {
         watched: Boolean,
     ): PendingPlaybackProgress = PendingPlaybackProgress(
         epoch = epoch,
-        recordingId = DvrEntryId(1),
+        target = TestCoordinatorRecordingTarget(),
         growingLease = null,
         progress = DvrPlaybackProgress(positionSeconds.seconds, watched),
         terminal = terminal,

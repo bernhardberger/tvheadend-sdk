@@ -19,12 +19,12 @@ import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileOpener
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileReader
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
-import at.bernhardberger.tvheadend.sdk.playback.RecordingId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import at.bernhardberger.tvheadend.sdk.playback.createRecordingFileReader
 import java.io.IOException
 import java.io.InterruptedIOException
 import java.util.concurrent.CancellationException
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.runBlocking
 
 /** Scheme of the opaque URI that identifies one TVHeadend recording to Media3. */
@@ -40,13 +40,21 @@ public class TvheadendRecordingException(
     public val failure: RecordingFileFailure,
 ) : IOException("Recording file operation failed: $failure")
 
-/** Builds the Media3 item that addresses the stored file of [recordingId]. */
-@SubscriptionInfrastructureApi
-@androidx.media3.common.util.UnstableApi
-public fun tvheadendRecordingMediaItem(recordingId: RecordingId): MediaItem =
+internal class RecordingMediaIdentity {
+    internal val uri: String = "$RECORDING_URI_SCHEME://bound/${nextValue.getAndIncrement()}"
+
+    override fun toString(): String = "RecordingMediaIdentity(<redacted>)"
+
+    private companion object {
+        val nextValue = AtomicLong()
+    }
+}
+
+/** Builds the opaque Media3 item for an already-bound recording target. */
+internal fun tvheadendRecordingMediaItem(identity: RecordingMediaIdentity): MediaItem =
     MediaItem.Builder()
-        .setMediaId(recordingUri(recordingId))
-        .setUri(recordingUri(recordingId))
+        .setMediaId(identity.uri)
+        .setUri(identity.uri)
         .build()
 
 /**
@@ -55,13 +63,15 @@ public fun tvheadendRecordingMediaItem(recordingId: RecordingId): MediaItem =
  * Every created data source owns its own reader, so Media3 may create as many as it needs.
  * [readAheadBytes] bounds each transport round trip and must be at most 16 MiB.
  */
-@SubscriptionInfrastructureApi
-@androidx.media3.common.util.UnstableApi
-public fun createTvheadendRecordingDataSourceFactory(
+internal fun createTvheadendRecordingDataSourceFactory(
     recordings: RecordingFileOpener,
+    identity: RecordingMediaIdentity,
     readAheadBytes: Int = DEFAULT_RECORDING_READ_AHEAD_BYTES,
 ): DataSource.Factory = DataSource.Factory {
-    TvheadendRecordingDataSource(createRecordingFileReader(recordings, readAheadBytes))
+    TvheadendRecordingDataSource(
+        createRecordingFileReader(recordings, readAheadBytes),
+        identity,
+    )
 }
 
 /**
@@ -70,33 +80,17 @@ public fun createTvheadendRecordingDataSourceFactory(
  * Playback uses the standard progressive pipeline, so the stored MKV, MP4, or TS container is
  * parsed by Media3's own extractors. Each extractor reopen performs a fresh transport open and
  * seek rather than reusing a stale server handle. Below HTSP v27, TVHeadend increments play count
- * on a plain file close, so this lower-level source cannot provide coordinated watched semantics;
- * callers needing that invariant must require the session's supported recording-progress
- * capability before opening it.
+ * on a plain file close. The coordinator still permits completed playback there, but starts over
+ * and disables explicit resume and progress reporting.
  */
-@SubscriptionInfrastructureApi
-@androidx.media3.common.util.UnstableApi
-public fun createTvheadendRecordingMediaSource(
+internal fun createTvheadendRecordingMediaSource(
     recordings: RecordingFileOpener,
-    recordingId: RecordingId,
+    identity: RecordingMediaIdentity,
     readAheadBytes: Int = DEFAULT_RECORDING_READ_AHEAD_BYTES,
 ): MediaSource = ProgressiveMediaSource.Factory(
-    createTvheadendRecordingDataSourceFactory(recordings, readAheadBytes),
+    createTvheadendRecordingDataSourceFactory(recordings, identity, readAheadBytes),
     DefaultExtractorsFactory(),
-).createMediaSource(tvheadendRecordingMediaItem(recordingId))
-
-internal fun recordingUri(recordingId: RecordingId): String =
-    "$RECORDING_URI_SCHEME://${recordingId.value}"
-
-/** Parses [uri] back into a recording identifier, or returns null when it addresses something else. */
-internal fun parseRecordingId(uri: String): RecordingId? {
-    val prefix = "$RECORDING_URI_SCHEME://"
-    if (!uri.startsWith(prefix)) return null
-    val digits = uri.substring(prefix.length)
-    if (digits.isEmpty() || digits.any { character -> character !in '0'..'9' }) return null
-    val value = digits.toLongOrNull() ?: return null
-    return if (value <= MAX_RECORDING_ID_VALUE) RecordingId(value) else null
-}
+).createMediaSource(tvheadendRecordingMediaItem(identity))
 
 /**
  * Media3 data source that pulls one recording over the SDK's suspend recording transport.
@@ -109,6 +103,7 @@ internal fun parseRecordingId(uri: String): RecordingId? {
  */
 private class TvheadendRecordingDataSource(
     private val reader: RecordingFileReader,
+    private val identity: RecordingMediaIdentity,
 ) : BaseDataSource(true) {
     private var openUri: Uri? = null
     private var opened = false
@@ -116,10 +111,11 @@ private class TvheadendRecordingDataSource(
     override fun open(dataSpec: DataSpec): Long {
         checkLoaderThread()
         transferInitializing(dataSpec)
-        val recordingId = parseRecordingId(dataSpec.uri.toString())
-            ?: throw TvheadendRecordingException(RecordingFileFailure.FILE_UNAVAILABLE)
+        if (dataSpec.uri.toString() != identity.uri) {
+            throw TvheadendRecordingException(RecordingFileFailure.FILE_UNAVAILABLE)
+        }
         val length = dataSpec.length.takeIf { value -> value != C.LENGTH_UNSET.toLong() }
-        val resolved = blockingIo { reader.open(recordingId, dataSpec.position, length) }.orThrow()
+        val resolved = blockingIo { reader.open(dataSpec.position, length) }.orThrow()
         openUri = dataSpec.uri
         opened = true
         transferStarted(dataSpec)
@@ -169,8 +165,8 @@ private fun <T> RecordingFileResult<T>.orThrow(): T = when (this) {
  * The protocol layer signals a superseded connection generation by cancelling its own coroutine.
  * That cancellation cannot be Media3's, because [runBlocking] roots a fresh job here and Media3
  * never cancels it. Reporting it as a classified changed connection keeps a reconnect
- * distinguishable from an unreadable file and lets Media3's own retry policy reopen the recording
- * on the replacement generation, instead of surfacing an opaque unexpected loader failure.
+ * distinguishable from an unreadable file. A Media3 retry reuses the same target-bound opener and
+ * therefore fails closed rather than opening the replacement generation.
  */
 private fun <T> blockingIo(body: suspend () -> T): T {
     val wasInterrupted = Thread.interrupted()
@@ -192,5 +188,3 @@ private fun checkLoaderThread() {
         "Recording playback must not block the main thread"
     }
 }
-
-private const val MAX_RECORDING_ID_VALUE: Long = 0xffff_ffffL

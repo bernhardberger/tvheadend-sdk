@@ -18,6 +18,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import at.bernhardberger.tvheadend.sdk.core.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.ServerAuthentication
 import at.bernhardberger.tvheadend.sdk.core.ServerProfile
 import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
@@ -33,7 +34,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionDiagnostics
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
-import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionState
@@ -88,7 +89,7 @@ internal class RealServerDeviceInstrumentationTest {
         val currentPlayback = AtomicReference<PlaybackObservation?>()
         lateinit var player: ExoPlayer
         var playerInitialized = false
-        var activeOpener: ObservedSubscriptionOpener? = null
+        var activeOpener: ObservedSubscriptionTarget? = null
 
         try {
             assertEquals(
@@ -201,8 +202,10 @@ internal class RealServerDeviceInstrumentationTest {
                     currentPlayback.set(null)
                 }
                 val playback = PlaybackObservation(channel)
-                val opener = ObservedSubscriptionOpener(
-                    delegate = session.subscriptions,
+                val opener = ObservedSubscriptionTarget(
+                    delegate = BoundCoordinatorLiveTarget(
+                        session.requireLivePlaybackBinding(ChannelId(channel.id.value)),
+                    ),
                     copyObservation = copyObservation,
                     onTracks = { tracks ->
                         val types = tracks.streams.mapTo(mutableSetOf()) { stream -> stream.type }
@@ -220,8 +223,7 @@ internal class RealServerDeviceInstrumentationTest {
                         .build()
                     player.setMediaSource(
                         createTvheadendLiveMediaSource(
-                            subscriptions = opener,
-                            channelId = channel.id,
+                            target = opener,
                             onUnsupportedStream = { stream -> unsupportedStreams += stream },
                         ),
                     )
@@ -355,18 +357,20 @@ private class PlaybackObservation(private val channel: RealServerChannel) {
     }
 }
 
-private class ObservedSubscriptionOpener(
-    private val delegate: SubscriptionOpener,
+private class ObservedSubscriptionTarget(
+    private val delegate: CoordinatorLiveTarget,
     private val copyObservation: PayloadCopyObservation,
     private val onTracks: (SubscriptionTracks) -> Unit,
-) : SubscriptionOpener {
+) : CoordinatorLiveTarget {
     private val closed = CountDownLatch(1)
     private val cleanClose = AtomicBoolean()
 
+    override val isCurrent: Boolean
+        get() = delegate.isCurrent
+
     override suspend fun open(
-        channelId: SubscriptionChannelId,
         consumer: SubscriptionEventConsumer,
-        timeshiftPeriod: Duration,
+        options: SubscriptionOptions,
     ): SubscriptionOpenResult {
         val observedConsumer = object : SubscriptionEventConsumer {
             override fun tracksReady(tracks: SubscriptionTracks) {
@@ -398,7 +402,7 @@ private class ObservedSubscriptionOpener(
             }
         }
         return when (
-            val result = delegate.open(channelId, observedConsumer, timeshiftPeriod)
+            val result = delegate.open(observedConsumer, options)
         ) {
             is SubscriptionOpenResult.Opened -> SubscriptionOpenResult.Opened(
                 object : ActiveSubscription {

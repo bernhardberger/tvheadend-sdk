@@ -8,8 +8,6 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.Timeline
-import at.bernhardberger.tvheadend.sdk.playback.RecordingId
-import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -21,11 +19,12 @@ import kotlin.time.Duration.Companion.milliseconds
  * keeps progressive MP4 and MKV playback from losing an early seek while their extractors discover
  * the seek map. Closing this coordinator never releases or changes the player.
  */
-@SubscriptionInfrastructureApi
-public class TvheadendRecordingResume internal constructor(
+internal class TvheadendRecordingResume(
     private val player: RecordingResumePlayer,
+    private val identity: RecordingMediaIdentity,
 ) : AutoCloseable {
-    internal constructor(player: Player) : this(Media3RecordingResumePlayer(player))
+    internal constructor(player: Player, identity: RecordingMediaIdentity) :
+        this(Media3RecordingResumePlayer(player), identity)
 
     private val stateMachine = RecordingResumeStateMachine(player::seekTo)
     private val listener = object : Player.Listener {
@@ -47,15 +46,15 @@ public class TvheadendRecordingResume internal constructor(
     }
 
     /**
-     * Replaces any pending target with [recordingId] and its optional [resumePosition].
+     * Replaces any pending target with its optional [resumePosition].
      *
      * A null or zero position starts over. A position at or beyond the eventual media duration also
      * starts over rather than issuing an invalid seek. The seek is applied at most once.
      */
-    public fun beginPlaybackTarget(recordingId: RecordingId, resumePosition: Duration?) {
+    internal fun beginPlaybackTarget(resumePosition: Duration?) {
         requirePlayerLooper()
         check(!closed) { "Recording resume is closed" }
-        check(currentRecordingId() == recordingId) {
+        check(currentTargetMatches()) {
             "Recording resume target must already be installed on the player"
         }
         val positionMillis = resumePosition?.let { position ->
@@ -68,7 +67,7 @@ public class TvheadendRecordingResume internal constructor(
             }
             position.inWholeMilliseconds
         }
-        stateMachine.beginPlaybackTarget(recordingId, positionMillis)
+        stateMachine.beginPlaybackTarget(positionMillis)
         evaluateResume()
     }
 
@@ -82,28 +81,30 @@ public class TvheadendRecordingResume internal constructor(
     }
 
     private fun evaluateResume() {
-        val recordingId = currentRecordingId()
         val durationMillis = player.duration.takeIf { duration ->
             duration != C.TIME_UNSET && duration >= 0L
         }
-        stateMachine.onMediaState(recordingId, durationMillis, player.isCurrentMediaItemSeekable)
+        stateMachine.onMediaState(
+            currentTargetMatches(),
+            durationMillis,
+            player.isCurrentMediaItemSeekable,
+        )
     }
 
-    private fun currentRecordingId(): RecordingId? = player.currentMediaItem?.let { mediaItem ->
-        parseRecordingId(mediaItem.mediaId)
-            ?: mediaItem.localConfiguration?.uri?.toString()?.let(::parseRecordingId)
-    }
+    private fun currentTargetMatches(): Boolean = player.currentMediaItem?.let { mediaItem ->
+        mediaItem.mediaId == identity.uri ||
+            mediaItem.localConfiguration?.uri?.toString() == identity.uri
+    } == true
 
     private fun requirePlayerLooper() {
         player.requireApplicationLooper()
     }
 }
 
-/** Creates one duration-gated resume coordinator for an application-owned [Player]. */
-@SubscriptionInfrastructureApi
-@androidx.media3.common.util.UnstableApi
-public fun createTvheadendRecordingResume(player: Player): TvheadendRecordingResume =
-    TvheadendRecordingResume(player)
+internal fun createTvheadendRecordingResume(
+    player: Player,
+    identity: RecordingMediaIdentity,
+): TvheadendRecordingResume = TvheadendRecordingResume(player, identity)
 
 internal class RecordingResumeStateMachine(
     private val seekTo: (Long) -> Unit,
@@ -111,20 +112,20 @@ internal class RecordingResumeStateMachine(
     private var pending: PendingResume? = null
     private var closed = false
 
-    fun beginPlaybackTarget(recordingId: RecordingId, positionMillis: Long?) {
+    fun beginPlaybackTarget(positionMillis: Long?) {
         check(!closed) { "Recording resume is closed" }
         pending = positionMillis
             ?.takeIf { position -> position > 0L }
-            ?.let { position -> PendingResume(recordingId, position) }
+            ?.let(::PendingResume)
     }
 
     fun onMediaState(
-        recordingId: RecordingId?,
+        targetMatches: Boolean,
         durationMillis: Long?,
         isSeekable: Boolean,
     ) {
         val target = pending ?: return
-        if (recordingId != target.recordingId || durationMillis == null) return
+        if (!targetMatches || durationMillis == null) return
         if (target.positionMillis >= durationMillis) {
             pending = null
             return
@@ -140,7 +141,6 @@ internal class RecordingResumeStateMachine(
     }
 
     private data class PendingResume(
-        val recordingId: RecordingId,
         val positionMillis: Long,
     )
 }

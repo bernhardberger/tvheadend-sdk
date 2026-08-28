@@ -21,7 +21,6 @@ import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
 import at.bernhardberger.tvheadend.sdk.playback.RECORDING_END_OF_INPUT
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
-import at.bernhardberger.tvheadend.sdk.playback.RecordingId
 import java.security.MessageDigest
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
@@ -64,6 +63,7 @@ internal class GrowingTsSourceInstrumentationTest {
         assertEquals("Fixture must end on a TS packet boundary", 0, bytes.size % GROWING_TS_PACKET_BYTES)
         val initialBytes = ((bytes.size / 2) / GROWING_TS_PACKET_BYTES) * GROWING_TS_PACKET_BYTES
         val recording = AppendableGrowingRecording(bytes, initialBytes)
+        val mediaIdentity = RecordingMediaIdentity()
         val texture = SurfaceTexture(0)
         val surface = Surface(texture)
         val failure = AtomicReference<PlaybackException?>()
@@ -112,7 +112,7 @@ internal class GrowingTsSourceInstrumentationTest {
                 player.setMediaSource(
                     createTvheadendGrowingRecordingMediaSource(
                         lease = recording,
-                        recordingId = FIXTURE_RECORDING_ID,
+                        identity = mediaIdentity,
                         readAheadBytes = FIXTURE_READ_AHEAD_BYTES,
                         onSeekMap = { map ->
                             if (map is GrowingTsSeekMap) latestSeekMap.set(map)
@@ -386,7 +386,6 @@ private val FIXTURES = listOf(
         mimeType = MimeTypes.VIDEO_H264,
     ),
 )
-private val FIXTURE_RECORDING_ID = RecordingId(7L)
 private const val FIXTURE_READ_AHEAD_BYTES: Int = GROWING_TS_PACKET_BYTES * 256
 private const val NO_OPEN_POSITION: Long = -1L
 private const val SEEK_POSITION_TOLERANCE_MS: Long = 2_000L

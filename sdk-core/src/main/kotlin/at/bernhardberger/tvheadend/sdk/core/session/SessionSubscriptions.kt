@@ -9,10 +9,11 @@ import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.ChannelId as SdkChannelId
 import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
+import at.bernhardberger.tvheadend.sdk.core.DvrEntryId as SdkDvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.StreamProfileId
 import at.bernhardberger.tvheadend.sdk.core.StreamProfilesResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
-import at.bernhardberger.tvheadend.sdk.core.gateway.DvrEntryId
+import at.bernhardberger.tvheadend.sdk.core.gateway.DvrEntryId as GatewayDvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.ProtocolGateway
@@ -21,7 +22,6 @@ import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFile
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
-import at.bernhardberger.tvheadend.sdk.playback.RecordingId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionConnection
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionConfirmation
@@ -57,7 +57,7 @@ import kotlin.time.Duration
 
 internal interface GenerationBoundGrowingRecordingFileLease : GrowingRecordingFileLease {
     public val boundGeneration: GatewayGeneration
-    public val boundRecordingId: DvrEntryId
+    public val boundRecordingId: GatewayDvrEntryId
 
     public fun isProgressBindingCurrent(): Boolean
 }
@@ -76,28 +76,6 @@ internal class PlaybackSessionChildren(
     private var streamingAccess: CapabilityAccess? = null
 
     override suspend fun open(
-        channelId: SubscriptionChannelId,
-        consumer: SubscriptionEventConsumer,
-        timeshiftPeriod: Duration,
-    ): SubscriptionOpenResult = openBound(
-        expectedGeneration = null,
-        channelId = channelId,
-        consumer = consumer,
-        options = SubscriptionOptions(timeshiftPeriod = timeshiftPeriod),
-    )
-
-    override suspend fun open(
-        channelId: SubscriptionChannelId,
-        consumer: SubscriptionEventConsumer,
-        options: SubscriptionOptions,
-    ): SubscriptionOpenResult = openBound(
-        expectedGeneration = null,
-        channelId = channelId,
-        consumer = consumer,
-        options = options,
-    )
-
-    override suspend fun open(
         generation: GatewayGeneration,
         channelId: SubscriptionChannelId,
         consumer: SubscriptionEventConsumer,
@@ -110,7 +88,7 @@ internal class PlaybackSessionChildren(
     )
 
     private suspend fun openBound(
-        expectedGeneration: GatewayGeneration?,
+        expectedGeneration: GatewayGeneration,
         channelId: SubscriptionChannelId,
         consumer: SubscriptionEventConsumer,
         options: SubscriptionOptions,
@@ -118,7 +96,7 @@ internal class PlaybackSessionChildren(
         currentCoroutineContext().ensureActive()
         val admission = synchronized(lock) {
             val boundGeneration = generation ?: return SubscriptionOpenResult.NotReady
-            if (expectedGeneration != null && boundGeneration !== expectedGeneration) {
+            if (boundGeneration !== expectedGeneration) {
                 return SubscriptionOpenResult.NotReady
             }
             val manager = subscriptions ?: return SubscriptionOpenResult.NotReady
@@ -176,57 +154,71 @@ internal class PlaybackSessionChildren(
         }
     }
 
-    /**
-     * Opens one recording file on the currently bound generation.
-     *
-     * The returned handle keeps that generation, so it stays usable for its own close even after a
-     * newer generation is bound; every other operation on it then reports the changed connection.
-     */
     override suspend fun openRecording(
-        recordingId: RecordingId,
-    ): RecordingFileResult<RecordingFile> = openRecordingBound(null, recordingId)
+        target: PlaybackRecordingTarget,
+    ): RecordingFileResult<RecordingFile> = openRecordingBound(
+        generation = target.generation,
+        recordingId = target.recordingId,
+        target = target,
+    )
 
-    override suspend fun openRecording(
+    internal suspend fun openRecording(
         generation: GatewayGeneration,
-        recordingId: RecordingId,
-    ): RecordingFileResult<RecordingFile> = openRecordingBound(generation, recordingId)
+        recordingId: SdkDvrEntryId,
+    ): RecordingFileResult<RecordingFile> = openRecordingBound(generation, recordingId, target = null)
 
     private suspend fun openRecordingBound(
-        expectedGeneration: GatewayGeneration?,
-        recordingId: RecordingId,
+        generation: GatewayGeneration,
+        recordingId: SdkDvrEntryId,
+        target: PlaybackRecordingTarget?,
     ): RecordingFileResult<RecordingFile> {
         currentCoroutineContext().ensureActive()
         val bound = synchronized(lock) {
-            generation?.takeIf { expectedGeneration == null || it === expectedGeneration }
+            this.generation?.takeIf { it === generation }
         }
             ?: return RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
-        return gateway.openRecordingFile(bound, DvrEntryId(recordingId.value))
+        when (target?.let(metadata::currentPlaybackRecording)) {
+            null,
+            is PlaybackRecordingLookup.Current,
+            -> Unit
+            PlaybackRecordingLookup.ObservationExpired ->
+                return RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
+            PlaybackRecordingLookup.TargetUnavailable ->
+                return RecordingFileResult.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+        }
+        return gateway.openRecordingFile(bound, GatewayDvrEntryId(recordingId.value))
             .toRecordingFileResult { file -> GatewayRecordingFileHandle(gateway, bound, file) }
     }
 
     override fun bindGrowingRecording(
-        recordingId: RecordingId,
-    ): RecordingFileResult<GrowingRecordingFileLease> = bindGrowingRecordingBound(null, recordingId)
+        target: PlaybackRecordingTarget,
+    ): RecordingFileResult<GrowingRecordingFileLease> = bindGrowingRecordingBound(
+        generation = target.generation,
+        recordingId = target.recordingId,
+        target = target,
+    )
 
-    override fun bindGrowingRecording(
+    internal fun bindGrowingRecording(
         generation: GatewayGeneration,
-        recordingId: RecordingId,
+        recordingId: SdkDvrEntryId,
     ): RecordingFileResult<GrowingRecordingFileLease> =
-        bindGrowingRecordingBound(generation, recordingId)
+        bindGrowingRecordingBound(generation, recordingId, target = null)
 
     private fun bindGrowingRecordingBound(
-        expectedGeneration: GatewayGeneration?,
-        recordingId: RecordingId,
+        generation: GatewayGeneration,
+        recordingId: SdkDvrEntryId,
+        target: PlaybackRecordingTarget?,
     ): RecordingFileResult<GrowingRecordingFileLease> {
         val bound = synchronized(lock) {
-            generation?.takeIf { expectedGeneration == null || it === expectedGeneration }
+            this.generation?.takeIf { it === generation }
         }
             ?: return RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
-        val dvrEntryId = DvrEntryId(recordingId.value)
+        val dvrEntryId = GatewayDvrEntryId(recordingId.value)
         val tracker = GrowingRecordingMetadataTracker(
             metadata = metadata,
             generation = bound,
             recordingId = dvrEntryId,
+            playbackTarget = target,
         )
         return when (val validation = tracker.validate()) {
             is GrowingMetadataValidation.Failed -> RecordingFileResult.Failed(validation.failure)
@@ -240,34 +232,9 @@ internal class PlaybackSessionChildren(
         }
     }
 
-    override suspend fun openGrowingRecording(
-        recordingId: RecordingId,
-        position: Long,
-    ): RecordingFileResult<GrowingRecordingFileReader> =
-        openGrowingRecordingBound(null, recordingId, position)
-
-    override suspend fun openGrowingRecording(
-        generation: GatewayGeneration,
-        recordingId: RecordingId,
-        position: Long,
-    ): RecordingFileResult<GrowingRecordingFileReader> =
-        openGrowingRecordingBound(generation, recordingId, position)
-
-    private suspend fun openGrowingRecordingBound(
-        expectedGeneration: GatewayGeneration?,
-        recordingId: RecordingId,
-        position: Long,
-    ): RecordingFileResult<GrowingRecordingFileReader> {
-        require(position >= 0L) { "Growing recording position must not be negative" }
-        return when (val binding = bindGrowingRecordingBound(expectedGeneration, recordingId)) {
-            is RecordingFileResult.Failed -> binding
-            is RecordingFileResult.Ok -> binding.value.open(position)
-        }
-    }
-
     private inner class BoundGrowingRecordingFileLease(
         override val boundGeneration: GatewayGeneration,
-        override val boundRecordingId: DvrEntryId,
+        override val boundRecordingId: GatewayDvrEntryId,
         private val tracker: GrowingRecordingMetadataTracker,
     ) : GenerationBoundGrowingRecordingFileLease {
         override val isCurrent: Boolean

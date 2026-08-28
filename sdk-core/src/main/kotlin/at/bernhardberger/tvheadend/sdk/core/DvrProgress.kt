@@ -218,6 +218,7 @@ internal interface DvrProgressCommands {
         generation: GatewayGeneration,
         id: DvrEntryId,
         progress: DvrPlaybackProgress,
+        targetIsCurrent: () -> Boolean = { true },
     ): DvrProgressResult
 
     @SubscriptionInfrastructureApi
@@ -231,6 +232,7 @@ internal interface DvrProgressCommands {
             generation: GatewayGeneration,
             id: DvrEntryId,
             progress: DvrPlaybackProgress,
+            targetIsCurrent: () -> Boolean,
         ): DvrProgressResult = DvrProgressResult.NotReady
     }
 }

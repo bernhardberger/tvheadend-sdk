@@ -1048,21 +1048,14 @@ public abstract interface class at/bernhardberger/tvheadend/sdk/core/DvrReposito
 	public abstract fun cancelEntry-jvmoZCg (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun createAutorecRule (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Lat/bernhardberger/tvheadend/sdk/core/AutorecRuleCreate;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun createTimerecRule (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Lat/bernhardberger/tvheadend/sdk/core/TimerecRuleCreate;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public abstract fun cutpoints-jvmoZCg (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun deleteAutorecRule-xYrR27c (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun deleteEntry-jvmoZCg (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun deleteTimerecRule-m_EujJA (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public fun reportProgress (Lat/bernhardberger/tvheadend/sdk/playback/GrowingRecordingFileLease;Lat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public abstract fun reportProgress-YimeFxE (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;JLat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun scheduleEntry (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Lat/bernhardberger/tvheadend/sdk/core/DvrScheduleRequest;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun stopEntry-jvmoZCg (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun updateAutorecRule-VXX7Pvs (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Ljava/lang/String;Lat/bernhardberger/tvheadend/sdk/core/AutorecRuleUpdate;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun updateEntry-YimeFxE (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;JLat/bernhardberger/tvheadend/sdk/core/DvrEntryUpdate;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun updateTimerecRule-dy4Dx4M (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Ljava/lang/String;Lat/bernhardberger/tvheadend/sdk/core/TimerecRuleUpdate;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/DvrRepository$DefaultImpls {
-	public static fun reportProgress (Lat/bernhardberger/tvheadend/sdk/core/DvrRepository;Lat/bernhardberger/tvheadend/sdk/playback/GrowingRecordingFileLease;Lat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
 public abstract interface class at/bernhardberger/tvheadend/sdk/core/DvrRepositoryState {
@@ -1482,6 +1475,82 @@ public final class at/bernhardberger/tvheadend/sdk/core/EventId {
 	public fun toString ()Ljava/lang/String;
 	public static fun toString-impl (J)Ljava/lang/String;
 	public final synthetic fun unbox-impl ()J
+}
+
+public abstract class at/bernhardberger/tvheadend/sdk/core/PlaybackBinding {
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/PlaybackBinding$Live : at/bernhardberger/tvheadend/sdk/core/PlaybackBinding {
+	public final fun isCurrent ()Z
+	public final fun open (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionEventConsumer;Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOptions;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/PlaybackBinding$Recording : at/bernhardberger/tvheadend/sdk/core/PlaybackBinding {
+	public final fun bindGrowingRecording ()Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileResult;
+	public final fun cutpoints (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun getAdmission ()Lat/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmission;
+	public final fun getStartedGrowing ()Z
+	public final fun openRecording (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun reportProgress (Lat/bernhardberger/tvheadend/sdk/playback/GrowingRecordingFileLease;Lat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class at/bernhardberger/tvheadend/sdk/core/PlaybackBindingResult {
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/PlaybackBindingResult$Bound : at/bernhardberger/tvheadend/sdk/core/PlaybackBindingResult {
+	public final fun getBinding ()Lat/bernhardberger/tvheadend/sdk/core/PlaybackBinding;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/PlaybackBindingResult$ObservationExpired : at/bernhardberger/tvheadend/sdk/core/PlaybackBindingResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/PlaybackBindingResult$ObservationExpired;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/PlaybackBindingResult$TargetUnavailable : at/bernhardberger/tvheadend/sdk/core/PlaybackBindingResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/PlaybackBindingResult$TargetUnavailable;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class at/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmission {
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmission$Completed : at/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmission {
+	public final fun getProgressCapability ()Lat/bernhardberger/tvheadend/sdk/core/RecordingProgressCapability;
+	public final fun getResumePosition-FghU774 ()Lkotlin/time/Duration;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmission$GrowingDeferred : at/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmission {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmission$GrowingDeferred;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmission$GrowingStartOverOnly : at/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmission {
+	public final fun getProgressCapability ()Lat/bernhardberger/tvheadend/sdk/core/RecordingProgressCapability;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmission$ObservationExpired : at/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmission {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmission$ObservationExpired;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmission$TargetUnavailable : at/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmission {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmission$TargetUnavailable;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/RecordingProgressCapability : java/lang/Enum {
@@ -1979,15 +2048,15 @@ public final class at/bernhardberger/tvheadend/sdk/core/TimerecRuleUpdate {
 }
 
 public abstract interface class at/bernhardberger/tvheadend/sdk/core/TvheadendSession {
+	public abstract fun bindLivePlayback-EMDS_hM (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;J)Lat/bernhardberger/tvheadend/sdk/core/PlaybackBindingResult;
+	public abstract fun bindRecordingPlayback-q1kOTE4 (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;J)Lat/bernhardberger/tvheadend/sdk/core/PlaybackBindingResult;
 	public abstract fun connect (Lat/bernhardberger/tvheadend/sdk/core/ServerProfile;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun disconnect (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun getArtwork ()Lat/bernhardberger/tvheadend/sdk/core/ArtworkLoader;
 	public abstract fun getDvrRepository ()Lat/bernhardberger/tvheadend/sdk/core/DvrRepository;
 	public abstract fun getEpgRepository ()Lat/bernhardberger/tvheadend/sdk/core/EpgRepository;
 	public abstract fun getObservation ()Lkotlinx/coroutines/flow/StateFlow;
-	public abstract fun getRecordings ()Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileOpener;
 	public fun getStreamProfiles (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public abstract fun getSubscriptions ()Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOpener;
 	public abstract fun retry (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun shutdown (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }

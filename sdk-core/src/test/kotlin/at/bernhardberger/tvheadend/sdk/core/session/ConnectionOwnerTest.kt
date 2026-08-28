@@ -25,6 +25,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverageAcquisitionResult
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
+import at.bernhardberger.tvheadend.sdk.core.PlaybackBindingResult
 import at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability
 import at.bernhardberger.tvheadend.sdk.core.ServerAuthentication
 import at.bernhardberger.tvheadend.sdk.core.ServerCapabilities
@@ -64,6 +65,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import java.util.Collections
 import java.util.IdentityHashMap
@@ -459,7 +461,7 @@ internal class ConnectionOwnerTest {
 
         assertSame(
             DvrProgressResult.AccessDenied,
-            owner.dvrRepository.reportProgress(currentSession, DvrEntryId(7), report),
+            metadata.reportProgress(generation, DvrEntryId(7), report),
         )
         assertEquals(
             CapabilityAccess.DENIED,
@@ -518,21 +520,20 @@ internal class ConnectionOwnerTest {
             owner.observation.value.recordingProgressCapability,
         )
         assertSame(
-            DvrProgressResult.ObservationExpired,
-            owner.dvrRepository.reportProgress(expired, DvrEntryId(7), report),
+            PlaybackBindingResult.ObservationExpired,
+            owner.bindRecordingPlayback(expired, DvrEntryId(7)),
         )
         owner.connect(ServerProfile("server"))
         runCurrent()
         gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
         runCurrent()
-        val firstCurrent = requireNotNull(owner.observation.value.currentSession)
         assertSame(
             RecordingProgressCapability.UNSUPPORTED,
             owner.observation.value.recordingProgressCapability,
         )
         assertSame(
             DvrProgressResult.NotSupported,
-            owner.dvrRepository.reportProgress(firstCurrent, DvrEntryId(7), report),
+            metadata.reportProgress(generation, DvrEntryId(7), report),
         )
         assertEquals(0, gateway.progressReportCount)
 
@@ -548,7 +549,6 @@ internal class ConnectionOwnerTest {
         runCurrent()
         gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(next))
         runCurrent()
-        val nextCurrent = requireNotNull(owner.observation.value.currentSession)
         assertSame(
             RecordingProgressCapability.SUPPORTED,
             owner.observation.value.recordingProgressCapability,
@@ -556,7 +556,7 @@ internal class ConnectionOwnerTest {
         gateway.reportDvrProgressBehavior = { _, _, _ -> GatewayResult.NotSupported }
         assertSame(
             DvrProgressResult.NotSupported,
-            owner.dvrRepository.reportProgress(nextCurrent, DvrEntryId(7), report),
+            metadata.reportProgress(next, DvrEntryId(7), report),
         )
         assertEquals(1, gateway.progressReportCount)
         assertSame(
@@ -565,7 +565,7 @@ internal class ConnectionOwnerTest {
         )
         assertSame(
             DvrProgressResult.NotSupported,
-            owner.dvrRepository.reportProgress(nextCurrent, DvrEntryId(7), report),
+            metadata.reportProgress(next, DvrEntryId(7), report),
         )
         assertEquals(1, gateway.progressReportCount)
 
@@ -581,7 +581,6 @@ internal class ConnectionOwnerTest {
         runCurrent()
         gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(restored))
         runCurrent()
-        val restoredCurrent = requireNotNull(owner.observation.value.currentSession)
         assertSame(
             RecordingProgressCapability.SUPPORTED,
             owner.observation.value.recordingProgressCapability,
@@ -589,7 +588,7 @@ internal class ConnectionOwnerTest {
         gateway.reportDvrProgressBehavior = { _, _, _ -> GatewayResult.Ok(Unit) }
         assertSame(
             DvrProgressResult.Accepted,
-            owner.dvrRepository.reportProgress(restoredCurrent, DvrEntryId(7), report),
+            metadata.reportProgress(restored, DvrEntryId(7), report),
         )
         assertEquals(2, gateway.progressReportCount)
         assertEquals(
@@ -1868,9 +1867,10 @@ private class RecordingSessionChildren(
     private val order: MutableList<String>,
 ) : SessionChildren {
     override suspend fun open(
+        generation: GatewayGeneration,
         channelId: SubscriptionChannelId,
         consumer: SubscriptionEventConsumer,
-        timeshiftPeriod: Duration,
+        options: SubscriptionOptions,
     ): SubscriptionOpenResult = SubscriptionOpenResult.NotReady
 
     override fun bindGeneration(generation: GatewayGeneration) {
@@ -1917,9 +1917,10 @@ private class BlockingSessionChildren(
     private val releaseCleanup: CompletableDeferred<Unit>,
 ) : SessionChildren {
     override suspend fun open(
+        generation: GatewayGeneration,
         channelId: SubscriptionChannelId,
         consumer: SubscriptionEventConsumer,
-        timeshiftPeriod: Duration,
+        options: SubscriptionOptions,
     ): SubscriptionOpenResult = SubscriptionOpenResult.NotReady
 
     override fun bindGeneration(generation: GatewayGeneration) = Unit
@@ -1948,9 +1949,10 @@ private class ThrowingSessionChildren(
     private val order: MutableList<String>,
 ) : SessionChildren {
     override suspend fun open(
+        generation: GatewayGeneration,
         channelId: SubscriptionChannelId,
         consumer: SubscriptionEventConsumer,
-        timeshiftPeriod: Duration,
+        options: SubscriptionOptions,
     ): SubscriptionOpenResult = SubscriptionOpenResult.NotReady
 
     override fun bindGeneration(generation: GatewayGeneration) = Unit

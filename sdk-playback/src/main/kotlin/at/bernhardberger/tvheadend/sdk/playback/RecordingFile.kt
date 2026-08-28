@@ -1,16 +1,5 @@
 package at.bernhardberger.tvheadend.sdk.playback
 
-/** Unsigned 32-bit identifier of the DVR recording that owns a stored file. */
-@SubscriptionInfrastructureApi
-@JvmInline
-public value class RecordingId(public val value: Long) {
-    init {
-        require(value in 0L..0xffff_ffffL) { "Recording ID must be an unsigned 32-bit value" }
-    }
-
-    override fun toString(): String = "RecordingId(<redacted>)"
-}
-
 /**
  * Safe classification of a failed recording file operation.
  *
@@ -141,40 +130,14 @@ public interface GrowingRecordingFileLease {
     public suspend fun open(position: Long): RecordingFileResult<GrowingRecordingFileReader>
 }
 
-/** Opens recording files without exposing generation admission or teardown controls. */
+/** Opens one already-bound recording without exposing its identity or generation controls. */
 @SubscriptionInfrastructureApi
 public fun interface RecordingFileOpener {
     /**
-     * Opens the stored file of [recordingId] on the currently bound connection generation.
+     * Opens the stored file selected when this opener was created.
      *
      * The caller owns the returned handle and must close it. When no generation is bound the
      * result is [RecordingFileFailure.CONNECTION_CHANGED].
      */
-    public suspend fun openRecording(recordingId: RecordingId): RecordingFileResult<RecordingFile>
-
-    /**
-     * Binds one active recording to its current generation, incarnation, and physical file.
-     *
-     * Binding performs no file transport I/O. Implementations without target-scoped continuity
-     * support return [RecordingFileFailure.NOT_SUPPORTED].
-     */
-    public fun bindGrowingRecording(
-        recordingId: RecordingId,
-    ): RecordingFileResult<GrowingRecordingFileLease> =
-        RecordingFileResult.Failed(RecordingFileFailure.NOT_SUPPORTED)
-
-    /**
-     * Opens one physical file of an active recording at absolute [position].
-     *
-     * The returned reader withholds temporary end of file and follows only that exact file and
-     * connection generation. Implementations that do not correlate fresh DVR state with
-     * open-handle stats return [RecordingFileFailure.NOT_SUPPORTED].
-     */
-    public suspend fun openGrowingRecording(
-        recordingId: RecordingId,
-        position: Long,
-    ): RecordingFileResult<GrowingRecordingFileReader> {
-        require(position >= 0L) { "Growing recording position must not be negative" }
-        return RecordingFileResult.Failed(RecordingFileFailure.NOT_SUPPORTED)
-    }
+    public suspend fun openRecording(): RecordingFileResult<RecordingFile>
 }

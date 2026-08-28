@@ -19,7 +19,6 @@ import at.bernhardberger.tvheadend.sdk.playback.MAX_RECORDING_READ_BYTES
 import at.bernhardberger.tvheadend.sdk.playback.RECORDING_END_OF_INPUT
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
-import at.bernhardberger.tvheadend.sdk.playback.RecordingId
 import java.io.InterruptedIOException
 import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicBoolean
@@ -27,6 +26,7 @@ import kotlinx.coroutines.runBlocking
 
 internal fun createTvheadendGrowingRecordingDataSourceFactory(
     lease: GrowingRecordingFileLease,
+    identity: RecordingMediaIdentity,
     readAheadBytes: Int = DEFAULT_RECORDING_READ_AHEAD_BYTES,
     onFinalEnd: () -> Unit = {},
 ): DataSource.Factory {
@@ -38,6 +38,7 @@ internal fun createTvheadendGrowingRecordingDataSourceFactory(
     return DataSource.Factory {
         TvheadendGrowingRecordingDataSource(
             lease = lease,
+            identity = identity,
             packetBufferBytes = packetAlignedCapacity,
             onFinalEnd = {
                 if (finalEndSignaled.compareAndSet(false, true)) onFinalEnd()
@@ -48,14 +49,14 @@ internal fun createTvheadendGrowingRecordingDataSourceFactory(
 
 internal fun createTvheadendGrowingRecordingMediaSource(
     lease: GrowingRecordingFileLease,
-    recordingId: RecordingId,
+    identity: RecordingMediaIdentity,
     readAheadBytes: Int = DEFAULT_RECORDING_READ_AHEAD_BYTES,
     onSeekMap: (SeekMap) -> Unit = {},
     onFinalEnd: () -> Unit = {},
 ): MediaSource = ProgressiveMediaSource.Factory(
-    createTvheadendGrowingRecordingDataSourceFactory(lease, readAheadBytes, onFinalEnd),
+    createTvheadendGrowingRecordingDataSourceFactory(lease, identity, readAheadBytes, onFinalEnd),
     createGrowingTsExtractorsFactory(onSeekMap),
-).createMediaSource(tvheadendRecordingMediaItem(recordingId))
+).createMediaSource(tvheadendRecordingMediaItem(identity))
 
 /**
  * Unknown-length Media3 source over P7-F2's target-scoped growing-file continuity lease.
@@ -67,6 +68,7 @@ internal fun createTvheadendGrowingRecordingMediaSource(
  */
 private class TvheadendGrowingRecordingDataSource(
     private val lease: GrowingRecordingFileLease,
+    private val identity: RecordingMediaIdentity,
     packetBufferBytes: Int,
     private val onFinalEnd: () -> Unit,
 ) : BaseDataSource(true) {
@@ -82,7 +84,7 @@ private class TvheadendGrowingRecordingDataSource(
         checkGrowingLoaderThread()
         check(reader == null) { "Growing recording data source is already open" }
         transferInitializing(dataSpec)
-        if (parseRecordingId(dataSpec.uri.toString()) == null) {
+        if (dataSpec.uri.toString() != identity.uri) {
             throw TvheadendRecordingException(RecordingFileFailure.FILE_UNAVAILABLE)
         }
         if (

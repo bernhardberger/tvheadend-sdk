@@ -8,24 +8,19 @@ package at.bernhardberger.tvheadend.sdk.media3
 
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
-import at.bernhardberger.tvheadend.sdk.core.DvrEntry
-import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
-import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
-import at.bernhardberger.tvheadend.sdk.core.DvrRecordingFile
-import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
-import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
-import at.bernhardberger.tvheadend.sdk.core.SessionObservation
+import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
+import at.bernhardberger.tvheadend.sdk.core.DvrProgressResult
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
-import at.bernhardberger.tvheadend.sdk.playback.RecordingId
-import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
+import at.bernhardberger.tvheadend.sdk.playback.RecordingFile
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import java.io.IOException
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
-import kotlin.time.Instant
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -55,7 +50,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             player.installLive(
                 PlayerOperationTicket(),
                 token,
-                SubscriptionChannelId(3),
+                TestCoordinatorLiveTarget(),
                 liveOptions,
                 controls(token),
             )
@@ -82,7 +77,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             player.installRecording(
                 PlayerOperationTicket(),
                 PlaybackTargetToken(),
-                RecordingId(9),
+                TestCoordinatorRecordingTarget(),
                 RecordingPlaybackStart.RESUME,
             )
         }
@@ -120,7 +115,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             player.installRecording(
                 PlayerOperationTicket(),
                 token,
-                RecordingId(9),
+                TestCoordinatorRecordingTarget(),
                 RecordingPlaybackStart.START_OVER,
             )
         }
@@ -161,7 +156,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             player.installLive(
                 PlayerOperationTicket(),
                 liveToken,
-                SubscriptionChannelId(3),
+                TestCoordinatorLiveTarget(),
                 timeshiftControls = controls(liveToken),
             )
         }
@@ -176,7 +171,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             player.installRecording(
                 PlayerOperationTicket(),
                 PlaybackTargetToken(),
-                RecordingId(9),
+                TestCoordinatorRecordingTarget(),
                 RecordingPlaybackStart.RESUME,
             )
         }
@@ -204,7 +199,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             player.installLive(
                 PlayerOperationTicket(),
                 liveToken,
-                SubscriptionChannelId(3),
+                TestCoordinatorLiveTarget(),
                 timeshiftControls = controls(liveToken),
             )
         }
@@ -218,7 +213,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             player.installRecording(
                 PlayerOperationTicket(),
                 PlaybackTargetToken(),
-                RecordingId(9),
+                TestCoordinatorRecordingTarget(),
                 RecordingPlaybackStart.RESUME,
             )
         }
@@ -244,7 +239,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             player.installRecording(
                 PlayerOperationTicket(),
                 PlaybackTargetToken(),
-                RecordingId(9),
+                TestCoordinatorRecordingTarget(),
                 RecordingPlaybackStart.RESUME,
             )
         }
@@ -267,7 +262,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             player.installRecording(
                 ticket,
                 PlaybackTargetToken(),
-                RecordingId(9),
+                TestCoordinatorRecordingTarget(),
                 RecordingPlaybackStart.RESUME,
             )
         }
@@ -292,7 +287,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             player.installRecording(
                 PlayerOperationTicket(),
                 token,
-                RecordingId(9),
+                TestCoordinatorRecordingTarget(),
                 RecordingPlaybackStart.START_OVER,
             )
         }
@@ -326,7 +321,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             player.installLive(
                 PlayerOperationTicket(),
                 liveToken,
-                SubscriptionChannelId(3),
+                TestCoordinatorLiveTarget(),
                 timeshiftControls = controls(liveToken),
             )
         }
@@ -342,7 +337,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             player.installRecording(
                 PlayerOperationTicket(),
                 recordingToken,
-                RecordingId(9),
+                TestCoordinatorRecordingTarget(),
                 RecordingPlaybackStart.START_OVER,
             )
         }
@@ -380,7 +375,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             player.installLive(
                 PlayerOperationTicket(),
                 liveToken,
-                SubscriptionChannelId(3),
+                TestCoordinatorLiveTarget(),
                 timeshiftControls = controls(liveToken),
             )
         }
@@ -395,7 +390,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             player.installRecording(
                 PlayerOperationTicket(),
                 recordingToken,
-                RecordingId(9),
+                TestCoordinatorRecordingTarget(),
                 RecordingPlaybackStart.START_OVER,
             )
         }
@@ -422,7 +417,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             player.installLive(
                 PlayerOperationTicket(),
                 liveToken,
-                SubscriptionChannelId(3),
+                TestCoordinatorLiveTarget(),
                 timeshiftControls = controls(liveToken),
             )
         }
@@ -438,7 +433,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             player.installRecording(
                 PlayerOperationTicket(),
                 recordingToken,
-                RecordingId(9),
+                TestCoordinatorRecordingTarget(),
                 RecordingPlaybackStart.START_OVER,
             )
         }
@@ -466,7 +461,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             player.installRecording(
                 PlayerOperationTicket(),
                 token,
-                RecordingId(9),
+                TestCoordinatorRecordingTarget(),
                 RecordingPlaybackStart.START_OVER,
             )
         }
@@ -522,7 +517,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             player.installLive(
                 PlayerOperationTicket(),
                 liveToken,
-                SubscriptionChannelId(3),
+                TestCoordinatorLiveTarget(),
                 timeshiftControls = controls(liveToken),
             )
         }
@@ -542,7 +537,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             player.installRecording(
                 PlayerOperationTicket(),
                 PlaybackTargetToken(),
-                RecordingId(9),
+                TestCoordinatorRecordingTarget(),
                 RecordingPlaybackStart.START_OVER,
             )
         }
@@ -610,7 +605,7 @@ private class FakeCoordinatorPlaybackAccess(
     }
 
     override fun createLiveSource(
-        channelId: SubscriptionChannelId,
+        target: CoordinatorLiveTarget,
         options: SubscriptionOptions,
         timeshiftControls: LiveTimeshiftControlBridge,
     ): CoordinatorMediaSource {
@@ -620,15 +615,18 @@ private class FakeCoordinatorPlaybackAccess(
         return FakeCoordinatorMediaSource("live")
     }
 
-    override fun createRecordingSource(recordingId: RecordingId): CoordinatorMediaSource {
+    override fun createRecordingSource(
+        target: CoordinatorRecordingTarget,
+        identity: RecordingMediaIdentity,
+    ): CoordinatorMediaSource {
         requireApplicationLooper()
         operations += "create-recording"
         return FakeCoordinatorMediaSource("recording")
     }
 
     override fun createGrowingRecordingSource(
-        recordingId: RecordingId,
         lease: GrowingRecordingFileLease,
+        identity: RecordingMediaIdentity,
         onFinalEnd: () -> Unit,
     ): CoordinatorMediaSource {
         requireApplicationLooper()
@@ -658,11 +656,11 @@ private class FakeCoordinatorPlaybackAccess(
         }
     }
 
-    override fun createResume(): CoordinatorRecordingResume {
+    override fun createResume(identity: RecordingMediaIdentity): CoordinatorRecordingResume {
         requireApplicationLooper()
         operations += "create-resume"
         return object : CoordinatorRecordingResume {
-            override fun beginPlaybackTarget(recordingId: RecordingId, position: Duration?) {
+            override fun beginPlaybackTarget(position: Duration?) {
                 requireApplicationLooper()
                 operations += "begin-resume:${position?.inWholeSeconds ?: 0}"
             }
@@ -733,31 +731,7 @@ private class TestCoordinatorLooper : CoordinatorLooper {
 }
 
 private fun growingAdmission(): RecordingAdmission.Growing {
-    val entry = DvrEntry.create(
-        id = DvrEntryId(9),
-        uuid = "stable-entry",
-        path = "/recording.ts",
-        files = listOf(
-            DvrRecordingFile(
-                fileId = 1,
-                path = "/recording.ts",
-                start = Instant.fromEpochSeconds(1),
-                stop = null,
-                sizeBytes = 1_000,
-            ),
-        ),
-        state = DvrEntryState.RECORDING,
-        dataSizeBytes = 1_000,
-    )
-    val states = kotlinx.coroutines.flow.MutableStateFlow(
-        SessionObservation.create(
-            dvrState = DvrRepositoryState.Current(DvrSnapshot.create(listOf(entry))),
-        ),
-    )
-    return RecordingAdmission.Growing(
-        checkNotNull(GrowingRecordingFence.create(entry, states)),
-        CurrentGrowingLease,
-    )
+    return RecordingAdmission.Growing(CurrentGrowingLease)
 }
 
 private data object CurrentGrowingLease : GrowingRecordingFileLease {

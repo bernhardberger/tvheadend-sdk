@@ -7,8 +7,9 @@ import android.os.Looper
 import androidx.media3.common.Player
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
-import at.bernhardberger.tvheadend.sdk.playback.RecordingId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import kotlin.time.Duration
 import kotlinx.coroutines.Dispatchers
@@ -36,7 +37,10 @@ internal class PlaybackCoordinatorLooperInstrumentationTest {
             player.installLive(
                 PlayerOperationTicket(),
                 token,
-                SubscriptionChannelId(4),
+                FixedSubscriptionLiveTarget(
+                    SubscriptionOpener { _, _, _ -> SubscriptionOpenResult.NotReady },
+                    SubscriptionChannelId(4),
+                ),
                 timeshiftControls = LiveTimeshiftControlBridge(token) {},
             )
         }
@@ -96,7 +100,7 @@ private class MainLooperCoordinatorPlaybackAccess : CoordinatorPlaybackAccess {
     }
 
     override fun createLiveSource(
-        channelId: SubscriptionChannelId,
+        target: CoordinatorLiveTarget,
         options: SubscriptionOptions,
         timeshiftControls: LiveTimeshiftControlBridge,
     ): CoordinatorMediaSource {
@@ -106,12 +110,15 @@ private class MainLooperCoordinatorPlaybackAccess : CoordinatorPlaybackAccess {
         return MainLooperMediaSource
     }
 
-    override fun createRecordingSource(recordingId: RecordingId): CoordinatorMediaSource =
+    override fun createRecordingSource(
+        target: CoordinatorRecordingTarget,
+        identity: RecordingMediaIdentity,
+    ): CoordinatorMediaSource =
         error("Recording source is not expected")
 
     override fun createGrowingRecordingSource(
-        recordingId: RecordingId,
         lease: GrowingRecordingFileLease,
+        identity: RecordingMediaIdentity,
         onFinalEnd: () -> Unit,
     ): CoordinatorMediaSource = error("Growing recording source is not expected")
 
@@ -133,7 +140,8 @@ private class MainLooperCoordinatorPlaybackAccess : CoordinatorPlaybackAccess {
         }
     }
 
-    override fun createResume(): CoordinatorRecordingResume = error("Recording resume is not expected")
+    override fun createResume(identity: RecordingMediaIdentity): CoordinatorRecordingResume =
+        error("Recording resume is not expected")
 
     override fun setMediaSource(source: CoordinatorMediaSource) {
         requireApplicationLooper()

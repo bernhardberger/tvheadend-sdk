@@ -7,7 +7,6 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.Timeline
-import at.bernhardberger.tvheadend.sdk.playback.RecordingId
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.microseconds
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -19,13 +18,14 @@ import org.junit.jupiter.api.Test
 internal class TvheadendRecordingResumeTest {
     @Test
     fun `listener waits for a known seekable timeline and applies resume once`() {
+        val identity = RecordingMediaIdentity()
         val player = FakeRecordingResumePlayer(
-            currentMediaItem = tvheadendRecordingMediaItem(RecordingId(7)),
+            currentMediaItem = tvheadendRecordingMediaItem(identity),
         )
-        val resume = TvheadendRecordingResume(player)
+        val resume = TvheadendRecordingResume(player, identity)
 
         assertNotNull(player.listener)
-        resume.beginPlaybackTarget(RecordingId(7), 180_000.milliseconds)
+        resume.beginPlaybackTarget(180_000.milliseconds)
         assertEquals(emptyList<Long>(), player.seeks)
 
         player.duration = 3_600_000
@@ -41,44 +41,48 @@ internal class TvheadendRecordingResumeTest {
 
     @Test
     fun `known media applies immediately using identity preserved in media id`() {
+        val identity = RecordingMediaIdentity()
         val player = FakeRecordingResumePlayer(
             currentMediaItem = MediaItem.Builder()
-                .setMediaId(recordingUri(RecordingId(7)))
+                .setMediaId(identity.uri)
                 .build(),
             duration = 3_600_000,
             isCurrentMediaItemSeekable = true,
         )
-        val resume = TvheadendRecordingResume(player)
+        val resume = TvheadendRecordingResume(player, identity)
 
-        resume.beginPlaybackTarget(RecordingId(7), 180_000.milliseconds)
+        resume.beginPlaybackTarget(180_000.milliseconds)
 
         assertEquals(listOf(180_000L), player.seeks)
     }
 
     @Test
     fun `begin validates installed identity and whole millisecond position`() {
+        val identity = RecordingMediaIdentity()
         val player = FakeRecordingResumePlayer(
-            currentMediaItem = tvheadendRecordingMediaItem(RecordingId(7)),
+            currentMediaItem = tvheadendRecordingMediaItem(identity),
         )
-        val resume = TvheadendRecordingResume(player)
+        val resume = TvheadendRecordingResume(player, identity)
 
+        assertThrows(IllegalArgumentException::class.java) {
+            resume.beginPlaybackTarget((-1).milliseconds)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            resume.beginPlaybackTarget(1_500.microseconds)
+        }
+        player.currentMediaItem = tvheadendRecordingMediaItem(RecordingMediaIdentity())
         assertThrows(IllegalStateException::class.java) {
-            resume.beginPlaybackTarget(RecordingId(8), 180_000.milliseconds)
-        }
-        assertThrows(IllegalArgumentException::class.java) {
-            resume.beginPlaybackTarget(RecordingId(7), (-1).milliseconds)
-        }
-        assertThrows(IllegalArgumentException::class.java) {
-            resume.beginPlaybackTarget(RecordingId(7), 1_500.microseconds)
+            resume.beginPlaybackTarget(180_000.milliseconds)
         }
     }
 
     @Test
     fun `callbacks enforce the application looper and close only detaches the listener`() {
+        val identity = RecordingMediaIdentity()
         val player = FakeRecordingResumePlayer(
-            currentMediaItem = tvheadendRecordingMediaItem(RecordingId(7)),
+            currentMediaItem = tvheadendRecordingMediaItem(identity),
         )
-        val resume = TvheadendRecordingResume(player)
+        val resume = TvheadendRecordingResume(player, identity)
         val listener = requireNotNull(player.listener)
 
         player.onApplicationLooper = false
@@ -93,7 +97,7 @@ internal class TvheadendRecordingResumeTest {
         assertNull(player.listener)
         assertEquals(1, player.removeListenerCalls)
         assertThrows(IllegalStateException::class.java) {
-            resume.beginPlaybackTarget(RecordingId(7), 180_000.milliseconds)
+            resume.beginPlaybackTarget(180_000.milliseconds)
         }
     }
 }

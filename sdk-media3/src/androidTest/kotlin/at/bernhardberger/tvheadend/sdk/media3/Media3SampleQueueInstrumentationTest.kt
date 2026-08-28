@@ -201,7 +201,9 @@ internal class Media3SampleQueueInstrumentationTest {
                     },
                 )
                 player.setMediaSource(
-                    createTvheadendLiveMediaSource(subscriptions, SubscriptionChannelId(1L)),
+                    createTvheadendLiveMediaSource(
+                        FixedSubscriptionLiveTarget(subscriptions, SubscriptionChannelId(1L)),
+                    ),
                 )
                 player.prepare()
                 player.play()
@@ -396,7 +398,9 @@ internal class Media3SampleQueueInstrumentationTest {
                     },
                 )
                 player.setMediaSource(
-                    createTvheadendLiveMediaSource(subscriptions, SubscriptionChannelId(1L)),
+                    createTvheadendLiveMediaSource(
+                        FixedSubscriptionLiveTarget(subscriptions, SubscriptionChannelId(1L)),
+                    ),
                 )
                 player.prepare()
                 player.play()

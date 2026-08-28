@@ -8,8 +8,6 @@ import at.bernhardberger.tvheadend.sdk.core.DvrConfigurationsState
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
 import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult
-import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
-import at.bernhardberger.tvheadend.sdk.core.DvrProgressResult
 import at.bernhardberger.tvheadend.sdk.core.DvrRepository
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.DvrSchedule
@@ -112,14 +110,6 @@ internal class DvrRealServerDenialVerificationTest {
                 currentDenialDvrSnapshot(session).entries.none { entry -> entry.title == marker },
                 "Denied schedule published a recording",
             )
-
-            val progress = dvr.reportProgress(
-                currentSession,
-                DvrEntryId(1),
-                DvrPlaybackProgress.checkpoint(30.seconds),
-            )
-            assertEquals(DvrProgressResult.AccessDenied, progress)
-            credentials.forbidLeak(progress.toString())
 
             dvr.createAutorecRule(
                 currentSession,

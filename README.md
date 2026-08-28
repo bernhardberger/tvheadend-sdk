@@ -83,13 +83,18 @@ val selected = when (val result = session.getStreamProfiles(currentSession)) {
 }
 
 if (selected != null) {
-    coordinator.setLiveTarget(
-        channel.id,
-        LivePlaybackOptions(
-            streamProfileId = selected.id,
-            timeshiftPeriod = 30.minutes,
-        ),
-    )
+    when (val target = session.bindLivePlayback(currentSession, channel.id)) {
+        is PlaybackBindingResult.Bound -> coordinator.setLiveTarget(
+            target.binding,
+            LivePlaybackOptions(
+                streamProfileId = selected.id,
+                timeshiftPeriod = 30.minutes,
+            ),
+        )
+        PlaybackBindingResult.ObservationExpired,
+        PlaybackBindingResult.TargetUnavailable,
+        -> Unit
+    }
 }
 ```
 
@@ -119,10 +124,11 @@ EPG, and DVR snapshots are current for one session-owned generation. It becomes
 snapshots remain selectable from that retired observation without being
 mistaken for current data.
 
-`SessionState.Synchronizing` admits live playback only for channel IDs from a
-retained same-process catalog when the server has not denied streaming. A cold
-session has no channel ID to validate and returns `SubscriptionOpenResult.NotReady`.
-DVR mutations and recording progress remain gated on `SessionState.Ready`.
+Retained snapshots remain selectable during `SessionState.Synchronizing`, but
+playback binding waits for a new authoritative `currentSession` after
+`SessionState.Ready`. An old observation can therefore never select a colliding
+target in a replacement connection generation. DVR mutations and recording
+progress are also gated on `SessionState.Ready`.
 
 `Ready` follows the server's authoritative initial metadata fence. EPG coverage
 queries and DVR configuration and disk-space enrichment continue as supervised
@@ -179,7 +185,8 @@ authenticated file API; otherwise loads report `ACCESS_DENIED`.
 `SessionObservation.recordingProgressCapability` is `SUPPORTED` only when the
 current ready generation can close recording files without changing play count
 and can report position and watched state separately. Unknown and pre-v27
-connections fail closed; there is no degraded fallback.
+connections disable resume and progress reporting. Completed files remain
+playable from the beginning without those optional operations.
 
 `DvrProgressPolicy` offers every positive saved position for completed
 recordings. Its pure tracker uses one 30-second elapsed cadence and reports any
@@ -188,10 +195,10 @@ marks a completed recording watched; an orderly exit requires at least 95% of a
 known positive actual media duration. Errors and growing recordings never infer
 completion.
 
-`DvrRepository.reportProgress(currentSession, recordingId, progress)` is an
-uncoordinated low-level RPC bound to the originating observation. Direct callers
-must serialize reports and preserve terminal ordering themselves; the SDK does
-not persist or replay pending progress.
+Playback progress and cutpoints are owned by an observation-bound
+`PlaybackBinding.Recording`, not the mutation-only `DvrRepository`. The Media3
+coordinator serializes reports, preserves terminal ordering, and never resolves
+a later connection generation for an installed target.
 
 ## Media3 playback coordination
 
@@ -204,19 +211,30 @@ does not create or release the player or own a service, MediaSession, audio
 focus, notification, surface, autoplay, navigation, or presentation policy.
 
 ```kotlin
-val coordinator = createTvheadendPlaybackCoordinator(session, player)
+val coordinator = createTvheadendPlaybackCoordinator(player)
 val owner = applicationScope.launch { coordinator.run() }
+val currentSession = requireNotNull(session.observation.value.currentSession)
 
-coordinator.setLiveTarget(
-    channel.id,
-    LivePlaybackOptions(timeshiftPeriod = 30.minutes),
-)
+val liveTarget = session.bindLivePlayback(currentSession, channel.id)
+if (liveTarget is PlaybackBindingResult.Bound) {
+    coordinator.setLiveTarget(
+        liveTarget.binding,
+        LivePlaybackOptions(timeshiftPeriod = 30.minutes),
+    )
+}
 coordinator.seekTimeshift((-30).seconds)
 coordinator.returnToLive() // bounded near-live position, not exact live mode
 coordinator.pauseTimeshift() // pauses server delivery only
 coordinator.resumeTimeshift()
-coordinator.setRecordingTarget(recording.id, RecordingPlaybackStart.RESUME)
-coordinator.setRecordingTarget(activeRecording.id, RecordingPlaybackStart.START_OVER)
+
+val completedTarget = session.bindRecordingPlayback(currentSession, recording.id)
+if (completedTarget is PlaybackBindingResult.Bound) {
+    coordinator.setRecordingTarget(completedTarget.binding, RecordingPlaybackStart.RESUME)
+}
+val growingTarget = session.bindRecordingPlayback(currentSession, activeRecording.id)
+if (growingTarget is PlaybackBindingResult.Bound) {
+    coordinator.setRecordingTarget(growingTarget.binding, RecordingPlaybackStart.START_OVER)
+}
 
 coordinator.shutdown(2.seconds)
 owner.join()
@@ -243,10 +261,11 @@ a separate LATM codec type. This path has deterministic packet-fixture coverage;
 the current acceptance server has no AAC service, so it is not a live-server AAC
 claim.
 
-All recording targets require the current semantic
-`RecordingProgressCapability.SUPPORTED`; unknown and pre-v27 connections are
-refused before source creation. An active target must have one stable `.ts`
-file and must use explicit `START_OVER`. `RESUME` returns
+Completed recordings remain playable when recording progress is unknown or
+unsupported; the coordinator starts them from the beginning and disables resume
+and reporting. Supported progress enables normal completed-recording resume and
+reporting. An active target still requires supported progress, one stable `.ts`
+file, and explicit `START_OVER`. `RESUME` returns
 `GROWING_RECORDING_RESUME_UNSUPPORTED`; other active containers remain
 `GROWING_RECORDING_DEFERRED`. Growing seek is approximate and becomes available
 only after the maintained `TsExtractor` wrapper has validated MPEG-2, H.264, or

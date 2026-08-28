@@ -28,14 +28,12 @@ import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
 import at.bernhardberger.tvheadend.sdk.core.createTvheadendSession
 import at.bernhardberger.tvheadend.sdk.playback.ActiveSubscription
-import at.bernhardberger.tvheadend.sdk.playback.RecordingId
 import at.bernhardberger.tvheadend.sdk.playback.SkipOutcome
 import at.bernhardberger.tvheadend.sdk.playback.StreamIndex
-import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
-import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionState
@@ -127,12 +125,13 @@ internal class PlaybackDeviceVerificationInstrumentationTest {
                 player.addAnalyticsListener(render.analyticsListener)
             }
 
-            val timeshift = TimeshiftObservingOpener(session.subscriptions)
+            val liveBinding = session.requireLivePlaybackBinding(checkNotNull(recording.channelId))
+            val timeshift = TimeshiftObservingTarget(BoundCoordinatorLiveTarget(liveBinding))
             instrumentation.runOnMainSync {
                 player.setMediaSource(
                     createTvheadendLiveMediaSource(
-                        subscriptions = timeshift,
-                        channelId = SubscriptionChannelId(checkNotNull(recording.channelId).value),
+                        target = timeshift,
+                        options = SubscriptionOptions(),
                     ),
                 )
                 player.prepare()
@@ -182,18 +181,21 @@ internal class PlaybackDeviceVerificationInstrumentationTest {
             )
             render.stopAndAssertAudio(instrumentation, player, "timeshift playback")
 
-            val recordingId = RecordingId(recording.id.value)
             val recordingDurationMs = checkNotNull(recording.durationMillis())
             val resumePositionMs = minOf(recordingDurationMs / 4L, MAX_RESUME_POSITION_MS)
                 .coerceAtLeast(MIN_RESUME_POSITION_MS)
             val recordingFrameBaseline = playerSnapshot(instrumentation, player).renderedVideoFrames
+            val recordingTarget = BoundCoordinatorRecordingTarget(
+                session.requireRecordingPlaybackBinding(recording.id),
+            )
+            val mediaIdentity = RecordingMediaIdentity()
             instrumentation.runOnMainSync {
                 player.clearMediaItems()
                 player.setMediaSource(
-                    createTvheadendRecordingMediaSource(session.recordings, recordingId),
+                    createTvheadendRecordingMediaSource(recordingTarget, mediaIdentity),
                 )
-                resume = createTvheadendRecordingResume(player)
-                checkNotNull(resume).beginPlaybackTarget(recordingId, resumePositionMs.toDurationMilliseconds())
+                resume = createTvheadendRecordingResume(player, mediaIdentity)
+                checkNotNull(resume).beginPlaybackTarget(resumePositionMs.toDurationMilliseconds())
                 player.prepare()
                 player.play()
             }
@@ -265,10 +267,9 @@ internal class TimeshiftClosureIsolationInstrumentationTest {
             )
             val recording = selectRecording(currentDvrEntries(session))
             val observation = TimeshiftIsolationObservation()
-            val opened = session.subscriptions.open(
-                channelId = SubscriptionChannelId(checkNotNull(recording.channelId).value),
+            val opened = session.requireLivePlaybackBinding(checkNotNull(recording.channelId)).open(
                 consumer = observation,
-                timeshiftPeriod = ISOLATION_TIMESHIFT_PERIOD,
+                options = SubscriptionOptions(timeshiftPeriod = ISOLATION_TIMESHIFT_PERIOD),
             )
             val subscription = when (opened) {
                 is SubscriptionOpenResult.Opened -> opened.subscription
@@ -423,7 +424,7 @@ private suspend fun verifySeek(
     instrumentation: android.app.Instrumentation,
     player: ExoPlayer,
     render: RenderObservation,
-    timeshift: TimeshiftObservingOpener,
+    timeshift: TimeshiftObservingTarget,
     active: ActiveSubscription,
     target: SubscriptionSeekTarget,
     label: String,
@@ -480,16 +481,18 @@ private suspend fun verifySeek(
     )
 }
 
-private class TimeshiftObservingOpener(
-    private val delegate: SubscriptionOpener,
-) : SubscriptionOpener {
+private class TimeshiftObservingTarget(
+    private val delegate: CoordinatorLiveTarget,
+) : CoordinatorLiveTarget {
     private val openResult = CompletableDeferred<SubscriptionOpenResult>()
     private val samples = TimeshiftSampleObservation()
 
+    override val isCurrent: Boolean
+        get() = delegate.isCurrent
+
     override suspend fun open(
-        channelId: SubscriptionChannelId,
         consumer: SubscriptionEventConsumer,
-        timeshiftPeriod: Duration,
+        options: SubscriptionOptions,
     ): SubscriptionOpenResult {
         val observingConsumer = object : SubscriptionEventConsumer {
             override fun tracksReady(tracks: SubscriptionTracks) {
@@ -516,7 +519,13 @@ private class TimeshiftObservingOpener(
                 }
             }
         }
-        val result = delegate.open(channelId, observingConsumer, REQUESTED_TIMESHIFT)
+        val result = delegate.open(
+            observingConsumer,
+            SubscriptionOptions(
+                streamProfileUuid = options.streamProfileUuid,
+                timeshiftPeriod = REQUESTED_TIMESHIFT,
+            ),
+        )
         openResult.complete(result)
         return result
     }

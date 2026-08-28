@@ -15,6 +15,7 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import at.bernhardberger.tvheadend.sdk.core.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
 import at.bernhardberger.tvheadend.sdk.core.SessionState
@@ -22,11 +23,10 @@ import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
 import at.bernhardberger.tvheadend.sdk.core.createTvheadendSession
 import at.bernhardberger.tvheadend.sdk.playback.ActiveSubscription
 import at.bernhardberger.tvheadend.sdk.playback.StreamIndex
-import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
-import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionState
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStream
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
@@ -35,7 +35,6 @@ import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
-import kotlin.time.Duration
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
@@ -127,18 +126,16 @@ private suspend fun discoverDvbTargets(session: TvheadendSession): DvbProbe {
     for (channel in channels.take(MAXIMUM_PROBE_CHANNELS)) {
         channelsProbed += 1
         val counter = DvbProbePacketCounter()
+        val binding = session.livePlaybackBindingOrNull(channel.id) ?: continue
         val opened = withTimeoutOrNull(PROBE_OPEN_TIMEOUT_MS) {
-            session.subscriptions.open(
-                SubscriptionChannelId(channel.id.value),
-                counter,
-            )
+            binding.open(counter, SubscriptionOptions())
         } as? SubscriptionOpenResult.Opened ?: continue
         try {
             val playable = opened.subscription.state.value as? SubscriptionState.Playable ?: continue
             val stream = playable.tracks.streams.firstOrNull(SubscriptionStream::isValidDvbDescriptor) ?: continue
             delay(PROBE_PACKET_WINDOW_MS)
             targets += DvbTarget(
-                channelId = SubscriptionChannelId(channel.id.value),
+                channelId = channel.id,
                 compositionId = checkNotNull(stream.compositionId),
                 ancillaryId = checkNotNull(stream.ancillaryId),
                 probePacketCount = counter.count(stream.index),
@@ -156,7 +153,10 @@ private suspend fun verifyDvbTarget(
     session: TvheadendSession,
     target: DvbTarget,
 ): DvbAttempt {
-    val opener = DvbObservingOpener(session.subscriptions, target)
+    val opener = DvbObservingTarget(
+        BoundCoordinatorLiveTarget(session.requireLivePlaybackBinding(target.channelId)),
+        target,
+    )
     val overrideApplied = AtomicBoolean()
     val trackSupported = AtomicBoolean()
     val trackSelected = AtomicBoolean()
@@ -217,7 +217,7 @@ private suspend fun verifyDvbTarget(
                     }
                 },
             )
-            player.setMediaSource(createTvheadendLiveMediaSource(opener, target.channelId))
+            player.setMediaSource(createTvheadendLiveMediaSource(opener))
             player.prepare()
             player.play()
         }
@@ -252,10 +252,10 @@ private suspend fun verifyDvbTarget(
     )
 }
 
-private class DvbObservingOpener(
-    private val delegate: SubscriptionOpener,
+private class DvbObservingTarget(
+    private val delegate: CoordinatorLiveTarget,
     private val target: DvbTarget,
-) : SubscriptionOpener {
+) : CoordinatorLiveTarget {
     val descriptorPresent = AtomicBoolean()
     val descriptorInRange = AtomicBoolean()
     val descriptorCorrelated = AtomicBoolean()
@@ -263,10 +263,12 @@ private class DvbObservingOpener(
     val active = CompletableDeferred<ActiveSubscription>()
     private val streamIndex = AtomicReference<StreamIndex?>()
 
+    override val isCurrent: Boolean
+        get() = delegate.isCurrent
+
     override suspend fun open(
-        channelId: SubscriptionChannelId,
         consumer: SubscriptionEventConsumer,
-        timeshiftPeriod: Duration,
+        options: SubscriptionOptions,
     ): SubscriptionOpenResult {
         val observingConsumer = object : SubscriptionEventConsumer {
             override fun tracksReady(tracks: SubscriptionTracks) {
@@ -290,7 +292,7 @@ private class DvbObservingOpener(
                 consumer.accept(event)
             }
         }
-        val result = delegate.open(channelId, observingConsumer, timeshiftPeriod)
+        val result = delegate.open(observingConsumer, options)
         if (result is SubscriptionOpenResult.Opened) active.complete(result.subscription)
         return result
     }
@@ -322,7 +324,7 @@ private fun DvbTarget.initializationData(): ByteArray = byteArrayOf(
 )
 
 private data class DvbTarget(
-    val channelId: SubscriptionChannelId,
+    val channelId: ChannelId,
     val compositionId: Long,
     val ancillaryId: Long,
     val probePacketCount: Long,

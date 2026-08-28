@@ -33,7 +33,7 @@ public const val RECORDING_END_OF_INPUT: Int = -1
 @SubscriptionInfrastructureApi
 public interface RecordingFileReader {
     /**
-     * Opens [recordingId] and positions it at absolute [position].
+     * Opens the reader's bound recording and positions it at absolute [position].
      *
      * A non-null [length] requests exactly that many readable bytes; null leaves the readable
      * range open ended. The result is the resolved readable byte count, or null when the server
@@ -45,7 +45,6 @@ public interface RecordingFileReader {
      * cannot leak a server-side handle.
      */
     public suspend fun open(
-        recordingId: RecordingId,
         position: Long,
         length: Long?,
     ): RecordingFileResult<Long?>
@@ -101,7 +100,6 @@ private class BufferedRecordingFileReader(
     private var bufferLength: Int = 0
 
     override suspend fun open(
-        recordingId: RecordingId,
         position: Long,
         length: Long?,
     ): RecordingFileResult<Long?> {
@@ -111,7 +109,7 @@ private class BufferedRecordingFileReader(
         releaseHandle()
 
         val opened =
-            when (val opening = opener.openRecording(recordingId)) {
+            when (val opening = opener.openRecording()) {
                 is RecordingFileResult.Failed -> return opening
                 is RecordingFileResult.Ok -> opening.value
             }

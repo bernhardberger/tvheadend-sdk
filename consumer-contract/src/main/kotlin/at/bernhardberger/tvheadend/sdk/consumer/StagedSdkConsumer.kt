@@ -11,6 +11,8 @@ import at.bernhardberger.tvheadend.sdk.core.Channel
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.EpgEvent
+import at.bernhardberger.tvheadend.sdk.core.PlaybackBinding
+import at.bernhardberger.tvheadend.sdk.core.PlaybackBindingResult
 import at.bernhardberger.tvheadend.sdk.core.SessionObservation
 import at.bernhardberger.tvheadend.sdk.core.StreamProfileId
 import at.bernhardberger.tvheadend.sdk.core.StreamProfilesResult
@@ -34,7 +36,7 @@ public class StagedSdkConsumer(
 ) {
     private val profileStore: TvheadendServerProfileStore = TvheadendServerProfileStore(context)
     private val coordinator: TvheadendPlaybackCoordinator =
-        createTvheadendPlaybackCoordinator(session, player)
+        createTvheadendPlaybackCoordinator(player)
 
     public suspend fun loadServerProfile(): ServerProfileReadResult = profileStore.loadProfile()
 
@@ -56,8 +58,12 @@ public class StagedSdkConsumer(
     public fun nextEvent(channelId: ChannelId, at: Instant): EpgEvent? =
         observation.value.nextEvent(channelId, at)
 
-    public suspend fun playLive(channelId: ChannelId): PlaybackTargetResult =
-        coordinator.setLiveTarget(channelId)
+    public suspend fun playLive(channelId: ChannelId): PlaybackTargetResult {
+        val currentSession = observation.value.currentSession ?: return PlaybackTargetResult.NOT_READY
+        return usePlaybackBinding(session.bindLivePlayback(currentSession, channelId)) { binding ->
+            coordinator.setLiveTarget(binding)
+        }
+    }
 
     public suspend fun streamProfiles(): StreamProfilesResult = session.getStreamProfiles(
         requireNotNull(observation.value.currentSession),
@@ -67,16 +73,33 @@ public class StagedSdkConsumer(
         channelId: ChannelId,
         streamProfileId: StreamProfileId?,
         timeshiftPeriod: Duration,
-    ): PlaybackTargetResult = coordinator.setLiveTarget(
-        channelId,
-        LivePlaybackOptions(streamProfileId, timeshiftPeriod),
-    )
+    ): PlaybackTargetResult {
+        val currentSession = observation.value.currentSession ?: return PlaybackTargetResult.NOT_READY
+        return usePlaybackBinding(session.bindLivePlayback(currentSession, channelId)) { binding ->
+            coordinator.setLiveTarget(
+                binding,
+                LivePlaybackOptions(streamProfileId, timeshiftPeriod),
+            )
+        }
+    }
 
-    public suspend fun resume(recordingId: DvrEntryId): PlaybackTargetResult =
-        coordinator.setRecordingTarget(recordingId, RecordingPlaybackStart.RESUME)
+    public suspend fun resume(recordingId: DvrEntryId): PlaybackTargetResult {
+        val currentSession = observation.value.currentSession ?: return PlaybackTargetResult.NOT_READY
+        return usePlaybackBinding(
+            session.bindRecordingPlayback(currentSession, recordingId),
+        ) { binding ->
+            coordinator.setRecordingTarget(binding, RecordingPlaybackStart.RESUME)
+        }
+    }
 
-    public suspend fun startGrowing(recordingId: DvrEntryId): PlaybackTargetResult =
-        coordinator.setRecordingTarget(recordingId, RecordingPlaybackStart.START_OVER)
+    public suspend fun startGrowing(recordingId: DvrEntryId): PlaybackTargetResult {
+        val currentSession = observation.value.currentSession ?: return PlaybackTargetResult.NOT_READY
+        return usePlaybackBinding(
+            session.bindRecordingPlayback(currentSession, recordingId),
+        ) { binding ->
+            coordinator.setRecordingTarget(binding, RecordingPlaybackStart.START_OVER)
+        }
+    }
 
     public val timeshiftState: StateFlow<LiveTimeshiftState>
         get() = coordinator.timeshiftState
@@ -95,4 +118,13 @@ public class StagedSdkConsumer(
 
     public fun isGrowingResumeUnsupported(result: PlaybackTargetResult): Boolean =
         result == PlaybackTargetResult.GROWING_RECORDING_RESUME_UNSUPPORTED
+
+    private suspend fun <T : PlaybackBinding> usePlaybackBinding(
+        result: PlaybackBindingResult<T>,
+        play: suspend (T) -> PlaybackTargetResult,
+    ): PlaybackTargetResult = when (result) {
+        is PlaybackBindingResult.Bound -> play(result.binding)
+        PlaybackBindingResult.ObservationExpired -> PlaybackTargetResult.NOT_READY
+        PlaybackBindingResult.TargetUnavailable -> PlaybackTargetResult.TARGET_UNAVAILABLE
+    }
 }

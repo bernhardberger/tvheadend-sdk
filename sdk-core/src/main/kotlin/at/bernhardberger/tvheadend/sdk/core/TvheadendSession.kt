@@ -10,9 +10,6 @@ import at.bernhardberger.tvheadend.sdk.core.session.DvrProgressCoordinator
 import at.bernhardberger.tvheadend.sdk.core.session.ExponentialReconnectBackoff
 import at.bernhardberger.tvheadend.sdk.core.session.PhaseOneSessionMetadata
 import at.bernhardberger.tvheadend.sdk.core.session.PlaybackSessionChildren
-import at.bernhardberger.tvheadend.sdk.playback.RecordingFileOpener
-import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
-import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener
 import java.util.Collections
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -30,7 +27,7 @@ public interface TvheadendSession {
     /** Programme-guide coverage commands for the selected server profile. */
     public val epgRepository: EpgRepository
 
-    /** Recording mutation, progress, and cutpoint commands for the selected server profile. */
+    /** Recording mutation commands for the selected server profile. */
     public val dvrRepository: DvrRepository
 
     /** Generation-bound authenticated artwork loader used by platform image integrations. */
@@ -44,13 +41,17 @@ public interface TvheadendSession {
         return StreamProfilesResult.NotReady
     }
 
-    /** Generation-bound subscription entry point used by SDK playback adapters. */
-    @SubscriptionInfrastructureApi
-    public val subscriptions: SubscriptionOpener
+    /** Binds one live target to the exact observation that selected it. */
+    public fun bindLivePlayback(
+        currentSession: CurrentSessionObservation,
+        channelId: ChannelId,
+    ): PlaybackBindingResult<PlaybackBinding.Live>
 
-    /** Generation-bound recording file entry point used by SDK recording playback adapters. */
-    @SubscriptionInfrastructureApi
-    public val recordings: RecordingFileOpener
+    /** Binds one recording target to the exact observation that selected it. */
+    public fun bindRecordingPlayback(
+        currentSession: CurrentSessionObservation,
+        recordingId: DvrEntryId,
+    ): PlaybackBindingResult<PlaybackBinding.Recording>
 
     /**
      * Selects [profile] and starts connection work.
@@ -241,8 +242,8 @@ public sealed interface SessionState {
     /**
      * Initial metadata is being synchronized.
      *
-     * Live subscriptions may already be admitted for channels in a retained same-process catalog;
-     * DVR mutations and progress observation remain unavailable until [Ready].
+     * Retained metadata remains selectable, but new playback bindings, DVR mutations, and progress
+     * observation remain unavailable until [Ready].
      */
     public data object Synchronizing : SessionState
 

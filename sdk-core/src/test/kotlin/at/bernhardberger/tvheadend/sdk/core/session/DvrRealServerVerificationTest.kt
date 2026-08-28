@@ -1,3 +1,5 @@
+@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class)
+
 package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleCreate
@@ -12,7 +14,6 @@ import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackExit
-import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
 import at.bernhardberger.tvheadend.sdk.core.DvrProgressPolicy
 import at.bernhardberger.tvheadend.sdk.core.DvrProgressResult
 import at.bernhardberger.tvheadend.sdk.core.DvrRepository
@@ -22,6 +23,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrSchedule
 import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
 import at.bernhardberger.tvheadend.sdk.core.EpgEvent
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.PlaybackBindingResult
 import at.bernhardberger.tvheadend.sdk.core.RecordingRuleChannel
 import at.bernhardberger.tvheadend.sdk.core.ServerAuthentication
 import at.bernhardberger.tvheadend.sdk.core.ServerProfile
@@ -153,14 +155,6 @@ internal class DvrRealServerVerificationTest {
                 session.observation.value.dvrEntry(scheduledId),
             )
             assertEquals(marker, updated.comment)
-
-            val progress = dvr.reportProgress(
-                currentSession,
-                scheduledId,
-                DvrPlaybackProgress.checkpoint(30.seconds),
-            )
-            assertEquals(DvrProgressResult.Accepted, progress)
-            credentials.forbidLeak(progress.toString())
 
             dvr.cancelEntry(currentSession, scheduledId).requireConfirmed()
             val cancelled = withTimeout(2.minutes) {
@@ -308,10 +302,11 @@ internal class DvrRealServerVerificationTest {
                 },
             )
             credentials.forbidLeak(DvrProgressPolicy().resumeOffer(stopped).toString())
-            val closeProgress = dvr.reportProgress(
-                currentSession,
-                liveId,
-                DvrProgressPolicy().terminalProgress(
+            val playback = session.bindRecordingPlayback(currentSession, liveId)
+            assertTrue(playback is PlaybackBindingResult.Bound)
+            val closeProgress = (playback as PlaybackBindingResult.Bound).binding.reportProgress(
+                growingLease = null,
+                progress = DvrProgressPolicy().terminalProgress(
                     position = 15.seconds,
                     duration = 75.seconds,
                     state = stopped.state,

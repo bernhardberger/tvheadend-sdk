@@ -1,8 +1,6 @@
 package at.bernhardberger.tvheadend.sdk.core
 
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
-import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
-import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import java.util.Collections
 import kotlin.time.Duration
 import kotlin.time.Instant
@@ -619,45 +617,10 @@ public interface DvrRepository {
         id: TimerecRuleId,
     ): DvrMutationResult<Unit>
 
-    /**
-     * Sends one low-level playback-progress RPC without mutating the authoritative DVR snapshot.
-     *
-     * The current ready generation must expose [RecordingProgressCapability.SUPPORTED]. Direct
-     * callers own serialization, coalescing, and terminal ordering; this function provides no
-     * durable retry or single-writer coordination.
-     */
-    public suspend fun reportProgress(
-        currentSession: CurrentSessionObservation,
-        id: DvrEntryId,
-        progress: DvrPlaybackProgress,
-    ): DvrProgressResult
-
-    /**
-     * Sends one playback-progress RPC for the exact growing target bound by [lease].
-     *
-     * A real session accepts only its own current lease and uses the lease's original connection
-     * generation and DVR entry. A reconnect therefore fails closed instead of reporting progress
-     * to a replacement generation. Implementations without this low-level binding return
-     * [DvrProgressResult.NotReady]. Local continuity is revalidated at final command admission;
-     * HTSP identifies an admitted update by DVR entry ID and has no file-incarnation precondition.
-     */
-    @SubscriptionInfrastructureApi
-    public suspend fun reportProgress(
-        lease: GrowingRecordingFileLease,
-        progress: DvrPlaybackProgress,
-    ): DvrProgressResult = DvrProgressResult.NotReady
-
-    /** Retrieves the selected entry's ordered cutpoint intervals without caching them. */
-    public suspend fun cutpoints(
-        currentSession: CurrentSessionObservation,
-        id: DvrEntryId,
-    ): DvrCutpointsResult
 }
 
 internal abstract class CommandBackedDvrRepository(
     private val mutations: DvrMutationCommands = DvrMutationCommands.None,
-    private val progressCommands: DvrProgressCommands = DvrProgressCommands.None,
-    private val cutpointCommands: DvrCutpointCommands = DvrCutpointCommands.None,
     private val resolveGeneration: (CurrentSessionObservation) -> GatewayGeneration? = { null },
 ) : DvrRepository {
     final override suspend fun scheduleEntry(
@@ -740,26 +703,6 @@ internal abstract class CommandBackedDvrRepository(
         mutations.deleteTimerecRule(generation, id)
     } ?: DvrMutationResult.ObservationExpired
 
-    final override suspend fun reportProgress(
-        currentSession: CurrentSessionObservation,
-        id: DvrEntryId,
-        progress: DvrPlaybackProgress,
-    ): DvrProgressResult = resolveGeneration(currentSession)?.let { generation ->
-        progressCommands.reportProgress(generation, id, progress)
-    } ?: DvrProgressResult.ObservationExpired
-
-    @SubscriptionInfrastructureApi
-    final override suspend fun reportProgress(
-        lease: GrowingRecordingFileLease,
-        progress: DvrPlaybackProgress,
-    ): DvrProgressResult = progressCommands.reportProgress(lease, progress)
-
-    final override suspend fun cutpoints(
-        currentSession: CurrentSessionObservation,
-        id: DvrEntryId,
-    ): DvrCutpointsResult = resolveGeneration(currentSession)?.let { generation ->
-        cutpointCommands.getCutpoints(generation, id)
-    } ?: DvrCutpointsResult.ObservationExpired
 }
 
 private fun requireDvrU32(name: String, value: Long) {

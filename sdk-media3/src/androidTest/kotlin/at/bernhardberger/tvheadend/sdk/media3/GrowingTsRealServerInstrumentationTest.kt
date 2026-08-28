@@ -341,12 +341,12 @@ private object GrowingTsRealServerVerifier {
                     },
                 )
             }
-            coordinator = createTvheadendPlaybackCoordinator(session, player)
+            coordinator = createTvheadendPlaybackCoordinator(player)
             coordinatorOwner = launch(start = CoroutineStart.UNDISPATCHED) { coordinator.run() }
             assertEquals(
                 PlaybackTargetResult.STARTED,
                 coordinator.setRecordingTarget(
-                    recordingId = recordingId,
+                    binding = session.requireRecordingPlaybackBinding(recordingId),
                     start = RecordingPlaybackStart.START_OVER,
                 )
             )
@@ -459,11 +459,14 @@ private object GrowingTsRealServerVerifier {
                 )
 
                 selectedVideoFormat.set(null)
-                coordinator = createTvheadendPlaybackCoordinator(session, player)
+                coordinator = createTvheadendPlaybackCoordinator(player)
                 coordinatorOwner = launch(start = CoroutineStart.UNDISPATCHED) { coordinator.run() }
                 assertEquals(
                     PlaybackTargetResult.STARTED,
-                    coordinator.setRecordingTarget(recordingId, RecordingPlaybackStart.START_OVER),
+                    coordinator.setRecordingTarget(
+                        session.requireRecordingPlaybackBinding(recordingId),
+                        RecordingPlaybackStart.START_OVER,
+                    ),
                 )
                 instrumentation.runOnMainSync {
                     player.setPlaybackSpeed(LIVE_PLAYBACK_SPEED)
@@ -623,11 +626,9 @@ private suspend fun discoverLiveTargets(session: TvheadendSession): List<LiveTar
     val found = LinkedHashMap<SubscriptionStreamType, LiveTarget>()
     val desired = setOf(SubscriptionStreamType.MPEG2_VIDEO, SubscriptionStreamType.H264)
     for (channel in currentChannels(session).take(MAXIMUM_CODEC_PROBE_CHANNELS)) {
+        val binding = session.livePlaybackBindingOrNull(channel.id) ?: continue
         val result = withTimeoutOrNull(CODEC_PROBE_TIMEOUT_MS) {
-            session.subscriptions.open(
-                SubscriptionChannelId(channel.id.value),
-                SubscriptionEventConsumer { },
-            )
+            binding.open(SubscriptionEventConsumer { }, at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions())
         } ?: continue
         if (result is SubscriptionOpenResult.Opened) {
             try {
@@ -664,9 +665,9 @@ private suspend fun discoverHevcTarget(session: TvheadendSession): LiveTarget {
         candidate.number == HEVC_CHANNEL_NUMBER
     } ?: throw AssertionError("The configured HEVC verification channel is unavailable")
     val opened = withTimeout(CODEC_PROBE_TIMEOUT_MS) {
-        session.subscriptions.open(
-            SubscriptionChannelId(channel.id.value),
+        session.requireLivePlaybackBinding(channel.id).open(
             SubscriptionEventConsumer { },
+            at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions(),
         )
     } as? SubscriptionOpenResult.Opened
         ?: throw AssertionError("The configured HEVC verification channel could not be opened")

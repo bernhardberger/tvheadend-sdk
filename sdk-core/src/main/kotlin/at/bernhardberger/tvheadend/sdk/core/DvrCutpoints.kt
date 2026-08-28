@@ -88,12 +88,14 @@ internal interface DvrCutpointCommands {
     public suspend fun getCutpoints(
         generation: GatewayGeneration,
         id: DvrEntryId,
+        targetIsCurrent: () -> Boolean = { true },
     ): DvrCutpointsResult
 
     data object None : DvrCutpointCommands {
         override suspend fun getCutpoints(
             generation: GatewayGeneration,
             id: DvrEntryId,
+            targetIsCurrent: () -> Boolean,
         ): DvrCutpointsResult =
             DvrCutpointsResult.NotReady
     }

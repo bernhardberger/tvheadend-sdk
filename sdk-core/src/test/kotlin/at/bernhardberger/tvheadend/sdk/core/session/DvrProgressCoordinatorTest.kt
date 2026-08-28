@@ -238,6 +238,54 @@ internal class DvrProgressCoordinatorTest {
     }
 
     @Test
+    fun `completed progress and cutpoints revalidate target identity at final admission`() =
+        runTest {
+            val generation = GatewayGeneration()
+            val gateway = MutationGateway()
+            var targetCurrent = true
+            var progressCommands = 0
+            var cutpointCommands = 0
+            val coordinator = DvrProgressCoordinator(
+                gateway = gateway,
+                isSessionReady = {
+                    targetCurrent = false
+                    true
+                },
+            )
+            gateway.progressBehavior = { _, _, _ ->
+                progressCommands += 1
+                GatewayResult.Ok(Unit)
+            }
+            gateway.cutpointsBehavior = { _, _ ->
+                cutpointCommands += 1
+                GatewayResult.Ok(emptyList())
+            }
+            coordinator.bindGeneration(generation, protocolVersion = 43)
+            coordinator.startAdmission(generation)
+
+            assertSame(
+                DvrProgressResult.TransportUnavailable,
+                coordinator.reportProgress(
+                    generation,
+                    DvrEntryId(7),
+                    checkpoint(),
+                    targetIsCurrent = { targetCurrent },
+                ),
+            )
+            targetCurrent = true
+            assertSame(
+                DvrCutpointsResult.TransportUnavailable,
+                coordinator.getCutpoints(
+                    generation,
+                    DvrEntryId(7),
+                    targetIsCurrent = { targetCurrent },
+                ),
+            )
+            assertEquals(0, progressCommands)
+            assertEquals(0, cutpointCommands)
+        }
+
+    @Test
     fun `access proof runs after the coordinator lock is released`() = runTest {
         val generation = GatewayGeneration()
         val gateway = MutationGateway()

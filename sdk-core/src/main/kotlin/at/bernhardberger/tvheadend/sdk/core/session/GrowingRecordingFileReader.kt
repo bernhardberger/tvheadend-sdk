@@ -5,6 +5,7 @@ package at.bernhardberger.tvheadend.sdk.core.session
 import at.bernhardberger.tvheadend.sdk.core.DvrEntry
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
+import at.bernhardberger.tvheadend.sdk.core.DvrRecordingFile
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.SessionObservation
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
@@ -44,12 +45,13 @@ internal class GrowingRecordingMetadataTracker(
     private val metadata: SessionMetadata,
     private val generation: GatewayGeneration,
     private val recordingId: DvrEntryId,
+    private val playbackTarget: PlaybackRecordingTarget? = null,
 ) {
     private val lock = Any()
     internal val states: StateFlow<SessionObservation> = metadata.observation
 
     private var identity: GrowingRecordingIdentity? = null
-    private var incarnation: DvrEntryIncarnation? = null
+    private var incarnation: DvrEntryIncarnation? = playbackTarget?.incarnation
     private var maximumFileSizeBytes: Long? = null
     private var maximumDataSizeBytes: Long? = null
     private var maximumTransportExtentBytes: Long = 0L
@@ -99,7 +101,20 @@ internal class GrowingRecordingMetadataTracker(
     }
 
     private fun validateCurrent(): GrowingMetadataValidation {
-        val current = when (val lookup = metadata.currentDvrEntry(generation, recordingId)) {
+        val current = playbackTarget?.let { target ->
+            when (val lookup = metadata.currentPlaybackRecording(target)) {
+                PlaybackRecordingLookup.ObservationExpired ->
+                    return GrowingMetadataValidation.Failed(RecordingFileFailure.CONNECTION_CHANGED)
+                PlaybackRecordingLookup.TargetUnavailable ->
+                    return GrowingMetadataValidation.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+                is PlaybackRecordingLookup.Current -> CurrentDvrEntryLookup.Current(
+                    state = lookup.state,
+                    entry = lookup.entry,
+                    matchCount = 1,
+                    incarnation = lookup.target.incarnation,
+                )
+            }
+        } ?: when (val lookup = metadata.currentDvrEntry(generation, recordingId)) {
             CurrentDvrEntryLookup.GenerationLost ->
                 return GrowingMetadataValidation.Failed(RecordingFileFailure.CONNECTION_CHANGED)
             CurrentDvrEntryLookup.NotCurrent ->
@@ -203,6 +218,59 @@ internal fun DvrEntry.preservesGrowingContinuity(next: DvrEntry): Boolean {
         return false
     }
     return true
+}
+
+internal class CompletedPlaybackIdentity private constructor(
+    private val uuid: String?,
+    private val entryPath: String?,
+    private val fileIds: List<Long>?,
+    private val filePaths: List<String>?,
+    private val fileStarts: List<Instant>?,
+) {
+    internal fun isCompatibleWith(next: CompletedPlaybackIdentity): Boolean =
+        uuid.matchesKnown(next.uuid) &&
+            entryPath.matchesKnown(next.entryPath) &&
+            fileIds.matchesKnown(next.fileIds) &&
+            filePaths.matchesKnown(next.filePaths) &&
+            fileStarts.matchesKnown(next.fileStarts)
+
+    internal fun mergedWith(next: CompletedPlaybackIdentity): CompletedPlaybackIdentity =
+        CompletedPlaybackIdentity(
+            uuid = uuid ?: next.uuid,
+            entryPath = entryPath ?: next.entryPath,
+            fileIds = fileIds ?: next.fileIds,
+            filePaths = filePaths ?: next.filePaths,
+            fileStarts = fileStarts ?: next.fileStarts,
+        )
+
+    override fun toString(): String = "CompletedPlaybackIdentity(<redacted>)"
+
+    internal companion object {
+        internal fun create(entry: DvrEntry): CompletedPlaybackIdentity? {
+            if (entry.state != DvrEntryState.COMPLETED) return null
+            return CompletedPlaybackIdentity(
+                uuid = entry.uuid?.takeUnless(String::isBlank),
+                entryPath = entry.path?.takeUnless(String::isBlank),
+                fileIds = entry.files.knownFileValues { file -> file.fileId },
+                filePaths = entry.files.knownFileValues { file ->
+                    file.path?.takeUnless(String::isBlank)
+                },
+                fileStarts = entry.files.knownFileValues { file -> file.start },
+            )
+        }
+    }
+}
+
+private fun <T> T?.matchesKnown(next: T?): Boolean =
+    this == null || next == null || this == next
+
+private fun <T : Any> List<DvrRecordingFile>?.knownFileValues(
+    value: (DvrRecordingFile) -> T?,
+): List<T>? {
+    val files = this ?: return null
+    return buildList(files.size) {
+        files.forEach { file -> add(value(file) ?: return null) }
+    }
 }
 
 internal interface GrowingRecordingTransport {

@@ -51,19 +51,12 @@ public final class at/bernhardberger/tvheadend/sdk/playback/RecordingFileFailure
 }
 
 public abstract interface class at/bernhardberger/tvheadend/sdk/playback/RecordingFileOpener {
-	public fun bindGrowingRecording-J6OnbWw (J)Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileResult;
-	public fun openGrowingRecording-c5QowNY (JJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public abstract fun openRecording-ISBBIW0 (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/playback/RecordingFileOpener$DefaultImpls {
-	public static fun bindGrowingRecording-J6OnbWw (Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileOpener;J)Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileResult;
-	public static fun openGrowingRecording-c5QowNY (Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileOpener;JJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun openRecording (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
 public abstract interface class at/bernhardberger/tvheadend/sdk/playback/RecordingFileReader {
 	public abstract fun close (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public abstract fun open-D_U2i0Q (JJLjava/lang/Long;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun open (JLjava/lang/Long;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun read ([BIILkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
@@ -88,20 +81,6 @@ public final class at/bernhardberger/tvheadend/sdk/playback/RecordingFileResult$
 	public fun <init> (Ljava/lang/Object;)V
 	public final fun getValue ()Ljava/lang/Object;
 	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/playback/RecordingId {
-	public static final synthetic fun box-impl (J)Lat/bernhardberger/tvheadend/sdk/playback/RecordingId;
-	public static fun constructor-impl (J)J
-	public fun equals (Ljava/lang/Object;)Z
-	public static fun equals-impl (JLjava/lang/Object;)Z
-	public static final fun equals-impl0 (JJ)Z
-	public final fun getValue ()J
-	public fun hashCode ()I
-	public static fun hashCode-impl (J)I
-	public fun toString ()Ljava/lang/String;
-	public static fun toString-impl (J)Ljava/lang/String;
-	public final synthetic fun unbox-impl ()J
 }
 
 public final class at/bernhardberger/tvheadend/sdk/playback/SkipOutcome : java/lang/Enum {

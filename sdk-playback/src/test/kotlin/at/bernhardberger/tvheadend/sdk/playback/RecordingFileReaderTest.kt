@@ -22,9 +22,9 @@ class RecordingFileReaderTest {
         val transport = FakeRecordingTransport(content = ByteArray(64) { index -> index.toByte() })
         val reader = createRecordingFileReader(transport, readAheadBytes = 16)
 
-        assertOk(64L, reader.open(RECORDING, position = 0L, length = null))
+        assertOk(64L, reader.open(position = 0L, length = null))
         assertOk(Unit, reader.close())
-        assertOk(34L, reader.open(RECORDING, position = 30L, length = null))
+        assertOk(34L, reader.open(position = 30L, length = null))
         assertOk(Unit, reader.close())
 
         assertEquals(
@@ -38,7 +38,7 @@ class RecordingFileReaderTest {
         val transport = FakeRecordingTransport(content = ByteArray(100))
         val reader = createRecordingFileReader(transport)
 
-        assertOk(70L, reader.open(RECORDING, position = 30L, length = null))
+        assertOk(70L, reader.open(position = 30L, length = null))
     }
 
     @Test
@@ -46,7 +46,7 @@ class RecordingFileReaderTest {
         val transport = FakeRecordingTransport(content = ByteArray(100))
         val reader = createRecordingFileReader(transport)
 
-        assertOk(20L, reader.open(RECORDING, position = 10L, length = 20L))
+        assertOk(20L, reader.open(position = 10L, length = 20L))
     }
 
     @Test
@@ -56,7 +56,7 @@ class RecordingFileReaderTest {
 
         assertFailed(
             RecordingFileFailure.FILE_UNAVAILABLE,
-            reader.open(RECORDING, position = 90L, length = 20L),
+            reader.open(position = 90L, length = 20L),
         )
         assertEquals(listOf("open", "close"), transport.calls)
     }
@@ -68,7 +68,7 @@ class RecordingFileReaderTest {
 
         assertFailed(
             RecordingFileFailure.FILE_UNAVAILABLE,
-            reader.open(RECORDING, position = 11L, length = null),
+            reader.open(position = 11L, length = null),
         )
         assertEquals(listOf("open", "close"), transport.calls)
     }
@@ -78,7 +78,7 @@ class RecordingFileReaderTest {
         val transport = FakeRecordingTransport(content = ByteArray(10))
         val reader = createRecordingFileReader(transport)
 
-        assertOk(0L, reader.open(RECORDING, position = 10L, length = null))
+        assertOk(0L, reader.open(position = 10L, length = null))
         assertOk(RECORDING_END_OF_INPUT, reader.read(ByteArray(4), 0, 4))
     }
 
@@ -87,7 +87,7 @@ class RecordingFileReaderTest {
         val transport = FakeRecordingTransport(content = ByteArray(10), reportSize = false)
         val reader = createRecordingFileReader(transport)
 
-        assertOk(null, reader.open(RECORDING, position = 0L, length = null))
+        assertOk(null, reader.open(position = 0L, length = null))
     }
 
     @Test
@@ -97,7 +97,7 @@ class RecordingFileReaderTest {
 
         assertFailed(
             RecordingFileFailure.FILE_UNAVAILABLE,
-            reader.open(RECORDING, position = 8L, length = null),
+            reader.open(position = 8L, length = null),
         )
         assertEquals(listOf("open", "seek@8", "close"), transport.calls)
     }
@@ -112,7 +112,7 @@ class RecordingFileReaderTest {
 
         assertFailed(
             RecordingFileFailure.CONNECTION_CHANGED,
-            reader.open(RECORDING, position = 0L, length = null),
+            reader.open(position = 0L, length = null),
         )
         assertEquals(listOf("open"), transport.calls)
     }
@@ -122,8 +122,8 @@ class RecordingFileReaderTest {
         val transport = FakeRecordingTransport(content = ByteArray(32))
         val reader = createRecordingFileReader(transport)
 
-        assertOk(32L, reader.open(RECORDING, position = 0L, length = null))
-        assertOk(32L, reader.open(RECORDING, position = 0L, length = null))
+        assertOk(32L, reader.open(position = 0L, length = null))
+        assertOk(32L, reader.open(position = 0L, length = null))
 
         assertEquals(listOf("open", "seek@0", "close", "open", "seek@0"), transport.calls)
         assertEquals(1, transport.openHandles)
@@ -134,7 +134,7 @@ class RecordingFileReaderTest {
         val transport = FakeRecordingTransport(content = ByteArray(1_024))
         val reader = createRecordingFileReader(transport, readAheadBytes = 8)
 
-        assertOk(1_024L, reader.open(RECORDING, position = 0L, length = null))
+        assertOk(1_024L, reader.open(position = 0L, length = null))
         assertOk(8, reader.read(ByteArray(512), 0, 512))
 
         assertEquals(listOf(8), transport.requestedLengths)
@@ -145,7 +145,7 @@ class RecordingFileReaderTest {
         val content = ByteArray(32) { index -> index.toByte() }
         val transport = FakeRecordingTransport(content)
         val reader = createRecordingFileReader(transport, readAheadBytes = 16)
-        assertOk(32L, reader.open(RECORDING, position = 0L, length = null))
+        assertOk(32L, reader.open(position = 0L, length = null))
 
         val destination = ByteArray(16)
         repeat(4) { round -> assertOk(4, reader.read(destination, round * 4, 4)) }
@@ -159,7 +159,7 @@ class RecordingFileReaderTest {
         val content = ByteArray(64) { index -> (index + 1).toByte() }
         val transport = FakeRecordingTransport(content)
         val reader = createRecordingFileReader(transport, readAheadBytes = 16)
-        assertOk(64L, reader.open(RECORDING, position = 0L, length = null))
+        assertOk(64L, reader.open(position = 0L, length = null))
 
         val destination = ByteArray(40)
         assertOk(16, reader.read(destination, 8, 24))
@@ -174,7 +174,7 @@ class RecordingFileReaderTest {
     fun `the final window is clamped to the remaining readable range`() = runTest {
         val transport = FakeRecordingTransport(content = ByteArray(10))
         val reader = createRecordingFileReader(transport, readAheadBytes = 8)
-        assertOk(10L, reader.open(RECORDING, position = 0L, length = null))
+        assertOk(10L, reader.open(position = 0L, length = null))
 
         val destination = ByteArray(8)
         assertOk(8, reader.read(destination, 0, 8))
@@ -189,7 +189,7 @@ class RecordingFileReaderTest {
     fun `a bounded open never reads past its requested length`() = runTest {
         val transport = FakeRecordingTransport(content = ByteArray(100))
         val reader = createRecordingFileReader(transport, readAheadBytes = 16)
-        assertOk(20L, reader.open(RECORDING, position = 40L, length = 20L))
+        assertOk(20L, reader.open(position = 40L, length = 20L))
 
         val destination = ByteArray(64)
         assertOk(16, reader.read(destination, 0, 64))
@@ -204,7 +204,7 @@ class RecordingFileReaderTest {
     fun `an unknown length ends at the server's end of file`() = runTest {
         val transport = FakeRecordingTransport(content = ByteArray(6), reportSize = false)
         val reader = createRecordingFileReader(transport, readAheadBytes = 8)
-        assertOk(null, reader.open(RECORDING, position = 0L, length = null))
+        assertOk(null, reader.open(position = 0L, length = null))
 
         val destination = ByteArray(8)
         assertOk(6, reader.read(destination, 0, 8))
@@ -215,7 +215,7 @@ class RecordingFileReaderTest {
     fun `a known range that stops early is an unreadable file`() = runTest {
         val transport = FakeRecordingTransport(content = ByteArray(6), reportedSizeOverride = 32L)
         val reader = createRecordingFileReader(transport, readAheadBytes = 8)
-        assertOk(32L, reader.open(RECORDING, position = 0L, length = null))
+        assertOk(32L, reader.open(position = 0L, length = null))
 
         val destination = ByteArray(8)
         assertOk(6, reader.read(destination, 0, 8))
@@ -226,7 +226,7 @@ class RecordingFileReaderTest {
     fun `a payload larger than the requested window is rejected`() = runTest {
         val transport = FakeRecordingTransport(content = ByteArray(64), overreadBy = 1)
         val reader = createRecordingFileReader(transport, readAheadBytes = 8)
-        assertOk(64L, reader.open(RECORDING, position = 0L, length = null))
+        assertOk(64L, reader.open(position = 0L, length = null))
 
         assertFailed(RecordingFileFailure.FILE_UNAVAILABLE, reader.read(ByteArray(32), 0, 32))
     }
@@ -238,7 +238,7 @@ class RecordingFileReaderTest {
             readFailure = RecordingFileFailure.TIMEOUT,
         )
         val reader = createRecordingFileReader(transport)
-        assertOk(64L, reader.open(RECORDING, position = 0L, length = null))
+        assertOk(64L, reader.open(position = 0L, length = null))
 
         assertFailed(RecordingFileFailure.TIMEOUT, reader.read(ByteArray(32), 0, 32))
     }
@@ -247,7 +247,7 @@ class RecordingFileReaderTest {
     fun `an empty window reads nothing`() = runTest {
         val transport = FakeRecordingTransport(content = ByteArray(8))
         val reader = createRecordingFileReader(transport)
-        assertOk(8L, reader.open(RECORDING, position = 0L, length = null))
+        assertOk(8L, reader.open(position = 0L, length = null))
 
         assertOk(0, reader.read(ByteArray(4), 0, 0))
         assertEquals(emptyList<Int>(), transport.requestedLengths)
@@ -266,7 +266,7 @@ class RecordingFileReaderTest {
     fun `a read window must lie inside the destination array`() {
         val transport = FakeRecordingTransport(content = ByteArray(8))
         val reader = createRecordingFileReader(transport)
-        runBlocking { assertOk(8L, reader.open(RECORDING, position = 0L, length = null)) }
+        runBlocking { assertOk(8L, reader.open(position = 0L, length = null)) }
 
         assertThrows(IllegalArgumentException::class.java) {
             runBlocking { reader.read(ByteArray(4), 3, 2) }
@@ -281,10 +281,10 @@ class RecordingFileReaderTest {
         val reader = createRecordingFileReader(FakeRecordingTransport(ByteArray(8)))
 
         assertThrows(IllegalArgumentException::class.java) {
-            runBlocking { reader.open(RECORDING, position = -1L, length = null) }
+            runBlocking { reader.open(position = -1L, length = null) }
         }
         assertThrows(IllegalArgumentException::class.java) {
-            runBlocking { reader.open(RECORDING, position = 0L, length = -1L) }
+            runBlocking { reader.open(position = 0L, length = -1L) }
         }
     }
 
@@ -292,7 +292,7 @@ class RecordingFileReaderTest {
     fun `a close releases the handle once and stays idempotent`() = runTest {
         val transport = FakeRecordingTransport(content = ByteArray(8))
         val reader = createRecordingFileReader(transport)
-        assertOk(8L, reader.open(RECORDING, position = 0L, length = null))
+        assertOk(8L, reader.open(position = 0L, length = null))
 
         assertOk(Unit, reader.close())
         assertOk(Unit, reader.close())
@@ -305,7 +305,7 @@ class RecordingFileReaderTest {
     fun `a cancelled consumer still releases the server handle`() = runTest {
         val transport = FakeRecordingTransport(content = ByteArray(8))
         val reader = createRecordingFileReader(transport)
-        assertOk(8L, reader.open(RECORDING, position = 0L, length = null))
+        assertOk(8L, reader.open(position = 0L, length = null))
         val release = CompletableDeferred<Unit>()
         transport.closeGate = release
 
@@ -328,7 +328,7 @@ class RecordingFileReaderTest {
         var cancelled = false
         val job = launch {
             try {
-                reader.open(RECORDING, position = 0L, length = null)
+                reader.open(position = 0L, length = null)
             } catch (failure: CancellationException) {
                 cancelled = true
                 throw failure
@@ -352,7 +352,7 @@ class RecordingFileReaderTest {
         val content = ByteArray(20) { index -> (index + 1).toByte() }
         val transport = FakeRecordingTransport(content = content)
         val reader = createRecordingFileReader(transport, readAheadBytes = 8)
-        assertOk(20L, reader.open(RECORDING, position = 0L, length = null))
+        assertOk(20L, reader.open(position = 0L, length = null))
 
         val destination = ByteArray(20)
         var total = 0
@@ -390,27 +390,7 @@ class RecordingFileReaderTest {
     }
 
     @Test
-    fun `existing opener implementations default growing access to unsupported`() = runTest {
-        val opener = RecordingFileOpener {
-            RecordingFileResult.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
-        }
-
-        assertFailed(
-            RecordingFileFailure.NOT_SUPPORTED,
-            opener.bindGrowingRecording(RECORDING),
-        )
-        assertFailed(
-            RecordingFileFailure.NOT_SUPPORTED,
-            opener.openGrowingRecording(RECORDING, position = 0L),
-        )
-        assertThrows(IllegalArgumentException::class.java) {
-            runBlocking { opener.openGrowingRecording(RECORDING, position = -1L) }
-        }
-    }
-
-    @Test
-    fun `identifiers and failures never expose their payload`() {
-        assertEquals("RecordingId(<redacted>)", RECORDING.toString())
+    fun `recording results never expose their payload`() {
         assertEquals(
             "RecordingFileResult.Ok(<redacted>)",
             RecordingFileResult.Ok(42L).toString(),
@@ -419,12 +399,8 @@ class RecordingFileReaderTest {
             "RecordingFileResult.Failed(failure=ACCESS_DENIED)",
             RecordingFileResult.Failed(RecordingFileFailure.ACCESS_DENIED).toString(),
         )
-        assertThrows(IllegalArgumentException::class.java) { RecordingId(-1L) }
-        assertThrows(IllegalArgumentException::class.java) { RecordingId(0x1_0000_0000L) }
     }
 }
-
-private val RECORDING = RecordingId(19L)
 
 private fun <T> assertOk(expected: T, actual: RecordingFileResult<T>) {
     assertTrue(actual is RecordingFileResult.Ok, "Expected success but was $actual")
@@ -455,9 +431,7 @@ private class FakeRecordingTransport(
     internal val seekEntered = CompletableDeferred<Unit>()
     internal var seekGate: CompletableDeferred<Unit>? = null
 
-    override suspend fun openRecording(
-        recordingId: RecordingId,
-    ): RecordingFileResult<RecordingFile> {
+    override suspend fun openRecording(): RecordingFileResult<RecordingFile> {
         calls += "open"
         openFailure?.let { failure -> return RecordingFileResult.Failed(failure) }
         openHandles += 1

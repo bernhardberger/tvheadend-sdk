@@ -11,7 +11,6 @@ import at.bernhardberger.tvheadend.sdk.playback.RecordingFile
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileOpener
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
-import at.bernhardberger.tvheadend.sdk.playback.RecordingId
 import java.util.concurrent.CancellationException
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -23,38 +22,31 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class TvheadendRecordingDataSourceTest {
-    @Test
-    fun `recording identifiers round trip through an opaque uri without a server path`() {
-        val uri = recordingUri(RecordingId(4_294_967_295L))
+    private val identity = RecordingMediaIdentity()
 
-        assertEquals("tvheadend-recording://4294967295", uri)
-        assertEquals(RecordingId(4_294_967_295L), parseRecordingId(uri))
-        assertEquals(RecordingId(0L), parseRecordingId("tvheadend-recording://0"))
-        assertEquals(
-            "tvheadend-recording://7",
-            tvheadendRecordingMediaItem(RecordingId(7L)).localConfiguration?.uri.toString(),
-        )
-        assertEquals(
-            "tvheadend-recording://7",
-            tvheadendRecordingMediaItem(RecordingId(7L)).mediaId,
-        )
+    @Test
+    fun `media item carries only its opaque per-install identity`() {
+        val other = RecordingMediaIdentity()
+        val item = tvheadendRecordingMediaItem(identity)
+
+        assertEquals(identity.uri, item.localConfiguration?.uri.toString())
+        assertEquals(identity.uri, item.mediaId)
+        assertTrue(identity.uri.startsWith("tvheadend-recording://bound/"))
+        assertFalse(identity.uri == other.uri)
+        assertEquals("RecordingMediaIdentity(<redacted>)", identity.toString())
     }
 
     @Test
-    fun `foreign or malformed uris are not recording identifiers`() {
-        listOf(
-            "http://host/dvrfile/7",
-            "tvheadend-recording:/7",
-            "tvheadend-recording://",
-            "tvheadend-recording://7/extra",
-            "tvheadend-recording://-1",
-            "tvheadend-recording:// 7",
-            "tvheadend-recording://0x7",
-            "tvheadend-recording://4294967296",
-            "tvheadend-recording://99999999999999999999",
-        ).forEach { candidate ->
-            assertNull(parseRecordingId(candidate), "Accepted a non-recording uri")
+    fun `another bound media identity cannot open this target`() {
+        val transport = FakeRecordingTransport(ByteArray(4))
+        val source = dataSource(transport, readAheadBytes = 4)
+
+        val failure = assertThrows(TvheadendRecordingException::class.java) {
+            source.open(recordingSpec(identity = RecordingMediaIdentity()))
         }
+
+        assertSame(RecordingFileFailure.FILE_UNAVAILABLE, failure.failure)
+        assertTrue(transport.calls.isEmpty())
     }
 
     @Test
@@ -65,8 +57,8 @@ class TvheadendRecordingDataSourceTest {
         source.addTransferListener(listener)
 
         assertNull(source.uri, "A data source must not present a uri before it opens")
-        assertEquals(10L, source.open(recordingSpec(RecordingId(3L))))
-        assertEquals("tvheadend-recording://3", source.uri.toString())
+        assertEquals(10L, source.open(recordingSpec()))
+        assertEquals(identity.uri, source.uri.toString())
         assertEquals(1, listener.starts)
 
         val buffer = ByteArray(16)
@@ -96,9 +88,9 @@ class TvheadendRecordingDataSourceTest {
         val transport = FakeRecordingTransport(ByteArray(64) { it.toByte() })
         val source = dataSource(transport, readAheadBytes = 8)
 
-        assertEquals(64L, source.open(recordingSpec(RecordingId(3L))))
+        assertEquals(64L, source.open(recordingSpec()))
         source.close()
-        assertEquals(24L, source.open(recordingSpec(RecordingId(3L), position = 40L)))
+        assertEquals(24L, source.open(recordingSpec(position = 40L)))
 
         val buffer = ByteArray(4)
         assertEquals(4, source.read(buffer, 0, 4))
@@ -114,7 +106,7 @@ class TvheadendRecordingDataSourceTest {
         val transport = FakeRecordingTransport(ByteArray(64) { it.toByte() })
         val source = dataSource(transport, readAheadBytes = 8)
 
-        assertEquals(6L, source.open(recordingSpec(RecordingId(3L), position = 8L, length = 6L)))
+        assertEquals(6L, source.open(recordingSpec(position = 8L, length = 6L)))
 
         val buffer = ByteArray(16)
         var total = 0
@@ -136,7 +128,7 @@ class TvheadendRecordingDataSourceTest {
             openFailure = RecordingFileFailure.CONNECTION_CHANGED,
         )
         val connectionFailure = assertThrows(TvheadendRecordingException::class.java) {
-            dataSource(changed, readAheadBytes = 4).open(recordingSpec(RecordingId(3L)))
+            dataSource(changed, readAheadBytes = 4).open(recordingSpec())
         }
         assertSame(RecordingFileFailure.CONNECTION_CHANGED, connectionFailure.failure)
 
@@ -145,7 +137,7 @@ class TvheadendRecordingDataSourceTest {
             openFailure = RecordingFileFailure.ACCESS_DENIED,
         )
         val deniedFailure = assertThrows(TvheadendRecordingException::class.java) {
-            dataSource(denied, readAheadBytes = 4).open(recordingSpec(RecordingId(3L)))
+            dataSource(denied, readAheadBytes = 4).open(recordingSpec())
         }
         assertSame(RecordingFileFailure.ACCESS_DENIED, deniedFailure.failure)
 
@@ -154,7 +146,7 @@ class TvheadendRecordingDataSourceTest {
             readFailure = RecordingFileFailure.FILE_UNAVAILABLE,
         )
         val readSource = dataSource(truncated, readAheadBytes = 4)
-        readSource.open(recordingSpec(RecordingId(3L)))
+        readSource.open(recordingSpec())
         val readingFailure = assertThrows(TvheadendRecordingException::class.java) {
             readSource.read(ByteArray(4), 0, 4)
         }
@@ -191,7 +183,7 @@ class TvheadendRecordingDataSourceTest {
         val source = dataSource(transport, readAheadBytes = 4)
 
         val failure = assertThrows(TvheadendRecordingException::class.java) {
-            source.open(recordingSpec(RecordingId(3L)))
+            source.open(recordingSpec())
         }
 
         assertSame(
@@ -212,14 +204,14 @@ class TvheadendRecordingDataSourceTest {
     }
 
     private fun dataSource(opener: RecordingFileOpener, readAheadBytes: Int): DataSource =
-        createTvheadendRecordingDataSourceFactory(opener, readAheadBytes).createDataSource()
+        createTvheadendRecordingDataSourceFactory(opener, identity, readAheadBytes).createDataSource()
 
     private fun recordingSpec(
-        recordingId: RecordingId,
+        identity: RecordingMediaIdentity = this.identity,
         position: Long = 0L,
         length: Long = C.LENGTH_UNSET.toLong(),
     ): DataSpec = DataSpec.Builder()
-        .setUri(recordingUri(recordingId))
+        .setUri(identity.uri)
         .setPosition(position)
         .setLength(length)
         .build()
@@ -268,9 +260,7 @@ private class FakeRecordingTransport(
     var closes: Int = 0
         private set
 
-    override suspend fun openRecording(
-        recordingId: RecordingId,
-    ): RecordingFileResult<RecordingFile> {
+    override suspend fun openRecording(): RecordingFileResult<RecordingFile> {
         openCancellation?.let { throw it }
         openFailure?.let { return RecordingFileResult.Failed(it) }
         calls += "open"

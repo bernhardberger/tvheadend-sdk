@@ -44,7 +44,6 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.ProtocolGateway
 import at.bernhardberger.tvheadend.sdk.core.gateway.ServerConfiguration
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
-import at.bernhardberger.tvheadend.sdk.playback.RecordingId
 import at.bernhardberger.tvheadend.sdk.playback.SkipOutcome
 import at.bernhardberger.tvheadend.sdk.playback.StreamIndex
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
@@ -105,19 +104,34 @@ class SessionSubscriptionsTest {
 
         assertSame(
             SubscriptionOpenResult.NotReady,
-            children.open(SubscriptionChannelId(1L), SubscriptionEventConsumer {}),
+            children.open(
+                generationA,
+                SubscriptionChannelId(1L),
+                SubscriptionEventConsumer {},
+                SubscriptionOptions(),
+            ),
         )
         metadata.bindKnownChannels(generationA, 1L)
         children.bindGeneration(generationA)
         assertSame(
             SubscriptionOpenResult.NotReady,
-            children.open(SubscriptionChannelId(1L), SubscriptionEventConsumer {}),
+            children.open(
+                generationA,
+                SubscriptionChannelId(1L),
+                SubscriptionEventConsumer {},
+                SubscriptionOptions(),
+            ),
         )
         assertFalse(children.startLiveAdmission(generationB, CapabilityAccess.ALLOWED))
         assertTrue(children.startLiveAdmission(generationA, CapabilityAccess.ALLOWED))
 
         val openA = async {
-            children.open(SubscriptionChannelId(1L), SubscriptionEventConsumer {})
+            children.open(
+                generationA,
+                SubscriptionChannelId(1L),
+                SubscriptionEventConsumer {},
+                SubscriptionOptions(),
+            )
         }
         runCurrent()
         gateway.emitStarted(generationA)
@@ -138,7 +152,12 @@ class SessionSubscriptionsTest {
         )
         assertSame(
             SubscriptionOpenResult.NotReady,
-            children.open(SubscriptionChannelId(1L), SubscriptionEventConsumer {}),
+            children.open(
+                generationA,
+                SubscriptionChannelId(1L),
+                SubscriptionEventConsumer {},
+                SubscriptionOptions(),
+            ),
         )
 
         metadata.resetWorkingStateRetainingPublishedSnapshot()
@@ -146,7 +165,12 @@ class SessionSubscriptionsTest {
         children.bindGeneration(generationB)
         assertTrue(children.startLiveAdmission(generationB, CapabilityAccess.ALLOWED))
         val openB = async {
-            children.open(SubscriptionChannelId(1L), SubscriptionEventConsumer {})
+            children.open(
+                generationB,
+                SubscriptionChannelId(1L),
+                SubscriptionEventConsumer {},
+                SubscriptionOptions(),
+            )
         }
         runCurrent()
         gateway.emitStarted(generationB)
@@ -176,7 +200,12 @@ class SessionSubscriptionsTest {
 
         assertSame(
             SubscriptionOpenResult.NotReady,
-            coldChildren.open(SubscriptionChannelId(1L), SubscriptionEventConsumer {}),
+            coldChildren.open(
+                coldGeneration,
+                SubscriptionChannelId(1L),
+                SubscriptionEventConsumer {},
+                SubscriptionOptions(),
+            ),
         )
         assertTrue(coldGateway.requestedTimeshiftPeriods.isEmpty())
         assertTrue(coldGateway.collectedGenerations.isEmpty())
@@ -195,8 +224,10 @@ class SessionSubscriptionsTest {
         assertTrue(knownChildren.startLiveAdmission(knownGeneration, CapabilityAccess.ALLOWED))
 
         val unknown = knownChildren.open(
+            knownGeneration,
             SubscriptionChannelId(2L),
             SubscriptionEventConsumer {},
+            SubscriptionOptions(),
         ) as SubscriptionOpenResult.Failed
         assertSame(
             SubscriptionOperationFailure.SERVER_REJECTED,
@@ -219,8 +250,10 @@ class SessionSubscriptionsTest {
         assertTrue(deniedChildren.startLiveAdmission(deniedGeneration, CapabilityAccess.DENIED))
 
         val denied = deniedChildren.open(
+            deniedGeneration,
             SubscriptionChannelId(1L),
             SubscriptionEventConsumer {},
+            SubscriptionOptions(),
         ) as SubscriptionOpenResult.Failed
         assertSame(
             SubscriptionOperationFailure.ACCESS_DENIED,
@@ -252,7 +285,12 @@ class SessionSubscriptionsTest {
             )
 
             val opening = async {
-                children.open(SubscriptionChannelId(7L), SubscriptionEventConsumer {})
+                children.open(
+                    currentGeneration,
+                    SubscriptionChannelId(7L),
+                    SubscriptionEventConsumer {},
+                    SubscriptionOptions(),
+                )
             }
             runCurrent()
             gateway.emitStarted(currentGeneration)
@@ -280,9 +318,10 @@ class SessionSubscriptionsTest {
             assertTrue(children.startLiveAdmission(generation, CapabilityAccess.ALLOWED))
             val opening = async {
                 children.open(
+                    generation,
                     SubscriptionChannelId(4L),
                     SubscriptionEventConsumer {},
-                    600.seconds,
+                    SubscriptionOptions(timeshiftPeriod = 600.seconds),
                 )
             }
             runCurrent()
@@ -338,6 +377,7 @@ class SessionSubscriptionsTest {
 
         val opening = async {
             children.open(
+                generation,
                 SubscriptionChannelId(4L),
                 SubscriptionEventConsumer {},
                 SubscriptionOptions(undiscoveredId.value, 600.seconds),
@@ -371,6 +411,7 @@ class SessionSubscriptionsTest {
         assertEquals(listOf(undiscoveredId.value), gateway.requestedStreamProfileUuids)
         val replacementOpening = async {
             children.open(
+                replacementGeneration,
                 SubscriptionChannelId(4L),
                 SubscriptionEventConsumer {},
                 SubscriptionOptions(profileId.value, 600.seconds),
@@ -457,9 +498,10 @@ class SessionSubscriptionsTest {
             assertTrue(children.startLiveAdmission(generation, CapabilityAccess.ALLOWED))
             val opening = async {
                 children.open(
+                    generation,
                     SubscriptionChannelId(4L),
                     SubscriptionEventConsumer {},
-                    600.seconds,
+                    SubscriptionOptions(timeshiftPeriod = 600.seconds),
                 )
             }
             runCurrent()
@@ -551,6 +593,7 @@ class SessionSubscriptionsTest {
         assertTrue(children.startLiveAdmission(generation, CapabilityAccess.ALLOWED))
         val opening = async {
             children.open(
+                generation,
                 SubscriptionChannelId(2L),
                 SubscriptionEventConsumer { event ->
                     if (event is SubscriptionEvent.Packet) {
@@ -558,6 +601,7 @@ class SessionSubscriptionsTest {
                         releaseConsumer.await()
                     }
                 },
+                SubscriptionOptions(),
             )
         }
         runCurrent()
@@ -593,7 +637,12 @@ class SessionSubscriptionsTest {
         assertEquals(1, gateway.unsubscribeCount)
         assertSame(
             SubscriptionOpenResult.NotReady,
-            children.open(SubscriptionChannelId(2L), SubscriptionEventConsumer {}),
+            children.open(
+                generation,
+                SubscriptionChannelId(2L),
+                SubscriptionEventConsumer {},
+                SubscriptionOptions(),
+            ),
         )
     }
 
@@ -616,6 +665,7 @@ class SessionSubscriptionsTest {
         assertTrue(children.startLiveAdmission(generationA, CapabilityAccess.ALLOWED))
         val opening = async {
             children.open(
+                generationA,
                 SubscriptionChannelId(3L),
                 SubscriptionEventConsumer { event ->
                     if (event is SubscriptionEvent.Packet) {
@@ -624,6 +674,7 @@ class SessionSubscriptionsTest {
                         throw childCancellation
                     }
                 },
+                SubscriptionOptions(),
             )
         }
         runCurrent()
@@ -652,7 +703,12 @@ class SessionSubscriptionsTest {
         children.bindGeneration(generationB)
         assertTrue(children.startLiveAdmission(generationB, CapabilityAccess.ALLOWED))
         val reopened = async {
-            children.open(SubscriptionChannelId(3L), SubscriptionEventConsumer {})
+            children.open(
+                generationB,
+                SubscriptionChannelId(3L),
+                SubscriptionEventConsumer {},
+                SubscriptionOptions(),
+            )
         }
         runCurrent()
         gateway.emitStarted(generationB)
@@ -677,13 +733,18 @@ class SessionSubscriptionsTest {
 
         assertSame(
             RecordingFileFailure.CONNECTION_CHANGED,
-            (children.openRecording(RecordingId(5L)) as RecordingFileResult.Failed).failure,
+            (
+                children.openRecording(generation, DvrEntryId(5L)) as
+                    RecordingFileResult.Failed
+            ).failure,
             "An unbound session must not present a recording as unreadable",
         )
         assertTrue(gateway.openedRecordingGenerations.isEmpty())
 
         children.bindGeneration(generation)
-        val file = (children.openRecording(RecordingId(5L)) as RecordingFileResult.Ok).value
+        val file = (
+            children.openRecording(generation, DvrEntryId(5L)) as RecordingFileResult.Ok
+        ).value
         assertSame(generation, gateway.openedRecordingGenerations.single())
         assertEquals(DvrEntryId(5L), gateway.openedRecordingIds.single())
         assertEquals(64L, file.sizeBytes)
@@ -716,7 +777,10 @@ class SessionSubscriptionsTest {
         children.closeAndJoinSubscriptions()
         assertSame(
             RecordingFileFailure.CONNECTION_CHANGED,
-            (children.openRecording(RecordingId(5L)) as RecordingFileResult.Failed).failure,
+            (
+                children.openRecording(generation, DvrEntryId(5L)) as
+                    RecordingFileResult.Failed
+            ).failure,
             "A torn-down generation must report a changed connection, not a bad file",
         )
         val replacementGeneration = GatewayGeneration()
@@ -724,12 +788,72 @@ class SessionSubscriptionsTest {
         assertSame(
             RecordingFileFailure.CONNECTION_CHANGED,
             (
-                children.openRecording(generation, RecordingId(5L)) as
+                children.openRecording(generation, DvrEntryId(5L)) as
                     RecordingFileResult.Failed
                 ).failure,
             "Generation A recording admission must not fall through to generation B",
         )
         assertEquals(listOf(generation), gateway.openedRecordingGenerations)
+        children.closeAndJoinSubscriptions()
+    }
+
+    @Test
+    fun `target bound recording opens reject a same generation reincarnation`() = runTest {
+        val gateway = SubscriptionGateway()
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        metadata.bindCurrentRecording(generation, id = 5L, sizeBytes = 64L)
+        metadata.publishSessionState(
+            state = SessionState.Ready(
+                ServerCapabilities.create(CapabilityAccess.ALLOWED, CapabilityAccess.ALLOWED),
+            ),
+            progressCapability = RecordingProgressCapability.SUPPORTED,
+            generation = generation,
+        )
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
+        val target = (
+            metadata.bindPlaybackRecording(generation, currentSession, DvrEntryId(5L)) as
+                PlaybackRecordingLookup.Current
+        ).target
+        val children = PlaybackSessionChildren(
+            gateway,
+            metadata,
+            StandardTestDispatcher(testScheduler),
+        )
+        children.bindGeneration(generation)
+
+        metadata.acceptMetadata(MetadataEvent.DvrEntryDeleted(generation, DvrEntryId(5L)))
+        metadata.acceptMetadata(
+            MetadataEvent.DvrEntryAdded(
+                generation,
+                GatewayDvrEntry(
+                    id = DvrEntryId(5L),
+                    uuid = "replacement-recording",
+                    files = listOf(
+                        GatewayDvrRecordingFile(
+                            fileId = 12L,
+                            path = "/replacement.ts",
+                            start = Instant.fromEpochSeconds(2L),
+                            stop = null,
+                            sizeBytes = 64L,
+                        ),
+                    ),
+                    path = "/replacement.ts",
+                    state = DvrEntryState.RECORDING,
+                    dataSizeBytes = 64L,
+                ),
+            ),
+        )
+
+        assertSame(
+            RecordingFileFailure.FILE_UNAVAILABLE,
+            (children.openRecording(target) as RecordingFileResult.Failed).failure,
+        )
+        assertSame(
+            RecordingFileFailure.FILE_UNAVAILABLE,
+            (children.bindGrowingRecording(target) as RecordingFileResult.Failed).failure,
+        )
+        assertTrue(gateway.openedRecordingGenerations.isEmpty())
         children.closeAndJoinSubscriptions()
     }
 
@@ -741,7 +865,8 @@ class SessionSubscriptionsTest {
             PhaseOneSessionMetadata(),
             StandardTestDispatcher(testScheduler),
         )
-        children.bindGeneration(GatewayGeneration())
+        val generation = GatewayGeneration()
+        children.bindGeneration(generation)
 
         listOf(
             GatewayResult.TransportUnavailable to RecordingFileFailure.CONNECTION_CHANGED,
@@ -754,7 +879,10 @@ class SessionSubscriptionsTest {
             gateway.recordingOpenResult = source
             assertSame(
                 expected,
-                (children.openRecording(RecordingId(9L)) as RecordingFileResult.Failed).failure,
+                (
+                    children.openRecording(generation, DvrEntryId(9L)) as
+                        RecordingFileResult.Failed
+                ).failure,
             )
         }
 
@@ -774,10 +902,10 @@ class SessionSubscriptionsTest {
         )
         children.bindGeneration(generation)
 
-        val reader = (
-            children.openGrowingRecording(RecordingId(5L), position = 4L)
-                as RecordingFileResult.Ok
+        val lease = (
+            children.bindGrowingRecording(generation, DvrEntryId(5L)) as RecordingFileResult.Ok
         ).value
+        val reader = (lease.open(position = 4L) as RecordingFileResult.Ok).value
         assertEquals(2, (reader.read(ByteArray(2), 0, 2) as RecordingFileResult.Ok).value)
         assertTrue(reader.close() is RecordingFileResult.Ok)
         assertTrue(reader.close() is RecordingFileResult.Ok)
@@ -803,7 +931,8 @@ class SessionSubscriptionsTest {
         )
         children.bindGeneration(firstGeneration)
         val lease = (
-            children.bindGrowingRecording(RecordingId(5L)) as RecordingFileResult.Ok
+            children.bindGrowingRecording(firstGeneration, DvrEntryId(5L)) as
+                RecordingFileResult.Ok
         ).value
         assertEquals("GrowingRecordingFileLease(<redacted>)", lease.toString())
         val firstReader = (lease.open(0L) as RecordingFileResult.Ok).value
@@ -836,7 +965,7 @@ class SessionSubscriptionsTest {
         )
         children.bindGeneration(generation)
         val lease = (
-            children.bindGrowingRecording(RecordingId(5L)) as RecordingFileResult.Ok
+            children.bindGrowingRecording(generation, DvrEntryId(5L)) as RecordingFileResult.Ok
         ).value
         val firstReader = (lease.open(0L) as RecordingFileResult.Ok).value
         assertTrue(firstReader.close() is RecordingFileResult.Ok)
@@ -866,7 +995,7 @@ class SessionSubscriptionsTest {
         )
         children.bindGeneration(generation)
         val lease = (
-            children.bindGrowingRecording(RecordingId(5L)) as RecordingFileResult.Ok
+            children.bindGrowingRecording(generation, DvrEntryId(5L)) as RecordingFileResult.Ok
         ).value
         val firstReader = (lease.open(0L) as RecordingFileResult.Ok).value
         assertTrue(firstReader.close() is RecordingFileResult.Ok)
@@ -900,8 +1029,8 @@ class SessionSubscriptionsTest {
         assertSame(
             RecordingFileFailure.FILE_UNAVAILABLE,
             (
-                children.openGrowingRecording(RecordingId(5L), position = 0L)
-                    as RecordingFileResult.Failed
+                children.bindGrowingRecording(generation, DvrEntryId(5L)) as
+                    RecordingFileResult.Failed
             ).failure,
         )
         assertTrue(gateway.openedRecordingGenerations.isEmpty())
@@ -921,12 +1050,12 @@ class SessionSubscriptionsTest {
         )
         children.bindGeneration(generation)
 
+        val lease = (
+            children.bindGrowingRecording(generation, DvrEntryId(5L)) as RecordingFileResult.Ok
+        ).value
         assertSame(
             RecordingFileFailure.FILE_UNAVAILABLE,
-            (
-                children.openGrowingRecording(RecordingId(5L), position = 65L)
-                    as RecordingFileResult.Failed
-            ).failure,
+            (lease.open(position = 65L) as RecordingFileResult.Failed).failure,
         )
         assertEquals(listOf(generation), gateway.openedRecordingGenerations)
         assertTrue(gateway.seekedRecordingGenerations.isEmpty())
@@ -951,12 +1080,12 @@ class SessionSubscriptionsTest {
             metadata.updateCurrentRecording(generation, id = 5L, path = "/recording.ts")
         }
 
+        val lease = (
+            children.bindGrowingRecording(generation, DvrEntryId(5L)) as RecordingFileResult.Ok
+        ).value
         assertSame(
             RecordingFileFailure.FILE_UNAVAILABLE,
-            (
-                children.openGrowingRecording(RecordingId(5L), position = 0L)
-                    as RecordingFileResult.Failed
-            ).failure,
+            (lease.open(position = 0L) as RecordingFileResult.Failed).failure,
         )
         assertEquals(listOf(generation), gateway.openedRecordingGenerations)
         assertEquals(listOf(generation), gateway.closedRecordingGenerations)

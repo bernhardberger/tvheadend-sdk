@@ -4,14 +4,18 @@ package at.bernhardberger.tvheadend.sdk.media3
 
 import android.os.Handler
 import android.os.Looper
-import at.bernhardberger.tvheadend.sdk.core.DvrEntry
-import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
-import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackExit
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
-import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
-import at.bernhardberger.tvheadend.sdk.core.SessionObservation
+import at.bernhardberger.tvheadend.sdk.core.DvrProgressResult
+import at.bernhardberger.tvheadend.sdk.core.PlaybackBinding
+import at.bernhardberger.tvheadend.sdk.core.RecordingPlaybackAdmission
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
+import at.bernhardberger.tvheadend.sdk.playback.RecordingFile
+import at.bernhardberger.tvheadend.sdk.playback.RecordingFileOpener
+import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.resume
@@ -20,8 +24,98 @@ import kotlin.time.Duration
 import kotlin.time.Instant
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
+
+internal interface CoordinatorLiveTarget {
+    val isCurrent: Boolean
+
+    suspend fun open(
+        consumer: SubscriptionEventConsumer,
+        options: SubscriptionOptions,
+    ): SubscriptionOpenResult
+}
+
+internal class BoundCoordinatorLiveTarget(
+    private val binding: PlaybackBinding.Live,
+) : CoordinatorLiveTarget {
+    override val isCurrent: Boolean
+        get() = binding.isCurrent
+
+    override suspend fun open(
+        consumer: SubscriptionEventConsumer,
+        options: SubscriptionOptions,
+    ): SubscriptionOpenResult = binding.open(consumer, options)
+
+    override fun toString(): String = "CoordinatorLiveTarget(<redacted>)"
+}
+
+internal interface CoordinatorRecordingTarget : RecordingFileOpener {
+    val startedGrowing: Boolean
+
+    val admission: CoordinatorRecordingAdmission
+
+    fun bindGrowingRecording(): RecordingFileResult<GrowingRecordingFileLease>
+
+    suspend fun reportProgress(
+        growingLease: GrowingRecordingFileLease?,
+        progress: DvrPlaybackProgress,
+    ): DvrProgressResult
+}
+
+internal class BoundCoordinatorRecordingTarget(
+    private val binding: PlaybackBinding.Recording,
+) : CoordinatorRecordingTarget {
+    override val startedGrowing: Boolean
+        get() = binding.startedGrowing
+
+    override val admission: CoordinatorRecordingAdmission
+        get() = binding.admission.toCoordinatorAdmission()
+
+    override suspend fun openRecording(): RecordingFileResult<RecordingFile> =
+        binding.openRecording()
+
+    override fun bindGrowingRecording(): RecordingFileResult<GrowingRecordingFileLease> =
+        binding.bindGrowingRecording()
+
+    override suspend fun reportProgress(
+        growingLease: GrowingRecordingFileLease?,
+        progress: DvrPlaybackProgress,
+    ): DvrProgressResult = binding.reportProgress(growingLease, progress)
+
+    override fun toString(): String = "CoordinatorRecordingTarget(<redacted>)"
+}
+
+internal sealed interface CoordinatorRecordingAdmission {
+    data class Completed(
+        val resumePosition: Duration?,
+        val progressCapability: at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability,
+    ) : CoordinatorRecordingAdmission
+
+    data class GrowingStartOverOnly(
+        val progressCapability: at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability,
+    ) : CoordinatorRecordingAdmission
+
+    data object GrowingDeferred : CoordinatorRecordingAdmission
+
+    data object TargetUnavailable : CoordinatorRecordingAdmission
+
+    data object ObservationExpired : CoordinatorRecordingAdmission
+}
+
+private fun RecordingPlaybackAdmission.toCoordinatorAdmission(): CoordinatorRecordingAdmission =
+    when (this) {
+        is RecordingPlaybackAdmission.Completed -> CoordinatorRecordingAdmission.Completed(
+            resumePosition,
+            progressCapability,
+        )
+        is RecordingPlaybackAdmission.GrowingStartOverOnly ->
+            CoordinatorRecordingAdmission.GrowingStartOverOnly(progressCapability)
+        RecordingPlaybackAdmission.GrowingDeferred -> CoordinatorRecordingAdmission.GrowingDeferred
+        RecordingPlaybackAdmission.TargetUnavailable ->
+            CoordinatorRecordingAdmission.TargetUnavailable
+        RecordingPlaybackAdmission.ObservationExpired ->
+            CoordinatorRecordingAdmission.ObservationExpired
+    }
 
 internal class PlayerOperationTicket {
     private val state = AtomicReference(OperationState.QUEUED)
@@ -202,144 +296,26 @@ internal class PlaybackPlayerEventAccumulator {
     }
 }
 
-internal class ReportingGateEpoch {
-    private val valid = AtomicBoolean(true)
-
-    fun isValid(): Boolean = valid.get()
-
-    fun invalidate() {
-        valid.set(false)
-    }
-}
-
 internal class PlaybackReportEpoch(
-    private val gate: ReportingGateEpoch,
     private val targetIsValid: () -> Boolean = { true },
 ) {
     private val active = AtomicBoolean(true)
 
-    fun isValid(): Boolean = active.get() && gate.isValid() && targetIsValid()
+    fun isValid(): Boolean {
+        if (!active.get()) return false
+        if (targetIsValid()) return true
+        active.set(false)
+        return false
+    }
 
     fun invalidate() {
         active.set(false)
     }
 }
 
-internal enum class GrowingRecordingObservation {
-    RECORDING,
-    COMPLETED,
-    INVALID,
-}
-
-internal class GrowingRecordingFence private constructor(
-    private val recordingId: DvrEntryId,
-    private val observations: StateFlow<SessionObservation>,
-    private val identity: CoordinatorGrowingIdentity,
-    initialFileSizeBytes: Long?,
-    initialDataSizeBytes: Long?,
-) {
-    private var valid = true
-    private var completionObserved = false
-    private var maximumFileSizeBytes = initialFileSizeBytes
-    private var maximumDataSizeBytes = initialDataSizeBytes
-
-    fun observe(): GrowingRecordingObservation = synchronized(this) {
-        if (!valid) return@synchronized GrowingRecordingObservation.INVALID
-        val current = observations.value.dvrState as? DvrRepositoryState.Current
-            ?: return@synchronized invalidate()
-        val entry = current.snapshot.entries.singleOrNull { candidate -> candidate.id == recordingId }
-            ?: return@synchronized invalidate()
-        if (entry.coordinatorGrowingIdentity() != identity) return@synchronized invalidate()
-
-        val fileSize = entry.files?.singleOrNull()?.sizeBytes
-        if (!observeCounter(fileSize, maximumFileSizeBytes)) return@synchronized invalidate()
-        val dataSize = entry.dataSizeBytes
-        if (!observeCounter(dataSize, maximumDataSizeBytes)) return@synchronized invalidate()
-        if (fileSize != null) maximumFileSizeBytes = fileSize
-        if (dataSize != null) maximumDataSizeBytes = dataSize
-
-        when (entry.state) {
-            DvrEntryState.RECORDING -> if (completionObserved) {
-                invalidate()
-            } else {
-                GrowingRecordingObservation.RECORDING
-            }
-            DvrEntryState.COMPLETED -> {
-                completionObserved = true
-                GrowingRecordingObservation.COMPLETED
-            }
-            DvrEntryState.SCHEDULED,
-            DvrEntryState.MISSED,
-            DvrEntryState.INVALID,
-            DvrEntryState.RECORDING_ERROR,
-            DvrEntryState.COMPLETED_ERROR,
-            DvrEntryState.FILE_MISSING,
-            DvrEntryState.UNKNOWN,
-            null,
-            -> invalidate()
-        }
-    }
-
-    override fun toString(): String = "GrowingRecordingFence(<redacted>)"
-
-    private fun observeCounter(value: Long?, maximum: Long?): Boolean =
-        value == null || value >= 0L && (maximum == null || value >= maximum)
-
-    private fun invalidate(): GrowingRecordingObservation {
-        valid = false
-        return GrowingRecordingObservation.INVALID
-    }
-
-    companion object {
-        fun create(
-            entry: DvrEntry,
-            observations: StateFlow<SessionObservation>,
-        ): GrowingRecordingFence? {
-            if (entry.state != DvrEntryState.RECORDING) return null
-            val identity = entry.coordinatorGrowingIdentity() ?: return null
-            val fileSize = entry.files?.singleOrNull()?.sizeBytes
-            if (fileSize != null && fileSize < 0L) return null
-            val dataSize = entry.dataSizeBytes
-            if (dataSize != null && dataSize < 0L) return null
-            return GrowingRecordingFence(
-                recordingId = entry.id,
-                observations = observations,
-                identity = identity,
-                initialFileSizeBytes = fileSize,
-                initialDataSizeBytes = dataSize,
-            )
-        }
-    }
-}
-
-private data class CoordinatorGrowingIdentity(
-    val entryUuid: String?,
-    val entryPath: String?,
-    val fileId: Long?,
-    val filePath: String?,
-    val fileStart: Instant?,
-) {
-    override fun toString(): String = "CoordinatorGrowingIdentity(<redacted>)"
-}
-
-private fun DvrEntry.coordinatorGrowingIdentity(): CoordinatorGrowingIdentity? {
-    if (uuid?.isBlank() == true) return null
-    if (path?.isBlank() == true) return null
-    val file = files?.singleOrNull() ?: return null
-    if (file.path?.isBlank() == true) return null
-    if (file.fileId == null && file.path == null) return null
-    return CoordinatorGrowingIdentity(
-        entryUuid = uuid,
-        entryPath = path,
-        fileId = file.fileId,
-        filePath = file.path,
-        fileStart = file.start,
-    )
-}
-
 internal data class PendingPlaybackProgress(
     val epoch: PlaybackReportEpoch,
-    val recordingId: DvrEntryId,
+    val target: CoordinatorRecordingTarget,
     val growingLease: GrowingRecordingFileLease?,
     val progress: DvrPlaybackProgress,
     val terminal: Boolean,

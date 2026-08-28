@@ -4,25 +4,15 @@
 package at.bernhardberger.tvheadend.sdk.media3
 
 import androidx.media3.exoplayer.ExoPlayer
-import at.bernhardberger.tvheadend.sdk.core.ChannelId
-import at.bernhardberger.tvheadend.sdk.core.DvrEntry
-import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackExit
-import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
 import at.bernhardberger.tvheadend.sdk.core.DvrProgressPolicy
-import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
-import at.bernhardberger.tvheadend.sdk.core.DvrResumeOffer
+import at.bernhardberger.tvheadend.sdk.core.PlaybackBinding
 import at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability
-import at.bernhardberger.tvheadend.sdk.core.SessionObservation
-import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.StreamProfileId
-import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
-import at.bernhardberger.tvheadend.sdk.playback.RecordingId
-import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionIssue
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationFailure
@@ -114,7 +104,6 @@ public enum class PlaybackShutdownResult {
  * application looper, and cancellation before that work is claimed prevents player mutation.
  */
 public class TvheadendPlaybackCoordinator internal constructor(
-    private val environment: PlaybackCoordinatorEnvironment,
     private val player: PlaybackCoordinatorPlayer,
     private val playerEvents: PlaybackPlayerEventAccumulator,
     private val progressPolicy: DvrProgressPolicy,
@@ -143,7 +132,6 @@ public class TvheadendPlaybackCoordinator internal constructor(
         }
         try {
             CoordinatorActor(
-                environment = environment,
                 player = player,
                 playerEvents = playerEvents,
                 commands = commands,
@@ -165,18 +153,19 @@ public class TvheadendPlaybackCoordinator internal constructor(
         }
     }
 
-    /** Replaces the current target with live playback for [channelId]. */
-    public suspend fun setLiveTarget(channelId: ChannelId): PlaybackTargetResult =
-        setLiveTarget(channelId, LivePlaybackOptions())
-
-    /** Replaces the current live target with explicit profile and timeshift [options]. */
+    /** Replaces the current live target with the exact observation-bound [binding]. */
     public suspend fun setLiveTarget(
-        channelId: ChannelId,
-        options: LivePlaybackOptions,
+        binding: PlaybackBinding.Live,
+        options: LivePlaybackOptions = LivePlaybackOptions(),
+    ): PlaybackTargetResult = setLiveTarget(BoundCoordinatorLiveTarget(binding), options)
+
+    internal suspend fun setLiveTarget(
+        target: CoordinatorLiveTarget,
+        options: LivePlaybackOptions = LivePlaybackOptions(),
     ): PlaybackTargetResult {
         val reply = CompletableDeferred<PlaybackTargetResult>()
         val command = CoordinatorCommand.Live(
-            channelId = SubscriptionChannelId(channelId.value),
+            target = target,
             options = options.subscriptionOptions,
             ticket = PlayerOperationTicket(),
             reply = reply,
@@ -185,19 +174,24 @@ public class TvheadendPlaybackCoordinator internal constructor(
     }
 
     /**
-     * Replaces the current target with a current completed or supported growing recording.
+     * Replaces the current target with one exact observation-bound recording.
      *
-     * Unknown and unsupported recording-progress capability fail before source creation. Growing
+     * Completed playback starts over when recording progress is unknown or unsupported. Growing
      * playback requires an explicit [RecordingPlaybackStart.START_OVER], one stable `.ts` file,
-     * and starts at zero; saved server progress is never reinterpreted as a growing seek.
+     * and supported progress; saved server progress is never reinterpreted as a growing seek.
      */
     public suspend fun setRecordingTarget(
-        recordingId: DvrEntryId,
+        binding: PlaybackBinding.Recording,
+        start: RecordingPlaybackStart = RecordingPlaybackStart.RESUME,
+    ): PlaybackTargetResult = setRecordingTarget(BoundCoordinatorRecordingTarget(binding), start)
+
+    internal suspend fun setRecordingTarget(
+        target: CoordinatorRecordingTarget,
         start: RecordingPlaybackStart = RecordingPlaybackStart.RESUME,
     ): PlaybackTargetResult {
         val reply = CompletableDeferred<PlaybackTargetResult>()
         val command = CoordinatorCommand.Recording(
-            recordingId = RecordingId(recordingId.value),
+            target = target,
             start = start,
             ticket = PlayerOperationTicket(),
             reply = reply,
@@ -338,30 +332,25 @@ public class TvheadendPlaybackCoordinator internal constructor(
     }
 }
 
-/** Creates a narrow playback coordinator over [session] and an application-owned [player]. */
+/** Creates a narrow playback coordinator over an application-owned [player]. */
 @androidx.media3.common.util.UnstableApi
 public fun createTvheadendPlaybackCoordinator(
-    session: TvheadendSession,
     player: ExoPlayer,
     progressPolicy: DvrProgressPolicy = DvrProgressPolicy(),
     recoveryPolicy: PlaybackRecoveryPolicy = PlaybackRecoveryPolicy(),
     onRecoveryRequired: (PlaybackRecoveryReason) -> Unit = {},
     onUnsupportedStream: (SubscriptionStreamType) -> Unit = {},
 ): TvheadendPlaybackCoordinator {
-    val environment = SessionPlaybackCoordinatorEnvironment(session, progressPolicy)
     val events = PlaybackPlayerEventAccumulator()
     return TvheadendPlaybackCoordinator(
-        environment = environment,
         player = Media3PlaybackCoordinatorPlayer(
             access = ExoPlayerCoordinatorPlaybackAccess(
                 player = player,
-                subscriptions = session.subscriptions,
-                recordings = session.recordings,
                 recoveryPolicy = recoveryPolicy,
                 onUnsupportedStream = onUnsupportedStream,
             ),
             events = events,
-            admitRecording = environment::admitRecording,
+            admitRecording = ::admitRecordingTarget,
         ),
         playerEvents = events,
         progressPolicy = progressPolicy,
@@ -370,156 +359,77 @@ public fun createTvheadendPlaybackCoordinator(
     )
 }
 
-internal interface PlaybackCoordinatorEnvironment {
-    val observation: StateFlow<SessionObservation>
-
-    fun admitRecording(
-        recordingId: RecordingId,
-        start: RecordingPlaybackStart,
-    ): RecordingAdmission
-
-    suspend fun reportProgress(
-        recordingId: DvrEntryId,
-        growingLease: GrowingRecordingFileLease?,
-        progress: DvrPlaybackProgress,
-    )
-}
-
-private class SessionPlaybackCoordinatorEnvironment(
-    private val session: TvheadendSession,
-    private val progressPolicy: DvrProgressPolicy,
-) : PlaybackCoordinatorEnvironment {
-    override val observation: StateFlow<SessionObservation> = session.observation
-
-    override fun admitRecording(
-        recordingId: RecordingId,
-        start: RecordingPlaybackStart,
-    ): RecordingAdmission = admitRecordingTarget(
-        observation = observation,
-        recordingId = recordingId,
-        start = start,
-        progressPolicy = progressPolicy,
-        bindGrowingRecording = session.recordings::bindGrowingRecording,
-    )
-
-    override suspend fun reportProgress(
-        recordingId: DvrEntryId,
-        growingLease: GrowingRecordingFileLease?,
-        progress: DvrPlaybackProgress,
-    ) {
-        if (growingLease == null) {
-            val currentSession = observation.value.currentSession ?: return
-            session.dvrRepository.reportProgress(currentSession, recordingId, progress)
-        } else {
-            session.dvrRepository.reportProgress(growingLease, progress)
-        }
-    }
-}
-
 internal fun admitRecordingTarget(
-    observation: StateFlow<SessionObservation>,
-    recordingId: RecordingId,
+    target: CoordinatorRecordingTarget,
     start: RecordingPlaybackStart,
-    progressPolicy: DvrProgressPolicy,
-    bindGrowingRecording: (RecordingId) -> RecordingFileResult<GrowingRecordingFileLease>,
 ): RecordingAdmission {
-    val initial = observation.value
-    if (initial.sessionState !is SessionState.Ready) return RecordingAdmission.NotReady
-    when (initial.recordingProgressCapability) {
-        RecordingProgressCapability.UNKNOWN -> return RecordingAdmission.NotReady
-        RecordingProgressCapability.UNSUPPORTED -> return RecordingAdmission.ProgressUnsupported
-        RecordingProgressCapability.SUPPORTED -> Unit
-    }
-    val growingBinding = when (start) {
-        RecordingPlaybackStart.START_OVER -> bindGrowingRecording(recordingId)
-        RecordingPlaybackStart.RESUME -> null
-    }
-    val observed = observation.value
-    if (observed.sessionState !is SessionState.Ready) return RecordingAdmission.NotReady
-    when (observed.recordingProgressCapability) {
-        RecordingProgressCapability.UNKNOWN -> return RecordingAdmission.NotReady
-        RecordingProgressCapability.UNSUPPORTED -> return RecordingAdmission.ProgressUnsupported
-        RecordingProgressCapability.SUPPORTED -> Unit
-    }
-    val current = observed.dvrState as? DvrRepositoryState.Current
-        ?: return RecordingAdmission.NotReady
-    val entry = current.snapshot.entries.singleOrNull { candidate ->
-        candidate.id.value == recordingId.value
-    }
-        ?: return RecordingAdmission.TargetUnavailable
-    return when (entry.state) {
-        DvrEntryState.RECORDING -> admitGrowingRecording(
-            entry = entry,
-            observation = observation,
-            start = start,
-            binding = growingBinding,
-        )
-        DvrEntryState.COMPLETED -> RecordingAdmission.Completed(
-            resumePosition = when (start) {
-                RecordingPlaybackStart.START_OVER -> null
-                RecordingPlaybackStart.RESUME -> when (val offer = progressPolicy.resumeOffer(entry)) {
-                    is DvrResumeOffer.Resume -> offer.position
-                    DvrResumeOffer.StartOver -> null
-                }
+    return when (val initial = target.admission) {
+        is CoordinatorRecordingAdmission.Completed -> RecordingAdmission.Completed(
+            resumePosition = initial.resumePosition.takeIf {
+                start == RecordingPlaybackStart.RESUME &&
+                    initial.progressCapability == RecordingProgressCapability.SUPPORTED
             },
+            progressReportingSupported =
+                initial.progressCapability == RecordingProgressCapability.SUPPORTED,
         )
-        DvrEntryState.SCHEDULED,
-        DvrEntryState.MISSED,
-        DvrEntryState.INVALID,
-        DvrEntryState.RECORDING_ERROR,
-        DvrEntryState.COMPLETED_ERROR,
-        DvrEntryState.FILE_MISSING,
-        DvrEntryState.UNKNOWN,
-        null,
-        -> RecordingAdmission.TargetUnavailable
+        is CoordinatorRecordingAdmission.GrowingStartOverOnly -> admitGrowingRecording(
+            target = target,
+            initial = initial,
+            start = start,
+        )
+        CoordinatorRecordingAdmission.GrowingDeferred -> RecordingAdmission.GrowingRecordingDeferred
+        CoordinatorRecordingAdmission.TargetUnavailable -> RecordingAdmission.TargetUnavailable
+        CoordinatorRecordingAdmission.ObservationExpired -> RecordingAdmission.NotReady
     }
 }
 
 private fun admitGrowingRecording(
-    entry: DvrEntry,
-    observation: StateFlow<SessionObservation>,
+    target: CoordinatorRecordingTarget,
+    initial: CoordinatorRecordingAdmission.GrowingStartOverOnly,
     start: RecordingPlaybackStart,
-    binding: RecordingFileResult<GrowingRecordingFileLease>?,
 ): RecordingAdmission {
-    val file = entry.files?.singleOrNull() ?: return RecordingAdmission.TargetUnavailable
-    val containerPath = file.path ?: entry.path ?: return RecordingAdmission.TargetUnavailable
-    if (containerPath.isBlank()) return RecordingAdmission.TargetUnavailable
-    if (!containerPath.endsWith(".ts", ignoreCase = true)) {
-        return RecordingAdmission.GrowingRecordingDeferred
+    when (initial.progressCapability) {
+        RecordingProgressCapability.UNKNOWN -> return RecordingAdmission.NotReady
+        RecordingProgressCapability.UNSUPPORTED -> return RecordingAdmission.ProgressUnsupported
+        RecordingProgressCapability.SUPPORTED -> Unit
     }
-    val fence = GrowingRecordingFence.create(entry, observation)
-        ?: return RecordingAdmission.TargetUnavailable
-    return when (start) {
-        RecordingPlaybackStart.START_OVER -> when (
-            val acceptedBinding = checkNotNull(binding)
-        ) {
-            is RecordingFileResult.Ok -> {
-                val lease = acceptedBinding.value
-                if (
-                    !lease.isCurrent ||
-                    fence.observe() == GrowingRecordingObservation.INVALID
-                ) {
-                    RecordingAdmission.TargetUnavailable
-                } else {
-                    RecordingAdmission.Growing(fence, lease)
-                }
-            }
-            is RecordingFileResult.Failed -> when (acceptedBinding.failure) {
-                RecordingFileFailure.CONNECTION_CHANGED -> RecordingAdmission.NotReady
-                RecordingFileFailure.ACCESS_DENIED,
-                RecordingFileFailure.FILE_UNAVAILABLE,
-                RecordingFileFailure.CONNECTION_LIMIT,
-                RecordingFileFailure.TIMEOUT,
-                RecordingFileFailure.NOT_SUPPORTED,
-                -> RecordingAdmission.TargetUnavailable
-            }
+    if (start == RecordingPlaybackStart.RESUME) {
+        return RecordingAdmission.GrowingResumeUnsupported
+    }
+    val lease = when (val binding = target.bindGrowingRecording()) {
+        is RecordingFileResult.Ok -> binding.value
+        is RecordingFileResult.Failed -> return when (binding.failure) {
+            RecordingFileFailure.CONNECTION_CHANGED -> RecordingAdmission.NotReady
+            RecordingFileFailure.ACCESS_DENIED,
+            RecordingFileFailure.FILE_UNAVAILABLE,
+            RecordingFileFailure.CONNECTION_LIMIT,
+            RecordingFileFailure.TIMEOUT,
+            RecordingFileFailure.NOT_SUPPORTED,
+            -> RecordingAdmission.TargetUnavailable
         }
-        RecordingPlaybackStart.RESUME -> RecordingAdmission.GrowingResumeUnsupported
+    }
+    if (!lease.isCurrent) return RecordingAdmission.TargetUnavailable
+    return when (val current = target.admission) {
+        is CoordinatorRecordingAdmission.Completed -> if (
+            current.progressCapability == RecordingProgressCapability.SUPPORTED
+        ) {
+            RecordingAdmission.Growing(lease, progressReportingSupported = true)
+        } else {
+            RecordingAdmission.NotReady
+        }
+        is CoordinatorRecordingAdmission.GrowingStartOverOnly -> when (current.progressCapability) {
+            RecordingProgressCapability.UNKNOWN -> RecordingAdmission.NotReady
+            RecordingProgressCapability.UNSUPPORTED -> RecordingAdmission.ProgressUnsupported
+            RecordingProgressCapability.SUPPORTED ->
+                RecordingAdmission.Growing(lease, progressReportingSupported = true)
+        }
+        CoordinatorRecordingAdmission.GrowingDeferred -> RecordingAdmission.GrowingRecordingDeferred
+        CoordinatorRecordingAdmission.TargetUnavailable -> RecordingAdmission.TargetUnavailable
+        CoordinatorRecordingAdmission.ObservationExpired -> RecordingAdmission.NotReady
     }
 }
 
 private class CoordinatorActor(
-    private val environment: PlaybackCoordinatorEnvironment,
     private val player: PlaybackCoordinatorPlayer,
     private val playerEvents: PlaybackPlayerEventAccumulator,
     private val commands: Channel<CoordinatorCommand>,
@@ -533,32 +443,19 @@ private class CoordinatorActor(
     private val deactivateTimeshift: (PlaybackTargetToken) -> Unit,
 ) {
     private val mailbox = PlaybackProgressMailbox()
-    private val gateEvents = Channel<Boolean>(capacity = 16)
     private val ticks = Channel<PlaybackTargetToken>(Channel.CONFLATED)
-    @Volatile
-    private var reportGate: ReportingGateEpoch? = null
     private var activeTarget: ActorTarget? = null
     private var ticker: Job? = null
 
     suspend fun run(): Unit = coroutineScope {
         val reportWorker = launch { runReportWorker() }
-        val gateObserver = launch {
-            environment.observation.collect { observation ->
-                val valid = observation.sessionState is SessionState.Ready &&
-                    observation.recordingProgressCapability == RecordingProgressCapability.SUPPORTED
-                if (!valid) reportGate?.invalidate()
-                gateEvents.send(valid)
-            }
-        }
         var processing: CoordinatorCommand? = null
         try {
-            applyReportGate(currentReportGateIsValid(), this)
             var shuttingDown = false
             while (!shuttingDown) {
                 select<Unit> {
                     commands.onReceiveCatching { received ->
                         val command = received.getOrNull() ?: return@onReceiveCatching
-                        drainGateEvents(this@coroutineScope)
                         if (command.ticket.isCancelled()) return@onReceiveCatching
                         processing = command
                         shuttingDown = processCommand(command, reportWorker, this@coroutineScope)
@@ -566,9 +463,6 @@ private class CoordinatorActor(
                     }
                     playerEvents.signal.onReceive {
                         drainPlayerEvents()
-                    }
-                    gateEvents.onReceive { valid ->
-                        applyReportGate(valid, this@coroutineScope)
                     }
                     ticks.onReceive { token ->
                         observeElapsed(token)
@@ -586,14 +480,11 @@ private class CoordinatorActor(
                 target.timeshiftControls.retire()
                 deactivateTimeshift(target.token)
             }
-            reportGate?.invalidate()
-            reportGate = null
             ticker?.cancel()
             ticker = null
             (activeTarget as? ActorTarget.Recording)?.reportEpoch?.invalidate()
             mailbox.discard()
             reportWorker.cancelAndJoin()
-            gateObserver.cancelAndJoin()
         }
     }
 
@@ -612,7 +503,7 @@ private class CoordinatorActor(
             val result = player.installLive(
                 ticket = command.ticket,
                 token = token,
-                channelId = command.channelId,
+                target = command.target,
                 options = command.options,
                 timeshiftControls = timeshiftControls,
             )
@@ -649,7 +540,7 @@ private class CoordinatorActor(
             val result = player.installRecording(
                 ticket = command.ticket,
                 token = token,
-                recordingId = command.recordingId,
+                target = command.target,
                 start = command.start,
             )
             applyRetirement(result.retiredTarget, result.retiredRecording)
@@ -657,12 +548,11 @@ private class CoordinatorActor(
                 val admission = checkNotNull(result.installedRecording)
                 val target = ActorTarget.Recording(
                     token = token,
-                    recordingId = DvrEntryId(command.recordingId.value),
+                    target = command.target,
                     admission = admission,
                 )
                 activeTarget = target
-                applyReportGate(currentReportGateIsValid(), scope)
-                if (target.reportEpoch == null) startReporting(target, scope)
+                if (admission.progressReportingSupported) startReporting(target, scope)
             } else {
                 token.retire()
             }
@@ -770,13 +660,13 @@ private class CoordinatorActor(
                         event.terminalExit,
                         event.growingFinalEndProven,
                     )
-                    event.paused && !target.terminalized && refreshGrowingTarget(target) ->
+                    event.paused && !target.terminalized && refreshRecordingTarget(target) ->
                         target.tracker?.let { tracker ->
                             target.reportEpoch?.takeIf { epoch -> epoch.isValid() }?.let { epoch ->
                                 mailbox.offer(
                                     PendingPlaybackProgress(
                                         epoch = epoch,
-                                        recordingId = target.recordingId,
+                                        target = target.target,
                                         growingLease = target.growingLease,
                                         progress = tracker.onPause(timeSource.now(), event.snapshot.position),
                                         terminal = false,
@@ -792,7 +682,7 @@ private class CoordinatorActor(
     private suspend fun observeElapsed(token: PlaybackTargetToken) {
         val target = activeTarget as? ActorTarget.Recording ?: return
         if (target.token !== token || target.terminalized) return
-        if (!refreshGrowingTarget(target)) return
+        if (!refreshRecordingTarget(target)) return
         val tracker = target.tracker ?: return
         val epoch = target.reportEpoch?.takeIf { it.isValid() } ?: return
         val snapshot = player.snapshot(token) ?: return
@@ -800,7 +690,7 @@ private class CoordinatorActor(
             mailbox.offer(
                 PendingPlaybackProgress(
                     epoch = epoch,
-                    recordingId = target.recordingId,
+                    target = target.target,
                     growingLease = target.growingLease,
                     progress = progress,
                     terminal = false,
@@ -819,11 +709,11 @@ private class CoordinatorActor(
         target.terminalized = true
         ticker?.cancel()
         ticker = null
-        if (!refreshGrowingTarget(target)) return
+        if (!refreshRecordingTarget(target)) return
         val tracker = target.tracker ?: return
         val epoch = target.reportEpoch?.takeIf { it.isValid() } ?: return
         val terminalState = if (
-            target.growingFence != null &&
+            target.growingLease != null &&
             exit == DvrPlaybackExit.NATURAL_END &&
             !growingFinalEndProven
         ) {
@@ -834,11 +724,11 @@ private class CoordinatorActor(
         mailbox.offer(
             PendingPlaybackProgress(
                 epoch = epoch,
-                recordingId = target.recordingId,
+                target = target.target,
                 growingLease = target.growingLease,
                 progress = tracker.onTerminal(
                     position = snapshot.position,
-                    duration = snapshot.duration.takeIf { target.growingFence == null },
+                    duration = snapshot.duration.takeIf { target.growingLease == null },
                     state = terminalState,
                     exit = exit,
                 ),
@@ -847,33 +737,11 @@ private class CoordinatorActor(
         )
     }
 
-    private suspend fun applyReportGate(valid: Boolean, scope: CoroutineScope) {
-        if (!valid) {
-            reportGate?.invalidate()
-            reportGate = null
-            val target = activeTarget as? ActorTarget.Recording
-            target?.reportEpoch?.invalidate()
-            target?.reportEpoch = null
-            target?.tracker = null
-            ticker?.cancel()
-            ticker = null
-            mailbox.discardInvalid()
-            return
-        }
-        if (reportGate == null) reportGate = ReportingGateEpoch()
-        val target = activeTarget as? ActorTarget.Recording ?: return
-        if (!target.terminalized && target.reportEpoch == null) startReporting(target, scope)
-    }
-
     private suspend fun startReporting(target: ActorTarget.Recording, scope: CoroutineScope) {
-        val gate = reportGate?.takeIf { it.isValid() } ?: return
-        if (!refreshGrowingTarget(target)) return
+        if (!refreshRecordingTarget(target)) return
         val tracker = progressPolicy.tracker()
         target.tracker = tracker
-        target.reportEpoch = PlaybackReportEpoch(gate) {
-            target.growingLease?.isCurrent != false &&
-                target.growingFence?.observe() != GrowingRecordingObservation.INVALID
-        }
+        target.reportEpoch = PlaybackReportEpoch { reportableEntryState(target) != null }
         player.snapshot(target.token)?.let { snapshot ->
             tracker.onElapsed(timeSource.now(), snapshot.position)
         }
@@ -886,36 +754,34 @@ private class CoordinatorActor(
         }
     }
 
-    private suspend fun drainGateEvents(scope: CoroutineScope) {
-        while (true) {
-            val valid = gateEvents.tryReceive().getOrNull() ?: break
-            applyReportGate(valid, scope)
+    private fun refreshRecordingTarget(target: ActorTarget.Recording): Boolean {
+        if (target.reportEpoch?.isValid() == false) return invalidateRecordingTarget(target)
+        val state = reportableEntryState(target) ?: return invalidateRecordingTarget(target)
+        target.entryState = state
+        return true
+    }
+
+    private fun reportableEntryState(target: ActorTarget.Recording): DvrEntryState? {
+        if (!target.progressReportingSupported || target.growingLease?.isCurrent == false) return null
+        return when (val admission = target.target.admission) {
+            is CoordinatorRecordingAdmission.Completed ->
+                DvrEntryState.COMPLETED.takeIf {
+                    admission.progressCapability == RecordingProgressCapability.SUPPORTED
+                }
+            is CoordinatorRecordingAdmission.GrowingStartOverOnly ->
+                DvrEntryState.RECORDING.takeIf {
+                    target.growingLease != null &&
+                        admission.progressCapability == RecordingProgressCapability.SUPPORTED
+                }
+            CoordinatorRecordingAdmission.GrowingDeferred,
+            CoordinatorRecordingAdmission.TargetUnavailable,
+            CoordinatorRecordingAdmission.ObservationExpired,
+            -> null
         }
     }
 
-    private fun currentReportGateIsValid(): Boolean {
-        val observation = environment.observation.value
-        return observation.sessionState is SessionState.Ready &&
-            observation.recordingProgressCapability == RecordingProgressCapability.SUPPORTED
-    }
-
-    private fun refreshGrowingTarget(target: ActorTarget.Recording): Boolean {
-        if (target.growingLease?.isCurrent == false) return invalidateGrowingTarget(target)
-        return when (target.growingFence?.observe()) {
-            null,
-            GrowingRecordingObservation.RECORDING,
-            -> true
-            GrowingRecordingObservation.COMPLETED -> {
-                target.entryState = DvrEntryState.COMPLETED
-                true
-            }
-            GrowingRecordingObservation.INVALID -> invalidateGrowingTarget(target)
-        }
-    }
-
-    private fun invalidateGrowingTarget(target: ActorTarget.Recording): Boolean {
+    private fun invalidateRecordingTarget(target: ActorTarget.Recording): Boolean {
         target.reportEpoch?.invalidate()
-        target.reportEpoch = null
         target.tracker = null
         ticker?.cancel()
         ticker = null
@@ -926,10 +792,9 @@ private class CoordinatorActor(
     private suspend fun runReportWorker() {
         while (true) {
             val report = mailbox.next() ?: return
-            if (!report.epoch.isValid() || !currentReportGateIsValid()) continue
+            if (!report.epoch.isValid()) continue
             try {
-                environment.reportProgress(
-                    report.recordingId,
+                report.target.reportProgress(
                     report.growingLease,
                     report.progress,
                 )
@@ -956,15 +821,14 @@ private class CoordinatorActor(
 
         class Recording(
             override val token: PlaybackTargetToken,
-            val recordingId: DvrEntryId,
+            val target: CoordinatorRecordingTarget,
             admission: RecordingAdmission.Accepted,
         ) : ActorTarget(token) {
+            val progressReportingSupported: Boolean = admission.progressReportingSupported
             var entryState: DvrEntryState = when (admission) {
                 is RecordingAdmission.Completed -> DvrEntryState.COMPLETED
                 is RecordingAdmission.Growing -> DvrEntryState.RECORDING
             }
-            val growingFence: GrowingRecordingFence? =
-                (admission as? RecordingAdmission.Growing)?.fence
             val growingLease: GrowingRecordingFileLease? =
                 (admission as? RecordingAdmission.Growing)?.lease
             var tracker: at.bernhardberger.tvheadend.sdk.core.DvrProgressTracker? = null
@@ -978,14 +842,14 @@ private sealed class CoordinatorCommand(
     open val ticket: PlayerOperationTicket,
 ) {
     data class Live(
-        val channelId: SubscriptionChannelId,
+        val target: CoordinatorLiveTarget,
         val options: SubscriptionOptions,
         override val ticket: PlayerOperationTicket,
         val reply: CompletableDeferred<PlaybackTargetResult>,
     ) : CoordinatorCommand(ticket)
 
     data class Recording(
-        val recordingId: RecordingId,
+        val target: CoordinatorRecordingTarget,
         val start: RecordingPlaybackStart,
         override val ticket: PlayerOperationTicket,
         val reply: CompletableDeferred<PlaybackTargetResult>,

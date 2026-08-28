@@ -137,18 +137,26 @@ internal class SdkAcceptanceInstrumentationTest {
 
             val activePlayer = createAcceptancePlayer(instrumentation, surface, render)
             player = activePlayer
-            val activeCoordinator = createTvheadendPlaybackCoordinator(session, activePlayer)
+            val activeCoordinator = createTvheadendPlaybackCoordinator(activePlayer)
             coordinator = activeCoordinator
             val activeCoordinatorOwner = launch(start = CoroutineStart.UNDISPATCHED) { activeCoordinator.run() }
             coordinatorOwner = activeCoordinatorOwner
             instrumentation.runOnMainSync { activePlayer.play() }
-            assertEquals(PlaybackTargetResult.STARTED, activeCoordinator.setLiveTarget(firstChannel))
+            assertEquals(
+                PlaybackTargetResult.STARTED,
+                activeCoordinator.setLiveTarget(session.requireLivePlaybackBinding(firstChannel)),
+            )
             val firstAdmissionMs = elapsedSince(startedAt)
             render.awaitPlayingVideo(instrumentation, activePlayer, "cold live playback")
             val firstRenderedFrameMs = elapsedSince(startedAt)
 
             val replacementBaseline = playerSnapshot(instrumentation, activePlayer)
-            assertEquals(PlaybackTargetResult.STARTED, activeCoordinator.setLiveTarget(replacementChannel))
+            assertEquals(
+                PlaybackTargetResult.STARTED,
+                activeCoordinator.setLiveTarget(
+                    session.requireLivePlaybackBinding(replacementChannel),
+                ),
+            )
             render.awaitPlayingVideo(
                 instrumentation = instrumentation,
                 player = activePlayer,
@@ -173,20 +181,19 @@ internal class SdkAcceptanceInstrumentationTest {
             assertEquals(SessionCommandResult.STARTED, session.connect(profile))
             val reconnectSynchronizingMs = reconnectSynchronizing.await()
             assertNotNull(session.observation.value.channel(firstChannel))
+            val warmReady = awaitReady(session)
+            awaitProgressSupport(session)
             val reconnectBaseline = playerSnapshot(instrumentation, activePlayer)
             assertEquals(
-                "A retained known channel must be admitted while synchronizing",
                 PlaybackTargetResult.STARTED,
-                activeCoordinator.setLiveTarget(firstChannel),
+                activeCoordinator.setLiveTarget(session.requireLivePlaybackBinding(firstChannel)),
             )
             render.awaitPlayingVideo(
                 instrumentation = instrumentation,
                 player = activePlayer,
-                label = "reconnect live playback during synchronization",
+                label = "observation-bound reconnect live playback",
                 frameBaseline = reconnectBaseline.renderedVideoFrames,
             )
-            val warmReady = awaitReady(session)
-            awaitProgressSupport(session)
             val warmReadyMs = elapsedSince(reconnectStartedAt)
             val memoryAfterReconnect = memoryObservation()
             assertEquals(PlaybackStopResult.STOPPED, activeCoordinator.stop())
@@ -338,7 +345,7 @@ internal class SdkAcceptanceInstrumentationTest {
         val surface = launchPlaybackSurface(instrumentation)
         val render = RenderObservation()
         val player = createAcceptancePlayer(instrumentation, surface, render)
-        val coordinator = createTvheadendPlaybackCoordinator(session, player)
+        val coordinator = createTvheadendPlaybackCoordinator(player)
         val coordinatorOwner = launch(start = CoroutineStart.UNDISPATCHED) { coordinator.run() }
 
         try {
@@ -349,7 +356,10 @@ internal class SdkAcceptanceInstrumentationTest {
             requireOwnedEntry(session, priorState)
             assertEquals(
                 PlaybackTargetResult.STARTED,
-                coordinator.setRecordingTarget(recordingId, RecordingPlaybackStart.START_OVER),
+                coordinator.setRecordingTarget(
+                    session.requireRecordingPlaybackBinding(recordingId),
+                    RecordingPlaybackStart.START_OVER,
+                ),
             )
             instrumentation.runOnMainSync { player.play() }
             render.awaitPlayingVideo(instrumentation, player, "periodic checkpoint playback")
@@ -450,13 +460,16 @@ internal class SdkAcceptanceInstrumentationTest {
 
             val activePlayer = createAcceptancePlayer(instrumentation, surface, render)
             player = activePlayer
-            val activeCoordinator = createTvheadendPlaybackCoordinator(session, activePlayer)
+            val activeCoordinator = createTvheadendPlaybackCoordinator(activePlayer)
             coordinator = activeCoordinator
             val activeCoordinatorOwner = launch(start = CoroutineStart.UNDISPATCHED) { activeCoordinator.run() }
             coordinatorOwner = activeCoordinatorOwner
             assertEquals(
                 PlaybackTargetResult.STARTED,
-                activeCoordinator.setRecordingTarget(recordingId, RecordingPlaybackStart.RESUME),
+                activeCoordinator.setRecordingTarget(
+                    session.requireRecordingPlaybackBinding(recordingId),
+                    RecordingPlaybackStart.RESUME,
+                ),
             )
             instrumentation.runOnMainSync { activePlayer.play() }
             render.awaitPlayingVideo(instrumentation, activePlayer, "cross-process resume")
@@ -499,7 +512,10 @@ internal class SdkAcceptanceInstrumentationTest {
             requireOwnedEntry(session, priorState)
             assertEquals(
                 PlaybackTargetResult.STARTED,
-                activeCoordinator.setRecordingTarget(recordingId, RecordingPlaybackStart.START_OVER),
+                activeCoordinator.setRecordingTarget(
+                    session.requireRecordingPlaybackBinding(recordingId),
+                    RecordingPlaybackStart.START_OVER,
+                ),
             )
             instrumentation.runOnMainSync { activePlayer.play() }
             render.awaitPlayingVideo(instrumentation, activePlayer, "natural completion setup")
@@ -513,7 +529,10 @@ internal class SdkAcceptanceInstrumentationTest {
             requireOwnedEntry(session, priorState)
             assertEquals(
                 PlaybackTargetResult.STARTED,
-                activeCoordinator.setRecordingTarget(recordingId, RecordingPlaybackStart.START_OVER),
+                activeCoordinator.setRecordingTarget(
+                    session.requireRecordingPlaybackBinding(recordingId),
+                    RecordingPlaybackStart.START_OVER,
+                ),
             )
             instrumentation.runOnMainSync { activePlayer.play() }
             render.awaitPlayingVideo(instrumentation, activePlayer, "orderly completion setup")

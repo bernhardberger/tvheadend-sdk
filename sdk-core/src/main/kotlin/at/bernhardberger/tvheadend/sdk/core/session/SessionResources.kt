@@ -15,12 +15,16 @@ import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
 import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
 import at.bernhardberger.tvheadend.sdk.core.DvrConfigurationsState
 import at.bernhardberger.tvheadend.sdk.core.DvrCutpointCommands
+import at.bernhardberger.tvheadend.sdk.core.DvrCutpointsResult
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpaceState
 import at.bernhardberger.tvheadend.sdk.core.DvrEntry
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
+import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
+import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
 import at.bernhardberger.tvheadend.sdk.core.DvrMutationCommands
 import at.bernhardberger.tvheadend.sdk.core.DvrProgressCommands
+import at.bernhardberger.tvheadend.sdk.core.DvrProgressResult
 import at.bernhardberger.tvheadend.sdk.core.DvrRepository
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
@@ -44,24 +48,19 @@ import at.bernhardberger.tvheadend.sdk.core.metadata.DvrReducer
 import at.bernhardberger.tvheadend.sdk.core.metadata.EpgQueryFence
 import at.bernhardberger.tvheadend.sdk.core.metadata.EpgReducer
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
-import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFile
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
-import at.bernhardberger.tvheadend.sdk.playback.RecordingFileOpener
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
-import at.bernhardberger.tvheadend.sdk.playback.RecordingId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
-import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlin.time.Duration
 import kotlin.time.Instant
 
 internal interface SessionMetadata {
@@ -79,6 +78,41 @@ internal interface SessionMetadata {
         generation: GatewayGeneration,
         currentSession: CurrentSessionObservation,
     ): SessionObservation?
+
+    public fun bindPlaybackRecording(
+        generation: GatewayGeneration,
+        currentSession: CurrentSessionObservation,
+        id: DvrEntryId,
+    ): PlaybackRecordingLookup
+
+    public fun currentPlaybackRecording(
+        target: PlaybackRecordingTarget,
+    ): PlaybackRecordingLookup
+
+    public suspend fun reportProgress(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+        progress: DvrPlaybackProgress,
+    ): DvrProgressResult = DvrProgressResult.NotReady
+
+    public suspend fun reportProgress(
+        target: PlaybackRecordingTarget,
+        progress: DvrPlaybackProgress,
+    ): DvrProgressResult = DvrProgressResult.NotReady
+
+    public suspend fun reportProgress(
+        lease: GrowingRecordingFileLease,
+        progress: DvrPlaybackProgress,
+    ): DvrProgressResult = DvrProgressResult.NotReady
+
+    public suspend fun getCutpoints(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+    ): DvrCutpointsResult = DvrCutpointsResult.NotReady
+
+    public suspend fun getCutpoints(
+        target: PlaybackRecordingTarget,
+    ): DvrCutpointsResult = DvrCutpointsResult.NotReady
 
     public fun publishSessionState(
         state: SessionState,
@@ -184,8 +218,48 @@ internal sealed interface CurrentDvrEntryLookup {
     ) : CurrentDvrEntryLookup
 }
 
-internal class DvrEntryIncarnation {
+internal class DvrEntryIncarnation(initialEntry: DvrEntry? = null) {
+    private var completedIdentity = initialEntry?.let(CompletedPlaybackIdentity::create)
+
+    internal fun preservesUpdate(previous: DvrEntry, next: DvrEntry): Boolean {
+        if (previous.state == DvrEntryState.COMPLETED && next.state == DvrEntryState.COMPLETED) {
+            val established = completedIdentity
+                ?: CompletedPlaybackIdentity.create(previous)
+                ?: return false
+            val candidate = CompletedPlaybackIdentity.create(next) ?: return false
+            if (!established.isCompatibleWith(candidate)) return false
+            completedIdentity = established.mergedWith(candidate)
+            return true
+        }
+
+        val preserved = previous.preservesGrowingContinuity(next)
+        if (preserved) completedIdentity = CompletedPlaybackIdentity.create(next)
+        return preserved
+    }
+
     override fun toString(): String = "DvrEntryIncarnation(<redacted>)"
+}
+
+internal class PlaybackRecordingTarget(
+    internal val generation: GatewayGeneration,
+    internal val currentSession: CurrentSessionObservation,
+    internal val recordingId: DvrEntryId,
+    internal val incarnation: DvrEntryIncarnation,
+) {
+    override fun toString(): String = "PlaybackRecordingTarget(<redacted>)"
+}
+
+internal sealed interface PlaybackRecordingLookup {
+    public data object ObservationExpired : PlaybackRecordingLookup
+
+    public data object TargetUnavailable : PlaybackRecordingLookup
+
+    public class Current(
+        internal val observation: SessionObservation,
+        internal val state: DvrRepositoryState.Current,
+        internal val entry: DvrEntry,
+        internal val target: PlaybackRecordingTarget,
+    ) : PlaybackRecordingLookup
 }
 
 internal fun interface EpgCoverageRequester {
@@ -198,8 +272,8 @@ internal fun interface EpgCoverageRequester {
 
 internal class PhaseOneSessionMetadata(
     mutationCommands: DvrMutationCommands = DvrMutationCommands.None,
-    progressCommands: DvrProgressCommands = DvrProgressCommands.None,
-    cutpointCommands: DvrCutpointCommands = DvrCutpointCommands.None,
+    private val progressCommands: DvrProgressCommands = DvrProgressCommands.None,
+    private val cutpointCommands: DvrCutpointCommands = DvrCutpointCommands.None,
     private val onDvrMetadataAccepted: (MetadataEvent) -> Unit = {},
     private val observationStore: SessionObservationStore = SessionObservationStore(),
 ) : SessionMetadata {
@@ -229,8 +303,6 @@ internal class PhaseOneSessionMetadata(
     }
     private val stateBackedDvrRepository = object : CommandBackedDvrRepository(
         mutations = mutationCommands,
-        progressCommands = progressCommands,
-        cutpointCommands = cutpointCommands,
         resolveGeneration = ::resolveGeneration,
     ) {}
     private var generation: GatewayGeneration? = null
@@ -267,6 +339,59 @@ internal class PhaseOneSessionMetadata(
         if (this.generation !== generation) return@synchronized null
         observationStore.currentObservation(currentSession, generation)
     }
+
+    override fun bindPlaybackRecording(
+        generation: GatewayGeneration,
+        currentSession: CurrentSessionObservation,
+        id: DvrEntryId,
+    ): PlaybackRecordingLookup = synchronized(lock) {
+        playbackRecordingLocked(generation, currentSession, id, expectedTarget = null)
+    }
+
+    override fun currentPlaybackRecording(
+        target: PlaybackRecordingTarget,
+    ): PlaybackRecordingLookup = synchronized(lock) {
+        playbackRecordingLocked(
+            target.generation,
+            target.currentSession,
+            target.recordingId,
+            expectedTarget = target,
+        )
+    }
+
+    override suspend fun reportProgress(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+        progress: DvrPlaybackProgress,
+    ): DvrProgressResult = progressCommands.reportProgress(generation, id, progress)
+
+    override suspend fun reportProgress(
+        target: PlaybackRecordingTarget,
+        progress: DvrPlaybackProgress,
+    ): DvrProgressResult = progressCommands.reportProgress(
+        generation = target.generation,
+        id = target.recordingId,
+        progress = progress,
+        targetIsCurrent = { currentPlaybackRecording(target) is PlaybackRecordingLookup.Current },
+    )
+
+    override suspend fun reportProgress(
+        lease: GrowingRecordingFileLease,
+        progress: DvrPlaybackProgress,
+    ): DvrProgressResult = progressCommands.reportProgress(lease, progress)
+
+    override suspend fun getCutpoints(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+    ): DvrCutpointsResult = cutpointCommands.getCutpoints(generation, id)
+
+    override suspend fun getCutpoints(
+        target: PlaybackRecordingTarget,
+    ): DvrCutpointsResult = cutpointCommands.getCutpoints(
+        generation = target.generation,
+        id = target.recordingId,
+        targetIsCurrent = { currentPlaybackRecording(target) is PlaybackRecordingLookup.Current },
+    )
 
     override fun publishSessionState(
         state: SessionState,
@@ -496,21 +621,34 @@ internal class PhaseOneSessionMetadata(
                     epgReducer.accept(event)
                     val dvrEventAccepted = dvrReducer.accept(event)
                     val dvrSnapshot = if (synchronizedCurrent) dvrReducer.snapshot() else null
-                    if (dvrEventAccepted) {
-                        val id = when (event) {
-                            is MetadataEvent.DvrEntryAdded -> event.entry.id
-                            is MetadataEvent.DvrEntryDeleted -> event.entryId
-                            is MetadataEvent.DvrEntryUpdated -> previousDvrEntry?.let { previous ->
+                    if (dvrEventAccepted && synchronizedCurrent) {
+                        when (event) {
+                            is MetadataEvent.DvrEntryAdded -> {
+                                val id = event.entry.id
                                 val current = dvrSnapshot
                                     ?.entries
-                                    ?.singleOrNull { entry -> entry.id == previous.id }
-                                previous.id.takeIf {
-                                    current == null || !previous.preservesGrowingContinuity(current)
+                                    ?.singleOrNull { entry -> entry.id == id }
+                                dvrEntryIncarnations[id] = DvrEntryIncarnation(current)
+                            }
+                            is MetadataEvent.DvrEntryDeleted -> {
+                                dvrEntryIncarnations[event.entryId] = DvrEntryIncarnation()
+                            }
+                            is MetadataEvent.DvrEntryUpdated -> {
+                                val id = event.entry.id
+                                val previous = previousDvrEntry
+                                val current = dvrSnapshot
+                                    ?.entries
+                                    ?.singleOrNull { entry -> entry.id == id }
+                                val preserved = previous != null && current != null &&
+                                    dvrEntryIncarnations
+                                        .getOrPut(id) { DvrEntryIncarnation(previous) }
+                                        .preservesUpdate(previous, current)
+                                if (!preserved) {
+                                    dvrEntryIncarnations[id] = DvrEntryIncarnation(current)
                                 }
                             }
-                            else -> null
+                            else -> Unit
                         }
-                        if (id != null) dvrEntryIncarnations[id] = DvrEntryIncarnation()
                     }
                     if (synchronizedCurrent) {
                         publishCurrent(reducer.snapshot(), epgReducer.snapshot(), checkNotNull(dvrSnapshot))
@@ -578,12 +716,43 @@ internal class PhaseOneSessionMetadata(
                 }
             }
             val incarnation = if (matchCount == 1) {
-                dvrEntryIncarnations.getOrPut(id, ::DvrEntryIncarnation)
+                dvrEntryIncarnations.getOrPut(id) { DvrEntryIncarnation(match) }
             } else {
                 null
             }
             CurrentDvrEntryLookup.Current(current, match, matchCount, incarnation)
         }
+    }
+
+    private fun playbackRecordingLocked(
+        generation: GatewayGeneration,
+        currentSession: CurrentSessionObservation,
+        id: DvrEntryId,
+        expectedTarget: PlaybackRecordingTarget?,
+    ): PlaybackRecordingLookup {
+        if (this.generation !== generation) return PlaybackRecordingLookup.ObservationExpired
+        val observation = observationStore.currentObservation(currentSession, generation)
+            ?: return PlaybackRecordingLookup.ObservationExpired
+        val current = mutableDvr.value as? DvrRepositoryState.Current
+            ?: return PlaybackRecordingLookup.TargetUnavailable
+        val matches = current.snapshot.entries.filter { entry -> entry.id == id }
+        val entry = matches.singleOrNull()
+            ?: return PlaybackRecordingLookup.TargetUnavailable
+        val incarnation = dvrEntryIncarnations.getOrPut(id) { DvrEntryIncarnation(entry) }
+        if (expectedTarget != null && expectedTarget.incarnation !== incarnation) {
+            return PlaybackRecordingLookup.TargetUnavailable
+        }
+        return PlaybackRecordingLookup.Current(
+            observation = observation,
+            state = current,
+            entry = entry,
+            target = expectedTarget ?: PlaybackRecordingTarget(
+                generation = generation,
+                currentSession = currentSession,
+                recordingId = id,
+                incarnation = incarnation,
+            ),
+        )
     }
 
     override fun bindEpgCoverageRequester(
@@ -793,7 +962,7 @@ private fun MetadataEvent.isDvrMutationConfirmation(): Boolean = when (this) {
     -> false
 }
 
-internal interface SessionChildren : ArtworkLoader, SubscriptionOpener, RecordingFileOpener {
+internal interface SessionChildren : ArtworkLoader {
     public suspend fun open(
         generation: GatewayGeneration,
         channelId: SubscriptionChannelId,
@@ -812,47 +981,15 @@ internal interface SessionChildren : ArtworkLoader, SubscriptionOpener, Recordin
         artworkId: ArtworkId,
     ): ArtworkLoadResult = ArtworkLoadResult.Unavailable(ArtworkFailure.OBSERVATION_EXPIRED)
 
-    /** Reports the changed connection until a child actually binds a generation to recordings. */
-    public override suspend fun openRecording(
-        recordingId: RecordingId,
-    ): RecordingFileResult<RecordingFile> =
-        RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
-
     public suspend fun openRecording(
-        generation: GatewayGeneration,
-        recordingId: RecordingId,
+        target: PlaybackRecordingTarget,
     ): RecordingFileResult<RecordingFile> =
-        RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
-
-    /** Reports the changed connection until a child can bind growing-file continuity. */
-    public override fun bindGrowingRecording(
-        recordingId: RecordingId,
-    ): RecordingFileResult<GrowingRecordingFileLease> =
         RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
 
     public fun bindGrowingRecording(
-        generation: GatewayGeneration,
-        recordingId: RecordingId,
+        target: PlaybackRecordingTarget,
     ): RecordingFileResult<GrowingRecordingFileLease> =
         RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
-
-    /** Reports the changed connection until a child can correlate fresh growing-file metadata. */
-    public override suspend fun openGrowingRecording(
-        recordingId: RecordingId,
-        position: Long,
-    ): RecordingFileResult<GrowingRecordingFileReader> {
-        require(position >= 0L) { "Growing recording position must not be negative" }
-        return RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
-    }
-
-    public suspend fun openGrowingRecording(
-        generation: GatewayGeneration,
-        recordingId: RecordingId,
-        position: Long,
-    ): RecordingFileResult<GrowingRecordingFileReader> {
-        require(position >= 0L) { "Growing recording position must not be negative" }
-        return RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
-    }
 
     public fun bindGeneration(generation: GatewayGeneration)
 
@@ -875,12 +1012,6 @@ internal interface SessionChildren : ArtworkLoader, SubscriptionOpener, Recordin
     public suspend fun closeAndJoinSubscriptions()
 
     public data object None : SessionChildren {
-        override suspend fun open(
-            channelId: SubscriptionChannelId,
-            consumer: SubscriptionEventConsumer,
-            timeshiftPeriod: Duration,
-        ): SubscriptionOpenResult = SubscriptionOpenResult.NotReady
-
         override fun bindGeneration(generation: GatewayGeneration) = Unit
 
         override fun startLiveAdmission(

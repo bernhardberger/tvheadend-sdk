@@ -5,10 +5,8 @@ package at.bernhardberger.tvheadend.sdk.media3
 
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.upstream.DefaultAllocator
-import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
-import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -21,31 +19,27 @@ import org.junit.jupiter.api.Test
 internal class TvheadendLiveMediaSourceTest {
     @Test
     fun `explicit source options reach the subscription opener through its media period`() = runTest {
-        val opener = CapturingSubscriptionOpener()
-        val channelId = SubscriptionChannelId(7L)
+        val target = CapturingLiveTarget()
         val options = SubscriptionOptions(
             streamProfileUuid = "0123456789abcdef0123456789abcdef",
             timeshiftPeriod = 600.seconds,
         )
-        val period = createPeriod(createTvheadendLiveMediaSource(opener, channelId, options))
+        val period = createPeriod(liveSource(target, options))
 
         assertSame(SubscriptionOpenResult.NotReady, period.openSubscription())
-        assertEquals(channelId, opener.channelId)
-        assertSame(period, opener.consumer)
-        assertSame(options, opener.options)
+        assertSame(period, target.consumer)
+        assertSame(options, target.options)
     }
 
     @Test
-    fun `legacy source overload reaches the subscription opener with server defaults`() = runTest {
-        val opener = CapturingSubscriptionOpener()
-        val channelId = SubscriptionChannelId(8L)
-        val period = createPeriod(createTvheadendLiveMediaSource(opener, channelId))
+    fun `default source options reach the bound target`() = runTest {
+        val target = CapturingLiveTarget()
+        val period = createPeriod(liveSource(target, SubscriptionOptions()))
 
         assertSame(SubscriptionOpenResult.NotReady, period.openSubscription())
-        assertEquals(channelId, opener.channelId)
-        assertSame(period, opener.consumer)
-        assertNull(opener.options?.streamProfileUuid)
-        assertEquals(Duration.ZERO, opener.options?.timeshiftPeriod)
+        assertSame(period, target.consumer)
+        assertNull(target.options?.streamProfileUuid)
+        assertEquals(Duration.ZERO, target.options?.timeshiftPeriod)
     }
 }
 
@@ -55,23 +49,28 @@ private fun createPeriod(source: MediaSource): TvheadendLiveMediaPeriod = source
     0L,
 ) as TvheadendLiveMediaPeriod
 
-private class CapturingSubscriptionOpener : SubscriptionOpener {
-    internal var channelId: SubscriptionChannelId? = null
+private fun liveSource(
+    target: CoordinatorLiveTarget,
+    options: SubscriptionOptions,
+): MediaSource {
+    val token = PlaybackTargetToken()
+    return createTvheadendLiveMediaSource(
+        target = target,
+        options = options,
+        timeshiftControls = LiveTimeshiftControlBridge(token) {},
+        onUnsupportedStream = {},
+    )
+}
+
+private class CapturingLiveTarget : CoordinatorLiveTarget {
+    override val isCurrent: Boolean = true
     internal var consumer: SubscriptionEventConsumer? = null
     internal var options: SubscriptionOptions? = null
 
     override suspend fun open(
-        channelId: SubscriptionChannelId,
-        consumer: SubscriptionEventConsumer,
-        timeshiftPeriod: Duration,
-    ): SubscriptionOpenResult = error("Legacy period opening must use explicit subscription options")
-
-    override suspend fun open(
-        channelId: SubscriptionChannelId,
         consumer: SubscriptionEventConsumer,
         options: SubscriptionOptions,
     ): SubscriptionOpenResult {
-        this.channelId = channelId
         this.consumer = consumer
         this.options = options
         return SubscriptionOpenResult.NotReady

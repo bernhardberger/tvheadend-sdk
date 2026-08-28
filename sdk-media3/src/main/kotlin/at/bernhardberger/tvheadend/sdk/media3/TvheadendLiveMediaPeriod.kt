@@ -26,11 +26,9 @@ import androidx.media3.extractor.text.DefaultSubtitleParserFactory
 import androidx.media3.extractor.text.SubtitleTranscodingExtractorOutput
 import at.bernhardberger.tvheadend.sdk.playback.ActiveSubscription
 import at.bernhardberger.tvheadend.sdk.playback.StreamIndex
-import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
-import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionState
@@ -48,8 +46,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
 internal class TvheadendLiveMediaPeriod(
-    private val subscriptions: SubscriptionOpener,
-    private val channelId: SubscriptionChannelId,
+    private val target: CoordinatorLiveTarget,
     private val options: SubscriptionOptions,
     private val allocator: Allocator,
     private val timeshiftControls: LiveTimeshiftControlBridge.Attachment? = null,
@@ -114,8 +111,7 @@ internal class TvheadendLiveMediaPeriod(
         }
     }
 
-    internal suspend fun openSubscription(): SubscriptionOpenResult = subscriptions.open(
-        channelId,
+    internal suspend fun openSubscription(): SubscriptionOpenResult = target.open(
         this,
         options,
     )

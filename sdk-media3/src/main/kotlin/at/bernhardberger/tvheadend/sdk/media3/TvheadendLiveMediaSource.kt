@@ -11,65 +11,23 @@ import androidx.media3.exoplayer.source.MediaPeriod
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.SinglePeriodTimeline
 import androidx.media3.exoplayer.upstream.Allocator
-import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
-import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
-import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 
-/**
- * Creates a live Media3 source backed directly by the SDK subscription stream.
- *
- * [onUnsupportedStream] receives only a safe codec category and must return quickly without
- * throwing. Unsupported streams are omitted; a subscription with no supported streams fails.
- */
-@SubscriptionInfrastructureApi
-@androidx.media3.common.util.UnstableApi
-public fun createTvheadendLiveMediaSource(
-    subscriptions: SubscriptionOpener,
-    channelId: SubscriptionChannelId,
-    onUnsupportedStream: (SubscriptionStreamType) -> Unit = {},
-): MediaSource = TvheadendLiveMediaSource(
-    subscriptions,
-    channelId,
-    SubscriptionOptions(),
-    null,
-    onUnsupportedStream,
-)
-
-/** Creates a live Media3 source with explicit subscription [options]. */
-@SubscriptionInfrastructureApi
-@androidx.media3.common.util.UnstableApi
-public fun createTvheadendLiveMediaSource(
-    subscriptions: SubscriptionOpener,
-    channelId: SubscriptionChannelId,
-    options: SubscriptionOptions,
-    onUnsupportedStream: (SubscriptionStreamType) -> Unit = {},
-): MediaSource = TvheadendLiveMediaSource(
-    subscriptions,
-    channelId,
-    options,
-    null,
-    onUnsupportedStream,
-)
-
 internal fun createTvheadendLiveMediaSource(
-    subscriptions: SubscriptionOpener,
-    channelId: SubscriptionChannelId,
-    options: SubscriptionOptions,
-    timeshiftControls: LiveTimeshiftControlBridge,
-    onUnsupportedStream: (SubscriptionStreamType) -> Unit,
+    target: CoordinatorLiveTarget,
+    options: SubscriptionOptions = SubscriptionOptions(),
+    timeshiftControls: LiveTimeshiftControlBridge? = null,
+    onUnsupportedStream: (SubscriptionStreamType) -> Unit = {},
 ): MediaSource = TvheadendLiveMediaSource(
-    subscriptions,
-    channelId,
+    target,
     options,
     timeshiftControls,
     onUnsupportedStream,
 )
 
 private class TvheadendLiveMediaSource(
-    private val subscriptions: SubscriptionOpener,
-    private val channelId: SubscriptionChannelId,
+    private val target: CoordinatorLiveTarget,
     private val options: SubscriptionOptions,
     private val timeshiftControls: LiveTimeshiftControlBridge?,
     private val onUnsupportedStream: (SubscriptionStreamType) -> Unit,
@@ -100,8 +58,7 @@ private class TvheadendLiveMediaSource(
         allocator: Allocator,
         startPositionUs: Long,
     ): MediaPeriod = TvheadendLiveMediaPeriod(
-        subscriptions = subscriptions,
-        channelId = channelId,
+        target = target,
         options = options,
         allocator = allocator,
         timeshiftControls = timeshiftControls?.newAttachment(),

@@ -201,6 +201,16 @@ internal class ModuleBoundaryTest {
             "Stale",
             "SessionObservation",
             "CurrentSessionObservation",
+            "PlaybackBinding",
+            "Live",
+            "Recording",
+            "PlaybackBindingResult",
+            "Bound",
+            "TargetUnavailable",
+            "RecordingPlaybackAdmission",
+            "Completed",
+            "GrowingStartOverOnly",
+            "GrowingDeferred",
             "EpgRating",
             "EpgEpisode",
             "EpgEvent",
@@ -252,6 +262,7 @@ internal class ModuleBoundaryTest {
         val publicApi = listOf(
             "src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/TvheadendSession.kt",
             "src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/DvrRepository.kt",
+            "src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/PlaybackBinding.kt",
             "src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/EpgRepository.kt",
             "src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/Artwork.kt",
             "../sdk-media3/src/main/kotlin/at/bernhardberger/tvheadend/sdk/media3/TvheadendPlaybackCoordinator.kt",
@@ -275,13 +286,13 @@ internal class ModuleBoundaryTest {
             "public suspend fun createTimerecRule( currentSession: CurrentSessionObservation, request: TimerecRuleCreate, ): DvrMutationResult<TimerecRuleId>",
             "public suspend fun updateTimerecRule( currentSession: CurrentSessionObservation, id: TimerecRuleId, update: TimerecRuleUpdate, ): DvrMutationResult<Unit>",
             "public suspend fun deleteTimerecRule( currentSession: CurrentSessionObservation, id: TimerecRuleId, ): DvrMutationResult<Unit>",
-            "public suspend fun reportProgress( currentSession: CurrentSessionObservation, id: DvrEntryId, progress: DvrPlaybackProgress, ): DvrProgressResult",
-            "public suspend fun reportProgress( lease: GrowingRecordingFileLease, progress: DvrPlaybackProgress, ): DvrProgressResult",
-            "public suspend fun cutpoints( currentSession: CurrentSessionObservation, id: DvrEntryId, ): DvrCutpointsResult",
+            "public suspend fun open( consumer: SubscriptionEventConsumer, options: SubscriptionOptions, ): SubscriptionOpenResult",
+            "public suspend fun cutpoints(): DvrCutpointsResult",
+            "public suspend fun openRecording(): RecordingFileResult<RecordingFile>",
+            "public suspend fun reportProgress( growingLease: GrowingRecordingFileLease?, progress: DvrPlaybackProgress, ): DvrProgressResult",
             "public suspend fun run()",
-            "public suspend fun setLiveTarget(channelId: ChannelId): PlaybackTargetResult",
-            "public suspend fun setLiveTarget( channelId: ChannelId, options: LivePlaybackOptions, ): PlaybackTargetResult",
-            "public suspend fun setRecordingTarget( recordingId: DvrEntryId, start: RecordingPlaybackStart = RecordingPlaybackStart.RESUME, ): PlaybackTargetResult",
+            "public suspend fun setLiveTarget( binding: PlaybackBinding.Live, options: LivePlaybackOptions = LivePlaybackOptions(), ): PlaybackTargetResult",
+            "public suspend fun setRecordingTarget( binding: PlaybackBinding.Recording, start: RecordingPlaybackStart = RecordingPlaybackStart.RESUME, ): PlaybackTargetResult",
             "public suspend fun seekTimeshift(offset: Duration): TimeshiftCommandResult",
             "public suspend fun returnToLive(): TimeshiftCommandResult",
             "public suspend fun pauseTimeshift(): TimeshiftCommandResult",
@@ -334,7 +345,6 @@ internal class ModuleBoundaryTest {
             "SubscriptionOpener",
             "SubscriptionManager",
             "createSubscriptionManager",
-            "RecordingId",
             "RecordingFileFailure",
             "RecordingFileResult",
             "RecordingFile",
@@ -367,15 +377,9 @@ internal class ModuleBoundaryTest {
             "TvheadendPlaybackRecovery",
             "TvheadendPlaybackCoordinator",
             "TvheadendRecordingException",
-            "TvheadendRecordingResume",
-            "createTvheadendLiveMediaSource",
             "createTvheadendPlaybackRecovery",
             "createTvheadendPlaybackCoordinator",
             "createTvheadendRenderersFactory",
-            "createTvheadendRecordingDataSourceFactory",
-            "createTvheadendRecordingMediaSource",
-            "createTvheadendRecordingResume",
-            "tvheadendRecordingMediaItem",
         )
         val expectedAndroid = setOf(
             "CredentialOperationResult",
@@ -412,22 +416,38 @@ internal class ModuleBoundaryTest {
         // The codec classification is intentionally stable for sdk-media3 application callbacks.
         assertPublicInfrastructure("sdk-playback", expectedPlayback, unannotatedCount = 3)
         assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 1)
-        assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 13)
+        assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 14)
+
+        val coordinatorApi = File(
+            "../sdk-media3/src/main/kotlin/at/bernhardberger/tvheadend/sdk/media3/" +
+                "TvheadendPlaybackCoordinator.kt",
+        ).readText().replace(Regex("\\s+"), " ")
+        assertTrue(
+            coordinatorApi.contains(
+                "public fun createTvheadendPlaybackCoordinator( player: ExoPlayer,",
+            ) && !coordinatorApi.contains(
+                "public fun createTvheadendPlaybackCoordinator( session:",
+            ),
+            "Playback coordinator creation must not retain unused session authority",
+        )
 
         val sessionApi = java.io.File(
             "src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/TvheadendSession.kt",
-        ).readText()
+        ).readText().replace(Regex("\\s+"), " ")
         org.junit.jupiter.api.Assertions.assertTrue(
-            Regex(
-                "@SubscriptionInfrastructureApi\\s+public val subscriptions: SubscriptionOpener",
-            ).containsMatchIn(sessionApi),
-            "Missing opted-in subscription opener on the public session",
+            !sessionApi.contains("public val subscriptions:") &&
+                !sessionApi.contains("public val recordings:"),
+            "Raw playback openers must not be exposed by the public session",
         )
         org.junit.jupiter.api.Assertions.assertTrue(
-            Regex(
-                "@SubscriptionInfrastructureApi\\s+public val recordings: RecordingFileOpener",
-            ).containsMatchIn(sessionApi),
-            "Missing opted-in recording file opener on the public session",
+            sessionApi.contains(
+                "public fun bindLivePlayback( currentSession: CurrentSessionObservation, " +
+                    "channelId: ChannelId, ): PlaybackBindingResult<PlaybackBinding.Live>",
+            ) && sessionApi.contains(
+                "public fun bindRecordingPlayback( currentSession: CurrentSessionObservation, " +
+                    "recordingId: DvrEntryId, ): PlaybackBindingResult<PlaybackBinding.Recording>",
+            ),
+            "Public playback authority must be created from one current-session observation",
         )
         org.junit.jupiter.api.Assertions.assertTrue(
             sessionApi.contains("public val observation: StateFlow<SessionObservation>"),
@@ -488,14 +508,9 @@ internal class ModuleBoundaryTest {
                         "createTvheadendArtworkFetcherFactory",
                         "createSubscriptionManager",
                         "createRecordingFileReader",
-                        "createTvheadendLiveMediaSource",
                         "createTvheadendPlaybackRecovery",
                         "createTvheadendPlaybackCoordinator",
                         "createTvheadendRenderersFactory",
-                        "createTvheadendRecordingDataSourceFactory",
-                        "createTvheadendRecordingMediaSource",
-                        "createTvheadendRecordingResume",
-                        "tvheadendRecordingMediaItem",
                     )
             }
             .forEach { function -> function.referencedPublicTypes().forEach(::enqueue) }

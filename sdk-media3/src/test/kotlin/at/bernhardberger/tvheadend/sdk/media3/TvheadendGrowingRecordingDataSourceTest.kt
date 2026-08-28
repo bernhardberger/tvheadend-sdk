@@ -10,7 +10,6 @@ import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
-import at.bernhardberger.tvheadend.sdk.playback.RecordingId
 import java.io.InterruptedIOException
 import java.util.concurrent.CancellationException
 import java.util.concurrent.CountDownLatch
@@ -27,6 +26,8 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class TvheadendGrowingRecordingDataSourceTest {
+    private val identity = RecordingMediaIdentity()
+
     @Test
     fun `open is unknown length and partial transport bytes wait for a complete TS packet`() {
         val opener = ScriptedGrowingLease(
@@ -77,6 +78,7 @@ class TvheadendGrowingRecordingDataSourceTest {
         var finalEnds = 0
         val factory = createTvheadendGrowingRecordingDataSourceFactory(
             lease = lease,
+            identity = identity,
             readAheadBytes = GROWING_TS_PACKET_BYTES,
             onFinalEnd = { finalEnds += 1 },
         )
@@ -286,6 +288,7 @@ class TvheadendGrowingRecordingDataSourceTest {
         onFinalEnd: () -> Unit = {},
     ): DataSource = createTvheadendGrowingRecordingDataSourceFactory(
         lease = lease,
+        identity = identity,
         readAheadBytes = readAheadBytes,
         onFinalEnd = onFinalEnd,
     ).createDataSource()
@@ -294,7 +297,7 @@ class TvheadendGrowingRecordingDataSourceTest {
         position: Long = 0L,
         length: Long = C.LENGTH_UNSET.toLong(),
     ): DataSpec = DataSpec.Builder()
-        .setUri(recordingUri(RecordingId(7L)))
+        .setUri(identity.uri)
         .setPosition(position)
         .setLength(length)
         .build()

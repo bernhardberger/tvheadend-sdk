@@ -10,10 +10,6 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.MediaSource
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackExit
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
-import at.bernhardberger.tvheadend.sdk.playback.RecordingFileOpener
-import at.bernhardberger.tvheadend.sdk.playback.RecordingId
-import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
-import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import kotlin.time.Duration
@@ -52,15 +48,18 @@ internal data class RetiredRecordingTarget(
 )
 
 internal sealed interface RecordingAdmission {
-    sealed interface Accepted : RecordingAdmission
+    sealed interface Accepted : RecordingAdmission {
+        val progressReportingSupported: Boolean
+    }
 
     data class Completed(
         val resumePosition: Duration?,
+        override val progressReportingSupported: Boolean = true,
     ) : Accepted
 
     class Growing(
-        val fence: GrowingRecordingFence,
         val lease: GrowingRecordingFileLease,
+        override val progressReportingSupported: Boolean = true,
     ) : Accepted {
         override fun toString(): String = "RecordingAdmission.Growing(<redacted>)"
     }
@@ -80,7 +79,7 @@ internal interface PlaybackCoordinatorPlayer {
     suspend fun installLive(
         ticket: PlayerOperationTicket,
         token: PlaybackTargetToken,
-        channelId: SubscriptionChannelId,
+        target: CoordinatorLiveTarget,
         options: SubscriptionOptions = SubscriptionOptions(),
         timeshiftControls: LiveTimeshiftControlBridge,
     ): PlaybackPlayerInstallResult
@@ -88,7 +87,7 @@ internal interface PlaybackCoordinatorPlayer {
     suspend fun installRecording(
         ticket: PlayerOperationTicket,
         token: PlaybackTargetToken,
-        recordingId: RecordingId,
+        target: CoordinatorRecordingTarget,
         start: RecordingPlaybackStart,
     ): PlaybackPlayerInstallResult
 
@@ -106,7 +105,7 @@ internal interface CoordinatorPlaybackRecovery : AutoCloseable {
 }
 
 internal interface CoordinatorRecordingResume : AutoCloseable {
-    fun beginPlaybackTarget(recordingId: RecordingId, position: Duration?)
+    fun beginPlaybackTarget(position: Duration?)
 }
 
 internal interface CoordinatorPlaybackAccess {
@@ -121,22 +120,25 @@ internal interface CoordinatorPlaybackAccess {
     fun removeListener(listener: Player.Listener)
 
     fun createLiveSource(
-        channelId: SubscriptionChannelId,
+        target: CoordinatorLiveTarget,
         options: SubscriptionOptions,
         timeshiftControls: LiveTimeshiftControlBridge,
     ): CoordinatorMediaSource
 
-    fun createRecordingSource(recordingId: RecordingId): CoordinatorMediaSource
+    fun createRecordingSource(
+        target: CoordinatorRecordingTarget,
+        identity: RecordingMediaIdentity,
+    ): CoordinatorMediaSource
 
     fun createGrowingRecordingSource(
-        recordingId: RecordingId,
         lease: GrowingRecordingFileLease,
+        identity: RecordingMediaIdentity,
         onFinalEnd: () -> Unit,
     ): CoordinatorMediaSource
 
     fun createRecovery(onRecoveryRequired: (PlaybackRecoveryReason) -> Unit): CoordinatorPlaybackRecovery
 
-    fun createResume(): CoordinatorRecordingResume
+    fun createResume(identity: RecordingMediaIdentity): CoordinatorRecordingResume
 
     fun setMediaSource(source: CoordinatorMediaSource)
 
@@ -150,7 +152,7 @@ internal interface CoordinatorPlaybackAccess {
 internal class Media3PlaybackCoordinatorPlayer(
     private val access: CoordinatorPlaybackAccess,
     private val events: PlaybackPlayerEventAccumulator,
-    private val admitRecording: (RecordingId, RecordingPlaybackStart) -> RecordingAdmission,
+    private val admitRecording: (CoordinatorRecordingTarget, RecordingPlaybackStart) -> RecordingAdmission,
 ) : PlaybackCoordinatorPlayer {
     private val executor = PlayerLooperExecutor(access.looper)
     private var active: InstalledPlayerTarget? = null
@@ -158,12 +160,12 @@ internal class Media3PlaybackCoordinatorPlayer(
     override suspend fun installLive(
         ticket: PlayerOperationTicket,
         token: PlaybackTargetToken,
-        channelId: SubscriptionChannelId,
+        target: CoordinatorLiveTarget,
         options: SubscriptionOptions,
         timeshiftControls: LiveTimeshiftControlBridge,
     ): PlaybackPlayerInstallResult = when (
         val operation = executor.execute(ticket) {
-            installLiveOnLooper(token, channelId, options, timeshiftControls)
+            installLiveOnLooper(token, target, options, timeshiftControls)
         }
     ) {
         is LooperOperationResult.Success -> operation.value
@@ -175,11 +177,11 @@ internal class Media3PlaybackCoordinatorPlayer(
     override suspend fun installRecording(
         ticket: PlayerOperationTicket,
         token: PlaybackTargetToken,
-        recordingId: RecordingId,
+        target: CoordinatorRecordingTarget,
         start: RecordingPlaybackStart,
     ): PlaybackPlayerInstallResult = when (
         val operation = executor.execute(ticket) {
-            installRecordingOnLooper(token, recordingId, start)
+            installRecordingOnLooper(token, target, start)
         }
     ) {
         is LooperOperationResult.Success -> operation.value
@@ -224,13 +226,16 @@ internal class Media3PlaybackCoordinatorPlayer(
 
     private fun installLiveOnLooper(
         token: PlaybackTargetToken,
-        channelId: SubscriptionChannelId,
+        target: CoordinatorLiveTarget,
         options: SubscriptionOptions,
         timeshiftControls: LiveTimeshiftControlBridge,
     ): PlaybackPlayerInstallResult {
         access.requireApplicationLooper()
+        if (!target.isCurrent) {
+            return PlaybackPlayerInstallResult(PlaybackPlayerInstallStatus.NOT_READY)
+        }
         val source = try {
-            access.createLiveSource(channelId, options, timeshiftControls)
+            access.createLiveSource(target, options, timeshiftControls)
         } catch (_: Exception) {
             return PlaybackPlayerInstallResult(PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE)
         }
@@ -274,11 +279,11 @@ internal class Media3PlaybackCoordinatorPlayer(
 
     private fun installRecordingOnLooper(
         token: PlaybackTargetToken,
-        recordingId: RecordingId,
+        target: CoordinatorRecordingTarget,
         start: RecordingPlaybackStart,
     ): PlaybackPlayerInstallResult {
         access.requireApplicationLooper()
-        val admission = admitRecording(recordingId, start)
+        val admission = admitRecording(target, start)
         val accepted = when (admission) {
             is RecordingAdmission.Accepted -> admission
             RecordingAdmission.NotReady ->
@@ -299,12 +304,14 @@ internal class Media3PlaybackCoordinatorPlayer(
                 )
         }
         val finality = (accepted as? RecordingAdmission.Growing)?.let { GrowingFinalitySignal() }
+        val mediaIdentity = RecordingMediaIdentity()
         val source = try {
             when (accepted) {
-                is RecordingAdmission.Completed -> access.createRecordingSource(recordingId)
+                is RecordingAdmission.Completed ->
+                    access.createRecordingSource(target, mediaIdentity)
                 is RecordingAdmission.Growing -> access.createGrowingRecordingSource(
-                    recordingId = recordingId,
                     lease = accepted.lease,
+                    identity = mediaIdentity,
                     onFinalEnd = checkNotNull(finality)::prove,
                 )
             }
@@ -326,8 +333,8 @@ internal class Media3PlaybackCoordinatorPlayer(
             installed.sourceInstalled = true
             access.setMediaSource(source)
             if (accepted is RecordingAdmission.Completed) {
-                installed.resume = access.createResume()
-                installed.resume?.beginPlaybackTarget(recordingId, accepted.resumePosition)
+                installed.resume = access.createResume(mediaIdentity)
+                installed.resume?.beginPlaybackTarget(accepted.resumePosition)
             }
             access.prepare()
             val retirement = retireReplacedOnLooper(previous, previousSnapshot)
@@ -607,8 +614,6 @@ internal class Media3PlaybackCoordinatorPlayer(
 
 internal class ExoPlayerCoordinatorPlaybackAccess(
     private val player: ExoPlayer,
-    private val subscriptions: SubscriptionOpener,
-    private val recordings: RecordingFileOpener,
     private val recoveryPolicy: PlaybackRecoveryPolicy,
     private val onUnsupportedStream: (SubscriptionStreamType) -> Unit,
 ) : CoordinatorPlaybackAccess {
@@ -643,33 +648,35 @@ internal class ExoPlayerCoordinatorPlaybackAccess(
     }
 
     override fun createLiveSource(
-        channelId: SubscriptionChannelId,
+        target: CoordinatorLiveTarget,
         options: SubscriptionOptions,
         timeshiftControls: LiveTimeshiftControlBridge,
     ): CoordinatorMediaSource =
         Media3CoordinatorMediaSource(
             createTvheadendLiveMediaSource(
-                subscriptions,
-                channelId,
+                target,
                 options,
                 timeshiftControls,
                 onUnsupportedStream,
             ),
         )
 
-    override fun createRecordingSource(recordingId: RecordingId): CoordinatorMediaSource =
+    override fun createRecordingSource(
+        target: CoordinatorRecordingTarget,
+        identity: RecordingMediaIdentity,
+    ): CoordinatorMediaSource =
         Media3CoordinatorMediaSource(
-            createTvheadendRecordingMediaSource(recordings, recordingId),
+            createTvheadendRecordingMediaSource(target, identity),
         )
 
     override fun createGrowingRecordingSource(
-        recordingId: RecordingId,
         lease: GrowingRecordingFileLease,
+        identity: RecordingMediaIdentity,
         onFinalEnd: () -> Unit,
     ): CoordinatorMediaSource = Media3CoordinatorMediaSource(
         createTvheadendGrowingRecordingMediaSource(
             lease = lease,
-            recordingId = recordingId,
+            identity = identity,
             onFinalEnd = onFinalEnd,
         ),
     )
@@ -689,11 +696,11 @@ internal class ExoPlayerCoordinatorPlaybackAccess(
         }
     }
 
-    override fun createResume(): CoordinatorRecordingResume {
-        val resume = createTvheadendRecordingResume(player)
+    override fun createResume(identity: RecordingMediaIdentity): CoordinatorRecordingResume {
+        val resume = createTvheadendRecordingResume(player, identity)
         return object : CoordinatorRecordingResume {
-            override fun beginPlaybackTarget(recordingId: RecordingId, position: Duration?) {
-                resume.beginPlaybackTarget(recordingId, position)
+            override fun beginPlaybackTarget(position: Duration?) {
+                resume.beginPlaybackTarget(position)
             }
 
             override fun close() {
