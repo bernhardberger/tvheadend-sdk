@@ -1,11 +1,17 @@
 package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
+import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
+import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverage
-import at.bernhardberger.tvheadend.sdk.core.EpgCoverageRequestResult
+import at.bernhardberger.tvheadend.sdk.core.EpgCoverageAcquisitionResult
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.EventId
+import at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability
+import at.bernhardberger.tvheadend.sdk.core.ServerCapabilities
+import at.bernhardberger.tvheadend.sdk.core.SessionObservation
+import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
@@ -16,6 +22,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
@@ -24,6 +31,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -100,9 +108,9 @@ internal class EpgWorkerTest {
     }
 
     @Test
-    fun `coverage request distinguishes satisfied accepted ineligible and generation lost`() {
+    fun `coverage acquisition distinguishes settled pending ineligible and expired`() = runTest {
         val generation = GatewayGeneration()
-        val metadata = synchronizedMetadata(generation, 1L..1L)
+        val metadata = synchronizedMetadata(generation, 1L..2L)
         val now = instant(1_000)
         val queriedTo = now + 4.hours
         val query = requireNotNull(metadata.beginEpgQuery(generation, ChannelId(1)))
@@ -112,37 +120,55 @@ internal class EpgWorkerTest {
             queriedTo = queriedTo,
             events = emptyList(),
         )
+        val dataQuery = requireNotNull(metadata.beginEpgQuery(generation, ChannelId(2)))
+        metadata.applySuccessfulEpgQuery(
+            generation = generation,
+            query = dataQuery,
+            queriedTo = queriedTo,
+            events = listOf(queryEvent(id = 20, channelId = 2, start = 1_100, stop = 1_200)),
+        )
         val worker = EpgWorker(
             generation = generation,
             metadata = metadata,
             clock = MutableClock(now),
             queryEpg = { _, _, _ -> GatewayResult.Timeout },
         )
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
 
-        assertEquals(
-            EpgCoverageRequestResult.SATISFIED,
-            worker.requestCoverage(ChannelId(1), queriedTo),
+        val settled = worker.acquireCoverage(currentSession, ChannelId(1), queriedTo)
+        assertTrue(settled is EpgCoverageAcquisitionResult.CoveredEmpty)
+        assertSame(
+            metadata.observation.value,
+            (settled as EpgCoverageAcquisitionResult.CoveredEmpty).observation,
         )
-        assertEquals(
-            EpgCoverageRequestResult.ACCEPTED,
-            worker.requestCoverage(ChannelId(1), queriedTo + 1.hours),
+        val coveredWithData = worker.acquireCoverage(currentSession, ChannelId(2), queriedTo)
+        assertTrue(coveredWithData is EpgCoverageAcquisitionResult.CoveredWithData)
+        assertSame(
+            metadata.observation.value,
+            (coveredWithData as EpgCoverageAcquisitionResult.CoveredWithData).observation,
         )
-        assertEquals(
-            EpgCoverageRequestResult.INELIGIBLE,
-            worker.requestCoverage(ChannelId(2), queriedTo + 1.hours),
+        val pending = backgroundScope.async {
+            worker.acquireCoverage(currentSession, ChannelId(1), queriedTo + 1.hours)
+        }
+        runCurrent()
+        assertFalse(pending.isCompleted)
+        assertSame(
+            EpgCoverageAcquisitionResult.Ineligible,
+            worker.acquireCoverage(currentSession, ChannelId(3), queriedTo + 1.hours),
         )
-        assertEquals(
-            EpgCoverageRequestResult.SATISFIED,
-            worker.requestCoverage(ChannelId(1), now),
+        assertTrue(
+            worker.acquireCoverage(currentSession, ChannelId(1), now) is
+                EpgCoverageAcquisitionResult.CoveredEmpty,
         )
-        assertEquals(
-            EpgCoverageRequestResult.INELIGIBLE,
-            worker.requestCoverage(ChannelId(1), now + 24.hours + 1.seconds),
+        assertSame(
+            EpgCoverageAcquisitionResult.Ineligible,
+            worker.acquireCoverage(currentSession, ChannelId(1), now + 24.hours + 1.seconds),
         )
         worker.stopAcceptingPriorities()
-        assertEquals(
-            EpgCoverageRequestResult.GENERATION_LOST,
-            worker.requestCoverage(ChannelId(1), queriedTo + 2.hours),
+        assertSame(EpgCoverageAcquisitionResult.ObservationExpired, pending.await())
+        assertSame(
+            EpgCoverageAcquisitionResult.ObservationExpired,
+            worker.acquireCoverage(currentSession, ChannelId(1), queriedTo + 2.hours),
         )
 
         val staleWorker = EpgWorker(
@@ -151,10 +177,49 @@ internal class EpgWorkerTest {
             clock = MutableClock(now),
             queryEpg = { _, _, _ -> GatewayResult.Timeout },
         )
-        assertEquals(
-            EpgCoverageRequestResult.GENERATION_LOST,
-            staleWorker.requestCoverage(ChannelId(1), queriedTo + 2.hours),
+        assertSame(
+            EpgCoverageAcquisitionResult.ObservationExpired,
+            staleWorker.acquireCoverage(currentSession, ChannelId(1), queriedTo + 2.hours),
         )
+    }
+
+    @Test
+    fun `caller cancellation removes only its waiter and priority target`() = runTest {
+        val generation = GatewayGeneration()
+        val metadata = synchronizedMetadata(generation, 1L..1L)
+        val now = instant(1_000)
+        val requestedTargets = mutableListOf<Instant>()
+        val worker = EpgWorker(
+            generation = generation,
+            metadata = metadata,
+            clock = MutableClock(now),
+            settings = EpgWorkerSettings(
+                requestSpacing = 1.milliseconds,
+                channelCooldown = 1.hours,
+            ),
+            queryEpg = { _, _, target ->
+                requestedTargets += target
+                GatewayResult.Ok(emptyList())
+            },
+        )
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
+        val retainedTarget = now + 6.hours
+        val cancelled = backgroundScope.async {
+            worker.acquireCoverage(currentSession, ChannelId(1), now + 8.hours)
+        }
+        val retained = backgroundScope.async {
+            worker.acquireCoverage(currentSession, ChannelId(1), retainedTarget)
+        }
+        runCurrent()
+
+        cancelled.cancelAndJoin()
+        val job = backgroundScope.launch { worker.run() }
+        runCurrent()
+
+        assertTrue(cancelled.isCancelled)
+        assertEquals(retainedTarget, requestedTargets.first())
+        assertTrue(retained.await() is EpgCoverageAcquisitionResult.CoveredEmpty)
+        job.cancelAndJoin()
     }
 
     @Test
@@ -179,28 +244,31 @@ internal class EpgWorkerTest {
                 GatewayResult.Timeout
             },
         )
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
 
-        assertEquals(
-            EpgCoverageRequestResult.ACCEPTED,
-            worker.requestCoverage(ChannelId(3), instant(0) + 8.hours),
-        )
-        assertEquals(
-            EpgCoverageRequestResult.ACCEPTED,
-            worker.requestCoverage(ChannelId(3), instant(0) + 12.hours + 999.milliseconds),
-        )
-        assertEquals(
-            EpgCoverageRequestResult.ACCEPTED,
-            worker.requestCoverage(ChannelId(2), instant(0) + 10.hours),
-        )
+        backgroundScope.async {
+            worker.acquireCoverage(currentSession, ChannelId(3), instant(0) + 8.hours)
+        }
+        backgroundScope.async {
+            worker.acquireCoverage(
+                currentSession,
+                ChannelId(3),
+                instant(0) + 12.hours + 999.milliseconds,
+            )
+        }
+        backgroundScope.async {
+            worker.acquireCoverage(currentSession, ChannelId(2), instant(0) + 10.hours)
+        }
+        runCurrent()
         val job = backgroundScope.launch { worker.run() }
 
         runCurrent()
         assertEquals(ChannelId(3), starts.single().channelId)
         assertEquals(instant(0) + 12.hours, starts.single().target)
-        assertEquals(
-            EpgCoverageRequestResult.ACCEPTED,
-            worker.requestCoverage(ChannelId(3), instant(0) + 11.hours),
-        )
+        backgroundScope.async {
+            worker.acquireCoverage(currentSession, ChannelId(3), instant(0) + 11.hours)
+        }
+        runCurrent()
         advanceTimeBy(1.milliseconds)
         runCurrent()
 
@@ -229,14 +297,14 @@ internal class EpgWorkerTest {
                 GatewayResult.Timeout
             },
         )
-        assertEquals(
-            EpgCoverageRequestResult.ACCEPTED,
-            worker.requestCoverage(ChannelId(3), instant(0) + 8.hours),
-        )
-        assertEquals(
-            EpgCoverageRequestResult.ACCEPTED,
-            worker.requestCoverage(ChannelId(2), instant(0) + 8.hours),
-        )
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
+        backgroundScope.async {
+            worker.acquireCoverage(currentSession, ChannelId(3), instant(0) + 8.hours)
+        }
+        backgroundScope.async {
+            worker.acquireCoverage(currentSession, ChannelId(2), instant(0) + 8.hours)
+        }
+        runCurrent()
         val job = backgroundScope.launch { worker.run() }
 
         runCurrent()
@@ -267,18 +335,19 @@ internal class EpgWorkerTest {
                 if (targets.size == 1) GatewayResult.Timeout else GatewayResult.Ok(emptyList())
             },
         )
-        assertEquals(
-            EpgCoverageRequestResult.ACCEPTED,
-            worker.requestCoverage(ChannelId(1), instant(0) + 8.hours),
-        )
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
+        backgroundScope.async {
+            worker.acquireCoverage(currentSession, ChannelId(1), instant(0) + 8.hours)
+        }
+        runCurrent()
         val job = backgroundScope.launch { worker.run() }
         runCurrent()
         assertEquals(listOf(instant(0) + 8.hours), targets)
 
-        assertEquals(
-            EpgCoverageRequestResult.ACCEPTED,
-            worker.requestCoverage(ChannelId(1), instant(0) + 12.hours),
-        )
+        backgroundScope.async {
+            worker.acquireCoverage(currentSession, ChannelId(1), instant(0) + 12.hours)
+        }
+        runCurrent()
         advanceTimeBy(999.milliseconds)
         runCurrent()
         assertEquals(1, targets.size)
@@ -303,14 +372,14 @@ internal class EpgWorkerTest {
                 else GatewayResult.NotSupported
             },
         )
-        assertEquals(
-            EpgCoverageRequestResult.ACCEPTED,
-            worker.requestCoverage(ChannelId(1), target),
-        )
-        assertEquals(
-            EpgCoverageRequestResult.ACCEPTED,
-            worker.requestCoverage(ChannelId(2), target),
-        )
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
+        val covered = backgroundScope.async {
+            worker.acquireCoverage(currentSession, ChannelId(1), target)
+        }
+        val ineligible = backgroundScope.async {
+            worker.acquireCoverage(currentSession, ChannelId(2), target)
+        }
+        runCurrent()
         val job = backgroundScope.launch { worker.run() }
 
         runCurrent()
@@ -319,13 +388,15 @@ internal class EpgWorkerTest {
 
         val snapshot = (metadata.observation.value.epgState as EpgRepositoryState.Current).snapshot
         assertEquals(target, snapshot.coverages.single { it.channelId == ChannelId(1) }.queriedTo)
-        assertEquals(
-            EpgCoverageRequestResult.SATISFIED,
-            worker.requestCoverage(ChannelId(1), target),
+        assertTrue(covered.await() is EpgCoverageAcquisitionResult.CoveredEmpty)
+        assertSame(EpgCoverageAcquisitionResult.Ineligible, ineligible.await())
+        assertTrue(
+            worker.acquireCoverage(currentSession, ChannelId(1), target) is
+                EpgCoverageAcquisitionResult.CoveredEmpty,
         )
-        assertEquals(
-            EpgCoverageRequestResult.INELIGIBLE,
-            worker.requestCoverage(ChannelId(2), target),
+        assertSame(
+            EpgCoverageAcquisitionResult.Ineligible,
+            worker.acquireCoverage(currentSession, ChannelId(2), target),
         )
         job.cancelAndJoin()
     }
@@ -370,6 +441,44 @@ internal class EpgWorkerTest {
 
         assertEquals((1L..8L).toList(), starts.map { it.first })
         assertEquals(listOf(1_500L, 1_750L), starts.takeLast(2).map { it.second })
+        job.cancelAndJoin()
+    }
+
+    @Test
+    fun `denial and racing latch consumption settle expired after metadata retirement`() = runTest {
+        val generation = GatewayGeneration()
+        val delegate = synchronizedMetadata(generation, 1L..1L)
+        val metadata = TransitioningSessionMetadata(delegate)
+        val queryStarted = CompletableDeferred<Unit>()
+        val releaseQuery = CompletableDeferred<GatewayResult<List<GatewayEpgQueryEvent>>>()
+        val worker = EpgWorker(
+            generation = generation,
+            metadata = metadata,
+            clock = SchedulerClock { testScheduler.currentTime },
+            queryEpg = { _, _, _ ->
+                queryStarted.complete(Unit)
+                releaseQuery.await()
+            },
+        )
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
+        val currentObservation = metadata.observation.value
+        val acquisition = backgroundScope.async {
+            worker.acquireCoverage(currentSession, ChannelId(1), instant(0) + 8.hours)
+        }
+        runCurrent()
+        val job = backgroundScope.launch { worker.run() }
+        queryStarted.await()
+
+        delegate.resetWorkingStateRetainingPublishedSnapshot()
+        releaseQuery.complete(GatewayResult.NotSupported)
+        runCurrent()
+
+        assertSame(EpgCoverageAcquisitionResult.ObservationExpired, acquisition.await())
+        metadata.nextCurrentObservation = currentObservation
+        assertSame(
+            EpgCoverageAcquisitionResult.ObservationExpired,
+            worker.acquireCoverage(currentSession, ChannelId(1), instant(0) + 8.hours),
+        )
         job.cancelAndJoin()
     }
 
@@ -534,9 +643,10 @@ internal class EpgWorkerTest {
         val generation = GatewayGeneration()
         val cancellation = CancellationException("fixed cancellation")
         var attempts = 0
+        val metadata = synchronizedMetadata(generation, 1L..1L)
         val worker = EpgWorker(
             generation = generation,
-            metadata = synchronizedMetadata(generation, 1L..1L),
+            metadata = metadata,
             clock = SchedulerClock { testScheduler.currentTime },
             settings = EpgWorkerSettings(
                 requestSpacing = 1.milliseconds,
@@ -552,14 +662,16 @@ internal class EpgWorkerTest {
         runCurrent()
         assertEquals(1, attempts)
         assertTrue(job.isActive)
-        assertEquals(
-            EpgCoverageRequestResult.ACCEPTED,
-            worker.requestCoverage(ChannelId(1), instant(0) + 8.hours),
-        )
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
+        val acquisition = backgroundScope.async {
+            worker.acquireCoverage(currentSession, ChannelId(1), instant(0) + 8.hours)
+        }
+        runCurrent()
         advanceTimeBy(1.seconds)
         runCurrent()
 
         assertEquals(2, attempts)
+        assertTrue(acquisition.await() is EpgCoverageAcquisitionResult.CoveredEmpty)
         assertTrue(job.isActive)
         job.cancelAndJoin()
     }
@@ -669,6 +781,26 @@ private fun synchronizedMetadata(
     }
     beforeFence()
     acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+    publishSessionState(
+        state = SessionState.Ready(
+            ServerCapabilities.create(CapabilityAccess.UNKNOWN, CapabilityAccess.UNKNOWN),
+        ),
+        progressCapability = RecordingProgressCapability.UNKNOWN,
+        generation = generation,
+    )
+}
+
+private class TransitioningSessionMetadata(
+    private val delegate: SessionMetadata,
+) : SessionMetadata by delegate {
+    internal var nextCurrentObservation: SessionObservation? = null
+
+    override fun currentObservation(
+        generation: GatewayGeneration,
+        currentSession: CurrentSessionObservation,
+    ): SessionObservation? = nextCurrentObservation?.also {
+        nextCurrentObservation = null
+    } ?: delegate.currentObservation(generation, currentSession)
 }
 
 private fun channel(id: Long): GatewayChannelMetadata = GatewayChannelMetadata(

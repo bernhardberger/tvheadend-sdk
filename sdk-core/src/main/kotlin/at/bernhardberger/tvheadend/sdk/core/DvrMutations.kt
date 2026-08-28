@@ -1,5 +1,6 @@
 package at.bernhardberger.tvheadend.sdk.core
 
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
@@ -261,6 +262,9 @@ public sealed interface DvrMutationResult<out T> {
     /** The session has not admitted mutations for a synchronized generation. */
     public data object NotReady : DvrMutationResult<Nothing>
 
+    /** The originating observation is no longer current for its owning session. */
+    public data object ObservationExpired : DvrMutationResult<Nothing>
+
     /** The server rejected the command without a safe detailed reason. */
     public data object ServerRejected : DvrMutationResult<Nothing>
 
@@ -281,81 +285,118 @@ public sealed interface DvrMutationResult<out T> {
 }
 
 internal interface DvrMutationCommands {
-    public suspend fun scheduleEntry(request: DvrScheduleRequest): DvrMutationResult<DvrEntryId>
+    public suspend fun scheduleEntry(
+        generation: GatewayGeneration,
+        request: DvrScheduleRequest,
+    ): DvrMutationResult<DvrEntryId>
 
     public suspend fun updateEntry(
+        generation: GatewayGeneration,
         id: DvrEntryId,
         update: DvrEntryUpdate,
     ): DvrMutationResult<Unit>
 
-    public suspend fun stopEntry(id: DvrEntryId): DvrMutationResult<Unit>
+    public suspend fun stopEntry(generation: GatewayGeneration, id: DvrEntryId): DvrMutationResult<Unit>
 
-    public suspend fun cancelEntry(id: DvrEntryId): DvrMutationResult<Unit>
+    public suspend fun cancelEntry(generation: GatewayGeneration, id: DvrEntryId): DvrMutationResult<Unit>
 
-    public suspend fun deleteEntry(id: DvrEntryId): DvrMutationResult<Unit>
+    public suspend fun deleteEntry(generation: GatewayGeneration, id: DvrEntryId): DvrMutationResult<Unit>
 
     public suspend fun createAutorecRule(
+        generation: GatewayGeneration,
         request: AutorecRuleCreate,
     ): DvrMutationResult<AutorecRuleId>
 
     public suspend fun updateAutorecRule(
+        generation: GatewayGeneration,
         id: AutorecRuleId,
         update: AutorecRuleUpdate,
     ): DvrMutationResult<Unit>
 
-    public suspend fun deleteAutorecRule(id: AutorecRuleId): DvrMutationResult<Unit>
+    public suspend fun deleteAutorecRule(
+        generation: GatewayGeneration,
+        id: AutorecRuleId,
+    ): DvrMutationResult<Unit>
 
     public suspend fun createTimerecRule(
+        generation: GatewayGeneration,
         request: TimerecRuleCreate,
     ): DvrMutationResult<TimerecRuleId>
 
     public suspend fun updateTimerecRule(
+        generation: GatewayGeneration,
         id: TimerecRuleId,
         update: TimerecRuleUpdate,
     ): DvrMutationResult<Unit>
 
-    public suspend fun deleteTimerecRule(id: TimerecRuleId): DvrMutationResult<Unit>
+    public suspend fun deleteTimerecRule(
+        generation: GatewayGeneration,
+        id: TimerecRuleId,
+    ): DvrMutationResult<Unit>
 
     data object None : DvrMutationCommands {
-        override suspend fun scheduleEntry(request: DvrScheduleRequest): DvrMutationResult<DvrEntryId> =
+        override suspend fun scheduleEntry(
+            generation: GatewayGeneration,
+            request: DvrScheduleRequest,
+        ): DvrMutationResult<DvrEntryId> =
             DvrMutationResult.NotReady
 
         override suspend fun updateEntry(
+            generation: GatewayGeneration,
             id: DvrEntryId,
             update: DvrEntryUpdate,
         ): DvrMutationResult<Unit> = DvrMutationResult.NotReady
 
-        override suspend fun stopEntry(id: DvrEntryId): DvrMutationResult<Unit> =
+        override suspend fun stopEntry(
+            generation: GatewayGeneration,
+            id: DvrEntryId,
+        ): DvrMutationResult<Unit> =
             DvrMutationResult.NotReady
 
-        override suspend fun cancelEntry(id: DvrEntryId): DvrMutationResult<Unit> =
+        override suspend fun cancelEntry(
+            generation: GatewayGeneration,
+            id: DvrEntryId,
+        ): DvrMutationResult<Unit> =
             DvrMutationResult.NotReady
 
-        override suspend fun deleteEntry(id: DvrEntryId): DvrMutationResult<Unit> =
+        override suspend fun deleteEntry(
+            generation: GatewayGeneration,
+            id: DvrEntryId,
+        ): DvrMutationResult<Unit> =
             DvrMutationResult.NotReady
 
         override suspend fun createAutorecRule(
+            generation: GatewayGeneration,
             request: AutorecRuleCreate,
         ): DvrMutationResult<AutorecRuleId> = DvrMutationResult.NotReady
 
         override suspend fun updateAutorecRule(
+            generation: GatewayGeneration,
             id: AutorecRuleId,
             update: AutorecRuleUpdate,
         ): DvrMutationResult<Unit> = DvrMutationResult.NotReady
 
-        override suspend fun deleteAutorecRule(id: AutorecRuleId): DvrMutationResult<Unit> =
+        override suspend fun deleteAutorecRule(
+            generation: GatewayGeneration,
+            id: AutorecRuleId,
+        ): DvrMutationResult<Unit> =
             DvrMutationResult.NotReady
 
         override suspend fun createTimerecRule(
+            generation: GatewayGeneration,
             request: TimerecRuleCreate,
         ): DvrMutationResult<TimerecRuleId> = DvrMutationResult.NotReady
 
         override suspend fun updateTimerecRule(
+            generation: GatewayGeneration,
             id: TimerecRuleId,
             update: TimerecRuleUpdate,
         ): DvrMutationResult<Unit> = DvrMutationResult.NotReady
 
-        override suspend fun deleteTimerecRule(id: TimerecRuleId): DvrMutationResult<Unit> =
+        override suspend fun deleteTimerecRule(
+            generation: GatewayGeneration,
+            id: TimerecRuleId,
+        ): DvrMutationResult<Unit> =
             DvrMutationResult.NotReady
     }
 }

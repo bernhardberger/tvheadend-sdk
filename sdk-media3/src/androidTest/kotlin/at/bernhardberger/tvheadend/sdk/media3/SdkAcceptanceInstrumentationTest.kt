@@ -24,7 +24,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.DvrSchedule
 import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
-import at.bernhardberger.tvheadend.sdk.core.EpgCoverageRequestResult
+import at.bernhardberger.tvheadend.sdk.core.EpgCoverageAcquisitionResult
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability
 import at.bernhardberger.tvheadend.sdk.core.ServerProfile
@@ -113,22 +113,24 @@ internal class SdkAcceptanceInstrumentationTest {
             val replacementChannel = channels.first { channel -> channel.id != firstChannel }.id
             val initialEpg = initialObservation.epgState as? EpgRepositoryState.Current
             assertNotNull("Ready must expose a current EPG snapshot", initialEpg)
+            val initialCurrentSession = requireNotNull(initialObservation.currentSession)
             val initialDvrCount =
                 (initialObservation.dvrState as DvrRepositoryState.Current).snapshot.entries.size
             val horizon = wholeSecondNow() + EPG_OBSERVATION_HORIZON
-            val epgRequest = session.epgRepository.requestCoverage(firstChannel, horizon)
-            assertTrue(
-                "The public EPG coverage request must be admitted or already satisfied; result=$epgRequest",
-                epgRequest == EpgCoverageRequestResult.ACCEPTED ||
-                    epgRequest == EpgCoverageRequestResult.SATISFIED,
-            )
-            withTimeout(EPG_TIMEOUT_MS) {
-                session.observation.first { observation ->
-                    observation.coverage(firstChannel)?.knownTo?.let { knownTo ->
-                        knownTo >= horizon
-                    } == true
-                }
+            val epgCoverage = withTimeout(EPG_TIMEOUT_MS) {
+                session.epgRepository.acquireCoverage(initialCurrentSession, firstChannel, horizon)
             }
+            val settledObservation = when (epgCoverage) {
+                is EpgCoverageAcquisitionResult.CoveredWithData -> epgCoverage.observation
+                is EpgCoverageAcquisitionResult.CoveredEmpty -> epgCoverage.observation
+                else -> throw AssertionError(
+                    "The public EPG coverage acquisition did not settle covered: " +
+                        epgCoverage.javaClass.simpleName,
+                )
+            }
+            assertTrue(
+                settledObservation.coverage(firstChannel)?.knownTo?.let { knownTo -> knownTo >= horizon } == true,
+            )
             val queriedCoverageCount =
                 (session.observation.value.epgState as EpgRepositoryState.Current)
                     .snapshot.coverages.count { coverage -> coverage.queriedTo != null }
@@ -192,6 +194,7 @@ internal class SdkAcceptanceInstrumentationTest {
             val marker = "sdk-p64-${UUID.randomUUID().toString().take(8)}"
             val recordingStart = wholeSecondNow() + RECORDING_START_DELAY
             val scheduleResult = session.dvrRepository.scheduleEntry(
+                requireNotNull(session.observation.value.currentSession),
                 DvrScheduleRequest(
                     schedule = DvrSchedule.ExplicitTime(
                         channelId = firstChannel,
@@ -247,7 +250,10 @@ internal class SdkAcceptanceInstrumentationTest {
             }
             delay(RECORDING_CAPTURE_MS)
             requireOwnedEntry(session, ownedState)
-            session.dvrRepository.stopEntry(recordingId).requireConfirmed()
+            session.dvrRepository.stopEntry(
+                requireNotNull(session.observation.value.currentSession),
+                recordingId,
+            ).requireConfirmed()
             val completed = requireNotNull(
                 withTimeout(RECORDING_COMPLETION_TIMEOUT_MS) {
                     session.observation.first { observation ->
@@ -279,7 +285,7 @@ internal class SdkAcceptanceInstrumentationTest {
                     putInt("p6_4_initial_epg_event_count", requireNotNull(initialEpg).snapshot.events.size)
                     putInt("p6_4_initial_dvr_count", initialDvrCount)
                     putInt("p6_4_queried_coverage_count", queriedCoverageCount)
-                    putString("p6_4_epg_request", epgRequest.name)
+                    putString("p6_4_epg_request", epgCoverage.javaClass.simpleName)
                     putMemory("p6_4_memory_before", memoryBefore)
                     putMemory("p6_4_memory_after_reconnect", memoryAfterReconnect)
                     putBoolean("p6_4_profile_consumed", true)
@@ -551,7 +557,10 @@ internal class SdkAcceptanceInstrumentationTest {
                 naturalPlayCount + 1L,
                 requireOwnedEntry(session, priorState).playCount ?: 0L,
             )
-            session.dvrRepository.deleteEntry(recordingId).requireConfirmed()
+            session.dvrRepository.deleteEntry(
+                requireNotNull(session.observation.value.currentSession),
+                recordingId,
+            ).requireConfirmed()
             withTimeout(FIXTURE_CLEANUP_TIMEOUT_MS) {
                 session.observation.first { observation ->
                     observation.dvrState is DvrRepositoryState.Current &&
@@ -754,15 +763,16 @@ private suspend fun runAcceptanceCleanup(
 private suspend fun cleanupRecording(session: TvheadendSession, state: AcceptanceState): Boolean {
     if (session.observation.value.dvrState !is DvrRepositoryState.Current) return false
     val dvr = session.dvrRepository
+    val currentSession = requireNotNull(session.observation.value.currentSession)
     val id = DvrEntryId(state.recordingId)
     val existing = session.observation.value.dvrEntry(id) ?: return true
     if (state.recordingUuid == null) return false
     existing.requireOwnedBy(state)
     if (existing.state == DvrEntryState.RECORDING) {
-        dvr.stopEntry(id).requireConfirmed()
+        dvr.stopEntry(currentSession, id).requireConfirmed()
         requireOwnedEntry(session, state)
     }
-    dvr.deleteEntry(id).requireConfirmed()
+    dvr.deleteEntry(currentSession, id).requireConfirmed()
     withTimeout(FIXTURE_CLEANUP_TIMEOUT_MS) {
         session.observation.first { observation ->
             observation.dvrState is DvrRepositoryState.Current && observation.dvrEntry(id) == null

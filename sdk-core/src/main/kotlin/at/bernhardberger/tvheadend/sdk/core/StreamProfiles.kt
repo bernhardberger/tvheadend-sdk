@@ -42,6 +42,9 @@ public sealed interface StreamProfilesResult {
     /** No connection generation is currently available for discovery. */
     public data object NotReady : StreamProfilesResult
 
+    /** The originating observation is no longer current for its owning session. */
+    public data object ObservationExpired : StreamProfilesResult
+
     /** The server rejected the request or returned an invalid profile UUID. */
     public data object ServerRejected : StreamProfilesResult
 

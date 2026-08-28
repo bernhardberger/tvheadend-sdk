@@ -1,5 +1,6 @@
 package at.bernhardberger.tvheadend.sdk.core
 
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import kotlin.time.Duration
@@ -56,6 +57,9 @@ public sealed interface DvrProgressResult {
 
     /** The session has not admitted progress reports for a synchronized generation. */
     public data object NotReady : DvrProgressResult
+
+    /** The originating observation is no longer current for its owning session. */
+    public data object ObservationExpired : DvrProgressResult
 
     /** The server rejected the command without a safe detailed reason. */
     public data object ServerRejected : DvrProgressResult
@@ -211,6 +215,7 @@ private fun Duration.toPlaybackProgress(markWatched: Boolean): DvrPlaybackProgre
 
 internal interface DvrProgressCommands {
     public suspend fun reportProgress(
+        generation: GatewayGeneration,
         id: DvrEntryId,
         progress: DvrPlaybackProgress,
     ): DvrProgressResult
@@ -223,6 +228,7 @@ internal interface DvrProgressCommands {
 
     data object None : DvrProgressCommands {
         override suspend fun reportProgress(
+            generation: GatewayGeneration,
             id: DvrEntryId,
             progress: DvrPlaybackProgress,
         ): DvrProgressResult = DvrProgressResult.NotReady

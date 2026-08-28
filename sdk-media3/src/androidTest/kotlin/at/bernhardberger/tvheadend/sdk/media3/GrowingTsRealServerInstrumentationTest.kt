@@ -268,6 +268,7 @@ private object GrowingTsRealServerVerifier {
         val marker = "$fixturePrefix-$markerRole-${UUID.randomUUID().toString().take(8)}"
         val startsAt = wholeSecondNow() + LIVE_RECORDING_START_DELAY
         val scheduleResult = session.dvrRepository.scheduleEntry(
+            requireNotNull(session.observation.value.currentSession),
             DvrScheduleRequest(
                 schedule = DvrSchedule.ExplicitTime(
                     channelId = target.channelId,
@@ -775,7 +776,10 @@ private suspend fun awaitLiveCompletion(
         DvrEntryState.RECORDING,
         requireCurrentOwnedRecording(session, owned).state,
     )
-    session.dvrRepository.stopEntry(owned.id).requireConfirmedMutation()
+    session.dvrRepository.stopEntry(
+        requireNotNull(session.observation.value.currentSession),
+        owned.id,
+    ).requireConfirmedMutation()
     requireNotNull(withTimeout(LIVE_RECORDING_COMPLETION_TIMEOUT_MS) {
         session.observation.first { observation ->
             val entry = observation.dvrEntry(owned.id)
@@ -853,7 +857,10 @@ private suspend fun cleanupOwnedRecording(session: TvheadendSession, owned: Owne
     }
     existing.requireOwnedBy(owned)
     if (existing.state == DvrEntryState.RECORDING) {
-        session.dvrRepository.stopEntry(owned.id).requireConfirmedMutation()
+        session.dvrRepository.stopEntry(
+            requireNotNull(session.observation.value.currentSession),
+            owned.id,
+        ).requireConfirmedMutation()
         withTimeout(LIVE_RECORDING_STOP_TIMEOUT_MS) {
             session.observation.first { observation ->
                 observation.dvrEntry(owned.id)?.state != DvrEntryState.RECORDING
@@ -861,7 +868,10 @@ private suspend fun cleanupOwnedRecording(session: TvheadendSession, owned: Owne
         }
     }
     requireCurrentOwnedRecording(session, owned)
-    session.dvrRepository.deleteEntry(owned.id).requireConfirmedMutation()
+    session.dvrRepository.deleteEntry(
+        requireNotNull(session.observation.value.currentSession),
+        owned.id,
+    ).requireConfirmedMutation()
     withTimeout(LIVE_RECORDING_DELETE_TIMEOUT_MS) {
         session.observation.first { observation ->
             observation.dvrState is DvrRepositoryState.Current &&

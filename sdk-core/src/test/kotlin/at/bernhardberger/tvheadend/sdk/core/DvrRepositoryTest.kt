@@ -2,6 +2,7 @@
 
 package at.bernhardberger.tvheadend.sdk.core
 
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
@@ -142,9 +143,12 @@ internal class DvrRepositoryTest {
     @Test
     fun `progress reports stay command-only and do not change repository state`() = runTest {
         val accepted = DvrProgressResult.Accepted
+        val currentSession = currentSession()
+        val generation = GatewayGeneration()
         var reportedLease: GrowingRecordingFileLease? = null
         val commands = object : DvrProgressCommands {
             override suspend fun reportProgress(
+                generation: GatewayGeneration,
                 id: DvrEntryId,
                 progress: DvrPlaybackProgress,
             ): DvrProgressResult = accepted
@@ -157,10 +161,18 @@ internal class DvrRepositoryTest {
                 return accepted
             }
         }
-        val repository = TestDvrRepository(progressCommands = commands)
+        val repository = TestDvrRepository(
+            progressCommands = commands,
+            currentSession = currentSession,
+            generation = generation,
+        )
         assertSame(
             accepted,
-            repository.reportProgress(DvrEntryId(1), DvrPlaybackProgress.checkpoint(30.seconds)),
+            repository.reportProgress(
+                currentSession,
+                DvrEntryId(1),
+                DvrPlaybackProgress.checkpoint(30.seconds),
+            ),
         )
         val lease = TestGrowingRecordingLease()
         assertSame(
@@ -170,7 +182,8 @@ internal class DvrRepositoryTest {
         assertSame(lease, reportedLease)
         assertSame(
             DvrProgressResult.NotReady,
-            TestDvrRepository().reportProgress(
+            TestDvrRepository(currentSession = currentSession).reportProgress(
+                currentSession,
                 DvrEntryId(1),
                 DvrPlaybackProgress.checkpoint(30.seconds),
             ),
@@ -179,6 +192,7 @@ internal class DvrRepositoryTest {
 
     @Test
     fun `cutpoint queries stay command only and default to not ready`() = runTest {
+        val currentSession = currentSession()
         val expected = DvrCutpointsResult.Available.create(
             listOf(
                 DvrCutpoint(
@@ -189,19 +203,45 @@ internal class DvrRepositoryTest {
             ),
         )
         val commands = object : DvrCutpointCommands {
-            override suspend fun getCutpoints(id: DvrEntryId): DvrCutpointsResult = expected
+            override suspend fun getCutpoints(
+                generation: GatewayGeneration,
+                id: DvrEntryId,
+            ): DvrCutpointsResult = expected
         }
-        val repository = TestDvrRepository(cutpointCommands = commands)
-        assertSame(expected, repository.cutpoints(DvrEntryId(1)))
-        assertSame(DvrCutpointsResult.NotReady, TestDvrRepository().cutpoints(DvrEntryId(1)))
+        val repository = TestDvrRepository(
+            cutpointCommands = commands,
+            currentSession = currentSession,
+        )
+        assertSame(expected, repository.cutpoints(currentSession, DvrEntryId(1)))
+        assertSame(
+            DvrCutpointsResult.NotReady,
+            TestDvrRepository(currentSession = currentSession).cutpoints(
+                currentSession,
+                DvrEntryId(1),
+            ),
+        )
     }
 
     private class TestDvrRepository(
         progressCommands: DvrProgressCommands = DvrProgressCommands.None,
         cutpointCommands: DvrCutpointCommands = DvrCutpointCommands.None,
+        currentSession: CurrentSessionObservation? = null,
+        generation: GatewayGeneration = GatewayGeneration(),
     ) : CommandBackedDvrRepository(
         progressCommands = progressCommands,
         cutpointCommands = cutpointCommands,
+        resolveGeneration = { capability -> generation.takeIf { capability === currentSession } },
+    )
+
+    private fun currentSession(): CurrentSessionObservation = requireNotNull(
+        SessionObservation.create(
+            sessionState = SessionState.Ready(
+                ServerCapabilities.create(CapabilityAccess.UNKNOWN, CapabilityAccess.UNKNOWN),
+            ),
+            channelState = ChannelRepositoryState.Current(ChannelCatalog.create()),
+            epgState = EpgRepositoryState.Current(EpgSnapshot.create()),
+            dvrState = DvrRepositoryState.Current(DvrSnapshot.create()),
+        ).currentSession,
     )
 
     private fun instant(seconds: Long): Instant = Instant.fromEpochSeconds(seconds)

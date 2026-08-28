@@ -1,5 +1,6 @@
 package at.bernhardberger.tvheadend.sdk.core
 
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import java.util.Collections
@@ -550,50 +551,73 @@ public sealed interface DvrDiskSpaceState {
 /** DVR commands for the selected server profile. */
 public interface DvrRepository {
     /** Schedules one DVR entry and waits for authoritative stream confirmation. */
-    public suspend fun scheduleEntry(request: DvrScheduleRequest): DvrMutationResult<DvrEntryId>
+    public suspend fun scheduleEntry(
+        currentSession: CurrentSessionObservation,
+        request: DvrScheduleRequest,
+    ): DvrMutationResult<DvrEntryId>
 
     /** Changes one DVR entry and waits for authoritative stream confirmation. */
     public suspend fun updateEntry(
+        currentSession: CurrentSessionObservation,
         id: DvrEntryId,
         update: DvrEntryUpdate,
     ): DvrMutationResult<Unit>
 
     /** Stops one recording and waits for authoritative stream confirmation. */
-    public suspend fun stopEntry(id: DvrEntryId): DvrMutationResult<Unit>
+    public suspend fun stopEntry(
+        currentSession: CurrentSessionObservation,
+        id: DvrEntryId,
+    ): DvrMutationResult<Unit>
 
     /** Cancels one DVR entry and waits for authoritative stream confirmation. */
-    public suspend fun cancelEntry(id: DvrEntryId): DvrMutationResult<Unit>
+    public suspend fun cancelEntry(
+        currentSession: CurrentSessionObservation,
+        id: DvrEntryId,
+    ): DvrMutationResult<Unit>
 
     /** Deletes one DVR entry and waits for authoritative stream confirmation. */
-    public suspend fun deleteEntry(id: DvrEntryId): DvrMutationResult<Unit>
+    public suspend fun deleteEntry(
+        currentSession: CurrentSessionObservation,
+        id: DvrEntryId,
+    ): DvrMutationResult<Unit>
 
     /** Creates one automatic-recording rule and waits for authoritative stream confirmation. */
     public suspend fun createAutorecRule(
+        currentSession: CurrentSessionObservation,
         request: AutorecRuleCreate,
     ): DvrMutationResult<AutorecRuleId>
 
     /** Changes one automatic-recording rule and waits for authoritative stream confirmation. */
     public suspend fun updateAutorecRule(
+        currentSession: CurrentSessionObservation,
         id: AutorecRuleId,
         update: AutorecRuleUpdate,
     ): DvrMutationResult<Unit>
 
     /** Deletes one automatic-recording rule and waits for authoritative stream confirmation. */
-    public suspend fun deleteAutorecRule(id: AutorecRuleId): DvrMutationResult<Unit>
+    public suspend fun deleteAutorecRule(
+        currentSession: CurrentSessionObservation,
+        id: AutorecRuleId,
+    ): DvrMutationResult<Unit>
 
     /** Creates one time-based recording rule and waits for authoritative stream confirmation. */
     public suspend fun createTimerecRule(
+        currentSession: CurrentSessionObservation,
         request: TimerecRuleCreate,
     ): DvrMutationResult<TimerecRuleId>
 
     /** Changes one time-based recording rule and waits for authoritative stream confirmation. */
     public suspend fun updateTimerecRule(
+        currentSession: CurrentSessionObservation,
         id: TimerecRuleId,
         update: TimerecRuleUpdate,
     ): DvrMutationResult<Unit>
 
     /** Deletes one time-based recording rule and waits for authoritative stream confirmation. */
-    public suspend fun deleteTimerecRule(id: TimerecRuleId): DvrMutationResult<Unit>
+    public suspend fun deleteTimerecRule(
+        currentSession: CurrentSessionObservation,
+        id: TimerecRuleId,
+    ): DvrMutationResult<Unit>
 
     /**
      * Sends one low-level playback-progress RPC without mutating the authoritative DVR snapshot.
@@ -603,6 +627,7 @@ public interface DvrRepository {
      * durable retry or single-writer coordination.
      */
     public suspend fun reportProgress(
+        currentSession: CurrentSessionObservation,
         id: DvrEntryId,
         progress: DvrPlaybackProgress,
     ): DvrProgressResult
@@ -623,60 +648,105 @@ public interface DvrRepository {
     ): DvrProgressResult = DvrProgressResult.NotReady
 
     /** Retrieves the selected entry's ordered cutpoint intervals without caching them. */
-    public suspend fun cutpoints(id: DvrEntryId): DvrCutpointsResult
+    public suspend fun cutpoints(
+        currentSession: CurrentSessionObservation,
+        id: DvrEntryId,
+    ): DvrCutpointsResult
 }
 
 internal abstract class CommandBackedDvrRepository(
     private val mutations: DvrMutationCommands = DvrMutationCommands.None,
     private val progressCommands: DvrProgressCommands = DvrProgressCommands.None,
     private val cutpointCommands: DvrCutpointCommands = DvrCutpointCommands.None,
+    private val resolveGeneration: (CurrentSessionObservation) -> GatewayGeneration? = { null },
 ) : DvrRepository {
     final override suspend fun scheduleEntry(
+        currentSession: CurrentSessionObservation,
         request: DvrScheduleRequest,
-    ): DvrMutationResult<DvrEntryId> = mutations.scheduleEntry(request)
+    ): DvrMutationResult<DvrEntryId> = resolveGeneration(currentSession)?.let { generation ->
+        mutations.scheduleEntry(generation, request)
+    } ?: DvrMutationResult.ObservationExpired
 
     final override suspend fun updateEntry(
+        currentSession: CurrentSessionObservation,
         id: DvrEntryId,
         update: DvrEntryUpdate,
-    ): DvrMutationResult<Unit> = mutations.updateEntry(id, update)
+    ): DvrMutationResult<Unit> = resolveGeneration(currentSession)?.let { generation ->
+        mutations.updateEntry(generation, id, update)
+    } ?: DvrMutationResult.ObservationExpired
 
-    final override suspend fun stopEntry(id: DvrEntryId): DvrMutationResult<Unit> =
-        mutations.stopEntry(id)
+    final override suspend fun stopEntry(
+        currentSession: CurrentSessionObservation,
+        id: DvrEntryId,
+    ): DvrMutationResult<Unit> = resolveGeneration(currentSession)?.let { generation ->
+        mutations.stopEntry(generation, id)
+    } ?: DvrMutationResult.ObservationExpired
 
-    final override suspend fun cancelEntry(id: DvrEntryId): DvrMutationResult<Unit> =
-        mutations.cancelEntry(id)
+    final override suspend fun cancelEntry(
+        currentSession: CurrentSessionObservation,
+        id: DvrEntryId,
+    ): DvrMutationResult<Unit> = resolveGeneration(currentSession)?.let { generation ->
+        mutations.cancelEntry(generation, id)
+    } ?: DvrMutationResult.ObservationExpired
 
-    final override suspend fun deleteEntry(id: DvrEntryId): DvrMutationResult<Unit> =
-        mutations.deleteEntry(id)
+    final override suspend fun deleteEntry(
+        currentSession: CurrentSessionObservation,
+        id: DvrEntryId,
+    ): DvrMutationResult<Unit> = resolveGeneration(currentSession)?.let { generation ->
+        mutations.deleteEntry(generation, id)
+    } ?: DvrMutationResult.ObservationExpired
 
     final override suspend fun createAutorecRule(
+        currentSession: CurrentSessionObservation,
         request: AutorecRuleCreate,
-    ): DvrMutationResult<AutorecRuleId> = mutations.createAutorecRule(request)
+    ): DvrMutationResult<AutorecRuleId> = resolveGeneration(currentSession)?.let { generation ->
+        mutations.createAutorecRule(generation, request)
+    } ?: DvrMutationResult.ObservationExpired
 
     final override suspend fun updateAutorecRule(
+        currentSession: CurrentSessionObservation,
         id: AutorecRuleId,
         update: AutorecRuleUpdate,
-    ): DvrMutationResult<Unit> = mutations.updateAutorecRule(id, update)
+    ): DvrMutationResult<Unit> = resolveGeneration(currentSession)?.let { generation ->
+        mutations.updateAutorecRule(generation, id, update)
+    } ?: DvrMutationResult.ObservationExpired
 
-    final override suspend fun deleteAutorecRule(id: AutorecRuleId): DvrMutationResult<Unit> =
-        mutations.deleteAutorecRule(id)
+    final override suspend fun deleteAutorecRule(
+        currentSession: CurrentSessionObservation,
+        id: AutorecRuleId,
+    ): DvrMutationResult<Unit> = resolveGeneration(currentSession)?.let { generation ->
+        mutations.deleteAutorecRule(generation, id)
+    } ?: DvrMutationResult.ObservationExpired
 
     final override suspend fun createTimerecRule(
+        currentSession: CurrentSessionObservation,
         request: TimerecRuleCreate,
-    ): DvrMutationResult<TimerecRuleId> = mutations.createTimerecRule(request)
+    ): DvrMutationResult<TimerecRuleId> = resolveGeneration(currentSession)?.let { generation ->
+        mutations.createTimerecRule(generation, request)
+    } ?: DvrMutationResult.ObservationExpired
 
     final override suspend fun updateTimerecRule(
+        currentSession: CurrentSessionObservation,
         id: TimerecRuleId,
         update: TimerecRuleUpdate,
-    ): DvrMutationResult<Unit> = mutations.updateTimerecRule(id, update)
+    ): DvrMutationResult<Unit> = resolveGeneration(currentSession)?.let { generation ->
+        mutations.updateTimerecRule(generation, id, update)
+    } ?: DvrMutationResult.ObservationExpired
 
-    final override suspend fun deleteTimerecRule(id: TimerecRuleId): DvrMutationResult<Unit> =
-        mutations.deleteTimerecRule(id)
+    final override suspend fun deleteTimerecRule(
+        currentSession: CurrentSessionObservation,
+        id: TimerecRuleId,
+    ): DvrMutationResult<Unit> = resolveGeneration(currentSession)?.let { generation ->
+        mutations.deleteTimerecRule(generation, id)
+    } ?: DvrMutationResult.ObservationExpired
 
     final override suspend fun reportProgress(
+        currentSession: CurrentSessionObservation,
         id: DvrEntryId,
         progress: DvrPlaybackProgress,
-    ): DvrProgressResult = progressCommands.reportProgress(id, progress)
+    ): DvrProgressResult = resolveGeneration(currentSession)?.let { generation ->
+        progressCommands.reportProgress(generation, id, progress)
+    } ?: DvrProgressResult.ObservationExpired
 
     @SubscriptionInfrastructureApi
     final override suspend fun reportProgress(
@@ -684,8 +754,12 @@ internal abstract class CommandBackedDvrRepository(
         progress: DvrPlaybackProgress,
     ): DvrProgressResult = progressCommands.reportProgress(lease, progress)
 
-    final override suspend fun cutpoints(id: DvrEntryId): DvrCutpointsResult =
-        cutpointCommands.getCutpoints(id)
+    final override suspend fun cutpoints(
+        currentSession: CurrentSessionObservation,
+        id: DvrEntryId,
+    ): DvrCutpointsResult = resolveGeneration(currentSession)?.let { generation ->
+        cutpointCommands.getCutpoints(generation, id)
+    } ?: DvrCutpointsResult.ObservationExpired
 }
 
 private fun requireDvrU32(name: String, value: Long) {

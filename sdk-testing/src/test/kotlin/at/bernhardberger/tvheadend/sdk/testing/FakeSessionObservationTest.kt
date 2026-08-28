@@ -28,10 +28,12 @@ internal class FakeSessionObservationTest {
 
         fake.publish(current)
         assertSame(current, fake.observation.value)
+        assertSame(current.currentSession, fake.captureCurrentSession())
         assertThrows(IllegalArgumentException::class.java) { fake.retire(current) }
 
         fake.retire(retired)
         assertSame(retired, fake.observation.value)
+        assertThrows(IllegalStateException::class.java) { fake.captureCurrentSession() }
     }
 
     private fun currentObservation(): SessionObservation = SessionObservation.create(

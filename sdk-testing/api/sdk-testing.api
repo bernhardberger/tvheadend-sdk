@@ -2,6 +2,7 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeSessionObservatio
 	public fun <init> ()V
 	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;)V
 	public synthetic fun <init> (Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun captureCurrentSession ()Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;
 	public final fun getObservation ()Lkotlinx/coroutines/flow/StateFlow;
 	public final fun publish (Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;)V
 	public final fun retire (Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;)V

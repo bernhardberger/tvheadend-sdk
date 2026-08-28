@@ -4,6 +4,7 @@ import at.bernhardberger.tvheadend.sdk.core.ArtworkFailure
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoader
+import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
 import coil3.ImageLoader
 import coil3.decode.DataSource
@@ -21,14 +22,23 @@ import okio.source
 /** Opaque Coil model for one authenticated TVHeadend image-cache entry. */
 public class TvheadendArtwork private constructor(
     internal val loader: ArtworkLoader,
+    internal val currentSession: CurrentSessionObservation,
     internal val id: ArtworkId,
 ) {
     override fun toString(): String = "TvheadendArtwork(<redacted>)"
 
     override fun equals(other: Any?): Boolean =
-        this === other || other is TvheadendArtwork && loader === other.loader && id == other.id
+        this === other ||
+            other is TvheadendArtwork &&
+            loader === other.loader &&
+            currentSession === other.currentSession &&
+            id == other.id
 
-    override fun hashCode(): Int = 31 * System.identityHashCode(loader) + id.hashCode()
+    override fun hashCode(): Int {
+        var result = System.identityHashCode(loader)
+        result = 31 * result + System.identityHashCode(currentSession)
+        return 31 * result + id.hashCode()
+    }
 
     public companion object {
         /**
@@ -38,12 +48,14 @@ public class TvheadendArtwork private constructor(
          */
         public fun create(
             session: TvheadendSession,
+            currentSession: CurrentSessionObservation,
             source: String?,
-        ): TvheadendArtwork? = create(session.artwork, source)
+        ): TvheadendArtwork? = create(session.artwork, currentSession, source)
 
         @JvmSynthetic
         internal fun create(
             loader: ArtworkLoader,
+            currentSession: CurrentSessionObservation,
             source: String?,
         ): TvheadendArtwork? {
             val normalized = source?.removePrefix("/") ?: return null
@@ -51,7 +63,7 @@ public class TvheadendArtwork private constructor(
             val value = normalized.removePrefix(ARTWORK_SELECTOR_PREFIX)
             if (value.isEmpty() || value.any { character -> character !in '0'..'9' }) return null
             val id = value.toIntOrNull()?.takeIf { parsed -> parsed > 0 } ?: return null
-            return TvheadendArtwork(loader, ArtworkId(id))
+            return TvheadendArtwork(loader, currentSession, ArtworkId(id))
         }
     }
 }
@@ -72,7 +84,9 @@ internal class TvheadendArtworkFetcher(
     private val artwork: TvheadendArtwork,
 ) : Fetcher {
     override suspend fun fetch(): FetchResult {
-        val content = when (val loaded = artwork.loader.loadArtwork(artwork.id)) {
+        val content = when (
+            val loaded = artwork.loader.loadArtwork(artwork.currentSession, artwork.id)
+        ) {
             is ArtworkLoadResult.Available -> loaded.content
             is ArtworkLoadResult.Unavailable -> throw loaded.failure.toIOException()
         }

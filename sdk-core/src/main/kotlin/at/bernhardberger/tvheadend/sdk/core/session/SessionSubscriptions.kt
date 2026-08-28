@@ -8,6 +8,7 @@ import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.ChannelId as SdkChannelId
+import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
 import at.bernhardberger.tvheadend.sdk.core.StreamProfileId
 import at.bernhardberger.tvheadend.sdk.core.StreamProfilesResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
@@ -73,19 +74,43 @@ internal class PlaybackSessionChildren(
     private var backgroundEnrichment: ActiveBackgroundEnrichment? = null
     private var subscriptions: SubscriptionManager? = null
     private var streamingAccess: CapabilityAccess? = null
-    private var discoveredStreamProfiles: Set<StreamProfileId>? = null
 
     override suspend fun open(
         channelId: SubscriptionChannelId,
         consumer: SubscriptionEventConsumer,
         timeshiftPeriod: Duration,
-    ): SubscriptionOpenResult = open(
-        channelId,
-        consumer,
-        SubscriptionOptions(timeshiftPeriod = timeshiftPeriod),
+    ): SubscriptionOpenResult = openBound(
+        expectedGeneration = null,
+        channelId = channelId,
+        consumer = consumer,
+        options = SubscriptionOptions(timeshiftPeriod = timeshiftPeriod),
     )
 
     override suspend fun open(
+        channelId: SubscriptionChannelId,
+        consumer: SubscriptionEventConsumer,
+        options: SubscriptionOptions,
+    ): SubscriptionOpenResult = openBound(
+        expectedGeneration = null,
+        channelId = channelId,
+        consumer = consumer,
+        options = options,
+    )
+
+    override suspend fun open(
+        generation: GatewayGeneration,
+        channelId: SubscriptionChannelId,
+        consumer: SubscriptionEventConsumer,
+        options: SubscriptionOptions,
+    ): SubscriptionOpenResult = openBound(
+        expectedGeneration = generation,
+        channelId = channelId,
+        consumer = consumer,
+        options = options,
+    )
+
+    private suspend fun openBound(
+        expectedGeneration: GatewayGeneration?,
         channelId: SubscriptionChannelId,
         consumer: SubscriptionEventConsumer,
         options: SubscriptionOptions,
@@ -93,13 +118,17 @@ internal class PlaybackSessionChildren(
         currentCoroutineContext().ensureActive()
         val admission = synchronized(lock) {
             val boundGeneration = generation ?: return SubscriptionOpenResult.NotReady
+            if (expectedGeneration != null && boundGeneration !== expectedGeneration) {
+                return SubscriptionOpenResult.NotReady
+            }
             val manager = subscriptions ?: return SubscriptionOpenResult.NotReady
             val access = streamingAccess ?: return SubscriptionOpenResult.NotReady
-            LiveAdmission(boundGeneration, manager, access, discoveredStreamProfiles)
+            LiveAdmission(boundGeneration, manager, access)
         }
         options.streamProfileUuid?.let { uuid ->
-            val discovered = admission.streamProfiles ?: return SubscriptionOpenResult.NotReady
-            if (StreamProfileId(uuid) !in discovered) {
+            try {
+                StreamProfileId(uuid)
+            } catch (_: IllegalArgumentException) {
                 return SubscriptionOpenResult.ProfileUnavailable
             }
         }
@@ -126,24 +155,23 @@ internal class PlaybackSessionChildren(
         }
     }
 
-    override suspend fun getStreamProfiles(): StreamProfilesResult {
+    override suspend fun getStreamProfiles(
+        generation: GatewayGeneration,
+    ): StreamProfilesResult {
         currentCoroutineContext().ensureActive()
         val discovery = synchronized(lock) {
+            if (this.generation !== generation) return StreamProfilesResult.ObservationExpired
             ProfileDiscovery(
-                generation ?: return StreamProfilesResult.NotReady,
+                generation,
                 subscriptions ?: return StreamProfilesResult.NotReady,
             )
         }
         val result = gateway.getStreamProfiles(discovery.generation)
         return synchronized(lock) {
-            if (generation !== discovery.generation || subscriptions !== discovery.manager) {
+            if (this.generation !== discovery.generation || subscriptions !== discovery.manager) {
                 StreamProfilesResult.TransportUnavailable
             } else {
-                result.toStreamProfilesResult().also { mapped ->
-                    if (mapped is StreamProfilesResult.Available) {
-                        discoveredStreamProfiles = mapped.profiles.mapTo(LinkedHashSet()) { it.id }
-                    }
-                }
+                result.toStreamProfilesResult()
             }
         }
     }
@@ -156,9 +184,21 @@ internal class PlaybackSessionChildren(
      */
     override suspend fun openRecording(
         recordingId: RecordingId,
+    ): RecordingFileResult<RecordingFile> = openRecordingBound(null, recordingId)
+
+    override suspend fun openRecording(
+        generation: GatewayGeneration,
+        recordingId: RecordingId,
+    ): RecordingFileResult<RecordingFile> = openRecordingBound(generation, recordingId)
+
+    private suspend fun openRecordingBound(
+        expectedGeneration: GatewayGeneration?,
+        recordingId: RecordingId,
     ): RecordingFileResult<RecordingFile> {
         currentCoroutineContext().ensureActive()
-        val bound = synchronized(lock) { generation }
+        val bound = synchronized(lock) {
+            generation?.takeIf { expectedGeneration == null || it === expectedGeneration }
+        }
             ?: return RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
         return gateway.openRecordingFile(bound, DvrEntryId(recordingId.value))
             .toRecordingFileResult { file -> GatewayRecordingFileHandle(gateway, bound, file) }
@@ -166,8 +206,21 @@ internal class PlaybackSessionChildren(
 
     override fun bindGrowingRecording(
         recordingId: RecordingId,
+    ): RecordingFileResult<GrowingRecordingFileLease> = bindGrowingRecordingBound(null, recordingId)
+
+    override fun bindGrowingRecording(
+        generation: GatewayGeneration,
+        recordingId: RecordingId,
+    ): RecordingFileResult<GrowingRecordingFileLease> =
+        bindGrowingRecordingBound(generation, recordingId)
+
+    private fun bindGrowingRecordingBound(
+        expectedGeneration: GatewayGeneration?,
+        recordingId: RecordingId,
     ): RecordingFileResult<GrowingRecordingFileLease> {
-        val bound = synchronized(lock) { generation }
+        val bound = synchronized(lock) {
+            generation?.takeIf { expectedGeneration == null || it === expectedGeneration }
+        }
             ?: return RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
         val dvrEntryId = DvrEntryId(recordingId.value)
         val tracker = GrowingRecordingMetadataTracker(
@@ -190,9 +243,23 @@ internal class PlaybackSessionChildren(
     override suspend fun openGrowingRecording(
         recordingId: RecordingId,
         position: Long,
+    ): RecordingFileResult<GrowingRecordingFileReader> =
+        openGrowingRecordingBound(null, recordingId, position)
+
+    override suspend fun openGrowingRecording(
+        generation: GatewayGeneration,
+        recordingId: RecordingId,
+        position: Long,
+    ): RecordingFileResult<GrowingRecordingFileReader> =
+        openGrowingRecordingBound(generation, recordingId, position)
+
+    private suspend fun openGrowingRecordingBound(
+        expectedGeneration: GatewayGeneration?,
+        recordingId: RecordingId,
+        position: Long,
     ): RecordingFileResult<GrowingRecordingFileReader> {
         require(position >= 0L) { "Growing recording position must not be negative" }
-        return when (val binding = bindGrowingRecording(recordingId)) {
+        return when (val binding = bindGrowingRecordingBound(expectedGeneration, recordingId)) {
             is RecordingFileResult.Failed -> binding
             is RecordingFileResult.Ok -> binding.value.open(position)
         }
@@ -276,10 +343,16 @@ internal class PlaybackSessionChildren(
         override fun toString(): String = "GrowingRecordingFileLease(<redacted>)"
     }
 
-    override suspend fun loadArtwork(artworkId: ArtworkId): ArtworkLoadResult {
+    override suspend fun loadArtwork(
+        currentSession: CurrentSessionObservation,
+        artworkId: ArtworkId,
+    ): ArtworkLoadResult {
         currentCoroutineContext().ensureActive()
-        val bound = synchronized(lock) { generation }
-            ?: return ArtworkLoadResult.Unavailable(ArtworkFailure.CONNECTION_CHANGED)
+        val expectedGeneration = metadata.resolveGeneration(currentSession)
+            ?: return ArtworkLoadResult.Unavailable(ArtworkFailure.OBSERVATION_EXPIRED)
+        val bound = synchronized(lock) {
+            generation.takeIf { it === expectedGeneration }
+        } ?: return ArtworkLoadResult.Unavailable(ArtworkFailure.OBSERVATION_EXPIRED)
         return gateway.loadArtwork(bound, artworkId).toArtworkLoadResult()
     }
 
@@ -289,7 +362,6 @@ internal class PlaybackSessionChildren(
             check(subscriptions == null) { "Previous subscription generation is still active" }
             this.generation = generation
             streamingAccess = null
-            discoveredStreamProfiles = null
             subscriptions = createSubscriptionManager(
                 GatewaySubscriptionConnection(gateway, generation),
                 dispatcher,
@@ -411,7 +483,6 @@ internal class PlaybackSessionChildren(
                         generation = null
                         subscriptions = null
                         streamingAccess = null
-                        discoveredStreamProfiles = null
                     }
                 }
             }
@@ -431,7 +502,6 @@ private class LiveAdmission(
     internal val generation: GatewayGeneration,
     internal val manager: SubscriptionManager,
     internal val streamingAccess: CapabilityAccess,
-    internal val streamProfiles: Set<StreamProfileId>?,
 )
 
 private class ProfileDiscovery(

@@ -408,7 +408,8 @@ private class SessionPlaybackCoordinatorEnvironment(
         progress: DvrPlaybackProgress,
     ) {
         if (growingLease == null) {
-            session.dvrRepository.reportProgress(recordingId, progress)
+            val currentSession = observation.value.currentSession ?: return
+            session.dvrRepository.reportProgress(currentSession, recordingId, progress)
         } else {
             session.dvrRepository.reportProgress(growingLease, progress)
         }

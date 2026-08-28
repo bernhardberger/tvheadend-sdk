@@ -5,6 +5,17 @@ import at.bernhardberger.tvheadend.sdk.core.ArtworkFailure
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoader
+import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
+import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
+import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
+import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
+import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
+import at.bernhardberger.tvheadend.sdk.core.ServerCapabilities
+import at.bernhardberger.tvheadend.sdk.core.SessionObservation
+import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
 import coil3.decode.DataSource
 import coil3.fetch.SourceFetchResult
@@ -26,11 +37,16 @@ internal class TvheadendArtworkTest {
     @Test
     fun `model accepts only HTSP image cache selectors and redacts rendering`() {
         val loader = FakeArtworkLoader()
+        val currentSession = currentSession()
 
-        val direct = TvheadendArtwork.create(loader, "imagecache/73")
-        val legacy = TvheadendArtwork.create(loader, "/imagecache/74")
-        val duplicate = TvheadendArtwork.create(loader, "imagecache/73")
-        val fromSession = TvheadendArtwork.create(sessionWith(loader), "imagecache/75")
+        val direct = TvheadendArtwork.create(loader, currentSession, "imagecache/73")
+        val legacy = TvheadendArtwork.create(loader, currentSession, "/imagecache/74")
+        val duplicate = TvheadendArtwork.create(loader, currentSession, "imagecache/73")
+        val fromSession = TvheadendArtwork.create(
+            sessionWith(loader),
+            currentSession,
+            "imagecache/75",
+        )
 
         assertNotNull(direct)
         assertNotNull(legacy)
@@ -38,7 +54,11 @@ internal class TvheadendArtworkTest {
         assertEquals(direct, duplicate)
         assertEquals(direct.hashCode(), duplicate.hashCode())
         assertNotEquals(direct, legacy)
-        assertNotEquals(direct, TvheadendArtwork.create(FakeArtworkLoader(), "imagecache/73"))
+        assertNotEquals(
+            direct,
+            TvheadendArtwork.create(FakeArtworkLoader(), currentSession, "imagecache/73"),
+        )
+        assertNotEquals(direct, TvheadendArtwork.create(loader, currentSession(), "imagecache/73"))
         assertEquals("TvheadendArtwork(<redacted>)", direct.toString())
         listOf(
             null,
@@ -50,7 +70,7 @@ internal class TvheadendArtworkTest {
             "//imagecache/1",
             "https://private-host/imagecache/1",
         ).forEach { source ->
-            assertNull(TvheadendArtwork.create(loader, source))
+            assertNull(TvheadendArtwork.create(loader, currentSession, source))
         }
         assertFalse(direct.toString().contains("73"))
     }
@@ -62,7 +82,10 @@ internal class TvheadendArtworkTest {
             ArtworkLoadResult.Available(ArtworkContent.create(payload)),
         )
         payload.fill(9)
-        val artwork = requireNotNull(TvheadendArtwork.create(loader, "imagecache/91"))
+        val currentSession = currentSession()
+        val artwork = requireNotNull(
+            TvheadendArtwork.create(loader, currentSession, "imagecache/91"),
+        )
 
         val result = TvheadendArtworkFetcher(artwork).fetch() as SourceFetchResult
 
@@ -74,7 +97,28 @@ internal class TvheadendArtworkTest {
             result.source.close()
         }
         assertEquals(ArtworkId(91), loader.lastId)
+        assertSame(currentSession, loader.lastCurrentSession)
         assertNotNull(createTvheadendArtworkFetcherFactory())
+    }
+
+    @Test
+    fun `delayed fetch retains its originating observation after replacement`() {
+        val loader = FakeArtworkLoader(
+            ArtworkLoadResult.Unavailable(ArtworkFailure.OBSERVATION_EXPIRED),
+        )
+        val original = currentSession()
+        val artwork = requireNotNull(
+            TvheadendArtwork.create(loader, original, "imagecache/92"),
+        )
+        val replacement = currentSession()
+        assertNotEquals(original, replacement)
+
+        val failure = assertThrows(IOException::class.java) {
+            runTest { TvheadendArtworkFetcher(artwork).fetch() }
+        }
+
+        assertEquals("TVHeadend artwork load failed: OBSERVATION_EXPIRED", failure.message)
+        assertSame(original, loader.lastCurrentSession)
     }
 
     @Test
@@ -82,7 +126,9 @@ internal class TvheadendArtworkTest {
         val loader = FakeArtworkLoader(
             ArtworkLoadResult.Unavailable(ArtworkFailure.ACCESS_DENIED),
         )
-        val artwork = requireNotNull(TvheadendArtwork.create(loader, "imagecache/27"))
+        val artwork = requireNotNull(
+            TvheadendArtwork.create(loader, currentSession(), "imagecache/27"),
+        )
 
         val failure = assertThrows(IOException::class.java) {
             runTest { TvheadendArtworkFetcher(artwork).fetch() }
@@ -101,6 +147,17 @@ internal class TvheadendArtworkTest {
         }
         assertSame(cancellation, caught)
     }
+
+    private fun currentSession(): CurrentSessionObservation = requireNotNull(
+        SessionObservation.create(
+            sessionState = SessionState.Ready(
+                ServerCapabilities.create(CapabilityAccess.UNKNOWN, CapabilityAccess.UNKNOWN),
+            ),
+            channelState = ChannelRepositoryState.Current(ChannelCatalog.create()),
+            epgState = EpgRepositoryState.Current(EpgSnapshot.create()),
+            dvrState = DvrRepositoryState.Current(DvrSnapshot.create()),
+        ).currentSession,
+    )
 }
 
 @Suppress("UNCHECKED_CAST")
@@ -116,10 +173,15 @@ private class FakeArtworkLoader(
         ArtworkLoadResult.Unavailable(ArtworkFailure.FILE_UNAVAILABLE),
 ) : ArtworkLoader {
     internal var lastId: ArtworkId? = null
+    internal var lastCurrentSession: CurrentSessionObservation? = null
     internal var cancellation: CancellationException? = null
 
-    override suspend fun loadArtwork(artworkId: ArtworkId): ArtworkLoadResult {
+    override suspend fun loadArtwork(
+        currentSession: CurrentSessionObservation,
+        artworkId: ArtworkId,
+    ): ArtworkLoadResult {
         cancellation?.let { throw it }
+        lastCurrentSession = currentSession
         lastId = artworkId
         return result
     }

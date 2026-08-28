@@ -75,6 +75,7 @@ internal class DvrRealServerDenialVerificationTest {
             )
             credentials.forbidLeak(capabilities.toString())
             credentials.forbidLeak(ready.toString())
+            val currentSession = requireNotNull(session.observation.value.currentSession)
 
             val dvr = session.dvrRepository
             withTimeout(2.minutes) {
@@ -97,6 +98,7 @@ internal class DvrRealServerDenialVerificationTest {
             val now = Instant.fromEpochSeconds(Clock.System.now().epochSeconds)
 
             dvr.scheduleEntry(
+                currentSession,
                 DvrScheduleRequest(
                     schedule = DvrSchedule.ExplicitTime(
                         channelId = requireNotNull(channelId),
@@ -112,6 +114,7 @@ internal class DvrRealServerDenialVerificationTest {
             )
 
             val progress = dvr.reportProgress(
+                currentSession,
                 DvrEntryId(1),
                 DvrPlaybackProgress.checkpoint(30.seconds),
             )
@@ -119,6 +122,7 @@ internal class DvrRealServerDenialVerificationTest {
             credentials.forbidLeak(progress.toString())
 
             dvr.createAutorecRule(
+                currentSession,
                 AutorecRuleCreate(
                     title = marker,
                     channel = RecordingRuleChannel.AllChannels,
@@ -235,25 +239,26 @@ private suspend fun cleanupDeniedLeftovers(
     timerec: Set<TimerecRuleId>,
 ) {
     val dvr: DvrRepository = session.dvrRepository
+    val currentSession = requireNotNull(session.observation.value.currentSession)
     var leftover = false
     entries.forEach { id ->
         val existing = currentDenialDvrSnapshot(session).entries.firstOrNull { entry -> entry.id == id }
         if (existing?.state == DvrEntryState.RECORDING) {
-            dvr.stopEntry(id)
+            dvr.stopEntry(currentSession, id)
         }
-        dvr.deleteEntry(id)
+        dvr.deleteEntry(currentSession, id)
         if (currentDenialDvrSnapshot(session).entries.any { entry -> entry.id == id }) {
             leftover = true
         }
     }
     autorec.forEach { id ->
-        dvr.deleteAutorecRule(id)
+        dvr.deleteAutorecRule(currentSession, id)
         if (currentDenialDvrSnapshot(session).autorecRules.any { rule -> rule.id == id }) {
             leftover = true
         }
     }
     timerec.forEach { id ->
-        dvr.deleteTimerecRule(id)
+        dvr.deleteTimerecRule(currentSession, id)
         if (currentDenialDvrSnapshot(session).timerecRules.any { rule -> rule.id == id }) {
             leftover = true
         }

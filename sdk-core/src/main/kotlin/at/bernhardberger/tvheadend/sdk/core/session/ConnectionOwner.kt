@@ -4,6 +4,7 @@ package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoader
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
+import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
 import at.bernhardberger.tvheadend.sdk.core.DVR_PROGRESS_MINIMUM_PROTOCOL_VERSION
 import at.bernhardberger.tvheadend.sdk.core.DvrRepository
 import at.bernhardberger.tvheadend.sdk.core.EpgRepository
@@ -77,7 +78,13 @@ internal class ConnectionOwner(
     override val epgRepository: EpgRepository = metadata.epgRepository
     override val dvrRepository: DvrRepository = metadata.dvrRepository
     override val artwork: ArtworkLoader = children
-    override suspend fun getStreamProfiles(): StreamProfilesResult = children.getStreamProfiles()
+    override suspend fun getStreamProfiles(
+        currentSession: CurrentSessionObservation,
+    ): StreamProfilesResult {
+        val generation = metadata.resolveGeneration(currentSession)
+            ?: return StreamProfilesResult.ObservationExpired
+        return children.getStreamProfiles(generation)
+    }
     override val subscriptions: SubscriptionOpener = children
     override val recordings: RecordingFileOpener = children
 

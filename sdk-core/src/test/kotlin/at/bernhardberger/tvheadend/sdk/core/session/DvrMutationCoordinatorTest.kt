@@ -77,11 +77,11 @@ internal class DvrMutationCoordinatorTest {
         coordinator.bindGeneration(generation)
         assertTrue(coordinator.startAdmission(generation))
 
-        assertSame(DvrMutationResult.NotReady, coordinator.scheduleEntry(scheduleRequest()))
+        assertSame(DvrMutationResult.NotReady, coordinator.scheduleEntry(generation, scheduleRequest()))
         assertEquals(0, commandCount)
 
         ready = true
-        assertSame(DvrMutationResult.AccessDenied, coordinator.scheduleEntry(scheduleRequest()))
+        assertSame(DvrMutationResult.AccessDenied, coordinator.scheduleEntry(generation, scheduleRequest()))
         assertEquals(1, commandCount)
     }
 
@@ -99,7 +99,7 @@ internal class DvrMutationCoordinatorTest {
         coordinator.bindGeneration(generation)
         assertTrue(coordinator.startAdmission(generation))
 
-        val result = async { coordinator.scheduleEntry(scheduleRequest()) }
+        val result = async { coordinator.scheduleEntry(generation, scheduleRequest()) }
         runCurrent()
         coordinator.acceptMetadata(dvrAdded(generation, 99))
         coordinator.acceptMetadata(dvrAdded(generation, 7))
@@ -126,10 +126,10 @@ internal class DvrMutationCoordinatorTest {
             GatewayResult.ServerRejected
         }
 
-        assertSame(DvrMutationResult.ServerRejected, coordinator.scheduleEntry(scheduleRequest()))
+        assertSame(DvrMutationResult.ServerRejected, coordinator.scheduleEntry(generation, scheduleRequest()))
 
         gateway.scheduleBehavior = { _, _ -> GatewayResult.Ok(DvrEntryId(8)) }
-        val timed = async { coordinator.scheduleEntry(scheduleRequest()) }
+        val timed = async { coordinator.scheduleEntry(generation, scheduleRequest()) }
         runCurrent()
         advanceTimeBy(1.seconds)
         runCurrent()
@@ -162,7 +162,7 @@ internal class DvrMutationCoordinatorTest {
         )
         cases.forEach { (gatewayResult, expected) ->
             gateway.scheduleBehavior = { _, _ -> gatewayResult }
-            assertSame(expected, coordinator.scheduleEntry(scheduleRequest()))
+            assertSame(expected, coordinator.scheduleEntry(generation, scheduleRequest()))
         }
         assertEquals(listOf(false), proofs)
 
@@ -170,7 +170,7 @@ internal class DvrMutationCoordinatorTest {
         gateway.updateBehavior = { _, _, _ -> throw cancellation }
         var caught: CancellationException? = null
         try {
-            coordinator.updateEntry(DvrEntryId(1), DvrEntryUpdate())
+            coordinator.updateEntry(generation, DvrEntryId(1), DvrEntryUpdate())
         } catch (failure: CancellationException) {
             caught = failure
         }
@@ -190,14 +190,53 @@ internal class DvrMutationCoordinatorTest {
             awaitCancellation()
         }
 
-        val result = async { coordinator.updateEntry(DvrEntryId(1), DvrEntryUpdate()) }
+        val result = async {
+            coordinator.updateEntry(generation, DvrEntryId(1), DvrEntryUpdate())
+        }
         commandStarted.await()
         coordinator.stopAdmission()
         coordinator.acceptMetadata(dvrUpdated(generation, 1))
         runCurrent()
 
         assertSame(DvrMutationResult.TransportUnavailable, result.await())
-        assertSame(DvrMutationResult.NotReady, coordinator.updateEntry(DvrEntryId(1), DvrEntryUpdate()))
+        assertSame(
+            DvrMutationResult.ObservationExpired,
+            coordinator.updateEntry(generation, DvrEntryId(1), DvrEntryUpdate()),
+        )
+    }
+
+    @Test
+    fun `queued generation A mutation never dispatches on replacement generation B`() = runTest {
+        val generationA = GatewayGeneration()
+        val generationB = GatewayGeneration()
+        val gateway = MutationGateway()
+        val dispatched = mutableListOf<GatewayGeneration>()
+        val coordinator = DvrMutationCoordinator(gateway)
+        coordinator.bindGeneration(generationA)
+        coordinator.startAdmission(generationA)
+        gateway.updateBehavior = { generation, _, _ ->
+            dispatched += generation
+            GatewayResult.Ok(Unit)
+        }
+
+        val inFlight = async {
+            coordinator.updateEntry(generationA, DvrEntryId(7), DvrEntryUpdate(title = "first"))
+        }
+        runCurrent()
+        val queued = async {
+            coordinator.updateEntry(generationA, DvrEntryId(7), DvrEntryUpdate(title = "second"))
+        }
+        runCurrent()
+        assertEquals(listOf(generationA), dispatched)
+
+        coordinator.stopAdmission()
+        coordinator.bindGeneration(generationB)
+        coordinator.startAdmission(generationB)
+        runCurrent()
+
+        assertSame(DvrMutationResult.TransportUnavailable, inFlight.await())
+        assertSame(DvrMutationResult.ObservationExpired, queued.await())
+        assertEquals(listOf(generationA), dispatched)
     }
 
     @Test
@@ -213,9 +252,13 @@ internal class DvrMutationCoordinatorTest {
         coordinator.bindGeneration(generation)
         coordinator.startAdmission(generation)
 
-        val first = async { coordinator.updateEntry(DvrEntryId(1), DvrEntryUpdate(title = "first")) }
+        val first = async {
+            coordinator.updateEntry(generation, DvrEntryId(1), DvrEntryUpdate(title = "first"))
+        }
         runCurrent()
-        val second = async { coordinator.updateEntry(DvrEntryId(1), DvrEntryUpdate(title = "second")) }
+        val second = async {
+            coordinator.updateEntry(generation, DvrEntryId(1), DvrEntryUpdate(title = "second"))
+        }
         runCurrent()
         assertEquals(1, commandCount)
 
@@ -242,7 +285,9 @@ internal class DvrMutationCoordinatorTest {
         coordinator.bindGeneration(generation)
         coordinator.startAdmission(generation)
 
-        val result = async { coordinator.createAutorecRule(AutorecRuleCreate("title")) }
+        val result = async {
+            coordinator.createAutorecRule(generation, AutorecRuleCreate("title"))
+        }
         runCurrent()
         coordinator.acceptMetadata(dvrAdded(generation, 1))
         coordinator.acceptMetadata(
@@ -279,7 +324,9 @@ internal class DvrMutationCoordinatorTest {
         coordinator.bindGeneration(generation)
         coordinator.startAdmission(generation)
 
-        val result = async { coordinator.createTimerecRule(TimerecRuleCreate("title")) }
+        val result = async {
+            coordinator.createTimerecRule(generation, TimerecRuleCreate("title"))
+        }
         runCurrent()
         coordinator.acceptMetadata(
             MetadataEvent.TimerecRuleAdded(

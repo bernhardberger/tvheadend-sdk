@@ -70,14 +70,14 @@ property.
 
 ## Live stream profiles
 
-`TvheadendSession.getStreamProfiles()` discovers the current connection
-generation's ordered stream profiles. Pass a returned ID through
-`LivePlaybackOptions` to select that server profile for one live target. Unknown
-IDs fail closed, and a connection-generation change clears the discovered
-allowlist until the new generation discovers the requested UUID:
+`TvheadendSession.getStreamProfiles(currentSession)` discovers the ordered stream
+profiles for exactly the generation represented by that observation. Pass a
+returned ID through `LivePlaybackOptions` to select that server profile for one
+live target:
 
 ```kotlin
-val selected = when (val result = session.getStreamProfiles()) {
+val currentSession = requireNotNull(session.observation.value.currentSession)
+val selected = when (val result = session.getStreamProfiles(currentSession)) {
     is StreamProfilesResult.Available -> result.profiles.firstOrNull()
     else -> null
 }
@@ -93,9 +93,10 @@ if (selected != null) {
 }
 ```
 
-The listed name and comment are presentation metadata. Profile IDs are opaque,
-redacted from string rendering, and selected only from the current generation's
-discovered allowlist. Omitting the profile keeps TVHeadend's default selection.
+The listed name and comment are presentation metadata. Profile IDs are opaque
+and redacted from string rendering. A canonical ID does not require a prior
+discovery-cache lookup; the exact admitted generation validates selection.
+Omitting the profile keeps TVHeadend's default selection.
 
 ## Atomic session observation
 
@@ -126,15 +127,16 @@ DVR mutations and recording progress remain gated on `SessionState.Ready`.
 `Ready` follows the server's authoritative initial metadata fence. EPG coverage
 queries and DVR configuration and disk-space enrichment continue as supervised
 generation-owned background work and do not delay or tear down readiness.
-Consumers can prioritize one bounded EPG horizon without waiting for network
-work:
+Consumers can acquire one bounded EPG horizon for the captured generation:
 
 ```kotlin
-val result = session.epgRepository.requestCoverage(channel.id, programme.stop)
+val currentSession = requireNotNull(observed.currentSession)
+val result = session.epgRepository.acquireCoverage(currentSession, channel.id, programme.stop)
 ```
 
-`EpgCoverageRequestResult` distinguishes existing coverage, an accepted or
-deduplicated hint, an ineligible request, and loss of the owning generation.
+`EpgCoverageAcquisitionResult` settles as covered-with-data, covered-empty,
+ineligible, or observation-expired. Covered results retain the exact immutable
+observation that established the coverage.
 
 See [the build matrix](docs/build-matrix.md) for the pinned toolchain and test
 runtime split. The optional decoder fallback's exact source, build, checksums,
@@ -162,7 +164,8 @@ val imageLoader = ImageLoader.Builder(context)
     }
     .build()
 
-val artwork = TvheadendArtwork.create(session, channel.icon)
+val currentSession = requireNotNull(session.observation.value.currentSession)
+val artwork = TvheadendArtwork.create(session, currentSession, channel.icon)
 ```
 
 The model rejects external URLs and malformed selectors. The SDK deliberately
@@ -185,9 +188,10 @@ marks a completed recording watched; an orderly exit requires at least 95% of a
 known positive actual media duration. Errors and growing recordings never infer
 completion.
 
-`DvrRepository.reportProgress` is an uncoordinated low-level RPC. Direct callers
-must serialize reports and preserve observation and terminal ordering
-themselves; the SDK does not persist or replay pending progress.
+`DvrRepository.reportProgress(currentSession, recordingId, progress)` is an
+uncoordinated low-level RPC bound to the originating observation. Direct callers
+must serialize reports and preserve terminal ordering themselves; the SDK does
+not persist or replay pending progress.
 
 ## Media3 playback coordination
 

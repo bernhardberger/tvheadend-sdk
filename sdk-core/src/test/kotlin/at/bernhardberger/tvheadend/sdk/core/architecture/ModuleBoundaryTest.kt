@@ -205,7 +205,11 @@ internal class ModuleBoundaryTest {
             "EpgEpisode",
             "EpgEvent",
             "EpgCoverage",
-            "EpgCoverageRequestResult",
+            "EpgCoverageAcquisitionResult",
+            "CoveredWithData",
+            "CoveredEmpty",
+            "Ineligible",
+            "ObservationExpired",
             "EpgSnapshot",
             "EpgRepositoryState",
             "EpgRepository",
@@ -248,6 +252,8 @@ internal class ModuleBoundaryTest {
         val publicApi = listOf(
             "src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/TvheadendSession.kt",
             "src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/DvrRepository.kt",
+            "src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/EpgRepository.kt",
+            "src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/Artwork.kt",
             "../sdk-media3/src/main/kotlin/at/bernhardberger/tvheadend/sdk/media3/TvheadendPlaybackCoordinator.kt",
         ).joinToString(" ") { path -> File(path).readText() }.replace(Regex("\\s+"), " ")
         val expectedSignatures = setOf(
@@ -255,21 +261,23 @@ internal class ModuleBoundaryTest {
             "public suspend fun retry(): SessionCommandResult",
             "public suspend fun disconnect()",
             "public suspend fun shutdown()",
-            "public suspend fun getStreamProfiles(): StreamProfilesResult",
-            "public suspend fun scheduleEntry(request: DvrScheduleRequest): DvrMutationResult<DvrEntryId>",
-            "public suspend fun updateEntry( id: DvrEntryId, update: DvrEntryUpdate, ): DvrMutationResult<Unit>",
-            "public suspend fun stopEntry(id: DvrEntryId): DvrMutationResult<Unit>",
-            "public suspend fun cancelEntry(id: DvrEntryId): DvrMutationResult<Unit>",
-            "public suspend fun deleteEntry(id: DvrEntryId): DvrMutationResult<Unit>",
-            "public suspend fun createAutorecRule( request: AutorecRuleCreate, ): DvrMutationResult<AutorecRuleId>",
-            "public suspend fun updateAutorecRule( id: AutorecRuleId, update: AutorecRuleUpdate, ): DvrMutationResult<Unit>",
-            "public suspend fun deleteAutorecRule(id: AutorecRuleId): DvrMutationResult<Unit>",
-            "public suspend fun createTimerecRule( request: TimerecRuleCreate, ): DvrMutationResult<TimerecRuleId>",
-            "public suspend fun updateTimerecRule( id: TimerecRuleId, update: TimerecRuleUpdate, ): DvrMutationResult<Unit>",
-            "public suspend fun deleteTimerecRule(id: TimerecRuleId): DvrMutationResult<Unit>",
-            "public suspend fun reportProgress( id: DvrEntryId, progress: DvrPlaybackProgress, ): DvrProgressResult",
+            "public suspend fun getStreamProfiles( currentSession: CurrentSessionObservation, ): StreamProfilesResult",
+            "public suspend fun acquireCoverage( currentSession: CurrentSessionObservation, channelId: ChannelId, through: Instant, ): EpgCoverageAcquisitionResult",
+            "public suspend fun loadArtwork( currentSession: CurrentSessionObservation, artworkId: ArtworkId, ): ArtworkLoadResult",
+            "public suspend fun scheduleEntry( currentSession: CurrentSessionObservation, request: DvrScheduleRequest, ): DvrMutationResult<DvrEntryId>",
+            "public suspend fun updateEntry( currentSession: CurrentSessionObservation, id: DvrEntryId, update: DvrEntryUpdate, ): DvrMutationResult<Unit>",
+            "public suspend fun stopEntry( currentSession: CurrentSessionObservation, id: DvrEntryId, ): DvrMutationResult<Unit>",
+            "public suspend fun cancelEntry( currentSession: CurrentSessionObservation, id: DvrEntryId, ): DvrMutationResult<Unit>",
+            "public suspend fun deleteEntry( currentSession: CurrentSessionObservation, id: DvrEntryId, ): DvrMutationResult<Unit>",
+            "public suspend fun createAutorecRule( currentSession: CurrentSessionObservation, request: AutorecRuleCreate, ): DvrMutationResult<AutorecRuleId>",
+            "public suspend fun updateAutorecRule( currentSession: CurrentSessionObservation, id: AutorecRuleId, update: AutorecRuleUpdate, ): DvrMutationResult<Unit>",
+            "public suspend fun deleteAutorecRule( currentSession: CurrentSessionObservation, id: AutorecRuleId, ): DvrMutationResult<Unit>",
+            "public suspend fun createTimerecRule( currentSession: CurrentSessionObservation, request: TimerecRuleCreate, ): DvrMutationResult<TimerecRuleId>",
+            "public suspend fun updateTimerecRule( currentSession: CurrentSessionObservation, id: TimerecRuleId, update: TimerecRuleUpdate, ): DvrMutationResult<Unit>",
+            "public suspend fun deleteTimerecRule( currentSession: CurrentSessionObservation, id: TimerecRuleId, ): DvrMutationResult<Unit>",
+            "public suspend fun reportProgress( currentSession: CurrentSessionObservation, id: DvrEntryId, progress: DvrPlaybackProgress, ): DvrProgressResult",
             "public suspend fun reportProgress( lease: GrowingRecordingFileLease, progress: DvrPlaybackProgress, ): DvrProgressResult",
-            "public suspend fun cutpoints(id: DvrEntryId): DvrCutpointsResult",
+            "public suspend fun cutpoints( currentSession: CurrentSessionObservation, id: DvrEntryId, ): DvrCutpointsResult",
             "public suspend fun run()",
             "public suspend fun setLiveTarget(channelId: ChannelId): PlaybackTargetResult",
             "public suspend fun setLiveTarget( channelId: ChannelId, options: LivePlaybackOptions, ): PlaybackTargetResult",
@@ -439,6 +447,17 @@ internal class ModuleBoundaryTest {
                 !sessionApi.contains("public val recordingProgressCapability:"),
             "Independent public session observation flows were not removed",
         )
+        val artworkApi = File(
+            "../sdk-android/src/main/kotlin/at/bernhardberger/tvheadend/sdk/android/TvheadendArtwork.kt",
+        ).readText().replace(Regex("\\s+"), " ")
+        assertTrue(
+            artworkApi.contains(
+                "public fun create( session: TvheadendSession, " +
+                    "currentSession: CurrentSessionObservation, source: String?, ): TvheadendArtwork?",
+            ),
+            "Artwork creation must retain the originating current-session observation",
+        )
+        assertEquals(1, Regex("public fun create\\(").findAll(artworkApi).count())
     }
 
     @Test

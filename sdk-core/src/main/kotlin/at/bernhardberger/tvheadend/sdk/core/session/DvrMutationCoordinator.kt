@@ -107,27 +107,39 @@ internal class DvrMutationCoordinator(
     }
 
     override suspend fun scheduleEntry(
+        generation: GatewayGeneration,
         request: DvrScheduleRequest,
     ): DvrMutationResult<DvrEntryId> = create(
+        expectedGeneration = generation,
         confirmationKind = ConfirmationKind.ENTRY_ADDED,
         command = { generation -> gateway.scheduleDvrEntry(generation, request) },
         confirmation = { id -> ConfirmationKey(ConfirmationKind.ENTRY_ADDED, id) },
     )
 
     override suspend fun updateEntry(
+        generation: GatewayGeneration,
         id: DvrEntryId,
         update: DvrEntryUpdate,
     ): DvrMutationResult<Unit> = mutate(
+        expectedGeneration = generation,
         confirmations = setOf(ConfirmationKey(ConfirmationKind.ENTRY_UPDATED, id)),
         command = { generation -> gateway.updateDvrEntry(generation, id, update) },
     )
 
-    override suspend fun stopEntry(id: DvrEntryId): DvrMutationResult<Unit> = mutate(
+    override suspend fun stopEntry(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+    ): DvrMutationResult<Unit> = mutate(
+        expectedGeneration = generation,
         confirmations = setOf(ConfirmationKey(ConfirmationKind.ENTRY_UPDATED, id)),
         command = { generation -> gateway.stopDvrEntry(generation, id) },
     )
 
-    override suspend fun cancelEntry(id: DvrEntryId): DvrMutationResult<Unit> = mutate(
+    override suspend fun cancelEntry(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+    ): DvrMutationResult<Unit> = mutate(
+        expectedGeneration = generation,
         confirmations = setOf(
             ConfirmationKey(ConfirmationKind.ENTRY_UPDATED, id),
             ConfirmationKey(ConfirmationKind.ENTRY_DELETED, id),
@@ -135,59 +147,87 @@ internal class DvrMutationCoordinator(
         command = { generation -> gateway.cancelDvrEntry(generation, id) },
     )
 
-    override suspend fun deleteEntry(id: DvrEntryId): DvrMutationResult<Unit> = mutate(
+    override suspend fun deleteEntry(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+    ): DvrMutationResult<Unit> = mutate(
+        expectedGeneration = generation,
         confirmations = setOf(ConfirmationKey(ConfirmationKind.ENTRY_DELETED, id)),
         command = { generation -> gateway.deleteDvrEntry(generation, id) },
     )
 
     override suspend fun createAutorecRule(
+        generation: GatewayGeneration,
         request: AutorecRuleCreate,
     ): DvrMutationResult<AutorecRuleId> = create(
+        expectedGeneration = generation,
         confirmationKind = ConfirmationKind.AUTOREC_ADDED,
         command = { generation -> gateway.createAutorecRule(generation, request) },
         confirmation = { id -> ConfirmationKey(ConfirmationKind.AUTOREC_ADDED, id) },
     )
 
     override suspend fun updateAutorecRule(
+        generation: GatewayGeneration,
         id: AutorecRuleId,
         update: AutorecRuleUpdate,
     ): DvrMutationResult<Unit> = mutate(
+        expectedGeneration = generation,
         confirmations = setOf(ConfirmationKey(ConfirmationKind.AUTOREC_UPDATED, id)),
         command = { generation -> gateway.updateAutorecRule(generation, id, update) },
     )
 
-    override suspend fun deleteAutorecRule(id: AutorecRuleId): DvrMutationResult<Unit> = mutate(
+    override suspend fun deleteAutorecRule(
+        generation: GatewayGeneration,
+        id: AutorecRuleId,
+    ): DvrMutationResult<Unit> = mutate(
+        expectedGeneration = generation,
         confirmations = setOf(ConfirmationKey(ConfirmationKind.AUTOREC_DELETED, id)),
         command = { generation -> gateway.deleteAutorecRule(generation, id) },
     )
 
     override suspend fun createTimerecRule(
+        generation: GatewayGeneration,
         request: TimerecRuleCreate,
     ): DvrMutationResult<TimerecRuleId> = create(
+        expectedGeneration = generation,
         confirmationKind = ConfirmationKind.TIMEREC_ADDED,
         command = { generation -> gateway.createTimerecRule(generation, request) },
         confirmation = { id -> ConfirmationKey(ConfirmationKind.TIMEREC_ADDED, id) },
     )
 
     override suspend fun updateTimerecRule(
+        generation: GatewayGeneration,
         id: TimerecRuleId,
         update: TimerecRuleUpdate,
     ): DvrMutationResult<Unit> = mutate(
+        expectedGeneration = generation,
         confirmations = setOf(ConfirmationKey(ConfirmationKind.TIMEREC_UPDATED, id)),
         command = { generation -> gateway.updateTimerecRule(generation, id, update) },
     )
 
-    override suspend fun deleteTimerecRule(id: TimerecRuleId): DvrMutationResult<Unit> = mutate(
+    override suspend fun deleteTimerecRule(
+        generation: GatewayGeneration,
+        id: TimerecRuleId,
+    ): DvrMutationResult<Unit> = mutate(
+        expectedGeneration = generation,
         confirmations = setOf(ConfirmationKey(ConfirmationKind.TIMEREC_DELETED, id)),
         command = { generation -> gateway.deleteTimerecRule(generation, id) },
     )
 
     private suspend fun <T : Any> create(
+        expectedGeneration: GatewayGeneration,
         confirmationKind: ConfirmationKind,
         command: suspend (GatewayGeneration) -> GatewayResult<T>,
         confirmation: (T) -> ConfirmationKey,
     ): DvrMutationResult<T> = operationMutex.withLock {
-        val operation = register(createKind = confirmationKind) ?: return@withLock DvrMutationResult.NotReady
+        val operation = when (
+            val registration = register(expectedGeneration, createKind = confirmationKind)
+        ) {
+            MutationRegistration.NotReady -> return@withLock DvrMutationResult.NotReady
+            MutationRegistration.ObservationExpired ->
+                return@withLock DvrMutationResult.ObservationExpired
+            is MutationRegistration.Registered -> registration.operation
+        }
         try {
             when (val outcome = awaitCommand(operation, command)) {
                 GatewayCommandOutcome.Retired -> DvrMutationResult.TransportUnavailable
@@ -217,11 +257,18 @@ internal class DvrMutationCoordinator(
     }
 
     private suspend fun mutate(
+        expectedGeneration: GatewayGeneration,
         confirmations: Set<ConfirmationKey>,
         command: suspend (GatewayGeneration) -> GatewayResult<Unit>,
     ): DvrMutationResult<Unit> = operationMutex.withLock {
-        val operation = register(confirmations = confirmations)
-            ?: return@withLock DvrMutationResult.NotReady
+        val operation = when (
+            val registration = register(expectedGeneration, confirmations = confirmations)
+        ) {
+            MutationRegistration.NotReady -> return@withLock DvrMutationResult.NotReady
+            MutationRegistration.ObservationExpired ->
+                return@withLock DvrMutationResult.ObservationExpired
+            is MutationRegistration.Registered -> registration.operation
+        }
         try {
             when (val outcome = awaitCommand(operation, command)) {
                 GatewayCommandOutcome.Retired -> DvrMutationResult.TransportUnavailable
@@ -249,18 +296,32 @@ internal class DvrMutationCoordinator(
     }
 
     private fun register(
+        expectedGeneration: GatewayGeneration,
         confirmations: Set<ConfirmationKey> = emptySet(),
         createKind: ConfirmationKind? = null,
-    ): PendingMutation? {
-        val activeGeneration = synchronized(lock) {
-            generation.takeIf { admitted && pending == null }
-        } ?: return null
-        if (!isSessionReady(activeGeneration)) return null
+    ): MutationRegistration {
+        val initiallyAdmitted = synchronized(lock) {
+            when {
+                generation !== expectedGeneration -> return MutationRegistration.ObservationExpired
+                !admitted || pending != null -> false
+                else -> true
+            }
+        }
+        if (!initiallyAdmitted || !isSessionReady(expectedGeneration)) {
+            return MutationRegistration.NotReady
+        }
         return synchronized(lock) {
-            if (!admitted || generation !== activeGeneration || pending != null) {
-                null
-            } else {
-                PendingMutation(activeGeneration, confirmations, createKind).also { pending = it }
+            when {
+                generation !== expectedGeneration -> MutationRegistration.ObservationExpired
+                !admitted || pending != null -> MutationRegistration.NotReady
+                else -> {
+                    val operation = PendingMutation(
+                        expectedGeneration,
+                        confirmations,
+                        createKind,
+                    ).also { pending = it }
+                    MutationRegistration.Registered(operation)
+                }
             }
         }
     }
@@ -367,6 +428,14 @@ internal class DvrMutationCoordinator(
             if (pending === operation) pending = null
         }
     }
+}
+
+private sealed interface MutationRegistration {
+    data object NotReady : MutationRegistration
+
+    data object ObservationExpired : MutationRegistration
+
+    class Registered(internal val operation: PendingMutation) : MutationRegistration
 }
 
 private class PendingMutation(

@@ -1,5 +1,6 @@
 package at.bernhardberger.tvheadend.sdk.testing
 
+import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
 import at.bernhardberger.tvheadend.sdk.core.SessionObservation
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -18,6 +19,12 @@ public class FakeSessionObservation(
     public fun publish(observation: SessionObservation) {
         mutableObservation.value = observation
     }
+
+    /** Captures the exact capability carried by the fake's current aggregate publication. */
+    public fun captureCurrentSession(): CurrentSessionObservation =
+        checkNotNull(mutableObservation.value.currentSession) {
+            "The fake session observation is not current"
+        }
 
     /** Publishes one complete retired observation that carries no current-session capability. */
     public fun retire(observation: SessionObservation = SessionObservation.create()) {

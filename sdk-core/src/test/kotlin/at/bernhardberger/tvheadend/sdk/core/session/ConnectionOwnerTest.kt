@@ -8,6 +8,7 @@ import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
 import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
 import at.bernhardberger.tvheadend.sdk.core.DvrConfigurationsState
 import at.bernhardberger.tvheadend.sdk.core.DvrCutpoint
@@ -21,7 +22,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
 import at.bernhardberger.tvheadend.sdk.core.DvrSchedule
 import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
-import at.bernhardberger.tvheadend.sdk.core.EpgCoverageRequestResult
+import at.bernhardberger.tvheadend.sdk.core.EpgCoverageAcquisitionResult
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability
@@ -208,14 +209,9 @@ internal class ConnectionOwnerTest {
             },
         )
         lateinit var owner: ConnectionOwner
-        var requestResult: EpgCoverageRequestResult? = null
         gateway.beforeReadyCommit = {
             assertEquals(SessionState.Synchronizing, owner.observation.value.sessionState)
             assertFalse("epg.query" in order, "Background network work started before Ready")
-            requestResult = metadata.epgRepository.requestCoverage(
-                SdkChannelId(1),
-                Instant.fromEpochSeconds(0) + 8.hours,
-            )
         }
         owner = owner(gateway, children, metadata)
 
@@ -226,7 +222,6 @@ internal class ConnectionOwnerTest {
             gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
             runCurrent()
 
-            assertEquals(EpgCoverageRequestResult.ACCEPTED, requestResult)
             assertTrue(owner.observation.value.sessionState is SessionState.Ready)
             assertTrue("epg.query" in order, "Background network work did not start after Ready")
         } finally {
@@ -346,20 +341,31 @@ internal class ConnectionOwnerTest {
             dvrMutations = coordinator,
         )
         val request = DvrScheduleRequest(DvrSchedule.Programme(EventId(1)))
+        val expired = CurrentSessionObservation(Any(), Any())
 
-        assertSame(DvrMutationResult.NotReady, owner.dvrRepository.scheduleEntry(request))
+        assertSame(
+            DvrMutationResult.ObservationExpired,
+            owner.dvrRepository.scheduleEntry(expired, request),
+        )
         owner.connect(ServerProfile("server"))
         runCurrent()
-        assertSame(DvrMutationResult.NotReady, owner.dvrRepository.scheduleEntry(request))
+        assertSame(
+            DvrMutationResult.ObservationExpired,
+            owner.dvrRepository.scheduleEntry(expired, request),
+        )
         gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
         runCurrent()
+        val currentSession = requireNotNull(owner.observation.value.currentSession)
         assertEquals(
             CapabilityAccess.UNKNOWN,
             (owner.observation.value.sessionState as SessionState.Ready).capabilities.dvrWrite,
         )
 
         gateway.scheduleDvrBehavior = { _, _ -> GatewayResult.AccessDenied }
-        assertSame(DvrMutationResult.AccessDenied, owner.dvrRepository.scheduleEntry(request))
+        assertSame(
+            DvrMutationResult.AccessDenied,
+            owner.dvrRepository.scheduleEntry(currentSession, request),
+        )
         assertEquals(
             CapabilityAccess.DENIED,
             (owner.observation.value.sessionState as SessionState.Ready).capabilities.dvrWrite,
@@ -371,7 +377,7 @@ internal class ConnectionOwnerTest {
             )
             GatewayResult.Ok(DvrEntryId(7))
         }
-        val confirmed = owner.dvrRepository.scheduleEntry(request)
+        val confirmed = owner.dvrRepository.scheduleEntry(currentSession, request)
         assertTrue(confirmed is DvrMutationResult.Confirmed)
         assertEquals(listOf(7L), owner.currentDvrSnapshot().entries.map { entry -> entry.id.value })
         assertEquals(
@@ -380,7 +386,10 @@ internal class ConnectionOwnerTest {
         )
 
         owner.disconnect()
-        assertSame(DvrMutationResult.NotReady, owner.dvrRepository.scheduleEntry(request))
+        assertSame(
+            DvrMutationResult.ObservationExpired,
+            owner.dvrRepository.scheduleEntry(currentSession, request),
+        )
         owner.shutdown()
     }
 
@@ -434,6 +443,7 @@ internal class ConnectionOwnerTest {
         runCurrent()
         gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
         runCurrent()
+        val currentSession = requireNotNull(owner.observation.value.currentSession)
         assertEquals(
             CapabilityAccess.UNKNOWN,
             (owner.observation.value.sessionState as SessionState.Ready).capabilities.dvrWrite,
@@ -444,12 +454,12 @@ internal class ConnectionOwnerTest {
             GatewayResult.Ok(DvrEntryId(7))
         }
         gateway.reportDvrProgressBehavior = { _, _, _ -> GatewayResult.AccessDenied }
-        val earlierMutation = async { owner.dvrRepository.scheduleEntry(request) }
+        val earlierMutation = async { owner.dvrRepository.scheduleEntry(currentSession, request) }
         earlierProofPrepared.await()
 
         assertSame(
             DvrProgressResult.AccessDenied,
-            owner.dvrRepository.reportProgress(DvrEntryId(7), report),
+            owner.dvrRepository.reportProgress(currentSession, DvrEntryId(7), report),
         )
         assertEquals(
             CapabilityAccess.DENIED,
@@ -501,26 +511,28 @@ internal class ConnectionOwnerTest {
             dvrProgress = progress,
         )
         val report = DvrPlaybackProgress.checkpoint(30.seconds)
+        val expired = CurrentSessionObservation(Any(), Any())
 
         assertSame(
             RecordingProgressCapability.UNKNOWN,
             owner.observation.value.recordingProgressCapability,
         )
         assertSame(
-            DvrProgressResult.NotReady,
-            owner.dvrRepository.reportProgress(DvrEntryId(7), report),
+            DvrProgressResult.ObservationExpired,
+            owner.dvrRepository.reportProgress(expired, DvrEntryId(7), report),
         )
         owner.connect(ServerProfile("server"))
         runCurrent()
         gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
         runCurrent()
+        val firstCurrent = requireNotNull(owner.observation.value.currentSession)
         assertSame(
             RecordingProgressCapability.UNSUPPORTED,
             owner.observation.value.recordingProgressCapability,
         )
         assertSame(
             DvrProgressResult.NotSupported,
-            owner.dvrRepository.reportProgress(DvrEntryId(7), report),
+            owner.dvrRepository.reportProgress(firstCurrent, DvrEntryId(7), report),
         )
         assertEquals(0, gateway.progressReportCount)
 
@@ -536,6 +548,7 @@ internal class ConnectionOwnerTest {
         runCurrent()
         gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(next))
         runCurrent()
+        val nextCurrent = requireNotNull(owner.observation.value.currentSession)
         assertSame(
             RecordingProgressCapability.SUPPORTED,
             owner.observation.value.recordingProgressCapability,
@@ -543,7 +556,7 @@ internal class ConnectionOwnerTest {
         gateway.reportDvrProgressBehavior = { _, _, _ -> GatewayResult.NotSupported }
         assertSame(
             DvrProgressResult.NotSupported,
-            owner.dvrRepository.reportProgress(DvrEntryId(7), report),
+            owner.dvrRepository.reportProgress(nextCurrent, DvrEntryId(7), report),
         )
         assertEquals(1, gateway.progressReportCount)
         assertSame(
@@ -552,7 +565,7 @@ internal class ConnectionOwnerTest {
         )
         assertSame(
             DvrProgressResult.NotSupported,
-            owner.dvrRepository.reportProgress(DvrEntryId(7), report),
+            owner.dvrRepository.reportProgress(nextCurrent, DvrEntryId(7), report),
         )
         assertEquals(1, gateway.progressReportCount)
 
@@ -568,6 +581,7 @@ internal class ConnectionOwnerTest {
         runCurrent()
         gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(restored))
         runCurrent()
+        val restoredCurrent = requireNotNull(owner.observation.value.currentSession)
         assertSame(
             RecordingProgressCapability.SUPPORTED,
             owner.observation.value.recordingProgressCapability,
@@ -575,7 +589,7 @@ internal class ConnectionOwnerTest {
         gateway.reportDvrProgressBehavior = { _, _, _ -> GatewayResult.Ok(Unit) }
         assertSame(
             DvrProgressResult.Accepted,
-            owner.dvrRepository.reportProgress(DvrEntryId(7), report),
+            owner.dvrRepository.reportProgress(restoredCurrent, DvrEntryId(7), report),
         )
         assertEquals(2, gateway.progressReportCount)
         assertEquals(
@@ -722,16 +736,19 @@ internal class ConnectionOwnerTest {
             assertTrue(owner.observation.value.sessionState is SessionState.Ready)
             assertFalse("disconnect" in order, "Cancelled background EPG work tore down transport")
             assertTrue(metadata.observation.value.epgState is EpgRepositoryState.Current)
-            assertEquals(
-                EpgCoverageRequestResult.ACCEPTED,
-                metadata.epgRepository.requestCoverage(
+            val currentSession = requireNotNull(owner.observation.value.currentSession)
+            val acquisition = async {
+                metadata.epgRepository.acquireCoverage(
+                    currentSession,
                     SdkChannelId(1),
                     Instant.fromEpochSeconds(0) + 8.hours,
-                ),
-            )
+                )
+            }
+            runCurrent()
             advanceTimeBy(10.minutes)
             runCurrent()
             assertEquals(2, queryAttempts)
+            assertTrue(acquisition.await() is EpgCoverageAcquisitionResult.CoveredEmpty)
             assertTrue(owner.observation.value.sessionState is SessionState.Ready)
         } finally {
             owner.shutdown()

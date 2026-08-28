@@ -50,10 +50,11 @@ internal class StreamProfilesTest {
     @Test
     fun `inherited discovery default propagates pre-existing caller cancellation`() = runTest {
         val session = sessionInheritingDefaults()
+        val currentSession = currentSession()
         var returned = false
         val caller = launch(start = CoroutineStart.UNDISPATCHED) {
             currentCoroutineContext().cancel(CancellationException("fixed caller cancellation"))
-            session.getStreamProfiles()
+            session.getStreamProfiles(currentSession)
             returned = true
         }
 
@@ -62,6 +63,17 @@ internal class StreamProfilesTest {
         assertTrue(caller.isCancelled)
         assertFalse(returned)
     }
+
+    private fun currentSession(): CurrentSessionObservation = requireNotNull(
+        SessionObservation.create(
+            sessionState = SessionState.Ready(
+                ServerCapabilities.create(CapabilityAccess.UNKNOWN, CapabilityAccess.UNKNOWN),
+            ),
+            channelState = ChannelRepositoryState.Current(ChannelCatalog.create()),
+            epgState = EpgRepositoryState.Current(EpgSnapshot.create()),
+            dvrState = DvrRepositoryState.Current(DvrSnapshot.create()),
+        ).currentSession,
+    )
 }
 
 @Suppress("UNCHECKED_CAST")

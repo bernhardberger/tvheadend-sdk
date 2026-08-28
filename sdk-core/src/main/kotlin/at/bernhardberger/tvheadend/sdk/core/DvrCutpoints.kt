@@ -1,5 +1,6 @@
 package at.bernhardberger.tvheadend.sdk.core
 
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import java.util.Collections
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -61,6 +62,9 @@ public sealed interface DvrCutpointsResult {
     /** The session has not admitted DVR queries for a synchronized generation. */
     public data object NotReady : DvrCutpointsResult
 
+    /** The originating observation is no longer current for its owning session. */
+    public data object ObservationExpired : DvrCutpointsResult
+
     /** The server rejected the request or returned an invalid cutpoint interval. */
     public data object ServerRejected : DvrCutpointsResult
 
@@ -81,10 +85,16 @@ public sealed interface DvrCutpointsResult {
 }
 
 internal interface DvrCutpointCommands {
-    public suspend fun getCutpoints(id: DvrEntryId): DvrCutpointsResult
+    public suspend fun getCutpoints(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+    ): DvrCutpointsResult
 
     data object None : DvrCutpointCommands {
-        override suspend fun getCutpoints(id: DvrEntryId): DvrCutpointsResult =
+        override suspend fun getCutpoints(
+            generation: GatewayGeneration,
+            id: DvrEntryId,
+        ): DvrCutpointsResult =
             DvrCutpointsResult.NotReady
     }
 }

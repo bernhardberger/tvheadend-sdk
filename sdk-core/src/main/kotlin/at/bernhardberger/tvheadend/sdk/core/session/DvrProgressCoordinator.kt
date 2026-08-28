@@ -76,9 +76,15 @@ internal class DvrProgressCoordinator(
     }
 
     override suspend fun reportProgress(
+        generation: GatewayGeneration,
         id: DvrEntryId,
         progress: DvrPlaybackProgress,
-    ): DvrProgressResult = reportProgress(id, progress, expectedGeneration = null)
+    ): DvrProgressResult = reportProgress(
+        id = id,
+        progress = progress,
+        expectedGeneration = generation,
+        admissionExpired = DvrProgressResult.ObservationExpired,
+    )
 
     override suspend fun reportProgress(
         lease: GrowingRecordingFileLease,
@@ -90,6 +96,7 @@ internal class DvrProgressCoordinator(
             id = bound.boundRecordingId,
             progress = progress,
             expectedGeneration = bound.boundGeneration,
+            admissionExpired = DvrProgressResult.TransportUnavailable,
             targetIsCurrent = bound::isProgressBindingCurrent,
         )
     }
@@ -97,12 +104,13 @@ internal class DvrProgressCoordinator(
     private suspend fun reportProgress(
         id: DvrEntryId,
         progress: DvrPlaybackProgress,
-        expectedGeneration: GatewayGeneration?,
+        expectedGeneration: GatewayGeneration,
+        admissionExpired: DvrProgressResult,
         targetIsCurrent: (() -> Boolean)? = null,
     ): DvrProgressResult {
         val activeGeneration = synchronized(lock) {
-            if (expectedGeneration != null && generation !== expectedGeneration) {
-                return DvrProgressResult.TransportUnavailable
+            if (generation !== expectedGeneration) {
+                return admissionExpired
             }
             generation.takeIf { admitted }
         } ?: return DvrProgressResult.NotReady
@@ -111,7 +119,11 @@ internal class DvrProgressCoordinator(
         }
         val unsupported = synchronized(lock) {
             if (!admitted || generation !== activeGeneration) {
-                return DvrProgressResult.TransportUnavailable
+                return if (generation !== expectedGeneration) {
+                    admissionExpired
+                } else {
+                    DvrProgressResult.NotReady
+                }
             }
             notSupported
         }
@@ -166,16 +178,24 @@ internal class DvrProgressCoordinator(
         return classified.result
     }
 
-    override suspend fun getCutpoints(id: DvrEntryId): DvrCutpointsResult {
+    override suspend fun getCutpoints(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+    ): DvrCutpointsResult {
         val activeGeneration = synchronized(lock) {
-            generation.takeIf { admitted }
+            if (this.generation !== generation) return DvrCutpointsResult.ObservationExpired
+            this.generation.takeIf { admitted }
         } ?: return DvrCutpointsResult.NotReady
         if (!isSessionReady(activeGeneration)) {
             return DvrCutpointsResult.NotReady
         }
         val unsupported = synchronized(lock) {
-            if (!admitted || generation !== activeGeneration) {
-                return DvrCutpointsResult.TransportUnavailable
+            if (!admitted || this.generation !== activeGeneration) {
+                return if (this.generation !== generation) {
+                    DvrCutpointsResult.ObservationExpired
+                } else {
+                    DvrCutpointsResult.NotReady
+                }
             }
             cutpointsNotSupported
         }
@@ -191,7 +211,7 @@ internal class DvrProgressCoordinator(
             GatewayResult.TransportUnavailable
         }
         return synchronized(lock) {
-            if (!admitted || generation !== activeGeneration) {
+            if (!admitted || this.generation !== activeGeneration) {
                 DvrCutpointsResult.TransportUnavailable
             } else {
                 when (result) {

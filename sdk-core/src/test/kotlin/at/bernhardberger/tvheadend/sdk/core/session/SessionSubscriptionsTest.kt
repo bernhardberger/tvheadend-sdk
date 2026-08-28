@@ -9,6 +9,7 @@ import at.bernhardberger.tvheadend.sdk.core.ArtworkFailure
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
+import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
 import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
 import at.bernhardberger.tvheadend.sdk.core.DvrCutpoint
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
@@ -17,6 +18,9 @@ import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
 import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
+import at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability
+import at.bernhardberger.tvheadend.sdk.core.ServerCapabilities
+import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleUpdate
@@ -311,9 +315,9 @@ class SessionSubscriptionsTest {
         }
 
     @Test
-    fun `profile discovery validates the current generation before subscribe`() = runTest {
+    fun `profile selection needs no discovery cache and stays generation bound`() = runTest {
         val profileId = StreamProfileId("0123456789abcdef0123456789abcdef")
-        val unknownId = StreamProfileId("abcdef0123456789abcdef0123456789")
+        val undiscoveredId = StreamProfileId("abcdef0123456789abcdef0123456789")
         val gateway = SubscriptionGateway().apply {
             streamProfilesAction = {
                 GatewayResult.Ok(listOf(StreamProfile(profileId, "Pass", "Original streams")))
@@ -327,38 +331,28 @@ class SessionSubscriptionsTest {
         )
         val generation = GatewayGeneration()
 
-        assertSame(StreamProfilesResult.NotReady, children.getStreamProfiles())
+        assertSame(StreamProfilesResult.ObservationExpired, children.getStreamProfiles(generation))
         metadata.bindKnownChannels(generation, 4L)
         children.bindGeneration(generation)
         assertTrue(children.startLiveAdmission(generation, CapabilityAccess.ALLOWED))
-
-        val available = children.getStreamProfiles() as StreamProfilesResult.Available
-        assertEquals(listOf(StreamProfile(profileId, "Pass", "Original streams")), available.profiles)
-        assertEquals(listOf(generation), gateway.profileDiscoveryGenerations)
-
-        assertSame(
-            SubscriptionOpenResult.ProfileUnavailable,
-            children.open(
-                SubscriptionChannelId(4L),
-                SubscriptionEventConsumer {},
-                SubscriptionOptions(unknownId.value, 600.seconds),
-            ),
-        )
-        assertTrue(gateway.collectedGenerations.isEmpty())
 
         val opening = async {
             children.open(
                 SubscriptionChannelId(4L),
                 SubscriptionEventConsumer {},
-                SubscriptionOptions(profileId.value, 600.seconds),
+                SubscriptionOptions(undiscoveredId.value, 600.seconds),
             )
         }
         runCurrent()
         gateway.emitStarted(generation)
         runCurrent()
         assertTrue(opening.await() is SubscriptionOpenResult.Opened)
-        assertEquals(listOf(profileId.value), gateway.requestedStreamProfileUuids)
+        assertEquals(listOf(undiscoveredId.value), gateway.requestedStreamProfileUuids)
         assertEquals(listOf(600.seconds), gateway.requestedTimeshiftPeriods)
+
+        val available = children.getStreamProfiles(generation) as StreamProfilesResult.Available
+        assertEquals(listOf(StreamProfile(profileId, "Pass", "Original streams")), available.profiles)
+        assertEquals(listOf(generation), gateway.profileDiscoveryGenerations)
         children.closeAndJoinSubscriptions()
 
         val replacementGeneration = GatewayGeneration()
@@ -368,12 +362,28 @@ class SessionSubscriptionsTest {
         assertSame(
             SubscriptionOpenResult.NotReady,
             children.open(
+                generation,
                 SubscriptionChannelId(4L),
                 SubscriptionEventConsumer {},
                 SubscriptionOptions(profileId.value, 600.seconds),
             ),
         )
-        assertEquals(listOf(profileId.value), gateway.requestedStreamProfileUuids)
+        assertEquals(listOf(undiscoveredId.value), gateway.requestedStreamProfileUuids)
+        val replacementOpening = async {
+            children.open(
+                SubscriptionChannelId(4L),
+                SubscriptionEventConsumer {},
+                SubscriptionOptions(profileId.value, 600.seconds),
+            )
+        }
+        runCurrent()
+        gateway.emitStarted(replacementGeneration)
+        runCurrent()
+        assertTrue(replacementOpening.await() is SubscriptionOpenResult.Opened)
+        assertEquals(
+            listOf(undiscoveredId.value, profileId.value),
+            gateway.requestedStreamProfileUuids,
+        )
         children.closeAndJoinSubscriptions()
     }
 
@@ -405,7 +415,7 @@ class SessionSubscriptionsTest {
         }
         children.bindGeneration(generationA)
 
-        val stale = async { children.getStreamProfiles() }
+        val stale = async { children.getStreamProfiles(generationA) }
         entered.await()
         children.closeAndJoinSubscriptions()
         children.bindGeneration(generationB)
@@ -415,7 +425,7 @@ class SessionSubscriptionsTest {
         val cancellation = CancellationException("private cancellation")
         gateway.streamProfilesAction = { throw cancellation }
         val caught = try {
-            children.getStreamProfiles()
+            children.getStreamProfiles(generationB)
             null
         } catch (failure: CancellationException) {
             failure
@@ -709,6 +719,18 @@ class SessionSubscriptionsTest {
             (children.openRecording(RecordingId(5L)) as RecordingFileResult.Failed).failure,
             "A torn-down generation must report a changed connection, not a bad file",
         )
+        val replacementGeneration = GatewayGeneration()
+        children.bindGeneration(replacementGeneration)
+        assertSame(
+            RecordingFileFailure.CONNECTION_CHANGED,
+            (
+                children.openRecording(generation, RecordingId(5L)) as
+                    RecordingFileResult.Failed
+                ).failure,
+            "Generation A recording admission must not fall through to generation B",
+        )
+        assertEquals(listOf(generation), gateway.openedRecordingGenerations)
+        children.closeAndJoinSubscriptions()
     }
 
     @Test
@@ -944,23 +966,30 @@ class SessionSubscriptionsTest {
     @Test
     fun `artwork loads bind one generation and publish only safe typed results`() = runTest {
         val gateway = SubscriptionGateway()
+        val metadata = PhaseOneSessionMetadata()
         val children = PlaybackSessionChildren(
             gateway,
-            PhaseOneSessionMetadata(),
+            metadata,
             StandardTestDispatcher(testScheduler),
         )
         val artworkId = ArtworkId(17)
+        val expired = CurrentSessionObservation(Any(), Any())
 
         assertSame(
-            ArtworkFailure.CONNECTION_CHANGED,
-            (children.loadArtwork(artworkId) as ArtworkLoadResult.Unavailable).failure,
+            ArtworkFailure.OBSERVATION_EXPIRED,
+            (children.loadArtwork(expired, artworkId) as ArtworkLoadResult.Unavailable).failure,
         )
 
         val generation = GatewayGeneration()
+        metadata.bindKnownChannels(generation)
         children.bindGeneration(generation)
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
         val source = byteArrayOf(1, 2, 3)
         gateway.artworkLoadResult = GatewayResult.Ok(source)
-        val available = children.loadArtwork(artworkId) as ArtworkLoadResult.Available
+        val available = children.loadArtwork(
+            currentSession,
+            artworkId,
+        ) as ArtworkLoadResult.Available
 
         assertSame(generation, gateway.loadedArtworkGenerations.single())
         assertEquals(artworkId, gateway.loadedArtworkIds.single())
@@ -979,7 +1008,10 @@ class SessionSubscriptionsTest {
             GatewayResult.NotSupported to ArtworkFailure.NOT_SUPPORTED,
         ).forEach { (sourceResult, expected) ->
             gateway.artworkLoadResult = sourceResult
-            val unavailable = children.loadArtwork(artworkId) as ArtworkLoadResult.Unavailable
+            val unavailable = children.loadArtwork(
+                currentSession,
+                artworkId,
+            ) as ArtworkLoadResult.Unavailable
             assertSame(expected, unavailable.failure)
             assertEquals(
                 "ArtworkLoadResult.Unavailable(failure=$expected)",
@@ -989,8 +1021,10 @@ class SessionSubscriptionsTest {
 
         children.closeAndJoinSubscriptions()
         assertSame(
-            ArtworkFailure.CONNECTION_CHANGED,
-            (children.loadArtwork(artworkId) as ArtworkLoadResult.Unavailable).failure,
+            ArtworkFailure.OBSERVATION_EXPIRED,
+            (
+                children.loadArtwork(currentSession, artworkId) as ArtworkLoadResult.Unavailable
+            ).failure,
         )
     }
 }
@@ -1377,6 +1411,13 @@ private fun PhaseOneSessionMetadata.bindKnownChannels(
         )
     }
     acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+    publishSessionState(
+        state = SessionState.Ready(
+            ServerCapabilities.create(CapabilityAccess.UNKNOWN, CapabilityAccess.UNKNOWN),
+        ),
+        progressCapability = RecordingProgressCapability.UNKNOWN,
+        generation = generation,
+    )
 }
 
 private fun PhaseOneSessionMetadata.bindCurrentRecording(

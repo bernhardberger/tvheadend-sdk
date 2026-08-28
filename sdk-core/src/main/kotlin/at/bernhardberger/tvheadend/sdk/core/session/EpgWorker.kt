@@ -1,13 +1,16 @@
 package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
+import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverage
-import at.bernhardberger.tvheadend.sdk.core.EpgCoverageRequestResult
+import at.bernhardberger.tvheadend.sdk.core.EpgCoverageAcquisitionResult
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
+import at.bernhardberger.tvheadend.sdk.core.SessionObservation
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import java.util.concurrent.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
@@ -127,44 +130,63 @@ internal class EpgWorker(
     private val coolingDown = mutableSetOf<ChannelId>()
     private val ineligible = mutableSetOf<ChannelId>()
     private val priorityTargets = linkedMapOf<ChannelId, Instant>()
+    private val waiters = linkedMapOf<ChannelId, LinkedHashSet<EpgCoverageWaiter>>()
     private var singleSlotPriorityTurn = true
     private var acceptingPriorities = true
     private var started = false
 
-    override fun requestCoverage(
+    override suspend fun acquireCoverage(
+        currentSession: CurrentSessionObservation,
         channelId: ChannelId,
         through: Instant,
-    ): EpgCoverageRequestResult {
-        val snapshot = metadata.currentEpgSnapshot(generation)
-            ?: return EpgCoverageRequestResult.GENERATION_LOST
-        val coverage = snapshot.coverages.firstOrNull { candidate ->
-            candidate.channelId == channelId
-        } ?: return EpgCoverageRequestResult.INELIGIBLE
+    ): EpgCoverageAcquisitionResult {
+        currentCoroutineContext().ensureActive()
+        val observation = metadata.currentObservation(generation, currentSession)
+            ?: return EpgCoverageAcquisitionResult.ObservationExpired
+        val coverage = observation.coverage(channelId)
+            ?: return EpgCoverageAcquisitionResult.Ineligible
         val now = clock.now().toWholeSecond()
         val target = through.toWholeSecond()
         if (coverage.knownTo?.let { knownTo -> knownTo >= target } == true) {
-            return EpgCoverageRequestResult.SATISFIED
+            return coveredResult(observation, coverage)
         }
         if (target <= now || target > now + settings.steadyMaximum) {
-            return EpgCoverageRequestResult.INELIGIBLE
+            return EpgCoverageAcquisitionResult.Ineligible
         }
 
-        return synchronized(activityLock) {
+        val waiter = EpgCoverageWaiter(currentSession, channelId, target)
+        val immediate = synchronized(activityLock) {
             when {
-                !acceptingPriorities -> EpgCoverageRequestResult.GENERATION_LOST
-                channelId in ineligible -> EpgCoverageRequestResult.INELIGIBLE
+                !acceptingPriorities -> EpgCoverageAcquisitionResult.ObservationExpired
+                channelId in ineligible -> EpgCoverageAcquisitionResult.Ineligible
                 else -> {
+                    waiters.getOrPut(channelId, ::linkedSetOf).add(waiter)
                     val previous = priorityTargets[channelId]
                     priorityTargets[channelId] = previous?.let { maxOf(it, target) } ?: target
                     wake.trySend(Unit)
-                    EpgCoverageRequestResult.ACCEPTED
+                    null
                 }
             }
+        }
+        if (immediate != null) {
+            return if (
+                immediate === EpgCoverageAcquisitionResult.Ineligible &&
+                metadata.currentObservation(generation, currentSession) == null
+            ) {
+                EpgCoverageAcquisitionResult.ObservationExpired
+            } else {
+                immediate
+            }
+        }
+        return try {
+            waiter.settlement.await()
+        } finally {
+            removeWaiter(waiter)
         }
     }
 
     internal fun stopAcceptingPriorities() {
-        synchronized(activityLock) { acceptingPriorities = false }
+        expireWaiters()
     }
 
     internal suspend fun run(): Unit = coroutineScope {
@@ -178,6 +200,7 @@ internal class EpgWorker(
         try {
             while (currentCoroutineContext().isActive) {
                 try {
+                    settleCoveredWaiters()
                     val now = clock.now().toWholeSecond()
                     metadata.retainEpgEvents(
                         generation = generation,
@@ -203,12 +226,13 @@ internal class EpgWorker(
             try {
                 stateObserver.cancelAndJoin()
             } finally {
+                expireWaiters()
                 synchronized(activityLock) {
-                    acceptingPriorities = false
                     inFlight.clear()
                     coolingDown.clear()
                     ineligible.clear()
                     priorityTargets.clear()
+                    waiters.clear()
                 }
                 wake.close()
             }
@@ -292,13 +316,10 @@ internal class EpgWorker(
                                 query = query,
                                 queriedTo = plan.target,
                                 events = result.value,
-                            )
+                            ).also { settleCoveredWaiters(plan.channelId) }
                             GatewayResult.AccessDenied,
                             GatewayResult.NotSupported,
-                            -> synchronized(activityLock) {
-                                ineligible += plan.channelId
-                                priorityTargets.remove(plan.channelId)
-                            }
+                            -> settleIneligible(plan.channelId)
                             GatewayResult.ServerRejected,
                             GatewayResult.ConnectionLimit,
                             GatewayResult.Timeout,
@@ -322,6 +343,104 @@ internal class EpgWorker(
         requests.awaitAll()
         currentCoroutineContext().ensureActive()
     }
+
+    private fun settleCoveredWaiters(channelId: ChannelId? = null) {
+        val candidates = synchronized(activityLock) {
+            if (channelId == null) {
+                waiters.values.flatMap { channelWaiters -> channelWaiters.toList() }
+            } else {
+                waiters[channelId]?.toList().orEmpty()
+            }
+        }
+        candidates.forEach { waiter ->
+            val observation = metadata.currentObservation(generation, waiter.currentSession)
+            val result = when {
+                observation == null -> EpgCoverageAcquisitionResult.ObservationExpired
+                else -> {
+                    val coverage = observation.coverage(waiter.channelId)
+                    when {
+                        coverage == null -> EpgCoverageAcquisitionResult.Ineligible
+                        coverage.knownTo?.let { knownTo -> knownTo >= waiter.target } == true ->
+                            coveredResult(observation, coverage)
+                        else -> null
+                    }
+                }
+            }
+            if (result != null) completeWaiter(waiter, result)
+        }
+    }
+
+    private fun settleIneligible(channelId: ChannelId) {
+        val retired = synchronized(activityLock) {
+            ineligible += channelId
+            priorityTargets.remove(channelId)
+            waiters.remove(channelId)?.toList().orEmpty()
+        }
+        retired.forEach { waiter ->
+            val result = if (metadata.currentObservation(generation, waiter.currentSession) == null) {
+                EpgCoverageAcquisitionResult.ObservationExpired
+            } else {
+                EpgCoverageAcquisitionResult.Ineligible
+            }
+            waiter.settlement.complete(result)
+        }
+    }
+
+    private fun expireWaiters() {
+        val retired = synchronized(activityLock) {
+            acceptingPriorities = false
+            priorityTargets.clear()
+            waiters.values.flatMap { channelWaiters -> channelWaiters.toList() }.also {
+                waiters.clear()
+            }
+        }
+        retired.forEach { waiter ->
+            waiter.settlement.complete(EpgCoverageAcquisitionResult.ObservationExpired)
+        }
+    }
+
+    private fun completeWaiter(
+        waiter: EpgCoverageWaiter,
+        result: EpgCoverageAcquisitionResult,
+    ) {
+        val removed = synchronized(activityLock) {
+            val channelWaiters = waiters[waiter.channelId] ?: return@synchronized false
+            if (!channelWaiters.remove(waiter)) return@synchronized false
+            updatePriorityTargetLocked(waiter.channelId, channelWaiters)
+            true
+        }
+        if (removed) waiter.settlement.complete(result)
+    }
+
+    private fun removeWaiter(waiter: EpgCoverageWaiter) {
+        synchronized(activityLock) {
+            val channelWaiters = waiters[waiter.channelId] ?: return
+            if (channelWaiters.remove(waiter)) {
+                updatePriorityTargetLocked(waiter.channelId, channelWaiters)
+            }
+        }
+    }
+
+    private fun updatePriorityTargetLocked(
+        channelId: ChannelId,
+        channelWaiters: Set<EpgCoverageWaiter>,
+    ) {
+        val target = channelWaiters.maxOfOrNull(EpgCoverageWaiter::target)
+        if (target == null) {
+            waiters.remove(channelId)
+            priorityTargets.remove(channelId)
+        } else {
+            priorityTargets[channelId] = target
+        }
+    }
+}
+
+private class EpgCoverageWaiter(
+    internal val currentSession: CurrentSessionObservation,
+    internal val channelId: ChannelId,
+    internal val target: Instant,
+) {
+    internal val settlement = CompletableDeferred<EpgCoverageAcquisitionResult>()
 }
 
 private data class EpgSchedulingSnapshot(
@@ -329,5 +448,14 @@ private data class EpgSchedulingSnapshot(
     internal val priorities: Map<ChannelId, Instant>,
     internal val priorityTurn: Boolean,
 )
+
+private fun coveredResult(
+    observation: SessionObservation,
+    coverage: EpgCoverage,
+): EpgCoverageAcquisitionResult = if (coverage.isEmpty) {
+    EpgCoverageAcquisitionResult.CoveredEmpty(observation)
+} else {
+    EpgCoverageAcquisitionResult.CoveredWithData(observation)
+}
 
 private fun Instant.toWholeSecond(): Instant = Instant.fromEpochSeconds(epochSeconds)

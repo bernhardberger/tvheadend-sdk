@@ -59,7 +59,9 @@ public class StagedSdkConsumer(
     public suspend fun playLive(channelId: ChannelId): PlaybackTargetResult =
         coordinator.setLiveTarget(channelId)
 
-    public suspend fun streamProfiles(): StreamProfilesResult = session.getStreamProfiles()
+    public suspend fun streamProfiles(): StreamProfilesResult = session.getStreamProfiles(
+        requireNotNull(observation.value.currentSession),
+    )
 
     public suspend fun playLive(
         channelId: ChannelId,

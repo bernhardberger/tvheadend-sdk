@@ -16,6 +16,7 @@ public value class ArtworkId(public val value: Int) {
 /** Safe classification of a failed authenticated artwork load. */
 public enum class ArtworkFailure {
     CONNECTION_CHANGED,
+    OBSERVATION_EXPIRED,
     ACCESS_DENIED,
     FILE_UNAVAILABLE,
     CONNECTION_LIMIT,
@@ -63,5 +64,8 @@ public sealed interface ArtworkLoadResult {
  */
 public interface ArtworkLoader {
     /** Loads [artworkId] without exposing an endpoint, credential, or protocol file selector. */
-    public suspend fun loadArtwork(artworkId: ArtworkId): ArtworkLoadResult
+    public suspend fun loadArtwork(
+        currentSession: CurrentSessionObservation,
+        artworkId: ArtworkId,
+    ): ArtworkLoadResult
 }

@@ -11,6 +11,7 @@ import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.CommandBackedDvrRepository
+import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
 import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
 import at.bernhardberger.tvheadend.sdk.core.DvrConfigurationsState
 import at.bernhardberger.tvheadend.sdk.core.DvrCutpointCommands
@@ -23,7 +24,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrProgressCommands
 import at.bernhardberger.tvheadend.sdk.core.DvrRepository
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
-import at.bernhardberger.tvheadend.sdk.core.EpgCoverageRequestResult
+import at.bernhardberger.tvheadend.sdk.core.EpgCoverageAcquisitionResult
 import at.bernhardberger.tvheadend.sdk.core.EpgRepository
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
@@ -54,6 +55,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -70,6 +72,13 @@ internal interface SessionMetadata {
     public val epgRepository: EpgRepository
 
     public val dvrRepository: DvrRepository
+
+    public fun resolveGeneration(currentSession: CurrentSessionObservation): GatewayGeneration?
+
+    public fun currentObservation(
+        generation: GatewayGeneration,
+        currentSession: CurrentSessionObservation,
+    ): SessionObservation?
 
     public fun publishSessionState(
         state: SessionState,
@@ -180,10 +189,11 @@ internal class DvrEntryIncarnation {
 }
 
 internal fun interface EpgCoverageRequester {
-    public fun requestCoverage(
+    public suspend fun acquireCoverage(
+        currentSession: CurrentSessionObservation,
         channelId: ChannelId,
         through: Instant,
-    ): EpgCoverageRequestResult
+    ): EpgCoverageAcquisitionResult
 }
 
 internal class PhaseOneSessionMetadata(
@@ -207,15 +217,21 @@ internal class PhaseOneSessionMetadata(
     )
     private val mutableDiskSpace = MutableStateFlow<DvrDiskSpaceState>(DvrDiskSpaceState.Unknown)
     private val stateBackedEpgRepository = object : EpgRepository {
-        override fun requestCoverage(
+        override suspend fun acquireCoverage(
+            currentSession: CurrentSessionObservation,
             channelId: ChannelId,
             through: Instant,
-        ): EpgCoverageRequestResult = requestEpgCoverage(channelId, through)
+        ): EpgCoverageAcquisitionResult {
+            val expectedGeneration = resolveGeneration(currentSession)
+                ?: return EpgCoverageAcquisitionResult.ObservationExpired
+            return acquireEpgCoverage(expectedGeneration, currentSession, channelId, through)
+        }
     }
     private val stateBackedDvrRepository = object : CommandBackedDvrRepository(
         mutations = mutationCommands,
         progressCommands = progressCommands,
         cutpointCommands = cutpointCommands,
+        resolveGeneration = ::resolveGeneration,
     ) {}
     private var generation: GatewayGeneration? = null
     private var initialSync = CompletableDeferred<Unit>()
@@ -236,6 +252,21 @@ internal class PhaseOneSessionMetadata(
         mutableChannelsAndTags.asStateFlow()
     override val epgRepository: EpgRepository = stateBackedEpgRepository
     override val dvrRepository: DvrRepository = stateBackedDvrRepository
+
+    override fun resolveGeneration(
+        currentSession: CurrentSessionObservation,
+    ): GatewayGeneration? = synchronized(lock) {
+        val expectedGeneration = generation ?: return@synchronized null
+        observationStore.resolve(currentSession, expectedGeneration) as? GatewayGeneration
+    }
+
+    override fun currentObservation(
+        generation: GatewayGeneration,
+        currentSession: CurrentSessionObservation,
+    ): SessionObservation? = synchronized(lock) {
+        if (this.generation !== generation) return@synchronized null
+        observationStore.currentObservation(currentSession, generation)
+    }
 
     override fun publishSessionState(
         state: SessionState,
@@ -719,13 +750,16 @@ internal class PhaseOneSessionMetadata(
         publishedConfigurations?.let(DvrConfigurationsState.Stale::create)
             ?: DvrConfigurationsState.Unknown
 
-    private fun requestEpgCoverage(
+    private suspend fun acquireEpgCoverage(
+        generation: GatewayGeneration,
+        currentSession: CurrentSessionObservation,
         channelId: ChannelId,
         through: Instant,
-    ): EpgCoverageRequestResult {
-        val requester = synchronized(lock) { epgCoverageRequester }
-            ?: return EpgCoverageRequestResult.GENERATION_LOST
-        return requester.requestCoverage(channelId, through)
+    ): EpgCoverageAcquisitionResult {
+        val requester = synchronized(lock) {
+            epgCoverageRequester.takeIf { this.generation === generation }
+        } ?: return EpgCoverageAcquisitionResult.ObservationExpired
+        return requester.acquireCoverage(currentSession, channelId, through)
     }
 }
 
@@ -760,15 +794,32 @@ private fun MetadataEvent.isDvrMutationConfirmation(): Boolean = when (this) {
 }
 
 internal interface SessionChildren : ArtworkLoader, SubscriptionOpener, RecordingFileOpener {
+    public suspend fun open(
+        generation: GatewayGeneration,
+        channelId: SubscriptionChannelId,
+        consumer: SubscriptionEventConsumer,
+        options: SubscriptionOptions,
+    ): SubscriptionOpenResult = SubscriptionOpenResult.NotReady
+
     /** Reports no active generation until a child binds profile discovery. */
-    public suspend fun getStreamProfiles(): StreamProfilesResult = StreamProfilesResult.NotReady
+    public suspend fun getStreamProfiles(
+        generation: GatewayGeneration,
+    ): StreamProfilesResult = StreamProfilesResult.NotReady
 
     /** Reports the changed connection until a child actually binds a generation to artwork. */
-    public override suspend fun loadArtwork(artworkId: ArtworkId): ArtworkLoadResult =
-        ArtworkLoadResult.Unavailable(ArtworkFailure.CONNECTION_CHANGED)
+    public override suspend fun loadArtwork(
+        currentSession: CurrentSessionObservation,
+        artworkId: ArtworkId,
+    ): ArtworkLoadResult = ArtworkLoadResult.Unavailable(ArtworkFailure.OBSERVATION_EXPIRED)
 
     /** Reports the changed connection until a child actually binds a generation to recordings. */
     public override suspend fun openRecording(
+        recordingId: RecordingId,
+    ): RecordingFileResult<RecordingFile> =
+        RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
+
+    public suspend fun openRecording(
+        generation: GatewayGeneration,
         recordingId: RecordingId,
     ): RecordingFileResult<RecordingFile> =
         RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
@@ -779,8 +830,23 @@ internal interface SessionChildren : ArtworkLoader, SubscriptionOpener, Recordin
     ): RecordingFileResult<GrowingRecordingFileLease> =
         RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
 
+    public fun bindGrowingRecording(
+        generation: GatewayGeneration,
+        recordingId: RecordingId,
+    ): RecordingFileResult<GrowingRecordingFileLease> =
+        RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
+
     /** Reports the changed connection until a child can correlate fresh growing-file metadata. */
     public override suspend fun openGrowingRecording(
+        recordingId: RecordingId,
+        position: Long,
+    ): RecordingFileResult<GrowingRecordingFileReader> {
+        require(position >= 0L) { "Growing recording position must not be negative" }
+        return RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
+    }
+
+    public suspend fun openGrowingRecording(
+        generation: GatewayGeneration,
         recordingId: RecordingId,
         position: Long,
     ): RecordingFileResult<GrowingRecordingFileReader> {

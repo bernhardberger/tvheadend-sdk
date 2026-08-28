@@ -197,6 +197,30 @@ internal class SessionObservationStore {
 
     internal val observation: StateFlow<SessionObservation> = mutableObservation.asStateFlow()
 
+    internal fun resolve(
+        capability: CurrentSessionObservation,
+        expectedGeneration: Any,
+    ): Any? = synchronized(lock) {
+        expectedGeneration.takeIf { generation ->
+            readyGeneration === generation &&
+                capability.owner === owner &&
+                capability.generation === generation &&
+                mutableObservation.value.currentSession === capability
+        }
+    }
+
+    internal fun currentObservation(
+        capability: CurrentSessionObservation,
+        expectedGeneration: Any,
+    ): SessionObservation? = synchronized(lock) {
+        mutableObservation.value.takeIf { observation ->
+            readyGeneration === expectedGeneration &&
+                capability.owner === owner &&
+                capability.generation === expectedGeneration &&
+                observation.currentSession === capability
+        }
+    }
+
     internal fun publishSessionState(
         state: SessionState,
         progressCapability: RecordingProgressCapability,

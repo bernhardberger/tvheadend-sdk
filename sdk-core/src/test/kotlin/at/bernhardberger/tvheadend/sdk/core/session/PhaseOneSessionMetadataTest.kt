@@ -1,7 +1,6 @@
 package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
-import at.bernhardberger.tvheadend.sdk.core.EpgCoverageRequestResult
 import at.bernhardberger.tvheadend.sdk.core.Channel
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.ChannelService
@@ -13,8 +12,11 @@ import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpaceState
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.EpgCoverageAcquisitionResult
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability
 import at.bernhardberger.tvheadend.sdk.core.ServerCapabilities
+import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.gateway.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.gateway.EventId
@@ -58,11 +60,14 @@ internal class PhaseOneSessionMetadataTest {
         coordinator.bindGeneration(generation)
         metadata.acceptMetadata(MetadataEvent.DvrEntryAdded(generation, dvrEntry(1, "old")))
         metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        publishReady(metadata, generation)
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
         coordinator.startAdmission(generation)
         gateway.updateBehavior = { _, _, _ -> GatewayResult.Ok(Unit) }
 
         val result = async {
             val mutation = metadata.dvrRepository.updateEntry(
+                currentSession,
                 DvrEntryId(1),
                 DvrEntryUpdate(title = "new"),
             )
@@ -99,11 +104,17 @@ internal class PhaseOneSessionMetadataTest {
             MetadataEvent.DvrEntryAdded(generation, dvrEntry(1, "old", start = 0, stop = 10)),
         )
         metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        publishReady(metadata, generation)
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
         coordinator.startAdmission(generation)
         gateway.updateBehavior = { _, _, _ -> GatewayResult.Ok(Unit) }
 
         val result = async {
-            metadata.dvrRepository.updateEntry(DvrEntryId(1), DvrEntryUpdate(title = "new"))
+            metadata.dvrRepository.updateEntry(
+                currentSession,
+                DvrEntryId(1),
+                DvrEntryUpdate(title = "new"),
+            )
         }
         runCurrent()
         metadata.acceptMetadata(
@@ -605,50 +616,53 @@ internal class PhaseOneSessionMetadataTest {
     }
 
     @Test
-    fun `coverage requester is current generation bound and cleared by identity or reset`() {
+    fun `coverage requester is current generation bound and cleared by identity or reset`() = runTest {
         val metadata = PhaseOneSessionMetadata()
         val generation = GatewayGeneration()
         val channelId = ChannelId(7)
         val through = Instant.fromEpochSeconds(20_000)
         var observed: Pair<ChannelId, Instant>? = null
-        val requester = EpgCoverageRequester { requestedChannelId, requestedThrough ->
+        val requester = EpgCoverageRequester { _, requestedChannelId, requestedThrough ->
             observed = requestedChannelId to requestedThrough
-            EpgCoverageRequestResult.ACCEPTED
+            EpgCoverageAcquisitionResult.Ineligible
         }
+        val expired = at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation(Any(), Any())
 
-        assertEquals(
-            EpgCoverageRequestResult.GENERATION_LOST,
-            metadata.epgRepository.requestCoverage(channelId, through),
+        assertSame(
+            EpgCoverageAcquisitionResult.ObservationExpired,
+            metadata.epgRepository.acquireCoverage(expired, channelId, through),
         )
         metadata.bindGeneration(generation)
         assertFalse(metadata.bindEpgCoverageRequester(generation, requester))
         metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        publishReady(metadata, generation)
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
         assertTrue(metadata.bindEpgCoverageRequester(generation, requester))
-        assertEquals(
-            EpgCoverageRequestResult.ACCEPTED,
-            metadata.epgRepository.requestCoverage(channelId, through),
+        assertSame(
+            EpgCoverageAcquisitionResult.Ineligible,
+            metadata.epgRepository.acquireCoverage(currentSession, channelId, through),
         )
         assertEquals(channelId to through, observed)
 
         metadata.clearEpgCoverageRequester(
             generation,
-            EpgCoverageRequester { _, _ -> EpgCoverageRequestResult.INELIGIBLE },
+            EpgCoverageRequester { _, _, _ -> EpgCoverageAcquisitionResult.ObservationExpired },
         )
-        assertEquals(
-            EpgCoverageRequestResult.ACCEPTED,
-            metadata.epgRepository.requestCoverage(channelId, through),
+        assertSame(
+            EpgCoverageAcquisitionResult.Ineligible,
+            metadata.epgRepository.acquireCoverage(currentSession, channelId, through),
         )
         metadata.clearEpgCoverageRequester(generation, requester)
-        assertEquals(
-            EpgCoverageRequestResult.GENERATION_LOST,
-            metadata.epgRepository.requestCoverage(channelId, through),
+        assertSame(
+            EpgCoverageAcquisitionResult.ObservationExpired,
+            metadata.epgRepository.acquireCoverage(currentSession, channelId, through),
         )
 
         assertTrue(metadata.bindEpgCoverageRequester(generation, requester))
         metadata.resetWorkingStateRetainingPublishedSnapshot()
-        assertEquals(
-            EpgCoverageRequestResult.GENERATION_LOST,
-            metadata.epgRepository.requestCoverage(channelId, through),
+        assertSame(
+            EpgCoverageAcquisitionResult.ObservationExpired,
+            metadata.epgRepository.acquireCoverage(currentSession, channelId, through),
         )
     }
 
@@ -961,4 +975,17 @@ internal class PhaseOneSessionMetadataTest {
         uiLevel = uiLevel,
         uiLanguage = uiLanguage,
     )
+
+    private fun publishReady(
+        metadata: PhaseOneSessionMetadata,
+        generation: GatewayGeneration,
+    ) {
+        metadata.publishSessionState(
+            state = SessionState.Ready(
+                ServerCapabilities.create(CapabilityAccess.UNKNOWN, CapabilityAccess.UNKNOWN),
+            ),
+            progressCapability = RecordingProgressCapability.UNKNOWN,
+            generation = generation,
+        )
+    }
 }

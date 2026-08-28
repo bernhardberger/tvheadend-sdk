@@ -36,8 +36,10 @@ public interface TvheadendSession {
     /** Generation-bound authenticated artwork loader used by platform image integrations. */
     public val artwork: ArtworkLoader
 
-    /** Discovers immutable stream profiles on the currently bound connection generation. */
-    public suspend fun getStreamProfiles(): StreamProfilesResult {
+    /** Discovers immutable stream profiles for the originating current session observation. */
+    public suspend fun getStreamProfiles(
+        currentSession: CurrentSessionObservation,
+    ): StreamProfilesResult {
         currentCoroutineContext().ensureActive()
         return StreamProfilesResult.NotReady
     }

@@ -257,35 +257,44 @@ public sealed interface EpgRepositoryState {
     }
 }
 
-/** Immediate outcome of requesting prioritized EPG coverage. */
-public enum class EpgCoverageRequestResult {
-    /** The current snapshot already covers the requested whole-second boundary. */
-    SATISFIED,
+/** Settled outcome of acquiring EPG coverage for one exact session observation. */
+public sealed interface EpgCoverageAcquisitionResult {
+    /** Coverage settled with retained programme data in this exact immutable observation. */
+    public class CoveredWithData(
+        public val observation: SessionObservation,
+    ) : EpgCoverageAcquisitionResult {
+        override fun toString(): String = "EpgCoverageAcquisitionResult.CoveredWithData(<redacted>)"
+    }
 
-    /** One deduplicated priority hint was accepted or promoted for background work. */
-    ACCEPTED,
+    /** A successful query proved coverage without retaining programme data. */
+    public class CoveredEmpty(
+        public val observation: SessionObservation,
+    ) : EpgCoverageAcquisitionResult {
+        override fun toString(): String = "EpgCoverageAcquisitionResult.CoveredEmpty(<redacted>)"
+    }
 
     /** The channel, bounded future window, or server query capability is not eligible. */
-    INELIGIBLE,
+    public data object Ineligible : EpgCoverageAcquisitionResult
 
-    /** No current generation-owned EPG worker can accept the request. A later Ready may be retried. */
-    GENERATION_LOST,
+    /** The originating observation is no longer current for its owning session. */
+    public data object ObservationExpired : EpgCoverageAcquisitionResult
 }
 
 /** Programme-guide commands for the selected server profile. */
 public interface EpgRepository {
     /**
-     * Prioritizes one channel through [through] without waiting for a query to complete.
+     * Acquires settled coverage for one channel through [through].
      *
      * The boundary is floored to the protocol's whole-second precision. An uncovered boundary at
      * or before the current second, or more than 24 hours ahead, is ineligible. Priority never
      * bypasses channel cooldown, repeated requests deduplicate, and ordinary catalog work keeps a
-     * fair share of each batch.
+     * fair share of each batch. Cancellation remains owned by the caller.
      */
-    public fun requestCoverage(
+    public suspend fun acquireCoverage(
+        currentSession: CurrentSessionObservation,
         channelId: ChannelId,
         through: Instant,
-    ): EpgCoverageRequestResult
+    ): EpgCoverageAcquisitionResult
 }
 
 private fun requireEpgU32(name: String, value: Long) {
