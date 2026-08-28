@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.3.2]
+
+This provisional patch release fixes Media3 recovery for a live target that
+remains buffering before any audio track is selected. The original 6,000 ms
+initial recovery deadline now remains active while tracks are loading and emits
+exactly one `AUDIO_RECOVERY_EXHAUSTED` request if the target is still buffering
+without selected audio when that deadline expires.
+
+If selected audio is present at the initial deadline, the existing two-stage
+recovery still disables it and waits through a second 6,000 ms deadline before
+escalating. Ready, idle, target replacement, and close continue to cancel
+pending recovery, while stale timer callbacks remain fenced. The public API and
+ABI are unchanged from `0.3.1`. Compatibility remains provisional during the
+major-zero line, and local or CI verification does not establish Maven Central
+availability.
+
 ## [0.3.1]
 
 This provisional patch release fixes a Media3 coordinator completion defect.
