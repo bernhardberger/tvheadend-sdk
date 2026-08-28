@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.1]
+
+This provisional patch release fixes a Media3 coordinator completion defect.
+When target installation already owns the application-owned `Player` looper,
+the SDK now performs the guarded player operation inline instead of posting
+back to the same looper. `TvheadendPlaybackCoordinator.setLiveTarget` can
+therefore return its typed result after installing the source rather than
+remain suspended while playback proceeds.
+
+Queued operations retain their existing cancellation and rejected-post
+behavior. The public API and ABI are unchanged from `0.3.0`. Compatibility
+remains provisional during the major-zero line, and local or CI verification
+does not establish Maven Central availability.
+
 ## [0.3.0]
 
 This provisional minor release intentionally replaces the SDK's public session
