@@ -1,7 +1,5 @@
 package at.bernhardberger.tvheadend.sdk.android
 
-import at.bernhardberger.tvheadend.sdk.core.ServerAuthentication
-
 internal class FakeCredentialStorage(
     initialState: StoredCredentialRead = StoredCredentialRead.Missing,
 ) : CredentialStorage {
@@ -63,10 +61,11 @@ internal open class FakeCredentialCipher : CredentialCipher {
         return encryptedCredentials(username, password, context)
     }
 
-    override suspend fun decrypt(
+    override suspend fun <T> decrypt(
         credentials: EncryptedCredentials,
         context: CredentialCipherContext,
-    ): ServerAuthentication.Password {
+        transform: (username: String, password: String) -> T,
+    ): T {
         decryptFailure?.let { failure -> throw failure }
         decryptCalls += 1
         lastContext = context
@@ -77,9 +76,9 @@ internal open class FakeCredentialCipher : CredentialCipher {
         val password = credentials.copyPassword().decodeToString()
         check(username.startsWith(usernamePrefix)) { "Associated data mismatch" }
         check(password.startsWith(passwordPrefix)) { "Associated data mismatch" }
-        return ServerAuthentication.Password(
-            username = username.removePrefix(usernamePrefix),
-            password = password.removePrefix(passwordPrefix),
+        return transform(
+            username.removePrefix(usernamePrefix),
+            password.removePrefix(passwordPrefix),
         )
     }
 }

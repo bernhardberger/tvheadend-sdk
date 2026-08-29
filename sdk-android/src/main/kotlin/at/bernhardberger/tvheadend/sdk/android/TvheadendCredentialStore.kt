@@ -64,15 +64,22 @@ public class TvheadendCredentialStore private constructor(
                 StoredCredentialRead.Unavailable -> CredentialReadResult.Unavailable
                 is StoredCredentialRead.Available -> when (val record = stored.record) {
                     is StoredCredentialRecord.LegacyPassword -> CredentialReadResult.Available.create(
-                        cipher.decrypt(record.credentials, CredentialCipherContext.Legacy),
+                        cipher.decrypt(
+                            credentials = record.credentials,
+                            context = CredentialCipherContext.Legacy,
+                        ) { username, password ->
+                            ServerAuthentication.Password(username, password)
+                        },
                     )
                     is StoredCredentialRecord.Profile -> when (record.authenticationMode) {
                         StoredAuthenticationMode.ANONYMOUS -> CredentialReadResult.Missing
                         StoredAuthenticationMode.PASSWORD -> CredentialReadResult.Available.create(
                             cipher.decrypt(
-                                checkNotNull(record.credentials),
-                                record.cipherContext(),
-                            ),
+                                credentials = checkNotNull(record.credentials),
+                                context = record.cipherContext(),
+                            ) { username, password ->
+                                ServerAuthentication.Password(username, password)
+                            },
                         )
                     }
                 }
@@ -160,7 +167,12 @@ public class TvheadendCredentialStore private constructor(
 
     private suspend fun validateStoredPassword(record: StoredCredentialRecord.Profile) {
         if (record.authenticationMode == StoredAuthenticationMode.PASSWORD) {
-            cipher.decrypt(checkNotNull(record.credentials), record.cipherContext())
+            cipher.decrypt(
+                credentials = checkNotNull(record.credentials),
+                context = record.cipherContext(),
+            ) { username, password ->
+                ServerAuthentication.Password(username, password)
+            }
         }
     }
 }
@@ -211,10 +223,11 @@ internal interface CredentialCipher {
         context: CredentialCipherContext,
     ): EncryptedCredentials
 
-    suspend fun decrypt(
+    suspend fun <T> decrypt(
         credentials: EncryptedCredentials,
         context: CredentialCipherContext,
-    ): ServerAuthentication.Password
+        transform: (username: String, password: String) -> T,
+    ): T
 }
 
 internal sealed interface CredentialCipherContext {
@@ -362,10 +375,11 @@ internal object AndroidTinkCredentialCipher : CredentialCipher {
         }
     }
 
-    override suspend fun decrypt(
+    override suspend fun <T> decrypt(
         credentials: EncryptedCredentials,
         context: CredentialCipherContext,
-    ): ServerAuthentication.Password = withContext(Dispatchers.IO) {
+        transform: (username: String, password: String) -> T,
+    ): T = withContext(Dispatchers.IO) {
         mutex.withLock {
             val aead = credentialAead(createIfMissing = false)
             var usernameBytes: ByteArray? = null
@@ -379,9 +393,9 @@ internal object AndroidTinkCredentialCipher : CredentialCipher {
                     credentials.copyPassword(),
                     credentialAssociatedData(context, CredentialField.PASSWORD),
                 )
-                ServerAuthentication.Password(
-                    username = usernameBytes.decodeToString(throwOnInvalidSequence = true),
-                    password = passwordBytes.decodeToString(throwOnInvalidSequence = true),
+                transform(
+                    usernameBytes.decodeToString(throwOnInvalidSequence = true),
+                    passwordBytes.decodeToString(throwOnInvalidSequence = true),
                 )
             } finally {
                 usernameBytes?.fill(0)

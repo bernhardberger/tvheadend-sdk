@@ -37,9 +37,8 @@ policy and [releasing](docs/releasing.md) for the publication trust boundary.
 ## Server profile storage
 
 `sdk-android` persists one selected server profile through the application-scoped
-`TvheadendServerProfileStore`. Host, port, and authentication mode remain
-readable for settings screens; password authentication is returned only inside
-an opaque, connectable `ServerProfile`:
+`TvheadendServerProfileStore`. Normal connection reads return password
+authentication only inside an opaque, connectable `ServerProfile`:
 
 ```kotlin
 val profiles = TvheadendServerProfileStore(context)
@@ -57,10 +56,18 @@ when (val stored = profiles.loadProfile()) {
 }
 ```
 
-Anonymous profiles do not use the Android Keystore. Password fields are
-encrypted with endpoint-bound associated data and must be entered in full when
-editing a password profile. The deprecated `TvheadendCredentialStore` remains
-binary compatible for existing applications and shares the same atomic record.
+Settings screens can call `loadProfileForEditing()` to distinguish missing,
+unavailable, anonymous, and password profiles. Anonymous and password results
+expose the editable host and port; only the password result exposes the exact
+normalized username and exact password. Those credentials are immutable
+plaintext strings and cannot be zeroed. Keep the result only in private memory
+while the active secure edit surface needs it, then drop every reference; never
+serialize it, place it in saved state, log it, or use it as a diagnostic.
+
+Anonymous profiles do not use the Android Keystore. Password fields remain
+encrypted at rest with endpoint-bound associated data. The deprecated
+`TvheadendCredentialStore` remains binary compatible for existing applications
+and shares the same atomic record.
 
 The default build resolves
 `at.bernhardberger.tvheadend:htsp:0.7.0` from Maven Central. Maintainers working

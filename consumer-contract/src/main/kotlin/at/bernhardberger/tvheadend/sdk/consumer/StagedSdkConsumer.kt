@@ -4,6 +4,7 @@ package at.bernhardberger.tvheadend.sdk.consumer
 
 import android.content.Context
 import androidx.media3.exoplayer.ExoPlayer
+import at.bernhardberger.tvheadend.sdk.android.ServerProfileEditReadResult
 import at.bernhardberger.tvheadend.sdk.android.ServerProfileOperationResult
 import at.bernhardberger.tvheadend.sdk.android.ServerProfileReadResult
 import at.bernhardberger.tvheadend.sdk.android.TvheadendServerProfileStore
@@ -39,6 +40,21 @@ public class StagedSdkConsumer(
         createTvheadendPlaybackCoordinator(player)
 
     public suspend fun loadServerProfile(): ServerProfileReadResult = profileStore.loadProfile()
+
+    public suspend fun loadServerProfileForEditing(): ServerProfileEditReadResult =
+        profileStore.loadProfileForEditing()
+
+    public fun hasExpectedEditableFields(result: ServerProfileEditReadResult): Boolean = when (result) {
+        ServerProfileEditReadResult.Missing,
+        ServerProfileEditReadResult.Unavailable,
+        -> true
+        is ServerProfileEditReadResult.Anonymous -> result.host.isNotEmpty() && result.port > 0
+        is ServerProfileEditReadResult.Password ->
+            result.host.isNotEmpty() &&
+                result.port > 0 &&
+                result.username.isNotEmpty() &&
+                result.password.isNotEmpty()
+    }
 
     public suspend fun storeAnonymousServerProfile(
         host: String,

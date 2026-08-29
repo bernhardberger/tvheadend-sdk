@@ -161,7 +161,7 @@ tasks.register("verifyConsumerDependencyGraph") {
             }
         }
 
-        val consumerSource = fileTree("src/main/kotlin") { include("**/*.kt") }
+        val consumerSource = fileTree("src/main") { include("**/*.kt", "**/*.java") }
             .files.joinToString("\n") { source -> source.readText() }
         check("at.bernhardberger.tvheadend.htsp" !in consumerSource) {
             "The consumer contract must not import the raw HTSP API"

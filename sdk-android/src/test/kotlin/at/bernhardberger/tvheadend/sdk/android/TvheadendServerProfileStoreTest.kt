@@ -65,6 +65,93 @@ internal class TvheadendServerProfileStoreTest {
     }
 
     @Test
+    fun `edit read distinguishes every state and preserves exact editable values`() = runTest {
+        val missing = TvheadendServerProfileStore.create(
+            FakeCredentialStorage(),
+            FakeCredentialCipher(),
+        ).loadProfileForEditing()
+        val unavailable = TvheadendServerProfileStore.create(
+            FakeCredentialStorage(StoredCredentialRead.Unavailable),
+            FakeCredentialCipher(),
+        ).loadProfileForEditing()
+        val anonymousCipher = FakeCredentialCipher()
+        val anonymous = TvheadendServerProfileStore.create(
+            FakeCredentialStorage(
+                StoredCredentialRead.Available(anonymousProfileRecord("edit.invalid", 4_242)),
+            ),
+            anonymousCipher,
+        ).loadProfileForEditing()
+        val passwordStore = TvheadendServerProfileStore.create(
+            FakeCredentialStorage(),
+            FakeCredentialCipher(),
+        )
+        assertSame(
+            ServerProfileOperationResult.SUCCESS,
+            passwordStore.storePassword(
+                host = " edit.invalid ",
+                port = 4_242,
+                username = " edit-user ",
+                password = " exact password ",
+            ),
+        )
+        val password = passwordStore.loadProfileForEditing()
+
+        assertSame(ServerProfileEditReadResult.Missing, missing)
+        assertSame(ServerProfileEditReadResult.Unavailable, unavailable)
+        assertTrue(anonymous is ServerProfileEditReadResult.Anonymous)
+        anonymous as ServerProfileEditReadResult.Anonymous
+        assertEquals("edit.invalid", anonymous.host)
+        assertEquals(4_242, anonymous.port)
+        assertEquals("ServerProfileEditReadResult.Anonymous(<redacted>)", anonymous.toString())
+        assertEquals(0, anonymousCipher.decryptCalls)
+        assertTrue(password is ServerProfileEditReadResult.Password)
+        password as ServerProfileEditReadResult.Password
+        assertEquals("edit.invalid", password.host)
+        assertEquals(4_242, password.port)
+        assertEquals("edit-user", password.username)
+        assertEquals(" exact password ", password.password)
+        assertEquals("ServerProfileEditReadResult.Password(<redacted>)", password.toString())
+        assertEquals(0, ServerProfileEditReadJavaConsumer.inspect(missing))
+        assertEquals(1, ServerProfileEditReadJavaConsumer.inspect(unavailable))
+        assertEquals(2, ServerProfileEditReadJavaConsumer.inspect(anonymous))
+        assertEquals(3, ServerProfileEditReadJavaConsumer.inspect(password))
+    }
+
+    @Test
+    fun `edit read rejects legacy and corrupt credentials without exposing failure details`() = runTest {
+        val legacyCipher = FakeCredentialCipher()
+        val legacy = TvheadendServerProfileStore.create(
+            FakeCredentialStorage(StoredCredentialRead.Available(legacyPasswordRecord())),
+            legacyCipher,
+        ).loadProfileForEditing()
+        val failure = IllegalStateException("private decryption detail")
+        val corrupt = TvheadendServerProfileStore.create(
+            FakeCredentialStorage(StoredCredentialRead.Available(passwordProfileRecord())),
+            FakeCredentialCipher().apply { decryptFailure = failure },
+        ).loadProfileForEditing()
+        val bound = passwordProfileRecord(host = "bound.invalid", port = 4_242)
+        val endpointMismatch = TvheadendServerProfileStore.create(
+            FakeCredentialStorage(
+                StoredCredentialRead.Available(
+                    StoredCredentialRecord.Profile(
+                        host = "changed.invalid",
+                        port = bound.port,
+                        authenticationMode = bound.authenticationMode,
+                        credentials = bound.credentials,
+                    ),
+                ),
+            ),
+            FakeCredentialCipher(),
+        ).loadProfileForEditing()
+
+        assertSame(ServerProfileEditReadResult.Missing, legacy)
+        assertEquals(0, legacyCipher.decryptCalls)
+        assertSame(ServerProfileEditReadResult.Unavailable, corrupt)
+        assertSame(ServerProfileEditReadResult.Unavailable, endpointMismatch)
+        assertFalse(corrupt.toString().contains(checkNotNull(failure.message)))
+    }
+
+    @Test
     fun `all input validation completes before storage and crypto`() {
         val storage = FakeCredentialStorage()
         val cipher = FakeCredentialCipher()
@@ -277,6 +364,18 @@ internal class TvheadendServerProfileStoreTest {
                     .storeAnonymous("test.invalid")
             },
             { TvheadendServerProfileStore.create(readStorage, FakeCredentialCipher()).loadProfile() },
+            {
+                TvheadendServerProfileStore.create(readStorage, FakeCredentialCipher())
+                    .loadProfileForEditing()
+            },
+            {
+                TvheadendServerProfileStore.create(
+                    FakeCredentialStorage(
+                        StoredCredentialRead.Available(passwordProfileRecord()),
+                    ),
+                    FakeCredentialCipher().apply { decryptFailure = cancellation },
+                ).loadProfileForEditing()
+            },
             { TvheadendServerProfileStore.create(clearStorage, FakeCredentialCipher()).clearProfile() },
         )
 
@@ -308,5 +407,45 @@ internal class TvheadendServerProfileStoreTest {
                 name.contains("cause", ignoreCase = true)
         })
         assertNotEquals("test.invalid", ServerProfileReadResult.Unavailable.toString())
+    }
+
+    @Test
+    fun `edit results expose no public construction or generated secret APIs`() {
+        val anonymousMethods = ServerProfileEditReadResult.Anonymous::class.java.declaredMethods
+            .filterNot { method -> method.isSynthetic }
+            .mapTo(mutableSetOf()) { method -> method.name }
+        val passwordMethods = ServerProfileEditReadResult.Password::class.java.declaredMethods
+            .filterNot { method -> method.isSynthetic }
+            .mapTo(mutableSetOf()) { method -> method.name }
+
+        assertEquals(
+            0,
+            ServerProfileEditReadResult.Anonymous::class.java.constructors
+                .count { constructor -> !constructor.isSynthetic },
+        )
+        assertEquals(
+            0,
+            ServerProfileEditReadResult.Password::class.java.constructors
+                .count { constructor -> !constructor.isSynthetic },
+        )
+        assertEquals(setOf("getHost", "getPort", "toString"), anonymousMethods)
+        assertEquals(
+            setOf("getHost", "getPort", "getUsername", "getPassword", "toString"),
+            passwordMethods,
+        )
+        assertFalse(anonymousMethods.any { method -> method.startsWith("component") || method == "copy" })
+        assertFalse(passwordMethods.any { method -> method.startsWith("component") || method == "copy" })
+        assertFalse(java.io.Serializable::class.java.isAssignableFrom(ServerProfileEditReadResult.Anonymous::class.java))
+        assertFalse(java.io.Serializable::class.java.isAssignableFrom(ServerProfileEditReadResult.Password::class.java))
+        assertFalse(
+            android.os.Parcelable::class.java.isAssignableFrom(
+                ServerProfileEditReadResult.Anonymous::class.java,
+            ),
+        )
+        assertFalse(
+            android.os.Parcelable::class.java.isAssignableFrom(
+                ServerProfileEditReadResult.Password::class.java,
+            ),
+        )
     }
 }

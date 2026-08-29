@@ -51,6 +51,28 @@ public class TvheadendServerProfileStore private constructor(
     }
 
     /**
+     * Loads the selected profile fields for a secure edit surface.
+     *
+     * A [ServerProfileEditReadResult.Password] contains immutable plaintext strings that cannot
+     * be zeroed. Keep that result only in private memory while the active edit surface needs it,
+     * then drop every reference.
+     */
+    public suspend fun loadProfileForEditing(): ServerProfileEditReadResult = profileResult(
+        unavailable = ServerProfileEditReadResult.Unavailable,
+    ) {
+        operationMutex.withLock {
+            when (val stored = storage.read()) {
+                StoredCredentialRead.Missing -> ServerProfileEditReadResult.Missing
+                StoredCredentialRead.Unavailable -> ServerProfileEditReadResult.Unavailable
+                is StoredCredentialRead.Available -> when (val record = stored.record) {
+                    is StoredCredentialRecord.LegacyPassword -> ServerProfileEditReadResult.Missing
+                    is StoredCredentialRecord.Profile -> loadProfileForEditing(record)
+                }
+            }
+        }
+    }
+
+    /**
      * Atomically stores an anonymous profile after normalizing and validating its endpoint.
      *
      * @throws IllegalArgumentException if [host] or [port] is invalid.
@@ -126,9 +148,11 @@ public class TvheadendServerProfileStore private constructor(
         val authentication = when (record.authenticationMode) {
             StoredAuthenticationMode.ANONYMOUS -> ServerAuthentication.Anonymous
             StoredAuthenticationMode.PASSWORD -> cipher.decrypt(
-                checkNotNull(record.credentials),
-                record.cipherContext(),
-            )
+                credentials = checkNotNull(record.credentials),
+                context = record.cipherContext(),
+            ) { username, password ->
+                ServerAuthentication.Password(username, password)
+            }
         }
         return ServerProfileReadResult.Available.create(
             profile = ServerProfile(record.host, record.port, authentication),
@@ -139,6 +163,26 @@ public class TvheadendServerProfileStore private constructor(
                 StoredAuthenticationMode.PASSWORD -> ServerProfileAuthenticationMode.PASSWORD
             },
         )
+    }
+
+    private suspend fun loadProfileForEditing(
+        record: StoredCredentialRecord.Profile,
+    ): ServerProfileEditReadResult = when (record.authenticationMode) {
+        StoredAuthenticationMode.ANONYMOUS -> ServerProfileEditReadResult.Anonymous.create(
+            host = record.host,
+            port = record.port,
+        )
+        StoredAuthenticationMode.PASSWORD -> cipher.decrypt(
+            credentials = checkNotNull(record.credentials),
+            context = record.cipherContext(),
+        ) { username, password ->
+            ServerProfileEditReadResult.Password.create(
+                host = record.host,
+                port = record.port,
+                username = username,
+                password = password,
+            )
+        }
     }
 }
 
@@ -178,6 +222,65 @@ public sealed interface ServerProfileReadResult {
 
     /** Stored profile data could not be read, validated, or decrypted. */
     public data object Unavailable : ServerProfileReadResult
+}
+
+/** Result of loading the selected server profile for editing. */
+public sealed interface ServerProfileEditReadResult {
+    /** No server profile is stored. */
+    public data object Missing : ServerProfileEditReadResult
+
+    /** Editable fields for an anonymous profile. */
+    public class Anonymous private constructor(
+        /** Normalized server host. */
+        public val host: String,
+        /** Server HTSP port. */
+        public val port: Int,
+    ) : ServerProfileEditReadResult {
+        internal companion object {
+            @JvmSynthetic
+            internal fun create(host: String, port: Int): Anonymous = Anonymous(host, port)
+        }
+
+        override fun toString(): String = "ServerProfileEditReadResult.Anonymous(<redacted>)"
+    }
+
+    /**
+     * Editable fields for a password profile.
+     *
+     * [username] and [password] are immutable plaintext strings and cannot be zeroed. Keep this
+     * result only in private memory while the active secure edit surface needs it, then drop every
+     * reference. Do not serialize it, place it in saved state, log it, or use it as a diagnostic.
+     */
+    public class Password private constructor(
+        /** Normalized server host. */
+        public val host: String,
+        /** Server HTSP port. */
+        public val port: Int,
+        /** Exact normalized username. */
+        public val username: String,
+        /** Exact password. */
+        public val password: String,
+    ) : ServerProfileEditReadResult {
+        internal companion object {
+            @JvmSynthetic
+            internal fun create(
+                host: String,
+                port: Int,
+                username: String,
+                password: String,
+            ): Password {
+                val normalizedUsername = username.trim()
+                require(normalizedUsername.isNotEmpty()) { "Username must not be blank" }
+                require(password.isNotBlank()) { "Password must not be blank" }
+                return Password(host, port, normalizedUsername, password)
+            }
+        }
+
+        override fun toString(): String = "ServerProfileEditReadResult.Password(<redacted>)"
+    }
+
+    /** Stored profile data could not be read, validated, or decrypted. */
+    public data object Unavailable : ServerProfileEditReadResult
 }
 
 /** Safe result of a server profile storage mutation. */

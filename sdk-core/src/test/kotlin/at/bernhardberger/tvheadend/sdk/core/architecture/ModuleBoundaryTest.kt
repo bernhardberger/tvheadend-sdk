@@ -385,6 +385,7 @@ internal class ModuleBoundaryTest {
             "CredentialOperationResult",
             "CredentialReadResult",
             "ServerProfileAuthenticationMode",
+            "ServerProfileEditReadResult",
             "ServerProfileOperationResult",
             "ServerProfileReadResult",
             "TvheadendDiscovery",
