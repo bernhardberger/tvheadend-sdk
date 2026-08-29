@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.3]
+
+This provisional patch release fixes timeshift speed commands, including pause
+and resume, when they are invoked from an application-owned coroutine context.
+The subscription now runs the HTSP speed round trip on its owned dispatcher
+rather than inheriting the caller's dispatcher.
+
+Caller cancellation still propagates, and transport failures retain their
+typed `TRANSPORT_UNAVAILABLE` outcome. Subscription admission, generation
+fencing, and speed-result mapping are otherwise unchanged. The public API and
+ABI are unchanged from `0.3.2`. Compatibility remains provisional during the
+major-zero line, and local or CI verification does not establish Maven Central
+availability.
+
 ## [0.3.2]
 
 This provisional patch release fixes Media3 recovery for a live target that

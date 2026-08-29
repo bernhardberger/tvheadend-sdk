@@ -69,10 +69,10 @@ works from the exact tag and explicitly completes convergence:
 ./tools/check-staged-publication --write-manifest build/staged-publication.json
 gh run download <run-id> --name release-<run-id> --dir build/release
 ./tools/publish-central-release --verify-published
-gh release create v0.3.2 \
-  build/release/tvheadend-sdk-0.3.2-central.zip \
+gh release create v0.3.3 \
+  build/release/tvheadend-sdk-0.3.3-central.zip \
   build/release/release-manifest.json \
-  --verify-tag --title v0.3.2 --prerelease \
+  --verify-tag --title v0.3.3 --prerelease \
   --notes-file build/release/release-notes.md
 ```
 
