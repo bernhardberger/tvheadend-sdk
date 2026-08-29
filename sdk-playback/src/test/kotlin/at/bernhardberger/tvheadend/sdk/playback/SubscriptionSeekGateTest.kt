@@ -3,9 +3,12 @@
 package at.bernhardberger.tvheadend.sdk.playback
 
 import java.util.concurrent.CancellationException
+import kotlin.coroutines.ContinuationInterceptor
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -425,6 +428,21 @@ class SubscriptionSeekGateTest {
         }
 
     @Test
+    fun `speed commands run on the subscription dispatcher`() = runTest {
+        val subscriptionDispatcher = StandardTestDispatcher(testScheduler, "subscription")
+        val fixture = openSeekable(dispatcher = subscriptionDispatcher)
+        var observedDispatcher: ContinuationInterceptor? = null
+        fixture.connection.speedAction = {
+            observedDispatcher = currentCoroutineContext()[ContinuationInterceptor]
+            SubscriptionOperationResult.Ok(Unit)
+        }
+
+        assertTrue(fixture.subscription.setSpeed(0) is SubscriptionOperationResult.Ok)
+        assertSame(subscriptionDispatcher, observedDispatcher)
+        fixture.close()
+    }
+
+    @Test
     fun `a stream terminal resolves a pending request without a seek terminal reason`() = runTest {
         val fixture = openSeekable()
         val seeking = async { fixture.subscription.seek(absoluteSeek()) }
@@ -551,13 +569,14 @@ class SubscriptionSeekGateTest {
         requested: Duration = 300.seconds,
         grantedTimeshiftSeconds: Long? = 300L,
         gate: SeekGateSettings = SeekGateSettings(),
+        dispatcher: CoroutineDispatcher = StandardTestDispatcher(testScheduler),
         onEvent: suspend (SubscriptionEvent) -> Unit = {},
     ): SeekFixture {
         val connection = RecordingSubscriptionConnection()
         connection.subscribeAction = { successfulConfirmation(grantedTimeshiftSeconds) }
         val manager = createSubscriptionManager(
             connection,
-            StandardTestDispatcher(testScheduler),
+            dispatcher,
             gate,
         )
         manager.startAdmission()

@@ -449,7 +449,7 @@ internal class SubscriptionIdAllocator(private var next: Long = 0L) {
 
 private class SubscriptionManagerImpl(
     private val connection: SubscriptionConnection,
-    dispatcher: CoroutineDispatcher,
+    private val dispatcher: CoroutineDispatcher,
     initialSubscriptionId: Long = 0L,
     private val seekGate: SeekGateSettings = SeekGateSettings(),
     private val rebase: TimestampRebaseSettings = TimestampRebaseSettings(),
@@ -502,6 +502,7 @@ private class SubscriptionManagerImpl(
                 channelId = channelId,
                 connection = connection,
                 consumer = consumer,
+                dispatcher = dispatcher,
                 scope = scope,
                 seekGate = seekGate,
                 rebase = rebase,
@@ -577,6 +578,7 @@ private class ActiveSubscriptionImpl(
     private val channelId: SubscriptionChannelId,
     private val connection: SubscriptionConnection,
     private val consumer: SubscriptionEventConsumer,
+    private val dispatcher: CoroutineDispatcher,
     private val scope: CoroutineScope,
     private val seekGate: SeekGateSettings,
     rebase: TimestampRebaseSettings,
@@ -701,7 +703,14 @@ private class ActiveSubscriptionImpl(
         }
         if (!available) return SubscriptionOperationResult.TransportUnavailable
         return try {
-            connection.speed(id, speed)
+            val outcome = withContext(dispatcher) {
+                try {
+                    Result.success(connection.speed(id, speed))
+                } catch (error: Exception) {
+                    Result.failure(error)
+                }
+            }
+            outcome.getOrThrow()
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (_: Exception) {
