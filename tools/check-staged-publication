@@ -447,8 +447,8 @@ def expect_error(errors: list[str], label: str, action: Callable[[], object]) ->
 
 def self_test() -> list[str]:
     errors: list[str] = []
-    build = f'group = "{GROUP}"\nversion = "0.3.3"\n'
-    if configured_version(build) != "0.3.3" or len(expected_originals("0.3.3")) != 26:
+    build = f'group = "{GROUP}"\nversion = "0.3.4"\n'
+    if configured_version(build) != "0.3.4" or len(expected_originals("0.3.4")) != 26:
         errors.append("self-test rejected the exact five-module release identity")
     expected_publication_names = {
         "sdk-android": "TVHeadend Kotlin SDK: Android",
@@ -471,7 +471,7 @@ def self_test() -> list[str]:
             f"obsolete {module} POM name",
             lambda root=obsolete, module=module: verify_pom_name(root, module, "synthetic POM"),
         )
-    expect_error(errors, "snapshot version", lambda: configured_version(build.replace("0.3.3", "0.3.3-SNAPSHOT")))
+    expect_error(errors, "snapshot version", lambda: configured_version(build.replace("0.3.4", "0.3.4-SNAPSHOT")))
     expect_error(errors, "wrong group", lambda: configured_version(build.replace(GROUP, "invalid.example")))
     legal = {
         "META-INF/LICENSE": b"GNU GENERAL PUBLIC LICENSE Version 3",

@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.3.4]
+
+This provisional patch release carries forward the timeshift speed-command fix
+from the unpublished `0.3.3` development release. Pause and resume round trips
+run on the subscription-owned dispatcher while preserving caller cancellation
+and typed transport-failure outcomes.
+
+Android settings screens can now use
+`TvheadendServerProfileStore.loadProfileForEditing()` to distinguish missing,
+unavailable, anonymous, and password profiles. Anonymous and password results
+expose the normalized endpoint; only the password result exposes the exact
+normalized username and password. These dedicated edit results have redacted
+rendering and identity semantics rather than generated value, copy,
+destructuring, or serialization APIs. Callers must keep immutable plaintext only
+in private memory while an active secure edit surface needs it, then drop every
+reference.
+
+Connection reads remain opaque, password fields remain encrypted at rest with
+endpoint-bound associated data, and storage, decryption, and cancellation still
+fail closed. Existing APIs remain source- and binary-compatible, but compatibility
+is provisional during the major-zero line. Local or CI verification does not
+establish Maven Central availability.
+
 ## [0.3.3]
 
 This provisional patch release fixes timeshift speed commands, including pause

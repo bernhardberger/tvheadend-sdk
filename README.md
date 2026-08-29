@@ -18,7 +18,7 @@ The SDK is split into five libraries:
 | `sdk-android` | Android | Discovery, connectivity, atomic server-profile storage, and authenticated artwork |
 | `sdk-testing` | Kotlin/JVM | Aggregate observation fakes, scripted events, and packet fixtures |
 
-The source is configured for release `0.3.3`. The normal build never publishes.
+The source is configured for release `0.3.4`. The normal build never publishes.
 `./gradlew clean build check stageLocalPublication` verifies the repository and
 stages all five modules under `build/local-maven`; the Maven Central badge, not
 local source or staging, reports public availability.
@@ -27,7 +27,7 @@ Applications can select only the modules they need. For example:
 
 ```kotlin
 dependencies {
-    implementation("at.bernhardberger.tvheadend:sdk-media3:0.3.3")
+    implementation("at.bernhardberger.tvheadend:sdk-media3:0.3.4")
 }
 ```
 
