@@ -37,3 +37,18 @@ jobs:
         run: ./gradlew --no-daemon -p consumer-contract clean test verifyConsumerDependencyGraph
       - name: Check release setup
         run: ./tools/publish-central-release --check-setup
+      - name: Record successful push staging provenance
+        if: github.event_name == 'push' && github.run_attempt == 1
+        run: ./tools/publish-central-release --write-ci-provenance
+      - name: Retain successful push staging
+        if: github.event_name == 'push' && github.run_attempt == 1
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: staged-publication-${{ github.run_id }}
+          path: |
+            build/local-maven
+            build/staged-publication.json
+            build/ci-staging-provenance.json
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0

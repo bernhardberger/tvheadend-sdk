@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import concurrent.futures
 import hashlib
 import io
 import json
@@ -15,6 +16,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -40,12 +42,20 @@ EXPECTED_UID = "Bernhard Berger <bernhard.berger@gmail.com>"
 UPLOAD_URL = "https://central.sonatype.com/api/v1/publisher/upload"
 MAVEN_URL = "https://repo1.maven.org/maven2"
 CENTRAL_ARTIFACT_URL = "https://central.sonatype.com/artifact"
+GITHUB_API_URL = "https://api.github.com"
+CI_WORKFLOW = ".github/workflows/ci.yml"
+CI_PROVENANCE_SCHEMA = "tvheadend-sdk-ci-staging-v1"
 SEMVER = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 DEPLOYMENT_ID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}")
 STAGED_MANIFEST = ROOT / "build/staged-publication.json"
 RELEASE_OUTPUT = ROOT / "build/release"
 UPLOAD_MARKER = ROOT / "build/central-upload-attempted"
+CI_PROVENANCE = ROOT / "build/ci-staging-provenance.json"
 SECRET_NAMES = ("MAVEN_GPG_PRIVATE_KEY", "MAVEN_GPG_PASSPHRASE", "CENTRAL_PORTAL_TOKEN")
+CREDENTIAL_NAMES = SECRET_NAMES + ("GITHUB_TOKEN",)
+CENTRAL_GET_WORKERS = 8
+CI_WORKFLOW_SHA256 = "ec16636efc8e3e4eee54f08644851c212fd47218886c303ec52e86d21ea2dcfa"
+RELEASE_WORKFLOW_SHA256 = "91d72c365d07ed16522e04598a89a6e98d4cc268619f51f5d38f292d8156b338"
 ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 ZIP_MODE = (stat.S_IFREG | 0o644) << 16
 
@@ -492,7 +502,7 @@ def stdlib_http(method: str, url: str, headers: dict[str, str], body: bytes | No
     except urllib.error.HTTPError as error:
         return HttpResponse(error.code, error.read())
     except (OSError, urllib.error.URLError) as error:
-        raise ReleaseError("Central HTTPS request failed") from error
+        raise ReleaseError("HTTPS request failed") from error
 
 
 def central_url(relative_path: str) -> str:
@@ -503,16 +513,25 @@ def member_paths(originals: tuple[Original, ...]) -> tuple[str, ...]:
     return tuple(sorted(item.relative_path + suffix for item in originals for suffix in ("", ".asc", ".md5", ".sha1")))
 
 
+def central_gets(paths: tuple[str, ...], client: HttpClient) -> tuple[tuple[str, HttpResponse], ...]:
+    def get(path: str) -> tuple[str, HttpResponse]:
+        return path, client("GET", central_url(path), {}, None)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=CENTRAL_GET_WORKERS) as executor:
+        return tuple(executor.map(get, paths))
+
+
 def require_central_absent(originals: tuple[Original, ...], client: HttpClient) -> None:
-    for path in member_paths(originals):
-        response = client("GET", central_url(path), {}, None)
+    for _path, response in central_gets(member_paths(originals), client):
         require(response.status == 404, "Central coordinates are not wholly absent; automatic upload or recovery is forbidden")
 
 
 def verify_published_members(expected: dict[str, bytes], client: HttpClient) -> None:
     require(len(expected) == 104, "published verification requires exactly 104 expected members")
-    for path, data in sorted(expected.items()):
-        response = client("GET", central_url(path), {}, None)
+    ordered = tuple(sorted(expected))
+    for (path, response), expected_path in zip(central_gets(ordered, client), ordered, strict=True):
+        require(path == expected_path, "published Central verification order differs")
+        data = expected[path]
         require(response.status == 200 and response.body == data, f"published Central member differs or is unavailable: {Path(path).name}")
 
 
@@ -528,7 +547,7 @@ def validate_portal_token(token: str) -> None:
 
 
 def scoped_credentials(required: tuple[str, ...], environment: dict[str, str]) -> tuple[str, ...]:
-    unrelated = (set(SECRET_NAMES) | {"GH_TOKEN"}) - set(required)
+    unrelated = (set(CREDENTIAL_NAMES) | {"GH_TOKEN"}) - set(required)
     require(not any(name in environment for name in unrelated), "release step received an unrelated credential")
     try:
         values = tuple(environment[name] for name in required)
@@ -536,6 +555,140 @@ def scoped_credentials(required: tuple[str, ...], environment: dict[str, str]) -
         raise ReleaseError(f"required release secret is unavailable: {error.args[0]}") from error
     require(all(values), "required release secret is empty")
     return values
+
+
+def positive_integer(value: object, label: str) -> int:
+    require(isinstance(value, int) and not isinstance(value, bool) and value > 0, f"{label} is invalid")
+    return value
+
+
+def github_json(url: str, token: str, client: HttpClient) -> dict[str, object]:
+    response = client("GET", url, {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {token}",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }, None)
+    require(response.status == 200, "GitHub Actions provenance cannot be read")
+    try:
+        value = json.loads(response.body.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise ReleaseError("GitHub Actions provenance is malformed") from error
+    require(isinstance(value, dict), "GitHub Actions provenance must be an object")
+    return value
+
+
+def select_ci_run(commit: str, token: str, client: HttpClient) -> int:
+    query = urllib.parse.urlencode({
+        "event": "push",
+        "status": "success",
+        "head_sha": commit,
+        "per_page": "100",
+    })
+    runs = github_json(f"{GITHUB_API_URL}/repos/{REPOSITORY}/actions/workflows/ci.yml/runs?{query}", token, client)
+    values = runs.get("workflow_runs")
+    require(runs.get("total_count") == 1 and isinstance(values, list) and len(values) == 1, "tagged commit must have exactly one successful push CI run")
+    run = values[0]
+    require(isinstance(run, dict), "successful push CI run is malformed")
+    run_id = positive_integer(run.get("id"), "successful push CI run id")
+    repository = run.get("repository")
+    require(
+        run.get("run_attempt") == 1
+        and run.get("event") == "push"
+        and run.get("status") == "completed"
+        and run.get("conclusion") == "success"
+        and run.get("head_sha") == commit
+        and run.get("head_branch") == "main"
+        and run.get("path") == CI_WORKFLOW
+        and isinstance(repository, dict)
+        and repository.get("full_name") == REPOSITORY,
+        "successful push CI run does not have exact first-attempt provenance",
+    )
+    artifacts = github_json(f"{GITHUB_API_URL}/repos/{REPOSITORY}/actions/runs/{run_id}/artifacts?per_page=100", token, client)
+    values = artifacts.get("artifacts")
+    require(artifacts.get("total_count") == 1 and isinstance(values, list) and len(values) == 1, "successful push CI run must retain exactly one staging artifact")
+    artifact = values[0]
+    require(isinstance(artifact, dict), "successful push CI artifact is malformed")
+    workflow_run = artifact.get("workflow_run")
+    require(
+        artifact.get("name") == f"staged-publication-{run_id}"
+        and artifact.get("expired") is False
+        and positive_integer(artifact.get("id"), "successful push CI artifact id") > 0
+        and positive_integer(artifact.get("size_in_bytes"), "successful push CI artifact size") > 0
+        and isinstance(workflow_run, dict)
+        and workflow_run.get("id") == run_id
+        and workflow_run.get("head_sha") == commit
+        and workflow_run.get("head_branch") == "main",
+        "successful push CI artifact does not match the selected run",
+    )
+    return run_id
+
+
+def require_ci_action_context(commit: str, environment: dict[str, str]) -> int:
+    expected = {
+        "GITHUB_ACTIONS": "true",
+        "GITHUB_EVENT_NAME": "push",
+        "GITHUB_REPOSITORY": REPOSITORY,
+        "GITHUB_REF": "refs/heads/main",
+        "GITHUB_REF_NAME": "main",
+        "GITHUB_RUN_ATTEMPT": "1",
+        "GITHUB_SHA": commit,
+        "GITHUB_WORKFLOW": "CI",
+        "GITHUB_WORKFLOW_REF": f"{REPOSITORY}/{CI_WORKFLOW}@refs/heads/main",
+    }
+    for name, value in expected.items():
+        require(environment.get(name) == value, f"CI staging requires exact first-attempt push context: {name}")
+    value = environment.get("GITHUB_RUN_ID", "")
+    require(re.fullmatch(r"[1-9][0-9]*", value) is not None, "CI staging run id is invalid")
+    return int(value)
+
+
+def ci_provenance(commit: str, run_id: int, manifest: bytes) -> dict[str, object]:
+    return {
+        "schema": CI_PROVENANCE_SCHEMA,
+        "repository": REPOSITORY,
+        "workflow": CI_WORKFLOW,
+        "event": "push",
+        "ref": "refs/heads/main",
+        "commit": commit,
+        "runId": run_id,
+        "runAttempt": 1,
+        "manifestSha256": digest("sha256", manifest),
+    }
+
+
+def write_ci_provenance() -> None:
+    scoped_credentials((), os.environ)
+    commit = git_text("rev-parse", "HEAD")
+    run_id = require_ci_action_context(commit, os.environ)
+    identity = configured_identity()
+    staged_originals(identity)
+    manifest = read_regular(STAGED_MANIFEST, "staged publication manifest")
+    ensure_absent(CI_PROVENANCE, "CI staging provenance")
+    CI_PROVENANCE.write_bytes(canonical_json(ci_provenance(commit, run_id, manifest)))
+    print("Exact successful push CI staging provenance recorded")
+
+
+def verify_ci_staging() -> None:
+    scoped_credentials((), os.environ)
+    identity = configured_identity(tag=os.environ.get("GITHUB_REF_NAME", ""))
+    commit = require_publish_context(identity)
+    run_id_text = os.environ.get("CI_RUN_ID", "")
+    require(re.fullmatch(r"[1-9][0-9]*", run_id_text) is not None, "selected CI run id is invalid")
+    manifest = read_regular(STAGED_MANIFEST, "staged publication manifest")
+    staged_originals(identity)
+    provenance = read_regular(CI_PROVENANCE, "CI staging provenance")
+    require(provenance == canonical_json(ci_provenance(commit, int(run_id_text), manifest)), "CI staging provenance does not match the tagged commit and selected run")
+    errors = check_setup()
+    require(not errors, "release setup differs after successful push CI")
+    print("Exact successful push CI staging validated for the tagged commit")
+
+
+def select_ci_run_output() -> None:
+    token, = scoped_credentials(("GITHUB_TOKEN",), os.environ)
+    require(bool(token) and not any(character.isspace() for character in token), "GITHUB_TOKEN is empty or malformed")
+    identity = configured_identity(tag=os.environ.get("GITHUB_REF_NAME", ""))
+    commit = require_publish_context(identity)
+    print(f"ci_run_id={select_ci_run(commit, token, stdlib_http)}")
 
 
 def upload_bundle(bundle: bytes, identity: Identity, token: str, client: HttpClient) -> str:
@@ -568,30 +721,120 @@ def upload_once(bundle: bytes, identity: Identity, environment: dict[str, str], 
     return upload_bundle(bundle, identity, token, client)
 
 
+def workflow_step(workflow: str, name: str) -> str:
+    marker = f"      - name: {name}\n"
+    return workflow.partition(marker)[2].partition("\n      - name:")[0].rstrip()
+
+
 def workflow_errors(workflow: str) -> list[str]:
     errors: list[str] = []
+    if digest("sha256", workflow.encode("utf-8")) != RELEASE_WORKFLOW_SHA256:
+        errors.append("release workflow differs from the exact approved ceremony")
     if workflow.count("tags:\n      - 'v*'") != 1 or any(name in workflow for name in ("workflow_dispatch:", "pull_request:", "schedule:", "branches:")):
         errors.append("release workflow must be triggered only by v* tag pushes")
     if workflow.count("    environment: central") != 1 or workflow.count("github.run_attempt == 1") != 1:
         errors.append("release workflow must use the protected Environment on the first attempt only")
     if workflow.count("group: release-${{ github.ref }}") != 1 or workflow.count("cancel-in-progress: false") != 1:
         errors.append("release workflow must serialize attempts for the exact tag")
-    if "contents: write" in workflow or "GH_TOKEN" in workflow or "github.token" in workflow:
+    if "contents: write" in workflow or "GH_TOKEN" in workflow:
         errors.append("release workflow must remain read-only and must not finalize GitHub autonomously")
-    secret_references = re.findall(r"\$\{\{ secrets\.([A-Z0-9_]+) \}\}", workflow)
-    if secret_references != list(SECRET_NAMES):
+    if workflow.count("      actions: read") != 1 or workflow.count("${{ github.token }}") != 2:
+        errors.append("release workflow must have exact read-only Actions access for CI staging")
+    selector = workflow_step(workflow, "Locate successful first-attempt push CI")
+    downloader = workflow_step(workflow, "Download exact CI staging")
+    validator = workflow_step(workflow, "Validate exact CI staging locally")
+    expected_selector = "\n".join((
+        "        id: ci",
+        "        env:",
+        "          GITHUB_TOKEN: ${{ github.token }}",
+        '        run: ./tools/publish-central-release --select-ci-run >> "$GITHUB_OUTPUT"',
+    ))
+    if selector != expected_selector:
+        errors.append("release workflow must isolate exact CI run selection to a read-only GitHub token")
+    if (
+        downloader.count("uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093") != 1
+        or downloader.count("name: staged-publication-${{ steps.ci.outputs.ci_run_id }}") != 1
+        or downloader.count("run-id: ${{ steps.ci.outputs.ci_run_id }}") != 1
+        or downloader.count("github-token: ${{ github.token }}") != 1
+        or downloader.count("repository: ${{ github.repository }}") != 1
+        or downloader.count("path: build") != 1
+    ):
+        errors.append("release workflow must download exactly the selected CI staging artifact")
+    if (
+        validator.count("CI_RUN_ID: ${{ steps.ci.outputs.ci_run_id }}") != 1
+        or validator.count("./tools/check-staged-publication --compare-manifest build/staged-publication.json") != 1
+        or validator.count("./tools/publish-central-release --verify-ci-staging") != 1
+    ):
+        errors.append("release workflow must locally validate exact CI staging before signing")
+    forbidden_build = ("./gradlew", "gradle/actions/", "actions/setup-java@", "sdkmanager", "ANDROID_SDK_ROOT")
+    if any(value in workflow for value in forbidden_build):
+        errors.append("release workflow must not run Gradle or set up Java or Android")
+    expected_secret_expressions = [f"${{{{ secrets.{name} }}}}" for name in SECRET_NAMES]
+    if len(re.findall(r"\bsecrets\b", workflow)) != len(SECRET_NAMES) or any(workflow.count(expression) != 1 for expression in expected_secret_expressions):
         errors.append("release secrets must occur exactly once in the protected prepare/upload steps")
-    prepare_step = workflow.partition("      - name: Prepare signed release bundle")[2].partition("\n      - name:")[0]
-    upload_step = workflow.partition("      - name: Upload once to Central")[2].partition("\n      - name:")[0]
-    if re.findall(r"\$\{\{ secrets\.([A-Z0-9_]+) \}\}", prepare_step) != list(SECRET_NAMES[:2]) or re.findall(r"\$\{\{ secrets\.([A-Z0-9_]+) \}\}", upload_step) != [SECRET_NAMES[2]]:
+    prepare_step = workflow_step(workflow, "Prepare signed release bundle")
+    upload_step = workflow_step(workflow, "Upload once to Central")
+    expected_prepare = "\n".join((
+        "        env:",
+        "          MAVEN_GPG_PRIVATE_KEY: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}",
+        "          MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}",
+        "        run: ./tools/publish-central-release --prepare",
+    ))
+    expected_upload = "\n".join((
+        "        env:",
+        "          CENTRAL_PORTAL_TOKEN: ${{ secrets.CENTRAL_PORTAL_TOKEN }}",
+        "        run: ./tools/publish-central-release --upload",
+    ))
+    if prepare_step != expected_prepare or upload_step != expected_upload:
         errors.append("OpenPGP and Central credentials must remain isolated to their exact steps")
-    commands = ("./tools/publish-central-release --prepare", "./tools/publish-central-release --upload")
+    commands = (
+        "./tools/publish-central-release --select-ci-run",
+        "uses: actions/download-artifact@",
+        "./tools/check-staged-publication --compare-manifest",
+        "./tools/publish-central-release --verify-ci-staging",
+        "./tools/publish-central-release --prepare",
+        "uses: actions/upload-artifact@",
+        "./tools/publish-central-release --upload",
+    )
     positions = [workflow.find(command) for command in commands]
-    artifact = workflow.find("uses: actions/upload-artifact@")
-    if any(workflow.count(command) != 1 for command in commands) or workflow.count("uses: actions/upload-artifact@") != 1 or not (positions[0] < artifact < positions[1]):
-        errors.append("release workflow must prepare, retain, and upload exactly once in order")
+    if any(workflow.count(command) != 1 for command in commands) or positions != sorted(positions) or any(position < 0 for position in positions):
+        errors.append("release workflow must select, validate, prepare, retain, and upload exactly once in order")
     if "          path: build/release" not in workflow or "--verify-published" in workflow:
         errors.append("release workflow must retain only release output and leave convergence explicit")
+    return errors
+
+
+def ci_workflow_errors(ci: str) -> list[str]:
+    errors: list[str] = []
+    if digest("sha256", ci.encode("utf-8")) != CI_WORKFLOW_SHA256:
+        errors.append("CI workflow differs from the exact approved verification and staging path")
+    if any(value in ci for value in ("secrets", "--prepare", "--upload", "--verify-published", "GITHUB_TOKEN", "github.token")) or re.search(r"(?m)^\s*environment\s*:", ci):
+        errors.append("normal CI must not access release credentials or mutation paths")
+    commands = (
+        "./gradlew --no-daemon clean build check stageLocalPublication",
+        "./tools/check-staged-publication --write-manifest build/staged-publication.json",
+        "./gradlew --no-daemon -p consumer-contract clean test verifyConsumerDependencyGraph",
+        "./tools/publish-central-release --check-setup",
+        "./tools/publish-central-release --write-ci-provenance",
+        "uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+    )
+    positions = [ci.find(command) for command in commands]
+    if any(ci.count(command) != 1 for command in commands) or positions != sorted(positions) or any(position < 0 for position in positions):
+        errors.append("CI must verify, provenance-bind, and retain staging exactly once in order")
+    if ci.count("if: github.event_name == 'push' && github.run_attempt == 1") != 2:
+        errors.append("CI staging provenance and retention must be first-attempt push only")
+    required_artifact = (
+        "name: staged-publication-${{ github.run_id }}",
+        "build/local-maven",
+        "build/staged-publication.json",
+        "build/ci-staging-provenance.json",
+        "if-no-files-found: error",
+        "retention-days: 7",
+        "compression-level: 0",
+    )
+    artifact = ci.partition("      - name: Retain successful push staging")[2].partition("\n      - name:")[0]
+    if any(artifact.count(value) != 1 for value in required_artifact):
+        errors.append("CI staging artifact must retain the exact repository, manifest, and provenance")
     return errors
 
 
@@ -608,8 +851,7 @@ def check_setup() -> list[str]:
         workflow = read_regular(ROOT / ".github/workflows/release.yml", "release workflow").decode("utf-8")
         errors.extend(workflow_errors(workflow))
         ci = read_regular(ROOT / ".github/workflows/ci.yml", "CI workflow").decode("utf-8")
-        if "secrets." in ci or "--prepare" in ci or "--upload" in ci or "upload-artifact" in ci:
-            errors.append("normal CI must not access release credentials or mutation paths")
+        errors.extend(ci_workflow_errors(ci))
     except (ReleaseError, OSError, UnicodeError) as error:
         errors.append(str(error))
     return errors
@@ -653,6 +895,58 @@ def self_test() -> list[str]:
         errors.append(f"self-test rejected exact action context: {error}")
     for label, name, value in (("wrong repository", "GITHUB_REPOSITORY", "other/repo"), ("tag object instead of commit", "GITHUB_SHA", tag_object), ("wrong action tag", "GITHUB_REF_NAME", "v0.1.3"), ("duplicate attempt", "GITHUB_RUN_ATTEMPT", "2")):
         expect_error(errors, label, lambda name=name, value=value: require_action_context(identity, tagged_commit, {**context, name: value}))
+    ci_context = {
+        "GITHUB_ACTIONS": "true",
+        "GITHUB_EVENT_NAME": "push",
+        "GITHUB_REPOSITORY": REPOSITORY,
+        "GITHUB_REF": "refs/heads/main",
+        "GITHUB_REF_NAME": "main",
+        "GITHUB_RUN_ATTEMPT": "1",
+        "GITHUB_RUN_ID": "12345",
+        "GITHUB_SHA": tagged_commit,
+        "GITHUB_WORKFLOW": "CI",
+        "GITHUB_WORKFLOW_REF": f"{REPOSITORY}/{CI_WORKFLOW}@refs/heads/main",
+    }
+    if require_ci_action_context(tagged_commit, ci_context) != 12345:
+        errors.append("self-test rejected exact first-attempt push CI context")
+    expect_error(errors, "rerun CI staging", lambda: require_ci_action_context(tagged_commit, {**ci_context, "GITHUB_RUN_ATTEMPT": "2"}))
+    if ci_provenance(tagged_commit, 12345, b"manifest")["manifestSha256"] != digest("sha256", b"manifest"):
+        errors.append("self-test CI staging provenance digest differs")
+    run_id = 12345
+    run = {
+        "id": run_id,
+        "run_attempt": 1,
+        "event": "push",
+        "status": "completed",
+        "conclusion": "success",
+        "head_sha": tagged_commit,
+        "head_branch": "main",
+        "path": CI_WORKFLOW,
+        "repository": {"full_name": REPOSITORY},
+    }
+    artifact = {
+        "id": 67890,
+        "name": f"staged-publication-{run_id}",
+        "expired": False,
+        "size_in_bytes": 100,
+        "workflow_run": {"id": run_id, "head_sha": tagged_commit, "head_branch": "main"},
+    }
+
+    def ci_client(run_value: dict[str, object], artifact_value: dict[str, object]) -> HttpClient:
+        def request(method: str, url: str, headers: dict[str, str], body: bytes | None) -> HttpResponse:
+            if method != "GET" or body is not None or headers.get("Authorization") != "Bearer token":
+                return HttpResponse(400, b"")
+            if "/actions/workflows/ci.yml/runs?" in url:
+                return HttpResponse(200, json.dumps({"total_count": 1, "workflow_runs": [run_value]}).encode())
+            if url.endswith(f"/actions/runs/{run_id}/artifacts?per_page=100"):
+                return HttpResponse(200, json.dumps({"total_count": 1, "artifacts": [artifact_value]}).encode())
+            return HttpResponse(404, b"")
+        return request
+
+    if select_ci_run(tagged_commit, "token", ci_client(run, artifact)) != run_id:
+        errors.append("self-test rejected exact successful push CI staging")
+    expect_error(errors, "rerun push CI", lambda: select_ci_run(tagged_commit, "token", ci_client({**run, "run_attempt": 2}, artifact)))
+    expect_error(errors, "expired CI staging", lambda: select_ci_run(tagged_commit, "token", ci_client(run, {**artifact, "expired": True})))
     originals = tuple(Original(f"group/module/0.1.2/file-{index}", f"file-{index}", f"original-{index}".encode(), digest("sha256", f"original-{index}".encode())) for index in range(26))
     signatures = {item.relative_path + ".asc": b"signature" for item in originals}
     bundle = zip_bytes(release_assets(originals, signatures))
@@ -671,18 +965,106 @@ def self_test() -> list[str]:
         link.external_attr = (stat.S_IFLNK | 0o777) << 16
         archive.writestr(link, b"target")
     expect_error(errors, "special bundle member", lambda: zip_members(unsafe.getvalue()))
-    all_absent = lambda _method, _url, _headers, _body: HttpResponse(404, b"")
+    barrier = threading.Barrier(CENTRAL_GET_WORKERS)
+    active = 0
+    maximum_active = 0
+    concurrency_lock = threading.Lock()
+
+    def all_absent(_method: str, _url: str, _headers: dict[str, str], _body: bytes | None) -> HttpResponse:
+        nonlocal active, maximum_active
+        with concurrency_lock:
+            active += 1
+            maximum_active = max(maximum_active, active)
+        try:
+            barrier.wait(timeout=5)
+        except threading.BrokenBarrierError:
+            return HttpResponse(500, b"")
+        finally:
+            with concurrency_lock:
+                active -= 1
+        return HttpResponse(404, b"")
+
     try:
         require_central_absent(originals, all_absent)
     except ReleaseError as error:
         errors.append(f"self-test rejected wholly absent Central members: {error}")
+    if maximum_active != CENTRAL_GET_WORKERS:
+        errors.append("self-test Central member checks did not use the exact concurrency bound")
     present = lambda _method, _url, _headers, _body: HttpResponse(200, b"present")
     expect_error(errors, "existing Central member", lambda: require_central_absent(originals, present))
+    members = zip_members(bundle)
+
+    def published(_method: str, url: str, _headers: dict[str, str], _body: bytes | None) -> HttpResponse:
+        path = urllib.parse.unquote(url.removeprefix(MAVEN_URL + "/"))
+        return HttpResponse(200, members[path])
+
+    try:
+        verify_published_members(members, published)
+    except ReleaseError as error:
+        errors.append(f"self-test rejected exact published Central members: {error}")
+    changed_path = sorted(members)[0]
+    changed_url = central_url(changed_path)
+    expect_error(
+        errors,
+        "changed published Central member",
+        lambda: verify_published_members(members, lambda method, url, headers, body: HttpResponse(200, b"changed") if url == changed_url else published(method, url, headers, body)),
+    )
     workflow = read_regular(ROOT / ".github/workflows/release.yml", "release workflow").decode("utf-8")
     if not workflow_errors(workflow.replace("${{ secrets.CENTRAL_PORTAL_TOKEN }}", "${{ secrets.EXTRA_TOKEN }}", 1)):
         errors.append("self-test accepted a changed release credential boundary")
     if not workflow_errors(workflow.replace("github.run_attempt == 1", "github.run_attempt == 2")):
         errors.append("self-test accepted a duplicate workflow attempt")
+    if not workflow_errors(workflow.replace("./tools/publish-central-release --verify-ci-staging", "./gradlew check")):
+        errors.append("self-test accepted tag-time Gradle workflow drift")
+    bracket_secret = workflow.replace(
+        "          GITHUB_TOKEN: ${{ github.token }}",
+        "          LEAK: ${{ secrets['MAVEN_GPG_PRIVATE_KEY'] }}\n          GITHUB_TOKEN: ${{ github.token }}",
+    )
+    if not workflow_errors(bracket_secret):
+        errors.append("self-test accepted bracket-form credential leakage")
+    formatted_secret = workflow.replace(
+        "${{ secrets.CENTRAL_PORTAL_TOKEN }}",
+        "${{ format('{0}', secrets.CENTRAL_PORTAL_TOKEN) }}",
+    )
+    if not workflow_errors(formatted_secret):
+        errors.append("self-test accepted formatted credential leakage")
+    bare_secret = workflow.replace(
+        "      - name: Upload once to Central",
+        "      - name: Expose credentials\n        run: echo ${{ toJSON(secrets) }}\n      - name: Upload once to Central",
+    )
+    if not workflow_errors(bare_secret):
+        errors.append("self-test accepted bare secret-context leakage")
+    second_upload = workflow.replace(
+        "        run: ./tools/publish-central-release --upload",
+        "        run: |\n          ./tools/publish-central-release --upload\n          curl --request POST https://central.invalid",
+    )
+    if not workflow_errors(second_upload):
+        errors.append("self-test accepted a second upload command")
+    separate_upload = workflow.replace(
+        "      - name: Upload once to Central",
+        "      - name: Additional Central POST\n        run: curl --request POST https://central.invalid\n      - name: Upload once to Central",
+    )
+    if not workflow_errors(separate_upload):
+        errors.append("self-test accepted a separate upload step")
+    java_step = workflow.replace(
+        "      - name: Upload once to Central",
+        "      - name: Run Java\n        run: java -version\n      - name: Upload once to Central",
+    )
+    if not workflow_errors(java_step):
+        errors.append("self-test accepted tag-time Java workflow drift")
+    ci = read_regular(ROOT / ".github/workflows/ci.yml", "CI workflow").decode("utf-8")
+    if not ci_workflow_errors(ci.replace("staged-publication-${{ github.run_id }}", "staged-publication-unbound")):
+        errors.append("self-test accepted unbound CI staging artifact drift")
+    if not ci_workflow_errors(ci.replace("github.run_attempt == 1", "github.run_attempt == 2", 1)):
+        errors.append("self-test accepted rerun CI staging provenance")
+    if not ci_workflow_errors(ci.replace("    steps:", "    environment: central\n    steps:")):
+        errors.append("self-test accepted protected release environment in CI")
+    ci_bracket_secret = ci.replace(
+        "      - name: Check release setup",
+        "      - name: Expose signing key\n        env:\n          LEAK: ${{ secrets['MAVEN_GPG_PRIVATE_KEY'] }}\n        run: echo leak\n      - name: Check release setup",
+    )
+    if not ci_workflow_errors(ci_bracket_secret):
+        errors.append("self-test accepted release credential leakage in CI")
     with tempfile.TemporaryDirectory() as directory:
         marker = Path(directory) / "attempted"
         calls: list[str] = []
@@ -765,10 +1147,19 @@ def verify_published() -> None:
 
 
 def main() -> int:
-    modes = {"--self-test", "--check-setup", "--prepare", "--upload", "--verify-published"}
+    modes = {
+        "--self-test",
+        "--check-setup",
+        "--write-ci-provenance",
+        "--select-ci-run",
+        "--verify-ci-staging",
+        "--prepare",
+        "--upload",
+        "--verify-published",
+    }
     arguments = sys.argv[1:]
     if len(arguments) != 1 or arguments[0] not in modes:
-        print("usage: publish-central-release --self-test|--check-setup|--prepare|--upload|--verify-published", file=sys.stderr)
+        print("usage: publish-central-release --self-test|--check-setup|--write-ci-provenance|--select-ci-run|--verify-ci-staging|--prepare|--upload|--verify-published", file=sys.stderr)
         return 2
     try:
         mode = arguments[0]
@@ -776,6 +1167,15 @@ def main() -> int:
             errors = self_test()
         elif mode == "--check-setup":
             errors = check_setup()
+        elif mode == "--write-ci-provenance":
+            write_ci_provenance()
+            return 0
+        elif mode == "--select-ci-run":
+            select_ci_run_output()
+            return 0
+        elif mode == "--verify-ci-staging":
+            verify_ci_staging()
+            return 0
         elif mode == "--prepare":
             prepare()
             return 0

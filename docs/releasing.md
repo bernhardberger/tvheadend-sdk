@@ -22,6 +22,15 @@ completion. GitHub and Central provide no cross-service atomic lock, so this
 administrative rule is the immutability boundary around the final remote-tag
 checks.
 
+## Push CI Staging
+
+A successful first-attempt `main` push CI run retains the verified
+`build/local-maven` repository, its exact 26-original manifest, and a provenance
+record bound to the commit and CI run. Pull requests and reruns do not create
+this seven-day `staged-publication-${{ github.run_id }}` artifact. The retained
+bytes are produced only after the clean build, checks, staging verification,
+real consumer contract, and release setup checks pass.
+
 ## Tag Workflow
 
 An annotated tag exactly matching the configured version starts one first-
@@ -29,18 +38,22 @@ attempt-only job. The job:
 
 1. Requires the configured major-zero version, exact tag, checked-out commit,
    remote annotated-tag object, clean tree, and reachability from `origin/main`.
-2. Builds, tests, and stages all five modules, then runs the real Android
-   application consumer.
-3. Records the SHA-256 identity of the exact 26 Maven originals and verifies
-   sources, Javadocs, POM and Gradle metadata, standard legal entries, and the
-   Media3 FFmpeg binary and corresponding-source payloads.
-4. Requires all 104 signed Central member paths to be absent before reading the
+2. Uses read-only Actions access to locate exactly one successful attempt-one
+   `ci.yml` push run at the peeled tag commit and exactly its unexpired staging
+   artifact.
+3. Downloads that staging without setting up Java, Gradle, or Android, verifies
+   the artifact's commit/run provenance, and locally rechecks its exact manifest,
+   sources, Javadocs, POM and Gradle metadata, legal entries, and Media3 FFmpeg
+   binary and corresponding-source payloads.
+4. Requires all 104 signed Central member paths to be absent, using at most
+   eight concurrent GETs, before reading the
    OpenPGP secrets, signs and verifies every original, and creates a deterministic
    Maven-layout ZIP plus release manifest and notes.
 5. Retains those three public files as the seven-day
    `release-${{ github.run_id }}` workflow artifact before any Central mutation.
 6. Revalidates the staged bytes, signatures, remote tag, and wholly absent
-   Central paths, then performs one `publishingType=AUTOMATIC` upload request.
+   Central paths with the same bounded GET checks, then performs one
+   `publishingType=AUTOMATIC` upload request.
 
 The upload step records `CENTRAL_DEPLOYMENT_ID` and stops. It does not poll,
 retry, recover published members, or mutate GitHub Releases. A workflow rerun is
@@ -68,11 +81,11 @@ digests, all five Central coordinates, and a clean application consumer that
 resolves only published coordinates. These are explicit release-package actions,
 not automatic recovery behavior in the repository tool.
 
-If the upload result is ambiguous, Central is slow, the retained artifact is
-missing, or any published byte differs, stop and investigate the recorded
-deployment. Never recreate the tag or issue a blind second upload. A confirmed
-post-upload GitHub failure is completed with the explicit `gh release create`
-step after Central verification.
+If CI provenance or run selection is ambiguous, the staging artifact expired or
+is missing, the upload result is ambiguous, Central is slow, or any published
+byte differs, stop. Never rebuild in the tag workflow, recreate the tag, or
+issue a blind second upload. A confirmed post-upload GitHub failure is completed
+with the explicit `gh release create` step after Central verification.
 
 [`../release/openpgp/README.md`](../release/openpgp/README.md) defines the public
 key and signature-verification contract.
