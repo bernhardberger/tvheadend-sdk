@@ -33,6 +33,8 @@ automatically. CI (`.github/workflows/ci.yml`) is the authoritative gate.
 - Update ABI dumps only through the Gradle ABI validation workflow.
 - Local cross-repository HTSP substitution is opt-in. CI and releases always
   resolve the pinned `at.bernhardberger.tvheadend:htsp:0.7.0` coordinate.
+- Start repository discovery with `docs/module-map.md`. Use direct search from
+  its named entry points before delegating a locator or rebuilding a broad map.
 
 ## Module boundaries
 
@@ -83,3 +85,15 @@ automatically. CI (`.github/workflows/ci.yml`) is the authoritative gate.
   operation.
 - Never print secrets or place them in source, arguments, artifacts, logs,
   reports, generated output, or Gradle dependency verification metadata.
+- For release work, read `docs/releasing.md` and command `--help` output. Do not
+  read `tools/publish-central-release` unless the package edits that tool or a
+  reproduced failure has been attributed to its implementation. Run release
+  setup validation once per package, not once per review or retry.
+
+## Device tooling
+
+- Use `tools/sdk-device` for SDK test APK installation, instrumentation,
+  app-private `run-as` operations, and cleanup. Do not reconstruct raw ADB
+  command sequences or embed the G10 endpoint in package instructions.
+- The helper never provisions credentials. Existing owner-only, one-use
+  provisioning remains a separately authorized coordination-workspace action.

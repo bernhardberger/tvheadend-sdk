@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+ADB="${ADB:-adb}"
+SERIAL="${ANDROID_SERIAL:-${G10_ADB_ENDPOINT:-192.168.8.178:5555}}"
+CLASS_PATTERN='^[A-Za-z0-9_.$#]+$'
+REMOTE_ARGUMENT_PATTERN='^[A-Za-z0-9_./:=,@%+!-]+$'
+PRIVATE_FILE_PATTERN='^files/[A-Za-z0-9_./-]+$'
+
+usage() {
+  cat <<'EOF'
+usage:
+  tools/sdk-device doctor
+  tools/sdk-device install --apk PATH
+  tools/sdk-device instrument --package PACKAGE --runner RUNNER --class CLASS
+  tools/sdk-device run-as --package PACKAGE -- COMMAND [ARG...]
+  tools/sdk-device cleanup --package PACKAGE [--file files/RELATIVE] [--uninstall]
+
+Target selection: ANDROID_SERIAL, then G10_ADB_ENDPOINT, then the documented G10.
+Credential provisioning is intentionally unsupported.
+EOF
+}
+
+die() {
+  printf 'error: %s\n' "$*" >&2
+  exit 2
+}
+
+valid_package() {
+  [[ "$1" =~ ^[A-Za-z0-9_]+([.][A-Za-z0-9_]+)+$ ]] || die "invalid package: $1"
+}
+
+require_device() {
+  command -v "$ADB" >/dev/null 2>&1 || die "adb is unavailable"
+  if [[ "$($ADB -s "$SERIAL" get-state 2>/dev/null || true)" != "device" && "$SERIAL" == *:* ]]; then
+    "$ADB" connect "$SERIAL" >/dev/null
+  fi
+  [[ "$($ADB -s "$SERIAL" get-state 2>/dev/null || true)" == "device" ]] ||
+    die "selected SDK test device is unavailable"
+}
+
+take_value() {
+  (($# >= 2)) || die "missing value for $1"
+  printf '%s' "$2"
+}
+
+command_name="${1:-}"
+[[ -n "$command_name" ]] || { usage >&2; exit 2; }
+shift
+
+case "$command_name" in
+  doctor)
+    (($# == 0)) || die "doctor takes no arguments"
+    require_device
+    printf 'sdk-device: ready\n'
+    ;;
+  install)
+    apk=""
+    while (($#)); do
+      case "$1" in
+        --apk) apk="$(take_value "$@")"; shift 2 ;;
+        *) die "unknown install argument: $1" ;;
+      esac
+    done
+    [[ -f "$apk" ]] || die "APK is unavailable: $apk"
+    require_device
+    "$ADB" -s "$SERIAL" install -r -t "$apk"
+    ;;
+  instrument)
+    package="" runner="" class_name=""
+    while (($#)); do
+      case "$1" in
+        --package) package="$(take_value "$@")"; shift 2 ;;
+        --runner) runner="$(take_value "$@")"; shift 2 ;;
+        --class) class_name="$(take_value "$@")"; shift 2 ;;
+        *) die "unknown instrument argument: $1" ;;
+      esac
+    done
+    valid_package "$package"
+    [[ "$runner" =~ ^[A-Za-z0-9_./]+$ ]] || die "invalid runner: $runner"
+    [[ "$class_name" =~ $CLASS_PATTERN ]] || die "invalid class: $class_name"
+    require_device
+    # adb shell joins arguments for a second shell parse. Validated values are
+    # single-quoted here so nested-class '$' characters remain literal.
+    output="$($ADB -s "$SERIAL" shell am instrument -w -r -e class "'$class_name'" "'$package/$runner'")"
+    printf '%s\n' "$output"
+    [[ ! "$output" =~ INSTRUMENTATION_(FAILED|ABORTED) ]] || die "instrumentation failed"
+    [[ ! "$output" =~ INSTRUMENTATION_STATUS_CODE:[[:space:]]*-[0-9]+ ]] || die "instrumentation reported a failed test"
+    [[ "$output" != *"FAILURES!!!"* ]] || die "instrumentation reported test failures"
+    terminal_code=""
+    while IFS= read -r line; do
+      [[ "$line" == "INSTRUMENTATION_CODE: "* ]] && terminal_code="${line#INSTRUMENTATION_CODE: }"
+    done <<< "$output"
+    [[ "$terminal_code" == "-1" ]] || die "instrumentation did not complete successfully"
+    ;;
+  run-as)
+    [[ "${1:-}" == "--package" ]] || die "run-as requires --package"
+    package="$(take_value "$@")"; shift 2
+    valid_package "$package"
+    [[ "${1:-}" == "--" ]] || die "run-as requires -- before the command"
+    shift
+    (($#)) || die "run-as command is empty"
+    for argument in "$@"; do
+      [[ "$argument" =~ $REMOTE_ARGUMENT_PATTERN ]] || die "run-as contains an unsafe remote argument"
+    done
+    require_device
+    "$ADB" -s "$SERIAL" shell run-as "$package" "$@"
+    ;;
+  cleanup)
+    package="" private_file="" uninstall=0
+    while (($#)); do
+      case "$1" in
+        --package) package="$(take_value "$@")"; shift 2 ;;
+        --file) private_file="$(take_value "$@")"; shift 2 ;;
+        --uninstall) uninstall=1; shift ;;
+        *) die "unknown cleanup argument: $1" ;;
+      esac
+    done
+    valid_package "$package"
+    [[ -z "$private_file" || ("$private_file" =~ $PRIVATE_FILE_PATTERN && "/$private_file/" != *"/../"*) ]] ||
+      die "cleanup file must be a relative files/ path"
+    require_device
+    [[ -z "$private_file" ]] || "$ADB" -s "$SERIAL" shell run-as "$package" rm -f -- "$private_file"
+    ((uninstall == 0)) || "$ADB" -s "$SERIAL" uninstall "$package"
+    ;;
+  -h|--help|help) usage ;;
+  *) usage >&2; die "unknown command: $command_name" ;;
+esac
