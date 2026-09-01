@@ -6,6 +6,8 @@ import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import kotlin.time.Duration.Companion.nanoseconds
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
 internal class EpgRepositoryTest {
@@ -92,6 +94,80 @@ internal class EpgRepositoryTest {
         assertEquals(instant(30), queryAhead.knownTo)
         assertThrows(IllegalArgumentException::class.java) {
             EpgCoverage.create(ChannelId(1), instant(20), instant(10))
+        }
+    }
+
+    @Test
+    fun `search models validate filters copy results and redact private text`() {
+        val request = EpgSearchRequest.create(
+            query = "private-query",
+            fullText = true,
+            channelId = ChannelId(1),
+            tagId = ChannelTagId(2),
+            contentType = 3,
+            language = "de",
+            minimumDuration = 4.seconds,
+            maximumDuration = 5.seconds,
+        )
+        val source = mutableListOf(event(id = 6, start = 10, stop = 20))
+        val available = EpgSearchResult.Available.create(source)
+        source.clear()
+        val javaRequest = EpgSearchRequest.createFromSeconds(
+            query = "private-java-query",
+            fullText = true,
+            channelId = 7,
+            tagId = 8,
+            contentType = 0xff,
+            language = "eng",
+            minimumDurationSeconds = 9,
+            maximumDurationSeconds = Int.MAX_VALUE.toLong(),
+        )
+
+        assertEquals("private-query", request.query)
+        assertTrue(request.fullText)
+        assertEquals(ChannelId(1), request.channelId)
+        assertEquals(ChannelTagId(2), request.tagId)
+        assertEquals(3L, request.contentType)
+        assertEquals("de", request.language)
+        assertEquals(4.seconds, request.minimumDuration)
+        assertEquals(5.seconds, request.maximumDuration)
+        assertEquals(ChannelId(7), javaRequest.channelId)
+        assertEquals(ChannelTagId(8), javaRequest.tagId)
+        assertEquals(0xffL, javaRequest.contentType)
+        assertEquals(9.seconds, javaRequest.minimumDuration)
+        assertEquals(Int.MAX_VALUE.toLong().seconds, javaRequest.maximumDuration)
+        assertEquals(listOf(6L), available.events.map { it.id.value })
+        assertThrows(UnsupportedOperationException::class.java) {
+            (available.events as MutableList<EpgEvent>).clear()
+        }
+        assertFalse(
+            listOf(request, javaRequest, available).joinToString().contains("private"),
+            "EPG search rendering exposed query or result metadata",
+        )
+
+        assertEquals("", EpgSearchRequest.create("").query)
+        assertEquals(" ", EpgSearchRequest.create(" ").query)
+        assertThrows(IllegalArgumentException::class.java) {
+            EpgSearchRequest.create("query", contentType = -1)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            EpgSearchRequest.create("query", contentType = 0x100)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            EpgSearchRequest.create("query", minimumDuration = 1.nanoseconds)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            EpgSearchRequest.create(
+                "query",
+                maximumDuration = (Int.MAX_VALUE.toLong() + 1).seconds,
+            )
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            EpgSearchRequest.create(
+                query = "query",
+                minimumDuration = 2.seconds,
+                maximumDuration = 1.seconds,
+            )
         }
     }
 

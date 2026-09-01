@@ -52,6 +52,7 @@ import at.bernhardberger.tvheadend.htsp.messages.HtspTimerecEntryUpdateMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspTimeshiftStatusMessage
 import at.bernhardberger.tvheadend.htsp.requests.FileSeekResponse
 import at.bernhardberger.tvheadend.htsp.requests.FileSeekWhence
+import at.bernhardberger.tvheadend.htsp.requests.EpgQueryResponse
 import at.bernhardberger.tvheadend.htsp.requests.HtspChannelService
 import at.bernhardberger.tvheadend.htsp.requests.AddDvrEntrySelector
 import at.bernhardberger.tvheadend.htsp.requests.HtspDvrCutpoint
@@ -69,6 +70,7 @@ import at.bernhardberger.tvheadend.htsp.requests.deleteAutorecEntry
 import at.bernhardberger.tvheadend.htsp.requests.deleteDvrEntry
 import at.bernhardberger.tvheadend.htsp.requests.deleteTimerecEntry
 import at.bernhardberger.tvheadend.htsp.requests.enableAsyncMetadataAwaitingInitialSync
+import at.bernhardberger.tvheadend.htsp.requests.epgQuery
 import at.bernhardberger.tvheadend.htsp.requests.fileClose
 import at.bernhardberger.tvheadend.htsp.requests.fileOpen
 import at.bernhardberger.tvheadend.htsp.requests.fileRead
@@ -104,6 +106,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
 import at.bernhardberger.tvheadend.sdk.core.DvrSchedule
 import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
+import at.bernhardberger.tvheadend.sdk.core.EpgSearchRequest
 import at.bernhardberger.tvheadend.sdk.core.RecordingRuleChannel
 import at.bernhardberger.tvheadend.sdk.core.StreamProfile
 import at.bernhardberger.tvheadend.sdk.core.StreamProfileId
@@ -293,6 +296,28 @@ internal class HtspProtocolGateway internal constructor(
     ).toGatewayResult { response ->
         Collections.unmodifiableList(
             response.events.mapTo(ArrayList(), HtspEvent::toGatewayEpgQueryEvent),
+        )
+    }
+
+    override suspend fun searchEpg(
+        generation: GatewayGeneration,
+        request: EpgSearchRequest,
+    ): GatewayResult<List<GatewayEpgQueryEvent>> = connection.epgQuery(
+        query = request.query,
+        channelId = request.channelId?.value,
+        tagId = request.tagId?.value,
+        contentType = request.contentType,
+        language = request.language,
+        fullText = request.fullText,
+        full = 1L,
+        minDurationSeconds = request.minimumDuration?.inWholeSeconds,
+        maxDurationSeconds = request.maximumDuration?.inWholeSeconds,
+        expectedGeneration = htspGenerationFor(generation),
+    ).toCheckedGatewayResult { response ->
+        val events = (response as? EpgQueryResponse.Events)?.events
+            ?: return@toCheckedGatewayResult null
+        Collections.unmodifiableList(
+            events.mapTo(ArrayList(), HtspEvent::toGatewayEpgQueryEvent),
         )
     }
 

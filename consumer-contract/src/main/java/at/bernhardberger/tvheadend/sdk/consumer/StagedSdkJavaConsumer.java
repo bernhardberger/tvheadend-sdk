@@ -2,6 +2,10 @@ package at.bernhardberger.tvheadend.sdk.consumer;
 
 import at.bernhardberger.tvheadend.sdk.android.ServerProfileEditReadResult;
 import at.bernhardberger.tvheadend.sdk.android.TvheadendServerProfileStore;
+import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation;
+import at.bernhardberger.tvheadend.sdk.core.EpgRepository;
+import at.bernhardberger.tvheadend.sdk.core.EpgSearchRequest;
+import at.bernhardberger.tvheadend.sdk.core.EpgSearchResult;
 import kotlin.coroutines.Continuation;
 
 public final class StagedSdkJavaConsumer {
@@ -11,6 +15,33 @@ public final class StagedSdkJavaConsumer {
             TvheadendServerProfileStore store,
             Continuation<? super ServerProfileEditReadResult> continuation) {
         return store.loadProfileForEditing(continuation);
+    }
+
+    public static Object searchEpg(
+            EpgRepository repository,
+            CurrentSessionObservation currentSession,
+            EpgSearchRequest request,
+            Continuation<? super EpgSearchResult> continuation) {
+        return repository.search(currentSession, request, continuation);
+    }
+
+    public static EpgSearchRequest epgSearchRequest(String query) {
+        return EpgSearchRequest.createFromSeconds(
+                query,
+                true,
+                1L,
+                2L,
+                0x20L,
+                "eng",
+                60L,
+                3_600L);
+    }
+
+    public static int searchResultSize(EpgSearchResult result) {
+        if (result instanceof EpgSearchResult.Available available) {
+            return available.getEvents().size();
+        }
+        return 0;
     }
 
     public static boolean hasExpectedEditableFields(ServerProfileEditReadResult result) {

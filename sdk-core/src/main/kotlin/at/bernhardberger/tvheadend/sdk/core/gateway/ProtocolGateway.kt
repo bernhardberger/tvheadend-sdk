@@ -9,6 +9,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
 import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
+import at.bernhardberger.tvheadend.sdk.core.EpgSearchRequest
 import at.bernhardberger.tvheadend.sdk.core.StreamProfile
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleUpdate
@@ -49,6 +50,11 @@ internal interface ProtocolGateway {
         channelId: ChannelId,
         maxTime: Instant,
     ): GatewayResult<List<GatewayEpgQueryEvent>>
+
+    public suspend fun searchEpg(
+        generation: GatewayGeneration,
+        request: EpgSearchRequest,
+    ): GatewayResult<List<GatewayEpgQueryEvent>> = GatewayResult.NotSupported
 
     public suspend fun getDvrConfigs(
         generation: GatewayGeneration,

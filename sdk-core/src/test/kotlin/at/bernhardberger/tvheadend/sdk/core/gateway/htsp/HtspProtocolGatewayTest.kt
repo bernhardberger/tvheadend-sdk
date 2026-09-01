@@ -65,6 +65,8 @@ import at.bernhardberger.tvheadend.htsp.requests.DeleteDvrEntryRequest
 import at.bernhardberger.tvheadend.htsp.requests.DeleteDvrEntryResponse
 import at.bernhardberger.tvheadend.htsp.requests.DeleteTimerecEntryRequest
 import at.bernhardberger.tvheadend.htsp.requests.DeleteTimerecEntryResponse
+import at.bernhardberger.tvheadend.htsp.requests.EpgQueryRequest
+import at.bernhardberger.tvheadend.htsp.requests.EpgQueryResponse
 import at.bernhardberger.tvheadend.htsp.requests.FileCloseRequest
 import at.bernhardberger.tvheadend.htsp.requests.FileCloseResponse
 import at.bernhardberger.tvheadend.htsp.requests.FileOpenRequest
@@ -124,6 +126,8 @@ import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
 import at.bernhardberger.tvheadend.sdk.core.DvrSchedule
 import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
 import at.bernhardberger.tvheadend.sdk.core.DvrSubscriptionError
+import at.bernhardberger.tvheadend.sdk.core.ChannelTagId
+import at.bernhardberger.tvheadend.sdk.core.EpgSearchRequest
 import at.bernhardberger.tvheadend.sdk.core.EventId
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleId
@@ -889,6 +893,114 @@ internal class HtspProtocolGatewayTest {
         var caught: CancellationException? = null
         try {
             gateway.queryEpg(generation, ChannelId(2), maxTime)
+        } catch (failure: CancellationException) {
+            caught = failure
+        }
+        assertSame(cancellation, caught)
+    }
+
+    @Test
+    fun `EPG search maps every filter requests full events and preserves failures`() = runTest {
+        val sourceGeneration = HtspConnectionGeneration()
+        val fake = FakeHtspConnection().apply {
+            liveConnectionValue.value = liveConnection(sourceGeneration)
+            connectOutcome = HtspConnectOutcome.Connected(requireNotNull(liveConnectionValue.value))
+            executeResult = HtspResult.Ok(
+                EpgQueryResponse.Events(
+                    listOf(
+                        HtspEvent(
+                            eventId = 7,
+                            channelId = 8,
+                            start = 9,
+                            stop = 10,
+                            title = "Private search result",
+                            subtitle = null,
+                            summary = null,
+                            description = null,
+                            categories = null,
+                            keywords = null,
+                            seriesLinkUri = null,
+                            episodeUri = null,
+                            contentType = null,
+                            ageRating = null,
+                            ratingLabel = null,
+                            ratingIcon = null,
+                            ratingAuthority = null,
+                            ratingCountry = null,
+                            starRating = null,
+                            copyrightYear = null,
+                            firstAired = null,
+                            isNew = null,
+                            seasonNumber = null,
+                            seasonCount = null,
+                            episodeNumber = null,
+                            episodeCount = null,
+                            partNumber = null,
+                            partCount = null,
+                            episodeOnscreen = null,
+                            image = null,
+                            dvrId = null,
+                            nextEventId = null,
+                        ),
+                    ),
+                ),
+            )
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+        val search = EpgSearchRequest.create(
+            query = "private-query",
+            fullText = true,
+            channelId = at.bernhardberger.tvheadend.sdk.core.ChannelId(11),
+            tagId = ChannelTagId(12),
+            contentType = 13,
+            language = "de",
+            minimumDuration = 14.seconds,
+            maximumDuration = 15.seconds,
+        )
+
+        val result = gateway.searchEpg(generation, search) as GatewayResult.Ok
+        val request = fake.lastRequest as EpgQueryRequest
+
+        assertSame(sourceGeneration, fake.lastExpectedGeneration)
+        assertEquals("private-query", request.query)
+        assertEquals(11L, request.channelId)
+        assertEquals(12L, request.tagId)
+        assertEquals(13L, request.contentType)
+        assertEquals("de", request.language)
+        assertEquals(true, request.fullText)
+        assertEquals(null, request.mergeText)
+        assertEquals(1L, request.full)
+        assertEquals(14L, request.minDurationSeconds)
+        assertEquals(15L, request.maxDurationSeconds)
+        assertEquals(7L, result.value.single().id.value)
+        assertFalse(result.value.toString().contains("Private"))
+        assertThrows(UnsupportedOperationException::class.java) {
+            (result.value as MutableList<*>).clear()
+        }
+
+        fake.executeResult = HtspResult.Ok(EpgQueryResponse.EventIds(listOf(7)))
+        assertSame(GatewayResult.ServerRejected, gateway.searchEpg(generation, search))
+
+        val failures = listOf(
+            HtspResult.ServerError to GatewayResult.ServerRejected,
+            HtspResult.AccessDenied to GatewayResult.AccessDenied,
+            HtspResult.ConnectionLimit to GatewayResult.ConnectionLimit,
+            HtspResult.Timeout to GatewayResult.Timeout,
+            HtspResult.TransportUnavailable to GatewayResult.TransportUnavailable,
+            HtspResult.NotSupported to GatewayResult.NotSupported,
+        )
+        failures.forEach { (source, expected) ->
+            fake.executeResult = source
+            assertSame(expected, gateway.searchEpg(generation, search))
+        }
+
+        val cancellation = CancellationException("private cancellation")
+        fake.executeException = cancellation
+        var caught: CancellationException? = null
+        try {
+            gateway.searchEpg(generation, search)
         } catch (failure: CancellationException) {
             caught = failure
         }

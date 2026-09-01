@@ -29,8 +29,11 @@ import at.bernhardberger.tvheadend.sdk.core.DvrRepository
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverageAcquisitionResult
+import at.bernhardberger.tvheadend.sdk.core.EpgEvent
 import at.bernhardberger.tvheadend.sdk.core.EpgRepository
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.EpgSearchRequest
+import at.bernhardberger.tvheadend.sdk.core.EpgSearchResult
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability
 import at.bernhardberger.tvheadend.sdk.core.ServerCapabilities
@@ -47,6 +50,7 @@ import at.bernhardberger.tvheadend.sdk.core.metadata.ChannelTagReducer
 import at.bernhardberger.tvheadend.sdk.core.metadata.DvrReducer
 import at.bernhardberger.tvheadend.sdk.core.metadata.EpgQueryFence
 import at.bernhardberger.tvheadend.sdk.core.metadata.EpgReducer
+import at.bernhardberger.tvheadend.sdk.core.metadata.ReducedEpgEvent
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFile
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
@@ -58,6 +62,8 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -270,8 +276,28 @@ internal fun interface EpgCoverageRequester {
     ): EpgCoverageAcquisitionResult
 }
 
+internal fun interface EpgSearchCommands {
+    public suspend fun search(
+        generation: GatewayGeneration,
+        request: EpgSearchRequest,
+    ): GatewayResult<List<GatewayEpgQueryEvent>>
+
+    public data object None : EpgSearchCommands {
+        override suspend fun search(
+            generation: GatewayGeneration,
+            request: EpgSearchRequest,
+        ): GatewayResult<List<GatewayEpgQueryEvent>> = GatewayResult.NotSupported
+    }
+}
+
+private class EpgSearchGenerationFence(
+    internal val generation: GatewayGeneration,
+    internal val bindRevision: Long,
+)
+
 internal class PhaseOneSessionMetadata(
     mutationCommands: DvrMutationCommands = DvrMutationCommands.None,
+    private val searchCommands: EpgSearchCommands = EpgSearchCommands.None,
     private val progressCommands: DvrProgressCommands = DvrProgressCommands.None,
     private val cutpointCommands: DvrCutpointCommands = DvrCutpointCommands.None,
     private val onDvrMetadataAccepted: (MetadataEvent) -> Unit = {},
@@ -291,6 +317,21 @@ internal class PhaseOneSessionMetadata(
     )
     private val mutableDiskSpace = MutableStateFlow<DvrDiskSpaceState>(DvrDiskSpaceState.Unknown)
     private val stateBackedEpgRepository = object : EpgRepository {
+        override suspend fun search(
+            currentSession: CurrentSessionObservation,
+            request: EpgSearchRequest,
+        ): EpgSearchResult {
+            currentCoroutineContext().ensureActive()
+            val generationFence = resolveSearchGeneration(currentSession)
+                ?: return EpgSearchResult.ObservationExpired
+            val result = searchCommands.search(generationFence.generation, request)
+            currentCoroutineContext().ensureActive()
+            val mappedResult = result.toEpgSearchResult()
+            val connectionChanged = hasReplacementGeneration(generationFence)
+            currentCoroutineContext().ensureActive()
+            return if (connectionChanged) EpgSearchResult.ConnectionChanged else mappedResult
+        }
+
         override suspend fun acquireCoverage(
             currentSession: CurrentSessionObservation,
             channelId: ChannelId,
@@ -306,6 +347,7 @@ internal class PhaseOneSessionMetadata(
         resolveGeneration = ::resolveGeneration,
     ) {}
     private var generation: GatewayGeneration? = null
+    private var generationBindRevision = 0L
     private var initialSync = CompletableDeferred<Unit>()
     private var publishedCatalog: ChannelCatalog? = null
     private var publishedEpgSnapshot: EpgSnapshot? = null
@@ -332,6 +374,15 @@ internal class PhaseOneSessionMetadata(
         observationStore.resolve(currentSession, expectedGeneration) as? GatewayGeneration
     }
 
+    private fun resolveSearchGeneration(
+        currentSession: CurrentSessionObservation,
+    ): EpgSearchGenerationFence? = synchronized(lock) {
+        val expectedGeneration = generation ?: return@synchronized null
+        val resolvedGeneration = observationStore.resolve(currentSession, expectedGeneration)
+            as? GatewayGeneration ?: return@synchronized null
+        EpgSearchGenerationFence(resolvedGeneration, generationBindRevision)
+    }
+
     override fun currentObservation(
         generation: GatewayGeneration,
         currentSession: CurrentSessionObservation,
@@ -339,6 +390,11 @@ internal class PhaseOneSessionMetadata(
         if (this.generation !== generation) return@synchronized null
         observationStore.currentObservation(currentSession, generation)
     }
+
+    private fun hasReplacementGeneration(generationFence: EpgSearchGenerationFence): Boolean =
+        synchronized(lock) {
+            generationBindRevision != generationFence.bindRevision
+        }
 
     override fun bindPlaybackRecording(
         generation: GatewayGeneration,
@@ -449,6 +505,7 @@ internal class PhaseOneSessionMetadata(
     override fun bindGeneration(generation: GatewayGeneration) {
         val retiredFence = synchronized(lock) {
             val previousFence = initialSync
+            generationBindRevision += 1
             this.generation = generation
             initialSync = CompletableDeferred()
             synchronizedCurrent = false
@@ -929,6 +986,26 @@ internal class PhaseOneSessionMetadata(
             epgCoverageRequester.takeIf { this.generation === generation }
         } ?: return EpgCoverageAcquisitionResult.ObservationExpired
         return requester.acquireCoverage(currentSession, channelId, through)
+    }
+}
+
+private fun GatewayResult<List<GatewayEpgQueryEvent>>.toEpgSearchResult(): EpgSearchResult {
+    return when (this) {
+        is GatewayResult.Ok -> {
+            val events = ArrayList<EpgEvent>(value.size)
+            value.forEach { event ->
+                val mapped = ReducedEpgEvent.fromQuery(event)?.toPublicOrNull()
+                    ?: return EpgSearchResult.InvalidQuery
+                events += mapped
+            }
+            EpgSearchResult.Available.create(events)
+        }
+        GatewayResult.ServerRejected -> EpgSearchResult.InvalidQuery
+        GatewayResult.AccessDenied -> EpgSearchResult.AccessDenied
+        GatewayResult.ConnectionLimit -> EpgSearchResult.ConnectionLimit
+        GatewayResult.Timeout -> EpgSearchResult.Timeout
+        GatewayResult.TransportUnavailable -> EpgSearchResult.TransportUnavailable
+        GatewayResult.NotSupported -> EpgSearchResult.NotSupported
     }
 }
 

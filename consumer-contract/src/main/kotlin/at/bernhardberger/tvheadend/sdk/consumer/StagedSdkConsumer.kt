@@ -12,6 +12,8 @@ import at.bernhardberger.tvheadend.sdk.core.Channel
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.EpgEvent
+import at.bernhardberger.tvheadend.sdk.core.EpgSearchRequest
+import at.bernhardberger.tvheadend.sdk.core.EpgSearchResult
 import at.bernhardberger.tvheadend.sdk.core.PlaybackBinding
 import at.bernhardberger.tvheadend.sdk.core.PlaybackBindingResult
 import at.bernhardberger.tvheadend.sdk.core.SessionObservation
@@ -84,6 +86,12 @@ public class StagedSdkConsumer(
     public suspend fun streamProfiles(): StreamProfilesResult = session.getStreamProfiles(
         requireNotNull(observation.value.currentSession),
     )
+
+    public suspend fun searchEpg(request: EpgSearchRequest): EpgSearchResult =
+        session.epgRepository.search(
+            requireNotNull(observation.value.currentSession),
+            request,
+        )
 
     public suspend fun playLive(
         channelId: ChannelId,

@@ -7,6 +7,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.htsp.HtspProtocolGateway
 import at.bernhardberger.tvheadend.sdk.core.session.ConnectionOwner
 import at.bernhardberger.tvheadend.sdk.core.session.DvrMutationCoordinator
 import at.bernhardberger.tvheadend.sdk.core.session.DvrProgressCoordinator
+import at.bernhardberger.tvheadend.sdk.core.session.EpgSearchCommands
 import at.bernhardberger.tvheadend.sdk.core.session.ExponentialReconnectBackoff
 import at.bernhardberger.tvheadend.sdk.core.session.PhaseOneSessionMetadata
 import at.bernhardberger.tvheadend.sdk.core.session.PlaybackSessionChildren
@@ -113,6 +114,9 @@ private object SessionRegistry {
         )
         metadata = PhaseOneSessionMetadata(
             mutationCommands = dvrMutations,
+            searchCommands = EpgSearchCommands { generation, request ->
+                gateway.searchEpg(generation, request)
+            },
             progressCommands = dvrProgress,
             cutpointCommands = dvrProgress,
             onDvrMetadataAccepted = dvrMutations::acceptMetadata,

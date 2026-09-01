@@ -1,6 +1,10 @@
 package at.bernhardberger.tvheadend.sdk.core
 
 import java.util.Collections
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
 private const val EPG_U32_MAX: Long = 0xffff_ffffL
@@ -280,8 +284,146 @@ public sealed interface EpgCoverageAcquisitionResult {
     public data object ObservationExpired : EpgCoverageAcquisitionResult
 }
 
+/**
+ * Immutable filters for one explicit server-backed EPG text search.
+ *
+ * [contentType] is an unsigned eight-bit genre code. TVHeadend servers using HTSP before version
+ * 6 reinterpret values `0..15` as legacy major categories, so only those inputs are distinct on
+ * such servers. Durations use finite whole seconds within the server's signed 32-bit storage.
+ */
+@ConsistentCopyVisibility
+public data class EpgSearchRequest private constructor(
+    public val query: String,
+    public val fullText: Boolean,
+    public val channelId: ChannelId?,
+    public val tagId: ChannelTagId?,
+    public val contentType: Long?,
+    public val language: String?,
+    public val minimumDuration: Duration?,
+    public val maximumDuration: Duration?,
+) {
+    init {
+        contentType?.let {
+            require(it in 0L..EPG_CONTENT_TYPE_MAX) {
+                "EpgSearchRequest contentType must be an unsigned 8-bit value"
+            }
+        }
+        minimumDuration?.requireEpgSearchDuration("minimumDuration")
+        maximumDuration?.requireEpgSearchDuration("maximumDuration")
+        require(minimumDuration == null || maximumDuration == null || minimumDuration <= maximumDuration) {
+            "EpgSearchRequest minimumDuration must not exceed maximumDuration"
+        }
+    }
+
+    override fun toString(): String = "EpgSearchRequest(<redacted>)"
+
+    public companion object {
+        /** Creates one validated search request from typed Kotlin filter values. */
+        public fun create(
+            query: String,
+            fullText: Boolean = false,
+            channelId: ChannelId? = null,
+            tagId: ChannelTagId? = null,
+            contentType: Long? = null,
+            language: String? = null,
+            minimumDuration: Duration? = null,
+            maximumDuration: Duration? = null,
+        ): EpgSearchRequest = EpgSearchRequest(
+            query = query,
+            fullText = fullText,
+            channelId = channelId,
+            tagId = tagId,
+            contentType = contentType,
+            language = language,
+            minimumDuration = minimumDuration,
+            maximumDuration = maximumDuration,
+        )
+
+        /** Creates one validated request for Java callers using numeric IDs and whole seconds. */
+        @JvmStatic
+        public fun createFromSeconds(
+            query: String,
+            fullText: Boolean,
+            channelId: Long?,
+            tagId: Long?,
+            contentType: Long?,
+            language: String?,
+            minimumDurationSeconds: Long?,
+            maximumDurationSeconds: Long?,
+        ): EpgSearchRequest = create(
+            query = query,
+            fullText = fullText,
+            channelId = channelId?.let(::ChannelId),
+            tagId = tagId?.let(::ChannelTagId),
+            contentType = contentType,
+            language = language,
+            minimumDuration = minimumDurationSeconds?.seconds,
+            maximumDuration = maximumDurationSeconds?.seconds,
+        )
+    }
+}
+
+/** Settled outcome of one explicit EPG search for an exact session observation. */
+public sealed interface EpgSearchResult {
+    /** The server returned this immutable finite event list, which may be empty. */
+    public class Available private constructor(
+        public val events: List<EpgEvent>,
+    ) : EpgSearchResult {
+        override fun toString(): String = "EpgSearchResult.Available(<redacted>)"
+
+        public companion object {
+            /** Creates a successful result while defensively copying the event list. */
+            public fun create(events: List<EpgEvent>): Available =
+                Available(events.toEpgImmutableList())
+        }
+    }
+
+    /** The originating observation was already retired before dispatch. */
+    public data object ObservationExpired : EpgSearchResult
+
+    /**
+     * The server rejected the query or returned an unusable search payload.
+     *
+     * TVHeadend also uses its generic rejection path for inaccessible channel or tag filters.
+     */
+    public data object InvalidQuery : EpgSearchResult
+
+    /** The protocol explicitly reported that the session lacks EPG search permission. */
+    public data object AccessDenied : EpgSearchResult
+
+    /** The server refused another concurrent operation. */
+    public data object ConnectionLimit : EpgSearchResult
+
+    /** The search did not settle before its protocol deadline. */
+    public data object Timeout : EpgSearchResult
+
+    /** The bound transport generation became unavailable. */
+    public data object TransportUnavailable : EpgSearchResult
+
+    /** A different session generation became current while the search was in flight. */
+    public data object ConnectionChanged : EpgSearchResult
+
+    /** The connected server does not support the requested search filters. */
+    public data object NotSupported : EpgSearchResult
+}
+
 /** Programme-guide commands for the selected server profile. */
 public interface EpgRepository {
+    /**
+     * Searches the server's EPG for [request] without reading or mutating retained coverage.
+     *
+     * The request is dispatched only while [currentSession] belongs to this repository's current
+     * generation. A generation replacement during the round trip is reported distinctly, and
+     * cancellation remains owned by the caller.
+     */
+    public suspend fun search(
+        currentSession: CurrentSessionObservation,
+        request: EpgSearchRequest,
+    ): EpgSearchResult {
+        currentCoroutineContext().ensureActive()
+        return EpgSearchResult.NotSupported
+    }
+
     /**
      * Acquires settled coverage for one channel through [through].
      *
@@ -301,5 +443,16 @@ private fun requireEpgU32(name: String, value: Long) {
     require(value in 0L..EPG_U32_MAX) { "$name must be an unsigned 32-bit value" }
 }
 
+private fun Duration.requireEpgSearchDuration(name: String) {
+    require(isFinite() && this >= Duration.ZERO) { "EpgSearchRequest $name must be finite and non-negative" }
+    require(this == inWholeSeconds.seconds) { "EpgSearchRequest $name must use whole seconds" }
+    require(inWholeSeconds <= EPG_SEARCH_DURATION_MAX_SECONDS) {
+        "EpgSearchRequest $name must not exceed $EPG_SEARCH_DURATION_MAX_SECONDS seconds"
+    }
+}
+
 private fun <T> Collection<T>.toEpgImmutableList(): List<T> =
     Collections.unmodifiableList(ArrayList(this))
+
+private const val EPG_CONTENT_TYPE_MAX: Long = 0xff
+private const val EPG_SEARCH_DURATION_MAX_SECONDS: Long = 2_147_483_647
