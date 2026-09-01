@@ -23,6 +23,32 @@ notices, and do not describe this project as official TVHeadend software.
   Dokka, Kotlin ABI validation, and GitHub Actions. Do not add bespoke checkers,
   generators, scripts, languages, or repository frameworks.
 
+## Package delegation
+
+- Package primaries invoke the repository-local `sdk-locator`, `sdk-planner`,
+  `sdk-analyze`, `sdk-research`, `sdk-review-sol`, and `sdk-review-opus` Task
+  subagents directly. Never ask a coordinator to select or launch them, and
+  never launch a reviewer as an external top-level session.
+- Use `sdk-locator` for mechanical retrieval, `sdk-analyze` for a concrete
+  post-plan ambiguity or failed invariant, and `sdk-research` only after exact
+  local sources are insufficient. `sdk-planner` is an optional bounded second
+  opinion, not a required planning stage.
+- Children are read-only and work solely from a self-contained task prompt.
+  State the bounded question, exact scope, allowed sources, forbidden actions,
+  known evidence, acceptance criteria, required output, and stop condition.
+  Children must not read orchestration ledgers, handoffs, or `AGENTS.md` files.
+- Run exactly one `sdk-review-sol` on every frozen, tested package. Release and
+  lower-stakes packages are Sol-only. For a critical or complex package, run
+  `./review-provider-route.sh select eligible` immediately before review; when
+  it prints `opus`, launch exactly one `sdk-review-opus` alongside the mandatory
+  Sol review with substantively identical scope and evidence.
+- Execute the review selector; never source it or its credential source into the
+  primary shell. Missing or untrustworthy quota telemetry selects Sol. A
+  skipped, failed, rate-limited, or aborted optional Opus review is non-blocking.
+  Independently adjudicate every finding from each completed reviewer.
+- A material edit after review reopens affected gates and frozen review. A
+  reviewer finding is evidence to adjudicate, not by itself a package blocker.
+
 ## Build and verify
 
 The checked-in Gradle wrapper is the build prerequisite. JDK toolchains resolve
@@ -76,6 +102,9 @@ automatically. CI (`.github/workflows/ci.yml`) is the authoritative gate.
   profiles performs full teardown, repository reset, reconnect, and sync.
 - Applications fake the SDK boundary. SDK tests fake the internal protocol
   gateway, not `HtspConnection`.
+- Compatibility shims for pre-1.0 SDK APIs are not required for the in-repo app
+  consumer. Make clean SDK API changes and migrate that app in the same
+  authorized package chain.
 
 ## Release trust boundary
 
