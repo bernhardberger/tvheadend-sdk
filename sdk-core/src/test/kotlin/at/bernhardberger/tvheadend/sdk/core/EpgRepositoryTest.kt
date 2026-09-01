@@ -6,11 +6,45 @@ import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.nanoseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
 internal class EpgRepositoryTest {
+    @Test
+    fun `coverage policy keeps the default and accepts a bounded seven day choice`() {
+        val default = EpgCoveragePolicy.create()
+        assertEquals(24.hours, default.futureHorizon)
+        assertEquals(100_000, default.maximumRetainedEvents)
+        assertEquals(
+            1,
+            EpgCoveragePolicy.create(7.days, maximumRetainedEvents = 1).maximumRetainedEvents,
+        )
+        assertEquals(7.days, EpgCoveragePolicy.createFromHours(168).futureHorizon)
+        assertEquals(250_000, EpgCoveragePolicy.createFromHours(168, 250_000).maximumRetainedEvents)
+        assertThrows(IllegalArgumentException::class.java) {
+            EpgCoveragePolicy.create(24.hours - 1.seconds)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            EpgCoveragePolicy.create(7.days + 1.seconds)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            EpgCoveragePolicy.create(24.hours + 1.nanoseconds)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            EpgCoveragePolicy.create(Duration.INFINITE)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            EpgCoveragePolicy.create(24.hours, maximumRetainedEvents = 0)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            EpgCoveragePolicy.create(24.hours, maximumRetainedEvents = 250_001)
+        }
+    }
+
     @Test
     fun `models validate wire domains timing and immutable collections`() {
         val categories = mutableListOf("private-category")

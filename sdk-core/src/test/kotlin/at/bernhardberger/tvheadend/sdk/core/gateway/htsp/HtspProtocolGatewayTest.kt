@@ -126,6 +126,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
 import at.bernhardberger.tvheadend.sdk.core.DvrSchedule
 import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
 import at.bernhardberger.tvheadend.sdk.core.DvrSubscriptionError
+import at.bernhardberger.tvheadend.sdk.core.EpgCoveragePolicy
 import at.bernhardberger.tvheadend.sdk.core.ChannelTagId
 import at.bernhardberger.tvheadend.sdk.core.EpgSearchRequest
 import at.bernhardberger.tvheadend.sdk.core.EventId
@@ -182,6 +183,7 @@ import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
@@ -1018,6 +1020,7 @@ internal class HtspProtocolGatewayTest {
 
         suspend fun requestFor(
             protocolVersion: Int,
+            coveragePolicy: EpgCoveragePolicy = EpgCoveragePolicy.create(),
             serverTimeResult: HtspResult<GetSysTimeResponse> = HtspResult.Ok(serverTime),
         ): Pair<GatewayResult<Unit>, List<HtspRequest<*>>> {
             val sourceGeneration = HtspConnectionGeneration()
@@ -1045,7 +1048,7 @@ internal class HtspProtocolGatewayTest {
                     }
                 }
             }
-            val gateway = HtspProtocolGateway(fake)
+            val gateway = HtspProtocolGateway(fake, coveragePolicy)
             val generation = (gateway.connect(ServerConfiguration("host", 9_982))
                 as GatewayConnectResult.Connected).connection.generation
 
@@ -1062,6 +1065,14 @@ internal class HtspProtocolGatewayTest {
         assertEquals(serverNow + 86_400L, supported.epgMaxTime)
         assertEquals(6, supported.minimumProtocolVersion)
 
+        val (configuredResult, configuredRequests) = requestFor(
+            protocolVersion = 6,
+            coveragePolicy = EpgCoveragePolicy.create(7.days),
+        )
+        assertTrue(configuredResult is GatewayResult.Ok)
+        val configured = configuredRequests.last() as EnableAsyncMetadataRequest
+        assertEquals(serverNow + 604_800L, configured.epgMaxTime)
+
         val (legacyResult, legacyRequests) = requestFor(protocolVersion = 5)
         assertTrue(legacyResult is GatewayResult.Ok)
         val legacy = legacyRequests.single() as EnableAsyncMetadataRequest
@@ -1075,6 +1086,66 @@ internal class HtspProtocolGatewayTest {
         )
         assertSame(GatewayResult.Timeout, failure)
         assertTrue(failedRequests.single() is GetSysTimeRequest)
+    }
+
+    @Test
+    fun `configured async EPG horizon survives a fresh connection generation`() = runTest {
+        val serverTimes = ArrayDeque(listOf(1_000_000L, 2_000_000L))
+        val metadataEvents = MutableSharedFlow<HtspTransportEvent>()
+        val requests = mutableListOf<HtspRequest<*>>()
+        val sourceGenerations = mutableListOf<HtspConnectionGeneration>()
+        val timeRequestGenerations = mutableListOf<HtspConnectionGeneration?>()
+        val fake = FakeHtspConnection().apply {
+            eventsFlow = metadataEvents
+            beforeExecute = { request ->
+                requests += request
+                when (request) {
+                    is GetSysTimeRequest -> {
+                        timeRequestGenerations += lastExpectedGeneration
+                        executeResult = HtspResult.Ok(
+                            GetSysTimeResponse(
+                                unixTimeSeconds = serverTimes.removeFirst(),
+                                legacyTimezoneHoursWestOfGmt = 0,
+                                gmtOffsetMinutes = 0,
+                            ),
+                        )
+                    }
+                    is EnableAsyncMetadataRequest -> {
+                        executeResult = HtspResult.Ok(HtspEmptyResponse)
+                        metadataEvents.emit(
+                            HtspTransportEvent.ServerMessage(
+                                message = HtspInitialSyncCompletedMessage,
+                                generation = requireNotNull(liveConnectionValue.value).generation,
+                                messageSequence = requests.size.toLong(),
+                            ),
+                        )
+                    }
+                    else -> error("Unexpected initial metadata request")
+                }
+            }
+        }
+        val gateway = HtspProtocolGateway(fake, EpgCoveragePolicy.create(7.days))
+
+        repeat(2) { index ->
+            val sourceGeneration = HtspConnectionGeneration()
+            sourceGenerations += sourceGeneration
+            val liveConnection = liveConnection(sourceGeneration, protocolVersion = 6)
+            fake.liveConnectionValue.value = liveConnection
+            fake.connectOutcome = HtspConnectOutcome.Connected(liveConnection)
+            val generation = (gateway.connect(ServerConfiguration("host-$index", 9_982))
+                as GatewayConnectResult.Connected).connection.generation
+
+            assertTrue(gateway.enableInitialMetadata(generation) is GatewayResult.Ok)
+            assertSame(sourceGeneration, fake.lastExpectedGeneration)
+        }
+
+        val asyncRequests = requests.filterIsInstance<EnableAsyncMetadataRequest>()
+        assertEquals(2, asyncRequests.size)
+        assertEquals(listOf(1_604_800L, 2_604_800L), asyncRequests.map { it.epgMaxTime })
+        assertEquals(2, timeRequestGenerations.size)
+        sourceGenerations.zip(timeRequestGenerations).forEach { (expected, actual) ->
+            assertSame(expected, actual)
+        }
     }
 
     @Test

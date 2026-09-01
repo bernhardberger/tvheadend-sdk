@@ -2,6 +2,7 @@ package at.bernhardberger.tvheadend.sdk.core.metadata
 
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverage
+import at.bernhardberger.tvheadend.sdk.core.EpgCoveragePolicy
 import at.bernhardberger.tvheadend.sdk.core.EpgEpisode
 import at.bernhardberger.tvheadend.sdk.core.EpgEpisodeId
 import at.bernhardberger.tvheadend.sdk.core.EpgEvent
@@ -330,7 +331,9 @@ internal class EpgQueryFence(
     override fun toString(): String = "EpgQueryFence(<redacted>)"
 }
 
-internal class EpgReducer {
+internal class EpgReducer(
+    private val maximumRetainedEvents: Int = EpgCoveragePolicy.create().maximumRetainedEvents,
+) {
     private val events = linkedMapOf<EventId, ReducedEpgEvent>()
     private val channelIds = linkedSetOf<ChannelId>()
     private val queriedToByChannel = linkedMapOf<ChannelId, Instant>()
@@ -339,6 +342,11 @@ internal class EpgReducer {
     private val eventAuthorityRevisions = linkedMapOf<EventId, Long>()
     private val channelAuthorityRevisions = linkedMapOf<ChannelId, Long>()
     private var authorityRevision = 0L
+    private var queriesInvalidAfterRevision: Long? = null
+
+    init {
+        require(maximumRetainedEvents > 0) { "EPG retained-event limit must be positive" }
+    }
 
     internal fun clear() {
         events.clear()
@@ -348,6 +356,7 @@ internal class EpgReducer {
         eventAuthorityRevisions.clear()
         channelAuthorityRevisions.clear()
         authorityRevision = 0L
+        queriesInvalidAfterRevision = null
     }
 
     internal fun accept(event: MetadataEvent) {
@@ -431,23 +440,37 @@ internal class EpgReducer {
         return try {
             if (
                 query.channelId !in channelIds ||
+                queriesInvalidAfterRevision
+                    ?.let { revision -> revision > query.authorityRevision } == true ||
                 channelAuthorityRevisions[query.channelId]
                     ?.let { revision -> revision > query.authorityRevision } == true
             ) {
                 false
             } else {
-                queriedEvents.forEach { event ->
-                    if (event.channelId != null && event.channelId != query.channelId) return@forEach
+                val stagedEvents = linkedMapOf<EventId, ReducedEpgEvent>()
+                var stagedNewEventCount = 0
+                for (event in queriedEvents) {
+                    if (event.channelId != null && event.channelId != query.channelId) continue
                     if (
                         eventAuthorityRevisions[event.id]
                             ?.let { revision -> revision > query.authorityRevision } == true
                     ) {
-                        return@forEach
+                        continue
                     }
-                    val candidate = events[event.id]?.replaceFromQuery(event)
+                    val candidate = (stagedEvents[event.id] ?: events[event.id])
+                        ?.replaceFromQuery(event)
                         ?: ReducedEpgEvent.fromQuery(event)
-                    if (candidate != null) events[event.id] = candidate
+                    if (candidate != null) {
+                        if (event.id !in events && event.id !in stagedEvents) {
+                            if (events.size + stagedNewEventCount >= maximumRetainedEvents) {
+                                return false
+                            }
+                            stagedNewEventCount += 1
+                        }
+                        stagedEvents[event.id] = candidate
+                    }
                 }
+                stagedEvents.forEach { (eventId, event) -> events[eventId] = event }
                 recordSuccessfulQuery(query.channelId, queriedTo)
                 true
             }
@@ -472,6 +495,10 @@ internal class EpgReducer {
 
     private fun acceptAdd(event: GatewayEpgEvent) {
         ReducedEpgEvent.fromAdd(event)?.let { candidate ->
+            if (event.id !in events && events.size >= maximumRetainedEvents) {
+                invalidateActiveQueriesAfterCapacityDrop()
+                return
+            }
             events[event.id] = candidate
         }
     }
@@ -484,19 +511,41 @@ internal class EpgReducer {
             current.merge(update)
         } ?: return
         if (current == null && candidate.start == null && candidate.stop == null) return
+        if (current == null && events.size >= maximumRetainedEvents) {
+            invalidateActiveQueriesAfterCapacityDrop()
+            return
+        }
         events[update.id] = candidate
+    }
+
+    private fun invalidateActiveQueriesAfterCapacityDrop() {
+        if (activeQueries.isNotEmpty()) queriesInvalidAfterRevision = authorityRevision
     }
 
     private fun recordEventAuthority(eventId: EventId) {
         if (activeQueries.isEmpty()) return
         authorityRevision += 1
-        eventAuthorityRevisions[eventId] = authorityRevision
+        if (
+            eventId in eventAuthorityRevisions ||
+            eventAuthorityRevisions.size < maximumRetainedEvents
+        ) {
+            eventAuthorityRevisions[eventId] = authorityRevision
+        } else {
+            queriesInvalidAfterRevision = authorityRevision
+        }
     }
 
     private fun recordChannelAuthority(channelId: ChannelId) {
         if (activeQueries.isEmpty()) return
         authorityRevision += 1
-        channelAuthorityRevisions[channelId] = authorityRevision
+        if (
+            channelId in channelAuthorityRevisions ||
+            channelAuthorityRevisions.size < maximumRetainedEvents
+        ) {
+            channelAuthorityRevisions[channelId] = authorityRevision
+        } else {
+            queriesInvalidAfterRevision = authorityRevision
+        }
     }
 
     private fun pruneQueryAuthority() {
@@ -505,12 +554,19 @@ internal class EpgReducer {
             eventAuthorityRevisions.clear()
             channelAuthorityRevisions.clear()
             authorityRevision = 0L
+            queriesInvalidAfterRevision = null
         } else {
             eventAuthorityRevisions.entries.removeIf { entry ->
                 entry.value <= oldestActiveRevision
             }
             channelAuthorityRevisions.entries.removeIf { entry ->
                 entry.value <= oldestActiveRevision
+            }
+            if (
+                queriesInvalidAfterRevision
+                    ?.let { revision -> revision <= oldestActiveRevision } == true
+            ) {
+                queriesInvalidAfterRevision = null
             }
         }
     }

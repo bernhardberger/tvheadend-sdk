@@ -155,6 +155,104 @@ internal class EpgReducerTest {
     }
 
     @Test
+    fun `async ingestion retains at most the configured event cardinality`() {
+        val reducer = EpgReducer(maximumRetainedEvents = 2)
+        addChannel(reducer, 1)
+        reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20)))
+        reducer.accept(MetadataEvent.EventAdded(generation, event(2, 1, 20, 30)))
+        reducer.accept(MetadataEvent.EventAdded(generation, event(3, 1, 30, 40)))
+
+        assertEquals(listOf(1L, 2L), reducer.snapshot().events.map { it.id.value })
+        reducer.accept(MetadataEvent.EventUpdated(generation, update(1, title = "updated")))
+        assertEquals("updated", reducer.snapshot().events.first().title)
+
+        reducer.accept(MetadataEvent.EventDeleted(generation, EventId(1)))
+        reducer.accept(MetadataEvent.EventAdded(generation, event(3, 1, 30, 40)))
+        assertEquals(listOf(2L, 3L), reducer.snapshot().events.map { it.id.value })
+    }
+
+    @Test
+    fun `query exceeding retained cardinality is atomic and does not advance coverage`() {
+        val reducer = EpgReducer(maximumRetainedEvents = 1)
+        addChannel(reducer, 1)
+        reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20)))
+
+        val rejected = requireNotNull(reducer.beginQuery(ChannelId(1)))
+        assertFalse(
+            reducer.acceptSuccessfulQuery(
+                query = rejected,
+                queriedTo = instant(100),
+                queriedEvents = listOf(queryEvent(2, 1, 20, 30)),
+            ),
+        )
+        var snapshot = reducer.snapshot()
+        assertEquals(listOf(1L), snapshot.events.map { it.id.value })
+        assertEquals(null, snapshot.coverages.single().queriedTo)
+
+        reducer.accept(MetadataEvent.EventDeleted(generation, EventId(1)))
+        val accepted = requireNotNull(reducer.beginQuery(ChannelId(1)))
+        assertTrue(
+            reducer.acceptSuccessfulQuery(
+                query = accepted,
+                queriedTo = instant(100),
+                queriedEvents = listOf(queryEvent(2, 1, 20, 30)),
+            ),
+        )
+        snapshot = reducer.snapshot()
+        assertEquals(listOf(2L), snapshot.events.map { it.id.value })
+        assertEquals(instant(100), snapshot.coverages.single().queriedTo)
+    }
+
+    @Test
+    fun `bounded authority tracking invalidates an overtaken active query`() {
+        val reducer = EpgReducer(maximumRetainedEvents = 1)
+        addChannel(reducer, 1)
+        val overtaken = requireNotNull(reducer.beginQuery(ChannelId(1)))
+
+        reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20)))
+        reducer.accept(MetadataEvent.EventAdded(generation, event(2, 1, 20, 30)))
+        assertFalse(
+            reducer.acceptSuccessfulQuery(
+                query = overtaken,
+                queriedTo = instant(100),
+                queriedEvents = emptyList(),
+            ),
+        )
+
+        val current = requireNotNull(reducer.beginQuery(ChannelId(1)))
+        assertTrue(
+            reducer.acceptSuccessfulQuery(
+                query = current,
+                queriedTo = instant(100),
+                queriedEvents = emptyList(),
+            ),
+        )
+        val snapshot = reducer.snapshot()
+        assertEquals(listOf(1L), snapshot.events.map { it.id.value })
+        assertEquals(instant(100), snapshot.coverages.single().queriedTo)
+    }
+
+    @Test
+    fun `capacity dropped async event invalidates a query that omits it`() {
+        val reducer = EpgReducer(maximumRetainedEvents = 1)
+        addChannel(reducer, 1)
+        reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20)))
+        val overtaken = requireNotNull(reducer.beginQuery(ChannelId(1)))
+
+        reducer.accept(MetadataEvent.EventAdded(generation, event(2, 1, 20, 30)))
+        assertFalse(
+            reducer.acceptSuccessfulQuery(
+                query = overtaken,
+                queriedTo = instant(100),
+                queriedEvents = emptyList(),
+            ),
+        )
+        val snapshot = reducer.snapshot()
+        assertEquals(listOf(1L), snapshot.events.map { it.id.value })
+        assertEquals(null, snapshot.coverages.single().queriedTo)
+    }
+
+    @Test
     fun `channel migration and deletion update events and actual coverage`() {
         val reducer = EpgReducer()
         addChannel(reducer, 1)

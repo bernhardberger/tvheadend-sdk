@@ -29,6 +29,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrRepository
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverageAcquisitionResult
+import at.bernhardberger.tvheadend.sdk.core.EpgCoveragePolicy
 import at.bernhardberger.tvheadend.sdk.core.EpgEvent
 import at.bernhardberger.tvheadend.sdk.core.EpgRepository
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
@@ -302,10 +303,11 @@ internal class PhaseOneSessionMetadata(
     private val cutpointCommands: DvrCutpointCommands = DvrCutpointCommands.None,
     private val onDvrMetadataAccepted: (MetadataEvent) -> Unit = {},
     private val observationStore: SessionObservationStore = SessionObservationStore(),
+    epgCoveragePolicy: EpgCoveragePolicy = EpgCoveragePolicy.create(),
 ) : SessionMetadata {
     private val lock = Any()
     private val reducer = ChannelTagReducer()
-    private val epgReducer = EpgReducer()
+    private val epgReducer = EpgReducer(epgCoveragePolicy.maximumRetainedEvents)
     private val dvrReducer = DvrReducer()
     private val mutableChannelsAndTags = MutableStateFlow<ChannelRepositoryState>(
         ChannelRepositoryState.Empty,

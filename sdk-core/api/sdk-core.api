@@ -1268,6 +1268,23 @@ public final class at/bernhardberger/tvheadend/sdk/core/EpgCoverageAcquisitionRe
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class at/bernhardberger/tvheadend/sdk/core/EpgCoveragePolicy {
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/EpgCoveragePolicy$Companion;
+	public static final fun createFromHours (J)Lat/bernhardberger/tvheadend/sdk/core/EpgCoveragePolicy;
+	public static final fun createFromHours (JI)Lat/bernhardberger/tvheadend/sdk/core/EpgCoveragePolicy;
+	public final fun getFutureHorizon-UwyO8pc ()J
+	public final fun getMaximumRetainedEvents ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/EpgCoveragePolicy$Companion {
+	public final fun create-LRDsOJo (J)Lat/bernhardberger/tvheadend/sdk/core/EpgCoveragePolicy;
+	public static synthetic fun create-LRDsOJo$default (Lat/bernhardberger/tvheadend/sdk/core/EpgCoveragePolicy$Companion;JILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/EpgCoveragePolicy;
+	public final fun create-VtjQ1oo (JI)Lat/bernhardberger/tvheadend/sdk/core/EpgCoveragePolicy;
+	public final fun createFromHours (J)Lat/bernhardberger/tvheadend/sdk/core/EpgCoveragePolicy;
+	public final fun createFromHours (JI)Lat/bernhardberger/tvheadend/sdk/core/EpgCoveragePolicy;
+}
+
 public final class at/bernhardberger/tvheadend/sdk/core/EpgEpisode {
 	public synthetic fun <init> (Lat/bernhardberger/tvheadend/sdk/core/EpgEpisodeId;Lat/bernhardberger/tvheadend/sdk/core/EpgSeriesLinkId;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/String;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun component1-heC5Ni0 ()Lat/bernhardberger/tvheadend/sdk/core/EpgEpisodeId;
@@ -2171,5 +2188,6 @@ public final class at/bernhardberger/tvheadend/sdk/core/TvheadendSession$Default
 
 public final class at/bernhardberger/tvheadend/sdk/core/TvheadendSessionKt {
 	public static final fun createTvheadendSession ()Lat/bernhardberger/tvheadend/sdk/core/TvheadendSession;
+	public static final fun createTvheadendSession (Lat/bernhardberger/tvheadend/sdk/core/EpgCoveragePolicy;)Lat/bernhardberger/tvheadend/sdk/core/TvheadendSession;
 }
 

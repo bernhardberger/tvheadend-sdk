@@ -106,6 +106,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
 import at.bernhardberger.tvheadend.sdk.core.DvrSchedule
 import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
+import at.bernhardberger.tvheadend.sdk.core.EpgCoveragePolicy
 import at.bernhardberger.tvheadend.sdk.core.EpgSearchRequest
 import at.bernhardberger.tvheadend.sdk.core.RecordingRuleChannel
 import at.bernhardberger.tvheadend.sdk.core.StreamProfile
@@ -183,7 +184,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.transform
 import kotlinx.coroutines.withContext
 import kotlin.time.Duration
-import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
@@ -191,10 +191,12 @@ import kotlin.time.Instant
 @OptIn(SubscriptionInfrastructureApi::class)
 internal class HtspProtocolGateway internal constructor(
     private val connection: HtspConnection,
+    private val epgCoveragePolicy: EpgCoveragePolicy = EpgCoveragePolicy.create(),
 ) : ProtocolGateway {
-    internal constructor(ioDispatcher: CoroutineDispatcher) : this(
-        createHtspConnection(ioDispatcher),
-    )
+    internal constructor(
+        ioDispatcher: CoroutineDispatcher,
+        epgCoveragePolicy: EpgCoveragePolicy = EpgCoveragePolicy.create(),
+    ) : this(createHtspConnection(ioDispatcher), epgCoveragePolicy)
 
     private val generationLock = Any()
     private val gatewayGenerations =
@@ -272,7 +274,7 @@ internal class HtspProtocolGateway internal constructor(
         val epgMaxTime = if (supportsAsyncEpg) {
             when (val serverTime = connection.getSysTime(expectedGeneration = htspGeneration)) {
                 is HtspResult.Ok -> serverTime.value.unixTimeSeconds +
-                    ASYNC_EPG_HORIZON.inWholeSeconds
+                    epgCoveragePolicy.futureHorizon.inWholeSeconds
                 else -> return serverTime.toGatewayResult {}
             }
         } else {
@@ -1742,7 +1744,6 @@ private const val ABSOLUTE_SKIP_FLAG = 1L
 private const val RELATIVE_SKIP_FLAG = 0L
 private const val ASYNC_EPG_MINIMUM_PROTOCOL_VERSION = 6
 private const val ASYNC_EPG_ENABLED = 1L
-private val ASYNC_EPG_HORIZON = 24.hours
 
 private fun SubscribeResponse.toGatewayConfirmation(): SubscriptionConfirmation =
     SubscriptionConfirmation(

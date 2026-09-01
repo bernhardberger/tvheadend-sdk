@@ -13,6 +13,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverageAcquisitionResult
+import at.bernhardberger.tvheadend.sdk.core.EpgCoveragePolicy
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability
 import at.bernhardberger.tvheadend.sdk.core.ServerCapabilities
@@ -43,6 +44,7 @@ import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -696,6 +698,41 @@ internal class PhaseOneSessionMetadataTest {
         assertEquals(emptyList<Any>(), snapshot.events)
         assertTrue(coverage.isEmpty)
         assertEquals(Instant.fromEpochSeconds(50), coverage.knownTo)
+    }
+
+    @Test
+    fun `configured retained event limit bounds async and query ingestion`() {
+        val metadata = PhaseOneSessionMetadata(
+            epgCoveragePolicy = EpgCoveragePolicy.create(24.hours, maximumRetainedEvents = 1),
+        )
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(id = 1)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(1, 1, 0, 10)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(2, 1, 10, 20)))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+
+        var snapshot = metadata.currentEpgSnapshot(generation)
+        assertEquals(listOf(1L), snapshot?.events?.map { event -> event.id.value })
+
+        val query = requireNotNull(metadata.beginEpgQuery(generation, ChannelId(1)))
+        metadata.applySuccessfulEpgQuery(
+            generation = generation,
+            query = query,
+            queriedTo = Instant.fromEpochSeconds(100),
+            events = listOf(
+                GatewayEpgQueryEvent(
+                    id = EventId(2),
+                    channelId = ChannelId(1),
+                    start = Instant.fromEpochSeconds(10),
+                    stop = Instant.fromEpochSeconds(20),
+                ),
+            ),
+        )
+
+        snapshot = metadata.currentEpgSnapshot(generation)
+        assertEquals(listOf(1L), snapshot?.events?.map { event -> event.id.value })
+        assertNull(snapshot?.coverages?.single()?.queriedTo)
     }
 
     @Test

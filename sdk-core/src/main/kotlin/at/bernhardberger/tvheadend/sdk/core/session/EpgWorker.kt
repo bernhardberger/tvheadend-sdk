@@ -4,6 +4,7 @@ import at.bernhardberger.tvheadend.sdk.core.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverage
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverageAcquisitionResult
+import at.bernhardberger.tvheadend.sdk.core.EpgCoveragePolicy
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.SessionObservation
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
@@ -34,26 +35,23 @@ import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 
 internal data class EpgWorkerSettings(
+    internal val coveragePolicy: EpgCoveragePolicy = EpgCoveragePolicy.create(),
     internal val warmupHorizon: Duration = 4.hours,
     internal val steadyMinimum: Duration = 20.hours,
-    internal val steadyMaximum: Duration = 24.hours,
     internal val queryChunk: Duration = 4.hours,
     internal val channelCooldown: Duration = 10.minutes,
     internal val requestSpacing: Duration = 250.milliseconds,
     internal val batchSize: Int = 6,
     internal val retainPast: Duration = 6.hours,
-    internal val retainFuture: Duration = 24.hours,
 ) {
     init {
         listOf(
             warmupHorizon,
             steadyMinimum,
-            steadyMaximum,
             queryChunk,
             channelCooldown,
             requestSpacing,
             retainPast,
-            retainFuture,
         ).forEach { duration ->
             require(duration.isFinite() && duration > Duration.ZERO) {
                 "EPG worker durations must be finite and positive"
@@ -62,11 +60,11 @@ internal data class EpgWorkerSettings(
         require(warmupHorizon <= steadyMinimum) {
             "EPG warmup horizon must not exceed the steady minimum"
         }
-        require(steadyMinimum <= steadyMaximum) {
-            "EPG steady minimum must not exceed the steady maximum"
+        require(steadyMinimum <= coveragePolicy.futureHorizon) {
+            "EPG steady minimum must not exceed the coverage horizon"
         }
-        require(queryChunk <= steadyMaximum) {
-            "EPG query chunk must not exceed the steady maximum"
+        require(queryChunk <= coveragePolicy.futureHorizon) {
+            "EPG query chunk must not exceed the coverage horizon"
         }
         require(batchSize > 0) { "EPG batch size must be positive" }
     }
@@ -89,7 +87,7 @@ internal fun epgQueryTarget(
 
     val steadyMinimumTarget = now + settings.steadyMinimum
     if (knownTo >= steadyMinimumTarget) return null
-    return minOf(knownTo + settings.queryChunk, now + settings.steadyMaximum)
+    return minOf(knownTo + settings.queryChunk, now + settings.coveragePolicy.futureHorizon)
 }
 
 internal fun selectEpgQueries(
@@ -150,7 +148,7 @@ internal class EpgWorker(
         if (coverage.knownTo?.let { knownTo -> knownTo >= target } == true) {
             return coveredResult(observation, coverage)
         }
-        if (target <= now || target > now + settings.steadyMaximum) {
+        if (target <= now || target > now + settings.coveragePolicy.futureHorizon) {
             return EpgCoverageAcquisitionResult.Ineligible
         }
 
@@ -205,7 +203,7 @@ internal class EpgWorker(
                     metadata.retainEpgEvents(
                         generation = generation,
                         from = now - settings.retainPast,
-                        to = now + settings.retainFuture,
+                        to = now + settings.coveragePolicy.futureHorizon,
                     )
                     val plans = metadata.currentEpgSnapshot(generation)?.let { snapshot ->
                         selectBatch(snapshot, now)

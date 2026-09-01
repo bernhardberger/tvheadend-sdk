@@ -5,6 +5,7 @@ import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverage
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverageAcquisitionResult
+import at.bernhardberger.tvheadend.sdk.core.EpgCoveragePolicy
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.EventId
@@ -36,6 +37,7 @@ import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import kotlin.time.Clock
+import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
@@ -52,13 +54,12 @@ internal class EpgWorkerTest {
 
         assertEquals(4.hours, settings.warmupHorizon)
         assertEquals(20.hours, settings.steadyMinimum)
-        assertEquals(24.hours, settings.steadyMaximum)
+        assertEquals(24.hours, settings.coveragePolicy.futureHorizon)
         assertEquals(4.hours, settings.queryChunk)
         assertEquals(10.minutes, settings.channelCooldown)
         assertEquals(250.milliseconds, settings.requestSpacing)
         assertEquals(6, settings.batchSize)
         assertEquals(6.hours, settings.retainPast)
-        assertEquals(24.hours, settings.retainFuture)
         assertEquals(now + 4.hours, epgQueryTarget(EpgCoverage.empty(channelId), now, settings))
         assertEquals(
             now + 8.hours,
@@ -80,9 +81,52 @@ internal class EpgWorkerTest {
             now + 24.hours,
             epgQueryTarget(EpgCoverage.empty(channelId, now + 19.hours), now, capped),
         )
+        val configured = capped.copy(coveragePolicy = EpgCoveragePolicy.create(7.days))
+        assertEquals(
+            now + 29.hours,
+            epgQueryTarget(EpgCoverage.empty(channelId, now + 19.hours), now, configured),
+        )
         assertThrows(IllegalArgumentException::class.java) {
             settings.copy(batchSize = 0)
         }
+    }
+
+    @Test
+    fun `seven day policy admits its exact horizon and rejects a later target`() = runTest {
+        val generation = GatewayGeneration()
+        val metadata = synchronizedMetadata(generation, 1L..1L)
+        val now = instant(1_000)
+        val targets = mutableListOf<Instant>()
+        val worker = EpgWorker(
+            generation = generation,
+            metadata = metadata,
+            clock = MutableClock(now),
+            settings = EpgWorkerSettings(
+                coveragePolicy = EpgCoveragePolicy.create(7.days),
+                requestSpacing = 1.milliseconds,
+            ),
+            queryEpg = { _, _, target ->
+                targets += target
+                GatewayResult.Ok(emptyList())
+            },
+        )
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
+        val acquisition = backgroundScope.async {
+            worker.acquireCoverage(currentSession, ChannelId(1), now + 7.days)
+        }
+        runCurrent()
+
+        assertFalse(acquisition.isCompleted)
+        assertSame(
+            EpgCoverageAcquisitionResult.Ineligible,
+            worker.acquireCoverage(currentSession, ChannelId(1), now + 7.days + 1.seconds),
+        )
+        val job = backgroundScope.launch { worker.run() }
+        runCurrent()
+
+        assertEquals(listOf(now + 7.days), targets)
+        assertTrue(acquisition.await() is EpgCoverageAcquisitionResult.CoveredEmpty)
+        job.cancelAndJoin()
     }
 
     @Test
@@ -695,6 +739,48 @@ internal class EpgWorkerTest {
 
         val snapshot = (metadata.observation.value.epgState as EpgRepositoryState.Current).snapshot
         assertEquals(listOf(1L), snapshot.events.map { it.id.value })
+        job.cancelAndJoin()
+    }
+
+    @Test
+    fun `seven day policy controls the future eviction boundary`() = runTest {
+        val generation = GatewayGeneration()
+        val now = instant(0)
+        val metadata = synchronizedMetadata(generation, 1L..1L) {
+            acceptMetadata(
+                MetadataEvent.EventAdded(
+                    generation,
+                    timedEvent(1, 1, now + 6.days, now + 6.days + 1.hours),
+                ),
+            )
+            acceptMetadata(
+                MetadataEvent.EventAdded(
+                    generation,
+                    timedEvent(2, 1, now + 7.days, now + 7.days + 1.hours),
+                ),
+            )
+            acceptMetadata(
+                MetadataEvent.EventAdded(
+                    generation,
+                    timedEvent(3, 1, now + 7.days + 1.seconds, now + 7.days + 1.hours),
+                ),
+            )
+        }
+        val worker = EpgWorker(
+            generation = generation,
+            metadata = metadata,
+            clock = MutableClock(now),
+            settings = EpgWorkerSettings(
+                coveragePolicy = EpgCoveragePolicy.create(7.days),
+            ),
+            queryEpg = { _, _, _ -> GatewayResult.Timeout },
+        )
+        val job = backgroundScope.launch { worker.run() }
+
+        runCurrent()
+
+        val snapshot = (metadata.observation.value.epgState as EpgRepositoryState.Current).snapshot
+        assertEquals(listOf(1L, 2L), snapshot.events.map { it.id.value })
         job.cancelAndJoin()
     }
 

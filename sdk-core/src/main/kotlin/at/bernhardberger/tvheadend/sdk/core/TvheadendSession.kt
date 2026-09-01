@@ -1,6 +1,7 @@
 package at.bernhardberger.tvheadend.sdk.core
 
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
+import at.bernhardberger.tvheadend.sdk.core.gateway.ProtocolGateway
 import at.bernhardberger.tvheadend.sdk.core.gateway.ServerAuthentication as GatewayAuthentication
 import at.bernhardberger.tvheadend.sdk.core.gateway.ServerConfiguration
 import at.bernhardberger.tvheadend.sdk.core.gateway.htsp.HtspProtocolGateway
@@ -8,9 +9,12 @@ import at.bernhardberger.tvheadend.sdk.core.session.ConnectionOwner
 import at.bernhardberger.tvheadend.sdk.core.session.DvrMutationCoordinator
 import at.bernhardberger.tvheadend.sdk.core.session.DvrProgressCoordinator
 import at.bernhardberger.tvheadend.sdk.core.session.EpgSearchCommands
+import at.bernhardberger.tvheadend.sdk.core.session.EpgWorkerSettings
 import at.bernhardberger.tvheadend.sdk.core.session.ExponentialReconnectBackoff
 import at.bernhardberger.tvheadend.sdk.core.session.PhaseOneSessionMetadata
 import at.bernhardberger.tvheadend.sdk.core.session.PlaybackSessionChildren
+import at.bernhardberger.tvheadend.sdk.core.session.SessionChildren
+import at.bernhardberger.tvheadend.sdk.core.session.SessionMetadata
 import java.util.Collections
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -81,19 +85,49 @@ public interface TvheadendSession {
  * Returns the process-wide TVHeadend session owner.
  *
  * Repeated calls return the same instance until its terminal [TvheadendSession.shutdown] completes.
- * Shutdown affects every holder of that shared instance; a later call creates a fresh owner.
+ * A newly created owner uses the default 24-hour EPG coverage policy. Shutdown affects every holder
+ * of that shared instance; a later call creates a fresh owner.
  */
-public fun createTvheadendSession(): TvheadendSession = SessionRegistry.acquire()
+public fun createTvheadendSession(): TvheadendSession =
+    SessionRegistry.acquire(EpgCoveragePolicy.create())
 
-private object SessionRegistry {
+/**
+ * Returns the process-wide TVHeadend session owner with [epgCoveragePolicy].
+ *
+ * The policy applies when this call creates a fresh owner. If an owner is already active, this call
+ * returns that instance without reconfiguring its connection generation.
+ */
+public fun createTvheadendSession(epgCoveragePolicy: EpgCoveragePolicy): TvheadendSession =
+    SessionRegistry.acquire(epgCoveragePolicy)
+
+internal object SessionRegistry {
     private var active: ConnectionOwner? = null
 
-    internal fun acquire(): TvheadendSession = synchronized(this) {
-        active ?: createOwner().also { active = it }
+    internal fun acquire(epgCoveragePolicy: EpgCoveragePolicy): TvheadendSession = synchronized(this) {
+        active ?: createOwner(epgCoveragePolicy).also { active = it }
     }
 
-    private fun createOwner(): ConnectionOwner {
-        val gateway = HtspProtocolGateway(Dispatchers.IO)
+    internal fun createOwner(
+        epgCoveragePolicy: EpgCoveragePolicy,
+        gatewayFactory: (EpgCoveragePolicy) -> ProtocolGateway = { policy ->
+            HtspProtocolGateway(Dispatchers.IO, policy)
+        },
+        childrenFactory: (
+            ProtocolGateway,
+            SessionMetadata,
+            EpgWorkerSettings,
+        ) -> SessionChildren = { gateway, metadata, settings ->
+            PlaybackSessionChildren(
+                gateway = gateway,
+                metadata = metadata,
+                dispatcher = Dispatchers.Default,
+                clock = Clock.System,
+                epgSettings = settings,
+            )
+        },
+    ): ConnectionOwner {
+        val epgSettings = EpgWorkerSettings(coveragePolicy = epgCoveragePolicy)
+        val gateway = gatewayFactory(epgCoveragePolicy)
         lateinit var owner: ConnectionOwner
         lateinit var metadata: PhaseOneSessionMetadata
         val onDvrAccessProof: suspend (GatewayGeneration, Boolean) -> Unit = { generation, allowed ->
@@ -113,6 +147,7 @@ private object SessionRegistry {
             },
         )
         metadata = PhaseOneSessionMetadata(
+            epgCoveragePolicy = epgCoveragePolicy,
             mutationCommands = dvrMutations,
             searchCommands = EpgSearchCommands { generation, request ->
                 gateway.searchEpg(generation, request)
@@ -124,12 +159,7 @@ private object SessionRegistry {
         owner = ConnectionOwner(
             gateway = gateway,
             metadata = metadata,
-            children = PlaybackSessionChildren(
-                gateway = gateway,
-                metadata = metadata,
-                dispatcher = Dispatchers.Default,
-                clock = Clock.System,
-            ),
+            children = childrenFactory(gateway, metadata, epgSettings),
             dvrMutations = dvrMutations,
             dvrProgress = dvrProgress,
             defaultDispatcher = Dispatchers.Default,

@@ -215,6 +215,7 @@ internal class ModuleBoundaryTest {
             "EpgEpisode",
             "EpgEvent",
             "EpgCoverage",
+            "EpgCoveragePolicy",
             "EpgCoverageAcquisitionResult",
             "CoveredWithData",
             "CoveredEmpty",

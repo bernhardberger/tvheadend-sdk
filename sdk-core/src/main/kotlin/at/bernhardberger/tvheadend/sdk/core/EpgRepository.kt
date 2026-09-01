@@ -4,6 +4,8 @@ import java.util.Collections
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
@@ -234,6 +236,67 @@ public data class EpgSnapshot private constructor(
     }
 }
 
+/**
+ * Bounds explicit EPG acquisition and retained future programme metadata.
+ *
+ * The default remains 24 hours with at most 100,000 retained events. Configured horizons use
+ * whole-second precision and range from 24 hours through seven days, inclusive. Retained-event
+ * limits range from 1 through 250,000, inclusive. When the event limit is full, asynchronous
+ * additions are ignored and a query requiring more capacity is rejected atomically without
+ * advancing its coverage boundary; time-window retention or server deletion frees capacity.
+ */
+public class EpgCoveragePolicy private constructor(
+    public val futureHorizon: Duration,
+    public val maximumRetainedEvents: Int,
+) {
+    init {
+        require(futureHorizon.isFinite()) {
+            "EpgCoveragePolicy futureHorizon must be finite"
+        }
+        require(futureHorizon == futureHorizon.inWholeSeconds.seconds) {
+            "EpgCoveragePolicy futureHorizon must use whole seconds"
+        }
+        require(futureHorizon in EPG_COVERAGE_MINIMUM_HORIZON..EPG_COVERAGE_MAXIMUM_HORIZON) {
+            "EpgCoveragePolicy futureHorizon must be between 24 hours and 7 days"
+        }
+        require(maximumRetainedEvents in 1..EPG_COVERAGE_MAXIMUM_RETAINED_EVENTS) {
+            "EpgCoveragePolicy maximumRetainedEvents must be between 1 and 250000"
+        }
+    }
+
+    override fun toString(): String =
+        "EpgCoveragePolicy(futureHorizon=$futureHorizon, " +
+            "maximumRetainedEvents=$maximumRetainedEvents)"
+
+    public companion object {
+        /** Creates a bounded policy from a typed Kotlin duration. */
+        public fun create(
+            futureHorizon: Duration = EPG_COVERAGE_MINIMUM_HORIZON,
+        ): EpgCoveragePolicy = EpgCoveragePolicy(
+            futureHorizon,
+            EPG_COVERAGE_DEFAULT_MAXIMUM_RETAINED_EVENTS,
+        )
+
+        /** Creates a bounded policy with an explicit retained-event limit. */
+        public fun create(
+            futureHorizon: Duration,
+            maximumRetainedEvents: Int,
+        ): EpgCoveragePolicy = EpgCoveragePolicy(futureHorizon, maximumRetainedEvents)
+
+        /** Creates a bounded policy for Java callers using whole hours. */
+        @JvmStatic
+        public fun createFromHours(futureHorizonHours: Long): EpgCoveragePolicy =
+            create(futureHorizonHours.hours)
+
+        /** Creates a bounded policy with an explicit retained-event limit for Java callers. */
+        @JvmStatic
+        public fun createFromHours(
+            futureHorizonHours: Long,
+            maximumRetainedEvents: Int,
+        ): EpgCoveragePolicy = create(futureHorizonHours.hours, maximumRetainedEvents)
+    }
+}
+
 /** Freshness and synchronization state of programme-guide metadata. */
 public sealed interface EpgRepositoryState {
     /** No EPG snapshot has been synchronized. */
@@ -277,7 +340,7 @@ public sealed interface EpgCoverageAcquisitionResult {
         override fun toString(): String = "EpgCoverageAcquisitionResult.CoveredEmpty(<redacted>)"
     }
 
-    /** The channel, bounded future window, or server query capability is not eligible. */
+    /** The channel, configured future window, or server query capability is not eligible. */
     public data object Ineligible : EpgCoverageAcquisitionResult
 
     /** The originating observation is no longer current for its owning session. */
@@ -428,9 +491,10 @@ public interface EpgRepository {
      * Acquires settled coverage for one channel through [through].
      *
      * The boundary is floored to the protocol's whole-second precision. An uncovered boundary at
-     * or before the current second, or more than 24 hours ahead, is ineligible. Priority never
-     * bypasses channel cooldown, repeated requests deduplicate, and ordinary catalog work keeps a
-     * fair share of each batch. Cancellation remains owned by the caller.
+     * or before the current second, or beyond the session's configured [EpgCoveragePolicy], is
+     * ineligible. Priority never bypasses channel cooldown, repeated requests deduplicate, and
+     * ordinary catalog work keeps a fair share of each batch. Cancellation remains owned by the
+     * caller.
      */
     public suspend fun acquireCoverage(
         currentSession: CurrentSessionObservation,
@@ -456,3 +520,7 @@ private fun <T> Collection<T>.toEpgImmutableList(): List<T> =
 
 private const val EPG_CONTENT_TYPE_MAX: Long = 0xff
 private const val EPG_SEARCH_DURATION_MAX_SECONDS: Long = 2_147_483_647
+private val EPG_COVERAGE_MINIMUM_HORIZON: Duration = 24.hours
+private val EPG_COVERAGE_MAXIMUM_HORIZON: Duration = 7.days
+private const val EPG_COVERAGE_DEFAULT_MAXIMUM_RETAINED_EVENTS = 100_000
+private const val EPG_COVERAGE_MAXIMUM_RETAINED_EVENTS = 250_000
