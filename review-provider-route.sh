@@ -89,6 +89,7 @@ try:
         {"password": password, "trustDevice": False}, separators=(",", ":")
     ).encode("utf-8")
     opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
         urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar())
     )
     login_request = urllib.request.Request(
@@ -117,8 +118,12 @@ import sys
 FIVE_HOUR_MINIMUM = 15.0
 WEEKLY_MINIMUM = 2.0
 
+def reject_nonstandard_constant(value):
+    raise ValueError(f"non-standard JSON constant: {value}")
+
+
 try:
-    payload = json.load(sys.stdin)
+    payload = json.load(sys.stdin, parse_constant=reject_nonstandard_constant)
 except Exception:
     print("quota response was not valid JSON")
     raise SystemExit(2)
@@ -158,38 +163,14 @@ if weekly <= WEEKLY_MINIMUM:
     print(f"Claude 7d remaining quota is {weekly:g}% (requires >{WEEKLY_MINIMUM:g}%)")
     raise SystemExit(1)
 
-models = usage.get("models")
-if not isinstance(models, dict):
-    print("Claude model quota windows were invalid")
-    raise SystemExit(2)
-opus_found = False
-for model_name, model_usage in models.items():
-    if "opus" not in str(model_name).lower():
-        continue
-    opus_found = True
-    model_windows = model_usage.get("windows") if isinstance(model_usage, dict) else None
-    opus_weekly = remaining(f"Opus-scoped 7d ({model_name})", model_windows.get("7d") if isinstance(model_windows, dict) else None)
-    if opus_weekly <= WEEKLY_MINIMUM:
-        print(f"Opus-scoped 7d remaining quota is {opus_weekly:g}% (requires >{WEEKLY_MINIMUM:g}%)")
-        raise SystemExit(1)
-if not opus_found:
-    print("Opus-scoped 7d quota window was missing")
-    raise SystemExit(2)
-
 print("eligible")
 ' 2>/dev/null
 }
 
 select_eligible_route() {
-  local payload reason rc
-  if ! payload="$(fetch_claude_quota)"; then
-    log_skip "trustworthy Claude quota telemetry is unavailable"
-    printf 'sol\n'
-    return 0
-  fi
-
+  local reason rc
   set +e
-  reason="$(printf '%s' "$payload" | evaluate_quota)"
+  reason="$(fetch_claude_quota | evaluate_quota)"
   rc=$?
   set -e
   if (( rc == 0 )); then
