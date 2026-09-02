@@ -11,6 +11,7 @@ import at.bernhardberger.tvheadend.sdk.core.PlaybackBinding
 import at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability
 import at.bernhardberger.tvheadend.sdk.core.StreamProfileId
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
+import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionDiagnostics
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionIssue
@@ -117,6 +118,7 @@ public class TvheadendPlaybackCoordinator internal constructor(
         LiveTimeshiftState.Unavailable,
     )
     private val mutableSubscriptionIssue = MutableStateFlow<SubscriptionIssue?>(null)
+    private val mutableLiveDiagnostics = MutableStateFlow<LiveSubscriptionDiagnostics?>(null)
 
     /** Current app-safe timeshift state for the active live target. */
     public val timeshiftState: StateFlow<LiveTimeshiftState> = mutableTimeshiftState.asStateFlow()
@@ -124,6 +126,10 @@ public class TvheadendPlaybackCoordinator internal constructor(
     /** Canonical issue reported for the current live target, or null when none is current. */
     public val subscriptionIssue: StateFlow<SubscriptionIssue?> =
         mutableSubscriptionIssue.asStateFlow()
+
+    /** App-safe observations for the current live target, or null when none are available. */
+    public val liveDiagnostics: StateFlow<LiveSubscriptionDiagnostics?> =
+        mutableLiveDiagnostics.asStateFlow()
 
     /** Runs the coordinator until [shutdown] completes or the caller cancels this boundary. */
     public suspend fun run() {
@@ -141,6 +147,7 @@ public class TvheadendPlaybackCoordinator internal constructor(
                 onShutdownClaimed = { lifecycle.set(CoordinatorLifecycle.SHUTTING_DOWN) },
                 publishTimeshiftState = ::publishTimeshiftState,
                 publishSubscriptionIssue = ::publishSubscriptionIssue,
+                publishLiveDiagnostics = ::publishLiveDiagnostics,
                 activateTimeshift = ::activateTimeshift,
                 deactivateTimeshift = ::deactivateTimeshift,
             ).run()
@@ -304,6 +311,13 @@ public class TvheadendPlaybackCoordinator internal constructor(
         if (activeTimeshiftToken.get() === token) mutableSubscriptionIssue.value = issue
     }
 
+    private fun publishLiveDiagnostics(
+        token: PlaybackTargetToken,
+        diagnostics: LiveSubscriptionDiagnostics?,
+    ) {
+        if (activeTimeshiftToken.get() === token) mutableLiveDiagnostics.value = diagnostics
+    }
+
     private fun activateTimeshift(
         token: PlaybackTargetToken,
         bridge: LiveTimeshiftControlBridge,
@@ -316,6 +330,7 @@ public class TvheadendPlaybackCoordinator internal constructor(
         if (activeTimeshiftToken.compareAndSet(token, null)) {
             mutableTimeshiftState.value = LiveTimeshiftState.Unavailable
             mutableSubscriptionIssue.value = null
+            mutableLiveDiagnostics.value = null
         }
     }
 
@@ -439,6 +454,7 @@ private class CoordinatorActor(
     private val onShutdownClaimed: () -> Unit,
     private val publishTimeshiftState: (PlaybackTargetToken, LiveTimeshiftState) -> Unit,
     private val publishSubscriptionIssue: (PlaybackTargetToken, SubscriptionIssue?) -> Unit,
+    private val publishLiveDiagnostics: (PlaybackTargetToken, LiveSubscriptionDiagnostics?) -> Unit,
     private val activateTimeshift: (PlaybackTargetToken, LiveTimeshiftControlBridge) -> Unit,
     private val deactivateTimeshift: (PlaybackTargetToken) -> Unit,
 ) {
@@ -476,6 +492,7 @@ private class CoordinatorActor(
             processing?.rejectAfterShutdown()
             throw failure
         } finally {
+            activeTarget?.token?.retire()
             (activeTarget as? ActorTarget.Live)?.let { target ->
                 target.timeshiftControls.retire()
                 deactivateTimeshift(target.token)
@@ -499,6 +516,7 @@ private class CoordinatorActor(
                 token = token,
                 publish = { state -> publishTimeshiftState(token, state) },
                 publishIssue = { issue -> publishSubscriptionIssue(token, issue) },
+                publishDiagnostics = { diagnostics -> publishLiveDiagnostics(token, diagnostics) },
             )
             val result = player.installLive(
                 ticket = command.ticket,

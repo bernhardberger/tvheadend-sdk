@@ -460,6 +460,128 @@ internal class Media3PlaybackCoordinatorPlayerTest {
     }
 
     @Test
+    fun `failed replacement never reinstalls an owner-retired target`() = runTest {
+        val access = FakeCoordinatorPlaybackAccess()
+        val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator()) { _, _ ->
+            RecordingAdmission.Completed(null)
+        }
+        val liveToken = PlaybackTargetToken()
+        val liveControls = controls(liveToken)
+        val live = async {
+            player.installLive(
+                PlayerOperationTicket(),
+                liveToken,
+                TestCoordinatorLiveTarget(),
+                timeshiftControls = liveControls,
+            )
+        }
+        runCurrent()
+        access.looperQueue.runAll()
+        runCurrent()
+        assertEquals(PlaybackPlayerInstallStatus.STARTED, live.await().status)
+        access.operations.clear()
+        access.prepareAction = {
+            access.prepareAction = null
+            throw IOException("scripted replacement failure")
+        }
+        access.removeListenerAction = {
+            access.removeListenerAction = null
+            liveToken.retire()
+            liveControls.retire()
+        }
+
+        val replacementToken = PlaybackTargetToken()
+        val replacement = async {
+            player.installRecording(
+                PlayerOperationTicket(),
+                replacementToken,
+                TestCoordinatorRecordingTarget(),
+                RecordingPlaybackStart.START_OVER,
+            )
+        }
+        runCurrent()
+        access.looperQueue.runAll()
+        runCurrent()
+
+        val result = replacement.await()
+        assertEquals(PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE, result.status)
+        assertFalse(liveToken.isActive())
+        assertFalse(replacementToken.isActive())
+        assertEquals("none", access.currentSourceKind)
+        assertEquals(
+            listOf(
+                "create-recording",
+                "add-listener",
+                "set-recording",
+                "create-resume",
+                "begin-resume:0",
+                "prepare",
+                "close-resume",
+                "remove-listener",
+                "close-recovery",
+                "remove-listener",
+                "stop",
+                "clear",
+            ),
+            access.operations,
+        )
+    }
+
+    @Test
+    fun `reentrant retirement during source restore skips prepare and clears player`() = runTest {
+        val access = FakeCoordinatorPlaybackAccess()
+        val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator()) { _, _ ->
+            RecordingAdmission.Completed(null)
+        }
+        val liveToken = PlaybackTargetToken()
+        val liveControls = controls(liveToken)
+        val live = async {
+            player.installLive(
+                PlayerOperationTicket(),
+                liveToken,
+                TestCoordinatorLiveTarget(),
+                timeshiftControls = liveControls,
+            )
+        }
+        runCurrent()
+        access.looperQueue.runAll()
+        runCurrent()
+        assertEquals(PlaybackPlayerInstallStatus.STARTED, live.await().status)
+        access.operations.clear()
+        access.prepareAction = {
+            access.prepareAction = null
+            throw IOException("scripted replacement failure")
+        }
+        access.setMediaSourceAction = { sourceKind ->
+            if (sourceKind == "live") {
+                liveToken.retire()
+                liveControls.retire()
+            }
+        }
+
+        val replacementToken = PlaybackTargetToken()
+        val replacement = async {
+            player.installRecording(
+                PlayerOperationTicket(),
+                replacementToken,
+                TestCoordinatorRecordingTarget(),
+                RecordingPlaybackStart.START_OVER,
+            )
+        }
+        runCurrent()
+        access.looperQueue.runAll()
+        runCurrent()
+
+        assertEquals(PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE, replacement.await().status)
+        assertFalse(liveToken.isActive())
+        assertFalse(replacementToken.isActive())
+        assertEquals("none", access.currentSourceKind)
+        assertEquals(1, access.operations.count { it == "prepare" })
+        assertEquals(1, access.operations.count { it == "set-live" })
+        assertTrue(access.operations.takeLast(2) == listOf("stop", "clear"))
+    }
+
+    @Test
     fun `successful replacement cleanup failure retires both targets`() = runTest {
         val access = FakeCoordinatorPlaybackAccess()
         val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator()) { _, _ ->
@@ -674,6 +796,9 @@ private class FakeCoordinatorPlaybackAccess(
     var failNextSetMediaSource = failSetMediaSource
     var failRecoveryClose = false
     var failNextRemoveListener = false
+    var prepareAction: (() -> Unit)? = null
+    var removeListenerAction: (() -> Unit)? = null
+    var setMediaSourceAction: ((String) -> Unit)? = null
 
     override fun requireApplicationLooper() {
         check(looperQueue.isCurrent())
@@ -693,6 +818,7 @@ private class FakeCoordinatorPlaybackAccess(
     override fun removeListener(listener: Player.Listener) {
         requireApplicationLooper()
         operations += "remove-listener"
+        removeListenerAction?.invoke()
         if (failNextRemoveListener) {
             failNextRemoveListener = false
             throw IOException("scripted listener removal failure")
@@ -772,6 +898,7 @@ private class FakeCoordinatorPlaybackAccess(
         requireApplicationLooper()
         sourceKind = (source as FakeCoordinatorMediaSource).kind
         operations += "set-$sourceKind"
+        setMediaSourceAction?.invoke(sourceKind)
         if (failNextSetMediaSource) {
             failNextSetMediaSource = false
             throw IOException("scripted")
@@ -781,6 +908,7 @@ private class FakeCoordinatorPlaybackAccess(
     override fun prepare() {
         requireApplicationLooper()
         operations += "prepare"
+        prepareAction?.invoke()
     }
 
     override fun stop() {

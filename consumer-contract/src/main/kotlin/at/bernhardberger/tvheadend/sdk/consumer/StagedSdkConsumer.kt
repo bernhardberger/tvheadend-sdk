@@ -27,6 +27,7 @@ import at.bernhardberger.tvheadend.sdk.media3.RecordingPlaybackStart
 import at.bernhardberger.tvheadend.sdk.media3.TvheadendPlaybackCoordinator
 import at.bernhardberger.tvheadend.sdk.media3.TimeshiftCommandResult
 import at.bernhardberger.tvheadend.sdk.media3.createTvheadendPlaybackCoordinator
+import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionDiagnostics
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionIssue
 import kotlin.time.Duration
 import kotlin.time.Instant
@@ -130,6 +131,18 @@ public class StagedSdkConsumer(
 
     public val subscriptionIssue: StateFlow<SubscriptionIssue?>
         get() = coordinator.subscriptionIssue
+
+    public val liveDiagnostics: StateFlow<LiveSubscriptionDiagnostics?>
+        get() = coordinator.liveDiagnostics
+
+    public fun currentLiveServiceName(): String? = liveDiagnostics.value?.source?.serviceName
+
+    public fun currentLiveSignalPercent(): Double? =
+        liveDiagnostics.value?.frontend?.relativeSignalPercent
+
+    public fun currentLiveQueuePackets(): Long? = liveDiagnostics.value?.queue?.packetCount
+
+    public fun currentLiveQueueSpan(): Duration? = liveDiagnostics.value?.queue?.mediaSpan
 
     public suspend fun seekTimeshift(offset: Duration): TimeshiftCommandResult =
         coordinator.seekTimeshift(offset)

@@ -242,9 +242,9 @@ internal class Media3PlaybackCoordinatorPlayer(
         val previous = active
         val previousSnapshot = snapshotForReplacement(previous)
             ?: return PlaybackPlayerInstallResult(PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE)
-        val issueReplacement = (previous as? InstalledPlayerTarget.Live)
+        val observationReplacement = (previous as? InstalledPlayerTarget.Live)
             ?.timeshiftControls
-            ?.beginIssueReplacement()
+            ?.beginObservationReplacement()
         val listener = targetListener(token, recording = false)
         val installed = InstalledPlayerTarget.Live(token, listener, source, timeshiftControls)
         active = installed
@@ -258,14 +258,14 @@ internal class Media3PlaybackCoordinatorPlayer(
             access.prepare()
             val retirement = retireReplacedOnLooper(previous, previousSnapshot)
             if (!retirement.playerAvailable) {
-                issueReplacement?.let {
-                    previous.timeshiftControls.commitIssueReplacement(it)
+                observationReplacement?.let {
+                    previous.timeshiftControls.commitObservationReplacement(it)
                 }
                 retireActiveOnLooper()
                 return retirement.failedInstall()
             }
-            issueReplacement?.let {
-                previous.timeshiftControls.commitIssueReplacement(it)
+            observationReplacement?.let {
+                previous.timeshiftControls.commitObservationReplacement(it)
             }
             PlaybackPlayerInstallResult(
                 status = PlaybackPlayerInstallStatus.STARTED,
@@ -273,7 +273,7 @@ internal class Media3PlaybackCoordinatorPlayer(
                 retiredRecording = retirement.retiredRecording,
             )
         } catch (_: Exception) {
-            rollbackReplacementOnLooper(installed, previous, issueReplacement)
+            rollbackReplacementOnLooper(installed, previous, observationReplacement)
         }
     }
 
@@ -321,9 +321,9 @@ internal class Media3PlaybackCoordinatorPlayer(
         val previous = active
         val previousSnapshot = snapshotForReplacement(previous)
             ?: return PlaybackPlayerInstallResult(PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE)
-        val issueReplacement = (previous as? InstalledPlayerTarget.Live)
+        val observationReplacement = (previous as? InstalledPlayerTarget.Live)
             ?.timeshiftControls
-            ?.beginIssueReplacement()
+            ?.beginObservationReplacement()
         val listener = targetListener(token, recording = true)
         val installed = InstalledPlayerTarget.Recording(token, listener, source, finality)
         active = installed
@@ -339,14 +339,14 @@ internal class Media3PlaybackCoordinatorPlayer(
             access.prepare()
             val retirement = retireReplacedOnLooper(previous, previousSnapshot)
             if (!retirement.playerAvailable) {
-                issueReplacement?.let {
-                    previous.timeshiftControls.commitIssueReplacement(it)
+                observationReplacement?.let {
+                    previous.timeshiftControls.commitObservationReplacement(it)
                 }
                 retireActiveOnLooper()
                 return retirement.failedInstall()
             }
-            issueReplacement?.let {
-                previous.timeshiftControls.commitIssueReplacement(it)
+            observationReplacement?.let {
+                previous.timeshiftControls.commitObservationReplacement(it)
             }
             PlaybackPlayerInstallResult(
                 status = PlaybackPlayerInstallStatus.STARTED,
@@ -355,7 +355,7 @@ internal class Media3PlaybackCoordinatorPlayer(
                 installedRecording = accepted,
             )
         } catch (_: Exception) {
-            rollbackReplacementOnLooper(installed, previous, issueReplacement)
+            rollbackReplacementOnLooper(installed, previous, observationReplacement)
         }
     }
 
@@ -442,55 +442,68 @@ internal class Media3PlaybackCoordinatorPlayer(
     private fun rollbackReplacementOnLooper(
         installed: InstalledPlayerTarget,
         previous: InstalledPlayerTarget?,
-        issueReplacement: LiveTimeshiftControlBridge.IssueReplacement?,
+        observationReplacement: LiveTimeshiftControlBridge.ObservationReplacement?,
     ): PlaybackPlayerInstallResult {
         if (active !== installed) {
+            commitObservationReplacement(previous, observationReplacement)
             return PlaybackPlayerInstallResult(PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE)
         }
-        active = previous
+        val restorablePrevious = previous?.takeIf { it.token.isActive() }
+        active = restorablePrevious
         val stagedRetirement = retireInstalledOnLooper(
             installed = installed,
             snapshot = PlaybackPlayerSnapshot(Duration.ZERO, null, Player.STATE_IDLE, failed = true),
-            clearPlayer = previous == null,
+            clearPlayer = restorablePrevious == null,
         )
         if (!stagedRetirement.playerAvailable) {
-            commitIssueReplacement(previous, issueReplacement)
+            commitObservationReplacement(previous, observationReplacement)
             val retirement = retireActiveOnLooper()
             return retirement.failedInstall()
         }
         if (previous == null) {
             return PlaybackPlayerInstallResult(PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE)
         }
+        if (restorablePrevious == null) {
+            commitObservationReplacement(previous, observationReplacement)
+            return stagedRetirement.failedInstall()
+        }
         if (!installed.sourceInstalled) {
-            rollbackIssueReplacement(previous, issueReplacement)
+            rollbackObservationReplacement(restorablePrevious, observationReplacement)
             return PlaybackPlayerInstallResult(PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE)
         }
         return try {
-            access.setMediaSource(previous.source)
-            access.prepare()
-            rollbackIssueReplacement(previous, issueReplacement)
+            val restored = restorablePrevious.token.runIfActive {
+                access.setMediaSource(restorablePrevious.source)
+                if (!restorablePrevious.token.isActive()) return@runIfActive
+                access.prepare()
+            }
+            if (!restored) {
+                commitObservationReplacement(previous, observationReplacement)
+                return retireActiveOnLooper().failedInstall()
+            }
+            rollbackObservationReplacement(restorablePrevious, observationReplacement)
             PlaybackPlayerInstallResult(PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE)
         } catch (_: Exception) {
-            commitIssueReplacement(previous, issueReplacement)
+            commitObservationReplacement(previous, observationReplacement)
             retireActiveOnLooper().failedInstall()
         }
     }
 
-    private fun commitIssueReplacement(
+    private fun commitObservationReplacement(
         previous: InstalledPlayerTarget?,
-        replacement: LiveTimeshiftControlBridge.IssueReplacement?,
+        replacement: LiveTimeshiftControlBridge.ObservationReplacement?,
     ) {
         if (replacement != null) {
-            (previous as InstalledPlayerTarget.Live).timeshiftControls.commitIssueReplacement(replacement)
+            (previous as InstalledPlayerTarget.Live).timeshiftControls.commitObservationReplacement(replacement)
         }
     }
 
-    private fun rollbackIssueReplacement(
+    private fun rollbackObservationReplacement(
         previous: InstalledPlayerTarget,
-        replacement: LiveTimeshiftControlBridge.IssueReplacement?,
+        replacement: LiveTimeshiftControlBridge.ObservationReplacement?,
     ) {
         if (replacement != null) {
-            (previous as InstalledPlayerTarget.Live).timeshiftControls.rollbackIssueReplacement(replacement)
+            (previous as InstalledPlayerTarget.Live).timeshiftControls.rollbackObservationReplacement(replacement)
         }
     }
 

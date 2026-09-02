@@ -345,6 +345,11 @@ internal class ModuleBoundaryTest {
             "SubscriptionSeekResult",
             "SubscriptionOperationFailure",
             "SubscriptionDiagnostics",
+            "LiveSubscriptionSource",
+            "LiveFrontendState",
+            "LiveFrontendDiagnostics",
+            "LiveQueueDiagnostics",
+            "LiveSubscriptionDiagnostics",
             "SubscriptionOpenResult",
             "SubscriptionCloseResult",
             "ActiveSubscription",
@@ -421,7 +426,7 @@ internal class ModuleBoundaryTest {
             "The compatibility credential store must be warning-deprecated without ReplaceWith",
         )
         // The codec classification is intentionally stable for sdk-media3 application callbacks.
-        assertPublicInfrastructure("sdk-playback", expectedPlayback, unannotatedCount = 3)
+        assertPublicInfrastructure("sdk-playback", expectedPlayback, unannotatedCount = 8)
         assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 1)
         assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 14)
 
@@ -579,7 +584,8 @@ internal class ModuleBoundaryTest {
         )
         val actual = declaration.findAll(source).map { match -> match.groupValues[1] }.toSet()
         val annotatedCount = Regex(
-            "@SubscriptionInfrastructureApi(?:\\s+@[^\\n]+)*\\s+public",
+            "^@SubscriptionInfrastructureApi(?:\\s+@[^\\n]+)*\\s+public",
+            RegexOption.MULTILINE,
         )
             .findAll(source)
             .count()

@@ -224,11 +224,18 @@ internal class PlayerLooperExecutor(
 
 internal class PlaybackTargetToken {
     private val active = AtomicBoolean(true)
+    private val ownershipLock = Any()
 
     fun isActive(): Boolean = active.get()
 
     fun retire() {
-        active.set(false)
+        synchronized(ownershipLock) { active.set(false) }
+    }
+
+    fun runIfActive(operation: () -> Unit): Boolean = synchronized(ownershipLock) {
+        if (!active.get()) return@synchronized false
+        operation()
+        active.get()
     }
 }
 

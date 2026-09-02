@@ -302,8 +302,23 @@ lifecycle failures.
 
 `subscriptionIssue` exposes only the current live target's canonical
 `SubscriptionIssue`. Unknown or localized server values map to `UNKNOWN`; raw
-server text is not exposed. The state clears when the target or lifecycle no
-longer owns that issue.
+server text is not exposed. The exact no-input status maps to `NO_INPUT` unless
+a conflicting known canonical error is present. The state clears when the
+target or lifecycle no longer owns that issue.
+
+`liveDiagnostics` conditionally exposes immutable observations for that same
+current live target. Source data contains only safe adapter, mux, network,
+provider, and service display names. Display text is normalized and bounded;
+controls and recognizable UUID, address, locator/userinfo, MAC, authorization,
+and credential-assignment forms are omitted. The SDK does not infer secrets from
+otherwise ordinary human-assigned names. Frontend values use percent, dB, and dBm properties;
+BER remains explicitly raw because the adapter defines no portable denominator.
+Queue data contains packet/byte depth, queued-media `Duration` (also available
+as explicit microseconds for Java), and B/P/I drop counts. Every unavailable
+section or measurement is `null`; recordings never
+imply tuner data. Replacement, stop, termination, disconnect, close, and
+coordinator shutdown clear the state, and stale subscription generations cannot
+publish into a newer target.
 
 ### Recordings
 

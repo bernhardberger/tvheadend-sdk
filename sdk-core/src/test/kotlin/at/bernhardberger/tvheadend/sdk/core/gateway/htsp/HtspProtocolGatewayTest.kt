@@ -39,6 +39,7 @@ import at.bernhardberger.tvheadend.htsp.messages.HtspSubscriptionGraceMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspSubscriptionSkipMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspSubscriptionSpeedMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspSubscriptionStartMessage
+import at.bernhardberger.tvheadend.htsp.messages.HtspSubscriptionSourceInfo
 import at.bernhardberger.tvheadend.htsp.messages.HtspSubscriptionStatusMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspSubscriptionStopMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspSubscriptionStream
@@ -2414,27 +2415,32 @@ internal class HtspProtocolGatewayTest {
     @Test
     fun `subscription issues exhaustively preserve canonical values and redact fallbacks`() = runTest {
         val cases = listOf(
-            null to null,
-            "noFreeAdapter" to SubscriptionIssue.NO_FREE_ADAPTER,
-            "scrambled" to SubscriptionIssue.SCRAMBLED,
-            "badSignal" to SubscriptionIssue.BAD_SIGNAL,
-            "tuningFailed" to SubscriptionIssue.TUNING_FAILED,
-            "subscriptionOverridden" to SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN,
-            "muxNotEnabled" to SubscriptionIssue.MUX_NOT_ENABLED,
-            "invalidTarget" to SubscriptionIssue.INVALID_TARGET,
-            "userAccess" to SubscriptionIssue.USER_ACCESS,
-            "userLimit" to SubscriptionIssue.USER_LIMIT,
-            "weakStream" to SubscriptionIssue.WEAK_STREAM,
-            "noDiskSpace" to SubscriptionIssue.NO_DISK_SPACE,
-            "futureCanonicalValue" to SubscriptionIssue.UNKNOWN,
-            "Localized subscription failure" to SubscriptionIssue.UNKNOWN,
+            Triple(null, null, null),
+            Triple(null, "noFreeAdapter", SubscriptionIssue.NO_FREE_ADAPTER),
+            Triple(null, "scrambled", SubscriptionIssue.SCRAMBLED),
+            Triple(null, "badSignal", SubscriptionIssue.BAD_SIGNAL),
+            Triple(null, "tuningFailed", SubscriptionIssue.TUNING_FAILED),
+            Triple(null, "subscriptionOverridden", SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN),
+            Triple(null, "muxNotEnabled", SubscriptionIssue.MUX_NOT_ENABLED),
+            Triple(null, "invalidTarget", SubscriptionIssue.INVALID_TARGET),
+            Triple(null, "userAccess", SubscriptionIssue.USER_ACCESS),
+            Triple(null, "userLimit", SubscriptionIssue.USER_LIMIT),
+            Triple(null, "weakStream", SubscriptionIssue.WEAK_STREAM),
+            Triple(null, "noDiskSpace", SubscriptionIssue.NO_DISK_SPACE),
+            Triple(null, "futureCanonicalValue", SubscriptionIssue.UNKNOWN),
+            Triple(null, "Localized subscription failure", SubscriptionIssue.UNKNOWN),
+            Triple("No input detected", "badSignal", SubscriptionIssue.NO_INPUT),
+            Triple("No input detected", null, SubscriptionIssue.NO_INPUT),
+            Triple("No input detected", "userAccess", SubscriptionIssue.USER_ACCESS),
+            Triple("No input detected", "futureCanonicalValue", SubscriptionIssue.NO_INPUT),
+            Triple("Localized no-input status", "badSignal", SubscriptionIssue.BAD_SIGNAL),
         )
         val sourceGeneration = HtspConnectionGeneration()
         val fake = FakeHtspConnection().apply {
             subscriptionFlow = flowOf(
-                *cases.map { (raw, _) ->
+                *cases.map { (status, error, _) ->
                     HtspSubscriptionEvent.Status(
-                        HtspSubscriptionStatusMessage(77, null, raw),
+                        HtspSubscriptionStatusMessage(77, status, error),
                     )
                 }.toTypedArray(),
             )
@@ -2447,9 +2453,61 @@ internal class HtspProtocolGatewayTest {
 
         val events = gateway.subscription(generation, SubscriptionId(77)).toList()
 
-        assertEquals(cases.map { it.second }, events.map { (it as SubscriptionEvent.Status).issue })
+        assertEquals(cases.map { it.third }, events.map { (it as SubscriptionEvent.Status).issue })
         assertTrue(events.all { it.toString() == "SubscriptionEvent.Status(<redacted>)" })
         assertFalse(events.toString().contains("Localized subscription failure"))
+        assertFalse(events.toString().contains("No input detected"))
+        gateway.shutdown()
+    }
+
+    @Test
+    fun `frontend status maps only proven values into non exhaustive state`() = runTest {
+        val rawStatuses = listOf(
+            "GOOD",
+            "BAD",
+            "FAINT",
+            "NONE",
+            "UNKNOWN",
+            "Localized frontend state",
+            "",
+        )
+        val sourceGeneration = HtspConnectionGeneration()
+        val fake = FakeHtspConnection().apply {
+            subscriptionFlow = flowOf(
+                *rawStatuses.map { status ->
+                    HtspSubscriptionEvent.Signal(
+                        HtspSignalStatusMessage(77, status, null, null, null, null, null, null),
+                    )
+                }.toTypedArray(),
+            )
+            liveConnectionValue.value = liveConnection(sourceGeneration)
+            connectOutcome = HtspConnectOutcome.Connected(requireNotNull(liveConnectionValue.value))
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+
+        val events = gateway.subscription(generation, SubscriptionId(77)).toList()
+            .map { it as SubscriptionEvent.Signal }
+
+        assertEquals(
+            listOf(
+                Triple(true, true, true),
+                Triple(true, true, false),
+                Triple(true, false, false),
+                Triple(false, false, false),
+                null,
+                null,
+                null,
+            ),
+            events.map { signal ->
+                signal.frontendState?.let { state ->
+                    Triple(state.signalDetected, state.partiallySynchronized, state.locked)
+                }
+            },
+        )
+        assertTrue(events.all(SubscriptionEvent.Signal::frontendStatusReported))
+        assertFalse(events.toString().contains("Localized frontend state"))
         gateway.shutdown()
     }
 
@@ -2516,6 +2574,18 @@ internal class HtspProtocolGatewayTest {
                             rdsUecp = null,
                         ),
                     ),
+                    sourceInfo = HtspSubscriptionSourceInfo(
+                        adapterUuid = "secret adapter uuid",
+                        muxUuid = "secret mux uuid",
+                        networkUuid = "secret network uuid",
+                        adapter = "\u4f8b\u5b50\u3002cn",
+                        mux = "127\uff610\uff610\uff611",
+                        network = "Network display",
+                        networkType = "secret network type",
+                        provider = "Provider display",
+                        service = "Service display",
+                        satellitePosition = "secret orbital position",
+                    ),
                     codecMetadata = HtspBinary(codecBytes),
                     status = "private status",
                     subscriptionError = null,
@@ -2546,7 +2616,7 @@ internal class HtspProtocolGatewayTest {
             HtspSubscriptionEvent.Timeshift(HtspTimeshiftStatusMessage(77, 1, -10, 20, 30, 4)),
             HtspSubscriptionEvent.Queue(HtspQueueStatusMessage(77, 8, 9, -1, 1, 2, 3)),
             HtspSubscriptionEvent.Signal(
-                HtspSignalStatusMessage(77, "private frontend", 1, -2, 3, -4, 5, 6),
+                HtspSignalStatusMessage(77, "GOOD", 1, -2, 3, -4, 5, 6),
             ),
             HtspSubscriptionEvent.Descramble(
                 HtspDescrambleInfoMessage(
@@ -2605,6 +2675,14 @@ internal class HtspProtocolGatewayTest {
         assertEquals(0x1234L, dvbSubtitle?.compositionId)
         assertEquals(0xabcdL, dvbSubtitle?.ancillaryId)
         assertEquals(2, started.codecMetadata?.size)
+        with(requireNotNull(started.source)) {
+            assertTrue(adapterName == null, "Unsafe adapter label was exposed")
+            assertTrue(muxName == null, "Unsafe mux label was exposed")
+            assertEquals("Network display", networkName)
+            assertEquals("Provider display", providerName)
+            assertEquals("Service display", serviceName)
+            assertEquals("LiveSubscriptionSource(<redacted>)", toString())
+        }
         val codecDestination = ByteArray(4) { -1 }
         assertEquals(2, started.streams?.first()?.codecMetadata?.copyInto(codecDestination, 1))
         assertArrayEquals(byteArrayOf(-1, 5, 6, -1), codecDestination)
@@ -2632,7 +2710,23 @@ internal class HtspProtocolGatewayTest {
             (events[4] as SubscriptionEvent.Status).condition,
         )
         assertSame(SubscriptionIssue.UNKNOWN, (events[4] as SubscriptionEvent.Status).issue)
-        assertEquals(true, (events[9] as SubscriptionEvent.Signal).frontendStatusReported)
+        val queue = events[8] as SubscriptionEvent.Queue
+        assertEquals(8L, queue.packetCount)
+        assertEquals(9L, queue.byteCount)
+        assertEquals(-1L, queue.delay)
+        assertEquals(1L, queue.bFrameDropCount)
+        assertEquals(2L, queue.pFrameDropCount)
+        assertEquals(3L, queue.iFrameDropCount)
+        assertFalse(queue.javaClass.methods.any { it.name == "getErrors" })
+        val signal = events[9] as SubscriptionEvent.Signal
+        assertTrue(signal.frontendStatusReported)
+        assertTrue(requireNotNull(signal.frontendState).locked)
+        assertEquals(1L, signal.relativeSnr)
+        assertEquals(-2L, signal.absoluteSnr)
+        assertEquals(3L, signal.relativeSignal)
+        assertEquals(-4L, signal.absoluteSignal)
+        assertEquals(5L, signal.bitErrorRate)
+        assertEquals(6L, signal.uncorrectedBlockCount)
         assertEquals(9L, (events[11] as SubscriptionEvent.Dropped).count)
         assertEquals(
             SubscriptionTermination.GENERATION_LOST,
@@ -2640,6 +2734,7 @@ internal class HtspProtocolGatewayTest {
         )
         assertTrue(events.all { it.toString().contains("<redacted>") })
         assertFalse(events.toString().contains("private", ignoreCase = true))
+        assertFalse(events.toString().contains("secret", ignoreCase = true))
     }
 
     @Test

@@ -284,8 +284,21 @@ status events arrive. Timeshift pause and resume send server speeds `0` and
 `TvheadendPlaybackCoordinator.subscriptionIssue` reports only the current live
 target's canonical TVHeadend issue. Known server codes map to the safe
 `SubscriptionIssue` enum; unknown or localized values become `UNKNOWN`, and raw
-server text is never exposed. The state clears on period retry, target
-replacement, recording playback, stop, and shutdown.
+server text is never exposed. The exact no-input status maps to `NO_INPUT`
+unless a conflicting known canonical error is present. The state clears on
+period retry, target replacement, recording playback, stop, and shutdown.
+
+`TvheadendPlaybackCoordinator.liveDiagnostics` conditionally reports immutable
+source display metadata, frontend state and
+measurements, and server queue depth, media span, and B/P/I drops for that same
+current live target. Relative values are
+percentages, absolute SNR is dB, absolute signal is dBm, BER is explicitly raw,
+and unavailable observations are `null`. Display text is normalized and bounded;
+controls and recognizable UUID, address, locator/userinfo, MAC, authorization,
+and credential-assignment forms are omitted. It does not infer secrets from
+otherwise ordinary human-assigned names. Raw server text and logs are not
+exposed. Recording replacement and every live subscription or
+coordinator termination clear the state; stale generations cannot republish it.
 
 Direct live playback feeds TVHeadend's packet-level `AAC` stream to Media3's
 maintained `AdtsReader`. TVHeadend normalizes AAC-LATM packets to ADTS before

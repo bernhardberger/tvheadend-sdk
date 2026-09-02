@@ -40,6 +40,7 @@ import at.bernhardberger.tvheadend.htsp.messages.HtspSubscriptionGraceMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspSubscriptionSkipMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspSubscriptionSpeedMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspSubscriptionStartMessage
+import at.bernhardberger.tvheadend.htsp.messages.HtspSubscriptionSourceInfo
 import at.bernhardberger.tvheadend.htsp.messages.HtspSubscriptionStatusMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspSubscriptionStopMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspSubscriptionStream
@@ -152,6 +153,8 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.ServerConfiguration
 import at.bernhardberger.tvheadend.sdk.core.gateway.TagId
 import at.bernhardberger.tvheadend.sdk.core.gateway.TimerecRuleId
 import at.bernhardberger.tvheadend.sdk.playback.MAX_RECORDING_READ_BYTES
+import at.bernhardberger.tvheadend.sdk.playback.LiveFrontendState
+import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionSource
 import at.bernhardberger.tvheadend.sdk.playback.MuxFrameType
 import at.bernhardberger.tvheadend.sdk.playback.SkipOutcome
 import at.bernhardberger.tvheadend.sdk.playback.StreamIndex
@@ -1561,6 +1564,7 @@ private fun String?.toDvrSubscriptionError(): DvrSubscriptionError? = when (this
 }
 
 private fun SubscriptionIssue?.toDvrSubscriptionError(): DvrSubscriptionError = when (this) {
+    SubscriptionIssue.NO_INPUT -> DvrSubscriptionError.BAD_SIGNAL
     SubscriptionIssue.NO_FREE_ADAPTER -> DvrSubscriptionError.NO_FREE_ADAPTER
     SubscriptionIssue.SCRAMBLED -> DvrSubscriptionError.SCRAMBLED
     SubscriptionIssue.BAD_SIGNAL -> DvrSubscriptionError.BAD_SIGNAL
@@ -1581,11 +1585,11 @@ private fun HtspSubscriptionEvent.toGatewayEvent(): SubscriptionEvent = when (th
     is HtspSubscriptionEvent.Skipped -> message.toGatewayEvent()
     is HtspSubscriptionEvent.Stopped -> SubscriptionEvent.Stopped(
         condition = subscriptionCondition(message.status, message.subscriptionError),
-        issue = message.subscriptionError.toSubscriptionIssue(),
+        issue = subscriptionIssue(message.status, message.subscriptionError),
     )
     is HtspSubscriptionEvent.Status -> SubscriptionEvent.Status(
         condition = subscriptionCondition(message.status, message.subscriptionError),
-        issue = message.subscriptionError.toSubscriptionIssue(),
+        issue = subscriptionIssue(message.status, message.subscriptionError),
     )
     is HtspSubscriptionEvent.Grace -> SubscriptionEvent.Grace(message.graceTimeoutSeconds)
     is HtspSubscriptionEvent.Speed -> SubscriptionEvent.Speed(message.speed)
@@ -1612,6 +1616,7 @@ private fun HtspSubscriptionEvent.toGatewayEvent(): SubscriptionEvent = when (th
         bitErrorRate = message.bitErrorRate,
         uncorrectedBlockCount = message.uncorrectedBlockCount,
         frontendStatusReported = message.frontendStatus != null,
+        frontendState = message.frontendStatus.toLiveFrontendState(),
     )
     is HtspSubscriptionEvent.Descramble -> message.toGatewayEvent()
     is HtspSubscriptionEvent.Dropped -> SubscriptionEvent.Dropped(count)
@@ -1625,8 +1630,42 @@ private fun HtspSubscriptionStartMessage.toGatewayEvent(): SubscriptionEvent.Sta
         streams = streams?.map(HtspSubscriptionStream::toGatewayStream),
         codecMetadata = codecMetadata?.let(::HtspGatewayBinary),
         condition = subscriptionCondition(status, subscriptionError),
-        issue = subscriptionError.toSubscriptionIssue(),
+        issue = subscriptionIssue(status, subscriptionError),
+        source = sourceInfo?.toGatewaySource(),
     )
+
+private fun HtspSubscriptionSourceInfo.toGatewaySource(): LiveSubscriptionSource? =
+    LiveSubscriptionSource.create(
+        adapterName = adapter,
+        muxName = mux,
+        networkName = network,
+        providerName = provider,
+        serviceName = service,
+    )
+
+private fun String?.toLiveFrontendState(): LiveFrontendState? = when (this) {
+    "GOOD" -> LiveFrontendState.create(
+        signalDetected = true,
+        partiallySynchronized = true,
+        locked = true,
+    )
+    "BAD" -> LiveFrontendState.create(
+        signalDetected = true,
+        partiallySynchronized = true,
+        locked = false,
+    )
+    "FAINT" -> LiveFrontendState.create(
+        signalDetected = true,
+        partiallySynchronized = false,
+        locked = false,
+    )
+    "NONE" -> LiveFrontendState.create(
+        signalDetected = false,
+        partiallySynchronized = false,
+        locked = false,
+    )
+    else -> null
+}
 
 private fun HtspSubscriptionStream.toGatewayStream(): SubscriptionStream = SubscriptionStream(
     index = StreamIndex(streamIndex),
@@ -1720,6 +1759,18 @@ private fun subscriptionCondition(
     else -> SubscriptionCondition.NO_DETAIL
 }
 
+private fun subscriptionIssue(status: String?, error: String?): SubscriptionIssue? {
+    val issue = error.toSubscriptionIssue()
+    return if (
+        status == NO_INPUT_STATUS &&
+        (issue == null || issue == SubscriptionIssue.BAD_SIGNAL || issue == SubscriptionIssue.UNKNOWN)
+    ) {
+        SubscriptionIssue.NO_INPUT
+    } else {
+        issue
+    }
+}
+
 private fun String?.toSubscriptionIssue(): SubscriptionIssue? = when (this) {
     null -> null
     "noFreeAdapter" -> SubscriptionIssue.NO_FREE_ADAPTER
@@ -1737,6 +1788,7 @@ private fun String?.toSubscriptionIssue(): SubscriptionIssue? = when (this) {
 }
 
 private const val RECORDING_FILE_SELECTOR_PREFIX = "dvr/"
+private const val NO_INPUT_STATUS = "No input detected"
 private const val ARTWORK_FILE_SELECTOR_PREFIX = "imagecache/"
 private const val ARTWORK_READ_CHUNK_BYTES = 64 * 1024
 private const val MAX_ARTWORK_BYTES = 16 * 1024 * 1024

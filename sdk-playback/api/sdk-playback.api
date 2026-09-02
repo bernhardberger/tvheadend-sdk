@@ -21,6 +21,76 @@ public abstract interface class at/bernhardberger/tvheadend/sdk/playback/Growing
 	public abstract fun read ([BIILkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
+public final class at/bernhardberger/tvheadend/sdk/playback/LiveFrontendDiagnostics {
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAbsoluteSignalDbm ()Ljava/lang/Double;
+	public final fun getAbsoluteSnrDecibels ()Ljava/lang/Double;
+	public final fun getBitErrorRateRaw ()Ljava/lang/Long;
+	public final fun getRelativeSignalPercent ()Ljava/lang/Double;
+	public final fun getRelativeSnrPercent ()Ljava/lang/Double;
+	public final fun getState ()Lat/bernhardberger/tvheadend/sdk/playback/LiveFrontendState;
+	public final fun getUncorrectedBlockCount ()Ljava/lang/Long;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/LiveFrontendState {
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/playback/LiveFrontendState$Companion;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getLocked ()Z
+	public final fun getPartiallySynchronized ()Z
+	public final fun getSignalDetected ()Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/LiveFrontendState$Companion {
+	public final fun create (ZZZ)Lat/bernhardberger/tvheadend/sdk/playback/LiveFrontendState;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/LiveQueueDiagnostics {
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getByteCount ()J
+	public final fun getDroppedBFrameCount ()J
+	public final fun getDroppedIFrameCount ()J
+	public final fun getDroppedPFrameCount ()J
+	public final fun getMediaSpan-FghU774 ()Lkotlin/time/Duration;
+	public final fun getMediaSpanMicroseconds ()Ljava/lang/Long;
+	public final fun getPacketCount ()J
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/LiveSubscriptionDiagnostics {
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/playback/LiveSubscriptionDiagnostics$Companion;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getFrontend ()Lat/bernhardberger/tvheadend/sdk/playback/LiveFrontendDiagnostics;
+	public final fun getQueue ()Lat/bernhardberger/tvheadend/sdk/playback/LiveQueueDiagnostics;
+	public final fun getSource ()Lat/bernhardberger/tvheadend/sdk/playback/LiveSubscriptionSource;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/LiveSubscriptionDiagnostics$Companion {
+	public final fun update (Lat/bernhardberger/tvheadend/sdk/playback/LiveSubscriptionDiagnostics;Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionEvent;)Lat/bernhardberger/tvheadend/sdk/playback/LiveSubscriptionDiagnostics;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/LiveSubscriptionSource {
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/playback/LiveSubscriptionSource$Companion;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAdapterName ()Ljava/lang/String;
+	public final fun getMuxName ()Ljava/lang/String;
+	public final fun getNetworkName ()Ljava/lang/String;
+	public final fun getProviderName ()Ljava/lang/String;
+	public final fun getServiceName ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/LiveSubscriptionSource$Companion {
+	public final fun create (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/playback/LiveSubscriptionSource;
+}
+
 public final class at/bernhardberger/tvheadend/sdk/playback/MuxFrameType : java/lang/Enum {
 	public static final field B Lat/bernhardberger/tvheadend/sdk/playback/MuxFrameType;
 	public static final field I Lat/bernhardberger/tvheadend/sdk/playback/MuxFrameType;
@@ -233,9 +303,11 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionEvent$Qu
 
 public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionEvent$Signal : at/bernhardberger/tvheadend/sdk/playback/SubscriptionEvent {
 	public fun <init> (Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Z)V
+	public fun <init> (Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;ZLat/bernhardberger/tvheadend/sdk/playback/LiveFrontendState;)V
 	public final fun getAbsoluteSignal ()Ljava/lang/Long;
 	public final fun getAbsoluteSnr ()Ljava/lang/Long;
 	public final fun getBitErrorRate ()Ljava/lang/Long;
+	public final fun getFrontendState ()Lat/bernhardberger/tvheadend/sdk/playback/LiveFrontendState;
 	public final fun getFrontendStatusReported ()Z
 	public final fun getRelativeSignal ()Ljava/lang/Long;
 	public final fun getRelativeSnr ()Ljava/lang/Long;
@@ -261,9 +333,11 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionEvent$Sp
 public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionEvent$Started : at/bernhardberger/tvheadend/sdk/playback/SubscriptionEvent {
 	public fun <init> (Ljava/util/List;Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionBinary;Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionCondition;)V
 	public fun <init> (Ljava/util/List;Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionBinary;Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionCondition;Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;)V
+	public fun <init> (Ljava/util/List;Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionBinary;Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionCondition;Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;Lat/bernhardberger/tvheadend/sdk/playback/LiveSubscriptionSource;)V
 	public final fun getCodecMetadata ()Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionBinary;
 	public final fun getCondition ()Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionCondition;
 	public final fun getIssue ()Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;
+	public final fun getSource ()Lat/bernhardberger/tvheadend/sdk/playback/LiveSubscriptionSource;
 	public final fun getStreams ()Ljava/util/List;
 	public fun toString ()Ljava/lang/String;
 }
@@ -332,6 +406,7 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue : 
 	public static final field MUX_NOT_ENABLED Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;
 	public static final field NO_DISK_SPACE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;
 	public static final field NO_FREE_ADAPTER Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;
+	public static final field NO_INPUT Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;
 	public static final field SCRAMBLED Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;
 	public static final field SUBSCRIPTION_OVERRIDDEN Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;
 	public static final field TUNING_FAILED Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;

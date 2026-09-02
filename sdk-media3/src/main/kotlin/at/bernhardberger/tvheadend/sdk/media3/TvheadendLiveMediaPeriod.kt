@@ -181,41 +181,46 @@ internal class TvheadendLiveMediaPeriod(
     override fun reevaluateBuffer(positionUs: Long): Unit = Unit
 
     override suspend fun accept(event: SubscriptionEvent) {
+        val terminalEvent = event is SubscriptionEvent.Stopped || event is SubscriptionEvent.Terminated
         try {
-            when (event) {
-                is SubscriptionEvent.Packet -> {
-                    val adapter = adapterFor(event.streamIndex) ?: return
-                    check(event.payload.size <= MAX_PACKET_BYTES) { "Media3 packet size limit reached" }
-                    check(allocator.totalBytesAllocated < MAX_ALLOCATED_BYTES) {
-                        "Media3 sample buffer limit reached"
+            try {
+                when (event) {
+                    is SubscriptionEvent.Packet -> {
+                        val adapter = adapterFor(event.streamIndex) ?: return
+                        check(event.payload.size <= MAX_PACKET_BYTES) { "Media3 packet size limit reached" }
+                        check(allocator.totalBytesAllocated < MAX_ALLOCATED_BYTES) {
+                            "Media3 sample buffer limit reached"
+                        }
+                        check(adapter.output.queue.writeIndex - adapter.output.queue.readIndex < MAX_BUFFERED_SAMPLES) {
+                            "Media3 sample buffer limit reached"
+                        }
+                        adapter.adapter.accept(event)
                     }
-                    check(adapter.output.queue.writeIndex - adapter.output.queue.readIndex < MAX_BUFFERED_SAMPLES) {
-                        "Media3 sample buffer limit reached"
+                    is SubscriptionEvent.Skipped,
+                    is SubscriptionEvent.Dropped,
+                    is SubscriptionEvent.Stopped,
+                    is SubscriptionEvent.Terminated,
+                    -> {
+                        currentAdapters().forEach { it.adapter.accept(event) }
+                        if (terminalEvent) {
+                            cleanEndOfStream = true
+                            if (!prepared) failPeriod()
+                        }
                     }
-                    adapter.adapter.accept(event)
+                    is SubscriptionEvent.Started,
+                    is SubscriptionEvent.Status,
+                    is SubscriptionEvent.Grace,
+                    is SubscriptionEvent.Speed,
+                    is SubscriptionEvent.Timeshift,
+                    is SubscriptionEvent.Queue,
+                    is SubscriptionEvent.Signal,
+                    is SubscriptionEvent.Descramble,
+                    -> Unit
                 }
-                is SubscriptionEvent.Skipped,
-                is SubscriptionEvent.Dropped,
-                is SubscriptionEvent.Stopped,
-                is SubscriptionEvent.Terminated,
-                -> {
-                    currentAdapters().forEach { it.adapter.accept(event) }
-                    if (event is SubscriptionEvent.Stopped || event is SubscriptionEvent.Terminated) {
-                        cleanEndOfStream = true
-                        if (!prepared) failPeriod()
-                    }
-                }
-                is SubscriptionEvent.Started,
-                is SubscriptionEvent.Status,
-                is SubscriptionEvent.Grace,
-                is SubscriptionEvent.Speed,
-                is SubscriptionEvent.Timeshift,
-                is SubscriptionEvent.Queue,
-                is SubscriptionEvent.Signal,
-                is SubscriptionEvent.Descramble,
-                -> Unit
+            } finally {
+                if (terminalEvent) timeshiftControls?.accept(event)
             }
-            timeshiftControls?.accept(event)
+            if (!terminalEvent) timeshiftControls?.accept(event)
         } catch (cancellation: CancellationException) {
             failPeriod()
             throw cancellation

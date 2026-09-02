@@ -5,15 +5,19 @@ package at.bernhardberger.tvheadend.sdk.media3
 
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.upstream.DefaultAllocator
+import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionDiagnostics
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTermination
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 internal class TvheadendLiveMediaSourceTest {
@@ -40,6 +44,36 @@ internal class TvheadendLiveMediaSourceTest {
         assertSame(period, target.consumer)
         assertNull(target.options?.streamProfileUuid)
         assertEquals(Duration.ZERO, target.options?.timeshiftPeriod)
+    }
+
+    @Test
+    fun `terminal delivery clears diagnostics when media adapters are not initialized`() = runTest {
+        var publishedDiagnostics: LiveSubscriptionDiagnostics? = null
+        val bridge = LiveTimeshiftControlBridge(
+            token = PlaybackTargetToken(),
+            publish = {},
+            publishIssue = {},
+            publishDiagnostics = { publishedDiagnostics = it },
+        )
+        bridge.newAttachment().apply {
+            bind(FakeTimeshiftSubscription(60.seconds))
+            accept(SubscriptionEvent.Queue(1L, 10L, 100L, 0L, 0L, 0L))
+        }
+        assertEquals(1L, publishedDiagnostics?.queue?.packetCount)
+        val period = createPeriod(
+            createTvheadendLiveMediaSource(
+                target = CapturingLiveTarget(),
+                options = SubscriptionOptions(),
+                timeshiftControls = bridge,
+            ),
+        )
+
+        val failure = runCatching {
+            period.accept(SubscriptionEvent.Terminated(SubscriptionTermination.GENERATION_LOST))
+        }.exceptionOrNull()
+
+        assertTrue(failure is IllegalStateException)
+        assertNull(publishedDiagnostics)
     }
 }
 

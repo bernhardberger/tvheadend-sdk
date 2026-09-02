@@ -3,6 +3,7 @@
 package at.bernhardberger.tvheadend.sdk.media3
 
 import at.bernhardberger.tvheadend.sdk.playback.ActiveSubscription
+import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionDiagnostics
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionIssue
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
@@ -54,76 +55,121 @@ internal class LiveTimeshiftControlBridge(
     private val token: PlaybackTargetToken,
     private val publish: (LiveTimeshiftState) -> Unit,
     private val publishIssue: (SubscriptionIssue?) -> Unit,
+    private val publishDiagnostics: (LiveSubscriptionDiagnostics?) -> Unit = {},
 ) {
     internal constructor(
         token: PlaybackTargetToken,
         publish: (LiveTimeshiftState) -> Unit,
-    ) : this(token, publish, {})
+    ) : this(token, publish, {}, {})
 
     private val lock = Any()
     private var nextAttachmentSequence = 0L
     private var newestBoundSequence = -1L
-    private var newestAttachment: Attachment? = null
+    private var newestTerminalAttachment: Attachment? = null
     private var activeAttachment: Attachment? = null
     private var retired = false
     private var currentState: LiveTimeshiftState = LiveTimeshiftState.Unavailable
     private var currentIssue: SubscriptionIssue? = null
-    private var issueReplacement: IssueReplacement? = null
-    private var pendingRestoredIssue: PendingRestoredIssue? = null
+    private var currentDiagnostics: LiveSubscriptionDiagnostics? = null
+    private var diagnosticsTerminalThroughSequence = -1L
+    private var diagnosticsDetachedThroughSequence = -1L
+    private var diagnosticsReplacedThroughSequence = -1L
+    private var observationReplacement: ObservationReplacement? = null
+    private var pendingRestoredObservations: PendingRestoredObservations? = null
 
     internal fun newAttachment(): Attachment = synchronized(lock) {
         check(nextAttachmentSequence != Long.MAX_VALUE) { "Timeshift attachment ids exhausted" }
-        Attachment(nextAttachmentSequence++).also { newestAttachment = it }
+        Attachment(nextAttachmentSequence++)
     }
 
     internal fun publishCurrent() {
         synchronized(lock) {
             if (!retired && token.isActive()) {
-                publish(currentState)
+                publishStateLocked(currentState)
                 publishIssueLocked(currentIssue)
+                publishDiagnosticsLocked(currentDiagnostics)
             }
         }
     }
 
-    internal fun beginIssueReplacement(): IssueReplacement = synchronized(lock) {
-        check(issueReplacement == null) { "Timeshift issue replacement already active" }
-        IssueReplacement(
+    internal fun beginObservationReplacement(): ObservationReplacement = synchronized(lock) {
+        check(observationReplacement == null) { "Live observation replacement already active" }
+        ObservationReplacement(
             lastAttachmentSequence = nextAttachmentSequence - 1L,
+            state = currentState,
             issue = currentIssue,
-        ).also { issueReplacement = it }
+            diagnostics = currentDiagnostics,
+            diagnosticsTerminalThroughSequence = diagnosticsTerminalThroughSequence,
+            diagnosticsDetachedThroughSequence = diagnosticsDetachedThroughSequence,
+            diagnosticsReplacedThroughSequence = diagnosticsReplacedThroughSequence,
+        ).also { observationReplacement = it }
     }
 
-    internal fun commitIssueReplacement(replacement: IssueReplacement) {
+    internal fun commitObservationReplacement(replacement: ObservationReplacement) {
         synchronized(lock) {
-            check(issueReplacement === replacement) { "Unexpected timeshift issue replacement" }
-            issueReplacement = null
-            pendingRestoredIssue = null
+            if (retired) return
+            check(observationReplacement === replacement) { "Unexpected live observation replacement" }
+            observationReplacement = null
+            pendingRestoredObservations = null
         }
     }
 
-    internal fun rollbackIssueReplacement(replacement: IssueReplacement) {
+    internal fun rollbackObservationReplacement(replacement: ObservationReplacement) {
         synchronized(lock) {
-            check(issueReplacement === replacement) { "Unexpected timeshift issue replacement" }
-            issueReplacement = null
+            if (retired) return
+            check(observationReplacement === replacement) { "Unexpected live observation replacement" }
+            observationReplacement = null
+            diagnosticsDetachedThroughSequence = replacement.diagnosticsDetachedThroughSequence
+            diagnosticsReplacedThroughSequence = replacement.diagnosticsReplacedThroughSequence
             val attachment = activeAttachment
-            val newerTerminal = newestAttachment?.takeIf { newest ->
-                newest.sequence > replacement.lastAttachmentSequence && newest.terminal
+            val replacementTerminal = newestTerminalAttachment?.takeIf {
+                diagnosticsTerminalThroughSequence > replacement.diagnosticsTerminalThroughSequence
             }
-            if (newerTerminal != null) {
-                pendingRestoredIssue = null
-                currentIssue = newerTerminal.latestIssue
-            } else if (attachment != null) {
-                if (!attachment.issueObserved) attachment.latestIssue = replacement.issue
-                pendingRestoredIssue = null
-                currentIssue = attachment.latestIssue
+            if (attachment != null) {
+                pendingRestoredObservations = null
+                currentIssue = if (
+                    replacementTerminal == null ||
+                    (attachment.sequence > replacementTerminal.sequence && attachment.issueObserved)
+                ) {
+                    if (!attachment.issueObserved) attachment.latestIssue = replacement.issue
+                    attachment.latestIssue
+                } else {
+                    replacementTerminal.latestIssue
+                }
+                currentDiagnostics = if (
+                    replacementTerminal == null ||
+                    (attachment.sequence > replacementTerminal.sequence && attachment.diagnosticsObserved)
+                ) {
+                    if (!attachment.diagnosticsObserved) attachment.latestDiagnostics = replacement.diagnostics
+                    updateDiagnosticsLocked()
+                } else {
+                    null
+                }
+                currentState = if (
+                    replacementTerminal == null || attachment.sequence > replacementTerminal.sequence
+                ) {
+                    updateStateLocked()
+                } else {
+                    LiveTimeshiftState.Unavailable
+                }
+            } else if (replacementTerminal != null) {
+                pendingRestoredObservations = null
+                currentState = LiveTimeshiftState.Unavailable
+                currentIssue = replacementTerminal.latestIssue
+                currentDiagnostics = null
             } else {
-                pendingRestoredIssue = PendingRestoredIssue(
+                pendingRestoredObservations = PendingRestoredObservations(
                     afterSequence = replacement.lastAttachmentSequence,
                     issue = replacement.issue,
+                    diagnostics = replacement.diagnostics,
                 )
+                currentState = replacement.state
                 currentIssue = replacement.issue
+                currentDiagnostics = replacement.diagnostics
             }
+            publishStateLocked(currentState)
             publishIssueLocked(currentIssue)
+            publishDiagnosticsLocked(currentDiagnostics)
         }
     }
 
@@ -132,13 +178,15 @@ internal class LiveTimeshiftControlBridge(
             if (retired && currentState === LiveTimeshiftState.Unavailable) return
             retired = true
             activeAttachment = null
-            newestAttachment = null
+            newestTerminalAttachment = null
             currentState = LiveTimeshiftState.Unavailable
             currentIssue = null
-            issueReplacement = null
-            pendingRestoredIssue = null
+            currentDiagnostics = null
+            observationReplacement = null
+            pendingRestoredObservations = null
             publish(LiveTimeshiftState.Unavailable)
             publishIssueLocked(null)
+            publishDiagnosticsLocked(null)
         }
     }
 
@@ -179,6 +227,8 @@ internal class LiveTimeshiftControlBridge(
         private var latestSpeed: Int? = null
         internal var latestIssue: SubscriptionIssue? = null
         internal var issueObserved = false
+        internal var latestDiagnostics: LiveSubscriptionDiagnostics? = null
+        internal var diagnosticsObserved = false
         internal var detached = false
         internal var terminal = false
 
@@ -194,8 +244,13 @@ internal class LiveTimeshiftControlBridge(
                     return
                 }
                 if (activeSubscription.state.value is SubscriptionState.Terminal) {
-                    terminal = true
+                    issueObserved = true
+                    latestIssue = null
+                    val diagnosticsInvalidated = terminalLocked()
                     consumePendingTerminalLocked()
+                    if (activeAttachment !== this && diagnosticsInvalidated) {
+                        publishDiagnosticsLocked(updateDiagnosticsLocked())
+                    }
                     return
                 }
                 check(subscription == null || subscription === activeSubscription) {
@@ -203,24 +258,32 @@ internal class LiveTimeshiftControlBridge(
                 }
                 subscription = activeSubscription
                 grant = activeSubscription.grantedTimeshiftPeriod
-                pendingRestoredIssue?.takeIf { sequence > it.afterSequence }?.let { pending ->
+                pendingRestoredObservations?.takeIf { sequence > it.afterSequence }?.let { pending ->
                     if (!issueObserved) latestIssue = pending.issue
-                    pendingRestoredIssue = null
+                    if (!diagnosticsObserved) latestDiagnostics = pending.diagnostics
+                    pendingRestoredObservations = null
                 }
                 newestBoundSequence = sequence
                 activeAttachment = this
-                publish(updateStateLocked())
+                publishStateLocked(updateStateLocked())
                 publishIssueLocked(updateIssueLocked())
+                publishDiagnosticsLocked(updateDiagnosticsLocked())
             }
         }
 
         internal fun accept(event: SubscriptionEvent) {
             synchronized(lock) {
                 if (retired || detached || terminal || !token.isActive()) return
+                var diagnosticsInvalidated = false
+                if (event.isDiagnosticsObservation()) {
+                    diagnosticsObserved = true
+                    latestDiagnostics = LiveSubscriptionDiagnostics.update(latestDiagnostics, event)
+                }
                 when (event) {
                     is SubscriptionEvent.Started -> {
                         issueObserved = true
                         latestIssue = event.issue
+                        diagnosticsInvalidated = replaceDiagnosticsThroughLocked(sequence - 1L)
                     }
                     is SubscriptionEvent.Status -> {
                         issueObserved = true
@@ -234,20 +297,26 @@ internal class LiveTimeshiftControlBridge(
                     is SubscriptionEvent.Stopped -> {
                         issueObserved = true
                         latestIssue = event.issue
-                        terminalLocked()
+                        diagnosticsInvalidated = terminalLocked()
                         consumePendingTerminalLocked()
                     }
                     is SubscriptionEvent.Terminated -> {
                         issueObserved = true
                         latestIssue = null
-                        terminalLocked()
+                        diagnosticsInvalidated = terminalLocked()
                         consumePendingTerminalLocked()
                     }
+                    is SubscriptionEvent.Queue,
+                    is SubscriptionEvent.Signal,
+                    -> Unit
                     else -> return
                 }
                 if (activeAttachment === this) {
-                    publish(updateStateLocked())
+                    publishStateLocked(updateStateLocked())
                     publishIssueLocked(updateIssueLocked())
+                    publishDiagnosticsLocked(updateDiagnosticsLocked())
+                } else if (diagnosticsInvalidated) {
+                    publishDiagnosticsLocked(updateDiagnosticsLocked())
                 }
             }
         }
@@ -257,10 +326,13 @@ internal class LiveTimeshiftControlBridge(
                 if (subscription !== activeSubscription || terminal) return
                 issueObserved = true
                 latestIssue = null
-                terminalLocked()
+                val diagnosticsInvalidated = terminalLocked()
                 if (activeAttachment === this) {
-                    publish(updateStateLocked())
+                    publishStateLocked(updateStateLocked())
                     publishIssueLocked(updateIssueLocked())
+                    publishDiagnosticsLocked(updateDiagnosticsLocked())
+                } else if (diagnosticsInvalidated) {
+                    publishDiagnosticsLocked(updateDiagnosticsLocked())
                 }
             }
         }
@@ -270,36 +342,60 @@ internal class LiveTimeshiftControlBridge(
                 if (detached) return
                 detached = true
                 subscription = null
+                diagnosticsObserved = true
+                latestDiagnostics = null
+                var diagnosticsInvalidated = detachDiagnosticsThroughLocked(sequence)
                 if (
                     !terminal &&
-                    issueReplacement?.let { sequence > it.lastAttachmentSequence } == true
+                    observationReplacement?.let { sequence > it.lastAttachmentSequence } == true
                 ) {
                     terminal = true
                     issueObserved = true
                     latestIssue = null
+                    diagnosticsObserved = true
+                    latestDiagnostics = null
+                    diagnosticsInvalidated = recordTerminalLocked() || diagnosticsInvalidated
                 }
                 if (activeAttachment === this) {
                     activeAttachment = null
-                    publish(updateStateLocked())
+                    publishStateLocked(updateStateLocked())
                     publishIssueLocked(updateIssueLocked())
-                } else if (pendingRestoredIssue?.let { sequence > it.afterSequence } == true) {
+                    publishDiagnosticsLocked(updateDiagnosticsLocked())
+                } else if (pendingRestoredObservations?.let { sequence > it.afterSequence } == true) {
                     latestIssue = null
+                    latestDiagnostics = null
                     consumePendingTerminalLocked()
+                } else if (diagnosticsInvalidated) {
+                    publishDiagnosticsLocked(updateDiagnosticsLocked())
                 }
             }
         }
 
-        private fun terminalLocked() {
+        private fun terminalLocked(): Boolean {
             terminal = true
             subscription = null
+            diagnosticsObserved = true
+            latestDiagnostics = null
+            return recordTerminalLocked()
+        }
+
+        private fun recordTerminalLocked(): Boolean {
+            if (sequence <= diagnosticsTerminalThroughSequence) return false
+            diagnosticsTerminalThroughSequence = sequence
+            newestTerminalAttachment = this
+            return true
         }
 
         private fun consumePendingTerminalLocked() {
-            val pending = pendingRestoredIssue ?: return
+            val pending = pendingRestoredObservations ?: return
             if (sequence <= pending.afterSequence || activeAttachment === this) return
-            pendingRestoredIssue = null
+            pendingRestoredObservations = null
+            currentState = LiveTimeshiftState.Unavailable
             currentIssue = latestIssue
+            currentDiagnostics = latestDiagnostics
+            publishStateLocked(currentState)
             publishIssueLocked(currentIssue)
+            publishDiagnosticsLocked(currentDiagnostics)
         }
 
         internal fun availableState(): LiveTimeshiftState =
@@ -333,18 +429,62 @@ internal class LiveTimeshiftControlBridge(
         return currentIssue
     }
 
-    private fun publishIssueLocked(issue: SubscriptionIssue?) {
-        if (issueReplacement == null) publishIssue(issue)
+    private fun updateDiagnosticsLocked(): LiveSubscriptionDiagnostics? {
+        val attachment = activeAttachment
+        currentDiagnostics = if (
+            retired ||
+            attachment == null ||
+            attachment.sequence <= maxOf(
+                diagnosticsTerminalThroughSequence,
+                diagnosticsDetachedThroughSequence,
+                diagnosticsReplacedThroughSequence,
+            )
+        ) {
+            null
+        } else {
+            attachment.latestDiagnostics
+        }
+        return currentDiagnostics
     }
 
-    internal class IssueReplacement internal constructor(
+    private fun detachDiagnosticsThroughLocked(sequence: Long): Boolean {
+        if (sequence <= diagnosticsDetachedThroughSequence) return false
+        diagnosticsDetachedThroughSequence = sequence
+        return true
+    }
+
+    private fun replaceDiagnosticsThroughLocked(sequence: Long): Boolean {
+        if (sequence <= diagnosticsReplacedThroughSequence) return false
+        diagnosticsReplacedThroughSequence = sequence
+        return true
+    }
+
+    private fun publishIssueLocked(issue: SubscriptionIssue?) {
+        if (observationReplacement == null) publishIssue(issue)
+    }
+
+    private fun publishStateLocked(state: LiveTimeshiftState) {
+        if (observationReplacement == null) publish(state)
+    }
+
+    private fun publishDiagnosticsLocked(diagnostics: LiveSubscriptionDiagnostics?) {
+        if (observationReplacement == null) publishDiagnostics(diagnostics)
+    }
+
+    internal class ObservationReplacement internal constructor(
         internal val lastAttachmentSequence: Long,
+        internal val state: LiveTimeshiftState,
         internal val issue: SubscriptionIssue?,
+        internal val diagnostics: LiveSubscriptionDiagnostics?,
+        internal val diagnosticsTerminalThroughSequence: Long,
+        internal val diagnosticsDetachedThroughSequence: Long,
+        internal val diagnosticsReplacedThroughSequence: Long,
     )
 
-    private data class PendingRestoredIssue(
+    private data class PendingRestoredObservations(
         val afterSequence: Long,
         val issue: SubscriptionIssue?,
+        val diagnostics: LiveSubscriptionDiagnostics?,
     )
 
     private data class ControlHandle(
@@ -352,6 +492,13 @@ internal class LiveTimeshiftControlBridge(
         val subscription: ActiveSubscription,
     )
 }
+
+private fun SubscriptionEvent.isDiagnosticsObservation(): Boolean =
+    this is SubscriptionEvent.Started ||
+        this is SubscriptionEvent.Queue ||
+        this is SubscriptionEvent.Signal ||
+        this is SubscriptionEvent.Stopped ||
+        this is SubscriptionEvent.Terminated
 
 private fun SubscriptionEvent.Timeshift.observedBufferedDuration(): Duration? {
     val observedStart = start ?: return null

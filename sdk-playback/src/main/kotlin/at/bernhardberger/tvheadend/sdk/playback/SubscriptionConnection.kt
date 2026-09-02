@@ -75,7 +75,15 @@ public sealed interface SubscriptionEvent {
         public val codecMetadata: SubscriptionBinary?,
         public val condition: SubscriptionCondition,
         public val issue: SubscriptionIssue?,
+        public val source: LiveSubscriptionSource?,
     ) : SubscriptionEvent {
+        public constructor(
+            streams: List<SubscriptionStream>?,
+            codecMetadata: SubscriptionBinary?,
+            condition: SubscriptionCondition,
+            issue: SubscriptionIssue?,
+        ) : this(streams, codecMetadata, condition, issue, null)
+
         public constructor(
             streams: List<SubscriptionStream>?,
             codecMetadata: SubscriptionBinary?,
@@ -189,7 +197,27 @@ public sealed interface SubscriptionEvent {
         public val bitErrorRate: Long?,
         public val uncorrectedBlockCount: Long?,
         public val frontendStatusReported: Boolean,
+        public val frontendState: LiveFrontendState?,
     ) : SubscriptionEvent {
+        public constructor(
+            relativeSnr: Long?,
+            absoluteSnr: Long?,
+            relativeSignal: Long?,
+            absoluteSignal: Long?,
+            bitErrorRate: Long?,
+            uncorrectedBlockCount: Long?,
+            frontendStatusReported: Boolean,
+        ) : this(
+            relativeSnr,
+            absoluteSnr,
+            relativeSignal,
+            absoluteSignal,
+            bitErrorRate,
+            uncorrectedBlockCount,
+            frontendStatusReported,
+            null,
+        )
+
         override fun toString(): String = "SubscriptionEvent.Signal(<redacted>)"
     }
 
@@ -259,6 +287,7 @@ public enum class SubscriptionStreamType {
 
 /** Canonical safe issue reported for a live TVHeadend subscription. */
 public enum class SubscriptionIssue {
+    NO_INPUT,
     NO_FREE_ADAPTER,
     SCRAMBLED,
     BAD_SIGNAL,
