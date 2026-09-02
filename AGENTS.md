@@ -89,9 +89,11 @@ automatically. CI (`.github/workflows/ci.yml`) is the authoritative gate.
 ## API and runtime invariants
 
 - Use explicit Kotlin APIs and track every hand-written public declaration in
-  ABI dumps where the pinned toolchain supports them. KGP 2.4.10 does not wire
-  ABI validation through AGP 9.3.1's built-in Kotlin path; keep Android public
-  APIs explicit and re-enable their ABI dumps when that integration is fixed.
+  ABI dumps where the pinned toolchain supports them. With AGP 9.3.1's built-in
+  Kotlin path, KGP 2.4.10's experimental ABI tasks register no Android variant
+  binaries (KT-83410), while binary-compatibility-validator 0.18.1 requires the
+  absent `kotlin-android` plugin. Keep Android public APIs explicit and re-enable
+  their ABI dumps only after maintained tooling supports built-in Kotlin.
 - Every public suspending server round trip returns a typed outcome.
   `CancellationException` always propagates and is never converted to a failure
   value.
