@@ -8,6 +8,10 @@ permission:
   edit: deny
   bash: deny
   task: deny
+  external_directory:
+    "*": deny
+    "/root/.gradle/caches": allow
+    "/root/.gradle/caches/**": allow
   webfetch: allow
   websearch: deny
   todowrite: deny
@@ -28,6 +32,8 @@ smallest relevant local evidence first, then use authoritative upstream sources.
 
 - Read only. Never edit files, run Gradle, install tools, access credentials, or
   delegate another agent. Shell access is denied.
+- OpenCode must reload the SDK project configuration before this cached-
+  dependency access policy is relied upon.
 - Prefer exact tagged source, official documentation, source JARs/AARs, release
   artifacts, and license/provenance files over blogs or search summaries.
 - Do not turn local code exploration or implementation design into external

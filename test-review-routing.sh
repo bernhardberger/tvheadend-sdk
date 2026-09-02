@@ -45,6 +45,31 @@ assert_agent_permissions() {
         "$agent must explicitly deny $permission"
     done
   done
+
+  for agent in sdk-analyze sdk-research; do
+    for permission in edit bash task question memory_list memory_set memory_replace; do
+      assert_contains "^  ${permission}: deny$" \
+        "$REPOSITORY_DIR/.opencode/agents/${agent}.md" \
+        "$agent must retain denied $permission permission"
+    done
+
+    local actual_external_directory_permissions=''
+    local in_external_directory_permissions=false
+    while IFS= read -r line; do
+      if [[ "$line" == '  external_directory:' ]]; then
+        in_external_directory_permissions=true
+        continue
+      fi
+      if [[ "$in_external_directory_permissions" == true ]]; then
+        [[ "$line" == '    '* ]] || break
+        actual_external_directory_permissions+="${line}"$'\n'
+      fi
+    done < "$REPOSITORY_DIR/.opencode/agents/${agent}.md"
+
+    assert_equal $'    "*": deny\n    "/root/.gradle/caches": allow\n    "/root/.gradle/caches/**": allow' \
+      "${actual_external_directory_permissions%$'\n'}" \
+      "$agent external-directory fallback and exact Gradle cache allowlist"
+  done
 }
 
 healthy='{"ok":true,"configured":true,"usage":{"windows":{"5h":{"remainingPercent":16},"7d":{"remainingPercent":3}}}}'

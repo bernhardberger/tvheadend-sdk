@@ -8,6 +8,10 @@ permission:
   edit: deny
   bash: deny
   task: deny
+  external_directory:
+    "*": deny
+    "/root/.gradle/caches": allow
+    "/root/.gradle/caches/**": allow
   webfetch: deny
   websearch: deny
   todowrite: deny
@@ -32,6 +36,8 @@ assessing the local API or ABI consequence of one proposed correction.
 
 - Read only. Never use the shell, edit files, run Gradle, access the web, or
   delegate another agent.
+- OpenCode must reload the SDK project configuration before this cached-
+  dependency access policy is relied upon.
 - Analyze only the bounded question and directly relevant source, tests, and
   documentation supplied by the caller. Do not perform broad repository
   archaeology.
