@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.4.0]
+
+This provisional feature release adds generation-bound EPG search with typed
+requests and outcomes. Applications can constrain searches by channel, tag,
+content type, language, and duration without receiving raw server errors, and
+the captured current-session observation prevents a delayed result from being
+accepted after its connection generation expires.
+
+Applications can also configure the session's future EPG horizon and retained
+event limit through `EpgCoveragePolicy`. Initial synchronization remains
+bounded, while explicit coverage acquisition can extend the retained horizon
+for the admitted generation.
+
+The `sdk-core` ABI changes from `0.3.4` are additive: the policy, search request
+and result types, repository search operation, and policy-taking session factory
+overload are new, while existing declarations remain unchanged. The other JVM
+module ABI dumps are unchanged. Compatibility remains provisional during the
+major-zero line, and local or CI verification does not establish Maven Central
+availability.
+
 ## [0.3.4]
 
 This provisional patch release carries forward the timeshift speed-command fix

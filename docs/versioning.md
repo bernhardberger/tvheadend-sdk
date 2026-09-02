@@ -1,16 +1,16 @@
 # Versioning and compatibility
 
-The source is configured for the provisional `0.3.4` release under these
+The source is configured for the provisional `0.4.0` release under these
 coordinates:
 
-- `at.bernhardberger.tvheadend:sdk-android:0.3.4`
-- `at.bernhardberger.tvheadend:sdk-core:0.3.4`
-- `at.bernhardberger.tvheadend:sdk-media3:0.3.4`
-- `at.bernhardberger.tvheadend:sdk-playback:0.3.4`
-- `at.bernhardberger.tvheadend:sdk-testing:0.3.4`
+- `at.bernhardberger.tvheadend:sdk-android:0.4.0`
+- `at.bernhardberger.tvheadend:sdk-core:0.4.0`
+- `at.bernhardberger.tvheadend:sdk-media3:0.4.0`
+- `at.bernhardberger.tvheadend:sdk-playback:0.4.0`
+- `at.bernhardberger.tvheadend:sdk-testing:0.4.0`
 
 The immutable `0.3.2` release remains available from Maven Central. Source,
-local staging, and CI do not establish that the configured `0.3.4` coordinates
+local staging, and CI do not establish that the configured `0.4.0` coordinates
 are publicly available; check Maven Central before selecting them.
 
 The signed `v0.3.3` tag is retained as development-release evidence after its
