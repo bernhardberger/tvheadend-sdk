@@ -1,0 +1,449 @@
+# Consumer API guide
+
+This guide covers the application-facing API of the independently maintained
+TVHeadend Kotlin SDK. It is not official TVHeadend software. The SDK is GPLv3
+and links the GPLv3 HTSP protocol library.
+
+## Choose artifacts
+
+Use one version for every SDK artifact. Replace `<released-version>` with the
+version reported by the Maven Central badge in the [README](../README.md). The
+version configured in a source checkout or staged under `build/local-maven` can
+be newer than the latest public release.
+
+An Android application that needs connection support and Media3 playback can
+use:
+
+```kotlin
+dependencies {
+    implementation("at.bernhardberger.tvheadend:sdk-android:<released-version>")
+    implementation("at.bernhardberger.tvheadend:sdk-media3:<released-version>")
+    testImplementation("at.bernhardberger.tvheadend:sdk-testing:<released-version>")
+}
+```
+
+The artifacts and their transitive API dependencies are:
+
+| Artifact | Add it for | Transitive SDK API |
+|---|---|---|
+| `sdk-playback` | A pure-JVM, low-level subscription, seek, timeshift, and timestamp integration | None |
+| `sdk-core` | A pure-JVM session with channel, EPG, DVR, and playback-binding APIs | `sdk-playback` |
+| `sdk-android` | Android discovery, connectivity, profile storage, and Coil artwork integration | `sdk-core`, and therefore `sdk-playback` |
+| `sdk-media3` | Android Media3 sources and the playback coordinator | `sdk-core` and `sdk-playback` |
+| `sdk-testing` | JVM consumer fakes, scripted subscription events, and packet fixtures | `sdk-core` and `sdk-playback` |
+
+`sdk-media3` also exposes Media3 ExoPlayer types, and `sdk-android` exposes Coil
+types used by its artwork component. `sdk-android` and `sdk-media3` do not expose
+each other, so add both when both feature sets are needed. A JVM application
+that only needs session, catalog, EPG, and DVR operations can depend on
+`sdk-core` alone. Add `sdk-playback` directly only for a custom low-level
+playback integration that does not use `sdk-core` or `sdk-media3`.
+
+The raw HTSP library is an implementation dependency of `sdk-core`. It remains
+on the runtime graph but is not exposed on the consumer compile classpath. No
+HTSP type is part of the public SDK API. JVM publications target Java 17;
+Android publications require API 24 or newer.
+
+## Own one session
+
+`createTvheadendSession()` returns the process-wide session owner. Repeated
+calls return the same instance until terminal `shutdown()` completes, so an
+application should share it rather than construct feature-specific sessions.
+Exactly one server profile and protocol generation can be active.
+
+`connect(profile)` selects a profile and returns a `SessionCommandResult`. That
+result reports command admission, not connection readiness. Observe the atomic
+`TvheadendSession.observation` flow for the durable lifecycle:
+
+| `SessionState` | Meaning |
+|---|---|
+| `Disconnected` | No connection lifecycle is active. |
+| `Connecting` | The transport is being established. |
+| `Synchronizing` | Initial metadata is loading. Retained same-profile snapshots may still be readable. |
+| `Ready` | The channel, EPG, and DVR snapshots are authoritative for one connection generation. |
+| `Unavailable` | A typed `SessionFailure` describes the safe failure and retry policy. |
+
+`Ready` is published only after the server's authoritative initial metadata
+fence. EPG coverage expansion, DVR configuration loading, and DVR disk-space
+enrichment are supervised generation-owned background work; their independent
+states may still be `Unknown` or `Synchronizing` after the session is ready.
+
+Capture related values from one observation:
+
+```kotlin
+val observed = session.observation.value
+val currentSession = observed.currentSession ?: return
+val channel = observed.channel(channelId) ?: return
+val currentProgramme = observed.eventAt(channel.id, now)
+val nextProgramme = observed.nextEvent(channel.id, now)
+```
+
+`currentSession` is an opaque proof that the lifecycle and primary channel, EPG,
+and DVR snapshots in that publication are current for the owning session and
+generation. It becomes `null` in the same atomic publication that retires the
+generation. A retained observation can still provide stale selectors for
+display or comparison, but it cannot authorize a server round trip or a new
+playback binding.
+
+Pass the captured `currentSession` to operations selected from the same
+observation. If a disconnect, reconnect, or profile switch wins the race, the
+operation returns a typed expiration or connection-change result instead of
+silently rebinding to the replacement generation. Capture the replacement
+observation and its new `currentSession` before retrying. Switching profiles
+performs full teardown and discards the prior repositories before the new sync.
+
+`disconnect()` completes reusable teardown. `shutdown()` is terminal, ordered,
+and idempotent. It affects every holder of the shared session; a later
+`createTvheadendSession()` call creates a fresh owner.
+
+## Read the catalog
+
+`SessionObservation.channelState` is `Empty`, `Synchronizing`, `Current`, or
+`Stale`. The non-empty states carry an immutable `ChannelCatalog` containing
+channels and tags. `Synchronizing.staleCatalog` is optional; `Current.catalog`
+is authoritative for the active generation; `Stale.catalog` belongs to an
+inactive generation.
+
+Use observation selectors when selecting related entities:
+
+| Selector | Result |
+|---|---|
+| `channel(id)` | One channel from the current or retained catalog |
+| `channels(ids)` | Matching channels in catalog order |
+| `event(id)` | One retained EPG event |
+| `eventAt(channelId, instant)` | The event active at the closed-start, open-stop instant |
+| `nextEvent(channelId, instant)` | The linked or deterministically timed next event |
+| `dvrEntry(id)` | One current or retained DVR entry |
+| `dvrEntryForEvent(eventId)` | The unique recording linked to an event |
+| `epgEventForDvrEntry(entryId)` | The unique event linked to a recording |
+
+`Channel.tagIds` and `ChannelTag.channelIds` expose catalog membership. Entity
+lists are immutable and preserve SDK catalog order. Presentation filtering,
+sorting, grouping, and UI policy are not SDK APIs.
+
+## Search and extend EPG coverage
+
+The retained `EpgRepositoryState` follows the same `Empty`, `Synchronizing`,
+`Current`, and `Stale` freshness model as the catalog. An `EpgSnapshot` pairs
+its immutable events with per-channel `EpgCoverage`; read both from one captured
+observation.
+
+Explicit text search is server-backed and generation-bound:
+
+```kotlin
+val request = EpgSearchRequest.create(
+    query = "news",
+    fullText = true,
+    channelId = channel.id,
+)
+
+when (val result = session.epgRepository.search(currentSession, request)) {
+    is EpgSearchResult.Available -> consume(result.events)
+    EpgSearchResult.ObservationExpired -> Unit
+    EpgSearchResult.InvalidQuery -> Unit
+    EpgSearchResult.AccessDenied -> Unit
+    EpgSearchResult.ConnectionLimit -> Unit
+    EpgSearchResult.Timeout -> Unit
+    EpgSearchResult.TransportUnavailable -> Unit
+    EpgSearchResult.ConnectionChanged -> Unit
+    EpgSearchResult.NotSupported -> Unit
+}
+```
+
+Search does not read or mutate retained coverage. `InvalidQuery` also covers an
+unusable server payload and the server's generic rejection of inaccessible
+channel or tag filters. Search durations, when supplied, must be finite,
+non-negative whole seconds; content type is an unsigned eight-bit genre code.
+
+Acquire a bounded future horizon separately:
+
+```kotlin
+when (
+    val result = session.epgRepository.acquireCoverage(
+        currentSession = currentSession,
+        channelId = channel.id,
+        through = requestedBoundary,
+    )
+) {
+    is EpgCoverageAcquisitionResult.CoveredWithData -> consume(result.observation)
+    is EpgCoverageAcquisitionResult.CoveredEmpty -> consume(result.observation)
+    EpgCoverageAcquisitionResult.Ineligible -> Unit
+    EpgCoverageAcquisitionResult.ObservationExpired -> Unit
+}
+```
+
+Covered results carry the exact immutable `SessionObservation` that established
+the answer; use that observation rather than recapturing a potentially newer
+one. `CoveredEmpty` proves the query succeeded without retained programmes.
+`Ineligible` covers an unknown channel, a boundary outside policy, or missing
+server query capability.
+
+The default `EpgCoveragePolicy` keeps a 24-hour future horizon and at most
+100,000 events. A custom policy supplied to `createTvheadendSession(policy)` can
+request 24 hours through 7 days and 1 through 250,000 retained events. The
+policy applies only when that call creates a fresh process-wide session owner.
+
+## Read and mutate DVR state
+
+`SessionObservation.dvrState` carries immutable entries, automatic-recording
+rules, and time-based rules through the `Empty`, `Synchronizing`, `Current`, and
+`Stale` freshness states. DVR configuration and disk-space enrichment are
+separate:
+
+| Observation field | Typed states |
+|---|---|
+| `dvrConfigurationsState` | `Unknown`, `Synchronizing`, `Current`, `Stale`, `Denied` |
+| `dvrDiskSpaceState` | `Unknown`, `Synchronizing`, `Current`, `Stale` |
+| `recordingProgressCapability` | `UNKNOWN`, `SUPPORTED`, `UNSUPPORTED` |
+
+`TvheadendSession.dvrRepository` provides generation-bound commands to
+schedule, update, stop, cancel, or delete entries and to create, update, or
+delete automatic and time-based rules. For example:
+
+```kotlin
+val request = DvrScheduleRequest(
+    schedule = DvrSchedule.Programme(event.id),
+)
+
+when (val result = session.dvrRepository.scheduleEntry(currentSession, request)) {
+    is DvrMutationResult.Confirmed -> select(result.value)
+    is DvrMutationResult.AcceptedButUnconfirmed -> select(result.value)
+    DvrMutationResult.NotReady -> Unit
+    DvrMutationResult.ObservationExpired -> Unit
+    DvrMutationResult.ServerRejected -> Unit
+    DvrMutationResult.AccessDenied -> Unit
+    DvrMutationResult.ConnectionLimit -> Unit
+    DvrMutationResult.Timeout -> Unit
+    DvrMutationResult.TransportUnavailable -> Unit
+    DvrMutationResult.NotSupported -> Unit
+}
+```
+
+`Confirmed` means matching authoritative metadata was published.
+`AcceptedButUnconfirmed` means the server accepted the command but confirmation
+did not arrive before the deadline; later observation data remains
+authoritative. Mutations and progress are admitted only for a ready generation.
+Cancellation remains caller-owned and is not converted into a failure result.
+
+Cutpoints and progress belong to an observation-bound
+`PlaybackBinding.Recording`, not to the mutation repository. `cutpoints()`
+returns `DvrCutpointsResult`, including `Available`, readiness and expiration
+states, safe server failures, and `NotSupported`. Cutpoint actions are metadata;
+the SDK does not impose commercial-skip or scene policy. The Media3 coordinator
+handles supported progress reporting. Custom low-level integrations that opt in
+to `SubscriptionInfrastructureApi` can use `DvrProgressPolicy` and the binding's
+progress API.
+
+## Bind Media3 playback
+
+`sdk-media3` supplies a narrow coordinator over an application-owned
+`ExoPlayer`. Launch its one-shot `run()` boundary in an application-owned
+coroutine, bind a target through the current session observation, and install
+that exact binding:
+
+```kotlin
+val coordinator = createTvheadendPlaybackCoordinator(player)
+val coordinatorJob = applicationScope.launch(start = CoroutineStart.UNDISPATCHED) {
+    coordinator.run()
+}
+
+val observed = session.observation.value
+val currentSession = observed.currentSession ?: return
+val channel = observed.channel(channelId) ?: return
+when (val target = session.bindLivePlayback(currentSession, channel.id)) {
+    is PlaybackBindingResult.Bound -> handlePlaybackTargetResult(
+        coordinator.setLiveTarget(
+            target.binding,
+            LivePlaybackOptions(timeshiftPeriod = 30.seconds),
+        ),
+    )
+    PlaybackBindingResult.ObservationExpired -> Unit
+    PlaybackBindingResult.TargetUnavailable -> Unit
+}
+```
+
+Starting the coroutine with `CoroutineStart.UNDISPATCHED` lets `run()` claim the
+coordinator lifecycle before the first target command can observe it as not yet
+running.
+
+Both live and recording binding return `Bound`, `ObservationExpired`, or
+`TargetUnavailable`. A binding retains the original connection generation and
+target identity. Target replacement retires it; it never follows a colliding
+channel, DVR incarnation, or physical file into another generation.
+
+`setLiveTarget()` and `setRecordingTarget()` return `PlaybackTargetResult`:
+`STARTED`, coordinator lifecycle failures, `NOT_READY`,
+`RECORDING_PROGRESS_UNSUPPORTED`, `TARGET_UNAVAILABLE`, the two typed growing
+recording limitations, or `PLAYER_UNAVAILABLE`. Handle the result before
+assuming Media3 accepted the target.
+
+Discover stream profiles for the same captured generation with
+`session.getStreamProfiles(currentSession)`. `StreamProfilesResult.Available`
+contains the immutable server order. Its other outcomes distinguish not-ready
+or expired observations, safe server failures, transport loss, and unsupported
+discovery. Pass an available opaque `StreamProfileId` through
+`LivePlaybackOptions`; omit it to keep the server default.
+
+### Timeshift
+
+A positive requested timeshift period is only a request. The active server must
+grant a positive period before `timeshiftState` becomes
+`LiveTimeshiftState.Available`. Its buffered duration, position behind live, and
+server-pause fields remain nullable until valid ordered status events arrive.
+
+`seekTimeshift(offset)` seeks by a signed relative duration. `returnToLive()`
+requests the bounded near-live position, not a separate exact-live mode.
+`pauseTimeshift()` and `resumeTimeshift()` control server delivery only; normal
+Media3 play and pause remain application-owned. Every command returns
+`TimeshiftCommandResult`, which distinguishes acceptance or rejection,
+unavailable or pending state, acknowledgement and queue failures, subscription
+end, safe server-operation failures, unsupported behavior, and coordinator
+lifecycle failures.
+
+`subscriptionIssue` exposes only the current live target's canonical
+`SubscriptionIssue`. Unknown or localized server values map to `UNKNOWN`; raw
+server text is not exposed. The state clears when the target or lifecycle no
+longer owns that issue.
+
+### Recordings
+
+Completed recordings remain playable from the beginning when progress support
+is unknown or unsupported. `RecordingPlaybackStart.RESUME` uses a positive
+server position only when `recordingProgressCapability` is `SUPPORTED`; normal
+completed-recording playback otherwise starts over and disables reporting.
+
+Growing playback is deliberately bounded. It requires supported progress, one
+stable `.ts` file, and explicit `RecordingPlaybackStart.START_OVER`. `RESUME`
+returns `GROWING_RECORDING_RESUME_UNSUPPORTED`; active recordings outside that
+path return `GROWING_RECORDING_DEFERRED`. Growing seek is approximate and starts
+only after the maintained MPEG-TS extractor has validated MPEG-2, H.264, or HEVC
+and indexed parsed keyframes. Other MPEG-TS codecs remain forward-only.
+Temporary EOF does not end playback or mark the recording watched.
+
+### Ownership and shutdown
+
+The coordinator may install and retire TVHeadend sources and listeners on the
+player's application looper. It does not construct or release the player and
+does not own a `MediaSession`, service, audio focus, notifications, surfaces,
+autoplay, navigation, UI, or presentation policy.
+
+Shut down in ownership order:
+
+```kotlin
+handlePlaybackShutdownResult(coordinator.shutdown(2.seconds))
+coordinatorJob.join()
+session.shutdown()
+player.release()
+```
+
+The coordinator shutdown timeout must be finite, non-negative, and at most ten
+seconds. It may drain one pending progress report and returns a typed
+`PlaybackShutdownResult`. The application still joins the coordinator, shuts
+down the session, and releases its own player.
+
+Applications using `sdk-playback` directly own their custom media adapter and
+must handle its typed subscription state machine, generation termination, seek,
+and server-operation outcomes. `sdk-media3` is the supported high-level Android
+boundary; the SDK does not provide URI factories or application-level track
+wrappers.
+
+## Add Android integration
+
+### Profiles
+
+`TvheadendServerProfileStore` atomically persists one selected profile for one
+application process. `loadProfile()` returns `Missing`, `Unavailable`, or an
+`Available` result containing an opaque connectable `ServerProfile` plus
+non-secret endpoint fields. It does not expose password fields:
+
+```kotlin
+when (val stored = profileStore.loadProfile()) {
+    ServerProfileReadResult.Missing -> Unit
+    ServerProfileReadResult.Unavailable -> Unit
+    is ServerProfileReadResult.Available -> session.connect(stored.profile)
+}
+```
+
+Use `storeAnonymous`, `storePassword`, and `clearProfile` and handle
+`ServerProfileOperationResult.SUCCESS` or `UNAVAILABLE`. Anonymous profiles do
+not use the Android Keystore. Password profiles are encrypted at rest with
+endpoint-bound associated data.
+
+`loadProfileForEditing()` additionally distinguishes `Anonymous` and
+`Password`. The password result contains immutable plaintext username and
+password strings that cannot be zeroed. Keep it only in private memory while an
+active secure edit surface needs it, then drop every reference. Never serialize
+it, save it in instance state, log it, or use it as diagnostic data. The store
+does not coordinate Android multi-process access.
+
+### Discovery and connectivity
+
+Collect `TvheadendDiscovery(context).state` while LAN discovery is needed. It is
+a cold flow: collection owns Android NSD registration, resolution, and cleanup.
+`TvheadendDiscoveryState.Discovering` carries the current immutable server
+snapshot. `Unavailable` reports only `PERMISSION_DENIED` or `START_FAILED` and
+ends that collection.
+
+`TvheadendConnectivity(context).status` is another cold flow with `UNKNOWN`,
+`AVAILABLE`, and `UNAVAILABLE` states. Running
+`retrySessionWhenAvailable(session)` in an application-owned coroutine
+interrupts the session's retry delay when Android reports a default network;
+it runs until caller cancellation. The session remains the owner of connection
+and retry policy, and profile-change failures remain application decisions.
+
+### Authenticated artwork
+
+Register the SDK's Coil 3 fetcher on an application-owned image loader:
+
+```kotlin
+val imageLoader = ImageLoader.Builder(context)
+    .components {
+        add(createTvheadendArtworkFetcherFactory())
+    }
+    .build()
+
+val observed = session.observation.value
+val currentSession = observed.currentSession ?: return
+val channel = observed.channel(channelId) ?: return
+val artwork = TvheadendArtwork.create(
+    session = session,
+    currentSession = currentSession,
+    source = channel.icon,
+)
+```
+
+`TvheadendArtwork.create` accepts only HTSP `imagecache/` selectors and returns
+`null` for absent, external, malformed, or unsupported values. The opaque model
+binds the authenticated load to the captured session generation. TVHeadend
+requires recorder access for this file API; denied loads fail safely.
+
+The SDK does not derive a Coil cache key from the authenticated selector, so the
+selector does not enter memory- or disk-cache keys. Coil owns decoding and
+closes successful image sources. This component is not a URI factory or a
+generic image cache.
+
+## Test a consumer
+
+Add `sdk-testing` with `testImplementation`. `FakeSessionObservation` publishes
+complete immutable `SessionObservation` values, captures a current-session
+capability for a ready fake observation, and can retire that capability.
+`ScriptedSubscriptionConnection` provides deterministic low-level subscription
+calls and events for integrations that opt into the playback infrastructure
+API. Packet fixtures support media adapter tests.
+
+These are focused SDK-boundary building blocks, not a UI or application
+architecture framework. Applications remain responsible for faking their own
+SDK-facing abstraction where that is the appropriate test boundary.
+
+## Typed limits and privacy
+
+Public suspending server round trips return typed outcomes. Handle the complete
+sealed result or enum for the operation being called rather than parsing text or
+retrying every failure. Caller cancellation always propagates as
+`CancellationException`.
+
+SDK diagnostics, result rendering, and `toString()` implementations redact
+credentials, endpoints, paths, hostnames, usernames, raw server errors, and
+subscription IDs. Treat model fields such as profile-edit credentials and DVR
+paths as sensitive application data: do not place them in logs, diagnostics,
+cache keys, or error messages.

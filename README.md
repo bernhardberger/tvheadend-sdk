@@ -21,18 +21,22 @@ The SDK is split into five libraries:
 The source is configured for release `0.3.4`. The normal build never publishes.
 `./gradlew clean build check stageLocalPublication` verifies the repository and
 stages all five modules under `build/local-maven`; the Maven Central badge, not
-local source or staging, reports public availability.
+local source or staging, reports the latest publicly available version.
 
 Applications can select only the modules they need. For example:
 
 ```kotlin
 dependencies {
-    implementation("at.bernhardberger.tvheadend:sdk-media3:0.3.4")
+    implementation("at.bernhardberger.tvheadend:sdk-media3:<released-version>")
 }
 ```
 
-See [versioning](docs/versioning.md) for the provisional 0.x compatibility
-policy and [releasing](docs/releasing.md) for the publication trust boundary.
+Replace `<released-version>` with the version reported by the Maven Central
+badge. A checkout's configured version can be newer than its public artifacts.
+See the [consumer API guide](docs/consumer-guide.md) for module selection and
+end-to-end usage, [versioning](docs/versioning.md) for the provisional 0.x
+compatibility policy, and [releasing](docs/releasing.md) for the publication
+trust boundary.
 
 ## Server profile storage
 
@@ -83,7 +87,9 @@ returned ID through `LivePlaybackOptions` to select that server profile for one
 live target:
 
 ```kotlin
-val currentSession = requireNotNull(session.observation.value.currentSession)
+val observed = session.observation.value
+val currentSession = requireNotNull(observed.currentSession)
+val channel = requireNotNull(observed.channel(channelId))
 val selected = when (val result = session.getStreamProfiles(currentSession)) {
     is StreamProfilesResult.Available -> result.profiles.firstOrNull()
     else -> null
@@ -91,11 +97,13 @@ val selected = when (val result = session.getStreamProfiles(currentSession)) {
 
 if (selected != null) {
     when (val target = session.bindLivePlayback(currentSession, channel.id)) {
-        is PlaybackBindingResult.Bound -> coordinator.setLiveTarget(
-            target.binding,
-            LivePlaybackOptions(
-                streamProfileId = selected.id,
-                timeshiftPeriod = 30.minutes,
+        is PlaybackBindingResult.Bound -> handlePlaybackTargetResult(
+            coordinator.setLiveTarget(
+                target.binding,
+                LivePlaybackOptions(
+                    streamProfileId = selected.id,
+                    timeshiftPeriod = 30.minutes,
+                ),
             ),
         )
         PlaybackBindingResult.ObservationExpired,
@@ -120,7 +128,7 @@ flows:
 
 ```kotlin
 val observed = session.observation.value
-val channel = observed.channel(channelId)
+val channel = requireNotNull(observed.channel(channelId))
 val current = observed.eventAt(channelId, now)
 val next = observed.nextEvent(channelId, now)
 ```
@@ -177,7 +185,9 @@ val imageLoader = ImageLoader.Builder(context)
     }
     .build()
 
-val currentSession = requireNotNull(session.observation.value.currentSession)
+val observed = session.observation.value
+val currentSession = requireNotNull(observed.currentSession)
+val channel = requireNotNull(observed.channel(channelId))
 val artwork = TvheadendArtwork.create(session, currentSession, channel.icon)
 ```
 
@@ -219,35 +229,51 @@ focus, notification, surface, autoplay, navigation, or presentation policy.
 
 ```kotlin
 val coordinator = createTvheadendPlaybackCoordinator(player)
-val owner = applicationScope.launch { coordinator.run() }
-val currentSession = requireNotNull(session.observation.value.currentSession)
+val owner = applicationScope.launch(start = CoroutineStart.UNDISPATCHED) {
+    coordinator.run()
+}
+val observed = session.observation.value
+val currentSession = requireNotNull(observed.currentSession)
+val channel = requireNotNull(observed.channel(channelId))
+val completedRecording = requireNotNull(observed.dvrEntry(completedRecordingId))
+val activeRecording = requireNotNull(observed.dvrEntry(activeRecordingId))
 
 val liveTarget = session.bindLivePlayback(currentSession, channel.id)
 if (liveTarget is PlaybackBindingResult.Bound) {
-    coordinator.setLiveTarget(
-        liveTarget.binding,
-        LivePlaybackOptions(timeshiftPeriod = 30.minutes),
+    handlePlaybackTargetResult(
+        coordinator.setLiveTarget(
+            liveTarget.binding,
+            LivePlaybackOptions(timeshiftPeriod = 30.minutes),
+        ),
     )
 }
-coordinator.seekTimeshift((-30).seconds)
-coordinator.returnToLive() // bounded near-live position, not exact live mode
-coordinator.pauseTimeshift() // pauses server delivery only
-coordinator.resumeTimeshift()
+handleTimeshiftCommandResult(coordinator.seekTimeshift((-30).seconds))
+handleTimeshiftCommandResult(coordinator.returnToLive()) // bounded near-live position
+handleTimeshiftCommandResult(coordinator.pauseTimeshift()) // pauses server delivery only
+handleTimeshiftCommandResult(coordinator.resumeTimeshift())
 
-val completedTarget = session.bindRecordingPlayback(currentSession, recording.id)
+val completedTarget = session.bindRecordingPlayback(currentSession, completedRecording.id)
 if (completedTarget is PlaybackBindingResult.Bound) {
-    coordinator.setRecordingTarget(completedTarget.binding, RecordingPlaybackStart.RESUME)
+    handlePlaybackTargetResult(
+        coordinator.setRecordingTarget(completedTarget.binding, RecordingPlaybackStart.RESUME),
+    )
 }
 val growingTarget = session.bindRecordingPlayback(currentSession, activeRecording.id)
 if (growingTarget is PlaybackBindingResult.Bound) {
-    coordinator.setRecordingTarget(growingTarget.binding, RecordingPlaybackStart.START_OVER)
+    handlePlaybackTargetResult(
+        coordinator.setRecordingTarget(growingTarget.binding, RecordingPlaybackStart.START_OVER),
+    )
 }
 
-coordinator.shutdown(2.seconds)
+handlePlaybackShutdownResult(coordinator.shutdown(2.seconds))
 owner.join()
 session.shutdown()
 player.release()
 ```
+
+`CoroutineStart.UNDISPATCHED` lets `run()` claim the coordinator lifecycle before
+the first command can be submitted. Applications should handle every typed
+target, timeshift, and shutdown result rather than assuming the player changed.
 
 `TvheadendPlaybackCoordinator.timeshiftState` reports only the current live
 target's positive server grant and ordered server observations. Buffered
