@@ -139,6 +139,27 @@ assert_equal $'route=sol\nfallback_route=sol\nsol_required=true\nopus_optional=f
   "$("$SELECTOR" status release)" 'release status documents fixed policy'
 
 assert_agent_permissions
+assert_contains '^model: anthropic/claude-opus-5$' \
+  "$REPOSITORY_DIR/.opencode/agents/sdk-review-opus.md" \
+  'bounded Opus reviewer model route'
+assert_contains '^variant: medium$' \
+  "$REPOSITORY_DIR/.opencode/agents/sdk-review-opus.md" \
+  'bounded Opus reviewer effort'
+assert_absent '^(temperature|top_p|top_k):' \
+  "$REPOSITORY_DIR/.opencode/agents/sdk-review-opus.md" \
+  'Opus reviewer must omit unsupported sampling controls'
+assert_contains '^<tone_preference>$' \
+  "$REPOSITORY_DIR/.opencode/agents/sdk-review-opus.md" \
+  'Opus reviewer response-length calibration'
+assert_contains 'Treat the supplied commit identity, ancestry, frozen state, and gate status as' \
+  "$REPOSITORY_DIR/.opencode/agents/sdk-review-opus.md" \
+  'Opus reviewer treats inaccessible Git and gate state as caller evidence'
+assert_contains '  or generic review policy. It supplies only variable scope and evidence.' \
+  "$REPOSITORY_DIR/.opencode/agents/sdk-review-opus.md" \
+  'Opus reviewer owns its verdict and policy contract'
+assert_contains '^- Run one broad frozen review round\. After material corrections, run at most one$' \
+  "$REPOSITORY_DIR/AGENTS.md" \
+  'repository limits repeated broad review rounds'
 assert_absent '^[[:space:]]*(source|\.)[[:space:]]' "$SELECTOR" \
   'selector must not source credential files'
 assert_absent 'set[[:space:]]+-a|mktemp|FileCookieJar|MozillaCookieJar|LWPCookieJar|curl[[:space:]]' "$SELECTOR" \

@@ -41,13 +41,22 @@ notices, and do not describe this project as official TVHeadend software.
   lower-stakes packages are Sol-only. For a critical or complex package, run
   `./review-provider-route.sh select eligible` immediately before review; when
   it prints `opus`, launch exactly one `sdk-review-opus` alongside the mandatory
-  Sol review with substantively identical scope and evidence.
+  Sol review with substantively identical scope and evidence. The bounded Opus
+  reviewer is fixed at medium effort; do not raise it to match the primary.
 - Execute the review selector; never source it or its credential source into the
   primary shell. Missing or untrustworthy quota telemetry selects Sol. A
   skipped, failed, rate-limited, or aborted optional Opus review is non-blocking.
   Independently adjudicate every finding from each completed reviewer.
-- A material edit after review reopens affected gates and frozen review. A
-  reviewer finding is evidence to adjudicate, not by itself a package blocker.
+- Reviewer packets contain only variable scope, actual relevant diff or exact
+  readable changed paths, acceptance criteria, gate evidence and prior finding
+  IDs. They must not redefine a reviewer's role, permissions, generic policy or
+  verdict vocabulary, and must treat Git identity and gate status as
+  caller-provided evidence when the reviewer cannot run commands.
+- Run one broad frozen review round. After material corrections, run at most one
+  closure limited to prior finding IDs, the fix delta and directly affected
+  neighboring logic. Do not rerun a full Opus review unless the Opus-reviewed
+  behavior or scope materially changed. A reviewer finding is evidence to
+  adjudicate, not by itself a package blocker.
 
 ## Build and verify
 
