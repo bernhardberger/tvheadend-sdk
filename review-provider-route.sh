@@ -157,10 +157,10 @@ def remaining(window_name, window):
 five_hour = remaining("5h", windows.get("5h"))
 weekly = remaining("7d", windows.get("7d"))
 if five_hour <= FIVE_HOUR_MINIMUM:
-    print(f"Claude 5h remaining quota is {five_hour:g}% (requires >{FIVE_HOUR_MINIMUM:g}%)")
+    print("Claude 5h quota is below the review eligibility minimum")
     raise SystemExit(1)
 if weekly <= WEEKLY_MINIMUM:
-    print(f"Claude 7d remaining quota is {weekly:g}% (requires >{WEEKLY_MINIMUM:g}%)")
+    print("Claude 7d quota is below the review eligibility minimum")
     raise SystemExit(1)
 
 print("eligible")

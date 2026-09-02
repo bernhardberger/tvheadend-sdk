@@ -22,6 +22,11 @@ route_for() {
   printf '%s' "$payload" | "$SELECTOR" evaluate-fixture 2>/dev/null
 }
 
+diagnostic_for() {
+  local payload="$1"
+  printf '%s' "$payload" | "$SELECTOR" evaluate-fixture 2>&1 >/dev/null
+}
+
 assert_contains() {
   local pattern="$1" file="$2" label="$3"
   grep -Eq "$pattern" "$file" || fail "$label"
@@ -31,6 +36,14 @@ assert_contains() {
 assert_absent() {
   local pattern="$1" file="$2" label="$3"
   if grep -Eq "$pattern" "$file"; then
+    fail "$label"
+  fi
+  TESTS=$((TESTS + 1))
+}
+
+assert_text_absent() {
+  local pattern="$1" text="$2" label="$3"
+  if grep -Eq "$pattern" <<< "$text"; then
     fail "$label"
   fi
   TESTS=$((TESTS + 1))
@@ -96,6 +109,25 @@ assert_equal sol "$(route_for 'not-json')" 'malformed telemetry'
 assert_equal sol "$(route_for "$nonstandard_number")" 'non-standard JSON number'
 assert_equal sol "$(printf '{"ok":tru\0e}' | "$SELECTOR" evaluate-fixture 2>/dev/null)" \
   'malformed telemetry containing NUL'
+
+five_hour_diagnostic="$(diagnostic_for "$at_five_hour_guard")"
+weekly_diagnostic="$(diagnostic_for "$at_weekly_guard")"
+malformed_diagnostic="$(diagnostic_for 'not-json-sensitive-response')"
+unavailable_diagnostic="$(diagnostic_for "$unavailable")"
+assert_equal 'Opus review skipped: Claude 5h quota is below the review eligibility minimum' \
+  "$five_hour_diagnostic" '5h below-threshold diagnostic remains useful'
+assert_equal 'Opus review skipped: Claude 7d quota is below the review eligibility minimum' \
+  "$weekly_diagnostic" '7d below-threshold diagnostic remains useful'
+assert_text_absent '[0-9]+%|requires|remaining' "$five_hour_diagnostic$weekly_diagnostic" \
+  'below-threshold diagnostics must redact percentages and policy thresholds'
+assert_equal 'Opus review skipped: quota response was not valid JSON' \
+  "$malformed_diagnostic" 'malformed telemetry diagnostic remains useful'
+assert_text_absent 'not-json-sensitive-response' "$malformed_diagnostic" \
+  'malformed telemetry diagnostic must redact response content'
+assert_equal 'Opus review skipped: Claude quota telemetry was unavailable' \
+  "$unavailable_diagnostic" 'unavailable telemetry diagnostic remains useful'
+assert_text_absent 'Rate limited|Retrying soon' "$unavailable_diagnostic" \
+  'unavailable telemetry diagnostic must redact authenticated response content'
 assert_equal sol "$(OPENCHAMBER_ENV_FILE=/tmp/tvheadend-sdk-missing-review-route.env \
   REVIEW_ROUTE_TESTING=1 REVIEW_ROUTE_TEST_QUOTA_JSON="$healthy" \
   "$SELECTOR" select eligible 2>/dev/null)" 'legacy fixture environment cannot bypass production fetch'
