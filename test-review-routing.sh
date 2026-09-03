@@ -51,7 +51,7 @@ assert_text_absent() {
 
 assert_agent_permissions() {
   local agent permission
-  for agent in sdk-locator sdk-planner sdk-analyze sdk-research sdk-review-sol sdk-review-opus; do
+  for agent in sdk-locator sdk-planner sdk-analyze sdk-research sdk-review-sol sdk-review-muse sdk-review-opus; do
     for permission in question memory_list memory_set memory_replace; do
       assert_contains "^  ${permission}: deny$" \
         "$REPOSITORY_DIR/.opencode/agents/${agent}.md" \
@@ -145,6 +145,17 @@ assert_contains '^model: anthropic/claude-opus-5$' \
 assert_contains '^variant: medium$' \
   "$REPOSITORY_DIR/.opencode/agents/sdk-review-opus.md" \
   'bounded Opus reviewer effort'
+assert_contains '^model: opencode/muse-spark-1.3-contributor-free$' \
+  "$REPOSITORY_DIR/.opencode/agents/sdk-review-muse.md" \
+  'experimental Muse reviewer model route'
+assert_contains '^variant: xhigh$' \
+  "$REPOSITORY_DIR/.opencode/agents/sdk-review-muse.md" \
+  'experimental Muse reviewer effort'
+for verdict in BLOCKING NON_BLOCKING CLEAN INSUFFICIENT_EVIDENCE; do
+  assert_contains "\`${verdict}\`" \
+    "$REPOSITORY_DIR/.opencode/agents/sdk-review-muse.md" \
+    "Muse reviewer verdict vocabulary includes $verdict"
+done
 assert_absent '^(temperature|top_p|top_k):' \
   "$REPOSITORY_DIR/.opencode/agents/sdk-review-opus.md" \
   'Opus reviewer must omit unsupported sampling controls'

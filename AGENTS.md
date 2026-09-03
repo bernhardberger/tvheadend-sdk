@@ -26,9 +26,9 @@ notices, and do not describe this project as official TVHeadend software.
 ## Package delegation
 
 - Package primaries invoke the repository-local `sdk-locator`, `sdk-planner`,
-  `sdk-analyze`, `sdk-research`, `sdk-review-sol`, and `sdk-review-opus` Task
-  subagents directly. Never ask a coordinator to select or launch them, and
-  never launch a reviewer as an external top-level session.
+  `sdk-analyze`, `sdk-research`, `sdk-review-sol`, `sdk-review-muse`, and
+  `sdk-review-opus` Task subagents directly. Never ask a coordinator to select
+  or launch them, and never launch a reviewer as an external top-level session.
 - Use `sdk-locator` for mechanical retrieval, `sdk-analyze` for a concrete
   post-plan ambiguity or failed invariant, and `sdk-research` only after exact
   local sources are insufficient. `sdk-planner` is an optional bounded second
@@ -37,8 +37,17 @@ notices, and do not describe this project as official TVHeadend software.
   State the bounded question, exact scope, allowed sources, forbidden actions,
   known evidence, acceptance criteria, required output, and stop condition.
   Children must not read orchestration ledgers, handoffs, or `AGENTS.md` files.
-- Run exactly one `sdk-review-sol` on every frozen, tested package. Release and
-  lower-stakes packages are Sol-only. For a critical or complex package, run
+- During the Muse field test, run exactly one `sdk-review-sol` and one fixed
+  Muse Spark 1.3 Contributor Free/xhigh `sdk-review-muse` in parallel on every
+  frozen, tested package with substantively identical packets. Sol remains the
+  mandatory gate; Muse provider failure is non-blocking and does not replace a
+  Sol verdict. Adjudicate every concrete finding from either completed reviewer
+  and record the Muse session, verdict, and disposition in package evidence.
+  Run at most one Muse review alongside each admitted Sol broad or closure round;
+  never start an independent Muse retry or review loop. Apply the same
+  credential-redaction rules used for every external reviewer packet.
+- Release and lower-stakes packages use Sol plus experimental Muse only, without
+  Opus. For a critical or complex package, run
   `./review-provider-route.sh select eligible` immediately before review; when
   it prints `opus`, launch exactly one `sdk-review-opus` alongside the mandatory
   Sol review with substantively identical scope and evidence. The bounded Opus
