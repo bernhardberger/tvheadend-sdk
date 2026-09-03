@@ -171,6 +171,12 @@ assert_contains '  or generic review policy. It supplies only variable scope and
 assert_contains '^- Run one broad frozen review round\. After material corrections, run at most one$' \
   "$REPOSITORY_DIR/AGENTS.md" \
   'repository limits repeated broad review rounds'
+assert_contains '^- The Muse reviewer field test is complete; do not invoke `sdk-review-muse`\.$' \
+  "$REPOSITORY_DIR/AGENTS.md" \
+  'retired Muse field-test route'
+assert_contains '^- Release and lower-stakes packages use Sol only, without Opus\. For a critical$' \
+  "$REPOSITORY_DIR/AGENTS.md" \
+  'lower-stakes Sol-only route'
 assert_absent '^[[:space:]]*(source|\.)[[:space:]]' "$SELECTOR" \
   'selector must not source credential files'
 assert_absent 'set[[:space:]]+-a|mktemp|FileCookieJar|MozillaCookieJar|LWPCookieJar|curl[[:space:]]' "$SELECTOR" \
