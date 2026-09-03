@@ -70,6 +70,140 @@ import org.junit.jupiter.api.Test
 
 internal class TvheadendPlaybackCoordinatorTest {
     @Test
+    fun `public playback outcomes expose stable non-exhaustive classifications`() {
+        val timeshiftCategories = mapOf(
+            TimeshiftCommandResult.ACCEPTED to emptySet(),
+            TimeshiftCommandResult.REJECTED to emptySet(),
+            TimeshiftCommandResult.UNAVAILABLE to setOf(PlaybackOutcomeCategory.TRANSIENT),
+            TimeshiftCommandResult.ALREADY_PENDING to setOf(PlaybackOutcomeCategory.TRANSIENT),
+            TimeshiftCommandResult.NOT_ACKNOWLEDGED to setOf(PlaybackOutcomeCategory.TRANSIENT),
+            TimeshiftCommandResult.ACKNOWLEDGEMENT_TIMEOUT to setOf(
+                PlaybackOutcomeCategory.TERMINAL,
+                PlaybackOutcomeCategory.UNCERTAIN,
+            ),
+            TimeshiftCommandResult.PENDING_QUEUE_OVERFLOW to setOf(
+                PlaybackOutcomeCategory.TERMINAL,
+                PlaybackOutcomeCategory.UNCERTAIN,
+            ),
+            TimeshiftCommandResult.UNCERTAIN_REQUEST_OUTCOME to setOf(
+                PlaybackOutcomeCategory.TERMINAL,
+                PlaybackOutcomeCategory.UNCERTAIN,
+            ),
+            TimeshiftCommandResult.UNRECOGNIZED_ACKNOWLEDGEMENT to setOf(
+                PlaybackOutcomeCategory.TERMINAL,
+                PlaybackOutcomeCategory.UNCERTAIN,
+            ),
+            TimeshiftCommandResult.RESUMED_SEGMENT_UNANCHORABLE to
+                setOf(PlaybackOutcomeCategory.TERMINAL),
+            TimeshiftCommandResult.SUBSCRIPTION_ENDED to setOf(
+                PlaybackOutcomeCategory.TERMINAL,
+                PlaybackOutcomeCategory.UNCERTAIN,
+            ),
+            TimeshiftCommandResult.SERVER_REJECTED to emptySet(),
+            TimeshiftCommandResult.ACCESS_DENIED to
+                setOf(PlaybackOutcomeCategory.CONFIGURATION_OR_ACCESS),
+            TimeshiftCommandResult.CONNECTION_LIMIT to setOf(PlaybackOutcomeCategory.TRANSIENT),
+            TimeshiftCommandResult.TIMEOUT to setOf(
+                PlaybackOutcomeCategory.TRANSIENT,
+                PlaybackOutcomeCategory.UNCERTAIN,
+            ),
+            TimeshiftCommandResult.TRANSPORT_UNAVAILABLE to
+                setOf(PlaybackOutcomeCategory.TRANSIENT),
+            TimeshiftCommandResult.NOT_SUPPORTED to setOf(PlaybackOutcomeCategory.UNSUPPORTED),
+            TimeshiftCommandResult.NOT_RUNNING to setOf(PlaybackOutcomeCategory.TRANSIENT),
+            TimeshiftCommandResult.SHUT_DOWN to setOf(PlaybackOutcomeCategory.TERMINAL),
+        )
+        val timeshiftDispositions = mapOf(
+            TimeshiftCommandResult.ACCEPTED to TimeshiftCommandDisposition.ACCEPTED,
+            TimeshiftCommandResult.REJECTED to TimeshiftCommandDisposition.NOT_ACCEPTED,
+            TimeshiftCommandResult.UNAVAILABLE to TimeshiftCommandDisposition.NOT_ACCEPTED,
+            TimeshiftCommandResult.ALREADY_PENDING to TimeshiftCommandDisposition.NOT_ACCEPTED,
+            TimeshiftCommandResult.NOT_ACKNOWLEDGED to TimeshiftCommandDisposition.NOT_ACCEPTED,
+            TimeshiftCommandResult.ACKNOWLEDGEMENT_TIMEOUT to
+                TimeshiftCommandDisposition.UNCONFIRMED,
+            TimeshiftCommandResult.PENDING_QUEUE_OVERFLOW to
+                TimeshiftCommandDisposition.UNCONFIRMED,
+            TimeshiftCommandResult.UNCERTAIN_REQUEST_OUTCOME to
+                TimeshiftCommandDisposition.UNCONFIRMED,
+            TimeshiftCommandResult.UNRECOGNIZED_ACKNOWLEDGEMENT to
+                TimeshiftCommandDisposition.UNCONFIRMED,
+            TimeshiftCommandResult.RESUMED_SEGMENT_UNANCHORABLE to
+                TimeshiftCommandDisposition.ACCEPTED,
+            TimeshiftCommandResult.SUBSCRIPTION_ENDED to TimeshiftCommandDisposition.UNCONFIRMED,
+            TimeshiftCommandResult.SERVER_REJECTED to TimeshiftCommandDisposition.NOT_ACCEPTED,
+            TimeshiftCommandResult.ACCESS_DENIED to TimeshiftCommandDisposition.NOT_ACCEPTED,
+            TimeshiftCommandResult.CONNECTION_LIMIT to TimeshiftCommandDisposition.NOT_ACCEPTED,
+            TimeshiftCommandResult.TIMEOUT to TimeshiftCommandDisposition.UNCONFIRMED,
+            TimeshiftCommandResult.TRANSPORT_UNAVAILABLE to
+                TimeshiftCommandDisposition.NOT_ACCEPTED,
+            TimeshiftCommandResult.NOT_SUPPORTED to TimeshiftCommandDisposition.NOT_ACCEPTED,
+            TimeshiftCommandResult.NOT_RUNNING to TimeshiftCommandDisposition.NOT_ACCEPTED,
+            TimeshiftCommandResult.SHUT_DOWN to TimeshiftCommandDisposition.NOT_ACCEPTED,
+        )
+        val publicTimeshiftValues = TimeshiftCommandResult::class.java.fields
+            .filter { field -> field.type == TimeshiftCommandResult::class.java }
+            .mapTo(mutableSetOf()) { field -> field.get(null) as TimeshiftCommandResult }
+        assertEquals(publicTimeshiftValues, timeshiftCategories.keys)
+        assertEquals(publicTimeshiftValues, timeshiftDispositions.keys)
+        timeshiftCategories.forEach { (result, categories) ->
+            assertEquals(categories, result.categories)
+            assertEquals(timeshiftDispositions.getValue(result), result.disposition)
+            assertEquals(
+                result.disposition == TimeshiftCommandDisposition.ACCEPTED,
+                result.isAccepted,
+            )
+            assertEquals(PlaybackOutcomeCategory.TRANSIENT in categories, result.isTransient)
+            assertEquals(PlaybackOutcomeCategory.TERMINAL in categories, result.isTerminal)
+            assertEquals(PlaybackOutcomeCategory.UNSUPPORTED in categories, result.isUnsupported)
+            assertEquals(
+                PlaybackOutcomeCategory.CONFIGURATION_OR_ACCESS in categories,
+                result.isConfigurationOrAccessRelated,
+            )
+            assertEquals(PlaybackOutcomeCategory.UNCERTAIN in categories, result.isOutcomeUncertain)
+        }
+        assertEquals("ACKNOWLEDGEMENT_TIMEOUT", TimeshiftCommandResult.ACKNOWLEDGEMENT_TIMEOUT.toString())
+        assertNotEquals(TimeshiftCommandResult.REJECTED, TimeshiftCommandResult.SERVER_REJECTED)
+
+        val targetCategories = mapOf(
+            PlaybackTargetResult.STARTED to emptySet(),
+            PlaybackTargetResult.NOT_RUNNING to setOf(PlaybackOutcomeCategory.TRANSIENT),
+            PlaybackTargetResult.SHUT_DOWN to setOf(PlaybackOutcomeCategory.TERMINAL),
+            PlaybackTargetResult.NOT_READY to setOf(PlaybackOutcomeCategory.TRANSIENT),
+            PlaybackTargetResult.RECORDING_PROGRESS_UNSUPPORTED to
+                setOf(PlaybackOutcomeCategory.UNSUPPORTED),
+            PlaybackTargetResult.TARGET_UNAVAILABLE to emptySet(),
+            PlaybackTargetResult.GROWING_RECORDING_RESUME_UNSUPPORTED to
+                setOf(PlaybackOutcomeCategory.UNSUPPORTED),
+            PlaybackTargetResult.GROWING_RECORDING_DEFERRED to setOf(
+                PlaybackOutcomeCategory.TRANSIENT,
+                PlaybackOutcomeCategory.UNSUPPORTED,
+            ),
+            PlaybackTargetResult.PLAYER_UNAVAILABLE to setOf(PlaybackOutcomeCategory.TRANSIENT),
+        )
+        val publicTargetValues = PlaybackTargetResult::class.java.fields
+            .filter { field -> field.type == PlaybackTargetResult::class.java }
+            .mapTo(mutableSetOf()) { field -> field.get(null) as PlaybackTargetResult }
+        assertEquals(publicTargetValues, targetCategories.keys)
+        targetCategories.forEach { (result, categories) ->
+            assertEquals(categories, result.categories)
+            assertEquals(result === PlaybackTargetResult.STARTED, result.isStarted)
+            assertEquals(PlaybackOutcomeCategory.TRANSIENT in categories, result.isTransient)
+            assertEquals(PlaybackOutcomeCategory.TERMINAL in categories, result.isTerminal)
+            assertEquals(PlaybackOutcomeCategory.UNSUPPORTED in categories, result.isUnsupported)
+            assertEquals(false, result.isConfigurationOrAccessRelated)
+            assertEquals(false, result.isOutcomeUncertain)
+        }
+        assertEquals(
+            "GROWING_RECORDING_RESUME_UNSUPPORTED",
+            PlaybackTargetResult.GROWING_RECORDING_RESUME_UNSUPPORTED.toString(),
+        )
+        assertNotEquals(
+            PlaybackTargetResult.NOT_RUNNING,
+            PlaybackTargetResult.PLAYER_UNAVAILABLE,
+        )
+    }
+
+    @Test
     fun `active TS requires explicit start over and unsupported containers remain deferred`() {
         val lease = MutableGrowingLease()
         val target = TestCoordinatorRecordingTarget(

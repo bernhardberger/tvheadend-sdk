@@ -154,7 +154,33 @@ public class StagedSdkConsumer(
     public suspend fun resumeTimeshift(): TimeshiftCommandResult = coordinator.resumeTimeshift()
 
     public fun isGrowingResumeUnsupported(result: PlaybackTargetResult): Boolean =
-        result == PlaybackTargetResult.GROWING_RECORDING_RESUME_UNSUPPORTED
+        when (result) {
+            PlaybackTargetResult.GROWING_RECORDING_RESUME_UNSUPPORTED -> true
+            else -> false
+        }
+
+    public fun targetStarted(result: PlaybackTargetResult): Boolean = result.isStarted
+
+    public fun targetMayChange(result: PlaybackTargetResult): Boolean = result.isTransient
+
+    public fun targetUnsupported(result: PlaybackTargetResult): Boolean = result.isUnsupported
+
+    public fun timeshiftAccepted(result: TimeshiftCommandResult): Boolean = result.isAccepted
+
+    public fun timeshiftMayChange(result: TimeshiftCommandResult): Boolean = result.isTransient
+
+    public fun timeshiftTerminal(result: TimeshiftCommandResult): Boolean = result.isTerminal
+
+    public fun timeshiftUnsupported(result: TimeshiftCommandResult): Boolean = result.isUnsupported
+
+    public fun timeshiftNeedsConfigurationOrAccess(result: TimeshiftCommandResult): Boolean =
+        result.isConfigurationOrAccessRelated
+
+    public fun timeshiftOutcomeUncertain(result: TimeshiftCommandResult): Boolean =
+        result.isOutcomeUncertain
+
+    public fun issueNeedsConfigurationOrAccess(issue: SubscriptionIssue): Boolean =
+        issue.isConfigurationOrAccessRelated
 
     private suspend fun <T : PlaybackBinding> usePlaybackBinding(
         result: PlaybackBindingResult<T>,

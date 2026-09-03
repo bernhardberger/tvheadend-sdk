@@ -275,7 +275,10 @@ channel, DVR incarnation, or physical file into another generation.
 `STARTED`, coordinator lifecycle failures, `NOT_READY`,
 `RECORDING_PROGRESS_UNSUPPORTED`, `TARGET_UNAVAILABLE`, the two typed growing
 recording limitations, or `PLAYER_UNAVAILABLE`. Handle the result before
-assuming Media3 accepted the target.
+assuming Media3 accepted the target. Exact values are SDK-owned singletons, not
+an exhaustive enum. Use `isStarted`, `disposition`, or the non-exclusive
+`categories` and retain a fallback when matching an exact value. `isTransient`
+means the condition may change; it does not promise that replay is safe.
 
 Discover stream profiles for the same captured generation with
 `session.getStreamProfiles(currentSession)`. `StreamProfilesResult.Available`
@@ -298,13 +301,53 @@ Media3 play and pause remain application-owned. Every command returns
 `TimeshiftCommandResult`, which distinguishes acceptance or rejection,
 unavailable or pending state, acknowledgement and queue failures, subscription
 end, safe server-operation failures, unsupported behavior, and coordinator
-lifecycle failures.
+lifecycle failures. Use `isAccepted`, `isTransient`, `isTerminal`,
+`isUnsupported`, `isConfigurationOrAccessRelated`, and `isOutcomeUncertain`, or
+the corresponding disposition and categories. Exact values are non-exhaustive,
+so exact-value matching must include a fallback. `UNCONFIRMED` means the SDK
+cannot prove whether the server accepted the command; those outcomes are also
+uncertain. Acceptance and categories are independent: for example, an accepted
+seek can still be terminal when its resumed segment cannot be anchored safely.
 
 `subscriptionIssue` exposes only the current live target's canonical
 `SubscriptionIssue`. Unknown or localized server values map to `UNKNOWN`; raw
 server text is not exposed. The exact no-input status maps to `NO_INPUT` unless
 a conflicting known canonical error is present. The state clears when the
-target or lifecycle no longer owns that issue.
+target or lifecycle no longer owns that issue. `SubscriptionIssue` exact values
+are also non-exhaustive. Its stable `category` and
+`isConfigurationOrAccessRelated` predicate support broad handling; retry and
+terminal behavior depend on the surrounding subscription event.
+
+### 0.4.0 app migration inventory
+
+The enum-to-singleton replacement is an intentional provisional 0.x source and
+binary break. Before an SDK release package is admitted, the in-repo Android app
+must migrate these call sites from the previously staged SDK:
+
+- `app/src/main/java/at/bernhardberger/tvhplayer/playback/AppPlaybackRuntime.kt`:
+  keep typed result plumbing and synthesized exact values, but use `isStarted`
+  for broad success checks.
+- `app/src/main/java/at/bernhardberger/tvhplayer/ui/player/VideoPlayerScreen.kt`:
+  replace accepted/start comparisons with `isAccepted`/`isStarted`; add an
+  `else` fallback to `SubscriptionIssue.messageResource()` so future exact
+  issues use the generic playback-failure message.
+- `app/src/main/java/at/bernhardberger/tvhplayer/ui/player/PlayerTimelinePresentationState.kt`:
+  use `isAccepted` for broad seek acceptance.
+- `app/src/test/java/at/bernhardberger/tvhplayer/playback/AppPlaybackRuntimeTest.kt`,
+  `app/src/test/java/at/bernhardberger/tvhplayer/ui/player/LivePlaybackStartPolicyTest.kt`,
+  `app/src/test/java/at/bernhardberger/tvhplayer/ui/player/TimeshiftCommandFeedbackTest.kt`,
+  and `app/src/test/java/at/bernhardberger/tvhplayer/ui/player/PlayerTimelinePresentationStateTest.kt`:
+  retain exact singleton fixtures and assertions, updating broad-behavior
+  assertions to predicates when they are intended to accept future values.
+- `app/src/androidTest/java/at/bernhardberger/tvhplayer/playback/ForegroundPlaybackLifecycleDeviceAcceptanceTest.kt`
+  and `app/src/androidTest/java/at/bernhardberger/tvhplayer/playback/TimeshiftCommandDeviceAcceptanceTest.kt`:
+  use success predicates where the device contract asserts only start or
+  acceptance rather than one exact SDK value.
+
+No app source is changed by this SDK package. The qualified result type and
+named constant references remain source-readable, but enum `when`, `values()`,
+`valueOf()`, `name`, `ordinal`, and compiled enum switches are intentionally not
+preserved.
 
 `liveDiagnostics` conditionally exposes immutable observations for that same
 current live target. Source data contains only safe adapter, mux, network,

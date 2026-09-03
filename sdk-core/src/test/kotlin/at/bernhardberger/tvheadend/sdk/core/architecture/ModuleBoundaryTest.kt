@@ -327,6 +327,7 @@ internal class ModuleBoundaryTest {
             "SubscriptionEvent",
             "SubscriptionStream",
             "SubscriptionStreamType",
+            "SubscriptionIssueCategory",
             "SubscriptionIssue",
             "SubscriptionCondition",
             "MuxFrameType",
@@ -377,11 +378,14 @@ internal class ModuleBoundaryTest {
         )
         val expectedMedia3 = setOf(
             "LiveTimeshiftState",
+            "TimeshiftCommandDisposition",
+            "PlaybackOutcomeCategory",
             "TimeshiftCommandResult",
             "PlaybackShutdownResult",
             "PlaybackRecoveryPolicy",
             "PlaybackRecoveryReason",
             "PlaybackStopResult",
+            "PlaybackTargetDisposition",
             "PlaybackTargetResult",
             "RecordingPlaybackStart",
             "LivePlaybackOptions",
@@ -426,9 +430,9 @@ internal class ModuleBoundaryTest {
             "The compatibility credential store must be warning-deprecated without ReplaceWith",
         )
         // The codec classification is intentionally stable for sdk-media3 application callbacks.
-        assertPublicInfrastructure("sdk-playback", expectedPlayback, unannotatedCount = 8)
+        assertPublicInfrastructure("sdk-playback", expectedPlayback, unannotatedCount = 9)
         assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 1)
-        assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 14)
+        assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 17)
 
         val coordinatorApi = File(
             "../sdk-media3/src/main/kotlin/at/bernhardberger/tvheadend/sdk/media3/" +

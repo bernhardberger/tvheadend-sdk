@@ -274,6 +274,11 @@ player.release()
 `CoroutineStart.UNDISPATCHED` lets `run()` claim the coordinator lifecycle before
 the first command can be submitted. Applications should handle every typed
 target, timeshift, and shutdown result rather than assuming the player changed.
+Target and timeshift outcomes expose stable dispositions, categories, and direct
+predicates; exact SDK-owned values are non-exhaustive so consumers must retain a
+fallback. A timeshift `UNCONFIRMED` disposition means acceptance could not be
+proved, while an accepted command may still carry a terminal category when its
+result cannot be used safely.
 
 `TvheadendPlaybackCoordinator.timeshiftState` reports only the current live
 target's positive server grant and ordered server observations. Buffered
@@ -282,8 +287,8 @@ status events arrive. Timeshift pause and resume send server speeds `0` and
 `100`; ordinary Media3 play/pause remains application-owned.
 
 `TvheadendPlaybackCoordinator.subscriptionIssue` reports only the current live
-target's canonical TVHeadend issue. Known server codes map to the safe
-`SubscriptionIssue` enum; unknown or localized values become `UNKNOWN`, and raw
+target's canonical TVHeadend issue. Known server codes map to safe non-exhaustive
+`SubscriptionIssue` values; unknown or localized values become `UNKNOWN`, and raw
 server text is never exposed. The exact no-input status maps to `NO_INPUT`
 unless a conflicting known canonical error is present. The state clears on
 period retry, target replacement, recording playback, stop, and shutdown.

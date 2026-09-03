@@ -10,6 +10,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionState
+import java.util.Collections
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.microseconds
 
@@ -28,27 +29,191 @@ public sealed interface LiveTimeshiftState {
     ) : LiveTimeshiftState
 }
 
-/** Typed application-safe outcome of one high-level timeshift command. */
-public enum class TimeshiftCommandResult {
+/** Closed disposition of a timeshift command without exhaustively defining its exact outcome. */
+public enum class TimeshiftCommandDisposition {
     ACCEPTED,
-    REJECTED,
-    UNAVAILABLE,
-    ALREADY_PENDING,
-    NOT_ACKNOWLEDGED,
-    ACKNOWLEDGEMENT_TIMEOUT,
-    PENDING_QUEUE_OVERFLOW,
-    UNCERTAIN_REQUEST_OUTCOME,
-    UNRECOGNIZED_ACKNOWLEDGEMENT,
-    RESUMED_SEGMENT_UNANCHORABLE,
-    SUBSCRIPTION_ENDED,
-    SERVER_REJECTED,
-    ACCESS_DENIED,
-    CONNECTION_LIMIT,
-    TIMEOUT,
-    TRANSPORT_UNAVAILABLE,
-    NOT_SUPPORTED,
-    NOT_RUNNING,
-    SHUT_DOWN,
+    NOT_ACCEPTED,
+    UNCONFIRMED,
+}
+
+/** Stable, non-exclusive category shared by high-level playback outcomes. */
+public enum class PlaybackOutcomeCategory {
+    TRANSIENT,
+    TERMINAL,
+    UNSUPPORTED,
+    CONFIGURATION_OR_ACCESS,
+    UNCERTAIN,
+}
+
+/**
+ * Typed application-safe outcome of one high-level timeshift command.
+ *
+ * Exact values are SDK-owned singletons rather than an exhaustive enum. Applications may compare
+ * a known value or use the stable disposition, categories, and predicates, but must retain a
+ * fallback for future exact outcomes. An empty category set means no stable broad classification
+ * is available. A transient result does not promise that replay is safe.
+ */
+public class TimeshiftCommandResult private constructor(
+    private val label: String,
+    public val disposition: TimeshiftCommandDisposition,
+    public val categories: Set<PlaybackOutcomeCategory>,
+) {
+    public val isAccepted: Boolean
+        get() = disposition == TimeshiftCommandDisposition.ACCEPTED
+
+    public val isTransient: Boolean
+        get() = PlaybackOutcomeCategory.TRANSIENT in categories
+
+    public val isTerminal: Boolean
+        get() = PlaybackOutcomeCategory.TERMINAL in categories
+
+    public val isUnsupported: Boolean
+        get() = PlaybackOutcomeCategory.UNSUPPORTED in categories
+
+    public val isConfigurationOrAccessRelated: Boolean
+        get() = PlaybackOutcomeCategory.CONFIGURATION_OR_ACCESS in categories
+
+    public val isOutcomeUncertain: Boolean
+        get() = PlaybackOutcomeCategory.UNCERTAIN in categories
+
+    override fun toString(): String = label
+
+    public companion object {
+        @JvmField
+        public val ACCEPTED: TimeshiftCommandResult = accepted("ACCEPTED")
+
+        @JvmField
+        public val REJECTED: TimeshiftCommandResult = result("REJECTED")
+
+        @JvmField
+        public val UNAVAILABLE: TimeshiftCommandResult = transient("UNAVAILABLE")
+
+        @JvmField
+        public val ALREADY_PENDING: TimeshiftCommandResult = transient("ALREADY_PENDING")
+
+        @JvmField
+        public val NOT_ACKNOWLEDGED: TimeshiftCommandResult = transient("NOT_ACKNOWLEDGED")
+
+        @JvmField
+        public val ACKNOWLEDGEMENT_TIMEOUT: TimeshiftCommandResult = terminalUncertain(
+            "ACKNOWLEDGEMENT_TIMEOUT",
+        )
+
+        @JvmField
+        public val PENDING_QUEUE_OVERFLOW: TimeshiftCommandResult = terminalUncertain(
+            "PENDING_QUEUE_OVERFLOW",
+        )
+
+        @JvmField
+        public val UNCERTAIN_REQUEST_OUTCOME: TimeshiftCommandResult = terminalUncertain(
+            "UNCERTAIN_REQUEST_OUTCOME",
+        )
+
+        @JvmField
+        public val UNRECOGNIZED_ACKNOWLEDGEMENT: TimeshiftCommandResult = terminalUncertain(
+            "UNRECOGNIZED_ACKNOWLEDGEMENT",
+        )
+
+        @JvmField
+        public val RESUMED_SEGMENT_UNANCHORABLE: TimeshiftCommandResult = terminal(
+            "RESUMED_SEGMENT_UNANCHORABLE",
+            TimeshiftCommandDisposition.ACCEPTED,
+        )
+
+        @JvmField
+        public val SUBSCRIPTION_ENDED: TimeshiftCommandResult = terminalUncertain(
+            "SUBSCRIPTION_ENDED",
+        )
+
+        @JvmField
+        public val SERVER_REJECTED: TimeshiftCommandResult = result("SERVER_REJECTED")
+
+        @JvmField
+        public val ACCESS_DENIED: TimeshiftCommandResult = categorized(
+            "ACCESS_DENIED",
+            PlaybackOutcomeCategory.CONFIGURATION_OR_ACCESS,
+        )
+
+        @JvmField
+        public val CONNECTION_LIMIT: TimeshiftCommandResult = transient("CONNECTION_LIMIT")
+
+        @JvmField
+        public val TIMEOUT: TimeshiftCommandResult = categorized(
+            "TIMEOUT",
+            TimeshiftCommandDisposition.UNCONFIRMED,
+            PlaybackOutcomeCategory.TRANSIENT,
+            PlaybackOutcomeCategory.UNCERTAIN,
+        )
+
+        @JvmField
+        public val TRANSPORT_UNAVAILABLE: TimeshiftCommandResult = transient(
+            "TRANSPORT_UNAVAILABLE",
+        )
+
+        @JvmField
+        public val NOT_SUPPORTED: TimeshiftCommandResult = categorized(
+            "NOT_SUPPORTED",
+            PlaybackOutcomeCategory.UNSUPPORTED,
+        )
+
+        @JvmField
+        public val NOT_RUNNING: TimeshiftCommandResult = transient("NOT_RUNNING")
+
+        @JvmField
+        public val SHUT_DOWN: TimeshiftCommandResult = terminal("SHUT_DOWN")
+
+        private fun accepted(label: String): TimeshiftCommandResult = TimeshiftCommandResult(
+            label,
+            TimeshiftCommandDisposition.ACCEPTED,
+            emptySet(),
+        )
+
+        private fun result(label: String): TimeshiftCommandResult = TimeshiftCommandResult(
+            label,
+            TimeshiftCommandDisposition.NOT_ACCEPTED,
+            emptySet(),
+        )
+
+        private fun transient(label: String): TimeshiftCommandResult = categorized(
+            label,
+            PlaybackOutcomeCategory.TRANSIENT,
+        )
+
+        private fun terminal(
+            label: String,
+            disposition: TimeshiftCommandDisposition = TimeshiftCommandDisposition.NOT_ACCEPTED,
+        ): TimeshiftCommandResult = categorized(
+            label,
+            disposition,
+            PlaybackOutcomeCategory.TERMINAL,
+        )
+
+        private fun terminalUncertain(label: String): TimeshiftCommandResult = categorized(
+            label,
+            TimeshiftCommandDisposition.UNCONFIRMED,
+            PlaybackOutcomeCategory.TERMINAL,
+            PlaybackOutcomeCategory.UNCERTAIN,
+        )
+
+        private fun categorized(
+            label: String,
+            vararg categories: PlaybackOutcomeCategory,
+        ): TimeshiftCommandResult = TimeshiftCommandResult(
+            label,
+            TimeshiftCommandDisposition.NOT_ACCEPTED,
+            Collections.unmodifiableSet(categories.toSet()),
+        )
+
+        private fun categorized(
+            label: String,
+            disposition: TimeshiftCommandDisposition,
+            vararg categories: PlaybackOutcomeCategory,
+        ): TimeshiftCommandResult = TimeshiftCommandResult(
+            label,
+            disposition,
+            Collections.unmodifiableSet(categories.toSet()),
+        )
+    }
 }
 
 internal class LiveTimeshiftControlBridge(

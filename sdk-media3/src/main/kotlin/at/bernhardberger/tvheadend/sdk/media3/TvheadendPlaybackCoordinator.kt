@@ -22,6 +22,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekInvalidation
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
+import java.util.Collections
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -62,19 +63,113 @@ public class LivePlaybackOptions(
     override fun toString(): String = "LivePlaybackOptions(<redacted>)"
 }
 
-/** Typed outcome of installing a live or completed-recording playback target. */
-public enum class PlaybackTargetResult {
+/** Closed disposition of target installation without exhaustively defining its exact outcome. */
+public enum class PlaybackTargetDisposition {
     STARTED,
-    NOT_RUNNING,
-    SHUT_DOWN,
-    NOT_READY,
-    RECORDING_PROGRESS_UNSUPPORTED,
-    TARGET_UNAVAILABLE,
-    /** An active recording was requested with server-progress resume instead of explicit start-over. */
-    GROWING_RECORDING_RESUME_UNSUPPORTED,
-    /** The active recording is outside the supported single-file pass-through MPEG-TS path. */
-    GROWING_RECORDING_DEFERRED,
-    PLAYER_UNAVAILABLE,
+    NOT_STARTED,
+}
+
+/**
+ * Typed outcome of installing a live or completed-recording playback target.
+ *
+ * Exact values are SDK-owned singletons rather than an exhaustive enum. Applications may compare
+ * a known value or use the stable disposition, categories, and predicates, but must retain a
+ * fallback for future exact outcomes. An empty category set means no stable broad classification
+ * is available. No current target result is configuration/access-related or uncertain; those
+ * shared category predicates remain false unless a future exact result carries such a category.
+ */
+public class PlaybackTargetResult private constructor(
+    private val label: String,
+    public val disposition: PlaybackTargetDisposition,
+    public val categories: Set<PlaybackOutcomeCategory>,
+) {
+    public val isStarted: Boolean
+        get() = disposition == PlaybackTargetDisposition.STARTED
+
+    public val isTransient: Boolean
+        get() = PlaybackOutcomeCategory.TRANSIENT in categories
+
+    public val isTerminal: Boolean
+        get() = PlaybackOutcomeCategory.TERMINAL in categories
+
+    public val isUnsupported: Boolean
+        get() = PlaybackOutcomeCategory.UNSUPPORTED in categories
+
+    public val isConfigurationOrAccessRelated: Boolean
+        get() = PlaybackOutcomeCategory.CONFIGURATION_OR_ACCESS in categories
+
+    public val isOutcomeUncertain: Boolean
+        get() = PlaybackOutcomeCategory.UNCERTAIN in categories
+
+    override fun toString(): String = label
+
+    public companion object {
+        @JvmField
+        public val STARTED: PlaybackTargetResult = PlaybackTargetResult(
+            "STARTED",
+            PlaybackTargetDisposition.STARTED,
+            emptySet(),
+        )
+
+        @JvmField
+        public val NOT_RUNNING: PlaybackTargetResult = transient("NOT_RUNNING")
+
+        @JvmField
+        public val SHUT_DOWN: PlaybackTargetResult = categorized(
+            "SHUT_DOWN",
+            PlaybackOutcomeCategory.TERMINAL,
+        )
+
+        @JvmField
+        public val NOT_READY: PlaybackTargetResult = transient("NOT_READY")
+
+        @JvmField
+        public val RECORDING_PROGRESS_UNSUPPORTED: PlaybackTargetResult = categorized(
+            "RECORDING_PROGRESS_UNSUPPORTED",
+            PlaybackOutcomeCategory.UNSUPPORTED,
+        )
+
+        @JvmField
+        public val TARGET_UNAVAILABLE: PlaybackTargetResult = result("TARGET_UNAVAILABLE")
+
+        /** An active recording was requested with server-progress resume instead of start-over. */
+        @JvmField
+        public val GROWING_RECORDING_RESUME_UNSUPPORTED: PlaybackTargetResult = categorized(
+            "GROWING_RECORDING_RESUME_UNSUPPORTED",
+            PlaybackOutcomeCategory.UNSUPPORTED,
+        )
+
+        /** The active recording is outside the supported single-file pass-through MPEG-TS path. */
+        @JvmField
+        public val GROWING_RECORDING_DEFERRED: PlaybackTargetResult = categorized(
+            "GROWING_RECORDING_DEFERRED",
+            PlaybackOutcomeCategory.TRANSIENT,
+            PlaybackOutcomeCategory.UNSUPPORTED,
+        )
+
+        @JvmField
+        public val PLAYER_UNAVAILABLE: PlaybackTargetResult = transient("PLAYER_UNAVAILABLE")
+
+        private fun result(label: String): PlaybackTargetResult = PlaybackTargetResult(
+            label,
+            PlaybackTargetDisposition.NOT_STARTED,
+            emptySet(),
+        )
+
+        private fun transient(label: String): PlaybackTargetResult = categorized(
+            label,
+            PlaybackOutcomeCategory.TRANSIENT,
+        )
+
+        private fun categorized(
+            label: String,
+            vararg categories: PlaybackOutcomeCategory,
+        ): PlaybackTargetResult = PlaybackTargetResult(
+            label,
+            PlaybackTargetDisposition.NOT_STARTED,
+            Collections.unmodifiableSet(categories.toSet()),
+        )
+    }
 }
 
 /** Typed outcome of retiring the coordinator's current target. */

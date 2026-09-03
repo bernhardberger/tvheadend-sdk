@@ -806,6 +806,38 @@ internal class HtspProtocolGatewayTest {
     }
 
     @Test
+    fun `every public subscription issue has an explicit DVR mapping`() {
+        val expected = mapOf(
+            SubscriptionIssue.NO_INPUT to DvrSubscriptionError.BAD_SIGNAL,
+            SubscriptionIssue.NO_FREE_ADAPTER to DvrSubscriptionError.NO_FREE_ADAPTER,
+            SubscriptionIssue.SCRAMBLED to DvrSubscriptionError.SCRAMBLED,
+            SubscriptionIssue.BAD_SIGNAL to DvrSubscriptionError.BAD_SIGNAL,
+            SubscriptionIssue.TUNING_FAILED to DvrSubscriptionError.TUNING_FAILED,
+            SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN to
+                DvrSubscriptionError.SUBSCRIPTION_OVERRIDDEN,
+            SubscriptionIssue.MUX_NOT_ENABLED to DvrSubscriptionError.MUX_NOT_ENABLED,
+            SubscriptionIssue.INVALID_TARGET to DvrSubscriptionError.INVALID_TARGET,
+            SubscriptionIssue.USER_ACCESS to DvrSubscriptionError.USER_ACCESS,
+            SubscriptionIssue.USER_LIMIT to DvrSubscriptionError.USER_LIMIT,
+            SubscriptionIssue.WEAK_STREAM to DvrSubscriptionError.WEAK_STREAM,
+            SubscriptionIssue.NO_DISK_SPACE to DvrSubscriptionError.NO_DISK_SPACE,
+            SubscriptionIssue.UNKNOWN to DvrSubscriptionError.UNKNOWN,
+        )
+        val publicValues = SubscriptionIssue::class.java.fields
+            .filter { field -> field.type == SubscriptionIssue::class.java }
+            .mapTo(mutableSetOf()) { field -> field.get(null) as SubscriptionIssue }
+
+        assertEquals(publicValues, expected.keys)
+        expected.forEach { (issue, result) ->
+            assertEquals(result, issue.toDvrSubscriptionError())
+        }
+        assertEquals(
+            DvrSubscriptionError.UNKNOWN,
+            (null as SubscriptionIssue?).toDvrSubscriptionError(),
+        )
+    }
+
+    @Test
     fun `EPG query maps exact generation horizon results and redacted events`() = runTest {
         val sourceGeneration = HtspConnectionGeneration()
         val fake = FakeHtspConnection().apply {

@@ -1563,7 +1563,7 @@ private fun String?.toDvrSubscriptionError(): DvrSubscriptionError? = when (this
     else -> toSubscriptionIssue().toDvrSubscriptionError()
 }
 
-private fun SubscriptionIssue?.toDvrSubscriptionError(): DvrSubscriptionError = when (this) {
+internal fun SubscriptionIssue?.toDvrSubscriptionError(): DvrSubscriptionError = when (this) {
     SubscriptionIssue.NO_INPUT -> DvrSubscriptionError.BAD_SIGNAL
     SubscriptionIssue.NO_FREE_ADAPTER -> DvrSubscriptionError.NO_FREE_ADAPTER
     SubscriptionIssue.SCRAMBLED -> DvrSubscriptionError.SCRAMBLED
@@ -1577,6 +1577,7 @@ private fun SubscriptionIssue?.toDvrSubscriptionError(): DvrSubscriptionError = 
     SubscriptionIssue.WEAK_STREAM -> DvrSubscriptionError.WEAK_STREAM
     SubscriptionIssue.NO_DISK_SPACE -> DvrSubscriptionError.NO_DISK_SPACE
     SubscriptionIssue.UNKNOWN, null -> DvrSubscriptionError.UNKNOWN
+    else -> DvrSubscriptionError.UNKNOWN
 }
 
 private fun HtspSubscriptionEvent.toGatewayEvent(): SubscriptionEvent = when (this) {

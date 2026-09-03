@@ -30,7 +30,14 @@ must never be replaced.
 While the major version is zero, the public API and behavior are provisional.
 No source, binary, or behavioral compatibility is promised for the provisional
 0.x line. A known breaking change requires the next minor version, not a patch
-version. Patch versions are reserved for backward-compatible fixes.
+version. Patch versions are reserved for backward-compatible fixes. The
+configured `0.4.0` line is the next provisional minor after the published
+`0.3.x` line and may carry intentional clean API replacements without legacy
+aliases, facades, overloads, or shims.
+
+The entire `1.x` line is reserved for a separately attended final stable
+release. Development packages must not select, recommend, tag, publish, or
+release a `1.x.x` version.
 
 Read the matching changelog section before selecting a release as a baseline.
 Candidate checks do not establish distribution, runtime support, or release

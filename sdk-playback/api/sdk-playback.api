@@ -400,8 +400,9 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionId {
 public abstract interface annotation class at/bernhardberger/tvheadend/sdk/playback/SubscriptionInfrastructureApi : java/lang/annotation/Annotation {
 }
 
-public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue : java/lang/Enum {
+public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue {
 	public static final field BAD_SIGNAL Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue$Companion;
 	public static final field INVALID_TARGET Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;
 	public static final field MUX_NOT_ENABLED Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;
 	public static final field NO_DISK_SPACE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;
@@ -414,9 +415,23 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue : 
 	public static final field USER_ACCESS Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;
 	public static final field USER_LIMIT Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;
 	public static final field WEAK_STREAM Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;
+	public final fun getCategory ()Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssueCategory;
+	public final fun isConfigurationOrAccessRelated ()Z
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue$Companion {
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionIssueCategory : java/lang/Enum {
+	public static final field CONFIGURATION_OR_ACCESS Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssueCategory;
+	public static final field INPUT_OR_SIGNAL Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssueCategory;
+	public static final field INTERRUPTION Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssueCategory;
+	public static final field RESOURCE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssueCategory;
+	public static final field UNKNOWN Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssueCategory;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public static fun valueOf (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;
-	public static fun values ()[Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssue;
+	public static fun valueOf (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssueCategory;
+	public static fun values ()[Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionIssueCategory;
 }
 
 public abstract interface class at/bernhardberger/tvheadend/sdk/playback/SubscriptionManager : at/bernhardberger/tvheadend/sdk/playback/SubscriptionOpener {

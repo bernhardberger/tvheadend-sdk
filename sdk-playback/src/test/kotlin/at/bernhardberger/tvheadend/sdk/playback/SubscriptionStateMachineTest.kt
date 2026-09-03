@@ -25,6 +25,39 @@ import org.junit.jupiter.api.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class SubscriptionStateMachineTest {
     @Test
+    fun `subscription issues expose stable non-exhaustive categories`() {
+        val categories = mapOf(
+            SubscriptionIssue.NO_INPUT to SubscriptionIssueCategory.INPUT_OR_SIGNAL,
+            SubscriptionIssue.NO_FREE_ADAPTER to SubscriptionIssueCategory.RESOURCE,
+            SubscriptionIssue.SCRAMBLED to SubscriptionIssueCategory.CONFIGURATION_OR_ACCESS,
+            SubscriptionIssue.BAD_SIGNAL to SubscriptionIssueCategory.INPUT_OR_SIGNAL,
+            SubscriptionIssue.TUNING_FAILED to SubscriptionIssueCategory.INPUT_OR_SIGNAL,
+            SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN to SubscriptionIssueCategory.INTERRUPTION,
+            SubscriptionIssue.MUX_NOT_ENABLED to SubscriptionIssueCategory.CONFIGURATION_OR_ACCESS,
+            SubscriptionIssue.INVALID_TARGET to SubscriptionIssueCategory.CONFIGURATION_OR_ACCESS,
+            SubscriptionIssue.USER_ACCESS to SubscriptionIssueCategory.CONFIGURATION_OR_ACCESS,
+            SubscriptionIssue.USER_LIMIT to SubscriptionIssueCategory.CONFIGURATION_OR_ACCESS,
+            SubscriptionIssue.WEAK_STREAM to SubscriptionIssueCategory.INPUT_OR_SIGNAL,
+            SubscriptionIssue.NO_DISK_SPACE to SubscriptionIssueCategory.RESOURCE,
+            SubscriptionIssue.UNKNOWN to SubscriptionIssueCategory.UNKNOWN,
+        )
+        val publicValues = SubscriptionIssue::class.java.fields
+            .filter { field -> field.type == SubscriptionIssue::class.java }
+            .mapTo(mutableSetOf()) { field -> field.get(null) as SubscriptionIssue }
+        assertEquals(publicValues, categories.keys)
+
+        categories.forEach { (issue, category) ->
+            assertEquals(category, issue.category)
+            assertEquals(
+                category == SubscriptionIssueCategory.CONFIGURATION_OR_ACCESS,
+                issue.isConfigurationOrAccessRelated,
+            )
+        }
+        assertEquals("NO_INPUT", SubscriptionIssue.NO_INPUT.toString())
+        assertTrue(SubscriptionIssue.NO_INPUT !== SubscriptionIssue.BAD_SIGNAL)
+    }
+
+    @Test
     fun `subscription options validate profile UUID and wire timeshift domain`() {
         val options = SubscriptionOptions(
             streamProfileUuid = "0123456789abcdef0123456789abcdef",

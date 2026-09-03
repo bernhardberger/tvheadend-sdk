@@ -285,21 +285,92 @@ public enum class SubscriptionStreamType {
     UNKNOWN,
 }
 
-/** Canonical safe issue reported for a live TVHeadend subscription. */
-public enum class SubscriptionIssue {
-    NO_INPUT,
-    NO_FREE_ADAPTER,
-    SCRAMBLED,
-    BAD_SIGNAL,
-    TUNING_FAILED,
-    SUBSCRIPTION_OVERRIDDEN,
-    MUX_NOT_ENABLED,
-    INVALID_TARGET,
-    USER_ACCESS,
-    USER_LIMIT,
-    WEAK_STREAM,
-    NO_DISK_SPACE,
+/** Stable broad category for a canonical live-subscription issue. */
+public enum class SubscriptionIssueCategory {
+    INPUT_OR_SIGNAL,
+    RESOURCE,
+    CONFIGURATION_OR_ACCESS,
+    INTERRUPTION,
     UNKNOWN,
+}
+
+/**
+ * Canonical safe issue reported for a live TVHeadend subscription.
+ *
+ * Exact values are SDK-owned singletons rather than an exhaustive enum. Applications may compare
+ * a known value or use [category], but must retain a fallback for future exact issues. Retry and
+ * terminal behavior depend on the surrounding subscription event and are deliberately not inferred.
+ */
+public class SubscriptionIssue private constructor(
+    private val label: String,
+    public val category: SubscriptionIssueCategory,
+) {
+    public val isConfigurationOrAccessRelated: Boolean
+        get() = category == SubscriptionIssueCategory.CONFIGURATION_OR_ACCESS
+
+    override fun toString(): String = label
+
+    public companion object {
+        @JvmField
+        public val NO_INPUT: SubscriptionIssue = inputOrSignal("NO_INPUT")
+
+        @JvmField
+        public val NO_FREE_ADAPTER: SubscriptionIssue = resource("NO_FREE_ADAPTER")
+
+        @JvmField
+        public val SCRAMBLED: SubscriptionIssue = configurationOrAccess("SCRAMBLED")
+
+        @JvmField
+        public val BAD_SIGNAL: SubscriptionIssue = inputOrSignal("BAD_SIGNAL")
+
+        @JvmField
+        public val TUNING_FAILED: SubscriptionIssue = inputOrSignal("TUNING_FAILED")
+
+        @JvmField
+        public val SUBSCRIPTION_OVERRIDDEN: SubscriptionIssue = SubscriptionIssue(
+            "SUBSCRIPTION_OVERRIDDEN",
+            SubscriptionIssueCategory.INTERRUPTION,
+        )
+
+        @JvmField
+        public val MUX_NOT_ENABLED: SubscriptionIssue = configurationOrAccess("MUX_NOT_ENABLED")
+
+        @JvmField
+        public val INVALID_TARGET: SubscriptionIssue = configurationOrAccess("INVALID_TARGET")
+
+        @JvmField
+        public val USER_ACCESS: SubscriptionIssue = configurationOrAccess("USER_ACCESS")
+
+        @JvmField
+        public val USER_LIMIT: SubscriptionIssue = configurationOrAccess("USER_LIMIT")
+
+        @JvmField
+        public val WEAK_STREAM: SubscriptionIssue = inputOrSignal("WEAK_STREAM")
+
+        @JvmField
+        public val NO_DISK_SPACE: SubscriptionIssue = resource("NO_DISK_SPACE")
+
+        @JvmField
+        public val UNKNOWN: SubscriptionIssue = SubscriptionIssue(
+            "UNKNOWN",
+            SubscriptionIssueCategory.UNKNOWN,
+        )
+
+        private fun inputOrSignal(label: String): SubscriptionIssue = SubscriptionIssue(
+            label,
+            SubscriptionIssueCategory.INPUT_OR_SIGNAL,
+        )
+
+        private fun resource(label: String): SubscriptionIssue = SubscriptionIssue(
+            label,
+            SubscriptionIssueCategory.RESOURCE,
+        )
+
+        private fun configurationOrAccess(label: String): SubscriptionIssue = SubscriptionIssue(
+            label,
+            SubscriptionIssueCategory.CONFIGURATION_OR_ACCESS,
+        )
+    }
 }
 
 /** Safe presence-only status and error classification. */
