@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.5.0] - In development
+
+This provisional minor line exposes immutable, current-target live diagnostics
+for source display metadata, frontend state and measurements, and server queue
+depth, media span, and packet drops. Values are normalized, bounded, redacted,
+generation-fenced, and cleared when the live subscription or coordinator target
+ends. The exact no-input status maps to `NO_INPUT` unless a conflicting known
+canonical error is present.
+
+Playback target, timeshift command, and live-subscription issue outcomes now use
+non-exhaustive SDK-owned singleton values instead of public enums. Stable
+dispositions, non-exclusive categories, and direct predicates let Kotlin and
+Java applications handle success, transient, terminal, unsupported,
+configuration/access, and uncertain outcomes without becoming exhaustive over
+future exact SDK values. Existing semantic distinctions, typed control flow,
+cancellation propagation, and redacted fixed rendering are preserved.
+
+The playback outcome replacement is an intentional source and binary break from
+the provisional `0.4.0` API; enum machinery and exhaustive matching are not
+retained. This entry records source development only. Local or CI verification
+does not establish publication or Maven Central availability.
+
 ## [0.4.0]
 
 This provisional feature release adds generation-bound EPG search with typed
@@ -13,19 +35,12 @@ event limit through `EpgCoveragePolicy`. Initial synchronization remains
 bounded, while explicit coverage acquisition can extend the retained horizon
 for the admitted generation.
 
-Playback target, timeshift command, and live-subscription issue outcomes now use
-non-exhaustive SDK-owned singleton values instead of public enums. Stable
-dispositions, non-exclusive categories, and direct predicates let Kotlin and
-Java applications handle success, transient, terminal, unsupported,
-configuration/access, and uncertain outcomes without becoming exhaustive over
-future exact SDK values. Existing semantic distinctions, typed control flow,
-cancellation propagation, and redacted fixed rendering are preserved.
-
-The `sdk-core` EPG additions remain additive. The playback outcome replacement
-is an intentional source and binary break from the provisional `0.3.x` API;
-enum machinery and exhaustive matching are not retained. Compatibility remains
-provisional during the major-zero line, and local or CI verification does not
-establish Maven Central availability.
+The `sdk-core` ABI changes from `0.3.4` are additive: the policy, search request
+and result types, repository search operation, and policy-taking session factory
+overload are new, while existing declarations remain unchanged. The other JVM
+module ABI dumps are unchanged. Compatibility remains provisional during the
+major-zero line, and local or CI verification does not establish Maven Central
+availability.
 
 ## [0.3.4]
 
