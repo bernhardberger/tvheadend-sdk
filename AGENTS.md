@@ -38,7 +38,7 @@ notices, and do not describe this project as official TVHeadend software.
   known evidence, acceptance criteria, required output, and stop condition.
   Children must not read orchestration ledgers, handoffs, or `AGENTS.md` files.
 - During the Muse field test, run exactly one `sdk-review-sol` and one fixed
-  Muse Spark 1.3 Contributor Free/xhigh `sdk-review-muse` in parallel on every
+  OpenRouter Muse Spark 1.3 Contributor/xhigh `sdk-review-muse` in parallel on every
   frozen, tested package with substantively identical packets. Sol remains the
   mandatory gate; Muse provider failure is non-blocking and does not replace a
   Sol verdict. Adjudicate every concrete finding from either completed reviewer

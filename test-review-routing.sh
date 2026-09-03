@@ -145,7 +145,7 @@ assert_contains '^model: anthropic/claude-opus-5$' \
 assert_contains '^variant: medium$' \
   "$REPOSITORY_DIR/.opencode/agents/sdk-review-opus.md" \
   'bounded Opus reviewer effort'
-assert_contains '^model: opencode/muse-spark-1.3-contributor-free$' \
+assert_contains '^model: openrouter/meta/muse-spark-1.3-contributor$' \
   "$REPOSITORY_DIR/.opencode/agents/sdk-review-muse.md" \
   'experimental Muse reviewer model route'
 assert_contains '^variant: xhigh$' \
