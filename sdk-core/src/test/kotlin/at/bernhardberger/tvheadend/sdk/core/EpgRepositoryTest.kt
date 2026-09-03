@@ -144,7 +144,17 @@ internal class EpgRepositoryTest {
             maximumDuration = 5.seconds,
         )
         val source = mutableListOf(event(id = 6, start = 10, stop = 20))
-        val available = EpgSearchResult.Available.create(source)
+        val currentSession = requireNotNull(
+            SessionObservation.create(
+                sessionState = SessionState.Ready(
+                    ServerCapabilities.create(CapabilityAccess.UNKNOWN, CapabilityAccess.UNKNOWN),
+                ),
+                channelState = ChannelRepositoryState.Current(ChannelCatalog.create()),
+                epgState = EpgRepositoryState.Current(EpgSnapshot.create()),
+                dvrState = DvrRepositoryState.Current(DvrSnapshot.create()),
+            ).currentSession,
+        )
+        val available = EpgSearchResult.Available.create(source, currentSession)
         source.clear()
         val javaRequest = EpgSearchRequest.createFromSeconds(
             query = "private-java-query",
@@ -171,6 +181,7 @@ internal class EpgRepositoryTest {
         assertEquals(9.seconds, javaRequest.minimumDuration)
         assertEquals(Int.MAX_VALUE.toLong().seconds, javaRequest.maximumDuration)
         assertEquals(listOf(6L), available.events.map { it.id.value })
+        assertSame(currentSession, available.originatingSession)
         assertThrows(UnsupportedOperationException::class.java) {
             (available.events as MutableList<EpgEvent>).clear()
         }

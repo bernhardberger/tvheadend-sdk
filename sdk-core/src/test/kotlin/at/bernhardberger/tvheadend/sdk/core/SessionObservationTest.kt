@@ -1,8 +1,13 @@
 package at.bernhardberger.tvheadend.sdk.core
 
+import java.lang.reflect.InvocationHandler
+import java.lang.reflect.Modifier
+import java.lang.reflect.Proxy
+import java.util.concurrent.CancellationException
 import kotlin.time.Instant
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
@@ -10,6 +15,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotSame
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
@@ -25,6 +31,21 @@ internal class SessionObservationTest {
         assertTrue(current.currentSession != null)
         assertFalse(current.toString().contains("private"))
         assertFalse(current.currentSession.toString().contains("private"))
+        assertTrue(
+            CurrentSessionObservation::class.java.declaredConstructors.none {
+                Modifier.isPublic(it.modifiers) && !it.isSynthetic
+            },
+        )
+        assertTrue(
+            SessionGenerationIdentity::class.java.declaredConstructors.none {
+                Modifier.isPublic(it.modifiers) && !it.isSynthetic
+            },
+        )
+        assertNotEquals(
+            current.currentSession,
+            observation().currentSession,
+            "Current proofs must retain identity equality",
+        )
 
         val synchronizing = SessionObservation.create(
             sessionState = current.sessionState,
@@ -98,6 +119,7 @@ internal class SessionObservationTest {
         store.publishSessionState(source.sessionState, RecordingProgressCapability.UNKNOWN, firstGeneration)
         runCurrent()
         val firstCurrent = requireNotNull(store.observation.value.currentSession)
+        assertEquals("SessionGenerationIdentity(<redacted>)", firstCurrent.generationIdentity.toString())
 
         store.publishSessionState(source.sessionState, RecordingProgressCapability.SUPPORTED, firstGeneration)
         runCurrent()
@@ -136,6 +158,22 @@ internal class SessionObservationTest {
         assertTrue(retired.epgState is EpgRepositoryState.Stale)
         assertTrue(retired.dvrState is DvrRepositoryState.Stale)
 
+        store.publishMetadata(
+            channelState = source.channelState,
+            epgState = source.epgState,
+            dvrState = source.dvrState,
+            configurationsState = source.dvrConfigurationsState,
+            diskSpaceState = source.dvrDiskSpaceState,
+        )
+        val republishedCurrent = requireNotNull(store.observation.value.currentSession)
+        assertNotSame(firstCurrent, republishedCurrent)
+        assertSame(firstCurrent.generationIdentity, republishedCurrent.generationIdentity)
+
+        store.publishSessionState(source.sessionState, RecordingProgressCapability.SUPPORTED, Any())
+        val directlyReplaced = requireNotNull(store.observation.value.currentSession)
+        assertNotSame(republishedCurrent, directlyReplaced)
+        assertNotSame(republishedCurrent.generationIdentity, directlyReplaced.generationIdentity)
+
         store.publishSessionState(
             SessionState.Unavailable(SessionFailure.TransportUnavailable),
             RecordingProgressCapability.UNKNOWN,
@@ -150,7 +188,73 @@ internal class SessionObservationTest {
         )
         assertNull(store.observation.value.currentSession)
         store.publishSessionState(source.sessionState, RecordingProgressCapability.SUPPORTED, Any())
-        assertNotSame(firstCurrent, store.observation.value.currentSession)
+        val replacementCurrent = requireNotNull(store.observation.value.currentSession)
+        assertNotSame(firstCurrent, replacementCurrent)
+        assertNotSame(firstCurrent.generationIdentity, replacementCurrent.generationIdentity)
+    }
+
+    @Test
+    fun `current inspection and replacement wait preserve proof identity and cancellation`() = runTest {
+        val store = SessionObservationStore()
+        val source = observation()
+        val session = sessionFor(store)
+        val generation = Any()
+        val initialWait = async(start = CoroutineStart.UNDISPATCHED) {
+            session.awaitCurrentSession()
+        }
+
+        assertFalse(initialWait.isCompleted)
+        store.publishMetadata(
+            channelState = source.channelState,
+            epgState = source.epgState,
+            dvrState = source.dvrState,
+            configurationsState = source.dvrConfigurationsState,
+            diskSpaceState = source.dvrDiskSpaceState,
+        )
+        store.publishSessionState(source.sessionState, RecordingProgressCapability.UNKNOWN, generation)
+        val first = initialWait.await()
+        assertTrue(session.isCurrent(first))
+
+        val replacementWait = async(start = CoroutineStart.UNDISPATCHED) {
+            session.awaitCurrentSession(replaced = first)
+        }
+        store.publishMetadata(
+            channelState = ChannelRepositoryState.Stale(
+                (source.channelState as ChannelRepositoryState.Current).catalog,
+            ),
+            epgState = source.epgState,
+            dvrState = source.dvrState,
+            configurationsState = source.dvrConfigurationsState,
+            diskSpaceState = source.dvrDiskSpaceState,
+        )
+        runCurrent()
+        assertFalse(replacementWait.isCompleted)
+        assertFalse(session.isCurrent(first))
+        store.publishMetadata(
+            channelState = source.channelState,
+            epgState = source.epgState,
+            dvrState = source.dvrState,
+            configurationsState = source.dvrConfigurationsState,
+            diskSpaceState = source.dvrDiskSpaceState,
+        )
+        val replacement = replacementWait.await()
+        assertNotSame(first, replacement)
+        assertSame(first.generationIdentity, replacement.generationIdentity)
+        assertTrue(session.isCurrent(replacement))
+
+        val cancellation = CancellationException("fixed wait cancellation")
+        val cancelledWait = async(start = CoroutineStart.UNDISPATCHED) {
+            session.awaitCurrentSession(replaced = replacement)
+        }
+        cancelledWait.cancel(cancellation)
+        var caught: CancellationException? = null
+        try {
+            cancelledWait.await()
+        } catch (failure: CancellationException) {
+            caught = failure
+        }
+        val propagated = requireNotNull(caught)
+        assertTrue(propagated === cancellation || propagated.cause === cancellation)
     }
 
     private fun observation(): SessionObservation = SessionObservation.create(
@@ -202,3 +306,15 @@ internal class SessionObservationTest {
 
     private fun instant(seconds: Long): Instant = Instant.fromEpochSeconds(seconds)
 }
+
+@Suppress("UNCHECKED_CAST")
+private fun sessionFor(store: SessionObservationStore): TvheadendSession = Proxy.newProxyInstance(
+    TvheadendSession::class.java.classLoader,
+    arrayOf(TvheadendSession::class.java),
+) { proxy, method, arguments ->
+    when {
+        method.name == "getObservation" -> store.observation
+        method.isDefault -> InvocationHandler.invokeDefault(proxy, method, *(arguments ?: emptyArray()))
+        else -> error("Unexpected session call")
+    }
+} as TvheadendSession

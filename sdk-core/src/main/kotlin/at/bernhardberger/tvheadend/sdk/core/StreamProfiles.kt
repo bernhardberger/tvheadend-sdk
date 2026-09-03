@@ -29,13 +29,24 @@ public sealed interface StreamProfilesResult {
     @ConsistentCopyVisibility
     public data class Available private constructor(
         public val profiles: List<StreamProfile>,
+        /**
+         * Exact proof that authorized this operation.
+         *
+         * Provenance does not guarantee that the proof is still current when the result is read.
+         */
+        public val originatingSession: CurrentSessionObservation,
     ) : StreamProfilesResult {
         override fun toString(): String = "StreamProfilesResult.Available(<redacted>)"
 
         public companion object {
             /** Creates a result while defensively copying the ordered profiles. */
-            public fun create(profiles: List<StreamProfile>): Available =
-                Available(Collections.unmodifiableList(ArrayList(profiles)))
+            public fun create(
+                profiles: List<StreamProfile>,
+                originatingSession: CurrentSessionObservation,
+            ): Available = Available(
+                profiles = Collections.unmodifiableList(ArrayList(profiles)),
+                originatingSession = originatingSession,
+            )
         }
     }
 

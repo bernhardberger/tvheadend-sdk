@@ -328,7 +328,7 @@ internal class PhaseOneSessionMetadata(
                 ?: return EpgSearchResult.ObservationExpired
             val result = searchCommands.search(generationFence.generation, request)
             currentCoroutineContext().ensureActive()
-            val mappedResult = result.toEpgSearchResult()
+            val mappedResult = result.toEpgSearchResult(currentSession)
             val connectionChanged = hasReplacementGeneration(generationFence)
             currentCoroutineContext().ensureActive()
             return if (connectionChanged) EpgSearchResult.ConnectionChanged else mappedResult
@@ -991,7 +991,9 @@ internal class PhaseOneSessionMetadata(
     }
 }
 
-private fun GatewayResult<List<GatewayEpgQueryEvent>>.toEpgSearchResult(): EpgSearchResult {
+private fun GatewayResult<List<GatewayEpgQueryEvent>>.toEpgSearchResult(
+    originatingSession: CurrentSessionObservation,
+): EpgSearchResult {
     return when (this) {
         is GatewayResult.Ok -> {
             val events = ArrayList<EpgEvent>(value.size)
@@ -1000,7 +1002,7 @@ private fun GatewayResult<List<GatewayEpgQueryEvent>>.toEpgSearchResult(): EpgSe
                     ?: return EpgSearchResult.InvalidQuery
                 events += mapped
             }
-            EpgSearchResult.Available.create(events)
+            EpgSearchResult.Available.create(events, originatingSession)
         }
         GatewayResult.ServerRejected -> EpgSearchResult.InvalidQuery
         GatewayResult.AccessDenied -> EpgSearchResult.AccessDenied
@@ -1052,6 +1054,7 @@ internal interface SessionChildren : ArtworkLoader {
     /** Reports no active generation until a child binds profile discovery. */
     public suspend fun getStreamProfiles(
         generation: GatewayGeneration,
+        currentSession: CurrentSessionObservation,
     ): StreamProfilesResult = StreamProfilesResult.NotReady
 
     /** Reports the changed connection until a child actually binds a generation to artwork. */

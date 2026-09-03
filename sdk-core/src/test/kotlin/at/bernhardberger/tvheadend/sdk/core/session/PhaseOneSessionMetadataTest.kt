@@ -628,7 +628,11 @@ internal class PhaseOneSessionMetadataTest {
             observed = requestedChannelId to requestedThrough
             EpgCoverageAcquisitionResult.Ineligible
         }
-        val expired = at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation(Any(), Any())
+        val expired = at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation.create(
+            Any(),
+            Any(),
+            at.bernhardberger.tvheadend.sdk.core.SessionGenerationIdentity.create(),
+        )
 
         assertSame(
             EpgCoverageAcquisitionResult.ObservationExpired,

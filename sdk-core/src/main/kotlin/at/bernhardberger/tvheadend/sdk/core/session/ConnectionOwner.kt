@@ -85,9 +85,10 @@ internal class ConnectionOwner(
     override suspend fun getStreamProfiles(
         currentSession: CurrentSessionObservation,
     ): StreamProfilesResult {
+        currentCoroutineContext().ensureActive()
         val generation = metadata.resolveGeneration(currentSession)
             ?: return StreamProfilesResult.ObservationExpired
-        return children.getStreamProfiles(generation)
+        return children.getStreamProfiles(generation, currentSession)
     }
     override fun bindLivePlayback(
         currentSession: CurrentSessionObservation,

@@ -135,6 +135,7 @@ internal class PlaybackSessionChildren(
 
     override suspend fun getStreamProfiles(
         generation: GatewayGeneration,
+        currentSession: CurrentSessionObservation,
     ): StreamProfilesResult {
         currentCoroutineContext().ensureActive()
         val discovery = synchronized(lock) {
@@ -145,11 +146,12 @@ internal class PlaybackSessionChildren(
             )
         }
         val result = gateway.getStreamProfiles(discovery.generation)
+        currentCoroutineContext().ensureActive()
         return synchronized(lock) {
             if (this.generation !== discovery.generation || subscriptions !== discovery.manager) {
                 StreamProfilesResult.TransportUnavailable
             } else {
-                result.toStreamProfilesResult()
+                result.toStreamProfilesResult(currentSession)
             }
         }
     }
@@ -320,7 +322,16 @@ internal class PlaybackSessionChildren(
         val bound = synchronized(lock) {
             generation.takeIf { it === expectedGeneration }
         } ?: return ArtworkLoadResult.Unavailable(ArtworkFailure.OBSERVATION_EXPIRED)
-        return gateway.loadArtwork(bound, artworkId).toArtworkLoadResult()
+        val result = gateway.loadArtwork(bound, artworkId)
+        currentCoroutineContext().ensureActive()
+        val proofRemainsCurrent = metadata.resolveGeneration(currentSession) === bound
+        return synchronized(lock) {
+            if (!proofRemainsCurrent || generation !== bound) {
+                ArtworkLoadResult.Unavailable(ArtworkFailure.CONNECTION_CHANGED)
+            } else {
+                result.toArtworkLoadResult()
+            }
+        }
     }
 
     override fun bindGeneration(generation: GatewayGeneration) {
@@ -577,9 +588,10 @@ private fun GatewayResult<ByteArray>.toArtworkLoadResult(): ArtworkLoadResult = 
     GatewayResult.NotSupported -> ArtworkLoadResult.Unavailable(ArtworkFailure.NOT_SUPPORTED)
 }
 
-private fun GatewayResult<List<at.bernhardberger.tvheadend.sdk.core.StreamProfile>>.toStreamProfilesResult():
-    StreamProfilesResult = when (this) {
-    is GatewayResult.Ok -> StreamProfilesResult.Available.create(value)
+private fun GatewayResult<List<at.bernhardberger.tvheadend.sdk.core.StreamProfile>>.toStreamProfilesResult(
+    originatingSession: CurrentSessionObservation,
+): StreamProfilesResult = when (this) {
+    is GatewayResult.Ok -> StreamProfilesResult.Available.create(value, originatingSession)
     GatewayResult.ServerRejected -> StreamProfilesResult.ServerRejected
     GatewayResult.AccessDenied -> StreamProfilesResult.AccessDenied
     GatewayResult.ConnectionLimit -> StreamProfilesResult.ConnectionLimit

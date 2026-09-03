@@ -200,6 +200,7 @@ internal class ModuleBoundaryTest {
             "Current",
             "Stale",
             "SessionObservation",
+            "SessionGenerationIdentity",
             "CurrentSessionObservation",
             "PlaybackBinding",
             "Live",
@@ -277,6 +278,7 @@ internal class ModuleBoundaryTest {
             "public suspend fun retry(): SessionCommandResult",
             "public suspend fun disconnect()",
             "public suspend fun shutdown()",
+            "public suspend fun awaitCurrentSession( replaced: CurrentSessionObservation? = null, ): CurrentSessionObservation",
             "public suspend fun getStreamProfiles( currentSession: CurrentSessionObservation, ): StreamProfilesResult",
             "public suspend fun search( currentSession: CurrentSessionObservation, request: EpgSearchRequest, ): EpgSearchResult",
             "public suspend fun acquireCoverage( currentSession: CurrentSessionObservation, channelId: ChannelId, through: Instant, ): EpgCoverageAcquisitionResult",
@@ -412,7 +414,8 @@ internal class ModuleBoundaryTest {
             "TvheadendCredentialStore",
             "TvheadendServerProfileStore",
             "TvheadendArtwork",
-            "createTvheadendArtworkFetcherFactory",
+            "TvheadendArtworkLoadException",
+            "ComponentRegistry",
         )
 
         assertPublicInfrastructure("sdk-android", expectedAndroid, unannotatedCount = expectedAndroid.size)
@@ -490,8 +493,12 @@ internal class ModuleBoundaryTest {
             artworkApi.contains(
                 "public fun create( session: TvheadendSession, " +
                     "currentSession: CurrentSessionObservation, source: String?, ): TvheadendArtwork?",
+            ) && artworkApi.contains(
+                "public fun ComponentRegistry.Builder.addTvheadendArtwork(): ComponentRegistry.Builder",
+            ) && artworkApi.contains(
+                "public class TvheadendArtworkLoadException( public val failure: ArtworkFailure, )",
             ),
-            "Artwork creation must retain the originating current-session observation",
+            "Artwork integration must retain provenance, register atomically, and preserve failures",
         )
         assertEquals(1, Regex("public fun create\\(").findAll(artworkApi).count())
     }
@@ -521,7 +528,7 @@ internal class ModuleBoundaryTest {
                 function.hasPublicOrDefaultModifier &&
                     function.name in setOf(
                         "createTvheadendSession",
-                        "createTvheadendArtworkFetcherFactory",
+                        "addTvheadendArtwork",
                         "createSubscriptionManager",
                         "createRecordingFileReader",
                         "createTvheadendPlaybackRecovery",
@@ -535,6 +542,8 @@ internal class ModuleBoundaryTest {
             "at.bernhardberger.tvheadend.sdk.android.TvheadendCredentialStore",
             "at.bernhardberger.tvheadend.sdk.android.TvheadendServerProfileStore",
             "at.bernhardberger.tvheadend.sdk.android.TvheadendDiscovery",
+            "at.bernhardberger.tvheadend.sdk.android.TvheadendArtwork",
+            "at.bernhardberger.tvheadend.sdk.android.TvheadendArtworkLoadException",
             "at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi",
             "at.bernhardberger.tvheadend.sdk.media3.PlaybackRecoveryReason",
             "at.bernhardberger.tvheadend.sdk.media3.TvheadendRecordingException",

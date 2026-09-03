@@ -38,7 +38,10 @@ internal class PlaybackBindingTest {
         val foreign = BindingFixture().apply { publishReady(GatewayGeneration()) }
             .currentSession
 
-        listOf(CurrentSessionObservation(Any(), Any()), foreign).forEach { proof ->
+        listOf(
+            CurrentSessionObservation.create(Any(), Any(), SessionGenerationIdentity.create()),
+            foreign,
+        ).forEach { proof ->
             assertSame(
                 PlaybackBindingResult.ObservationExpired,
                 fixture.factory.bindLive(proof, ChannelId(1)),

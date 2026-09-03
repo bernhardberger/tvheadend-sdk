@@ -20,6 +20,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlin.jvm.JvmSynthetic
 import kotlin.random.Random
 import kotlin.time.Clock
@@ -37,6 +38,31 @@ public interface TvheadendSession {
 
     /** Generation-bound authenticated artwork loader used by platform image integrations. */
     public val artwork: ArtworkLoader
+
+    /**
+     * Reports whether [currentSession] is the current proof at this instant without leasing it.
+     *
+     * A true result can become stale immediately after this method returns.
+     */
+    public fun isCurrent(currentSession: CurrentSessionObservation): Boolean =
+        observation.value.currentSession === currentSession
+
+    /**
+     * Waits for a current proof distinct by identity from [replaced].
+     *
+     * Null accepts the current proof, if one exists. The returned proof can be retired immediately
+     * after return, and caller cancellation always propagates.
+     */
+    public suspend fun awaitCurrentSession(
+        replaced: CurrentSessionObservation? = null,
+    ): CurrentSessionObservation {
+        currentCoroutineContext().ensureActive()
+        val currentSession = observation.first { candidate ->
+            candidate.currentSession != null && candidate.currentSession !== replaced
+        }.currentSession!!
+        currentCoroutineContext().ensureActive()
+        return currentSession
+    }
 
     /** Discovers immutable stream profiles for the originating current session observation. */
     public suspend fun getStreamProfiles(

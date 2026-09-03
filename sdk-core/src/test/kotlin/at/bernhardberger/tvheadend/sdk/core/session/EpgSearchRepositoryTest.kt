@@ -71,6 +71,7 @@ internal class EpgSearchRepositoryTest {
             as EpgSearchResult.Available
 
         assertEquals(listOf(2L), result.events.map { it.id.value })
+        assertSame(currentSession, result.originatingSession)
         assertFalse(result.toString().contains("private"))
         assertThrows(UnsupportedOperationException::class.java) {
             (result.events as MutableList<*>).clear()
@@ -80,6 +81,7 @@ internal class EpgSearchRepositoryTest {
         val emptyResult = metadata.epgRepository.search(currentSession, request)
             as EpgSearchResult.Available
         assertTrue(emptyResult.events.isEmpty())
+        assertSame(currentSession, emptyResult.originatingSession)
         gatewayResult = GatewayResult.Timeout
         assertSame(
             EpgSearchResult.Timeout,
@@ -94,6 +96,9 @@ internal class EpgSearchRepositoryTest {
                 .events
                 .map { it.id.value },
         )
+        metadata.clearAllState()
+        assertEquals(null, metadata.observation.value.currentSession)
+        assertSame(currentSession, result.originatingSession)
     }
 
     @Test

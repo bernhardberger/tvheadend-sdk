@@ -139,6 +139,15 @@ EPG, and DVR snapshots are current for one session-owned generation. It becomes
 snapshots remain selectable from that retired observation without being
 mistaken for current data.
 
+`session.isCurrent(currentSession)` inspects currency without side effects;
+`session.awaitCurrentSession(replaced = currentSession)` waits for a distinct
+proof and propagates cancellation. Neither leases the returned proof. Its
+opaque, process-local `generationIdentity` scopes caches across metadata-only
+republication under the same connection authority, but cannot reconstruct or
+authorize a proof. Successful EPG searches and stream-profile discovery expose
+their exact `originatingSession` for provenance, which may already be retired
+when the result is observed.
+
 Retained snapshots remain selectable during `SessionState.Synchronizing`, but
 playback binding waits for a new authoritative `currentSession` after
 `SessionState.Ready`. An old observation can therefore never select a colliding
@@ -181,7 +190,7 @@ loader, then create models from channel, tag, or rating icon metadata:
 ```kotlin
 val imageLoader = ImageLoader.Builder(context)
     .components {
-        add(createTvheadendArtworkFetcherFactory())
+        addTvheadendArtwork()
     }
     .build()
 
@@ -191,11 +200,13 @@ val channel = requireNotNull(observed.channel(channelId))
 val artwork = TvheadendArtwork.create(session, currentSession, channel.icon)
 ```
 
-The model rejects external URLs and malformed selectors. The SDK deliberately
-does not install a path-derived Coil key, so authenticated selectors do not
-enter memory-cache or disk-cache keys. Coil owns decoding and closes every
-successfully returned image source. TVHeadend requires recorder access for this
-authenticated file API; otherwise loads report `ACCESS_DENIED`.
+The model rejects external URLs and malformed selectors. The SDK installs an
+opaque process-local memory key scoped to the current connection generation;
+selectors and connection details do not enter the key. The streamed result has
+no disk identity, so this component does not authorize persistent authenticated
+artwork caching. Coil owns decoding and closes every successfully returned
+image source. `TvheadendArtworkLoadException.failure` preserves typed failures
+such as `ACCESS_DENIED` without parsing exception text.
 
 ## Recording progress
 

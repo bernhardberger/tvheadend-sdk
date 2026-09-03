@@ -1,11 +1,17 @@
 package at.bernhardberger.tvheadend.sdk.consumer;
 
+import at.bernhardberger.tvheadend.sdk.android.TvheadendArtworkKt;
+import at.bernhardberger.tvheadend.sdk.android.TvheadendArtworkLoadException;
 import at.bernhardberger.tvheadend.sdk.android.ServerProfileEditReadResult;
 import at.bernhardberger.tvheadend.sdk.android.TvheadendServerProfileStore;
+import at.bernhardberger.tvheadend.sdk.core.ArtworkFailure;
 import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation;
 import at.bernhardberger.tvheadend.sdk.core.EpgRepository;
 import at.bernhardberger.tvheadend.sdk.core.EpgSearchRequest;
 import at.bernhardberger.tvheadend.sdk.core.EpgSearchResult;
+import at.bernhardberger.tvheadend.sdk.core.SessionGenerationIdentity;
+import at.bernhardberger.tvheadend.sdk.core.StreamProfilesResult;
+import at.bernhardberger.tvheadend.sdk.core.TvheadendSession;
 import at.bernhardberger.tvheadend.sdk.media3.TvheadendPlaybackCoordinator;
 import at.bernhardberger.tvheadend.sdk.media3.PlaybackOutcomeCategory;
 import at.bernhardberger.tvheadend.sdk.media3.PlaybackTargetDisposition;
@@ -19,6 +25,7 @@ import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionDiagnostics;
 import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionSource;
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionIssue;
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionIssueCategory;
+import coil3.ComponentRegistry;
 import kotlin.coroutines.Continuation;
 
 public final class StagedSdkJavaConsumer {
@@ -55,6 +62,44 @@ public final class StagedSdkJavaConsumer {
             return available.getEvents().size();
         }
         return 0;
+    }
+
+    public static boolean isCurrent(
+            TvheadendSession session,
+            CurrentSessionObservation currentSession) {
+        return session.isCurrent(currentSession);
+    }
+
+    public static Object awaitReplacement(
+            TvheadendSession session,
+            CurrentSessionObservation currentSession,
+            Continuation<? super CurrentSessionObservation> continuation) {
+        return session.awaitCurrentSession(currentSession, continuation);
+    }
+
+    public static SessionGenerationIdentity generationIdentity(
+            CurrentSessionObservation currentSession) {
+        return currentSession.getGenerationIdentity();
+    }
+
+    public static CurrentSessionObservation searchProvenance(EpgSearchResult result) {
+        return result instanceof EpgSearchResult.Available available
+                ? available.getOriginatingSession()
+                : null;
+    }
+
+    public static CurrentSessionObservation profileProvenance(StreamProfilesResult result) {
+        return result instanceof StreamProfilesResult.Available available
+                ? available.getOriginatingSession()
+                : null;
+    }
+
+    public static ComponentRegistry.Builder registerArtwork(ComponentRegistry.Builder components) {
+        return TvheadendArtworkKt.addTvheadendArtwork(components);
+    }
+
+    public static ArtworkFailure artworkFailure(TvheadendArtworkLoadException failure) {
+        return failure.getFailure();
     }
 
     public static String currentLiveServiceName(TvheadendPlaybackCoordinator coordinator) {

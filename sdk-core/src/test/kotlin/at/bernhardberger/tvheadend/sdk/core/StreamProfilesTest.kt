@@ -10,6 +10,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -36,10 +37,12 @@ internal class StreamProfilesTest {
     fun `available profiles preserve wire order and own an immutable snapshot`() {
         val id = StreamProfileId("0123456789abcdef0123456789abcdef")
         val source = mutableListOf(StreamProfile(id, "Pass", "Original streams"))
-        val available = StreamProfilesResult.Available.create(source)
+        val currentSession = currentSession()
+        val available = StreamProfilesResult.Available.create(source, currentSession)
         source.clear()
 
         assertEquals(listOf(StreamProfile(id, "Pass", "Original streams")), available.profiles)
+        assertSame(currentSession, available.originatingSession)
         assertThrows(UnsupportedOperationException::class.java) {
             (available.profiles as MutableList<*>).clear()
         }

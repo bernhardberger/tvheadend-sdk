@@ -431,13 +431,24 @@ public sealed interface EpgSearchResult {
     /** The server returned this immutable finite event list, which may be empty. */
     public class Available private constructor(
         public val events: List<EpgEvent>,
+        /**
+         * Exact proof that authorized this operation.
+         *
+         * Provenance does not guarantee that the proof is still current when the result is read.
+         */
+        public val originatingSession: CurrentSessionObservation,
     ) : EpgSearchResult {
         override fun toString(): String = "EpgSearchResult.Available(<redacted>)"
 
         public companion object {
             /** Creates a successful result while defensively copying the event list. */
-            public fun create(events: List<EpgEvent>): Available =
-                Available(events.toEpgImmutableList())
+            public fun create(
+                events: List<EpgEvent>,
+                originatingSession: CurrentSessionObservation,
+            ): Available = Available(
+                events = events.toEpgImmutableList(),
+                originatingSession = originatingSession,
+            )
         }
     }
 

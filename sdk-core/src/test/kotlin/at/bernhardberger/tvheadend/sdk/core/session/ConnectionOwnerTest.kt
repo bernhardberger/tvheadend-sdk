@@ -343,7 +343,11 @@ internal class ConnectionOwnerTest {
             dvrMutations = coordinator,
         )
         val request = DvrScheduleRequest(DvrSchedule.Programme(EventId(1)))
-        val expired = CurrentSessionObservation(Any(), Any())
+        val expired = CurrentSessionObservation.create(
+            Any(),
+            Any(),
+            at.bernhardberger.tvheadend.sdk.core.SessionGenerationIdentity.create(),
+        )
 
         assertSame(
             DvrMutationResult.ObservationExpired,
@@ -513,7 +517,11 @@ internal class ConnectionOwnerTest {
             dvrProgress = progress,
         )
         val report = DvrPlaybackProgress.checkpoint(30.seconds)
-        val expired = CurrentSessionObservation(Any(), Any())
+        val expired = CurrentSessionObservation.create(
+            Any(),
+            Any(),
+            at.bernhardberger.tvheadend.sdk.core.SessionGenerationIdentity.create(),
+        )
 
         assertSame(
             RecordingProgressCapability.UNKNOWN,

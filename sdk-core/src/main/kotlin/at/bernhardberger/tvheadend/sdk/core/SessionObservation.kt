@@ -117,7 +117,12 @@ public class SessionObservation private constructor(
     override fun toString(): String = "SessionObservation(<redacted>)"
 
     public companion object {
-        /** Creates a standalone immutable observation for consumer and fake tests. */
+        /**
+         * Creates a standalone immutable observation for consumer and fake tests.
+         *
+         * Each call represents independent connection-generation authority. Production metadata
+         * republication preserves its owner-managed generation identity instead.
+         */
         public fun create(
             sessionState: SessionState = SessionState.Disconnected,
             channelState: ChannelRepositoryState = ChannelRepositoryState.Empty,
@@ -138,6 +143,7 @@ public class SessionObservation private constructor(
                 recordingProgressCapability = recordingProgressCapability,
                 owner = standaloneOwner,
                 generation = standaloneOwner,
+                generationIdentity = SessionGenerationIdentity.create(),
                 previousCurrent = null,
             )
         }
@@ -152,6 +158,7 @@ public class SessionObservation private constructor(
             recordingProgressCapability: RecordingProgressCapability,
             owner: Any,
             generation: Any?,
+            generationIdentity: SessionGenerationIdentity?,
             previousCurrent: CurrentSessionObservation?,
         ): SessionObservation {
             val current = if (
@@ -163,7 +170,11 @@ public class SessionObservation private constructor(
             ) {
                 previousCurrent?.takeIf { capability ->
                     capability.owner === owner && capability.generation === generation
-                } ?: CurrentSessionObservation(owner, generation)
+                } ?: CurrentSessionObservation.create(
+                    owner = owner,
+                    generation = generation,
+                    generationIdentity = requireNotNull(generationIdentity),
+                )
             } else {
                 null
             }
@@ -181,12 +192,33 @@ public class SessionObservation private constructor(
     }
 }
 
+/** Opaque process-local identity for one connection-generation authority. */
+public class SessionGenerationIdentity private constructor() {
+    override fun toString(): String = "SessionGenerationIdentity(<redacted>)"
+
+    internal companion object {
+        @JvmSynthetic
+        internal fun create(): SessionGenerationIdentity = SessionGenerationIdentity()
+    }
+}
+
 /** Opaque proof that one aggregate observation is current for its owning session generation. */
-public class CurrentSessionObservation internal constructor(
+public class CurrentSessionObservation private constructor(
     internal val owner: Any,
     internal val generation: Any,
+    /** Process-local identity shared by proofs issued under the same connection authority. */
+    public val generationIdentity: SessionGenerationIdentity,
 ) {
     override fun toString(): String = "CurrentSessionObservation(<redacted>)"
+
+    internal companion object {
+        @JvmSynthetic
+        internal fun create(
+            owner: Any,
+            generation: Any,
+            generationIdentity: SessionGenerationIdentity,
+        ): CurrentSessionObservation = CurrentSessionObservation(owner, generation, generationIdentity)
+    }
 }
 
 internal class SessionObservationStore {
@@ -194,6 +226,7 @@ internal class SessionObservationStore {
     private val owner = Any()
     private val mutableObservation = MutableStateFlow(SessionObservation.create())
     private var readyGeneration: Any? = null
+    private var readyGenerationIdentity: SessionGenerationIdentity? = null
 
     internal val observation: StateFlow<SessionObservation> = mutableObservation.asStateFlow()
 
@@ -230,7 +263,15 @@ internal class SessionObservationStore {
             check(state !is SessionState.Ready || generation != null) {
                 "A ready session observation requires an internal generation"
             }
-            readyGeneration = generation.takeIf { state is SessionState.Ready }
+            if (state is SessionState.Ready) {
+                if (readyGeneration !== generation) {
+                    readyGenerationIdentity = SessionGenerationIdentity.create()
+                }
+                readyGeneration = generation
+            } else {
+                readyGeneration = null
+                readyGenerationIdentity = null
+            }
             publishLocked(
                 sessionState = state,
                 recordingProgressCapability = progressCapability,
@@ -278,6 +319,7 @@ internal class SessionObservationStore {
             recordingProgressCapability = recordingProgressCapability,
             owner = owner,
             generation = readyGeneration,
+            generationIdentity = readyGenerationIdentity,
             previousCurrent = previous.currentSession,
         )
     }

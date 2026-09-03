@@ -4,12 +4,16 @@ package at.bernhardberger.tvheadend.sdk.consumer
 
 import android.content.Context
 import androidx.media3.exoplayer.ExoPlayer
+import at.bernhardberger.tvheadend.sdk.android.TvheadendArtworkLoadException
 import at.bernhardberger.tvheadend.sdk.android.ServerProfileEditReadResult
 import at.bernhardberger.tvheadend.sdk.android.ServerProfileOperationResult
 import at.bernhardberger.tvheadend.sdk.android.ServerProfileReadResult
 import at.bernhardberger.tvheadend.sdk.android.TvheadendServerProfileStore
+import at.bernhardberger.tvheadend.sdk.android.addTvheadendArtwork
+import at.bernhardberger.tvheadend.sdk.core.ArtworkFailure
 import at.bernhardberger.tvheadend.sdk.core.Channel
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
+import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.EpgEvent
 import at.bernhardberger.tvheadend.sdk.core.EpgSearchRequest
@@ -17,6 +21,7 @@ import at.bernhardberger.tvheadend.sdk.core.EpgSearchResult
 import at.bernhardberger.tvheadend.sdk.core.PlaybackBinding
 import at.bernhardberger.tvheadend.sdk.core.PlaybackBindingResult
 import at.bernhardberger.tvheadend.sdk.core.SessionObservation
+import at.bernhardberger.tvheadend.sdk.core.SessionGenerationIdentity
 import at.bernhardberger.tvheadend.sdk.core.StreamProfileId
 import at.bernhardberger.tvheadend.sdk.core.StreamProfilesResult
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
@@ -29,6 +34,7 @@ import at.bernhardberger.tvheadend.sdk.media3.TimeshiftCommandResult
 import at.bernhardberger.tvheadend.sdk.media3.createTvheadendPlaybackCoordinator
 import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionDiagnostics
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionIssue
+import coil3.ComponentRegistry
 import kotlin.time.Duration
 import kotlin.time.Instant
 import kotlinx.coroutines.flow.StateFlow
@@ -69,6 +75,24 @@ public class StagedSdkConsumer(
     public val observation: StateFlow<SessionObservation>
         get() = session.observation
 
+    public fun isCurrent(currentSession: CurrentSessionObservation): Boolean =
+        session.isCurrent(currentSession)
+
+    public suspend fun awaitReplacement(
+        currentSession: CurrentSessionObservation,
+    ): CurrentSessionObservation = session.awaitCurrentSession(currentSession)
+
+    public fun generationIdentity(
+        currentSession: CurrentSessionObservation,
+    ): SessionGenerationIdentity = currentSession.generationIdentity
+
+    public fun registerArtwork(
+        components: ComponentRegistry.Builder,
+    ): ComponentRegistry.Builder = components.addTvheadendArtwork()
+
+    public fun artworkFailure(failure: TvheadendArtworkLoadException): ArtworkFailure =
+        failure.failure
+
     public fun channel(id: ChannelId): Channel? = observation.value.channel(id)
 
     public fun eventAt(channelId: ChannelId, at: Instant): EpgEvent? =
@@ -88,11 +112,19 @@ public class StagedSdkConsumer(
         requireNotNull(observation.value.currentSession),
     )
 
+    public fun streamProfileProvenance(
+        result: StreamProfilesResult,
+    ): CurrentSessionObservation? = (result as? StreamProfilesResult.Available)?.originatingSession
+
     public suspend fun searchEpg(request: EpgSearchRequest): EpgSearchResult =
         session.epgRepository.search(
             requireNotNull(observation.value.currentSession),
             request,
         )
+
+    public fun epgSearchProvenance(
+        result: EpgSearchResult,
+    ): CurrentSessionObservation? = (result as? EpgSearchResult.Available)?.originatingSession
 
     public suspend fun playLive(
         channelId: ChannelId,

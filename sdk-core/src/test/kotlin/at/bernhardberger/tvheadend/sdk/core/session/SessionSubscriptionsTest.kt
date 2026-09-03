@@ -369,11 +369,20 @@ class SessionSubscriptionsTest {
             StandardTestDispatcher(testScheduler),
         )
         val generation = GatewayGeneration()
+        val expired = CurrentSessionObservation.create(
+            Any(),
+            Any(),
+            at.bernhardberger.tvheadend.sdk.core.SessionGenerationIdentity.create(),
+        )
 
-        assertSame(StreamProfilesResult.ObservationExpired, children.getStreamProfiles(generation))
+        assertSame(
+            StreamProfilesResult.ObservationExpired,
+            children.getStreamProfiles(generation, expired),
+        )
         metadata.bindKnownChannels(generation, 4L)
         children.bindGeneration(generation)
         assertTrue(children.startLiveAdmission(generation, CapabilityAccess.ALLOWED))
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
 
         val opening = async {
             children.open(
@@ -390,8 +399,12 @@ class SessionSubscriptionsTest {
         assertEquals(listOf(undiscoveredId.value), gateway.requestedStreamProfileUuids)
         assertEquals(listOf(600.seconds), gateway.requestedTimeshiftPeriods)
 
-        val available = children.getStreamProfiles(generation) as StreamProfilesResult.Available
+        val available = children.getStreamProfiles(
+            generation,
+            currentSession,
+        ) as StreamProfilesResult.Available
         assertEquals(listOf(StreamProfile(profileId, "Pass", "Original streams")), available.profiles)
+        assertSame(currentSession, available.originatingSession)
         assertEquals(listOf(generation), gateway.profileDiscoveryGenerations)
         children.closeAndJoinSubscriptions()
 
@@ -441,6 +454,11 @@ class SessionSubscriptionsTest {
         val generationB = GatewayGeneration()
         val entered = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()
+        val currentSession = CurrentSessionObservation.create(
+            Any(),
+            Any(),
+            at.bernhardberger.tvheadend.sdk.core.SessionGenerationIdentity.create(),
+        )
         gateway.streamProfilesAction = {
             entered.complete(Unit)
             release.await()
@@ -456,7 +474,7 @@ class SessionSubscriptionsTest {
         }
         children.bindGeneration(generationA)
 
-        val stale = async { children.getStreamProfiles(generationA) }
+        val stale = async { children.getStreamProfiles(generationA, currentSession) }
         entered.await()
         children.closeAndJoinSubscriptions()
         children.bindGeneration(generationB)
@@ -466,12 +484,39 @@ class SessionSubscriptionsTest {
         val cancellation = CancellationException("private cancellation")
         gateway.streamProfilesAction = { throw cancellation }
         val caught = try {
-            children.getStreamProfiles(generationB)
+            children.getStreamProfiles(generationB, currentSession)
             null
         } catch (failure: CancellationException) {
             failure
         }
         assertSame(cancellation, caught)
+
+        val suppressedEntered = CompletableDeferred<Unit>()
+        val suppressedRelease = CompletableDeferred<Unit>()
+        gateway.streamProfilesAction = {
+            suppressedEntered.complete(Unit)
+            try {
+                suppressedRelease.await()
+            } catch (_: CancellationException) {
+                // Exercise the post-command cancellation check.
+            }
+            GatewayResult.Ok(emptyList())
+        }
+        val suppressedCancellation = CancellationException("private suppressed cancellation")
+        val suppressed = async { children.getStreamProfiles(generationB, currentSession) }
+        suppressedEntered.await()
+        suppressed.cancel(suppressedCancellation)
+        suppressedRelease.complete(Unit)
+        var suppressedCaught: CancellationException? = null
+        try {
+            suppressed.await()
+        } catch (failure: CancellationException) {
+            suppressedCaught = failure
+        }
+        val propagated = requireNotNull(suppressedCaught)
+        assertTrue(
+            propagated === suppressedCancellation || propagated.cause === suppressedCancellation,
+        )
         children.closeAndJoinSubscriptions()
     }
 
@@ -1102,7 +1147,11 @@ class SessionSubscriptionsTest {
             StandardTestDispatcher(testScheduler),
         )
         val artworkId = ArtworkId(17)
-        val expired = CurrentSessionObservation(Any(), Any())
+        val expired = CurrentSessionObservation.create(
+            Any(),
+            Any(),
+            at.bernhardberger.tvheadend.sdk.core.SessionGenerationIdentity.create(),
+        )
 
         assertSame(
             ArtworkFailure.OBSERVATION_EXPIRED,
@@ -1156,6 +1205,66 @@ class SessionSubscriptionsTest {
             ).failure,
         )
     }
+
+    @Test
+    fun `artwork completion fences proof retirement and suppressed cancellation`() = runTest {
+        val gateway = SubscriptionGateway()
+        val metadata = PhaseOneSessionMetadata()
+        val children = PlaybackSessionChildren(
+            gateway,
+            metadata,
+            StandardTestDispatcher(testScheduler),
+        )
+        val generationA = GatewayGeneration()
+        metadata.bindKnownChannels(generationA)
+        children.bindGeneration(generationA)
+        val currentA = requireNotNull(metadata.observation.value.currentSession)
+        val replacementEntered = CompletableDeferred<Unit>()
+        val replacementRelease = CompletableDeferred<Unit>()
+        gateway.artworkLoadAction = { _, _ ->
+            replacementEntered.complete(Unit)
+            replacementRelease.await()
+            GatewayResult.Ok(byteArrayOf(1))
+        }
+
+        val replaced = async { children.loadArtwork(currentA, ArtworkId(1)) }
+        replacementEntered.await()
+        metadata.clearAllState()
+        replacementRelease.complete(Unit)
+        val replacementFailure = replaced.await() as ArtworkLoadResult.Unavailable
+        assertSame(ArtworkFailure.CONNECTION_CHANGED, replacementFailure.failure)
+
+        children.closeAndJoinSubscriptions()
+        val generationB = GatewayGeneration()
+        metadata.bindKnownChannels(generationB)
+        children.bindGeneration(generationB)
+        val currentB = requireNotNull(metadata.observation.value.currentSession)
+        val cancellationEntered = CompletableDeferred<Unit>()
+        val cancellationRelease = CompletableDeferred<Unit>()
+        gateway.artworkLoadAction = { _, _ ->
+            cancellationEntered.complete(Unit)
+            try {
+                cancellationRelease.await()
+            } catch (_: CancellationException) {
+                // Exercise the post-command cancellation check.
+            }
+            GatewayResult.Ok(byteArrayOf(2))
+        }
+        val cancellation = CancellationException("private artwork cancellation")
+        val cancelled = async { children.loadArtwork(currentB, ArtworkId(2)) }
+        cancellationEntered.await()
+        cancelled.cancel(cancellation)
+        cancellationRelease.complete(Unit)
+        var caught: CancellationException? = null
+        try {
+            cancelled.await()
+        } catch (failure: CancellationException) {
+            caught = failure
+        }
+        val propagated = requireNotNull(caught)
+        assertTrue(propagated === cancellation || propagated.cause === cancellation)
+        children.closeAndJoinSubscriptions()
+    }
 }
 
 private class SubscriptionGateway : ProtocolGateway {
@@ -1190,6 +1299,10 @@ private class SubscriptionGateway : ProtocolGateway {
         GatewayResult.Ok(GatewayRecordingFile(handleId = 7L, sizeBytes = 64L, protocolVersion = 27))
     internal var beforeRecordingOpenResult: (() -> Unit)? = null
     internal var artworkLoadResult: GatewayResult<ByteArray> = GatewayResult.NotSupported
+    internal var artworkLoadAction:
+        suspend (GatewayGeneration, ArtworkId) -> GatewayResult<ByteArray> = { _, _ ->
+            artworkLoadResult
+        }
     internal var streamProfilesAction: suspend (GatewayGeneration) -> GatewayResult<List<StreamProfile>> = {
         GatewayResult.NotSupported
     }
@@ -1317,7 +1430,7 @@ private class SubscriptionGateway : ProtocolGateway {
     ): GatewayResult<ByteArray> {
         loadedArtworkGenerations += generation
         loadedArtworkIds += id
-        return artworkLoadResult
+        return artworkLoadAction(generation, id)
     }
 
     override suspend fun openRecordingFile(

@@ -92,6 +92,15 @@ silently rebinding to the replacement generation. Capture the replacement
 observation and its new `currentSession` before retrying. Switching profiles
 performs full teardown and discards the prior repositories before the new sync.
 
+Use `session.isCurrent(currentSession)` for side-effect-free inspection and
+`session.awaitCurrentSession(replaced = currentSession)` to suspend until a
+distinct proof is published. Neither API leases a proof: it can retire
+immediately after inspection or return, and cancellation of the wait always
+propagates. `currentSession.generationIdentity` is an opaque, process-local cache
+scope. It can remain the same when metadata temporarily retires and republishes
+a proof under the same connection authority, but it cannot reconstruct or
+authorize a proof.
+
 `disconnect()` completes reusable teardown. `shutdown()` is terminal, ordered,
 and idempotent. It affects every holder of the shared session; a later
 `createTvheadendSession()` call creates a fresh owner.
@@ -138,7 +147,7 @@ val request = EpgSearchRequest.create(
 )
 
 when (val result = session.epgRepository.search(currentSession, request)) {
-    is EpgSearchResult.Available -> consume(result.events)
+    is EpgSearchResult.Available -> consume(result.events, result.originatingSession)
     EpgSearchResult.ObservationExpired -> Unit
     EpgSearchResult.InvalidQuery -> Unit
     EpgSearchResult.AccessDenied -> Unit
@@ -149,6 +158,10 @@ when (val result = session.epgRepository.search(currentSession, request)) {
     EpgSearchResult.NotSupported -> Unit
 }
 ```
+
+`originatingSession` is the exact proof that admitted the successful search. It
+records provenance only; the proof may already be retired when the result is
+observed. Check current state or wait for a replacement before a new operation.
 
 Search does not read or mutate retained coverage. `InvalidQuery` also covers an
 unusable server payload and the server's generic rejection of inaccessible
@@ -282,10 +295,12 @@ means the condition may change; it does not promise that replay is safe.
 
 Discover stream profiles for the same captured generation with
 `session.getStreamProfiles(currentSession)`. `StreamProfilesResult.Available`
-contains the immutable server order. Its other outcomes distinguish not-ready
-or expired observations, safe server failures, transport loss, and unsupported
-discovery. Pass an available opaque `StreamProfileId` through
-`LivePlaybackOptions`; omit it to keep the server default.
+contains the immutable server order and its exact `originatingSession`. That
+proof is provenance, not a currency guarantee, and may already be retired when
+the result is observed. Other outcomes distinguish not-ready or expired
+observations, safe server failures, transport loss, and unsupported discovery.
+Pass an available opaque `StreamProfileId` through `LivePlaybackOptions`; omit
+it to keep the server default.
 
 ### Timeshift
 
@@ -451,12 +466,13 @@ and retry policy, and profile-change failures remain application decisions.
 
 ### Authenticated artwork
 
-Register the SDK's Coil 3 fetcher on an application-owned image loader:
+Register the SDK's Coil 3 memory keyer and fetcher together on an
+application-owned image loader:
 
 ```kotlin
 val imageLoader = ImageLoader.Builder(context)
     .components {
-        add(createTvheadendArtworkFetcherFactory())
+        addTvheadendArtwork()
     }
     .build()
 
@@ -475,10 +491,15 @@ val artwork = TvheadendArtwork.create(
 binds the authenticated load to the captured session generation. TVHeadend
 requires recorder access for this file API; denied loads fail safely.
 
-The SDK does not derive a Coil cache key from the authenticated selector, so the
-selector does not enter memory- or disk-cache keys. Coil owns decoding and
-closes successful image sources. This component is not a URI factory or a
-generic image cache.
+The SDK derives an opaque process-local memory key from the current generation
+and artwork identity. The key contains no selector, endpoint, hostname,
+username, path, ticket, credential, or stable cross-process history. Retired
+proofs do not produce keys, and replacement generations cannot reuse old
+entries. Fetches return stream sources without disk identities, so this
+component does not authorize persistent authenticated artwork caching. Catch
+`TvheadendArtworkLoadException` and inspect its typed `failure`; do not parse
+exception text. Coil owns decoding and closes successful image sources. This
+component is not a URI factory or a generic image cache.
 
 ## Test a consumer
 
