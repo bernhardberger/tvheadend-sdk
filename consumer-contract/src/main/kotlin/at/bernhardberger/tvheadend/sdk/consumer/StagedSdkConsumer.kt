@@ -43,6 +43,8 @@ import at.bernhardberger.tvheadend.sdk.core.epgSnapshotAuthority
 import at.bernhardberger.tvheadend.sdk.core.epgSnapshotForDisplay
 import at.bernhardberger.tvheadend.sdk.media3.LivePlaybackOptions
 import at.bernhardberger.tvheadend.sdk.media3.LiveTimeshiftState
+import at.bernhardberger.tvheadend.sdk.media3.PlaybackCoordinatorLifetime
+import at.bernhardberger.tvheadend.sdk.media3.PlaybackShutdownResult
 import at.bernhardberger.tvheadend.sdk.media3.PlaybackTargetResult
 import at.bernhardberger.tvheadend.sdk.media3.RecordingPlaybackStart
 import at.bernhardberger.tvheadend.sdk.media3.TvheadendPlaybackCoordinator
@@ -55,6 +57,7 @@ import at.bernhardberger.tvheadend.sdk.testing.FakeServerProfileStore
 import coil3.ComponentRegistry
 import kotlin.time.Duration
 import kotlin.time.Instant
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.StateFlow
 
 public class StagedSdkConsumer(
@@ -100,6 +103,21 @@ public class StagedSdkConsumer(
     }
 
     public suspend fun run(): Unit = coordinator.run()
+
+    public fun launchCoordinator(scope: CoroutineScope): PlaybackCoordinatorLifetime =
+        coordinator.launchIn(scope)
+
+    public suspend fun shutdownCoordinator(
+        lifetime: PlaybackCoordinatorLifetime,
+        drainTimeout: Duration,
+    ): PlaybackShutdownResult = lifetime.shutdown(drainTimeout)
+
+    public suspend fun joinCoordinator(lifetime: PlaybackCoordinatorLifetime): Unit = lifetime.join()
+
+    public suspend fun withCoordinatorLifetime(
+        drainTimeout: Duration,
+        block: suspend CoroutineScope.(TvheadendPlaybackCoordinator) -> Unit,
+    ): PlaybackShutdownResult = coordinator.withLifetime(drainTimeout, block)
 
     public val observation: StateFlow<SessionObservation>
         get() = session.observation

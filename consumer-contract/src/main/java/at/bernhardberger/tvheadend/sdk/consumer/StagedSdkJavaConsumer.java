@@ -30,7 +30,9 @@ import at.bernhardberger.tvheadend.sdk.core.SessionObservation;
 import at.bernhardberger.tvheadend.sdk.core.StreamProfilesResult;
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession;
 import at.bernhardberger.tvheadend.sdk.media3.TvheadendPlaybackCoordinator;
+import at.bernhardberger.tvheadend.sdk.media3.PlaybackCoordinatorLifetime;
 import at.bernhardberger.tvheadend.sdk.media3.PlaybackOutcomeCategory;
+import at.bernhardberger.tvheadend.sdk.media3.PlaybackShutdownResult;
 import at.bernhardberger.tvheadend.sdk.media3.PlaybackTargetDisposition;
 import at.bernhardberger.tvheadend.sdk.media3.PlaybackTargetResult;
 import at.bernhardberger.tvheadend.sdk.media3.TimeshiftCommandDisposition;
@@ -45,7 +47,9 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionIssueCategory;
 import at.bernhardberger.tvheadend.sdk.testing.FakeTvheadendSession;
 import at.bernhardberger.tvheadend.sdk.testing.FakeServerProfileStore;
 import coil3.ComponentRegistry;
+import kotlin.Unit;
 import kotlin.coroutines.Continuation;
+import kotlinx.coroutines.CoroutineScope;
 
 public final class StagedSdkJavaConsumer {
     private StagedSdkJavaConsumer() {}
@@ -232,6 +236,25 @@ public final class StagedSdkJavaConsumer {
 
     public static ArtworkFailure artworkFailure(TvheadendArtworkLoadException failure) {
         return failure.getFailure();
+    }
+
+    public static PlaybackCoordinatorLifetime launchCoordinator(
+            TvheadendPlaybackCoordinator coordinator,
+            CoroutineScope scope) {
+        return coordinator.launchIn(scope);
+    }
+
+    public static Object shutdownCoordinator(
+            PlaybackCoordinatorLifetime lifetime,
+            long drainTimeoutMillis,
+            Continuation<? super PlaybackShutdownResult> continuation) {
+        return lifetime.shutdownMillis(drainTimeoutMillis, continuation);
+    }
+
+    public static Object joinCoordinator(
+            PlaybackCoordinatorLifetime lifetime,
+            Continuation<? super Unit> continuation) {
+        return lifetime.join(continuation);
     }
 
     public static String currentLiveServiceName(TvheadendPlaybackCoordinator coordinator) {

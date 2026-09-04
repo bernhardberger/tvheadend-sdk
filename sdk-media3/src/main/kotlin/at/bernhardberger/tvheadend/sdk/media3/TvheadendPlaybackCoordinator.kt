@@ -25,12 +25,16 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ClosedSendChannelException
@@ -191,13 +195,54 @@ public enum class PlaybackShutdownResult {
 }
 
 /**
+ * One launched, non-restartable playback-coordinator lifetime.
+ *
+ * [shutdown] combines the coordinator's typed terminal request with actor completion. [join] only
+ * observes completion and never cancels the coordinator when its caller is cancelled.
+ */
+public sealed interface PlaybackCoordinatorLifetime {
+    /** Shuts down the coordinator and waits for all of its internal cleanup to complete. */
+    public suspend fun shutdown(drainTimeout: Duration): PlaybackShutdownResult
+
+    /** Java-friendly millisecond form of [shutdown]. */
+    public suspend fun shutdownMillis(drainTimeoutMillis: Long): PlaybackShutdownResult
+
+    /** Waits for completion and rethrows the retained actor failure on every failed join. */
+    public suspend fun join(): Unit
+}
+
+private class DefaultPlaybackCoordinatorLifetime(
+    private val coordinator: TvheadendPlaybackCoordinator,
+    private val actor: Deferred<Unit>,
+) : PlaybackCoordinatorLifetime {
+    override suspend fun shutdown(drainTimeout: Duration): PlaybackShutdownResult {
+        return try {
+            val result = coordinator.shutdown(drainTimeout)
+            actor.join()
+            result
+        } catch (cancellation: CancellationException) {
+            actor.cancel(cancellation)
+            withContext(NonCancellable) { actor.join() }
+            throw cancellation
+        }
+    }
+
+    override suspend fun shutdownMillis(drainTimeoutMillis: Long): PlaybackShutdownResult =
+        shutdown(drainTimeoutMillis.milliseconds)
+
+    override suspend fun join(): Unit = actor.await()
+}
+
+/**
  * Serializes TVHeadend source changes on an application-owned [ExoPlayer].
  *
- * The application launches the one-shot [run] boundary and retains ownership of the player. This
- * coordinator never constructs or releases it, never changes autoplay, and owns no MediaSession,
- * service, audio focus, notification, surface, navigation, or presentation policy. Target, stop,
- * and shutdown intents may be called from any coroutine. All player work is moved to the player's
- * application looper, and cancellation before that work is claimed prevents player mutation.
+ * The application retains ownership of the player and may use [withLifetime] for a structured
+ * lifetime or [launchIn] when its owner cannot be expressed as one suspending block. This
+ * coordinator never constructs or releases the player, never changes autoplay, and owns no
+ * MediaSession, service, audio focus, notification, surface, navigation, or presentation policy.
+ * Target, stop, and shutdown intents may be called from any coroutine. All player work is moved to
+ * the player's application looper, and cancellation before that work is claimed prevents player
+ * mutation.
  */
 public class TvheadendPlaybackCoordinator internal constructor(
     private val player: PlaybackCoordinatorPlayer,
@@ -226,11 +271,66 @@ public class TvheadendPlaybackCoordinator internal constructor(
     public val liveDiagnostics: StateFlow<LiveSubscriptionDiagnostics?> =
         mutableLiveDiagnostics.asStateFlow()
 
+    /**
+     * Launches this one-shot coordinator immediately as a child of [scope].
+     *
+     * Prefer [withLifetime] when the full consumer workflow fits in one suspending block.
+     */
+    public fun launchIn(scope: CoroutineScope): PlaybackCoordinatorLifetime {
+        claimRun()
+        return DefaultPlaybackCoordinatorLifetime(
+            coordinator = this,
+            actor = scope.async(start = CoroutineStart.UNDISPATCHED) { runClaimed() },
+        )
+    }
+
+    /**
+     * Runs [block] with a launched coordinator and a scope for lifetime-bound collectors.
+     *
+     * Normal block completion cancels its collector children, shuts down the coordinator, and
+     * returns typed shutdown evidence. Block failure and caller cancellation are rethrown only
+     * after the same terminal cleanup completes.
+     */
+    public suspend fun withLifetime(
+        drainTimeout: Duration,
+        block: suspend CoroutineScope.(TvheadendPlaybackCoordinator) -> Unit,
+    ): PlaybackShutdownResult {
+        validatePlaybackShutdownDrainTimeout(drainTimeout)
+        return coroutineScope {
+            val lifetime = launchIn(this)
+            val collectorJob = Job(coroutineContext[Job])
+            val collectorScope = CoroutineScope(coroutineContext + collectorJob)
+            try {
+                collectorScope.block(this@TvheadendPlaybackCoordinator)
+            } catch (failure: Throwable) {
+                withContext(NonCancellable) {
+                    collectorJob.cancelAndJoin()
+                    try {
+                        lifetime.shutdown(drainTimeout)
+                    } catch (cleanupFailure: Throwable) {
+                        if (cleanupFailure !== failure) failure.addSuppressed(cleanupFailure)
+                    }
+                }
+                throw failure
+            }
+            withContext(NonCancellable) { collectorJob.cancelAndJoin() }
+            lifetime.shutdown(drainTimeout)
+        }
+    }
+
     /** Runs the coordinator until [shutdown] completes or the caller cancels this boundary. */
     public suspend fun run() {
+        claimRun()
+        runClaimed()
+    }
+
+    private fun claimRun() {
         check(lifecycle.compareAndSet(CoordinatorLifecycle.NEW, CoordinatorLifecycle.RUNNING)) {
             "Playback coordinator run is one-shot"
         }
+    }
+
+    private suspend fun runClaimed() {
         try {
             CoordinatorActor(
                 player = player,
@@ -247,11 +347,16 @@ public class TvheadendPlaybackCoordinator internal constructor(
                 deactivateTimeshift = ::deactivateTimeshift,
             ).run()
         } finally {
-            withContext(NonCancellable) { player.abandon() }
-            playerEvents.discard()
-            lifecycle.set(CoordinatorLifecycle.STOPPED)
-            commands.close()
-            rejectQueuedCommands()
+            withContext(NonCancellable) {
+                try {
+                    player.abandon()
+                } finally {
+                    playerEvents.discard()
+                    lifecycle.set(CoordinatorLifecycle.STOPPED)
+                    commands.close()
+                    rejectQueuedCommands()
+                }
+            }
         }
     }
 
@@ -343,13 +448,7 @@ public class TvheadendPlaybackCoordinator internal constructor(
      * must be finite, non-negative, and no greater than ten seconds.
      */
     public suspend fun shutdown(drainTimeout: Duration): PlaybackShutdownResult {
-        require(
-            drainTimeout.isFinite() &&
-                !drainTimeout.isNegative() &&
-                drainTimeout <= MAX_DRAIN_TIMEOUT,
-        ) {
-            "Playback shutdown drain timeout must be finite and between zero and ten seconds"
-        }
+        validatePlaybackShutdownDrainTimeout(drainTimeout)
         val reply = CompletableDeferred<PlaybackShutdownResult>()
         val command = CoordinatorCommand.Shutdown(
             drainTimeout = drainTimeout,
@@ -438,7 +537,16 @@ public class TvheadendPlaybackCoordinator internal constructor(
 
     private companion object {
         const val COMMAND_CAPACITY: Int = 32
-        val MAX_DRAIN_TIMEOUT: Duration = 10.seconds
+    }
+}
+
+private fun validatePlaybackShutdownDrainTimeout(drainTimeout: Duration) {
+    require(
+        drainTimeout.isFinite() &&
+            !drainTimeout.isNegative() &&
+            drainTimeout <= 10.seconds,
+    ) {
+        "Playback shutdown drain timeout must be finite and between zero and ten seconds"
     }
 }
 

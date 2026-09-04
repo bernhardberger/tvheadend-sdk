@@ -282,7 +282,7 @@ internal class ModuleBoundaryTest {
             "src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/ServerProfileStore.kt",
             "../sdk-media3/src/main/kotlin/at/bernhardberger/tvheadend/sdk/media3/TvheadendPlaybackCoordinator.kt",
         ).joinToString(" ") { path -> File(path).readText() }.replace(Regex("\\s+"), " ")
-        val expectedSignatures = setOf(
+        val expectedSignatures = listOf(
             "public suspend fun connect(profile: ServerProfile): SessionCommandResult",
             "public suspend fun retry(): SessionCommandResult",
             "public suspend fun disconnect()",
@@ -312,6 +312,7 @@ internal class ModuleBoundaryTest {
             "public suspend fun openRecording(): RecordingFileResult<RecordingFile>",
             "public suspend fun reportProgress( growingLease: GrowingRecordingFileLease?, progress: DvrPlaybackProgress, ): DvrProgressResult",
             "public suspend fun run()",
+            "public suspend fun withLifetime( drainTimeout: Duration, block: suspend CoroutineScope.(TvheadendPlaybackCoordinator) -> Unit, ): PlaybackShutdownResult",
             "public suspend fun setLiveTarget( binding: PlaybackBinding.Live, options: LivePlaybackOptions = LivePlaybackOptions(), ): PlaybackTargetResult",
             "public suspend fun setRecordingTarget( binding: PlaybackBinding.Recording, start: RecordingPlaybackStart = RecordingPlaybackStart.RESUME, ): PlaybackTargetResult",
             "public suspend fun seekTimeshift(offset: Duration): TimeshiftCommandResult",
@@ -320,6 +321,9 @@ internal class ModuleBoundaryTest {
             "public suspend fun resumeTimeshift(): TimeshiftCommandResult",
             "public suspend fun stop(): PlaybackStopResult",
             "public suspend fun shutdown(drainTimeout: Duration): PlaybackShutdownResult",
+            "public suspend fun shutdown(drainTimeout: Duration): PlaybackShutdownResult",
+            "public suspend fun shutdownMillis(drainTimeoutMillis: Long): PlaybackShutdownResult",
+            "public suspend fun join(): Unit",
         )
 
         assertEquals(expectedSignatures.size, Regex("public suspend fun ").findAll(publicApi).count())
@@ -329,6 +333,15 @@ internal class ModuleBoundaryTest {
                 "Missing typed public suspending signature",
             )
         }
+        assertEquals(
+            2,
+            Regex(
+                Regex.escape(
+                    "public suspend fun shutdown(drainTimeout: Duration): PlaybackShutdownResult",
+                ),
+            ).findAll(publicApi).count(),
+        )
+        assertTrue("public sealed interface PlaybackCoordinatorLifetime" in publicApi)
     }
 
     @Test
@@ -405,6 +418,7 @@ internal class ModuleBoundaryTest {
             "PlaybackOutcomeCategory",
             "TimeshiftCommandResult",
             "PlaybackShutdownResult",
+            "PlaybackCoordinatorLifetime",
             "PlaybackRecoveryPolicy",
             "PlaybackRecoveryReason",
             "PlaybackStopResult",
@@ -470,7 +484,7 @@ internal class ModuleBoundaryTest {
             ),
             fakePlaybackFunctions,
         )
-        assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 17)
+        assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 18)
 
         val coordinatorApi = File(
             "../sdk-media3/src/main/kotlin/at/bernhardberger/tvheadend/sdk/media3/" +

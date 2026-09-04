@@ -52,11 +52,14 @@ import kotlin.time.Duration.Companion.microseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
@@ -365,6 +368,166 @@ internal class TvheadendPlaybackCoordinatorTest {
         )
         val secondRunFailure = runCatching { fixture.coordinator.run() }.exceptionOrNull()
         assertTrue(secondRunFailure is IllegalStateException)
+    }
+
+    @Test
+    fun `lifetime launches immediately and repeated shutdown and join remain terminal`() = runTest {
+        val fixture = CoordinatorFixture()
+        val lifetime = fixture.coordinator.launchIn(this)
+
+        assertSame(
+            PlaybackTargetResult.STARTED,
+            fixture.coordinator.setLiveTarget(ChannelId(1)),
+        )
+        assertSame(PlaybackShutdownResult.DRAINED, lifetime.shutdown(1.seconds))
+        assertSame(PlaybackShutdownResult.ALREADY_SHUT_DOWN, lifetime.shutdown(1.seconds))
+        lifetime.join()
+        lifetime.join()
+
+        assertEquals(1, fixture.player.abandonCalls)
+        assertFalse(fixture.player.released)
+        assertTrue(
+            runCatching { fixture.coordinator.launchIn(this) }.exceptionOrNull() is
+                IllegalStateException,
+        )
+    }
+
+    @Test
+    fun `lifetime exposes no public JVM constructor`() {
+        assertTrue(PlaybackCoordinatorLifetime::class.java.isSealed)
+        assertTrue(PlaybackCoordinatorLifetime::class.java.constructors.isEmpty())
+    }
+
+    @Test
+    fun `structured block stops collector children before returning shutdown evidence`() = runTest {
+        val fixture = CoordinatorFixture()
+        var collectorStopped = false
+
+        val result = fixture.coordinator.withLifetime(1.seconds) { coordinator ->
+            launch(start = CoroutineStart.UNDISPATCHED) {
+                try {
+                    awaitCancellation()
+                } finally {
+                    collectorStopped = true
+                }
+            }
+            assertSame(
+                PlaybackTargetResult.STARTED,
+                coordinator.setLiveTarget(ChannelId(1)),
+            )
+        }
+
+        assertSame(PlaybackShutdownResult.DRAINED, result)
+        assertTrue(collectorStopped)
+        assertEquals(1, fixture.player.abandonCalls)
+        assertFalse(fixture.player.released)
+    }
+
+    @Test
+    fun `structured block failure is rethrown after collector and coordinator cleanup`() = runTest {
+        val fixture = CoordinatorFixture()
+        val failure = IOException("scripted block failure")
+        var collectorStopped = false
+
+        val caught = runCatching {
+            fixture.coordinator.withLifetime(1.seconds) {
+                launch(start = CoroutineStart.UNDISPATCHED) {
+                    try {
+                        awaitCancellation()
+                    } finally {
+                        collectorStopped = true
+                    }
+                }
+                throw failure
+            }
+        }.exceptionOrNull()
+
+        assertTrue(caught === failure || caught?.cause === failure)
+        assertTrue(collectorStopped)
+        assertEquals(1, fixture.player.abandonCalls)
+        assertFalse(fixture.player.released)
+        assertSame(
+            PlaybackTargetResult.SHUT_DOWN,
+            fixture.coordinator.setLiveTarget(ChannelId(2)),
+        )
+    }
+
+    @Test
+    fun `structured caller cancellation remains cancellation after terminal cleanup`() = runTest {
+        val fixture = CoordinatorFixture()
+        val entered = CompletableDeferred<Unit>()
+        val cancellation = CancellationException("scripted caller cancellation")
+        val caller = async(start = CoroutineStart.UNDISPATCHED) {
+            fixture.coordinator.withLifetime(1.seconds) {
+                entered.complete(Unit)
+                awaitCancellation()
+            }
+        }
+        entered.await()
+
+        caller.cancel(cancellation)
+        val caught = runCatching { caller.await() }.exceptionOrNull()
+
+        assertTrue(caught is CancellationException)
+        assertEquals(cancellation.message, caught?.message)
+        assertEquals(1, fixture.player.abandonCalls)
+        assertFalse(fixture.player.released)
+        assertSame(
+            PlaybackShutdownResult.ALREADY_SHUT_DOWN,
+            fixture.coordinator.shutdown(1.seconds),
+        )
+    }
+
+    @Test
+    fun `shutdown caller cancellation cancels and joins the actor before propagating`() = runTest {
+        val fixture = CoordinatorFixture()
+        val installEntered = CompletableDeferred<Unit>()
+        fixture.player.liveInstallEntered = installEntered
+        fixture.player.liveInstallRelease = CompletableDeferred()
+        val lifetime = fixture.coordinator.launchIn(this)
+        val install = async { fixture.coordinator.setLiveTarget(ChannelId(1)) }
+        installEntered.await()
+        val cancellation = CancellationException("scripted shutdown caller cancellation")
+        val shutdown = async { lifetime.shutdown(1.seconds) }
+        runCurrent()
+
+        shutdown.cancel(cancellation)
+        val caught = runCatching { shutdown.await() }.exceptionOrNull()
+
+        assertTrue(caught is CancellationException)
+        assertEquals(cancellation.message, caught?.message)
+        assertSame(PlaybackTargetResult.SHUT_DOWN, install.await())
+        assertEquals(1, fixture.player.abandonCalls)
+        assertFalse(fixture.player.released)
+        assertSame(
+            PlaybackShutdownResult.ALREADY_SHUT_DOWN,
+            lifetime.shutdown(1.seconds),
+        )
+    }
+
+    @Test
+    fun `failed actor is retained by every lifetime join`() = runTest {
+        val fixture = CoordinatorFixture()
+        val failure = IOException("scripted install failure")
+        fixture.player.installFailure = failure
+
+        supervisorScope {
+            val lifetime = fixture.coordinator.launchIn(this)
+            assertSame(
+                PlaybackTargetResult.SHUT_DOWN,
+                fixture.coordinator.setLiveTarget(ChannelId(1)),
+            )
+            assertSame(
+                PlaybackShutdownResult.ALREADY_SHUT_DOWN,
+                lifetime.shutdown(1.seconds),
+            )
+            repeat(2) {
+                val caught = runCatching { lifetime.join() }.exceptionOrNull()
+                assertTrue(caught === failure || caught?.cause === failure)
+            }
+        }
+        assertEquals(1, fixture.player.abandonCalls)
+        assertFalse(fixture.player.released)
     }
 
     @Test
@@ -1921,6 +2084,15 @@ private class TestCoordinatorHarness(
     val liveDiagnostics = delegate.liveDiagnostics
 
     suspend fun run() = delegate.run()
+
+    fun launchIn(scope: CoroutineScope): PlaybackCoordinatorLifetime = delegate.launchIn(scope)
+
+    suspend fun withLifetime(
+        timeout: Duration,
+        block: suspend CoroutineScope.(TestCoordinatorHarness) -> Unit,
+    ): PlaybackShutdownResult = delegate.withLifetime(timeout) {
+        block(this@TestCoordinatorHarness)
+    }
 
     suspend fun setLiveTarget(
         channelId: ChannelId,

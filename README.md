@@ -237,58 +237,57 @@ a later connection generation for an installed target.
 
 `sdk-media3` provides a narrow coordinator for live channels, completed
 recordings, and the bounded growing pass-through MPEG-TS path. The application
-owns the `ExoPlayer` and the coroutine running the coordinator. Source changes,
-resume registration, recovery, and progress observation are serialized on the
-player's application looper; the coordinator
+owns the `ExoPlayer`; the structured lifetime owns the coroutine running the
+coordinator. Source changes, resume registration, recovery, and progress
+observation are serialized on the player's application looper; the coordinator
 does not create or release the player or own a service, MediaSession, audio
 focus, notification, surface, autoplay, navigation, or presentation policy.
 
 ```kotlin
 val coordinator = createTvheadendPlaybackCoordinator(player)
-val owner = applicationScope.launch(start = CoroutineStart.UNDISPATCHED) {
-    coordinator.run()
-}
-val observed = session.observation.value
-val currentSession = requireNotNull(observed.currentSession)
-val channel = requireNotNull(observed.channel(channelId))
-val completedRecording = requireNotNull(observed.dvrEntry(completedRecordingId))
-val activeRecording = requireNotNull(observed.dvrEntry(activeRecordingId))
+val shutdownResult = coordinator.withLifetime(2.seconds) { coordinator ->
+    val observed = session.observation.value
+    val currentSession = requireNotNull(observed.currentSession)
+    val channel = requireNotNull(observed.channel(channelId))
+    val completedRecording = requireNotNull(observed.dvrEntry(completedRecordingId))
+    val activeRecording = requireNotNull(observed.dvrEntry(activeRecordingId))
 
-val liveTarget = session.bindLivePlayback(currentSession, channel.id)
-if (liveTarget is PlaybackBindingResult.Bound) {
-    handlePlaybackTargetResult(
-        coordinator.setLiveTarget(
-            liveTarget.binding,
-            LivePlaybackOptions(timeshiftPeriod = 30.minutes),
-        ),
-    )
-}
-handleTimeshiftCommandResult(coordinator.seekTimeshift((-30).seconds))
-handleTimeshiftCommandResult(coordinator.returnToLive()) // bounded near-live position
-handleTimeshiftCommandResult(coordinator.pauseTimeshift()) // pauses server delivery only
-handleTimeshiftCommandResult(coordinator.resumeTimeshift())
+    val liveTarget = session.bindLivePlayback(currentSession, channel.id)
+    if (liveTarget is PlaybackBindingResult.Bound) {
+        handlePlaybackTargetResult(
+            coordinator.setLiveTarget(
+                liveTarget.binding,
+                LivePlaybackOptions(timeshiftPeriod = 30.minutes),
+            ),
+        )
+    }
+    handleTimeshiftCommandResult(coordinator.seekTimeshift((-30).seconds))
+    handleTimeshiftCommandResult(coordinator.returnToLive()) // bounded near-live position
+    handleTimeshiftCommandResult(coordinator.pauseTimeshift()) // pauses server delivery only
+    handleTimeshiftCommandResult(coordinator.resumeTimeshift())
 
-val completedTarget = session.bindRecordingPlayback(currentSession, completedRecording.id)
-if (completedTarget is PlaybackBindingResult.Bound) {
-    handlePlaybackTargetResult(
-        coordinator.setRecordingTarget(completedTarget.binding, RecordingPlaybackStart.RESUME),
-    )
-}
-val growingTarget = session.bindRecordingPlayback(currentSession, activeRecording.id)
-if (growingTarget is PlaybackBindingResult.Bound) {
-    handlePlaybackTargetResult(
-        coordinator.setRecordingTarget(growingTarget.binding, RecordingPlaybackStart.START_OVER),
-    )
+    val completedTarget = session.bindRecordingPlayback(currentSession, completedRecording.id)
+    if (completedTarget is PlaybackBindingResult.Bound) {
+        handlePlaybackTargetResult(
+            coordinator.setRecordingTarget(completedTarget.binding, RecordingPlaybackStart.RESUME),
+        )
+    }
+    val growingTarget = session.bindRecordingPlayback(currentSession, activeRecording.id)
+    if (growingTarget is PlaybackBindingResult.Bound) {
+        handlePlaybackTargetResult(
+            coordinator.setRecordingTarget(growingTarget.binding, RecordingPlaybackStart.START_OVER),
+        )
+    }
 }
 
-handlePlaybackShutdownResult(coordinator.shutdown(2.seconds))
-owner.join()
+handlePlaybackShutdownResult(shutdownResult)
 session.shutdown()
 player.release()
 ```
 
-`CoroutineStart.UNDISPATCHED` lets `run()` claim the coordinator lifecycle before
-the first command can be submitted. Applications should handle every typed
+`withLifetime` launches the coordinator before invoking its block, cancels and
+joins child collectors launched on the block scope, and completes terminal
+cleanup before returning. Applications should handle every typed
 target, timeshift, and shutdown result rather than assuming the player changed.
 Target and timeshift outcomes expose stable dispositions, categories, and direct
 predicates; exact SDK-owned values are non-exhaustive so consumers must retain a

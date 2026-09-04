@@ -268,34 +268,32 @@ progress API.
 ## Bind Media3 playback
 
 `sdk-media3` supplies a narrow coordinator over an application-owned
-`ExoPlayer`. Launch its one-shot `run()` boundary in an application-owned
-coroutine, bind a target through the current session observation, and install
-that exact binding:
+`ExoPlayer`. Use its structured lifetime boundary, bind a target through the
+current session observation, and install that exact binding:
 
 ```kotlin
 val coordinator = createTvheadendPlaybackCoordinator(player)
-val coordinatorJob = applicationScope.launch(start = CoroutineStart.UNDISPATCHED) {
-    coordinator.run()
+val shutdownResult = coordinator.withLifetime(2.seconds) { coordinator ->
+    val observed = session.observation.value
+    val currentSession = observed.currentSession ?: return@withLifetime
+    val channel = observed.channel(channelId) ?: return@withLifetime
+    when (val target = session.bindLivePlayback(currentSession, channel.id)) {
+        is PlaybackBindingResult.Bound -> handlePlaybackTargetResult(
+            coordinator.setLiveTarget(
+                target.binding,
+                LivePlaybackOptions(timeshiftPeriod = 30.seconds),
+            ),
+        )
+        PlaybackBindingResult.ObservationExpired -> Unit
+        PlaybackBindingResult.TargetUnavailable -> Unit
+    }
 }
-
-val observed = session.observation.value
-val currentSession = observed.currentSession ?: return
-val channel = observed.channel(channelId) ?: return
-when (val target = session.bindLivePlayback(currentSession, channel.id)) {
-    is PlaybackBindingResult.Bound -> handlePlaybackTargetResult(
-        coordinator.setLiveTarget(
-            target.binding,
-            LivePlaybackOptions(timeshiftPeriod = 30.seconds),
-        ),
-    )
-    PlaybackBindingResult.ObservationExpired -> Unit
-    PlaybackBindingResult.TargetUnavailable -> Unit
-}
+handlePlaybackShutdownResult(shutdownResult)
 ```
 
-Starting the coroutine with `CoroutineStart.UNDISPATCHED` lets `run()` claim the
-coordinator lifecycle before the first target command can observe it as not yet
-running.
+`withLifetime` claims the one-shot coordinator before invoking the block. The
+block receiver is a scope for lifetime-bound collectors; all of its child jobs
+are cancelled and joined before terminal shutdown evidence is returned.
 
 Both live and recording binding return `Bound`, `ObservationExpired`, or
 `TargetUnavailable`. A binding retains the original connection generation and
@@ -418,19 +416,23 @@ player's application looper. It does not construct or release the player and
 does not own a `MediaSession`, service, audio focus, notifications, surfaces,
 autoplay, navigation, UI, or presentation policy.
 
-Shut down in ownership order:
+When the owner cannot fit its work in one suspending block, use the lower-level
+lifetime handle and shut down in ownership order:
 
 ```kotlin
-handlePlaybackShutdownResult(coordinator.shutdown(2.seconds))
-coordinatorJob.join()
+val lifetime = coordinator.launchIn(applicationScope)
+// Install targets and launch application work.
+handlePlaybackShutdownResult(lifetime.shutdown(2.seconds))
+lifetime.join() // safe to repeat
 session.shutdown()
 player.release()
 ```
 
 The coordinator shutdown timeout must be finite, non-negative, and at most ten
 seconds. It may drain one pending progress report and returns a typed
-`PlaybackShutdownResult`. The application still joins the coordinator, shuts
-down the session, and releases its own player.
+`PlaybackShutdownResult` after terminal cleanup. Caller cancellation remains a
+`CancellationException`, but cleanup still completes before it propagates. The
+application still shuts down the session and releases its own player.
 
 Applications using `sdk-playback` directly own their custom media adapter and
 must handle its typed subscription state machine, generation termination, seek,
