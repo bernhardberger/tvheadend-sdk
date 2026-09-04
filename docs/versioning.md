@@ -1,6 +1,6 @@
 # Versioning and compatibility
 
-The source is configured for the provisional `0.5.0` development line under these
+The source is configured for the provisional `0.5.0` release under these
 coordinates:
 
 - `at.bernhardberger.tvheadend:sdk-android:0.5.0`

@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.5.0] - In development
+## [0.5.0]
 
 This provisional minor line exposes immutable, current-target live diagnostics
 for source display metadata, frontend state and measurements, and server queue
@@ -17,10 +17,40 @@ configuration/access, and uncertain outcomes without becoming exhaustive over
 future exact SDK values. Existing semantic distinctions, typed control flow,
 cancellation propagation, and redacted fixed rendering are preserved.
 
-The playback outcome replacement is an intentional source and binary break from
-the provisional `0.4.0` API; enum machinery and exhaustive matching are not
-retained. This entry records source development only. Local or CI verification
-does not establish publication or Maven Central availability.
+Session observations now expose current-generation checks and cancellable waits,
+and successful EPG search and stream-profile results retain their originating
+session proof. Channel, EPG, and DVR snapshots expose explicit retained-metadata
+authority plus display-safe retained data while a replacement generation is
+synchronizing.
+
+The profile-store contract now lives in `sdk-core`, with typed, redacted read and
+mutation results implemented by the Android store and its JVM fake. Session and
+operation failures expose a stable recovery disposition so applications can
+distinguish automatic backoff, explicit retry, profile correction, and terminal
+failures without interpreting transport details.
+
+EPG coverage can be acquired for a batch of channel identifiers in one
+generation-bound operation. Ordered per-channel settlements distinguish covered
+channels from absent, rejected, or expired targets without turning partial
+success into an aggregate exception.
+
+The Media3 playback coordinator adds structured `launchIn` and `withLifetime`
+entry points, a generation-fenced bind-and-install live workflow, and one
+coherent live observation combining timeshift state, subscription issue, and
+diagnostics. Applications still own the `Player` and all presentation and
+service policy.
+
+`sdk-testing` adds a composable generation-aware `FakeTvheadendSession` with
+scriptable repositories, profile storage, artwork, playback bindings, typed
+failures, and recorded calls for Kotlin and Java consumers.
+
+The playback outcome replacement, profile-store move, and originating-session
+result changes are intentional source and binary breaks from the provisional
+`0.4.0` API; legacy enum machinery and compatibility shims are not retained.
+The published set remains the same five SDK artifacts, and production dependency
+identities are unchanged, including HTSP `0.7.0`. Compatibility remains
+provisional during the major-zero line, and local or CI verification does not
+establish Maven Central availability.
 
 ## [0.4.0]
 
