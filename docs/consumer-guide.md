@@ -203,6 +203,33 @@ when (
 }
 ```
 
+Guide screens can acquire one shared horizon for an ordered visible-channel selection without
+launching or serializing singular calls:
+
+```kotlin
+val result = session.epgRepository.acquireCoverageBatch(
+    currentSession = currentSession,
+    channelIds = visibleChannels.map(Channel::id),
+    through = requestedBoundary,
+)
+
+result.settlements.forEach { settlement ->
+    when (settlement) {
+        is EpgCoverageBatchSettlement.CoveredWithData -> consume(settlement.observation)
+        is EpgCoverageBatchSettlement.CoveredEmpty -> consume(settlement.observation)
+        is EpgCoverageBatchSettlement.TargetAbsent -> Unit
+        is EpgCoverageBatchSettlement.Rejected -> Unit
+        is EpgCoverageBatchSettlement.ObservationExpired -> Unit
+    }
+}
+```
+
+Duplicate IDs settle once at their first position. The session's EPG worker retains ownership of
+cooldown, fairness, spacing, coalescing, and bounded query concurrency. Cancelling the batch
+promptly removes only its waiters; shared worker work remains available to other callers. Visible
+channel selection, horizon choice, paging, pending UI, timeout copy, and retry policy stay in the
+application. `acquireCoverage` remains available for focused callers.
+
 Covered results carry the exact immutable `SessionObservation` that established
 the answer; use that observation rather than recapturing a potentially newer
 one. `CoveredEmpty` proves the query succeeded without retained programmes.

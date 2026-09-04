@@ -30,7 +30,10 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeDvrRepository : a
 
 public final class at/bernhardberger/tvheadend/sdk/testing/FakeEpgRepository : at/bernhardberger/tvheadend/sdk/core/EpgRepository {
 	public fun acquireCoverage-Wmzk6bQ (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;JLkotlin/time/Instant;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun acquireCoverageBatch (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Ljava/util/List;Lkotlin/time/Instant;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun acquireCoverageBatchFromIds (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;[JLkotlin/time/Instant;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun scriptCoverage (Lat/bernhardberger/tvheadend/sdk/core/EpgCoverageAcquisitionResult;)V
+	public final fun scriptCoverageBatch (Lat/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchResult;)V
 	public final fun scriptSearch (Ljava/util/List;)V
 	public final fun scriptSearchFailure (Lat/bernhardberger/tvheadend/sdk/core/EpgSearchResult;)V
 	public fun search (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Lat/bernhardberger/tvheadend/sdk/core/EpgSearchRequest;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -80,6 +83,7 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeSessionCall : jav
 	public static final field DVR_UPDATE_ENTRY Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
 	public static final field DVR_UPDATE_TIMEREC_RULE Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
 	public static final field EPG_ACQUIRE_COVERAGE Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
+	public static final field EPG_ACQUIRE_COVERAGE_BATCH Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
 	public static final field EPG_SEARCH Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
 	public static final field GET_STREAM_PROFILES Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
 	public static final field LOAD_ARTWORK Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;

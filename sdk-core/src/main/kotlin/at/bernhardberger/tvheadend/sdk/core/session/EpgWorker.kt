@@ -4,6 +4,8 @@ import at.bernhardberger.tvheadend.sdk.core.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverage
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverageAcquisitionResult
+import at.bernhardberger.tvheadend.sdk.core.EpgCoverageBatchResult
+import at.bernhardberger.tvheadend.sdk.core.EpgCoverageBatchSettlement
 import at.bernhardberger.tvheadend.sdk.core.EpgCoveragePolicy
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.SessionObservation
@@ -181,6 +183,26 @@ internal class EpgWorker(
         } finally {
             removeWaiter(waiter)
         }
+    }
+
+    override suspend fun acquireCoverageBatch(
+        currentSession: CurrentSessionObservation,
+        channelIds: List<ChannelId>,
+        through: Instant,
+    ): EpgCoverageBatchResult = coroutineScope {
+        currentCoroutineContext().ensureActive()
+        val originatingObservation = metadata.currentObservation(generation, currentSession)
+            ?: return@coroutineScope expiredBatch(channelIds)
+        val settlements = channelIds.distinct().map { channelId ->
+            async(start = CoroutineStart.UNDISPATCHED) {
+                if (originatingObservation.coverage(channelId) == null) {
+                    EpgCoverageBatchSettlement.TargetAbsent(channelId)
+                } else {
+                    acquireCoverage(currentSession, channelId, through).toBatchSettlement(channelId)
+                }
+            }
+        }.awaitAll()
+        EpgCoverageBatchResult.create(settlements)
     }
 
     internal fun stopAcceptingPriorities() {
@@ -455,5 +477,22 @@ private fun coveredResult(
 } else {
     EpgCoverageAcquisitionResult.CoveredWithData(observation)
 }
+
+private fun EpgCoverageAcquisitionResult.toBatchSettlement(
+    channelId: ChannelId,
+): EpgCoverageBatchSettlement = when (this) {
+    is EpgCoverageAcquisitionResult.CoveredWithData ->
+        EpgCoverageBatchSettlement.CoveredWithData(channelId, observation)
+    is EpgCoverageAcquisitionResult.CoveredEmpty ->
+        EpgCoverageBatchSettlement.CoveredEmpty(channelId, observation)
+    EpgCoverageAcquisitionResult.Ineligible -> EpgCoverageBatchSettlement.Rejected(channelId)
+    EpgCoverageAcquisitionResult.ObservationExpired ->
+        EpgCoverageBatchSettlement.ObservationExpired(channelId)
+}
+
+private fun expiredBatch(channelIds: List<ChannelId>): EpgCoverageBatchResult =
+    EpgCoverageBatchResult.create(
+        channelIds.distinct().map(EpgCoverageBatchSettlement::ObservationExpired),
+    )
 
 private fun Instant.toWholeSecond(): Instant = Instant.fromEpochSeconds(epochSeconds)

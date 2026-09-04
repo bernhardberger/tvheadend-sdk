@@ -20,6 +20,8 @@ import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult
 import at.bernhardberger.tvheadend.sdk.core.DvrRepository
 import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverageAcquisitionResult
+import at.bernhardberger.tvheadend.sdk.core.EpgCoverageBatchResult
+import at.bernhardberger.tvheadend.sdk.core.EpgCoverageBatchSettlement
 import at.bernhardberger.tvheadend.sdk.core.EpgEvent
 import at.bernhardberger.tvheadend.sdk.core.EpgRepository
 import at.bernhardberger.tvheadend.sdk.core.EpgSearchRequest
@@ -61,6 +63,7 @@ public enum class FakeSessionCall {
     BIND_RECORDING_PLAYBACK,
     EPG_SEARCH,
     EPG_ACQUIRE_COVERAGE,
+    EPG_ACQUIRE_COVERAGE_BATCH,
     DVR_SCHEDULE_ENTRY,
     DVR_UPDATE_ENTRY,
     DVR_STOP_ENTRY,
@@ -256,6 +259,7 @@ public class FakeEpgRepository internal constructor(
     private val lock = Any()
     private var searchScript: EpgSearchScript = EpgSearchScript.Result(EpgSearchResult.NotSupported)
     private var coverageResult: EpgCoverageAcquisitionResult = EpgCoverageAcquisitionResult.Ineligible
+    private var coverageBatchResult: EpgCoverageBatchResult? = null
     /** Scripts a failed search result. */
     public fun scriptSearchFailure(result: EpgSearchResult) {
         require(result !is EpgSearchResult.Available && result !== EpgSearchResult.ObservationExpired) {
@@ -274,6 +278,10 @@ public class FakeEpgRepository internal constructor(
             "Scripted coverage results require a current observation"
         }
         synchronized(lock) { coverageResult = result }
+    }
+    /** Scripts the next and subsequent batch coverage result. */
+    public fun scriptCoverageBatch(result: EpgCoverageBatchResult) {
+        synchronized(lock) { coverageBatchResult = result }
     }
     override suspend fun search(
         currentSession: CurrentSessionObservation,
@@ -300,6 +308,38 @@ public class FakeEpgRepository internal constructor(
         FakeSessionCall.EPG_ACQUIRE_COVERAGE,
         EpgCoverageAcquisitionResult.ObservationExpired,
     ) { synchronized(lock) { coverageResult } }
+    override suspend fun acquireCoverageBatch(
+        currentSession: CurrentSessionObservation,
+        channelIds: List<ChannelId>,
+        through: Instant,
+    ): EpgCoverageBatchResult {
+        val orderedChannelIds = channelIds.distinct()
+        return session.roundTrip(
+            currentSession,
+            FakeSessionCall.EPG_ACQUIRE_COVERAGE_BATCH,
+            EpgCoverageBatchResult.create(
+                orderedChannelIds.map(EpgCoverageBatchSettlement::ObservationExpired),
+            ),
+        ) {
+            synchronized(lock) {
+                coverageBatchResult ?: EpgCoverageBatchResult.create(
+                    orderedChannelIds.map { channelId -> coverageResult.toBatchSettlement(channelId) },
+                )
+            }
+        }
+    }
+}
+
+private fun EpgCoverageAcquisitionResult.toBatchSettlement(
+    channelId: ChannelId,
+): EpgCoverageBatchSettlement = when (this) {
+    is EpgCoverageAcquisitionResult.CoveredWithData ->
+        EpgCoverageBatchSettlement.CoveredWithData(channelId, observation)
+    is EpgCoverageAcquisitionResult.CoveredEmpty ->
+        EpgCoverageBatchSettlement.CoveredEmpty(channelId, observation)
+    EpgCoverageAcquisitionResult.Ineligible -> EpgCoverageBatchSettlement.Rejected(channelId)
+    EpgCoverageAcquisitionResult.ObservationExpired ->
+        EpgCoverageBatchSettlement.ObservationExpired(channelId)
 }
 
 /** Scriptable DVR command boundary owned by [FakeTvheadendSession]. */

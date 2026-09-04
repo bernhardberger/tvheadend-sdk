@@ -29,6 +29,8 @@ import at.bernhardberger.tvheadend.sdk.core.DvrRepository
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverageAcquisitionResult
+import at.bernhardberger.tvheadend.sdk.core.EpgCoverageBatchResult
+import at.bernhardberger.tvheadend.sdk.core.EpgCoverageBatchSettlement
 import at.bernhardberger.tvheadend.sdk.core.EpgCoveragePolicy
 import at.bernhardberger.tvheadend.sdk.core.EpgEvent
 import at.bernhardberger.tvheadend.sdk.core.EpgRepository
@@ -276,6 +278,16 @@ internal fun interface EpgCoverageRequester {
         channelId: ChannelId,
         through: Instant,
     ): EpgCoverageAcquisitionResult
+
+    public suspend fun acquireCoverageBatch(
+        currentSession: CurrentSessionObservation,
+        channelIds: List<ChannelId>,
+        through: Instant,
+    ): EpgCoverageBatchResult = EpgCoverageBatchResult.create(
+        channelIds.distinct().map { channelId ->
+            acquireCoverage(currentSession, channelId, through).toBatchSettlement(channelId)
+        },
+    )
 }
 
 internal fun interface EpgSearchCommands {
@@ -340,9 +352,21 @@ internal class PhaseOneSessionMetadata(
             channelId: ChannelId,
             through: Instant,
         ): EpgCoverageAcquisitionResult {
+            currentCoroutineContext().ensureActive()
             val expectedGeneration = resolveGeneration(currentSession)
                 ?: return EpgCoverageAcquisitionResult.ObservationExpired
             return acquireEpgCoverage(expectedGeneration, currentSession, channelId, through)
+        }
+
+        override suspend fun acquireCoverageBatch(
+            currentSession: CurrentSessionObservation,
+            channelIds: List<ChannelId>,
+            through: Instant,
+        ): EpgCoverageBatchResult {
+            currentCoroutineContext().ensureActive()
+            val expectedGeneration = resolveGeneration(currentSession)
+                ?: return expiredEpgCoverageBatch(channelIds)
+            return acquireEpgCoverageBatch(expectedGeneration, currentSession, channelIds, through)
         }
     }
     private val stateBackedDvrRepository = object : CommandBackedDvrRepository(
@@ -985,7 +1009,36 @@ internal class PhaseOneSessionMetadata(
         } ?: return EpgCoverageAcquisitionResult.ObservationExpired
         return requester.acquireCoverage(currentSession, channelId, through)
     }
+
+    private suspend fun acquireEpgCoverageBatch(
+        generation: GatewayGeneration,
+        currentSession: CurrentSessionObservation,
+        channelIds: List<ChannelId>,
+        through: Instant,
+    ): EpgCoverageBatchResult {
+        val requester = synchronized(lock) {
+            epgCoverageRequester.takeIf { this.generation === generation }
+        } ?: return expiredEpgCoverageBatch(channelIds)
+        return requester.acquireCoverageBatch(currentSession, channelIds, through)
+    }
 }
+
+private fun EpgCoverageAcquisitionResult.toBatchSettlement(
+    channelId: ChannelId,
+): EpgCoverageBatchSettlement = when (this) {
+    is EpgCoverageAcquisitionResult.CoveredWithData ->
+        EpgCoverageBatchSettlement.CoveredWithData(channelId, observation)
+    is EpgCoverageAcquisitionResult.CoveredEmpty ->
+        EpgCoverageBatchSettlement.CoveredEmpty(channelId, observation)
+    EpgCoverageAcquisitionResult.Ineligible -> EpgCoverageBatchSettlement.Rejected(channelId)
+    EpgCoverageAcquisitionResult.ObservationExpired ->
+        EpgCoverageBatchSettlement.ObservationExpired(channelId)
+}
+
+private fun expiredEpgCoverageBatch(channelIds: List<ChannelId>): EpgCoverageBatchResult =
+    EpgCoverageBatchResult.create(
+        channelIds.distinct().map(EpgCoverageBatchSettlement::ObservationExpired),
+    )
 
 private fun GatewayResult<List<GatewayEpgQueryEvent>>.toEpgSearchResult(
     originatingSession: CurrentSessionObservation,

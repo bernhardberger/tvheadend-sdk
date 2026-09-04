@@ -26,6 +26,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
 import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverageAcquisitionResult
+import at.bernhardberger.tvheadend.sdk.core.EpgCoverageBatchSettlement
 import at.bernhardberger.tvheadend.sdk.core.EpgSearchRequest
 import at.bernhardberger.tvheadend.sdk.core.EpgSearchResult
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
@@ -125,6 +126,13 @@ internal class FakeTvheadendSessionTest {
             EpgSearchResult.ObservationExpired,
             second.epgRepository.search(foreign, EpgSearchRequest.create("news")),
         )
+        val expiredCoverage = second.epgRepository.acquireCoverageBatch(
+            foreign,
+            listOf(ChannelId(2), ChannelId(2), ChannelId(3)),
+            Instant.fromEpochSeconds(1),
+        )
+        assertEquals(listOf(2L, 3L), expiredCoverage.settlements.map { it.channelId.value })
+        assertTrue(expiredCoverage.settlements.all { it is EpgCoverageBatchSettlement.ObservationExpired })
         assertSame(
             DvrMutationResult.ObservationExpired,
             second.dvrRepository.scheduleEntry(foreign, scheduleRequest()),
@@ -187,6 +195,13 @@ internal class FakeTvheadendSessionTest {
             EpgCoverageAcquisitionResult.Ineligible,
             fake.epgRepository.acquireCoverage(current, ChannelId(1), Instant.fromEpochSeconds(1)),
         )
+        val batch = fake.epgRepository.acquireCoverageBatch(
+            current,
+            listOf(ChannelId(1), ChannelId(1), ChannelId(2)),
+            Instant.fromEpochSeconds(1),
+        )
+        assertEquals(listOf(1L, 2L), batch.settlements.map { it.channelId.value })
+        assertTrue(batch.settlements.all { it is EpgCoverageBatchSettlement.Rejected })
         val results: List<DvrMutationResult<*>> = listOf(
             fake.dvrRepository.scheduleEntry(current, scheduleRequest()),
             fake.dvrRepository.updateEntry(current, DvrEntryId(1), DvrEntryUpdate()),

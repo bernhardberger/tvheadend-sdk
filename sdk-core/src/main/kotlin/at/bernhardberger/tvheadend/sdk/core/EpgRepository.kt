@@ -369,6 +369,68 @@ public sealed interface EpgCoverageAcquisitionResult {
     public data object ObservationExpired : EpgCoverageAcquisitionResult
 }
 
+/** Ordered settlement of one channel in a batch EPG coverage acquisition. */
+public sealed interface EpgCoverageBatchSettlement {
+    /** Channel selected by the consumer. */
+    public val channelId: ChannelId
+
+    /** Numeric channel identifier for Java consumers. */
+    public val channelIdValue: Long
+        get() = channelId.value
+
+    /** Authoritative coverage settled with retained programme data. */
+    public class CoveredWithData(
+        override val channelId: ChannelId,
+        public val observation: SessionObservation,
+    ) : EpgCoverageBatchSettlement {
+        override fun toString(): String = "EpgCoverageBatchSettlement.CoveredWithData(<redacted>)"
+    }
+
+    /** An authoritative successful query settled without retained programme data. */
+    public class CoveredEmpty(
+        override val channelId: ChannelId,
+        public val observation: SessionObservation,
+    ) : EpgCoverageBatchSettlement {
+        override fun toString(): String = "EpgCoverageBatchSettlement.CoveredEmpty(<redacted>)"
+    }
+
+    /** The selected channel was absent from the originating observation. */
+    public class TargetAbsent(
+        override val channelId: ChannelId,
+    ) : EpgCoverageBatchSettlement {
+        override fun toString(): String = "EpgCoverageBatchSettlement.TargetAbsent(<redacted>)"
+    }
+
+    /** The target horizon or server query capability rejected this channel request. */
+    public class Rejected(
+        override val channelId: ChannelId,
+    ) : EpgCoverageBatchSettlement {
+        override fun toString(): String = "EpgCoverageBatchSettlement.Rejected(<redacted>)"
+    }
+
+    /** The originating observation expired before this channel settled. */
+    public class ObservationExpired(
+        override val channelId: ChannelId,
+    ) : EpgCoverageBatchSettlement {
+        override fun toString(): String = "EpgCoverageBatchSettlement.ObservationExpired(<redacted>)"
+    }
+}
+
+/** Immutable ordered settlements for one deduplicated EPG coverage batch. */
+@ConsistentCopyVisibility
+public data class EpgCoverageBatchResult private constructor(
+    public val settlements: List<EpgCoverageBatchSettlement>,
+) {
+    override fun toString(): String = "EpgCoverageBatchResult(<redacted>)"
+
+    public companion object {
+        /** Creates a result while defensively copying settlements in association order. */
+        public fun create(
+            settlements: List<EpgCoverageBatchSettlement>,
+        ): EpgCoverageBatchResult = EpgCoverageBatchResult(settlements.toEpgImmutableList())
+    }
+}
+
 /**
  * Immutable filters for one explicit server-backed EPG text search.
  *
@@ -534,6 +596,36 @@ public interface EpgRepository {
         channelId: ChannelId,
         through: Instant,
     ): EpgCoverageAcquisitionResult
+
+    /**
+     * Acquires settled coverage for the first occurrence of each [channelIds] entry through
+     * [through], preserving that order in the returned association.
+     *
+     * The whole batch is bound to [currentSession]. Worker-owned cooldown, fairness, spacing,
+     * coalescing, and concurrency apply exactly as for [acquireCoverage]. Cancellation remains
+     * owned by the caller and does not cancel work shared with another waiter. Visible-channel
+     * selection, horizon choice, paging, timeout presentation, and retries remain application
+     * policy.
+     */
+    public suspend fun acquireCoverageBatch(
+        currentSession: CurrentSessionObservation,
+        channelIds: List<ChannelId>,
+        through: Instant,
+    ): EpgCoverageBatchResult
+
+    /** Java bridge for [acquireCoverageBatch] using numeric channel identifiers. */
+    public suspend fun acquireCoverageBatchFromIds(
+        currentSession: CurrentSessionObservation,
+        channelIds: LongArray,
+        through: Instant,
+    ): EpgCoverageBatchResult {
+        currentCoroutineContext().ensureActive()
+        return acquireCoverageBatch(
+            currentSession,
+            channelIds.map(::ChannelId),
+            through,
+        )
+    }
 }
 
 private fun requireEpgU32(name: String, value: Long) {

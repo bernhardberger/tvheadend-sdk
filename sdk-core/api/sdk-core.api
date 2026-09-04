@@ -1279,6 +1279,65 @@ public final class at/bernhardberger/tvheadend/sdk/core/EpgCoverageAcquisitionRe
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchResult {
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchResult$Companion;
+	public final fun component1 ()Ljava/util/List;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getSettlements ()Ljava/util/List;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchResult$Companion {
+	public final fun create (Ljava/util/List;)Lat/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchResult;
+}
+
+public abstract interface class at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchSettlement {
+	public abstract fun getChannelId-X9YaTts ()J
+	public fun getChannelIdValue ()J
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchSettlement$CoveredEmpty : at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchSettlement {
+	public synthetic fun <init> (JLat/bernhardberger/tvheadend/sdk/core/SessionObservation;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun getChannelId-X9YaTts ()J
+	public fun getChannelIdValue ()J
+	public final fun getObservation ()Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchSettlement$CoveredWithData : at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchSettlement {
+	public synthetic fun <init> (JLat/bernhardberger/tvheadend/sdk/core/SessionObservation;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun getChannelId-X9YaTts ()J
+	public fun getChannelIdValue ()J
+	public final fun getObservation ()Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchSettlement$DefaultImpls {
+	public static fun getChannelIdValue (Lat/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchSettlement;)J
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchSettlement$ObservationExpired : at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchSettlement {
+	public synthetic fun <init> (JLkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun getChannelId-X9YaTts ()J
+	public fun getChannelIdValue ()J
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchSettlement$Rejected : at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchSettlement {
+	public synthetic fun <init> (JLkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun getChannelId-X9YaTts ()J
+	public fun getChannelIdValue ()J
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchSettlement$TargetAbsent : at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchSettlement {
+	public synthetic fun <init> (JLkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun getChannelId-X9YaTts ()J
+	public fun getChannelIdValue ()J
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class at/bernhardberger/tvheadend/sdk/core/EpgCoveragePolicy {
 	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/EpgCoveragePolicy$Companion;
 	public static final fun createFromHours (J)Lat/bernhardberger/tvheadend/sdk/core/EpgCoveragePolicy;
@@ -1416,10 +1475,13 @@ public final class at/bernhardberger/tvheadend/sdk/core/EpgRating {
 
 public abstract interface class at/bernhardberger/tvheadend/sdk/core/EpgRepository {
 	public abstract fun acquireCoverage-Wmzk6bQ (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;JLkotlin/time/Instant;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun acquireCoverageBatch (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Ljava/util/List;Lkotlin/time/Instant;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun acquireCoverageBatchFromIds (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;[JLkotlin/time/Instant;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun search (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Lat/bernhardberger/tvheadend/sdk/core/EpgSearchRequest;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/EpgRepository$DefaultImpls {
+	public static fun acquireCoverageBatchFromIds (Lat/bernhardberger/tvheadend/sdk/core/EpgRepository;Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;[JLkotlin/time/Instant;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static fun search (Lat/bernhardberger/tvheadend/sdk/core/EpgRepository;Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Lat/bernhardberger/tvheadend/sdk/core/EpgSearchRequest;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 

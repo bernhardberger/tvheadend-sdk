@@ -5,6 +5,7 @@ import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverage
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverageAcquisitionResult
+import at.bernhardberger.tvheadend.sdk.core.EpgCoverageBatchSettlement
 import at.bernhardberger.tvheadend.sdk.core.EpgCoveragePolicy
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
@@ -263,6 +264,152 @@ internal class EpgWorkerTest {
         assertTrue(cancelled.isCancelled)
         assertEquals(retainedTarget, requestedTargets.first())
         assertTrue(retained.await() is EpgCoverageAcquisitionResult.CoveredEmpty)
+        job.cancelAndJoin()
+    }
+
+    @Test
+    fun `batch deduplicates in order and returns mixed authoritative settlements`() = runTest {
+        val generation = GatewayGeneration()
+        val metadata = synchronizedMetadata(generation, 1L..3L)
+        val now = instant(0)
+        val target = now + 8.hours
+        val coveredQuery = requireNotNull(metadata.beginEpgQuery(generation, ChannelId(1)))
+        metadata.applySuccessfulEpgQuery(
+            generation = generation,
+            query = coveredQuery,
+            queriedTo = target,
+            events = listOf(queryEvent(id = 10, channelId = 1, start = 1, stop = 2)),
+        )
+        val authoritativeObservation = metadata.observation.value
+        val thirdStarted = CompletableDeferred<Unit>()
+        val releaseThird = CompletableDeferred<Unit>()
+        val worker = EpgWorker(
+            generation = generation,
+            metadata = metadata,
+            clock = SchedulerClock { testScheduler.currentTime },
+            settings = EpgWorkerSettings(requestSpacing = 1.milliseconds, batchSize = 3),
+            queryEpg = { _, channelId, _ ->
+                when (channelId) {
+                    ChannelId(2) -> GatewayResult.NotSupported
+                    ChannelId(3) -> {
+                        thirdStarted.complete(Unit)
+                        releaseThird.await()
+                        GatewayResult.Timeout
+                    }
+                    else -> GatewayResult.Timeout
+                }
+            },
+        )
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
+        val batch = backgroundScope.async {
+            worker.acquireCoverageBatch(
+                currentSession,
+                listOf(ChannelId(1), ChannelId(9), ChannelId(2), ChannelId(1), ChannelId(3)),
+                target,
+            )
+        }
+        runCurrent()
+        val job = backgroundScope.launch { worker.run() }
+        runCurrent()
+        advanceTimeBy(1.milliseconds)
+        thirdStarted.await()
+
+        metadata.resetWorkingStateRetainingPublishedSnapshot()
+        runCurrent()
+        releaseThird.complete(Unit)
+        val settlements = batch.await().settlements
+
+        assertEquals(listOf(1L, 9L, 2L, 3L), settlements.map { it.channelId.value })
+        assertTrue(settlements[0] is EpgCoverageBatchSettlement.CoveredWithData)
+        assertTrue(settlements[1] is EpgCoverageBatchSettlement.TargetAbsent)
+        assertTrue(settlements[2] is EpgCoverageBatchSettlement.Rejected)
+        assertTrue(settlements[3] is EpgCoverageBatchSettlement.ObservationExpired)
+        assertSame(
+            authoritativeObservation,
+            (settlements[0] as EpgCoverageBatchSettlement.CoveredWithData).observation,
+        )
+        job.cancelAndJoin()
+    }
+
+    @Test
+    fun `batch cancellation keeps a shared singular waiter and narrows its target`() = runTest {
+        val generation = GatewayGeneration()
+        val metadata = synchronizedMetadata(generation, 1L..1L)
+        val now = instant(0)
+        val targets = mutableListOf<Instant>()
+        val worker = EpgWorker(
+            generation = generation,
+            metadata = metadata,
+            clock = SchedulerClock { testScheduler.currentTime },
+            settings = EpgWorkerSettings(requestSpacing = 1.milliseconds),
+            queryEpg = { _, _, target ->
+                targets += target
+                GatewayResult.Ok(emptyList())
+            },
+        )
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
+        val retainedTarget = now + 6.hours
+        val retained = backgroundScope.async {
+            worker.acquireCoverage(currentSession, ChannelId(1), retainedTarget)
+        }
+        val cancelled = backgroundScope.async {
+            worker.acquireCoverageBatch(currentSession, listOf(ChannelId(1)), now + 8.hours)
+        }
+        runCurrent()
+
+        cancelled.cancelAndJoin()
+        val job = backgroundScope.launch { worker.run() }
+        runCurrent()
+
+        assertTrue(cancelled.isCancelled)
+        assertEquals(listOf(retainedTarget), targets)
+        assertTrue(retained.await() is EpgCoverageAcquisitionResult.CoveredEmpty)
+        job.cancelAndJoin()
+    }
+
+    @Test
+    fun `batch priorities coalesce by channel while ordinary work keeps a slot`() = runTest {
+        val generation = GatewayGeneration()
+        val metadata = synchronizedMetadata(generation, 1L..3L)
+        val release = CompletableDeferred<Unit>()
+        val starts = mutableListOf<ChannelId>()
+        val worker = EpgWorker(
+            generation = generation,
+            metadata = metadata,
+            clock = SchedulerClock { testScheduler.currentTime },
+            settings = EpgWorkerSettings(
+                requestSpacing = 1.milliseconds,
+                channelCooldown = 1.hours,
+                batchSize = 2,
+            ),
+            queryEpg = { _, channelId, _ ->
+                starts += channelId
+                release.await()
+                GatewayResult.Timeout
+            },
+        )
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
+        val batch = backgroundScope.async {
+            worker.acquireCoverageBatch(
+                currentSession,
+                listOf(ChannelId(3), ChannelId(3), ChannelId(2)),
+                instant(0) + 8.hours,
+            )
+        }
+        val coalesced = backgroundScope.async {
+            worker.acquireCoverage(currentSession, ChannelId(3), instant(0) + 10.hours)
+        }
+        runCurrent()
+        val job = backgroundScope.launch { worker.run() }
+        runCurrent()
+        advanceTimeBy(1.milliseconds)
+        runCurrent()
+
+        assertEquals(listOf(ChannelId(3), ChannelId(1)), starts)
+        assertEquals(1, starts.count { it == ChannelId(3) })
+        batch.cancelAndJoin()
+        coalesced.cancelAndJoin()
+        release.complete(Unit)
         job.cancelAndJoin()
     }
 

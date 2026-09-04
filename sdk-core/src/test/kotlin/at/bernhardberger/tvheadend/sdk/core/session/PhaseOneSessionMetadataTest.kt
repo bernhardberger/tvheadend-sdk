@@ -33,8 +33,13 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayServerFacts
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayTagMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.TagId
+import java.util.concurrent.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -670,6 +675,76 @@ internal class PhaseOneSessionMetadataTest {
             EpgCoverageAcquisitionResult.ObservationExpired,
             metadata.epgRepository.acquireCoverage(currentSession, channelId, through),
         )
+    }
+
+    @Test
+    fun `coverage fast paths propagate pre-existing caller cancellation`() = runTest {
+        val metadata = PhaseOneSessionMetadata()
+        val expired = at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation.create(
+            Any(),
+            Any(),
+            at.bernhardberger.tvheadend.sdk.core.SessionGenerationIdentity.create(),
+        )
+        var kotlinReturned = false
+        var javaBridgeReturned = false
+        var expiredSingularReturned = false
+        var unboundSingularReturned = false
+        val kotlinCaller = launch(start = CoroutineStart.UNDISPATCHED) {
+            currentCoroutineContext().cancel(CancellationException("fixed caller cancellation"))
+            metadata.epgRepository.acquireCoverageBatch(
+                expired,
+                listOf(ChannelId(1)),
+                Instant.fromEpochSeconds(1),
+            )
+            kotlinReturned = true
+        }
+        val javaBridgeCaller = launch(start = CoroutineStart.UNDISPATCHED) {
+            currentCoroutineContext().cancel(CancellationException("fixed caller cancellation"))
+            metadata.epgRepository.acquireCoverageBatchFromIds(
+                expired,
+                longArrayOf(1),
+                Instant.fromEpochSeconds(1),
+            )
+            javaBridgeReturned = true
+        }
+        val expiredSingularCaller = launch(start = CoroutineStart.UNDISPATCHED) {
+            currentCoroutineContext().cancel(CancellationException("fixed caller cancellation"))
+            metadata.epgRepository.acquireCoverage(
+                expired,
+                ChannelId(1),
+                Instant.fromEpochSeconds(1),
+            )
+            expiredSingularReturned = true
+        }
+        val unboundMetadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        unboundMetadata.bindGeneration(generation)
+        unboundMetadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        publishReady(unboundMetadata, generation)
+        val currentSession = requireNotNull(unboundMetadata.observation.value.currentSession)
+        val unboundSingularCaller = launch(start = CoroutineStart.UNDISPATCHED) {
+            currentCoroutineContext().cancel(CancellationException("fixed caller cancellation"))
+            unboundMetadata.epgRepository.acquireCoverage(
+                currentSession,
+                ChannelId(1),
+                Instant.fromEpochSeconds(1),
+            )
+            unboundSingularReturned = true
+        }
+
+        kotlinCaller.join()
+        javaBridgeCaller.join()
+        expiredSingularCaller.join()
+        unboundSingularCaller.join()
+
+        assertTrue(kotlinCaller.isCancelled)
+        assertTrue(javaBridgeCaller.isCancelled)
+        assertTrue(expiredSingularCaller.isCancelled)
+        assertTrue(unboundSingularCaller.isCancelled)
+        assertFalse(kotlinReturned)
+        assertFalse(javaBridgeReturned)
+        assertFalse(expiredSingularReturned)
+        assertFalse(unboundSingularReturned)
     }
 
     @Test

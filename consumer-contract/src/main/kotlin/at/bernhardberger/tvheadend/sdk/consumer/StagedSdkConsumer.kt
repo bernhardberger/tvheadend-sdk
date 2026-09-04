@@ -20,6 +20,8 @@ import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult
 import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.EpgEvent
+import at.bernhardberger.tvheadend.sdk.core.EpgCoverageBatchResult
+import at.bernhardberger.tvheadend.sdk.core.EpgCoverageBatchSettlement
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.EpgSearchRequest
 import at.bernhardberger.tvheadend.sdk.core.EpgSearchResult
@@ -205,6 +207,19 @@ public class StagedSdkConsumer(
             request,
         )
 
+    public suspend fun acquireGuideCoverage(
+        currentSession: CurrentSessionObservation,
+        channelIds: List<ChannelId>,
+        through: Instant,
+    ): EpgCoverageBatchResult = session.epgRepository.acquireCoverageBatch(
+        currentSession,
+        channelIds,
+        through,
+    )
+
+    public fun acquiredGuideChannelIds(result: EpgCoverageBatchResult): List<ChannelId> =
+        result.settlements.map(EpgCoverageBatchSettlement::channelId)
+
     public fun epgSearchProvenance(
         result: EpgSearchResult,
     ): CurrentSessionObservation? = (result as? EpgSearchResult.Available)?.originatingSession
@@ -335,6 +350,11 @@ public fun stagedTestingFake(
     epgRepository.scriptSearch(emptyList())
     epgRepository.scriptCoverage(
         at.bernhardberger.tvheadend.sdk.core.EpgCoverageAcquisitionResult.Ineligible,
+    )
+    epgRepository.scriptCoverageBatch(
+        EpgCoverageBatchResult.create(
+            listOf(EpgCoverageBatchSettlement.Rejected(ChannelId(1))),
+        ),
     )
     dvrRepository.scriptScheduleEntry(DvrMutationResult.NotReady)
     dvrRepository.scriptUpdateEntry(DvrMutationResult.NotReady)

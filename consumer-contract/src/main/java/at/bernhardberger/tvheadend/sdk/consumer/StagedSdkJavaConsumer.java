@@ -15,6 +15,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult;
 import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot;
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryKt;
 import at.bernhardberger.tvheadend.sdk.core.EpgRepository;
+import at.bernhardberger.tvheadend.sdk.core.EpgCoverageBatchResult;
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState;
 import at.bernhardberger.tvheadend.sdk.core.EpgSearchRequest;
 import at.bernhardberger.tvheadend.sdk.core.EpgSearchResult;
@@ -52,6 +53,7 @@ import at.bernhardberger.tvheadend.sdk.testing.FakeServerProfileStore;
 import coil3.ComponentRegistry;
 import kotlin.Unit;
 import kotlin.coroutines.Continuation;
+import kotlin.time.Instant;
 import kotlinx.coroutines.CoroutineScope;
 
 public final class StagedSdkJavaConsumer {
@@ -136,6 +138,21 @@ public final class StagedSdkJavaConsumer {
             EpgSearchRequest request,
             Continuation<? super EpgSearchResult> continuation) {
         return repository.search(currentSession, request, continuation);
+    }
+
+    public static Object acquireGuideCoverage(
+            EpgRepository repository,
+            CurrentSessionObservation currentSession,
+            long[] channelIds,
+            Instant through,
+            Continuation<? super EpgCoverageBatchResult> continuation) {
+        return repository.acquireCoverageBatchFromIds(currentSession, channelIds, through, continuation);
+    }
+
+    public static long[] acquiredGuideChannelIds(EpgCoverageBatchResult result) {
+        return result.getSettlements().stream()
+                .mapToLong(settlement -> settlement.getChannelIdValue())
+                .toArray();
     }
 
     public static EpgSearchRequest epgSearchRequest(String query) {
