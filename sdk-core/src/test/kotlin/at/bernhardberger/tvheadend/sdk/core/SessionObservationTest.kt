@@ -26,6 +26,122 @@ import org.junit.jupiter.api.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 internal class SessionObservationTest {
     @Test
+    fun `channel display projection covers every repository state`() {
+        val retained = catalog()
+        val cases = listOf(
+            Triple(ChannelRepositoryState.Empty, null, RetainedMetadataAuthority.ABSENT),
+            Triple(
+                ChannelRepositoryState.Synchronizing(null),
+                null,
+                RetainedMetadataAuthority.SYNCHRONIZING_WITHOUT_RETAINED_DATA,
+            ),
+            Triple(
+                ChannelRepositoryState.Synchronizing(retained),
+                retained,
+                RetainedMetadataAuthority.SYNCHRONIZING_WITH_RETAINED_DATA,
+            ),
+            Triple(ChannelRepositoryState.Current(retained), retained, RetainedMetadataAuthority.CURRENT),
+            Triple(ChannelRepositoryState.Stale(retained), retained, RetainedMetadataAuthority.STALE),
+        )
+
+        cases.forEach { (state, expectedCatalog, expectedAuthority) ->
+            assertSame(expectedCatalog, state.channelCatalogForDisplay)
+            assertEquals(expectedAuthority, state.channelCatalogAuthority)
+            val observation = SessionObservation.create(channelState = state)
+            assertSame(expectedCatalog, observation.channelCatalogForDisplay)
+            assertEquals(expectedAuthority, observation.channelCatalogAuthority)
+        }
+    }
+
+    @Test
+    fun `EPG display projection covers every repository state`() {
+        val retained = EpgSnapshot.create()
+        val cases = listOf(
+            Triple(EpgRepositoryState.Empty, null, RetainedMetadataAuthority.ABSENT),
+            Triple(
+                EpgRepositoryState.Synchronizing(null),
+                null,
+                RetainedMetadataAuthority.SYNCHRONIZING_WITHOUT_RETAINED_DATA,
+            ),
+            Triple(
+                EpgRepositoryState.Synchronizing(retained),
+                retained,
+                RetainedMetadataAuthority.SYNCHRONIZING_WITH_RETAINED_DATA,
+            ),
+            Triple(EpgRepositoryState.Current(retained), retained, RetainedMetadataAuthority.CURRENT),
+            Triple(EpgRepositoryState.Stale(retained), retained, RetainedMetadataAuthority.STALE),
+        )
+
+        cases.forEach { (state, expectedSnapshot, expectedAuthority) ->
+            assertSame(expectedSnapshot, state.epgSnapshotForDisplay)
+            assertEquals(expectedAuthority, state.epgSnapshotAuthority)
+            val observation = SessionObservation.create(epgState = state)
+            assertSame(expectedSnapshot, observation.epgSnapshotForDisplay)
+            assertEquals(expectedAuthority, observation.epgSnapshotAuthority)
+        }
+    }
+
+    @Test
+    fun `DVR display projection covers every repository state`() {
+        val retained = DvrSnapshot.create()
+        val cases = listOf(
+            Triple(DvrRepositoryState.Empty, null, RetainedMetadataAuthority.ABSENT),
+            Triple(
+                DvrRepositoryState.Synchronizing(null),
+                null,
+                RetainedMetadataAuthority.SYNCHRONIZING_WITHOUT_RETAINED_DATA,
+            ),
+            Triple(
+                DvrRepositoryState.Synchronizing(retained),
+                retained,
+                RetainedMetadataAuthority.SYNCHRONIZING_WITH_RETAINED_DATA,
+            ),
+            Triple(DvrRepositoryState.Current(retained), retained, RetainedMetadataAuthority.CURRENT),
+            Triple(DvrRepositoryState.Stale(retained), retained, RetainedMetadataAuthority.STALE),
+        )
+
+        cases.forEach { (state, expectedSnapshot, expectedAuthority) ->
+            assertSame(expectedSnapshot, state.dvrSnapshotForDisplay)
+            assertEquals(expectedAuthority, state.dvrSnapshotAuthority)
+            val observation = SessionObservation.create(dvrState = state)
+            assertSame(expectedSnapshot, observation.dvrSnapshotForDisplay)
+            assertEquals(expectedAuthority, observation.dvrSnapshotAuthority)
+        }
+    }
+
+    @Test
+    fun `repository authority stays distinct from current session proof`() {
+        val source = observation()
+        val withoutProof = SessionObservation.create(
+            sessionState = SessionState.Disconnected,
+            channelState = source.channelState,
+            epgState = source.epgState,
+            dvrState = source.dvrState,
+        )
+
+        assertNull(withoutProof.currentSession)
+        assertEquals(RetainedMetadataAuthority.CURRENT, withoutProof.channelCatalogAuthority)
+        assertEquals(RetainedMetadataAuthority.CURRENT, withoutProof.epgSnapshotAuthority)
+        assertEquals(RetainedMetadataAuthority.CURRENT, withoutProof.dvrSnapshotAuthority)
+    }
+
+    @Test
+    fun `point selectors use retained display projections`() {
+        val source = observation()
+        val retained = SessionObservation.create(
+            channelState = ChannelRepositoryState.Synchronizing(source.channelCatalogForDisplay),
+            epgState = EpgRepositoryState.Stale(requireNotNull(source.epgSnapshotForDisplay)),
+            dvrState = DvrRepositoryState.Synchronizing(source.dvrSnapshotForDisplay),
+        )
+
+        assertSame(source.channel(ChannelId(1)), retained.channel(ChannelId(1)))
+        assertSame(source.event(EventId(10)), retained.event(EventId(10)))
+        assertSame(source.dvrEntry(DvrEntryId(100)), retained.dvrEntry(DvrEntryId(100)))
+        assertSame(source.dvrEntryForEvent(EventId(10)), retained.dvrEntryForEvent(EventId(10)))
+        assertSame(source.epgEventForDvrEntry(DvrEntryId(100)), retained.epgEventForDvrEntry(DvrEntryId(100)))
+    }
+
+    @Test
     fun `current capability requires ready channel EPG and DVR state`() {
         val current = observation()
         assertTrue(current.currentSession != null)

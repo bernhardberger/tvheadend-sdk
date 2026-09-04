@@ -42,6 +42,7 @@ import at.bernhardberger.tvheadend.sdk.core.SessionObservation
 import at.bernhardberger.tvheadend.sdk.core.SessionObservationStore
 import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.StreamProfilesResult
+import at.bernhardberger.tvheadend.sdk.core.channelCatalogForDisplay
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
@@ -747,12 +748,7 @@ internal class PhaseOneSessionMetadata(
         if (this.generation !== generation) {
             null
         } else {
-            val catalog = when (val state = mutableChannelsAndTags.value) {
-                ChannelRepositoryState.Empty -> null
-                is ChannelRepositoryState.Synchronizing -> state.staleCatalog
-                is ChannelRepositoryState.Current -> state.catalog
-                is ChannelRepositoryState.Stale -> state.catalog
-            }
+            val catalog = mutableChannelsAndTags.value.channelCatalogForDisplay
             catalog?.channels?.any { channel -> channel.id == channelId }
         }
     }

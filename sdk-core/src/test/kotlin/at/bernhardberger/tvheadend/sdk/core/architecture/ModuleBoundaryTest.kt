@@ -193,6 +193,7 @@ internal class ModuleBoundaryTest {
             "ChannelTag",
             "ChannelCatalog",
             "ChannelRepositoryState",
+            "RetainedMetadataAuthority",
             "Empty",
             "Unknown",
             "Denied",

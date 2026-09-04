@@ -17,27 +17,51 @@ public class SessionObservation private constructor(
     public val recordingProgressCapability: RecordingProgressCapability,
     public val currentSession: CurrentSessionObservation?,
 ) {
+    /** Current or retained channel catalog available for display, without copying. */
+    public val channelCatalogForDisplay: ChannelCatalog?
+        get() = channelState.channelCatalogForDisplay
+
+    /** Provenance and synchronization state of [channelCatalogForDisplay]. */
+    public val channelCatalogAuthority: RetainedMetadataAuthority
+        get() = channelState.channelCatalogAuthority
+
+    /** Current or retained EPG snapshot available for display, without copying. */
+    public val epgSnapshotForDisplay: EpgSnapshot?
+        get() = epgState.epgSnapshotForDisplay
+
+    /** Provenance and synchronization state of [epgSnapshotForDisplay]. */
+    public val epgSnapshotAuthority: RetainedMetadataAuthority
+        get() = epgState.epgSnapshotAuthority
+
+    /** Current or retained DVR snapshot available for display, without copying. */
+    public val dvrSnapshotForDisplay: DvrSnapshot?
+        get() = dvrState.dvrSnapshotForDisplay
+
+    /** Provenance and synchronization state of [dvrSnapshotForDisplay]. */
+    public val dvrSnapshotAuthority: RetainedMetadataAuthority
+        get() = dvrState.dvrSnapshotAuthority
+
     /** Selects exactly one channel from this observation's current or retained catalog. */
     public fun channel(id: ChannelId): Channel? =
-        channelState.catalogOrNull()?.channels?.singleOrNull { channel -> channel.id == id }
+        channelCatalogForDisplay?.channels?.singleOrNull { channel -> channel.id == id }
 
     /** Selects channels in catalog order from this observation's current or retained catalog. */
     public fun channels(ids: Set<ChannelId>): List<Channel> {
         if (ids.isEmpty()) return emptyList()
-        val selected = channelState.catalogOrNull()?.channels?.filter { channel -> channel.id in ids }
+        val selected = channelCatalogForDisplay?.channels?.filter { channel -> channel.id in ids }
             .orEmpty()
-        return Collections.unmodifiableList(ArrayList(selected))
+        return Collections.unmodifiableList(selected)
     }
 
     /** Selects exactly one event from this observation's current or retained EPG snapshot. */
     public fun event(id: EventId): EpgEvent? =
-        epgState.snapshotOrNull()?.events?.singleOrNull { event -> event.id == id }
+        epgSnapshotForDisplay?.events?.singleOrNull { event -> event.id == id }
 
     /**
      * Selects the first retained event active at [at] using a closed start and open stop boundary.
      */
     public fun eventAt(channelId: ChannelId, at: Instant): EpgEvent? =
-        epgState.snapshotOrNull()?.events?.firstOrNull { event ->
+        epgSnapshotForDisplay?.events?.firstOrNull { event ->
             event.channelId == channelId && event.start <= at && at < event.stop
         }
 
@@ -48,7 +72,7 @@ public class SessionObservation private constructor(
      * not overlap the active event. Otherwise timing and then event ID provide deterministic order.
      */
     public fun nextEvent(channelId: ChannelId, at: Instant): EpgEvent? {
-        val snapshot = epgState.snapshotOrNull() ?: return null
+        val snapshot = epgSnapshotForDisplay ?: return null
         val active = snapshot.events.firstOrNull { event ->
             event.channelId == channelId && event.start <= at && at < event.stop
         }
@@ -66,18 +90,18 @@ public class SessionObservation private constructor(
 
     /** Selects coverage paired with this observation's exact immutable EPG event snapshot. */
     public fun coverage(channelId: ChannelId): EpgCoverage? =
-        epgState.snapshotOrNull()?.coverages?.singleOrNull { coverage ->
+        epgSnapshotForDisplay?.coverages?.singleOrNull { coverage ->
             coverage.channelId == channelId
         }
 
     /** Selects exactly one DVR entry from this observation's current or retained DVR snapshot. */
     public fun dvrEntry(id: DvrEntryId): DvrEntry? =
-        dvrState.snapshotOrNull()?.entries?.singleOrNull { entry -> entry.id == id }
+        dvrSnapshotForDisplay?.entries?.singleOrNull { entry -> entry.id == id }
 
     /** Selects the unique DVR entry related to [eventId] within this aggregate observation. */
     public fun dvrEntryForEvent(eventId: EventId): DvrEntry? {
         val event = event(eventId) ?: return null
-        return dvrState.snapshotOrNull()?.entries?.singleOrNull { entry ->
+        return dvrSnapshotForDisplay?.entries?.singleOrNull { entry ->
             entry.eventId == eventId || event.dvrEntryId == entry.id
         }
     }
@@ -85,7 +109,7 @@ public class SessionObservation private constructor(
     /** Selects the unique EPG event related to [entryId] within this aggregate observation. */
     public fun epgEventForDvrEntry(entryId: DvrEntryId): EpgEvent? {
         val entry = dvrEntry(entryId) ?: return null
-        return epgState.snapshotOrNull()?.events?.singleOrNull { event ->
+        return epgSnapshotForDisplay?.events?.singleOrNull { event ->
             event.dvrEntryId == entryId || entry.eventId == event.id
         }
     }
@@ -323,25 +347,4 @@ internal class SessionObservationStore {
             previousCurrent = previous.currentSession,
         )
     }
-}
-
-private fun ChannelRepositoryState.catalogOrNull(): ChannelCatalog? = when (this) {
-    ChannelRepositoryState.Empty -> null
-    is ChannelRepositoryState.Synchronizing -> staleCatalog
-    is ChannelRepositoryState.Current -> catalog
-    is ChannelRepositoryState.Stale -> catalog
-}
-
-private fun EpgRepositoryState.snapshotOrNull(): EpgSnapshot? = when (this) {
-    EpgRepositoryState.Empty -> null
-    is EpgRepositoryState.Synchronizing -> staleSnapshot
-    is EpgRepositoryState.Current -> snapshot
-    is EpgRepositoryState.Stale -> snapshot
-}
-
-private fun DvrRepositoryState.snapshotOrNull(): DvrSnapshot? = when (this) {
-    DvrRepositoryState.Empty -> null
-    is DvrRepositoryState.Synchronizing -> staleSnapshot
-    is DvrRepositoryState.Current -> snapshot
-    is DvrRepositoryState.Stale -> snapshot
 }

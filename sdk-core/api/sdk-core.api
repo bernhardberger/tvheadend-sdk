@@ -320,6 +320,11 @@ public final class at/bernhardberger/tvheadend/sdk/core/ChannelId {
 	public final synthetic fun unbox-impl ()J
 }
 
+public final class at/bernhardberger/tvheadend/sdk/core/ChannelRepositoryKt {
+	public static final fun getChannelCatalogAuthority (Lat/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState;)Lat/bernhardberger/tvheadend/sdk/core/RetainedMetadataAuthority;
+	public static final fun getChannelCatalogForDisplay (Lat/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState;)Lat/bernhardberger/tvheadend/sdk/core/ChannelCatalog;
+}
+
 public abstract interface class at/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState {
 }
 
@@ -1059,6 +1064,11 @@ public abstract interface class at/bernhardberger/tvheadend/sdk/core/DvrReposito
 	public abstract fun updateTimerecRule-dy4Dx4M (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Ljava/lang/String;Lat/bernhardberger/tvheadend/sdk/core/TimerecRuleUpdate;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
+public final class at/bernhardberger/tvheadend/sdk/core/DvrRepositoryKt {
+	public static final fun getDvrSnapshotAuthority (Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState;)Lat/bernhardberger/tvheadend/sdk/core/RetainedMetadataAuthority;
+	public static final fun getDvrSnapshotForDisplay (Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState;)Lat/bernhardberger/tvheadend/sdk/core/DvrSnapshot;
+}
+
 public abstract interface class at/bernhardberger/tvheadend/sdk/core/DvrRepositoryState {
 }
 
@@ -1413,6 +1423,11 @@ public final class at/bernhardberger/tvheadend/sdk/core/EpgRepository$DefaultImp
 	public static fun search (Lat/bernhardberger/tvheadend/sdk/core/EpgRepository;Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Lat/bernhardberger/tvheadend/sdk/core/EpgSearchRequest;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
+public final class at/bernhardberger/tvheadend/sdk/core/EpgRepositoryKt {
+	public static final fun getEpgSnapshotAuthority (Lat/bernhardberger/tvheadend/sdk/core/EpgRepositoryState;)Lat/bernhardberger/tvheadend/sdk/core/RetainedMetadataAuthority;
+	public static final fun getEpgSnapshotForDisplay (Lat/bernhardberger/tvheadend/sdk/core/EpgRepositoryState;)Lat/bernhardberger/tvheadend/sdk/core/EpgSnapshot;
+}
+
 public abstract interface class at/bernhardberger/tvheadend/sdk/core/EpgRepositoryState {
 }
 
@@ -1706,6 +1721,17 @@ public final class at/bernhardberger/tvheadend/sdk/core/RecordingRuleChannel$Spe
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class at/bernhardberger/tvheadend/sdk/core/RetainedMetadataAuthority : java/lang/Enum {
+	public static final field ABSENT Lat/bernhardberger/tvheadend/sdk/core/RetainedMetadataAuthority;
+	public static final field CURRENT Lat/bernhardberger/tvheadend/sdk/core/RetainedMetadataAuthority;
+	public static final field STALE Lat/bernhardberger/tvheadend/sdk/core/RetainedMetadataAuthority;
+	public static final field SYNCHRONIZING_WITHOUT_RETAINED_DATA Lat/bernhardberger/tvheadend/sdk/core/RetainedMetadataAuthority;
+	public static final field SYNCHRONIZING_WITH_RETAINED_DATA Lat/bernhardberger/tvheadend/sdk/core/RetainedMetadataAuthority;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/RetainedMetadataAuthority;
+	public static fun values ()[Lat/bernhardberger/tvheadend/sdk/core/RetainedMetadataAuthority;
+}
+
 public abstract interface class at/bernhardberger/tvheadend/sdk/core/ServerAuthentication {
 }
 
@@ -1869,11 +1895,17 @@ public final class at/bernhardberger/tvheadend/sdk/core/SessionObservation {
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun event-eg3kBS8 (J)Lat/bernhardberger/tvheadend/sdk/core/EpgEvent;
 	public final fun eventAt-RL2hoTo (JLkotlin/time/Instant;)Lat/bernhardberger/tvheadend/sdk/core/EpgEvent;
+	public final fun getChannelCatalogAuthority ()Lat/bernhardberger/tvheadend/sdk/core/RetainedMetadataAuthority;
+	public final fun getChannelCatalogForDisplay ()Lat/bernhardberger/tvheadend/sdk/core/ChannelCatalog;
 	public final fun getChannelState ()Lat/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState;
 	public final fun getCurrentSession ()Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;
 	public final fun getDvrConfigurationsState ()Lat/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState;
 	public final fun getDvrDiskSpaceState ()Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpaceState;
+	public final fun getDvrSnapshotAuthority ()Lat/bernhardberger/tvheadend/sdk/core/RetainedMetadataAuthority;
+	public final fun getDvrSnapshotForDisplay ()Lat/bernhardberger/tvheadend/sdk/core/DvrSnapshot;
 	public final fun getDvrState ()Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState;
+	public final fun getEpgSnapshotAuthority ()Lat/bernhardberger/tvheadend/sdk/core/RetainedMetadataAuthority;
+	public final fun getEpgSnapshotForDisplay ()Lat/bernhardberger/tvheadend/sdk/core/EpgSnapshot;
 	public final fun getEpgState ()Lat/bernhardberger/tvheadend/sdk/core/EpgRepositoryState;
 	public final fun getRecordingProgressCapability ()Lat/bernhardberger/tvheadend/sdk/core/RecordingProgressCapability;
 	public final fun getSessionState ()Lat/bernhardberger/tvheadend/sdk/core/SessionState;

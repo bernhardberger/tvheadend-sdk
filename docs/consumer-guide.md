@@ -113,7 +113,25 @@ channels and tags. `Synchronizing.staleCatalog` is optional; `Current.catalog`
 is authoritative for the active generation; `Stale.catalog` belongs to an
 inactive generation.
 
-Use observation selectors when selecting related entities:
+Use the deliberately display-only projections when rendering whole retained datasets. They return
+the immutable catalog or snapshot already held by the repository state without another copy:
+
+| Repository state | Display projection | Authority |
+|---|---|---|
+| `Empty` | `null` | `ABSENT` |
+| `Synchronizing` without retained data | `null` | `SYNCHRONIZING_WITHOUT_RETAINED_DATA` |
+| `Synchronizing` with retained data | Exact retained value | `SYNCHRONIZING_WITH_RETAINED_DATA` |
+| `Current` | Exact current value | `CURRENT` |
+| `Stale` | Exact retained value | `STALE` |
+
+The state-level properties are `channelCatalogForDisplay` and `channelCatalogAuthority`,
+`epgSnapshotForDisplay` and `epgSnapshotAuthority`, and `dvrSnapshotForDisplay` and
+`dvrSnapshotAuthority`. `SessionObservation` forwards the same properties for aggregate reads.
+`RetainedMetadataAuthority` describes data provenance and synchronization only. It does not make
+data selectable or authorize actions or retries; only `currentSession` proves aggregate mutation
+and playback authority for the current connection generation.
+
+Use observation point selectors when selecting related entities:
 
 | Selector | Result |
 |---|---|

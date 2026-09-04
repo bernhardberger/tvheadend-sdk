@@ -12,19 +12,32 @@ import at.bernhardberger.tvheadend.sdk.android.TvheadendServerProfileStore
 import at.bernhardberger.tvheadend.sdk.android.addTvheadendArtwork
 import at.bernhardberger.tvheadend.sdk.core.ArtworkFailure
 import at.bernhardberger.tvheadend.sdk.core.Channel
+import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
+import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
+import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.EpgEvent
+import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.EpgSearchRequest
 import at.bernhardberger.tvheadend.sdk.core.EpgSearchResult
+import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.PlaybackBinding
 import at.bernhardberger.tvheadend.sdk.core.PlaybackBindingResult
 import at.bernhardberger.tvheadend.sdk.core.SessionObservation
 import at.bernhardberger.tvheadend.sdk.core.SessionGenerationIdentity
+import at.bernhardberger.tvheadend.sdk.core.RetainedMetadataAuthority
 import at.bernhardberger.tvheadend.sdk.core.StreamProfileId
 import at.bernhardberger.tvheadend.sdk.core.StreamProfilesResult
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
+import at.bernhardberger.tvheadend.sdk.core.channelCatalogAuthority
+import at.bernhardberger.tvheadend.sdk.core.channelCatalogForDisplay
+import at.bernhardberger.tvheadend.sdk.core.dvrSnapshotAuthority
+import at.bernhardberger.tvheadend.sdk.core.dvrSnapshotForDisplay
+import at.bernhardberger.tvheadend.sdk.core.epgSnapshotAuthority
+import at.bernhardberger.tvheadend.sdk.core.epgSnapshotForDisplay
 import at.bernhardberger.tvheadend.sdk.media3.LivePlaybackOptions
 import at.bernhardberger.tvheadend.sdk.media3.LiveTimeshiftState
 import at.bernhardberger.tvheadend.sdk.media3.PlaybackTargetResult
@@ -94,6 +107,40 @@ public class StagedSdkConsumer(
         failure.failure
 
     public fun channel(id: ChannelId): Channel? = observation.value.channel(id)
+
+    public fun channelCatalogForDisplay(state: ChannelRepositoryState): ChannelCatalog? =
+        state.channelCatalogForDisplay
+
+    public fun epgSnapshotForDisplay(state: EpgRepositoryState): EpgSnapshot? =
+        state.epgSnapshotForDisplay
+
+    public fun dvrSnapshotForDisplay(state: DvrRepositoryState): DvrSnapshot? =
+        state.dvrSnapshotForDisplay
+
+    public fun observationChannelCatalogForDisplay(observation: SessionObservation): ChannelCatalog? =
+        observation.channelCatalogForDisplay
+
+    public fun observationEpgSnapshotForDisplay(observation: SessionObservation): EpgSnapshot? =
+        observation.epgSnapshotForDisplay
+
+    public fun observationDvrSnapshotForDisplay(observation: SessionObservation): DvrSnapshot? =
+        observation.dvrSnapshotForDisplay
+
+    public fun retainedMetadataIsCurrent(observation: SessionObservation): Boolean =
+        observation.channelCatalogAuthority == RetainedMetadataAuthority.CURRENT &&
+            observation.epgSnapshotAuthority == RetainedMetadataAuthority.CURRENT &&
+            observation.dvrSnapshotAuthority == RetainedMetadataAuthority.CURRENT &&
+            observation.channelState.channelCatalogAuthority == RetainedMetadataAuthority.CURRENT &&
+            observation.epgState.epgSnapshotAuthority == RetainedMetadataAuthority.CURRENT &&
+            observation.dvrState.dvrSnapshotAuthority == RetainedMetadataAuthority.CURRENT
+
+    public fun authorityDescription(authority: RetainedMetadataAuthority): String = when (authority) {
+        RetainedMetadataAuthority.ABSENT -> "absent"
+        RetainedMetadataAuthority.SYNCHRONIZING_WITHOUT_RETAINED_DATA -> "synchronizing-empty"
+        RetainedMetadataAuthority.SYNCHRONIZING_WITH_RETAINED_DATA -> "synchronizing-retained"
+        RetainedMetadataAuthority.CURRENT -> "current"
+        RetainedMetadataAuthority.STALE -> "stale"
+    }
 
     public fun eventAt(channelId: ChannelId, at: Instant): EpgEvent? =
         observation.value.eventAt(channelId, at)

@@ -184,6 +184,28 @@ public sealed interface ChannelRepositoryState {
     }
 }
 
+/** Returns this state's current or retained catalog for display without copying it. */
+public val ChannelRepositoryState.channelCatalogForDisplay: ChannelCatalog?
+    get() = when (this) {
+        ChannelRepositoryState.Empty -> null
+        is ChannelRepositoryState.Synchronizing -> staleCatalog
+        is ChannelRepositoryState.Current -> catalog
+        is ChannelRepositoryState.Stale -> catalog
+    }
+
+/** Describes the provenance and synchronization state of [channelCatalogForDisplay]. */
+public val ChannelRepositoryState.channelCatalogAuthority: RetainedMetadataAuthority
+    get() = when (this) {
+        ChannelRepositoryState.Empty -> RetainedMetadataAuthority.ABSENT
+        is ChannelRepositoryState.Synchronizing -> if (staleCatalog == null) {
+            RetainedMetadataAuthority.SYNCHRONIZING_WITHOUT_RETAINED_DATA
+        } else {
+            RetainedMetadataAuthority.SYNCHRONIZING_WITH_RETAINED_DATA
+        }
+        is ChannelRepositoryState.Current -> RetainedMetadataAuthority.CURRENT
+        is ChannelRepositoryState.Stale -> RetainedMetadataAuthority.STALE
+    }
+
 private fun requireUnsignedU32(name: String, value: Long) {
     require(value in 0L..U32_MAX) { "$name must be an unsigned 32-bit value" }
 }

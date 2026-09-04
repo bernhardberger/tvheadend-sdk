@@ -467,6 +467,28 @@ public sealed interface DvrRepositoryState {
     }
 }
 
+/** Returns this state's current or retained DVR snapshot for display without copying it. */
+public val DvrRepositoryState.dvrSnapshotForDisplay: DvrSnapshot?
+    get() = when (this) {
+        DvrRepositoryState.Empty -> null
+        is DvrRepositoryState.Synchronizing -> staleSnapshot
+        is DvrRepositoryState.Current -> snapshot
+        is DvrRepositoryState.Stale -> snapshot
+    }
+
+/** Describes the provenance and synchronization state of [dvrSnapshotForDisplay]. */
+public val DvrRepositoryState.dvrSnapshotAuthority: RetainedMetadataAuthority
+    get() = when (this) {
+        DvrRepositoryState.Empty -> RetainedMetadataAuthority.ABSENT
+        is DvrRepositoryState.Synchronizing -> if (staleSnapshot == null) {
+            RetainedMetadataAuthority.SYNCHRONIZING_WITHOUT_RETAINED_DATA
+        } else {
+            RetainedMetadataAuthority.SYNCHRONIZING_WITH_RETAINED_DATA
+        }
+        is DvrRepositoryState.Current -> RetainedMetadataAuthority.CURRENT
+        is DvrRepositoryState.Stale -> RetainedMetadataAuthority.STALE
+    }
+
 /** Freshness of retrieved DVR configurations. */
 public sealed interface DvrConfigurationsState {
     /** No configuration snapshot has been proven. */

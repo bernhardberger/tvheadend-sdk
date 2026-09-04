@@ -324,6 +324,28 @@ public sealed interface EpgRepositoryState {
     }
 }
 
+/** Returns this state's current or retained EPG snapshot for display without copying it. */
+public val EpgRepositoryState.epgSnapshotForDisplay: EpgSnapshot?
+    get() = when (this) {
+        EpgRepositoryState.Empty -> null
+        is EpgRepositoryState.Synchronizing -> staleSnapshot
+        is EpgRepositoryState.Current -> snapshot
+        is EpgRepositoryState.Stale -> snapshot
+    }
+
+/** Describes the provenance and synchronization state of [epgSnapshotForDisplay]. */
+public val EpgRepositoryState.epgSnapshotAuthority: RetainedMetadataAuthority
+    get() = when (this) {
+        EpgRepositoryState.Empty -> RetainedMetadataAuthority.ABSENT
+        is EpgRepositoryState.Synchronizing -> if (staleSnapshot == null) {
+            RetainedMetadataAuthority.SYNCHRONIZING_WITHOUT_RETAINED_DATA
+        } else {
+            RetainedMetadataAuthority.SYNCHRONIZING_WITH_RETAINED_DATA
+        }
+        is EpgRepositoryState.Current -> RetainedMetadataAuthority.CURRENT
+        is EpgRepositoryState.Stale -> RetainedMetadataAuthority.STALE
+    }
+
 /** Settled outcome of acquiring EPG coverage for one exact session observation. */
 public sealed interface EpgCoverageAcquisitionResult {
     /** Coverage settled with retained programme data in this exact immutable observation. */
