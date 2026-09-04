@@ -268,24 +268,29 @@ progress API.
 ## Bind Media3 playback
 
 `sdk-media3` supplies a narrow coordinator over an application-owned
-`ExoPlayer`. Use its structured lifetime boundary, bind a target through the
-current session observation, and install that exact binding:
+`ExoPlayer`. Use its structured lifetime boundary, capture one exact current
+session proof, and install the live target in one operation:
 
 ```kotlin
 val coordinator = createTvheadendPlaybackCoordinator(player)
-val shutdownResult = coordinator.withLifetime(2.seconds) { coordinator ->
+val shutdownResult = coordinator.withLifetime(2.seconds) { activeCoordinator ->
     val observed = session.observation.value
     val currentSession = observed.currentSession ?: return@withLifetime
     val channel = observed.channel(channelId) ?: return@withLifetime
-    when (val target = session.bindLivePlayback(currentSession, channel.id)) {
-        is PlaybackBindingResult.Bound -> handlePlaybackTargetResult(
-            coordinator.setLiveTarget(
-                target.binding,
-                LivePlaybackOptions(timeshiftPeriod = 30.seconds),
-            ),
+    launch {
+        activeCoordinator.livePlaybackObservation.collect(::renderLivePlayback)
+    }
+    when (
+        val target = activeCoordinator.setLiveTarget(
+            session = session,
+            currentSession = currentSession,
+            channelId = channel.id,
+            options = LivePlaybackOptions(timeshiftPeriod = 30.seconds),
         )
-        PlaybackBindingResult.ObservationExpired -> Unit
-        PlaybackBindingResult.TargetUnavailable -> Unit
+    ) {
+        is LivePlaybackTargetResult.Bound -> handlePlaybackTargetResult(target.result)
+        LivePlaybackTargetResult.ObservationExpired -> handleExpiredObservation()
+        LivePlaybackTargetResult.TargetUnavailable -> handleUnavailableChannel()
     }
 }
 handlePlaybackShutdownResult(shutdownResult)
@@ -295,10 +300,22 @@ handlePlaybackShutdownResult(shutdownResult)
 block receiver is a scope for lifetime-bound collectors; all of its child jobs
 are cancelled and joined before terminal shutdown evidence is returned.
 
-Both live and recording binding return `Bound`, `ObservationExpired`, or
-`TargetUnavailable`. A binding retains the original connection generation and
-target identity. Target replacement retires it; it never follows a colliding
-channel, DVR incarnation, or physical file into another generation.
+The live overload taking `session`, `currentSession`, and `channelId` performs
+exactly one generation-bound bind and, only when binding succeeds, one normal
+coordinator installation. `LivePlaybackTargetResult.ObservationExpired` and
+`TargetUnavailable` preserve binding failures. `LivePlaybackTargetResult.Bound`
+retains the exact `PlaybackTargetResult`, including `STARTED`, coordinator
+lifecycle failures, target failures, and `PLAYER_UNAVAILABLE`; it does not imply
+that installation started. This operation never reacquires a generation,
+retries, or retains the channel selection for reconnect.
+
+Binding remains lazy: a successful bind does not itself create a subscription
+or file resource. The existing coordinator replacement transaction remains the
+installation boundary, so a failed replacement either restores the healthy
+prior target or reports retirement under the coordinator's documented failure
+semantics. Recording consumers still bind once with
+`session.bindRecordingPlayback(currentSession, recordingId)` and pass that
+exact binding to `setRecordingTarget()`.
 
 `setLiveTarget()` and `setRecordingTarget()` return `PlaybackTargetResult`:
 `STARTED`, coordinator lifecycle failures, `NOT_READY`,
@@ -339,6 +356,14 @@ so exact-value matching must include a fallback. `UNCONFIRMED` means the SDK
 cannot prove whether the server accepted the command; those outcomes are also
 uncertain. Acceptance and categories are independent: for example, an accepted
 seek can still be terminal when its resumed segment cannot be anchored safely.
+
+`livePlaybackObservation` is the conflated-latest aggregate for consumers that
+need timeshift state, subscription issue, and diagnostics from one target-fenced
+publication. It emits `Active` when any of those components changes and resets
+to `NoTarget` as one retirement transition before stale target callbacks can
+publish again. `timeshiftState`, `subscriptionIssue`, and `liveDiagnostics`
+remain available for consumers interested in only one component; independently
+collecting those flows does not create an atomic aggregate snapshot.
 
 `subscriptionIssue` exposes only the current live target's canonical
 `SubscriptionIssue`. Unknown or localized server values map to `UNKNOWN`; raw
@@ -393,6 +418,10 @@ section or measurement is `null`; recordings never
 imply tuner data. Replacement, stop, termination, disconnect, close, and
 coordinator shutdown clear the state, and stale subscription generations cannot
 publish into a newer target.
+
+The staged Java consumer validates ordinary JVM linkage for the operation,
+aggregate getter, nested result, and explicit `Continuation` signature. It does
+not claim that Kotlin coroutine or `Flow` APIs are idiomatic Java ergonomics.
 
 ### Recordings
 

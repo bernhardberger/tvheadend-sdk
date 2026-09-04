@@ -221,11 +221,12 @@ internal class LiveTimeshiftControlBridge(
     private val publish: (LiveTimeshiftState) -> Unit,
     private val publishIssue: (SubscriptionIssue?) -> Unit,
     private val publishDiagnostics: (LiveSubscriptionDiagnostics?) -> Unit = {},
+    private val publishObservation: (LivePlaybackObservation.Active) -> Unit = {},
 ) {
     internal constructor(
         token: PlaybackTargetToken,
         publish: (LiveTimeshiftState) -> Unit,
-    ) : this(token, publish, {}, {})
+    ) : this(token, publish, {}, {}, {})
 
     private val lock = Any()
     private var nextAttachmentSequence = 0L
@@ -250,9 +251,7 @@ internal class LiveTimeshiftControlBridge(
     internal fun publishCurrent() {
         synchronized(lock) {
             if (!retired && token.isActive()) {
-                publishStateLocked(currentState)
-                publishIssueLocked(currentIssue)
-                publishDiagnosticsLocked(currentDiagnostics)
+                publishCurrentLocked()
             }
         }
     }
@@ -332,9 +331,7 @@ internal class LiveTimeshiftControlBridge(
                 currentIssue = replacement.issue
                 currentDiagnostics = replacement.diagnostics
             }
-            publishStateLocked(currentState)
-            publishIssueLocked(currentIssue)
-            publishDiagnosticsLocked(currentDiagnostics)
+            publishCurrentLocked()
         }
     }
 
@@ -350,8 +347,11 @@ internal class LiveTimeshiftControlBridge(
             observationReplacement = null
             pendingRestoredObservations = null
             publish(LiveTimeshiftState.Unavailable)
-            publishIssueLocked(null)
-            publishDiagnosticsLocked(null)
+            publishIssue(null)
+            publishDiagnostics(null)
+            publishObservation(
+                LivePlaybackObservation.Active(LiveTimeshiftState.Unavailable, null, null),
+            )
         }
     }
 
@@ -414,7 +414,8 @@ internal class LiveTimeshiftControlBridge(
                     val diagnosticsInvalidated = terminalLocked()
                     consumePendingTerminalLocked()
                     if (activeAttachment !== this && diagnosticsInvalidated) {
-                        publishDiagnosticsLocked(updateDiagnosticsLocked())
+                        updateDiagnosticsLocked()
+                        publishCurrentLocked(state = false, issue = false)
                     }
                     return
                 }
@@ -430,9 +431,10 @@ internal class LiveTimeshiftControlBridge(
                 }
                 newestBoundSequence = sequence
                 activeAttachment = this
-                publishStateLocked(updateStateLocked())
-                publishIssueLocked(updateIssueLocked())
-                publishDiagnosticsLocked(updateDiagnosticsLocked())
+                updateStateLocked()
+                updateIssueLocked()
+                updateDiagnosticsLocked()
+                publishCurrentLocked()
             }
         }
 
@@ -477,11 +479,13 @@ internal class LiveTimeshiftControlBridge(
                     else -> return
                 }
                 if (activeAttachment === this) {
-                    publishStateLocked(updateStateLocked())
-                    publishIssueLocked(updateIssueLocked())
-                    publishDiagnosticsLocked(updateDiagnosticsLocked())
+                    updateStateLocked()
+                    updateIssueLocked()
+                    updateDiagnosticsLocked()
+                    publishCurrentLocked()
                 } else if (diagnosticsInvalidated) {
-                    publishDiagnosticsLocked(updateDiagnosticsLocked())
+                    updateDiagnosticsLocked()
+                    publishCurrentLocked(state = false, issue = false)
                 }
             }
         }
@@ -493,11 +497,13 @@ internal class LiveTimeshiftControlBridge(
                 latestIssue = null
                 val diagnosticsInvalidated = terminalLocked()
                 if (activeAttachment === this) {
-                    publishStateLocked(updateStateLocked())
-                    publishIssueLocked(updateIssueLocked())
-                    publishDiagnosticsLocked(updateDiagnosticsLocked())
+                    updateStateLocked()
+                    updateIssueLocked()
+                    updateDiagnosticsLocked()
+                    publishCurrentLocked()
                 } else if (diagnosticsInvalidated) {
-                    publishDiagnosticsLocked(updateDiagnosticsLocked())
+                    updateDiagnosticsLocked()
+                    publishCurrentLocked(state = false, issue = false)
                 }
             }
         }
@@ -523,15 +529,17 @@ internal class LiveTimeshiftControlBridge(
                 }
                 if (activeAttachment === this) {
                     activeAttachment = null
-                    publishStateLocked(updateStateLocked())
-                    publishIssueLocked(updateIssueLocked())
-                    publishDiagnosticsLocked(updateDiagnosticsLocked())
+                    updateStateLocked()
+                    updateIssueLocked()
+                    updateDiagnosticsLocked()
+                    publishCurrentLocked()
                 } else if (pendingRestoredObservations?.let { sequence > it.afterSequence } == true) {
                     latestIssue = null
                     latestDiagnostics = null
                     consumePendingTerminalLocked()
                 } else if (diagnosticsInvalidated) {
-                    publishDiagnosticsLocked(updateDiagnosticsLocked())
+                    updateDiagnosticsLocked()
+                    publishCurrentLocked(state = false, issue = false)
                 }
             }
         }
@@ -558,9 +566,7 @@ internal class LiveTimeshiftControlBridge(
             currentState = LiveTimeshiftState.Unavailable
             currentIssue = latestIssue
             currentDiagnostics = latestDiagnostics
-            publishStateLocked(currentState)
-            publishIssueLocked(currentIssue)
-            publishDiagnosticsLocked(currentDiagnostics)
+            publishCurrentLocked()
         }
 
         internal fun availableState(): LiveTimeshiftState =
@@ -634,6 +640,20 @@ internal class LiveTimeshiftControlBridge(
 
     private fun publishDiagnosticsLocked(diagnostics: LiveSubscriptionDiagnostics?) {
         if (observationReplacement == null) publishDiagnostics(diagnostics)
+    }
+
+    private fun publishCurrentLocked(
+        state: Boolean = true,
+        issue: Boolean = true,
+        diagnostics: Boolean = true,
+    ) {
+        if (observationReplacement != null) return
+        if (state) publishStateLocked(currentState)
+        if (issue) publishIssueLocked(currentIssue)
+        if (diagnostics) publishDiagnosticsLocked(currentDiagnostics)
+        publishObservation(
+            LivePlaybackObservation.Active(currentState, currentIssue, currentDiagnostics),
+        )
     }
 
     internal class ObservationReplacement internal constructor(

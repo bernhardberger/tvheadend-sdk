@@ -30,6 +30,9 @@ import at.bernhardberger.tvheadend.sdk.core.SessionObservation;
 import at.bernhardberger.tvheadend.sdk.core.StreamProfilesResult;
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession;
 import at.bernhardberger.tvheadend.sdk.media3.TvheadendPlaybackCoordinator;
+import at.bernhardberger.tvheadend.sdk.media3.LivePlaybackObservation;
+import at.bernhardberger.tvheadend.sdk.media3.LivePlaybackOptions;
+import at.bernhardberger.tvheadend.sdk.media3.LivePlaybackTargetResult;
 import at.bernhardberger.tvheadend.sdk.media3.PlaybackCoordinatorLifetime;
 import at.bernhardberger.tvheadend.sdk.media3.PlaybackOutcomeCategory;
 import at.bernhardberger.tvheadend.sdk.media3.PlaybackShutdownResult;
@@ -255,6 +258,32 @@ public final class StagedSdkJavaConsumer {
             PlaybackCoordinatorLifetime lifetime,
             Continuation<? super Unit> continuation) {
         return lifetime.join(continuation);
+    }
+
+    public static Object installLiveTarget(
+            TvheadendPlaybackCoordinator coordinator,
+            TvheadendSession session,
+            CurrentSessionObservation currentSession,
+            long channelId,
+            LivePlaybackOptions options,
+            Continuation<? super LivePlaybackTargetResult> continuation) {
+        return coordinator.setLiveTarget(session, currentSession, channelId, options, continuation);
+    }
+
+    public static LivePlaybackObservation currentLiveObservation(
+            TvheadendPlaybackCoordinator coordinator) {
+        return coordinator.getLivePlaybackObservation().getValue();
+    }
+
+    public static PlaybackTargetResult boundLiveTargetResult(LivePlaybackTargetResult result) {
+        return result instanceof LivePlaybackTargetResult.Bound bound ? bound.getResult() : null;
+    }
+
+    public static int liveTargetResultKind(LivePlaybackTargetResult result) {
+        if (result instanceof LivePlaybackTargetResult.Bound) return 0;
+        if (result == LivePlaybackTargetResult.ObservationExpired.INSTANCE) return 1;
+        if (result == LivePlaybackTargetResult.TargetUnavailable.INSTANCE) return 2;
+        throw new IllegalArgumentException("Unknown live target result");
     }
 
     public static String currentLiveServiceName(TvheadendPlaybackCoordinator coordinator) {

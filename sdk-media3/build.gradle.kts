@@ -75,6 +75,7 @@ dependencies {
     implementation(files("libs/media3-decoder-ffmpeg-1.11.0.jar"))
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(project(":sdk-testing"))
     testRuntimeOnly(libs.junit.platform.launcher)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)

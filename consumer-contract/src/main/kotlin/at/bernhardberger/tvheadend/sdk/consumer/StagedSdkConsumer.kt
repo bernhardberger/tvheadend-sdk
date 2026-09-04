@@ -42,6 +42,8 @@ import at.bernhardberger.tvheadend.sdk.core.dvrSnapshotForDisplay
 import at.bernhardberger.tvheadend.sdk.core.epgSnapshotAuthority
 import at.bernhardberger.tvheadend.sdk.core.epgSnapshotForDisplay
 import at.bernhardberger.tvheadend.sdk.media3.LivePlaybackOptions
+import at.bernhardberger.tvheadend.sdk.media3.LivePlaybackObservation
+import at.bernhardberger.tvheadend.sdk.media3.LivePlaybackTargetResult
 import at.bernhardberger.tvheadend.sdk.media3.LiveTimeshiftState
 import at.bernhardberger.tvheadend.sdk.media3.PlaybackCoordinatorLifetime
 import at.bernhardberger.tvheadend.sdk.media3.PlaybackShutdownResult
@@ -58,7 +60,9 @@ import coil3.ComponentRegistry
 import kotlin.time.Duration
 import kotlin.time.Instant
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 
 public class StagedSdkConsumer(
     context: Context,
@@ -182,12 +186,10 @@ public class StagedSdkConsumer(
     public fun nextEvent(channelId: ChannelId, at: Instant): EpgEvent? =
         observation.value.nextEvent(channelId, at)
 
-    public suspend fun playLive(channelId: ChannelId): PlaybackTargetResult {
-        val currentSession = observation.value.currentSession ?: return PlaybackTargetResult.NOT_READY
-        return usePlaybackBinding(session.bindLivePlayback(currentSession, channelId)) { binding ->
-            coordinator.setLiveTarget(binding)
-        }
-    }
+    public suspend fun playLive(
+        currentSession: CurrentSessionObservation,
+        channelId: ChannelId,
+    ): LivePlaybackTargetResult = coordinator.setLiveTarget(session, currentSession, channelId)
 
     public suspend fun streamProfiles(): StreamProfilesResult = session.getStreamProfiles(
         requireNotNull(observation.value.currentSession),
@@ -208,17 +210,27 @@ public class StagedSdkConsumer(
     ): CurrentSessionObservation? = (result as? EpgSearchResult.Available)?.originatingSession
 
     public suspend fun playLive(
+        currentSession: CurrentSessionObservation,
         channelId: ChannelId,
         streamProfileId: StreamProfileId?,
         timeshiftPeriod: Duration,
-    ): PlaybackTargetResult {
-        val currentSession = observation.value.currentSession ?: return PlaybackTargetResult.NOT_READY
-        return usePlaybackBinding(session.bindLivePlayback(currentSession, channelId)) { binding ->
-            coordinator.setLiveTarget(
-                binding,
-                LivePlaybackOptions(streamProfileId, timeshiftPeriod),
-            )
-        }
+    ): LivePlaybackTargetResult = coordinator.setLiveTarget(
+        session,
+        currentSession,
+        channelId,
+        LivePlaybackOptions(streamProfileId, timeshiftPeriod),
+    )
+
+    public suspend fun withLivePlayback(
+        channelId: ChannelId,
+        options: LivePlaybackOptions,
+        drainTimeout: Duration,
+        observe: suspend (LivePlaybackObservation) -> Unit,
+        onTargetResult: (LivePlaybackTargetResult) -> Unit,
+    ): PlaybackShutdownResult = coordinator.withLifetime(drainTimeout) { activeCoordinator ->
+        val currentSession = session.observation.value.currentSession ?: return@withLifetime
+        launch { activeCoordinator.livePlaybackObservation.collect(observe) }
+        onTargetResult(activeCoordinator.setLiveTarget(session, currentSession, channelId, options))
     }
 
     public suspend fun resume(recordingId: DvrEntryId): PlaybackTargetResult {
@@ -247,6 +259,9 @@ public class StagedSdkConsumer(
 
     public val liveDiagnostics: StateFlow<LiveSubscriptionDiagnostics?>
         get() = coordinator.liveDiagnostics
+
+    public val livePlaybackObservation: StateFlow<LivePlaybackObservation>
+        get() = coordinator.livePlaybackObservation
 
     public fun currentLiveServiceName(): String? = liveDiagnostics.value?.source?.serviceName
 

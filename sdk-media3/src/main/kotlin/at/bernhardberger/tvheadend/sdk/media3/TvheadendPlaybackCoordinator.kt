@@ -4,12 +4,16 @@
 package at.bernhardberger.tvheadend.sdk.media3
 
 import androidx.media3.exoplayer.ExoPlayer
+import at.bernhardberger.tvheadend.sdk.core.ChannelId
+import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackExit
 import at.bernhardberger.tvheadend.sdk.core.DvrProgressPolicy
 import at.bernhardberger.tvheadend.sdk.core.PlaybackBinding
+import at.bernhardberger.tvheadend.sdk.core.PlaybackBindingResult
 import at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability
 import at.bernhardberger.tvheadend.sdk.core.StreamProfileId
+import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionDiagnostics
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
@@ -39,6 +43,8 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ClosedSendChannelException
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -176,6 +182,34 @@ public class PlaybackTargetResult private constructor(
     }
 }
 
+/** Typed result of binding and installing one exact current-session live target. */
+public sealed interface LivePlaybackTargetResult {
+    /** Binding succeeded; [result] is the coordinator's exact installation outcome. */
+    public class Bound internal constructor(
+        public val result: PlaybackTargetResult,
+    ) : LivePlaybackTargetResult
+
+    /** The supplied current-session observation was no longer authoritative. */
+    public data object ObservationExpired : LivePlaybackTargetResult
+
+    /** The channel was unavailable in the supplied current-session observation. */
+    public data object TargetUnavailable : LivePlaybackTargetResult
+}
+
+/** Conflated, target-fenced live state for consumers that need one coherent observation. */
+public sealed interface LivePlaybackObservation {
+    /** No live target is active; a recording target may still be active. */
+    public data object NoTarget : LivePlaybackObservation
+
+    /** Latest coherent state for the active live target. */
+    @ConsistentCopyVisibility
+    public data class Active internal constructor(
+        public val timeshiftState: LiveTimeshiftState,
+        public val subscriptionIssue: SubscriptionIssue?,
+        public val diagnostics: LiveSubscriptionDiagnostics?,
+    ) : LivePlaybackObservation
+}
+
 /** Typed outcome of retiring the coordinator's current target. */
 public enum class PlaybackStopResult {
     STOPPED,
@@ -253,12 +287,16 @@ public class TvheadendPlaybackCoordinator internal constructor(
 ) {
     private val lifecycle = AtomicReference(CoordinatorLifecycle.NEW)
     private val commands = Channel<CoordinatorCommand>(capacity = COMMAND_CAPACITY)
-    private val activeTimeshiftToken = AtomicReference<PlaybackTargetToken?>(null)
+    private val liveObservationLock = Any()
+    private var activeTimeshiftToken: PlaybackTargetToken? = null
     private val mutableTimeshiftState = MutableStateFlow<LiveTimeshiftState>(
         LiveTimeshiftState.Unavailable,
     )
     private val mutableSubscriptionIssue = MutableStateFlow<SubscriptionIssue?>(null)
     private val mutableLiveDiagnostics = MutableStateFlow<LiveSubscriptionDiagnostics?>(null)
+    private val mutableLivePlaybackObservation = MutableStateFlow<LivePlaybackObservation>(
+        LivePlaybackObservation.NoTarget,
+    )
 
     /** Current app-safe timeshift state for the active live target. */
     public val timeshiftState: StateFlow<LiveTimeshiftState> = mutableTimeshiftState.asStateFlow()
@@ -270,6 +308,10 @@ public class TvheadendPlaybackCoordinator internal constructor(
     /** App-safe observations for the current live target, or null when none are available. */
     public val liveDiagnostics: StateFlow<LiveSubscriptionDiagnostics?> =
         mutableLiveDiagnostics.asStateFlow()
+
+    /** Latest coherent observation for the active live target, or [LivePlaybackObservation.NoTarget]. */
+    public val livePlaybackObservation: StateFlow<LivePlaybackObservation> =
+        mutableLivePlaybackObservation.asStateFlow()
 
     /**
      * Launches this one-shot coordinator immediately as a child of [scope].
@@ -340,9 +382,7 @@ public class TvheadendPlaybackCoordinator internal constructor(
                 onRecoveryRequired = onRecoveryRequired,
                 timeSource = timeSource,
                 onShutdownClaimed = { lifecycle.set(CoordinatorLifecycle.SHUTTING_DOWN) },
-                publishTimeshiftState = ::publishTimeshiftState,
-                publishSubscriptionIssue = ::publishSubscriptionIssue,
-                publishLiveDiagnostics = ::publishLiveDiagnostics,
+                publishLiveObservation = ::publishLiveObservation,
                 activateTimeshift = ::activateTimeshift,
                 deactivateTimeshift = ::deactivateTimeshift,
             ).run()
@@ -365,6 +405,31 @@ public class TvheadendPlaybackCoordinator internal constructor(
         binding: PlaybackBinding.Live,
         options: LivePlaybackOptions = LivePlaybackOptions(),
     ): PlaybackTargetResult = setLiveTarget(BoundCoordinatorLiveTarget(binding), options)
+
+    /**
+     * Binds and installs one live target from the caller's exact [currentSession] proof.
+     *
+     * Binding is lazy and attempted once. This operation never reacquires a generation, retries,
+     * or retains [channelId] for reconnect; those choices remain application policy.
+     */
+    @JvmName("setLiveTarget")
+    public suspend fun setLiveTarget(
+        session: TvheadendSession,
+        currentSession: CurrentSessionObservation,
+        channelId: ChannelId,
+        options: LivePlaybackOptions = LivePlaybackOptions(),
+    ): LivePlaybackTargetResult {
+        currentCoroutineContext().ensureActive()
+        val binding = session.bindLivePlayback(currentSession, channelId)
+        currentCoroutineContext().ensureActive()
+        return when (binding) {
+            is PlaybackBindingResult.Bound -> LivePlaybackTargetResult.Bound(
+                setLiveTarget(binding.binding, options),
+            )
+            PlaybackBindingResult.ObservationExpired -> LivePlaybackTargetResult.ObservationExpired
+            PlaybackBindingResult.TargetUnavailable -> LivePlaybackTargetResult.TargetUnavailable
+        }
+    }
 
     internal suspend fun setLiveTarget(
         target: CoordinatorLiveTarget,
@@ -491,40 +556,45 @@ public class TvheadendPlaybackCoordinator internal constructor(
         return submit(command, reply) { state -> state.timeshiftUnavailableResult() }
     }
 
-    private fun publishTimeshiftState(
+    private fun publishLiveObservation(
         token: PlaybackTargetToken,
-        state: LiveTimeshiftState,
+        observation: LivePlaybackObservation.Active,
     ) {
-        if (activeTimeshiftToken.get() === token) mutableTimeshiftState.value = state
-    }
-
-    private fun publishSubscriptionIssue(
-        token: PlaybackTargetToken,
-        issue: SubscriptionIssue?,
-    ) {
-        if (activeTimeshiftToken.get() === token) mutableSubscriptionIssue.value = issue
-    }
-
-    private fun publishLiveDiagnostics(
-        token: PlaybackTargetToken,
-        diagnostics: LiveSubscriptionDiagnostics?,
-    ) {
-        if (activeTimeshiftToken.get() === token) mutableLiveDiagnostics.value = diagnostics
+        synchronized(liveObservationLock) {
+            if (activeTimeshiftToken !== token) return
+            mutableTimeshiftState.value = observation.timeshiftState
+            mutableSubscriptionIssue.value = observation.subscriptionIssue
+            mutableLiveDiagnostics.value = observation.diagnostics
+            mutableLivePlaybackObservation.value = observation
+        }
     }
 
     private fun activateTimeshift(
         token: PlaybackTargetToken,
         bridge: LiveTimeshiftControlBridge,
     ) {
-        activeTimeshiftToken.set(token)
+        synchronized(liveObservationLock) {
+            activeTimeshiftToken = token
+            mutableTimeshiftState.value = LiveTimeshiftState.Unavailable
+            mutableSubscriptionIssue.value = null
+            mutableLiveDiagnostics.value = null
+            mutableLivePlaybackObservation.value = LivePlaybackObservation.Active(
+                timeshiftState = LiveTimeshiftState.Unavailable,
+                subscriptionIssue = null,
+                diagnostics = null,
+            )
+        }
         bridge.publishCurrent()
     }
 
     private fun deactivateTimeshift(token: PlaybackTargetToken) {
-        if (activeTimeshiftToken.compareAndSet(token, null)) {
+        synchronized(liveObservationLock) {
+            if (activeTimeshiftToken !== token) return
+            activeTimeshiftToken = null
             mutableTimeshiftState.value = LiveTimeshiftState.Unavailable
             mutableSubscriptionIssue.value = null
             mutableLiveDiagnostics.value = null
+            mutableLivePlaybackObservation.value = LivePlaybackObservation.NoTarget
         }
     }
 
@@ -655,9 +725,7 @@ private class CoordinatorActor(
     private val onRecoveryRequired: (PlaybackRecoveryReason) -> Unit,
     private val timeSource: PlaybackCoordinatorTimeSource,
     private val onShutdownClaimed: () -> Unit,
-    private val publishTimeshiftState: (PlaybackTargetToken, LiveTimeshiftState) -> Unit,
-    private val publishSubscriptionIssue: (PlaybackTargetToken, SubscriptionIssue?) -> Unit,
-    private val publishLiveDiagnostics: (PlaybackTargetToken, LiveSubscriptionDiagnostics?) -> Unit,
+    private val publishLiveObservation: (PlaybackTargetToken, LivePlaybackObservation.Active) -> Unit,
     private val activateTimeshift: (PlaybackTargetToken, LiveTimeshiftControlBridge) -> Unit,
     private val deactivateTimeshift: (PlaybackTargetToken) -> Unit,
 ) {
@@ -697,8 +765,8 @@ private class CoordinatorActor(
         } finally {
             activeTarget?.token?.retire()
             (activeTarget as? ActorTarget.Live)?.let { target ->
-                target.timeshiftControls.retire()
                 deactivateTimeshift(target.token)
+                target.timeshiftControls.retire()
             }
             ticker?.cancel()
             ticker = null
@@ -717,9 +785,9 @@ private class CoordinatorActor(
             val token = PlaybackTargetToken()
             val timeshiftControls = LiveTimeshiftControlBridge(
                 token = token,
-                publish = { state -> publishTimeshiftState(token, state) },
-                publishIssue = { issue -> publishSubscriptionIssue(token, issue) },
-                publishDiagnostics = { diagnostics -> publishLiveDiagnostics(token, diagnostics) },
+                publish = {},
+                publishIssue = {},
+                publishObservation = { observation -> publishLiveObservation(token, observation) },
             )
             val result = player.installLive(
                 ticket = command.ticket,
@@ -845,8 +913,8 @@ private class CoordinatorActor(
         if (!retiredTarget) return
         val old = activeTarget
         if (old is ActorTarget.Live) {
-            old.timeshiftControls.retire()
             deactivateTimeshift(old.token)
+            old.timeshiftControls.retire()
         }
         if (old is ActorTarget.Recording && retiredRecording?.token === old.token) {
             terminalize(

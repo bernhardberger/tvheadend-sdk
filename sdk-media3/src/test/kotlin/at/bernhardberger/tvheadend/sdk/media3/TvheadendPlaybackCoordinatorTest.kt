@@ -1,13 +1,17 @@
 @file:androidx.media3.common.util.UnstableApi
 @file:OptIn(
     at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class,
+    at.bernhardberger.tvheadend.sdk.testing.FakePlaybackApi::class,
     kotlinx.coroutines.ExperimentalCoroutinesApi::class,
 )
 
 package at.bernhardberger.tvheadend.sdk.media3
 
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
+import at.bernhardberger.tvheadend.sdk.core.Channel as TvheadendChannel
+import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
+import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.DvrEntry
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
@@ -18,8 +22,11 @@ import at.bernhardberger.tvheadend.sdk.core.DvrProgressResult
 import at.bernhardberger.tvheadend.sdk.core.DvrRecordingFile
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
+import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability
 import at.bernhardberger.tvheadend.sdk.core.ServerCapabilities
+import at.bernhardberger.tvheadend.sdk.core.SessionObservation
 import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.StreamProfileId
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
@@ -45,6 +52,8 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionState
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTerminalReason
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTermination
+import at.bernhardberger.tvheadend.sdk.testing.FakeSessionCall
+import at.bernhardberger.tvheadend.sdk.testing.FakeTvheadendSession
 import java.io.IOException
 import java.util.concurrent.CancellationException
 import kotlin.time.Duration
@@ -56,6 +65,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
@@ -340,6 +350,160 @@ internal class TvheadendPlaybackCoordinatorTest {
     }
 
     @Test
+    fun `one-call live workflow preserves binding and coordinator result domains`() = runTest {
+        val staleFixture = CoordinatorFixture()
+        val staleSession = liveSession()
+        val staleProof = staleSession.captureCurrentSession()
+        staleSession.replaceGeneration(currentLiveObservation())
+        assertSame(
+            LivePlaybackTargetResult.ObservationExpired,
+            staleFixture.coordinator.setLiveTarget(staleSession, staleProof, ChannelId(1)),
+        )
+        assertEquals(listOf(FakeSessionCall.BIND_LIVE_PLAYBACK), staleSession.calls)
+        assertTrue(staleFixture.player.operations.isEmpty())
+
+        val unavailableFixture = CoordinatorFixture()
+        val unavailableSession = liveSession().apply {
+            scriptLivePlaybackFailure(at.bernhardberger.tvheadend.sdk.core.PlaybackBindingResult.TargetUnavailable)
+        }
+        assertSame(
+            LivePlaybackTargetResult.TargetUnavailable,
+            unavailableFixture.coordinator.setLiveTarget(
+                unavailableSession,
+                unavailableSession.captureCurrentSession(),
+                ChannelId(1),
+            ),
+        )
+        assertEquals(listOf(FakeSessionCall.BIND_LIVE_PLAYBACK), unavailableSession.calls)
+        assertTrue(unavailableFixture.player.operations.isEmpty())
+
+        val notRunningFixture = CoordinatorFixture()
+        val lifecycleSession = liveSession()
+        val current = lifecycleSession.captureCurrentSession()
+        val notRunning = notRunningFixture.coordinator.setLiveTarget(
+            lifecycleSession,
+            current,
+            ChannelId(1),
+        ) as LivePlaybackTargetResult.Bound
+        assertSame(PlaybackTargetResult.NOT_RUNNING, notRunning.result)
+        assertTrue(notRunningFixture.player.operations.isEmpty())
+
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { notRunningFixture.coordinator.run() }
+        assertSame(PlaybackShutdownResult.DRAINED, notRunningFixture.coordinator.shutdown(1.seconds))
+        owner.join()
+        val shutDown = notRunningFixture.coordinator.setLiveTarget(
+            lifecycleSession,
+            current,
+            ChannelId(1),
+        ) as LivePlaybackTargetResult.Bound
+        assertSame(PlaybackTargetResult.SHUT_DOWN, shutDown.result)
+        assertEquals(
+            listOf(FakeSessionCall.BIND_LIVE_PLAYBACK, FakeSessionCall.BIND_LIVE_PLAYBACK),
+            lifecycleSession.calls,
+        )
+
+        mapOf(
+            PlaybackPlayerInstallStatus.STARTED to PlaybackTargetResult.STARTED,
+            PlaybackPlayerInstallStatus.NOT_READY to PlaybackTargetResult.NOT_READY,
+            PlaybackPlayerInstallStatus.TARGET_UNAVAILABLE to PlaybackTargetResult.TARGET_UNAVAILABLE,
+            PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE to PlaybackTargetResult.PLAYER_UNAVAILABLE,
+        ).forEach { (status, expected) ->
+            val fixture = CoordinatorFixture()
+            fixture.player.liveInstallStatus = status
+            val session = liveSession()
+            val lifetime = fixture.coordinator.launchIn(this)
+
+            val result = fixture.coordinator.setLiveTarget(
+                session,
+                session.captureCurrentSession(),
+                ChannelId(1),
+            ) as LivePlaybackTargetResult.Bound
+
+            assertSame(expected, result.result)
+            assertEquals(listOf(FakeSessionCall.BIND_LIVE_PLAYBACK), session.calls)
+            assertEquals(status == PlaybackPlayerInstallStatus.STARTED, fixture.player.hasActiveTarget)
+            lifetime.shutdown(1.seconds)
+        }
+    }
+
+    @Test
+    fun `one-call live workflow rejects pre-cancelled binding and immediate lifecycle paths`() = runTest {
+        suspend fun verify(session: FakeTvheadendSession) {
+            val operation = async(start = CoroutineStart.UNDISPATCHED) {
+                coroutineContext.cancel(CancellationException("scripted pre-cancellation"))
+                CoordinatorFixture().coordinator.setLiveTarget(
+                    session,
+                    session.captureCurrentSession(),
+                    ChannelId(1),
+                )
+            }
+
+            assertTrue(runCatching { operation.await() }.exceptionOrNull() is CancellationException)
+            assertTrue(session.calls.isEmpty())
+        }
+
+        verify(liveSession())
+        verify(liveSession().apply {
+            scriptLivePlaybackFailure(
+                at.bernhardberger.tvheadend.sdk.core.PlaybackBindingResult.TargetUnavailable,
+            )
+        })
+    }
+
+    @Test
+    fun `one-call live workflow preserves replacement and cancellation semantics`() = runTest {
+        val replacementFixture = CoordinatorFixture()
+        val replacementOwner = launch(start = CoroutineStart.UNDISPATCHED) {
+            replacementFixture.coordinator.run()
+        }
+        assertSame(
+            PlaybackTargetResult.STARTED,
+            replacementFixture.coordinator.setLiveTarget(ChannelId(7)),
+        )
+        val healthyToken = replacementFixture.player.requireActiveToken()
+        replacementFixture.player.liveInstallStatus = PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE
+        val replacementSession = liveSession()
+
+        val failed = replacementFixture.coordinator.setLiveTarget(
+            replacementSession,
+            replacementSession.captureCurrentSession(),
+            ChannelId(1),
+        ) as LivePlaybackTargetResult.Bound
+
+        assertSame(PlaybackTargetResult.PLAYER_UNAVAILABLE, failed.result)
+        assertSame(healthyToken, replacementFixture.player.requireActiveToken())
+        assertEquals(listOf("live:7"), replacementFixture.player.operations)
+        assertEquals(listOf(FakeSessionCall.BIND_LIVE_PLAYBACK), replacementSession.calls)
+        replacementFixture.coordinator.shutdown(1.seconds)
+        replacementOwner.join()
+
+        val cancellationFixture = CoordinatorFixture()
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        cancellationFixture.player.liveInstallEntered = entered
+        cancellationFixture.player.liveInstallRelease = release
+        val cancellationOwner = launch(start = CoroutineStart.UNDISPATCHED) {
+            cancellationFixture.coordinator.run()
+        }
+        val cancellationSession = liveSession()
+        val operation = async {
+            cancellationFixture.coordinator.setLiveTarget(
+                cancellationSession,
+                cancellationSession.captureCurrentSession(),
+                ChannelId(1),
+            )
+        }
+        entered.await()
+
+        operation.cancel(CancellationException("scripted workflow cancellation"))
+        release.complete(Unit)
+        assertTrue(runCatching { operation.await() }.exceptionOrNull() is CancellationException)
+        assertEquals(listOf(FakeSessionCall.BIND_LIVE_PLAYBACK), cancellationSession.calls)
+        cancellationFixture.coordinator.shutdown(1.seconds)
+        cancellationOwner.join()
+    }
+
+    @Test
     fun `one caller-owned run boundary preserves application player lifetime`() = runTest {
         val fixture = CoordinatorFixture()
         assertEquals(
@@ -421,6 +585,7 @@ internal class TvheadendPlaybackCoordinatorTest {
         assertTrue(collectorStopped)
         assertEquals(1, fixture.player.abandonCalls)
         assertFalse(fixture.player.released)
+        assertSame(LivePlaybackObservation.NoTarget, fixture.coordinator.livePlaybackObservation.value)
     }
 
     @Test
@@ -882,6 +1047,78 @@ internal class TvheadendPlaybackCoordinatorTest {
             owner.join()
             assertEquals(null, fixture.coordinator.liveDiagnostics.value)
         }
+
+    @Test
+    fun `aggregate live observation updates coherently and resets behind the target fence`() = runTest {
+        val fixture = CoordinatorFixture()
+        assertSame(LivePlaybackObservation.NoTarget, fixture.coordinator.livePlaybackObservation.value)
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+        assertSame(PlaybackTargetResult.STARTED, fixture.coordinator.setLiveTarget(ChannelId(1)))
+
+        var observation = fixture.coordinator.livePlaybackObservation.value as LivePlaybackObservation.Active
+        assertSame(LiveTimeshiftState.Unavailable, observation.timeshiftState)
+        assertNull(observation.subscriptionIssue)
+        assertNull(observation.diagnostics)
+
+        fixture.player.attachTimeshift(FakeTimeshiftSubscription(60.seconds))
+        fixture.player.emitTimeshift(
+            SubscriptionEvent.Status(
+                SubscriptionCondition.ERROR_REPORTED,
+                SubscriptionIssue.BAD_SIGNAL,
+            ),
+        )
+        observation = fixture.coordinator.livePlaybackObservation.value as LivePlaybackObservation.Active
+        assertSame(SubscriptionIssue.BAD_SIGNAL, observation.subscriptionIssue)
+        assertEquals(fixture.coordinator.timeshiftState.value, observation.timeshiftState)
+
+        fixture.player.emitTimeshift(SubscriptionEvent.Queue(3L, 30L, 300L, 0L, 0L, 0L))
+        observation = fixture.coordinator.livePlaybackObservation.value as LivePlaybackObservation.Active
+        assertEquals(3L, observation.diagnostics?.queue?.packetCount)
+        assertSame(SubscriptionIssue.BAD_SIGNAL, observation.subscriptionIssue)
+
+        fixture.player.emitTimeshift(
+            SubscriptionEvent.Timeshift(0L, 10_000_000L, 0L, 30_000_000L, 100),
+        )
+        observation = fixture.coordinator.livePlaybackObservation.value as LivePlaybackObservation.Active
+        assertTrue(observation.timeshiftState is LiveTimeshiftState.Available)
+        assertSame(fixture.coordinator.subscriptionIssue.value, observation.subscriptionIssue)
+        assertSame(fixture.coordinator.liveDiagnostics.value, observation.diagnostics)
+        val original = observation
+        val staleAttachment = fixture.player.requireTimeshiftControls()
+
+        fixture.player.liveInstallStatus = PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE
+        assertSame(
+            PlaybackTargetResult.PLAYER_UNAVAILABLE,
+            fixture.coordinator.setLiveTarget(ChannelId(2)),
+        )
+        assertEquals(original, fixture.coordinator.livePlaybackObservation.value)
+
+        fixture.player.liveInstallStatus = PlaybackPlayerInstallStatus.STARTED
+        assertSame(PlaybackTargetResult.STARTED, fixture.coordinator.setLiveTarget(ChannelId(3)))
+        val replacement = fixture.coordinator.livePlaybackObservation.value
+        assertEquals(
+            LivePlaybackObservation.Active(LiveTimeshiftState.Unavailable, null, null),
+            replacement,
+        )
+        staleAttachment.accept(
+            SubscriptionEvent.Status(
+                SubscriptionCondition.ERROR_REPORTED,
+                SubscriptionIssue.SCRAMBLED,
+            ),
+        )
+        staleAttachment.accept(SubscriptionEvent.Queue(99L, 99L, 99L, 0L, 0L, 0L))
+        assertEquals(replacement, fixture.coordinator.livePlaybackObservation.value)
+
+        assertSame(PlaybackTargetResult.STARTED, fixture.coordinator.setRecordingTarget(DvrEntryId(7)))
+        assertSame(LivePlaybackObservation.NoTarget, fixture.coordinator.livePlaybackObservation.value)
+        assertSame(PlaybackTargetResult.STARTED, fixture.coordinator.setLiveTarget(ChannelId(4)))
+        assertSame(PlaybackStopResult.STOPPED, fixture.coordinator.stop())
+        assertSame(LivePlaybackObservation.NoTarget, fixture.coordinator.livePlaybackObservation.value)
+        assertSame(PlaybackTargetResult.STARTED, fixture.coordinator.setLiveTarget(ChannelId(5)))
+        assertSame(PlaybackShutdownResult.DRAINED, fixture.coordinator.shutdown(1.seconds))
+        owner.join()
+        assertSame(LivePlaybackObservation.NoTarget, fixture.coordinator.livePlaybackObservation.value)
+    }
 
     @Test
     fun `replacement rollback keeps newer diagnostics observations`() {
@@ -2082,6 +2319,7 @@ private class TestCoordinatorHarness(
     val timeshiftState = delegate.timeshiftState
     val subscriptionIssue = delegate.subscriptionIssue
     val liveDiagnostics = delegate.liveDiagnostics
+    val livePlaybackObservation = delegate.livePlaybackObservation
 
     suspend fun run() = delegate.run()
 
@@ -2098,6 +2336,18 @@ private class TestCoordinatorHarness(
         channelId: ChannelId,
         options: LivePlaybackOptions = LivePlaybackOptions(),
     ): PlaybackTargetResult = delegate.setLiveTarget(NumberedLiveTarget(channelId.value), options)
+
+    suspend fun setLiveTarget(
+        session: FakeTvheadendSession,
+        currentSession: at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation,
+        channelId: ChannelId,
+        options: LivePlaybackOptions = LivePlaybackOptions(),
+    ): LivePlaybackTargetResult = delegate.setLiveTarget(
+        session,
+        currentSession,
+        channelId,
+        options,
+    )
 
     suspend fun setRecordingTarget(
         recordingId: DvrEntryId,
@@ -2279,7 +2529,8 @@ private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
         this.timeshiftControls = timeshiftControls
         timeshiftAttachment = timeshiftControls.newAttachment()
         liveOptions = options
-        operations += "live:${(target as NumberedLiveTarget).id}"
+        operations += (target as? NumberedLiveTarget)?.let { numbered -> "live:${numbered.id}" }
+            ?: "live:bound"
         ticket.complete()
         return PlaybackPlayerInstallResult(
             PlaybackPlayerInstallStatus.STARTED,
@@ -2440,6 +2691,19 @@ private fun readyState(): SessionState.Ready = SessionState.Ready(
         streaming = CapabilityAccess.ALLOWED,
         dvrWrite = CapabilityAccess.ALLOWED,
     ),
+)
+
+private fun liveSession(): FakeTvheadendSession = FakeTvheadendSession(currentLiveObservation()).apply {
+    scriptLivePlaybackSuccess()
+}
+
+private fun currentLiveObservation(): SessionObservation = SessionObservation.create(
+    sessionState = readyState(),
+    channelState = ChannelRepositoryState.Current(
+        ChannelCatalog.create(listOf(TvheadendChannel.create(ChannelId(1)))),
+    ),
+    epgState = EpgRepositoryState.Current(EpgSnapshot.create()),
+    dvrState = DvrRepositoryState.Current(DvrSnapshot.create()),
 )
 
 private fun currentDvr(vararg entries: DvrEntry): DvrRepositoryState.Current =
