@@ -3,6 +3,11 @@
 Releases remain provisional during the major-zero line. Local staging is
 verification, not publication, and published bytes are immutable.
 
+One authorized owner performs preparation, CI/tagging, publication and completion
+in the same task. No planner, model review, convergence package or verification
+package is required for an ordinary release through this existing path. Obtain
+the exact publication/GitHub authorization first and retain the checks below.
+
 ## Protected Setup
 
 The `central` GitHub Environment contains exactly:
@@ -78,7 +83,7 @@ gh release create v0.5.0 \
 
 The owner then verifies the GitHub release target, prerelease state, two asset
 digests, all five Central coordinates, and a clean application consumer that
-resolves only published coordinates. These are explicit release-package actions,
+resolves only published coordinates. These are explicitly authorized release actions,
 not automatic recovery behavior in the repository tool.
 
 If CI provenance or run selection is ambiguous, the staging artifact expired or

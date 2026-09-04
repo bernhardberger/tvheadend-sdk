@@ -25,55 +25,34 @@ notices, and do not describe this project as official TVHeadend software.
 
 ## Package delegation
 
-- New package primaries default to Astra Medium; use Low for exact mechanical
-  work and High only for justified difficult work. Existing manifests retain
-  authority. Resolve routine choices within scope, reuse existing patterns, and
-  finish after relevant checks and required gates pass unless a concrete concern
-  needs investigation. Delegate bounded independent questions when worthwhile;
-  preserve read-only children and depth limits. The primary integrates results.
-- The selector's legacy `sol` output names the mandatory OpenAI lane, now
-  `sdk-review-astra`; its wire format stays stable for existing consumers.
-
-- Package primaries invoke the repository-local `sdk-locator`, `sdk-planner`,
-  `sdk-analyze`, `sdk-research`, `sdk-review-astra`, and `sdk-review-opus` Task
-  subagents directly. Never ask a coordinator to select or launch them, and
-  never launch a reviewer as an external top-level session.
-- Use `sdk-locator` for mechanical retrieval, `sdk-analyze` for a concrete
-  post-plan ambiguity or failed invariant, and `sdk-research` only after exact
-  local sources are insufficient. `sdk-planner` is an optional bounded second
-  opinion, not a required planning stage.
-- Children are read-only and work solely from a self-contained task prompt.
-  State the bounded question, exact scope, allowed sources, forbidden actions,
-  known evidence, acceptance criteria, required output, and stop condition.
-  Children must not read orchestration ledgers, handoffs, or `AGENTS.md` files.
-- The Muse reviewer field test is complete; do not invoke `sdk-review-muse`.
-- Release and lower-stakes packages use Astra only, without Opus. For a critical
-  or complex package, run
-  `./review-provider-route.sh select eligible` immediately before review; when
-  it prints `opus`, launch exactly one `sdk-review-opus` alongside the mandatory
-  Astra review with substantively identical scope and evidence. The bounded Opus
-  reviewer is fixed at medium effort; do not raise it to match the primary.
-- Execute the review selector; never source it or its credential source into the
-  primary shell. Missing or untrustworthy quota telemetry selects Astra. A
-  skipped, failed, rate-limited, or aborted optional Opus review is non-blocking.
-  Independently adjudicate every finding from each completed reviewer.
-- Reviewer packets contain only variable scope, actual relevant diff or exact
-  readable changed paths, acceptance criteria, gate evidence and prior finding
-  IDs. They must not redefine a reviewer's role, permissions, generic policy or
-  verdict vocabulary, and must treat Git identity and gate status as
-  caller-provided evidence when the reviewer cannot run commands.
-- Run one broad frozen review round. After material corrections, run at most one
-  closure limited to prior finding IDs, the fix delta and directly affected
-  neighboring logic. Do not rerun a full Opus review unless the Opus-reviewed
-  behavior or scope materially changed. A reviewer finding is evidence to
-  adjudicate, not by itself a package blocker.
+- One primary owns the task end-to-end. Routine work and ordinary releases need
+  no planner, reviewer, package chain or coordinator. Split only for a real
+  dependency, ownership or authorization boundary, not for workflow stages.
+- Use read-only advisers for a concrete question that benefits from independence.
+  Require one independent review for security-sensitive changes or substantial
+  protocol, concurrency or public-contract changes; otherwise review is optional.
+  Select one suitable configured reviewer, not a mandatory pair or provider.
+- Give children the relevant diff, evidence, question and stop condition. They
+  retain their configured permissions and cannot create a new work stream.
+  The primary adjudicates findings and owns fixes. Re-review only a specific fix
+  whose correctness remains uncertain, not the unchanged full packet.
+- Model and effort choices live in OpenCode configuration, not product policy.
+  Changing an assignment does not require editing these instructions. The old
+  quota selector is optional; never source it or its credential file.
+  Its legacy `sol`/`sol_required` output is a route contract, not a review mandate.
+- Existing admitted manifests retain their explicit authority and gates. Do not
+  silently weaken an in-flight package or revive a retired field-test role.
 
 ## Build and verify
 
 The checked-in Gradle wrapper is the build prerequisite. JDK toolchains resolve
 automatically. CI (`.github/workflows/ci.yml`) is the authoritative gate.
 
-- Local verification: `./gradlew clean build check stageLocalPublication`.
+- During development, run the affected module's tests/checks. The full gate is
+  `./gradlew build check`; stage publication only for publication/build changes
+  or a release. Do not clean by default or rerun successful unchanged checks for
+  each review. CI remains authoritative; add tests for concrete behavior, not
+  scaffolding, model names, prompt prose or hypothetical acceptance expansion.
 - Use JDK 21. JVM publications target Java 17 and class-file major 61.
 - Update ABI dumps only through the Gradle ABI validation workflow.
 - Local cross-repository HTSP substitution is opt-in. CI and releases always
@@ -138,7 +117,10 @@ automatically. CI (`.github/workflows/ci.yml`) is the authoritative gate.
 - For release work, read `docs/releasing.md` and command `--help` output. Do not
   read `tools/publish-central-release` unless the package edits that tool or a
   reproduced failure has been attributed to its implementation. Run release
-  setup validation once per package, not once per review or retry.
+  setup validation once per release attempt, not once per review. One authorized
+  task may prepare, verify, tag, publish and confirm availability; these stages
+  do not require separate packages or model reviews. Publication still requires
+  the exact maintainer authorization and artifact checks in `docs/releasing.md`.
 
 ## Device tooling
 

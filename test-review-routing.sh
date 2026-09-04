@@ -50,8 +50,10 @@ assert_text_absent() {
 }
 
 assert_agent_permissions() {
-  local agent permission
-  for agent in sdk-locator sdk-planner sdk-analyze sdk-research sdk-review-astra sdk-review-muse sdk-review-opus; do
+  local agent permission path
+  for path in "$REPOSITORY_DIR"/.opencode/agents/sdk-*.md; do
+    agent="${path##*/}"
+    agent="${agent%.md}"
     for permission in question memory_list memory_set memory_replace; do
       assert_contains "^  ${permission}: deny$" \
         "$REPOSITORY_DIR/.opencode/agents/${agent}.md" \
@@ -139,44 +141,6 @@ assert_equal $'route=sol\nfallback_route=sol\nsol_required=true\nopus_optional=f
   "$("$SELECTOR" status release)" 'release status documents fixed policy'
 
 assert_agent_permissions
-assert_contains '^model: anthropic/claude-opus-5$' \
-  "$REPOSITORY_DIR/.opencode/agents/sdk-review-opus.md" \
-  'bounded Opus reviewer model route'
-assert_contains '^variant: medium$' \
-  "$REPOSITORY_DIR/.opencode/agents/sdk-review-opus.md" \
-  'bounded Opus reviewer effort'
-assert_contains '^model: openrouter/meta/muse-spark-1.3-contributor$' \
-  "$REPOSITORY_DIR/.opencode/agents/sdk-review-muse.md" \
-  'experimental Muse reviewer model route'
-assert_contains '^variant: xhigh$' \
-  "$REPOSITORY_DIR/.opencode/agents/sdk-review-muse.md" \
-  'experimental Muse reviewer effort'
-for verdict in BLOCKING NON_BLOCKING CLEAN INSUFFICIENT_EVIDENCE; do
-  assert_contains "\`${verdict}\`" \
-    "$REPOSITORY_DIR/.opencode/agents/sdk-review-muse.md" \
-    "Muse reviewer verdict vocabulary includes $verdict"
-done
-assert_absent '^(temperature|top_p|top_k):' \
-  "$REPOSITORY_DIR/.opencode/agents/sdk-review-opus.md" \
-  'Opus reviewer must omit unsupported sampling controls'
-assert_contains '^<tone_preference>$' \
-  "$REPOSITORY_DIR/.opencode/agents/sdk-review-opus.md" \
-  'Opus reviewer response-length calibration'
-assert_contains 'Treat the supplied commit identity, ancestry, frozen state, and gate status as' \
-  "$REPOSITORY_DIR/.opencode/agents/sdk-review-opus.md" \
-  'Opus reviewer treats inaccessible Git and gate state as caller evidence'
-assert_contains '  or generic review policy. It supplies only variable scope and evidence.' \
-  "$REPOSITORY_DIR/.opencode/agents/sdk-review-opus.md" \
-  'Opus reviewer owns its verdict and policy contract'
-assert_contains '^- Run one broad frozen review round\. After material corrections, run at most one$' \
-  "$REPOSITORY_DIR/AGENTS.md" \
-  'repository limits repeated broad review rounds'
-assert_contains '^- The Muse reviewer field test is complete; do not invoke `sdk-review-muse`\.$' \
-  "$REPOSITORY_DIR/AGENTS.md" \
-  'retired Muse field-test route'
-assert_contains '^- Release and lower-stakes packages use Astra only, without Opus\. For a critical$' \
-  "$REPOSITORY_DIR/AGENTS.md" \
-  'lower-stakes Sol-only route'
 assert_absent '^[[:space:]]*(source|\.)[[:space:]]' "$SELECTOR" \
   'selector must not source credential files'
 assert_absent 'set[[:space:]]+-a|mktemp|FileCookieJar|MozillaCookieJar|LWPCookieJar|curl[[:space:]]' "$SELECTOR" \
