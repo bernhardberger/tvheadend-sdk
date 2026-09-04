@@ -1930,11 +1930,13 @@ public final class at/bernhardberger/tvheadend/sdk/core/SessionCommandResult : j
 }
 
 public abstract interface class at/bernhardberger/tvheadend/sdk/core/SessionFailure {
+	public abstract fun getRecoveryDisposition ()Lat/bernhardberger/tvheadend/sdk/core/SessionRecoveryDisposition;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/SessionFailure$AuthenticationRejected : at/bernhardberger/tvheadend/sdk/core/SessionFailure {
 	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/SessionFailure$AuthenticationRejected;
 	public fun equals (Ljava/lang/Object;)Z
+	public fun getRecoveryDisposition ()Lat/bernhardberger/tvheadend/sdk/core/SessionRecoveryDisposition;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
@@ -1942,6 +1944,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/SessionFailure$Authentic
 public final class at/bernhardberger/tvheadend/sdk/core/SessionFailure$IncompatibleServer : at/bernhardberger/tvheadend/sdk/core/SessionFailure {
 	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/SessionFailure$IncompatibleServer;
 	public fun equals (Ljava/lang/Object;)Z
+	public fun getRecoveryDisposition ()Lat/bernhardberger/tvheadend/sdk/core/SessionRecoveryDisposition;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
@@ -1949,6 +1952,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/SessionFailure$Incompati
 public final class at/bernhardberger/tvheadend/sdk/core/SessionFailure$NetworkUnavailable : at/bernhardberger/tvheadend/sdk/core/SessionFailure {
 	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/SessionFailure$NetworkUnavailable;
 	public fun equals (Ljava/lang/Object;)Z
+	public fun getRecoveryDisposition ()Lat/bernhardberger/tvheadend/sdk/core/SessionRecoveryDisposition;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
@@ -1956,6 +1960,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/SessionFailure$NetworkUn
 public final class at/bernhardberger/tvheadend/sdk/core/SessionFailure$NoChannels : at/bernhardberger/tvheadend/sdk/core/SessionFailure {
 	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/SessionFailure$NoChannels;
 	public fun equals (Ljava/lang/Object;)Z
+	public fun getRecoveryDisposition ()Lat/bernhardberger/tvheadend/sdk/core/SessionRecoveryDisposition;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
@@ -1963,6 +1968,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/SessionFailure$NoChannel
 public final class at/bernhardberger/tvheadend/sdk/core/SessionFailure$PermissionDenied : at/bernhardberger/tvheadend/sdk/core/SessionFailure {
 	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/SessionFailure$PermissionDenied;
 	public fun equals (Ljava/lang/Object;)Z
+	public fun getRecoveryDisposition ()Lat/bernhardberger/tvheadend/sdk/core/SessionRecoveryDisposition;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
@@ -1970,6 +1976,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/SessionFailure$Permissio
 public final class at/bernhardberger/tvheadend/sdk/core/SessionFailure$ServerUnreachable : at/bernhardberger/tvheadend/sdk/core/SessionFailure {
 	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/SessionFailure$ServerUnreachable;
 	public fun equals (Ljava/lang/Object;)Z
+	public fun getRecoveryDisposition ()Lat/bernhardberger/tvheadend/sdk/core/SessionRecoveryDisposition;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
@@ -1981,6 +1988,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/SessionFailure$Synchroni
 	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/SessionFailure$SynchronizationFailed;Lat/bernhardberger/tvheadend/sdk/core/SessionOperationFailure;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/SessionFailure$SynchronizationFailed;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getFailure ()Lat/bernhardberger/tvheadend/sdk/core/SessionOperationFailure;
+	public fun getRecoveryDisposition ()Lat/bernhardberger/tvheadend/sdk/core/SessionRecoveryDisposition;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
@@ -1988,6 +1996,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/SessionFailure$Synchroni
 public final class at/bernhardberger/tvheadend/sdk/core/SessionFailure$TransportUnavailable : at/bernhardberger/tvheadend/sdk/core/SessionFailure {
 	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/SessionFailure$TransportUnavailable;
 	public fun equals (Ljava/lang/Object;)Z
+	public fun getRecoveryDisposition ()Lat/bernhardberger/tvheadend/sdk/core/SessionRecoveryDisposition;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
@@ -1995,6 +2004,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/SessionFailure$Transport
 public final class at/bernhardberger/tvheadend/sdk/core/SessionFailure$UnexpectedFailure : at/bernhardberger/tvheadend/sdk/core/SessionFailure {
 	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/SessionFailure$UnexpectedFailure;
 	public fun equals (Ljava/lang/Object;)Z
+	public fun getRecoveryDisposition ()Lat/bernhardberger/tvheadend/sdk/core/SessionRecoveryDisposition;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
@@ -2055,8 +2065,19 @@ public final class at/bernhardberger/tvheadend/sdk/core/SessionOperationFailure 
 	public static final field TIMEOUT Lat/bernhardberger/tvheadend/sdk/core/SessionOperationFailure;
 	public static final field TRANSPORT_UNAVAILABLE Lat/bernhardberger/tvheadend/sdk/core/SessionOperationFailure;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public final fun getRecoveryDisposition ()Lat/bernhardberger/tvheadend/sdk/core/SessionRecoveryDisposition;
 	public static fun valueOf (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/SessionOperationFailure;
 	public static fun values ()[Lat/bernhardberger/tvheadend/sdk/core/SessionOperationFailure;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/SessionRecoveryDisposition : java/lang/Enum {
+	public static final field AUTOMATIC_BACKOFF Lat/bernhardberger/tvheadend/sdk/core/SessionRecoveryDisposition;
+	public static final field EXPLICIT_RETRY Lat/bernhardberger/tvheadend/sdk/core/SessionRecoveryDisposition;
+	public static final field NO_RETRY Lat/bernhardberger/tvheadend/sdk/core/SessionRecoveryDisposition;
+	public static final field PROFILE_CHANGE_REQUIRED Lat/bernhardberger/tvheadend/sdk/core/SessionRecoveryDisposition;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/SessionRecoveryDisposition;
+	public static fun values ()[Lat/bernhardberger/tvheadend/sdk/core/SessionRecoveryDisposition;
 }
 
 public abstract interface class at/bernhardberger/tvheadend/sdk/core/SessionState {

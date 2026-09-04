@@ -284,7 +284,7 @@ public enum class SessionCommandResult {
     /** No server profile is selected. */
     NO_ACTIVE_PROFILE,
 
-    /** The selected failure requires a configuration change. */
+    /** The selected failure policy does not permit explicit retry. */
     RETRY_NOT_ALLOWED,
 
     /** The session has completed terminal shutdown. */
@@ -320,34 +320,85 @@ public sealed interface SessionState {
 
 /** Safe, SDK-authored reason that a session is unavailable. */
 public sealed interface SessionFailure {
+    /** Stable recovery guidance for this failure. */
+    public val recoveryDisposition: SessionRecoveryDisposition
+
     /** Authentication was rejected; retry requires a profile configuration change. */
-    public data object AuthenticationRejected : SessionFailure
+    public data object AuthenticationRejected : SessionFailure {
+        override val recoveryDisposition: SessionRecoveryDisposition =
+            SessionRecoveryDisposition.PROFILE_CHANGE_REQUIRED
+    }
 
     /** The authenticated user lacks permission; retry requires a profile configuration change. */
-    public data object PermissionDenied : SessionFailure
+    public data object PermissionDenied : SessionFailure {
+        override val recoveryDisposition: SessionRecoveryDisposition =
+            SessionRecoveryDisposition.PROFILE_CHANGE_REQUIRED
+    }
 
     /** The server endpoint could not be reached and is retried with backoff. */
-    public data object ServerUnreachable : SessionFailure
+    public data object ServerUnreachable : SessionFailure {
+        override val recoveryDisposition: SessionRecoveryDisposition =
+            SessionRecoveryDisposition.AUTOMATIC_BACKOFF
+    }
 
     /** The client network is unavailable and is retried with backoff. */
-    public data object NetworkUnavailable : SessionFailure
+    public data object NetworkUnavailable : SessionFailure {
+        override val recoveryDisposition: SessionRecoveryDisposition =
+            SessionRecoveryDisposition.AUTOMATIC_BACKOFF
+    }
 
     /** The server protocol is incompatible; retry requires a profile configuration change. */
-    public data object IncompatibleServer : SessionFailure
+    public data object IncompatibleServer : SessionFailure {
+        override val recoveryDisposition: SessionRecoveryDisposition =
+            SessionRecoveryDisposition.PROFILE_CHANGE_REQUIRED
+    }
 
     /** The synchronized server contains no channels and permits only explicit retry. */
-    public data object NoChannels : SessionFailure
+    public data object NoChannels : SessionFailure {
+        override val recoveryDisposition: SessionRecoveryDisposition =
+            SessionRecoveryDisposition.EXPLICIT_RETRY
+    }
 
     /** The active transport is unavailable and is retried with backoff. */
-    public data object TransportUnavailable : SessionFailure
+    public data object TransportUnavailable : SessionFailure {
+        override val recoveryDisposition: SessionRecoveryDisposition =
+            SessionRecoveryDisposition.AUTOMATIC_BACKOFF
+    }
 
     /** Initial synchronization failed with a typed operation result and its documented policy. */
     public data class SynchronizationFailed(
         public val failure: SessionOperationFailure,
-    ) : SessionFailure
+    ) : SessionFailure {
+        override val recoveryDisposition: SessionRecoveryDisposition
+            get() = failure.recoveryDisposition
+    }
 
     /** An unexpected internal operation failed without exposing its cause and permits explicit retry. */
-    public data object UnexpectedFailure : SessionFailure
+    public data object UnexpectedFailure : SessionFailure {
+        override val recoveryDisposition: SessionRecoveryDisposition =
+            SessionRecoveryDisposition.EXPLICIT_RETRY
+    }
+}
+
+/**
+ * Stable SDK-authored recovery guidance for an unavailable session.
+ *
+ * Guidance describes who may initiate another attempt, not whether that attempt will succeed.
+ * Applications retain ownership of copy, action labels, presentation of retry timing and counts,
+ * connectivity, and navigation. Consumers should retain a fallback for future enum values.
+ */
+public enum class SessionRecoveryDisposition {
+    /** The SDK continues connection attempts using its internal backoff policy. */
+    AUTOMATIC_BACKOFF,
+
+    /** The SDK has stopped retrying, but a user-requested [TvheadendSession.retry] is permitted. */
+    EXPLICIT_RETRY,
+
+    /** The current profile is not retried; recovery requires connecting a changed profile. */
+    PROFILE_CHANGE_REQUIRED,
+
+    /** Terminal guidance: the SDK offers no retry path for the failure. */
+    NO_RETRY,
 }
 
 /**
@@ -356,13 +407,15 @@ public sealed interface SessionFailure {
  * Timeouts, transport unavailability, and connection limits use automatic backoff. Server rejection
  * permits explicit retry. Access denial and unsupported operations require a profile change.
  */
-public enum class SessionOperationFailure {
-    SERVER_REJECTED,
-    ACCESS_DENIED,
-    CONNECTION_LIMIT,
-    TIMEOUT,
-    TRANSPORT_UNAVAILABLE,
-    NOT_SUPPORTED,
+public enum class SessionOperationFailure(
+    public val recoveryDisposition: SessionRecoveryDisposition,
+) {
+    SERVER_REJECTED(SessionRecoveryDisposition.EXPLICIT_RETRY),
+    ACCESS_DENIED(SessionRecoveryDisposition.PROFILE_CHANGE_REQUIRED),
+    CONNECTION_LIMIT(SessionRecoveryDisposition.AUTOMATIC_BACKOFF),
+    TIMEOUT(SessionRecoveryDisposition.AUTOMATIC_BACKOFF),
+    TRANSPORT_UNAVAILABLE(SessionRecoveryDisposition.AUTOMATIC_BACKOFF),
+    NOT_SUPPORTED(SessionRecoveryDisposition.PROFILE_CHANGE_REQUIRED),
 }
 
 /** Capabilities and server observations proven for the current synchronized generation. */

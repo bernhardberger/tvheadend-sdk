@@ -260,6 +260,7 @@ internal class ModuleBoundaryTest {
             "TransportUnavailable",
             "SynchronizationFailed",
             "UnexpectedFailure",
+            "SessionRecoveryDisposition",
             "SessionOperationFailure",
             "ServerCapabilities",
             "CapabilityAccess",

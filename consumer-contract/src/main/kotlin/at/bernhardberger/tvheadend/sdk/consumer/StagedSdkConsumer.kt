@@ -31,6 +31,9 @@ import at.bernhardberger.tvheadend.sdk.core.PlaybackBindingResult
 import at.bernhardberger.tvheadend.sdk.core.SessionObservation
 import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
 import at.bernhardberger.tvheadend.sdk.core.SessionGenerationIdentity
+import at.bernhardberger.tvheadend.sdk.core.SessionFailure
+import at.bernhardberger.tvheadend.sdk.core.SessionOperationFailure
+import at.bernhardberger.tvheadend.sdk.core.SessionRecoveryDisposition
 import at.bernhardberger.tvheadend.sdk.core.RetainedMetadataAuthority
 import at.bernhardberger.tvheadend.sdk.core.ServerProfileReadResult
 import at.bernhardberger.tvheadend.sdk.core.ServerProfileStore
@@ -138,6 +141,30 @@ public class StagedSdkConsumer(
     public fun generationIdentity(
         currentSession: CurrentSessionObservation,
     ): SessionGenerationIdentity = currentSession.generationIdentity
+
+    public fun sdkRetriesSessionAutomatically(failure: SessionFailure): Boolean =
+        failure.recoveryDisposition == SessionRecoveryDisposition.AUTOMATIC_BACKOFF
+
+    public fun sessionAllowsExplicitRetry(failure: SessionFailure): Boolean =
+        failure.recoveryDisposition == SessionRecoveryDisposition.EXPLICIT_RETRY
+
+    public fun sessionRequiresProfileChange(failure: SessionFailure): Boolean =
+        failure.recoveryDisposition == SessionRecoveryDisposition.PROFILE_CHANGE_REQUIRED
+
+    public fun sessionHasNoRecovery(failure: SessionFailure): Boolean =
+        when (failure.recoveryDisposition) {
+            SessionRecoveryDisposition.AUTOMATIC_BACKOFF,
+            SessionRecoveryDisposition.EXPLICIT_RETRY,
+            SessionRecoveryDisposition.PROFILE_CHANGE_REQUIRED,
+            -> false
+            else -> true
+        }
+
+    public fun synchronizationFailure(failure: SessionFailure): SessionOperationFailure? =
+        (failure as? SessionFailure.SynchronizationFailed)?.failure
+
+    public fun isAuthenticationRejected(failure: SessionFailure): Boolean =
+        failure === SessionFailure.AuthenticationRejected
 
     public fun registerArtwork(
         components: ComponentRegistry.Builder,

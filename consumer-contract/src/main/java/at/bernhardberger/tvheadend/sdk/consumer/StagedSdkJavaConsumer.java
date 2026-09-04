@@ -26,8 +26,11 @@ import at.bernhardberger.tvheadend.sdk.core.ServerProfile;
 import at.bernhardberger.tvheadend.sdk.core.ServerProfileReadResult;
 import at.bernhardberger.tvheadend.sdk.core.ServerProfileStore;
 import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult;
+import at.bernhardberger.tvheadend.sdk.core.SessionFailure;
 import at.bernhardberger.tvheadend.sdk.core.SessionGenerationIdentity;
 import at.bernhardberger.tvheadend.sdk.core.SessionObservation;
+import at.bernhardberger.tvheadend.sdk.core.SessionOperationFailure;
+import at.bernhardberger.tvheadend.sdk.core.SessionRecoveryDisposition;
 import at.bernhardberger.tvheadend.sdk.core.StreamProfilesResult;
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession;
 import at.bernhardberger.tvheadend.sdk.media3.TvheadendPlaybackCoordinator;
@@ -190,6 +193,35 @@ public final class StagedSdkJavaConsumer {
     public static SessionGenerationIdentity generationIdentity(
             CurrentSessionObservation currentSession) {
         return currentSession.getGenerationIdentity();
+    }
+
+    public static boolean sdkRetriesSessionAutomatically(SessionFailure failure) {
+        return failure.getRecoveryDisposition() == SessionRecoveryDisposition.AUTOMATIC_BACKOFF;
+    }
+
+    public static boolean sessionAllowsExplicitRetry(SessionFailure failure) {
+        return failure.getRecoveryDisposition() == SessionRecoveryDisposition.EXPLICIT_RETRY;
+    }
+
+    public static boolean sessionRequiresProfileChange(SessionFailure failure) {
+        return failure.getRecoveryDisposition() == SessionRecoveryDisposition.PROFILE_CHANGE_REQUIRED;
+    }
+
+    public static boolean sessionHasNoRecovery(SessionFailure failure) {
+        SessionRecoveryDisposition disposition = failure.getRecoveryDisposition();
+        return disposition != SessionRecoveryDisposition.AUTOMATIC_BACKOFF &&
+                disposition != SessionRecoveryDisposition.EXPLICIT_RETRY &&
+                disposition != SessionRecoveryDisposition.PROFILE_CHANGE_REQUIRED;
+    }
+
+    public static SessionOperationFailure synchronizationFailure(SessionFailure failure) {
+        return failure instanceof SessionFailure.SynchronizationFailed synchronizationFailed
+                ? synchronizationFailed.getFailure()
+                : null;
+    }
+
+    public static boolean isAuthenticationRejected(SessionFailure failure) {
+        return failure == SessionFailure.AuthenticationRejected.INSTANCE;
     }
 
     public static ChannelCatalog channelCatalogForDisplay(ChannelRepositoryState state) {

@@ -18,6 +18,7 @@ import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
 import at.bernhardberger.tvheadend.sdk.core.SessionFailure
 import at.bernhardberger.tvheadend.sdk.core.SessionOperationFailure
 import at.bernhardberger.tvheadend.sdk.core.SessionObservation
+import at.bernhardberger.tvheadend.sdk.core.SessionRecoveryDisposition
 import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.StreamProfilesResult
 import at.bernhardberger.tvheadend.sdk.core.SessionPlaybackBindingFactory
@@ -73,7 +74,7 @@ internal class ConnectionOwner(
     private var activeToken: SessionToken? = null
     private var activeGeneration: GatewayGeneration? = null
     private var latestDvrCapabilityRevision: Long? = null
-    private var retryDisposition: RetryDisposition? = null
+    private var retryDisposition: SessionRecoveryDisposition? = null
     private var closed = false
     private var shutdownCompletion: CompletableDeferred<Unit>? = null
     private val playbackBindings = SessionPlaybackBindingFactory(metadata, children)
@@ -143,9 +144,11 @@ internal class ConnectionOwner(
             val profile = selectedProfile ?: return@withLock SessionCommandResult.NO_ACTIVE_PROFILE
             when (currentRetryDisposition()) {
                 null -> SessionCommandResult.NO_CHANGE
-                RetryDisposition.CONFIGURATION_CHANGE -> SessionCommandResult.RETRY_NOT_ALLOWED
-                RetryDisposition.BACKOFF,
-                RetryDisposition.EXPLICIT,
+                SessionRecoveryDisposition.PROFILE_CHANGE_REQUIRED,
+                SessionRecoveryDisposition.NO_RETRY,
+                -> SessionCommandResult.RETRY_NOT_ALLOWED
+                SessionRecoveryDisposition.AUTOMATIC_BACKOFF,
+                SessionRecoveryDisposition.EXPLICIT_RETRY,
                 -> {
                     withContext(NonCancellable) {
                         selectedProfile = null
@@ -303,7 +306,7 @@ internal class ConnectionOwner(
             commitUnavailable(
                 token,
                 SessionFailure.UnexpectedFailure,
-                RetryDisposition.EXPLICIT,
+                SessionFailure.UnexpectedFailure.recoveryDisposition,
             )
         }
     }
@@ -319,7 +322,7 @@ internal class ConnectionOwner(
             } catch (_: Exception) {
                 AttemptOutcome(
                     failure = SessionFailure.UnexpectedFailure,
-                    disposition = RetryDisposition.EXPLICIT,
+                    disposition = SessionFailure.UnexpectedFailure.recoveryDisposition,
                     connected = true,
                     reachedReady = false,
                 )
@@ -348,7 +351,7 @@ internal class ConnectionOwner(
             } else if (unavailable.admissionFailure != null) {
                 throw unavailable.admissionFailure
             }
-            if (outcome.disposition != RetryDisposition.BACKOFF) {
+            if (outcome.disposition != SessionRecoveryDisposition.AUTOMATIC_BACKOFF) {
                 return
             }
 
@@ -563,7 +566,7 @@ internal class ConnectionOwner(
     private fun commitUnavailable(
         token: SessionToken,
         failure: SessionFailure,
-        disposition: RetryDisposition,
+        disposition: SessionRecoveryDisposition,
     ): UnavailableCommit = synchronized(stateLock) {
         if (activeToken !== token || closed) {
             UnavailableCommit(committed = false, admissionFailure = null)
@@ -584,7 +587,7 @@ internal class ConnectionOwner(
         }
     }
 
-    private fun currentRetryDisposition(): RetryDisposition? = synchronized(stateLock) {
+    private fun currentRetryDisposition(): SessionRecoveryDisposition? = synchronized(stateLock) {
         retryDisposition
     }
 
@@ -693,15 +696,9 @@ private suspend fun runOrderedCleanup(
     firstFailure?.let { throw it }
 }
 
-private enum class RetryDisposition {
-    BACKOFF,
-    EXPLICIT,
-    CONFIGURATION_CHANGE,
-}
-
 private class AttemptOutcome(
     internal val failure: SessionFailure,
-    internal val disposition: RetryDisposition,
+    internal val disposition: SessionRecoveryDisposition,
     internal val connected: Boolean,
     internal val reachedReady: Boolean,
 )
@@ -743,86 +740,41 @@ private sealed interface ShutdownPlan {
 private fun GatewayConnectionFailure.toAttemptOutcome(
     connected: Boolean = false,
     reachedReady: Boolean = false,
-): AttemptOutcome = when (this) {
-    GatewayConnectionFailure.AUTHENTICATION_REJECTED -> AttemptOutcome(
-        SessionFailure.AuthenticationRejected,
-        RetryDisposition.CONFIGURATION_CHANGE,
-        connected,
-        reachedReady,
-    )
-    GatewayConnectionFailure.PERMISSION_DENIED -> AttemptOutcome(
-        SessionFailure.PermissionDenied,
-        RetryDisposition.CONFIGURATION_CHANGE,
-        connected,
-        reachedReady,
-    )
-    GatewayConnectionFailure.SERVER_UNREACHABLE -> AttemptOutcome(
-        SessionFailure.ServerUnreachable,
-        RetryDisposition.BACKOFF,
-        connected,
-        reachedReady,
-    )
-    GatewayConnectionFailure.NETWORK_UNAVAILABLE -> AttemptOutcome(
-        SessionFailure.NetworkUnavailable,
-        RetryDisposition.BACKOFF,
-        connected,
-        reachedReady,
-    )
-    GatewayConnectionFailure.INCOMPATIBLE_SERVER -> AttemptOutcome(
-        SessionFailure.IncompatibleServer,
-        RetryDisposition.CONFIGURATION_CHANGE,
-        connected,
-        reachedReady,
-    )
-    GatewayConnectionFailure.NO_CHANNELS -> AttemptOutcome(
-        SessionFailure.NoChannels,
-        RetryDisposition.EXPLICIT,
-        connected,
-        reachedReady,
-    )
-    GatewayConnectionFailure.TRANSPORT_UNAVAILABLE -> AttemptOutcome(
-        SessionFailure.TransportUnavailable,
-        RetryDisposition.BACKOFF,
-        connected,
-        reachedReady,
+): AttemptOutcome {
+    val failure = when (this) {
+        GatewayConnectionFailure.AUTHENTICATION_REJECTED -> SessionFailure.AuthenticationRejected
+        GatewayConnectionFailure.PERMISSION_DENIED -> SessionFailure.PermissionDenied
+        GatewayConnectionFailure.SERVER_UNREACHABLE -> SessionFailure.ServerUnreachable
+        GatewayConnectionFailure.NETWORK_UNAVAILABLE -> SessionFailure.NetworkUnavailable
+        GatewayConnectionFailure.INCOMPATIBLE_SERVER -> SessionFailure.IncompatibleServer
+        GatewayConnectionFailure.NO_CHANNELS -> SessionFailure.NoChannels
+        GatewayConnectionFailure.TRANSPORT_UNAVAILABLE -> SessionFailure.TransportUnavailable
+    }
+    return AttemptOutcome(
+        failure = failure,
+        disposition = failure.recoveryDisposition,
+        connected = connected,
+        reachedReady = reachedReady,
     )
 }
 
 private fun GatewayResult<*>.toSynchronizationFailure(): SynchronizationOutcome.Failed = when (this) {
     is GatewayResult.Ok -> error("A successful result is not a synchronization failure")
-    GatewayResult.ServerRejected -> synchronizationFailure(
-        SessionOperationFailure.SERVER_REJECTED,
-        RetryDisposition.EXPLICIT,
-    )
-    GatewayResult.AccessDenied -> synchronizationFailure(
-        SessionOperationFailure.ACCESS_DENIED,
-        RetryDisposition.CONFIGURATION_CHANGE,
-    )
-    GatewayResult.ConnectionLimit -> synchronizationFailure(
-        SessionOperationFailure.CONNECTION_LIMIT,
-        RetryDisposition.BACKOFF,
-    )
-    GatewayResult.Timeout -> synchronizationFailure(
-        SessionOperationFailure.TIMEOUT,
-        RetryDisposition.BACKOFF,
-    )
-    GatewayResult.TransportUnavailable -> synchronizationFailure(
-        SessionOperationFailure.TRANSPORT_UNAVAILABLE,
-        RetryDisposition.BACKOFF,
-    )
-    GatewayResult.NotSupported -> synchronizationFailure(
-        SessionOperationFailure.NOT_SUPPORTED,
-        RetryDisposition.CONFIGURATION_CHANGE,
-    )
+    GatewayResult.ServerRejected -> synchronizationFailure(SessionOperationFailure.SERVER_REJECTED)
+    GatewayResult.AccessDenied -> synchronizationFailure(SessionOperationFailure.ACCESS_DENIED)
+    GatewayResult.ConnectionLimit -> synchronizationFailure(SessionOperationFailure.CONNECTION_LIMIT)
+    GatewayResult.Timeout -> synchronizationFailure(SessionOperationFailure.TIMEOUT)
+    GatewayResult.TransportUnavailable ->
+        synchronizationFailure(SessionOperationFailure.TRANSPORT_UNAVAILABLE)
+    GatewayResult.NotSupported -> synchronizationFailure(SessionOperationFailure.NOT_SUPPORTED)
 }
 
 private fun synchronizationFailure(
     failure: SessionOperationFailure,
-    disposition: RetryDisposition,
 ): SynchronizationOutcome.Failed = SynchronizationOutcome.Failed(
     AttemptOutcome(
         failure = SessionFailure.SynchronizationFailed(failure),
-        disposition = disposition,
+        disposition = failure.recoveryDisposition,
         connected = true,
         reachedReady = false,
     ),
