@@ -21,6 +21,9 @@ import at.bernhardberger.tvheadend.sdk.core.EpgSearchResult;
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot;
 import at.bernhardberger.tvheadend.sdk.core.PlaybackBindingResult;
 import at.bernhardberger.tvheadend.sdk.core.RetainedMetadataAuthority;
+import at.bernhardberger.tvheadend.sdk.core.ServerProfile;
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileReadResult;
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileStore;
 import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult;
 import at.bernhardberger.tvheadend.sdk.core.SessionGenerationIdentity;
 import at.bernhardberger.tvheadend.sdk.core.SessionObservation;
@@ -40,6 +43,7 @@ import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionSource;
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionIssue;
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionIssueCategory;
 import at.bernhardberger.tvheadend.sdk.testing.FakeTvheadendSession;
+import at.bernhardberger.tvheadend.sdk.testing.FakeServerProfileStore;
 import coil3.ComponentRegistry;
 import kotlin.coroutines.Continuation;
 
@@ -92,6 +96,31 @@ public final class StagedSdkJavaConsumer {
             TvheadendServerProfileStore store,
             Continuation<? super ServerProfileEditReadResult> continuation) {
         return store.loadProfileForEditing(continuation);
+    }
+
+    public static FakeServerProfileStore stagedProfileStoreFake() {
+        FakeServerProfileStore fake = new FakeServerProfileStore(
+                ServerProfileReadResult.anonymous("test.invalid", 9_982));
+        fake.scriptProfile(ServerProfileReadResult.password(
+                "test.invalid", 9_982, "user", "password"));
+        fake.scriptMutationUnavailable();
+        fake.scriptMutationSuccess();
+        fake.getCalls();
+        return fake;
+    }
+
+    public static Object storeAnonymous(
+            ServerProfileStore store,
+            String host,
+            int port,
+            Continuation<? super ServerProfileReadResult> continuation) {
+        return store.storeAnonymous(host, port, continuation);
+    }
+
+    public static ServerProfile connectableProfile(ServerProfileReadResult result) {
+        return result instanceof ServerProfileReadResult.Available available
+                ? available.getProfile()
+                : null;
     }
 
     public static Object searchEpg(

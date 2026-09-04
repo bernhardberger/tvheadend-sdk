@@ -233,6 +233,10 @@ internal class ModuleBoundaryTest {
             "TvheadendSession",
             "ServerProfile",
             "ServerAuthentication",
+            "ServerProfileStore",
+            "ServerProfileAuthenticationMode",
+            "ServerProfileReadResult",
+            "Missing",
             "Anonymous",
             "Password",
             "SessionCommandResult",
@@ -275,6 +279,7 @@ internal class ModuleBoundaryTest {
             "src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/PlaybackBinding.kt",
             "src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/EpgRepository.kt",
             "src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/Artwork.kt",
+            "src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/ServerProfileStore.kt",
             "../sdk-media3/src/main/kotlin/at/bernhardberger/tvheadend/sdk/media3/TvheadendPlaybackCoordinator.kt",
         ).joinToString(" ") { path -> File(path).readText() }.replace(Regex("\\s+"), " ")
         val expectedSignatures = setOf(
@@ -287,6 +292,10 @@ internal class ModuleBoundaryTest {
             "public suspend fun search( currentSession: CurrentSessionObservation, request: EpgSearchRequest, ): EpgSearchResult",
             "public suspend fun acquireCoverage( currentSession: CurrentSessionObservation, channelId: ChannelId, through: Instant, ): EpgCoverageAcquisitionResult",
             "public suspend fun loadArtwork( currentSession: CurrentSessionObservation, artworkId: ArtworkId, ): ArtworkLoadResult",
+            "public suspend fun loadProfile(): ServerProfileReadResult",
+            "public suspend fun storeAnonymous( host: String, port: Int = 9_982, ): ServerProfileReadResult",
+            "public suspend fun storePassword( host: String, port: Int = 9_982, username: String, password: String, ): ServerProfileReadResult",
+            "public suspend fun clearProfile(): ServerProfileReadResult",
             "public suspend fun scheduleEntry( currentSession: CurrentSessionObservation, request: DvrScheduleRequest, ): DvrMutationResult<DvrEntryId>",
             "public suspend fun updateEntry( currentSession: CurrentSessionObservation, id: DvrEntryId, update: DvrEntryUpdate, ): DvrMutationResult<Unit>",
             "public suspend fun stopEntry( currentSession: CurrentSessionObservation, id: DvrEntryId, ): DvrMutationResult<Unit>",
@@ -380,6 +389,8 @@ internal class ModuleBoundaryTest {
             "FakeDvrRepository",
             "FakeEpgRepository",
             "FakePlaybackApi",
+            "FakeServerProfileStore",
+            "FakeServerProfileStoreCall",
             "FakeSessionCall",
             "FakeSessionObservation",
             "FakeTvheadendSession",
@@ -411,10 +422,7 @@ internal class ModuleBoundaryTest {
         val expectedAndroid = setOf(
             "CredentialOperationResult",
             "CredentialReadResult",
-            "ServerProfileAuthenticationMode",
             "ServerProfileEditReadResult",
-            "ServerProfileOperationResult",
-            "ServerProfileReadResult",
             "TvheadendDiscovery",
             "DiscoveredTvheadendServer",
             "TvheadendDiscoveryState",
@@ -444,7 +452,7 @@ internal class ModuleBoundaryTest {
         )
         // The codec classification is intentionally stable for sdk-media3 application callbacks.
         assertPublicInfrastructure("sdk-playback", expectedPlayback, unannotatedCount = 9)
-        assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 7)
+        assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 9)
         val fakeSessionSource = File(
             repositoryRoot,
             "sdk-testing/src/main/kotlin/at/bernhardberger/tvheadend/sdk/testing/FakeTvheadendSession.kt",
@@ -584,6 +592,7 @@ internal class ModuleBoundaryTest {
             "at.bernhardberger.tvheadend.sdk.testing.SubscriptionBinaryFixture",
             "at.bernhardberger.tvheadend.sdk.testing.FakeSessionObservation",
             "at.bernhardberger.tvheadend.sdk.testing.FakeTvheadendSession",
+            "at.bernhardberger.tvheadend.sdk.testing.FakeServerProfileStore",
             "at.bernhardberger.tvheadend.sdk.core.SessionGenerationTestAuthority",
             "at.bernhardberger.tvheadend.sdk.core.TvheadendTestResultFactory",
             "at.bernhardberger.tvheadend.sdk.core.TvheadendTestingApi",

@@ -45,16 +45,14 @@ trust boundary.
 authentication only inside an opaque, connectable `ServerProfile`:
 
 ```kotlin
-val profiles = TvheadendServerProfileStore(context)
-profiles.storePassword(
+val profiles: ServerProfileStore = TvheadendServerProfileStore(context)
+when (val stored = profiles.storePassword(
     host = enteredHost,
     port = enteredPort,
     username = enteredUsername,
     password = enteredPassword,
-)
-
-when (val stored = profiles.loadProfile()) {
-    ServerProfileReadResult.Missing -> showSetup()
+)) {
+    ServerProfileReadResult.Missing -> error("A successful write cannot be missing")
     ServerProfileReadResult.Unavailable -> showStorageUnavailable()
     is ServerProfileReadResult.Available -> session.connect(stored.profile)
 }
@@ -72,6 +70,13 @@ Anonymous profiles do not use the Android Keystore. Password fields remain
 encrypted at rest with endpoint-bound associated data. The deprecated
 `TvheadendCredentialStore` remains binary compatible for existing applications
 and shares the same atomic record.
+
+Successful writes return the locally normalized connectable profile, and a
+successful clear returns `Missing`; neither requires a follow-up read. This
+proves only local persistence, not server reachability, authentication, or
+session readiness. JVM tests can use `FakeServerProfileStore` to script stored,
+missing, and unavailable behavior without Android `Context` or Android runtime
+internals.
 
 The default build resolves
 `at.bernhardberger.tvheadend:htsp:0.7.0` from Maven Central. Maintainers working

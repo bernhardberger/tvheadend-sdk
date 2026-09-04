@@ -442,8 +442,9 @@ wrappers.
 
 ### Profiles
 
-`TvheadendServerProfileStore` atomically persists one selected profile for one
-application process. `loadProfile()` returns `Missing`, `Unavailable`, or an
+The Android-free `ServerProfileStore` contract is implemented by
+`TvheadendServerProfileStore`, which atomically persists one selected profile
+for one application process. `loadProfile()` returns `Missing`, `Unavailable`, or an
 `Available` result containing an opaque connectable `ServerProfile` plus
 non-secret endpoint fields. It does not expose password fields:
 
@@ -455,10 +456,15 @@ when (val stored = profileStore.loadProfile()) {
 }
 ```
 
-Use `storeAnonymous`, `storePassword`, and `clearProfile` and handle
-`ServerProfileOperationResult.SUCCESS` or `UNAVAILABLE`. Anonymous profiles do
-not use the Android Keystore. Password profiles are encrypted at rest with
-endpoint-bound associated data.
+`storeAnonymous` and `storePassword` return the locally normalized `Available`
+profile after persistence, so it can be passed explicitly to `session.connect`
+without a readback. `clearProfile` returns authoritative `Missing` state after
+local removal. Any mutation can return typed `Unavailable` state. Success says
+nothing about server reachability, authentication, or session readiness.
+Anonymous profiles do not use the Android Keystore. Password profiles are
+encrypted at rest with endpoint-bound associated data. JVM consumer tests can
+use `FakeServerProfileStore` for positive and unavailable behavior without an
+Android `Context`.
 
 `loadProfileForEditing()` additionally distinguishes `Anonymous` and
 `Password`. The password result contains immutable plaintext username and

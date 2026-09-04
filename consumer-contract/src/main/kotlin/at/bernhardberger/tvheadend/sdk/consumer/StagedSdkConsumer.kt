@@ -7,8 +7,6 @@ import android.content.Context
 import androidx.media3.exoplayer.ExoPlayer
 import at.bernhardberger.tvheadend.sdk.android.TvheadendArtworkLoadException
 import at.bernhardberger.tvheadend.sdk.android.ServerProfileEditReadResult
-import at.bernhardberger.tvheadend.sdk.android.ServerProfileOperationResult
-import at.bernhardberger.tvheadend.sdk.android.ServerProfileReadResult
 import at.bernhardberger.tvheadend.sdk.android.TvheadendServerProfileStore
 import at.bernhardberger.tvheadend.sdk.android.addTvheadendArtwork
 import at.bernhardberger.tvheadend.sdk.core.ArtworkFailure
@@ -32,6 +30,8 @@ import at.bernhardberger.tvheadend.sdk.core.SessionObservation
 import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
 import at.bernhardberger.tvheadend.sdk.core.SessionGenerationIdentity
 import at.bernhardberger.tvheadend.sdk.core.RetainedMetadataAuthority
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileReadResult
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileStore
 import at.bernhardberger.tvheadend.sdk.core.StreamProfileId
 import at.bernhardberger.tvheadend.sdk.core.StreamProfilesResult
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
@@ -51,6 +51,7 @@ import at.bernhardberger.tvheadend.sdk.media3.createTvheadendPlaybackCoordinator
 import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionDiagnostics
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionIssue
 import at.bernhardberger.tvheadend.sdk.testing.FakeTvheadendSession
+import at.bernhardberger.tvheadend.sdk.testing.FakeServerProfileStore
 import coil3.ComponentRegistry
 import kotlin.time.Duration
 import kotlin.time.Instant
@@ -85,7 +86,18 @@ public class StagedSdkConsumer(
     public suspend fun storeAnonymousServerProfile(
         host: String,
         port: Int,
-    ): ServerProfileOperationResult = profileStore.storeAnonymous(host, port)
+    ): ServerProfileReadResult = profileStore.storeAnonymous(host, port)
+
+    public suspend fun storeAndConnect(
+        store: ServerProfileStore,
+        host: String,
+        port: Int,
+    ): SessionCommandResult = when (val stored = store.storeAnonymous(host, port)) {
+        is ServerProfileReadResult.Available -> session.connect(stored.profile)
+        ServerProfileReadResult.Missing,
+        ServerProfileReadResult.Unavailable,
+        -> SessionCommandResult.NO_ACTIVE_PROFILE
+    }
 
     public suspend fun run(): Unit = coordinator.run()
 
@@ -311,4 +323,11 @@ public fun stagedTestingFake(
     scriptRecordingPlaybackSuccess()
     calls
     retire(retiredObservation)
+}
+
+public fun stagedProfileStoreFake(): FakeServerProfileStore = FakeServerProfileStore().apply {
+    scriptProfile(ServerProfileReadResult.anonymous("test.invalid"))
+    scriptMutationUnavailable()
+    scriptMutationSuccess()
+    calls
 }

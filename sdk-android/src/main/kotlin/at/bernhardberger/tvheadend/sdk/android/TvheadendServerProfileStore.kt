@@ -1,8 +1,8 @@
 package at.bernhardberger.tvheadend.sdk.android
 
 import android.content.Context
-import at.bernhardberger.tvheadend.sdk.core.ServerAuthentication
-import at.bernhardberger.tvheadend.sdk.core.ServerProfile
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileReadResult
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -17,7 +17,7 @@ public class TvheadendServerProfileStore private constructor(
     private val storage: CredentialStorage,
     private val cipher: CredentialCipher,
     private val operationMutex: Mutex,
-) {
+) : ServerProfileStore {
     /** Creates a profile store scoped to the application that owns [context]. */
     public constructor(context: Context) : this(
         storage = productionCredentialStorage(context),
@@ -35,7 +35,7 @@ public class TvheadendServerProfileStore private constructor(
     }
 
     /** Loads the complete selected profile without exposing password fields. */
-    public suspend fun loadProfile(): ServerProfileReadResult = profileResult(
+    override suspend fun loadProfile(): ServerProfileReadResult = profileResult(
         unavailable = ServerProfileReadResult.Unavailable,
     ) {
         operationMutex.withLock {
@@ -77,22 +77,22 @@ public class TvheadendServerProfileStore private constructor(
      *
      * @throws IllegalArgumentException if [host] or [port] is invalid.
      */
-    public suspend fun storeAnonymous(
+    override suspend fun storeAnonymous(
         host: String,
-        port: Int = 9_982,
-    ): ServerProfileOperationResult {
-        val normalizedHost = normalizeEndpoint(host, port)
-        return profileResult(ServerProfileOperationResult.UNAVAILABLE) {
+        port: Int,
+    ): ServerProfileReadResult {
+        val persisted = ServerProfileReadResult.anonymous(host, port)
+        return profileResult(ServerProfileReadResult.Unavailable) {
             operationMutex.withLock {
                 storage.write(
                     StoredCredentialRecord.Profile(
-                        host = normalizedHost,
-                        port = port,
+                        host = persisted.host,
+                        port = persisted.port,
                         authenticationMode = StoredAuthenticationMode.ANONYMOUS,
                         credentials = null,
                     ),
                 )
-                ServerProfileOperationResult.SUCCESS
+                persisted
             }
         }
     }
@@ -102,67 +102,64 @@ public class TvheadendServerProfileStore private constructor(
      *
      * @throws IllegalArgumentException if the endpoint, [username], or [password] is invalid.
      */
-    public suspend fun storePassword(
+    override suspend fun storePassword(
         host: String,
-        port: Int = 9_982,
+        port: Int,
         username: String,
         password: String,
-    ): ServerProfileOperationResult {
-        val normalizedHost = normalizeEndpoint(host, port)
+    ): ServerProfileReadResult {
         val normalizedUsername = username.trim()
-        require(normalizedUsername.isNotEmpty()) { "Username must not be blank" }
-        require(password.isNotBlank()) { "Password must not be blank" }
+        val persisted = ServerProfileReadResult.password(host, port, normalizedUsername, password)
         val context = CredentialCipherContext.Profile(
-            host = normalizedHost,
-            port = port,
+            host = persisted.host,
+            port = persisted.port,
             authenticationMode = StoredAuthenticationMode.PASSWORD,
         )
 
-        return profileResult(ServerProfileOperationResult.UNAVAILABLE) {
+        return profileResult(ServerProfileReadResult.Unavailable) {
             operationMutex.withLock {
                 val credentials = cipher.encrypt(normalizedUsername, password, context)
                 storage.write(
                     StoredCredentialRecord.Profile(
-                        host = normalizedHost,
-                        port = port,
+                        host = persisted.host,
+                        port = persisted.port,
                         authenticationMode = StoredAuthenticationMode.PASSWORD,
                         credentials = credentials,
                     ),
                 )
-                ServerProfileOperationResult.SUCCESS
+                persisted
             }
         }
     }
 
     /** Removes the complete selected profile in one atomic DataStore update. */
-    public suspend fun clearProfile(): ServerProfileOperationResult = profileResult(
-        unavailable = ServerProfileOperationResult.UNAVAILABLE,
+    override suspend fun clearProfile(): ServerProfileReadResult = profileResult(
+        unavailable = ServerProfileReadResult.Unavailable,
     ) {
         operationMutex.withLock {
             storage.clear()
-            ServerProfileOperationResult.SUCCESS
+            ServerProfileReadResult.Missing
         }
     }
 
     private suspend fun loadProfile(record: StoredCredentialRecord.Profile): ServerProfileReadResult {
-        val authentication = when (record.authenticationMode) {
-            StoredAuthenticationMode.ANONYMOUS -> ServerAuthentication.Anonymous
+        return when (record.authenticationMode) {
+            StoredAuthenticationMode.ANONYMOUS -> ServerProfileReadResult.anonymous(
+                host = record.host,
+                port = record.port,
+            )
             StoredAuthenticationMode.PASSWORD -> cipher.decrypt(
                 credentials = checkNotNull(record.credentials),
                 context = record.cipherContext(),
             ) { username, password ->
-                ServerAuthentication.Password(username, password)
+                ServerProfileReadResult.password(
+                    host = record.host,
+                    port = record.port,
+                    username = username,
+                    password = password,
+                )
             }
         }
-        return ServerProfileReadResult.Available.create(
-            profile = ServerProfile(record.host, record.port, authentication),
-            host = record.host,
-            port = record.port,
-            authenticationMode = when (record.authenticationMode) {
-                StoredAuthenticationMode.ANONYMOUS -> ServerProfileAuthenticationMode.ANONYMOUS
-                StoredAuthenticationMode.PASSWORD -> ServerProfileAuthenticationMode.PASSWORD
-            },
-        )
     }
 
     private suspend fun loadProfileForEditing(
@@ -184,44 +181,6 @@ public class TvheadendServerProfileStore private constructor(
             )
         }
     }
-}
-
-/** Authentication mode stored with a selected server profile. */
-public enum class ServerProfileAuthenticationMode {
-    /** Connect without credentials. */
-    ANONYMOUS,
-
-    /** Connect with endpoint-bound password authentication. */
-    PASSWORD,
-}
-
-/** Safe result of loading a selected server profile. */
-public sealed interface ServerProfileReadResult {
-    /** No server profile is stored. */
-    public data object Missing : ServerProfileReadResult
-
-    /** A connectable profile and its non-secret editable endpoint fields are available. */
-    public class Available private constructor(
-        public val profile: ServerProfile,
-        public val host: String,
-        public val port: Int,
-        public val authenticationMode: ServerProfileAuthenticationMode,
-    ) : ServerProfileReadResult {
-        internal companion object {
-            @JvmSynthetic
-            internal fun create(
-                profile: ServerProfile,
-                host: String,
-                port: Int,
-                authenticationMode: ServerProfileAuthenticationMode,
-            ): Available = Available(profile, host, port, authenticationMode)
-        }
-
-        override fun toString(): String = "ServerProfileReadResult.Available(<redacted>)"
-    }
-
-    /** Stored profile data could not be read, validated, or decrypted. */
-    public data object Unavailable : ServerProfileReadResult
 }
 
 /** Result of loading the selected server profile for editing. */
@@ -281,22 +240,6 @@ public sealed interface ServerProfileEditReadResult {
 
     /** Stored profile data could not be read, validated, or decrypted. */
     public data object Unavailable : ServerProfileEditReadResult
-}
-
-/** Safe result of a server profile storage mutation. */
-public enum class ServerProfileOperationResult {
-    /** The complete requested mutation was persisted. */
-    SUCCESS,
-
-    /** The mutation could not be persisted. */
-    UNAVAILABLE,
-}
-
-private fun normalizeEndpoint(host: String, port: Int): String {
-    val normalizedHost = host.trim()
-    require(normalizedHost.isNotEmpty()) { "Server host must not be blank" }
-    require(port in 1..65_535) { "Server port must be valid" }
-    return normalizedHost
 }
 
 private suspend fun <T> profileResult(

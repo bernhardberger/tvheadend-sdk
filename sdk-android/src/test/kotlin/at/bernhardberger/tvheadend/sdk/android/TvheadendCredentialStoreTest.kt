@@ -3,6 +3,7 @@
 package at.bernhardberger.tvheadend.sdk.android
 
 import android.content.Context
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileReadResult
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
@@ -270,7 +271,7 @@ internal class TvheadendCredentialStoreTest {
         assertEquals(0, storage.readCalls)
 
         releaseEncryption.complete(Unit)
-        assertSame(ServerProfileOperationResult.SUCCESS, profileWrite.await())
+        assertTrue(profileWrite.await() is ServerProfileReadResult.Available)
         assertSame(CredentialOperationResult.SUCCESS, legacyClear.await())
         val record = (storage.state as StoredCredentialRead.Available).record as
             StoredCredentialRecord.Profile

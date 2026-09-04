@@ -39,6 +39,30 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeEpgRepository : a
 public abstract interface annotation class at/bernhardberger/tvheadend/sdk/testing/FakePlaybackApi : java/lang/annotation/Annotation {
 }
 
+public final class at/bernhardberger/tvheadend/sdk/testing/FakeServerProfileStore : at/bernhardberger/tvheadend/sdk/core/ServerProfileStore {
+	public fun <init> ()V
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileReadResult;)V
+	public synthetic fun <init> (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileReadResult;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun clearProfile (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun getCalls ()Ljava/util/List;
+	public fun loadProfile (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun scriptMutationSuccess ()V
+	public final fun scriptMutationUnavailable ()V
+	public final fun scriptProfile (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileReadResult;)V
+	public fun storeAnonymous (Ljava/lang/String;ILkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun storePassword (Ljava/lang/String;ILjava/lang/String;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/testing/FakeServerProfileStoreCall : java/lang/Enum {
+	public static final field CLEAR_PROFILE Lat/bernhardberger/tvheadend/sdk/testing/FakeServerProfileStoreCall;
+	public static final field LOAD_PROFILE Lat/bernhardberger/tvheadend/sdk/testing/FakeServerProfileStoreCall;
+	public static final field STORE_ANONYMOUS Lat/bernhardberger/tvheadend/sdk/testing/FakeServerProfileStoreCall;
+	public static final field STORE_PASSWORD Lat/bernhardberger/tvheadend/sdk/testing/FakeServerProfileStoreCall;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/testing/FakeServerProfileStoreCall;
+	public static fun values ()[Lat/bernhardberger/tvheadend/sdk/testing/FakeServerProfileStoreCall;
+}
+
 public final class at/bernhardberger/tvheadend/sdk/testing/FakeSessionCall : java/lang/Enum {
 	public static final field BIND_LIVE_PLAYBACK Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
 	public static final field BIND_RECORDING_PLAYBACK Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;

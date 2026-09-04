@@ -3,6 +3,8 @@ package at.bernhardberger.tvheadend.sdk.android
 import android.content.Context
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.mutablePreferencesOf
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileAuthenticationMode
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileReadResult
 import java.nio.ByteBuffer
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.test.runTest
@@ -22,10 +24,12 @@ internal class TvheadendServerProfileStoreTest {
         val cipher = FakeCredentialCipher()
         val store = TvheadendServerProfileStore.create(storage, cipher)
 
-        assertSame(
-            ServerProfileOperationResult.SUCCESS,
-            store.storeAnonymous("  test.invalid  ", 4_242),
-        )
+        val stored = store.storeAnonymous("  test.invalid  ", 4_242)
+            as ServerProfileReadResult.Available
+        assertEquals("test.invalid", stored.host)
+        assertEquals(4_242, stored.port)
+        assertSame(ServerProfileAuthenticationMode.ANONYMOUS, stored.authenticationMode)
+        assertEquals(0, storage.readCalls)
         val loaded = store.loadProfile()
         assertTrue(loaded is ServerProfileReadResult.Available)
         loaded as ServerProfileReadResult.Available
@@ -44,15 +48,14 @@ internal class TvheadendServerProfileStoreTest {
         val cipher = FakeCredentialCipher()
         val store = TvheadendServerProfileStore.create(storage, cipher)
 
-        assertSame(
-            ServerProfileOperationResult.SUCCESS,
-            store.storePassword(
-                host = " test.invalid ",
-                port = 4_242,
-                username = " user ",
-                password = " exact password ",
-            ),
+        val stored = store.storePassword(
+            host = " test.invalid ",
+            port = 4_242,
+            username = " user ",
+            password = " exact password ",
         )
+        assertTrue(stored is ServerProfileReadResult.Available)
+        assertEquals(0, storage.readCalls)
         assertEquals("user", cipher.lastUsername)
         assertEquals(" exact password ", cipher.lastPassword)
         val loaded = store.loadProfile() as ServerProfileReadResult.Available
@@ -85,14 +88,13 @@ internal class TvheadendServerProfileStoreTest {
             FakeCredentialStorage(),
             FakeCredentialCipher(),
         )
-        assertSame(
-            ServerProfileOperationResult.SUCCESS,
+        assertTrue(
             passwordStore.storePassword(
                 host = " edit.invalid ",
                 port = 4_242,
                 username = " edit-user ",
                 password = " exact password ",
-            ),
+            ) is ServerProfileReadResult.Available,
         )
         val password = passwordStore.loadProfileForEditing()
 
@@ -316,14 +318,14 @@ internal class TvheadendServerProfileStoreTest {
         }
 
         assertSame(
-            ServerProfileOperationResult.UNAVAILABLE,
+            ServerProfileReadResult.Unavailable,
             TvheadendServerProfileStore.create(encryptStorage, encryptCipher)
                 .storePassword("new.invalid", username = "user", password = "password"),
         )
         assertSame(original, encryptStorage.state)
         assertEquals(0, encryptStorage.writeCalls)
         assertSame(
-            ServerProfileOperationResult.UNAVAILABLE,
+            ServerProfileReadResult.Unavailable,
             TvheadendServerProfileStore.create(writeStorage, FakeCredentialCipher())
                 .storeAnonymous("new.invalid"),
         )
@@ -337,12 +339,12 @@ internal class TvheadendServerProfileStoreTest {
         )
         val store = TvheadendServerProfileStore.create(storage, FakeCredentialCipher())
 
-        assertSame(
-            ServerProfileOperationResult.SUCCESS,
-            store.storePassword("test.invalid", username = "user", password = "password"),
+        assertTrue(
+            store.storePassword("test.invalid", username = "user", password = "password")
+                is ServerProfileReadResult.Available,
         )
         assertEquals(1, storage.writeCalls)
-        assertSame(ServerProfileOperationResult.SUCCESS, store.clearProfile())
+        assertSame(ServerProfileReadResult.Missing, store.clearProfile())
         assertEquals(1, storage.clearCalls)
         assertSame(StoredCredentialRead.Missing, storage.state)
     }

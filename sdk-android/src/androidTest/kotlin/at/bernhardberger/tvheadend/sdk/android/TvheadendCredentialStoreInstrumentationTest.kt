@@ -4,6 +4,8 @@ package at.bernhardberger.tvheadend.sdk.android
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileAuthenticationMode
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileReadResult
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -17,7 +19,7 @@ internal class TvheadendCredentialStoreInstrumentationTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val first = TvheadendCredentialStore(context)
         assertEquals(
-            ServerProfileOperationResult.SUCCESS,
+            ServerProfileReadResult.Missing,
             TvheadendServerProfileStore(context).clearProfile(),
         )
 
@@ -48,17 +50,17 @@ internal class TvheadendCredentialStoreInstrumentationTest {
     fun server_profile_round_trips_through_recreated_stores_and_legacy_clear_preserves_endpoint() = runTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val profileStore = TvheadendServerProfileStore(context)
-        assertEquals(ServerProfileOperationResult.SUCCESS, profileStore.clearProfile())
+        assertEquals(ServerProfileReadResult.Missing, profileStore.clearProfile())
 
         try {
             assertEquals(
-                ServerProfileOperationResult.SUCCESS,
-                profileStore.storePassword(
+                ServerProfileAuthenticationMode.PASSWORD,
+                (profileStore.storePassword(
                     host = " instrumented.invalid ",
                     port = 4_242,
                     username = " instrumented-user ",
                     password = "instrumented-password",
-                ),
+                ) as ServerProfileReadResult.Available).authenticationMode,
             )
 
             val loaded = TvheadendServerProfileStore(context).loadProfile()

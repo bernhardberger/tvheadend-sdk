@@ -1799,6 +1799,63 @@ public final class at/bernhardberger/tvheadend/sdk/core/ServerProfile {
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class at/bernhardberger/tvheadend/sdk/core/ServerProfileAuthenticationMode : java/lang/Enum {
+	public static final field ANONYMOUS Lat/bernhardberger/tvheadend/sdk/core/ServerProfileAuthenticationMode;
+	public static final field PASSWORD Lat/bernhardberger/tvheadend/sdk/core/ServerProfileAuthenticationMode;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/ServerProfileAuthenticationMode;
+	public static fun values ()[Lat/bernhardberger/tvheadend/sdk/core/ServerProfileAuthenticationMode;
+}
+
+public abstract interface class at/bernhardberger/tvheadend/sdk/core/ServerProfileReadResult {
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/ServerProfileReadResult$Companion;
+	public static fun anonymous (Ljava/lang/String;I)Lat/bernhardberger/tvheadend/sdk/core/ServerProfileReadResult$Available;
+	public static fun password (Ljava/lang/String;ILjava/lang/String;Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/ServerProfileReadResult$Available;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ServerProfileReadResult$Available : at/bernhardberger/tvheadend/sdk/core/ServerProfileReadResult {
+	public final fun getAuthenticationMode ()Lat/bernhardberger/tvheadend/sdk/core/ServerProfileAuthenticationMode;
+	public final fun getHost ()Ljava/lang/String;
+	public final fun getPort ()I
+	public final fun getProfile ()Lat/bernhardberger/tvheadend/sdk/core/ServerProfile;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ServerProfileReadResult$Companion {
+	public final fun anonymous (Ljava/lang/String;I)Lat/bernhardberger/tvheadend/sdk/core/ServerProfileReadResult$Available;
+	public static synthetic fun anonymous$default (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileReadResult$Companion;Ljava/lang/String;IILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/ServerProfileReadResult$Available;
+	public final fun password (Ljava/lang/String;ILjava/lang/String;Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/ServerProfileReadResult$Available;
+	public static synthetic fun password$default (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileReadResult$Companion;Ljava/lang/String;ILjava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/ServerProfileReadResult$Available;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ServerProfileReadResult$Missing : at/bernhardberger/tvheadend/sdk/core/ServerProfileReadResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/ServerProfileReadResult$Missing;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ServerProfileReadResult$Unavailable : at/bernhardberger/tvheadend/sdk/core/ServerProfileReadResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/ServerProfileReadResult$Unavailable;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class at/bernhardberger/tvheadend/sdk/core/ServerProfileStore {
+	public abstract fun clearProfile (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun loadProfile (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun storeAnonymous (Ljava/lang/String;ILkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun storeAnonymous$default (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileStore;Ljava/lang/String;ILkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public abstract fun storePassword (Ljava/lang/String;ILjava/lang/String;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun storePassword$default (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileStore;Ljava/lang/String;ILjava/lang/String;Ljava/lang/String;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ServerProfileStore$DefaultImpls {
+	public static synthetic fun storeAnonymous$default (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileStore;Ljava/lang/String;ILkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static synthetic fun storePassword$default (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileStore;Ljava/lang/String;ILjava/lang/String;Ljava/lang/String;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+}
+
 public final class at/bernhardberger/tvheadend/sdk/core/SessionCommandResult : java/lang/Enum {
 	public static final field NO_ACTIVE_PROFILE Lat/bernhardberger/tvheadend/sdk/core/SessionCommandResult;
 	public static final field NO_CHANGE Lat/bernhardberger/tvheadend/sdk/core/SessionCommandResult;
