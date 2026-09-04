@@ -120,7 +120,7 @@ internal class ModuleBoundaryTest {
     @Test
     fun `public SDK type set remains deliberate and reachable from the session API`() {
         val publicType = Regex(
-            "public\\s+(?:(?:data|sealed|value)\\s+)*(?:class|interface|enum\\s+class|object)\\s+(\\w+)",
+            "public\\s+(?:(?:data|sealed|value|annotation)\\s+)*(?:class|interface|enum\\s+class|object)\\s+(\\w+)",
         )
         val coreApi = productionScope("sdk-core").files
             .filter { file -> file.packagee?.name == "at.bernhardberger.tvheadend.sdk.core" }
@@ -259,6 +259,9 @@ internal class ModuleBoundaryTest {
             "StreamProfileId",
             "StreamProfile",
             "StreamProfilesResult",
+            "TvheadendTestingApi",
+            "SessionGenerationTestAuthority",
+            "TvheadendTestResultFactory",
         )
 
         assertEquals(expected, actual)
@@ -373,7 +376,13 @@ internal class ModuleBoundaryTest {
             "RECORDING_END_OF_INPUT",
         )
         val expectedTesting = setOf(
+            "FakeArtworkLoader",
+            "FakeDvrRepository",
+            "FakeEpgRepository",
+            "FakePlaybackApi",
+            "FakeSessionCall",
             "FakeSessionObservation",
+            "FakeTvheadendSession",
             "ScriptedSubscriptionCall",
             "ScriptedSubscriptionConnection",
             "ScriptedSubscriptionRegistration",
@@ -435,7 +444,24 @@ internal class ModuleBoundaryTest {
         )
         // The codec classification is intentionally stable for sdk-media3 application callbacks.
         assertPublicInfrastructure("sdk-playback", expectedPlayback, unannotatedCount = 9)
-        assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 1)
+        assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 7)
+        val fakeSessionSource = File(
+            repositoryRoot,
+            "sdk-testing/src/main/kotlin/at/bernhardberger/tvheadend/sdk/testing/FakeTvheadendSession.kt",
+        ).readText()
+        val fakePlaybackFunctions = Regex("^[\\t ]*@FakePlaybackApi\\s+public fun (\\w+)", RegexOption.MULTILINE)
+            .findAll(fakeSessionSource)
+            .map { match -> match.groupValues[1] }
+            .toSet()
+        assertEquals(
+            setOf(
+                "scriptLivePlaybackSuccess",
+                "scriptRecordingPlaybackSuccess",
+                "scriptLivePlaybackFailure",
+                "scriptRecordingPlaybackFailure",
+            ),
+            fakePlaybackFunctions,
+        )
         assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 17)
 
         val coordinatorApi = File(
@@ -557,6 +583,11 @@ internal class ModuleBoundaryTest {
             "at.bernhardberger.tvheadend.sdk.testing.ScriptedSubscriptionConnection",
             "at.bernhardberger.tvheadend.sdk.testing.SubscriptionBinaryFixture",
             "at.bernhardberger.tvheadend.sdk.testing.FakeSessionObservation",
+            "at.bernhardberger.tvheadend.sdk.testing.FakeTvheadendSession",
+            "at.bernhardberger.tvheadend.sdk.core.SessionGenerationTestAuthority",
+            "at.bernhardberger.tvheadend.sdk.core.TvheadendTestResultFactory",
+            "at.bernhardberger.tvheadend.sdk.core.TvheadendTestingApi",
+            "at.bernhardberger.tvheadend.sdk.testing.FakePlaybackApi",
         ).forEach { name -> enqueue(publicTypes[name]) }
 
         while (pending.isNotEmpty()) {
@@ -598,7 +629,7 @@ internal class ModuleBoundaryTest {
         )
         val actual = declaration.findAll(source).map { match -> match.groupValues[1] }.toSet()
         val annotatedCount = Regex(
-            "^@SubscriptionInfrastructureApi(?:\\s+@[^\\n]+)*\\s+public",
+            "^@(?:SubscriptionInfrastructureApi|FakePlaybackApi)(?:\\s+@[^\\n]+)*\\s+public",
             RegexOption.MULTILINE,
         )
             .findAll(source)

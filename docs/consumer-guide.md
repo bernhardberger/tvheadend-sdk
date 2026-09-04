@@ -521,12 +521,18 @@ component is not a URI factory or a generic image cache.
 
 ## Test a consumer
 
-Add `sdk-testing` with `testImplementation`. `FakeSessionObservation` publishes
-complete immutable `SessionObservation` values, captures a current-session
-capability for a ready fake observation, and can retire that capability.
-`ScriptedSubscriptionConnection` provides deterministic low-level subscription
-calls and events for integrations that opt into the playback infrastructure
-API. Packet fixtures support media adapter tests.
+Add `sdk-testing` with `testImplementation`. `FakeTvheadendSession` implements
+the JVM session boundary with scriptable observations, commands, repositories,
+typed failures, and recorded calls. It enforces production generation authority,
+including proof retention, replacement, and cross-session rejection. Opt into
+`FakePlaybackApi` only when scripting successful playback bindings.
+Observations supplied to its constructor or publication methods are republished
+under the fake's authority, so capture a fresh proof with
+`captureCurrentSession()`. Successful fake bindings validate and track target
+identity, but their open operations deliberately return typed unavailable or
+not-ready results instead of forging gateway resources. `FakeSessionObservation`
+remains a narrow observation-shape fake; it does not model session authority.
+`ScriptedSubscriptionConnection` and packet fixtures support lower-level tests.
 
 These are focused SDK-boundary building blocks, not a UI or application
 architecture framework. Applications remain responsible for faking their own

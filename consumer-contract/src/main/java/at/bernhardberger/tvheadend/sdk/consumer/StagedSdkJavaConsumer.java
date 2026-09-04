@@ -11,6 +11,7 @@ import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState;
 import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation;
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryKt;
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState;
+import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult;
 import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot;
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryKt;
 import at.bernhardberger.tvheadend.sdk.core.EpgRepository;
@@ -18,7 +19,9 @@ import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState;
 import at.bernhardberger.tvheadend.sdk.core.EpgSearchRequest;
 import at.bernhardberger.tvheadend.sdk.core.EpgSearchResult;
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot;
+import at.bernhardberger.tvheadend.sdk.core.PlaybackBindingResult;
 import at.bernhardberger.tvheadend.sdk.core.RetainedMetadataAuthority;
+import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult;
 import at.bernhardberger.tvheadend.sdk.core.SessionGenerationIdentity;
 import at.bernhardberger.tvheadend.sdk.core.SessionObservation;
 import at.bernhardberger.tvheadend.sdk.core.StreamProfilesResult;
@@ -36,11 +39,54 @@ import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionDiagnostics;
 import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionSource;
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionIssue;
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionIssueCategory;
+import at.bernhardberger.tvheadend.sdk.testing.FakeTvheadendSession;
 import coil3.ComponentRegistry;
 import kotlin.coroutines.Continuation;
 
 public final class StagedSdkJavaConsumer {
     private StagedSdkJavaConsumer() {}
+
+    public static FakeTvheadendSession stagedTestingFake(
+            SessionObservation readyObservation,
+            SessionObservation retiredObservation) {
+        FakeTvheadendSession fake = new FakeTvheadendSession(readyObservation);
+        fake.publish(readyObservation);
+        fake.replaceGeneration(readyObservation);
+        fake.captureCurrentSession();
+        fake.scriptConnect(SessionCommandResult.STARTED);
+        fake.scriptRetry(SessionCommandResult.NO_ACTIVE_PROFILE);
+        fake.scriptStreamProfilesFailure(StreamProfilesResult.NotReady.INSTANCE);
+        fake.scriptStreamProfiles(java.util.List.of());
+        fake.getEpgRepository().scriptSearchFailure(EpgSearchResult.NotSupported.INSTANCE);
+        fake.getEpgRepository().scriptSearch(java.util.List.of());
+        fake.getEpgRepository().scriptCoverage(
+                at.bernhardberger.tvheadend.sdk.core.EpgCoverageAcquisitionResult.Ineligible.INSTANCE);
+        fake.getDvrRepository().scriptScheduleEntry(notReady());
+        fake.getDvrRepository().scriptUpdateEntry(notReady());
+        fake.getDvrRepository().scriptStopEntry(notReady());
+        fake.getDvrRepository().scriptCancelEntry(notReady());
+        fake.getDvrRepository().scriptDeleteEntry(notReady());
+        fake.getDvrRepository().scriptCreateAutorecRule(notReady());
+        fake.getDvrRepository().scriptUpdateAutorecRule(notReady());
+        fake.getDvrRepository().scriptDeleteAutorecRule(notReady());
+        fake.getDvrRepository().scriptCreateTimerecRule(notReady());
+        fake.getDvrRepository().scriptUpdateTimerecRule(notReady());
+        fake.getDvrRepository().scriptDeleteTimerecRule(notReady());
+        fake.getArtwork().scriptLoad(new at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult.Unavailable(
+                ArtworkFailure.NOT_SUPPORTED));
+        fake.scriptLivePlaybackFailure(PlaybackBindingResult.TargetUnavailable.INSTANCE);
+        fake.scriptRecordingPlaybackFailure(PlaybackBindingResult.TargetUnavailable.INSTANCE);
+        fake.scriptLivePlaybackSuccess();
+        fake.scriptRecordingPlaybackSuccess();
+        fake.getCalls();
+        fake.retire(retiredObservation);
+        return fake;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T> DvrMutationResult<T> notReady() {
+        return (DvrMutationResult<T>) DvrMutationResult.NotReady.INSTANCE;
+    }
 
     public static Object loadServerProfileForEditing(
             TvheadendServerProfileStore store,

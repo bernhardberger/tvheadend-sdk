@@ -1,4 +1,5 @@
 import dev.detekt.gradle.Detekt
+import org.gradle.api.component.AdhocComponentWithVariants
 import org.gradle.api.publish.maven.MavenPublication
 import org.gradle.api.tasks.bundling.Jar
 import org.gradle.api.tasks.compile.JavaCompile
@@ -6,6 +7,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     `java-library`
+    `java-test-fixtures`
     `maven-publish`
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.detekt)
@@ -46,6 +48,8 @@ dependencies {
     testImplementation(libs.konsist)
     testImplementation(libs.kotlinx.coroutines.test)
     testRuntimeOnly(libs.junit.platform.launcher)
+
+    testFixturesImplementation(libs.kotlinx.coroutines.test)
 }
 
 detekt {
@@ -69,6 +73,11 @@ tasks.named<Jar>("javadocJar") {
         include("**/*.md")
         into("docs")
     }
+}
+
+(components["java"] as AdhocComponentWithVariants).apply {
+    withVariantsFromConfiguration(configurations["testFixturesApiElements"]) { skip() }
+    withVariantsFromConfiguration(configurations["testFixturesRuntimeElements"]) { skip() }
 }
 
 publishing {

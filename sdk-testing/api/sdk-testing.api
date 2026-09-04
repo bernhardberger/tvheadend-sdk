@@ -1,3 +1,71 @@
+public final class at/bernhardberger/tvheadend/sdk/testing/FakeArtworkLoader : at/bernhardberger/tvheadend/sdk/core/ArtworkLoader {
+	public fun loadArtwork-j_U-F9s (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;ILkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun scriptLoad (Lat/bernhardberger/tvheadend/sdk/core/ArtworkLoadResult;)V
+}
+
+public final class at/bernhardberger/tvheadend/sdk/testing/FakeDvrRepository : at/bernhardberger/tvheadend/sdk/core/DvrRepository {
+	public fun cancelEntry-jvmoZCg (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun createAutorecRule (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Lat/bernhardberger/tvheadend/sdk/core/AutorecRuleCreate;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun createTimerecRule (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Lat/bernhardberger/tvheadend/sdk/core/TimerecRuleCreate;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun deleteAutorecRule-xYrR27c (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun deleteEntry-jvmoZCg (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun deleteTimerecRule-m_EujJA (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun scheduleEntry (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Lat/bernhardberger/tvheadend/sdk/core/DvrScheduleRequest;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun scriptCancelEntry (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
+	public final fun scriptCreateAutorecRule (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
+	public final fun scriptCreateTimerecRule (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
+	public final fun scriptDeleteAutorecRule (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
+	public final fun scriptDeleteEntry (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
+	public final fun scriptDeleteTimerecRule (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
+	public final fun scriptScheduleEntry (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
+	public final fun scriptStopEntry (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
+	public final fun scriptUpdateAutorecRule (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
+	public final fun scriptUpdateEntry (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
+	public final fun scriptUpdateTimerecRule (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
+	public fun stopEntry-jvmoZCg (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun updateAutorecRule-VXX7Pvs (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Ljava/lang/String;Lat/bernhardberger/tvheadend/sdk/core/AutorecRuleUpdate;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun updateEntry-YimeFxE (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;JLat/bernhardberger/tvheadend/sdk/core/DvrEntryUpdate;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun updateTimerecRule-dy4Dx4M (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Ljava/lang/String;Lat/bernhardberger/tvheadend/sdk/core/TimerecRuleUpdate;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/testing/FakeEpgRepository : at/bernhardberger/tvheadend/sdk/core/EpgRepository {
+	public fun acquireCoverage-Wmzk6bQ (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;JLkotlin/time/Instant;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun scriptCoverage (Lat/bernhardberger/tvheadend/sdk/core/EpgCoverageAcquisitionResult;)V
+	public final fun scriptSearch (Ljava/util/List;)V
+	public final fun scriptSearchFailure (Lat/bernhardberger/tvheadend/sdk/core/EpgSearchResult;)V
+	public fun search (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Lat/bernhardberger/tvheadend/sdk/core/EpgSearchRequest;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public abstract interface annotation class at/bernhardberger/tvheadend/sdk/testing/FakePlaybackApi : java/lang/annotation/Annotation {
+}
+
+public final class at/bernhardberger/tvheadend/sdk/testing/FakeSessionCall : java/lang/Enum {
+	public static final field BIND_LIVE_PLAYBACK Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
+	public static final field BIND_RECORDING_PLAYBACK Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
+	public static final field CONNECT Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
+	public static final field DISCONNECT Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
+	public static final field DVR_CANCEL_ENTRY Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
+	public static final field DVR_CREATE_AUTOREC_RULE Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
+	public static final field DVR_CREATE_TIMEREC_RULE Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
+	public static final field DVR_DELETE_AUTOREC_RULE Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
+	public static final field DVR_DELETE_ENTRY Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
+	public static final field DVR_DELETE_TIMEREC_RULE Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
+	public static final field DVR_SCHEDULE_ENTRY Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
+	public static final field DVR_STOP_ENTRY Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
+	public static final field DVR_UPDATE_AUTOREC_RULE Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
+	public static final field DVR_UPDATE_ENTRY Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
+	public static final field DVR_UPDATE_TIMEREC_RULE Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
+	public static final field EPG_ACQUIRE_COVERAGE Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
+	public static final field EPG_SEARCH Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
+	public static final field GET_STREAM_PROFILES Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
+	public static final field LOAD_ARTWORK Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
+	public static final field RETRY Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
+	public static final field SHUTDOWN Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
+	public static fun values ()[Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
+}
+
 public final class at/bernhardberger/tvheadend/sdk/testing/FakeSessionObservation {
 	public fun <init> ()V
 	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;)V
@@ -7,6 +75,42 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeSessionObservatio
 	public final fun publish (Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;)V
 	public final fun retire (Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;)V
 	public static synthetic fun retire$default (Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionObservation;Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;ILjava/lang/Object;)V
+}
+
+public final class at/bernhardberger/tvheadend/sdk/testing/FakeTvheadendSession : at/bernhardberger/tvheadend/sdk/core/TvheadendSession {
+	public fun <init> ()V
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;)V
+	public synthetic fun <init> (Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun awaitCurrentSession (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun bindLivePlayback-EMDS_hM (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;J)Lat/bernhardberger/tvheadend/sdk/core/PlaybackBindingResult;
+	public fun bindRecordingPlayback-q1kOTE4 (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;J)Lat/bernhardberger/tvheadend/sdk/core/PlaybackBindingResult;
+	public final fun captureCurrentSession ()Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;
+	public fun connect (Lat/bernhardberger/tvheadend/sdk/core/ServerProfile;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun disconnect (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public synthetic fun getArtwork ()Lat/bernhardberger/tvheadend/sdk/core/ArtworkLoader;
+	public fun getArtwork ()Lat/bernhardberger/tvheadend/sdk/testing/FakeArtworkLoader;
+	public final fun getCalls ()Ljava/util/List;
+	public synthetic fun getDvrRepository ()Lat/bernhardberger/tvheadend/sdk/core/DvrRepository;
+	public fun getDvrRepository ()Lat/bernhardberger/tvheadend/sdk/testing/FakeDvrRepository;
+	public synthetic fun getEpgRepository ()Lat/bernhardberger/tvheadend/sdk/core/EpgRepository;
+	public fun getEpgRepository ()Lat/bernhardberger/tvheadend/sdk/testing/FakeEpgRepository;
+	public fun getObservation ()Lkotlinx/coroutines/flow/StateFlow;
+	public fun getStreamProfiles (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun isCurrent (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;)Z
+	public final fun publish (Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;)V
+	public final fun replaceGeneration (Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;)V
+	public final fun retire (Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;)V
+	public static synthetic fun retire$default (Lat/bernhardberger/tvheadend/sdk/testing/FakeTvheadendSession;Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;ILjava/lang/Object;)V
+	public fun retry (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun scriptConnect (Lat/bernhardberger/tvheadend/sdk/core/SessionCommandResult;)V
+	public final fun scriptLivePlaybackFailure (Lat/bernhardberger/tvheadend/sdk/core/PlaybackBindingResult;)V
+	public final fun scriptLivePlaybackSuccess ()V
+	public final fun scriptRecordingPlaybackFailure (Lat/bernhardberger/tvheadend/sdk/core/PlaybackBindingResult;)V
+	public final fun scriptRecordingPlaybackSuccess ()V
+	public final fun scriptRetry (Lat/bernhardberger/tvheadend/sdk/core/SessionCommandResult;)V
+	public final fun scriptStreamProfiles (Ljava/util/List;)V
+	public final fun scriptStreamProfilesFailure (Lat/bernhardberger/tvheadend/sdk/core/StreamProfilesResult;)V
+	public fun shutdown (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/testing/ScriptedSubscriptionCall : java/lang/Enum {

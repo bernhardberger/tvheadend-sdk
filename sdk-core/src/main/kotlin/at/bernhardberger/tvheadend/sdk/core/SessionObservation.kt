@@ -321,6 +321,35 @@ internal class SessionObservationStore {
         }
     }
 
+    internal fun publishObservation(
+        observation: SessionObservation,
+        generation: Any?,
+    ) {
+        synchronized(lock) {
+            check(observation.sessionState !is SessionState.Ready || generation != null) {
+                "A ready session observation requires an internal generation"
+            }
+            if (observation.sessionState is SessionState.Ready) {
+                if (readyGeneration !== generation) {
+                    readyGenerationIdentity = SessionGenerationIdentity.create()
+                }
+                readyGeneration = generation
+            } else {
+                readyGeneration = null
+                readyGenerationIdentity = null
+            }
+            publishLocked(
+                sessionState = observation.sessionState,
+                channelState = observation.channelState,
+                epgState = observation.epgState,
+                dvrState = observation.dvrState,
+                dvrConfigurationsState = observation.dvrConfigurationsState,
+                dvrDiskSpaceState = observation.dvrDiskSpaceState,
+                recordingProgressCapability = observation.recordingProgressCapability,
+            )
+        }
+    }
+
     private fun publishLocked(
         sessionState: SessionState = mutableObservation.value.sessionState,
         channelState: ChannelRepositoryState = mutableObservation.value.channelState,

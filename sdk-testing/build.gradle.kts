@@ -43,6 +43,7 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(testFixtures(project(":sdk-core")))
     testRuntimeOnly(libs.junit.platform.launcher)
 }
 

@@ -1,4 +1,5 @@
 @file:androidx.media3.common.util.UnstableApi
+@file:OptIn(at.bernhardberger.tvheadend.sdk.testing.FakePlaybackApi::class)
 
 package at.bernhardberger.tvheadend.sdk.consumer
 
@@ -17,6 +18,7 @@ import at.bernhardberger.tvheadend.sdk.core.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult
 import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.EpgEvent
@@ -27,6 +29,7 @@ import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.PlaybackBinding
 import at.bernhardberger.tvheadend.sdk.core.PlaybackBindingResult
 import at.bernhardberger.tvheadend.sdk.core.SessionObservation
+import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
 import at.bernhardberger.tvheadend.sdk.core.SessionGenerationIdentity
 import at.bernhardberger.tvheadend.sdk.core.RetainedMetadataAuthority
 import at.bernhardberger.tvheadend.sdk.core.StreamProfileId
@@ -47,6 +50,7 @@ import at.bernhardberger.tvheadend.sdk.media3.TimeshiftCommandResult
 import at.bernhardberger.tvheadend.sdk.media3.createTvheadendPlaybackCoordinator
 import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionDiagnostics
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionIssue
+import at.bernhardberger.tvheadend.sdk.testing.FakeTvheadendSession
 import coil3.ComponentRegistry
 import kotlin.time.Duration
 import kotlin.time.Instant
@@ -269,4 +273,42 @@ public class StagedSdkConsumer(
         PlaybackBindingResult.ObservationExpired -> PlaybackTargetResult.NOT_READY
         PlaybackBindingResult.TargetUnavailable -> PlaybackTargetResult.TARGET_UNAVAILABLE
     }
+}
+
+public fun stagedTestingFake(
+    readyObservation: SessionObservation,
+    retiredObservation: SessionObservation,
+): FakeTvheadendSession = FakeTvheadendSession(readyObservation).apply {
+    publish(readyObservation)
+    replaceGeneration(readyObservation)
+    captureCurrentSession()
+    scriptConnect(SessionCommandResult.STARTED)
+    scriptRetry(SessionCommandResult.NO_ACTIVE_PROFILE)
+    scriptStreamProfilesFailure(StreamProfilesResult.NotReady)
+    scriptStreamProfiles(emptyList())
+    epgRepository.scriptSearchFailure(EpgSearchResult.NotSupported)
+    epgRepository.scriptSearch(emptyList())
+    epgRepository.scriptCoverage(
+        at.bernhardberger.tvheadend.sdk.core.EpgCoverageAcquisitionResult.Ineligible,
+    )
+    dvrRepository.scriptScheduleEntry(DvrMutationResult.NotReady)
+    dvrRepository.scriptUpdateEntry(DvrMutationResult.NotReady)
+    dvrRepository.scriptStopEntry(DvrMutationResult.NotReady)
+    dvrRepository.scriptCancelEntry(DvrMutationResult.NotReady)
+    dvrRepository.scriptDeleteEntry(DvrMutationResult.NotReady)
+    dvrRepository.scriptCreateAutorecRule(DvrMutationResult.NotReady)
+    dvrRepository.scriptUpdateAutorecRule(DvrMutationResult.NotReady)
+    dvrRepository.scriptDeleteAutorecRule(DvrMutationResult.NotReady)
+    dvrRepository.scriptCreateTimerecRule(DvrMutationResult.NotReady)
+    dvrRepository.scriptUpdateTimerecRule(DvrMutationResult.NotReady)
+    dvrRepository.scriptDeleteTimerecRule(DvrMutationResult.NotReady)
+    artwork.scriptLoad(
+        at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult.Unavailable(ArtworkFailure.NOT_SUPPORTED),
+    )
+    scriptLivePlaybackFailure(PlaybackBindingResult.TargetUnavailable)
+    scriptRecordingPlaybackFailure(PlaybackBindingResult.TargetUnavailable)
+    scriptLivePlaybackSuccess()
+    scriptRecordingPlaybackSuccess()
+    calls
+    retire(retiredObservation)
 }

@@ -47,6 +47,9 @@ dependencies {
     implementation("at.bernhardberger.tvheadend:sdk-media3") {
         version { strictly(sdkVersion) }
     }
+    implementation("at.bernhardberger.tvheadend:sdk-testing") {
+        version { strictly(sdkVersion) }
+    }
 }
 
 configurations.configureEach {
@@ -80,22 +83,28 @@ tasks.register("verifyConsumerDependencyGraph") {
 
     doLast {
         val sdkGroup = "at.bernhardberger.tvheadend"
-        val expectedSdkModules = setOf("sdk-android", "sdk-core", "sdk-media3", "sdk-playback")
+        val expectedSdkModules = setOf(
+            "sdk-android",
+            "sdk-core",
+            "sdk-media3",
+            "sdk-playback",
+            "sdk-testing",
+        )
         val expectedSdkCoordinates = expectedSdkModules.mapTo(mutableSetOf()) { module ->
             "$sdkGroup:$module:$sdkVersion"
         }
         val implementationDependencies = configurations.getByName("implementation").dependencies
             .filterIsInstance<ExternalModuleDependency>()
-        check(implementationDependencies.size == 2) {
-            "The consumer must declare exactly two external dependencies"
+        check(implementationDependencies.size == 3) {
+            "The consumer must declare exactly three external dependencies"
         }
         check(
             implementationDependencies.mapTo(mutableSetOf()) { dependency ->
                 check(dependency.group == sdkGroup && dependency.versionConstraint.strictVersion == sdkVersion)
                 dependency.name
-            } == setOf("sdk-android", "sdk-media3"),
+            } == setOf("sdk-android", "sdk-media3", "sdk-testing"),
         ) {
-            "The consumer must depend strictly and directly on staged sdk-android and sdk-media3"
+            "The consumer must depend strictly and directly on staged Android, Media3, and testing SDK artifacts"
         }
 
         fun moduleIds(configurationName: String): Set<String> {
