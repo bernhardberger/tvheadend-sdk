@@ -51,7 +51,7 @@ assert_text_absent() {
 
 assert_agent_permissions() {
   local agent permission
-  for agent in sdk-locator sdk-planner sdk-analyze sdk-research sdk-review-sol sdk-review-muse sdk-review-opus; do
+  for agent in sdk-locator sdk-planner sdk-analyze sdk-research sdk-review-astra sdk-review-muse sdk-review-opus; do
     for permission in question memory_list memory_set memory_replace; do
       assert_contains "^  ${permission}: deny$" \
         "$REPOSITORY_DIR/.opencode/agents/${agent}.md" \
@@ -174,7 +174,7 @@ assert_contains '^- Run one broad frozen review round\. After material correctio
 assert_contains '^- The Muse reviewer field test is complete; do not invoke `sdk-review-muse`\.$' \
   "$REPOSITORY_DIR/AGENTS.md" \
   'retired Muse field-test route'
-assert_contains '^- Release and lower-stakes packages use Sol only, without Opus\. For a critical$' \
+assert_contains '^- Release and lower-stakes packages use Astra only, without Opus\. For a critical$' \
   "$REPOSITORY_DIR/AGENTS.md" \
   'lower-stakes Sol-only route'
 assert_absent '^[[:space:]]*(source|\.)[[:space:]]' "$SELECTOR" \

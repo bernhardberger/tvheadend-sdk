@@ -1,8 +1,8 @@
 ---
 description: Optional read-only TVHeadend SDK planning second opinion for one bounded architecture or implementation question
 mode: subagent
-model: openai/gpt-5.6-sol
-variant: high
+model: openai/gpt-6-astra
+variant: medium
 steps: 45
 permission:
   edit: deny
@@ -43,7 +43,7 @@ package. The primary owns planning and every final design decision.
   primary can accept, reject, or adapt the recommendation deliberately.
 - Do not implement, review a completed diff, or investigate an implementation
   failure. Concrete post-plan failures belong to `sdk-analyze`; final diff review
-  belongs to `sdk-review-sol`.
+  belongs to `sdk-review-astra`.
 - Produce one recommendation and stop. A second pass is allowed only when the
   primary supplies specific contradictory evidence; do not enter iterative
   planner churn.

@@ -1,7 +1,7 @@
 ---
 description: Read-only TVHeadend SDK implementation diagnosis for concrete local behavior, ownership, concurrency, lifecycle, and invariant failures
 mode: subagent
-model: openai/gpt-5.6-sol
+model: openai/gpt-6-astra
 variant: medium
 steps: 30
 permission:

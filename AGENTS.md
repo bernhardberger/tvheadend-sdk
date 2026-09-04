@@ -25,8 +25,17 @@ notices, and do not describe this project as official TVHeadend software.
 
 ## Package delegation
 
+- New package primaries default to Astra Medium; use Low for exact mechanical
+  work and High only for justified difficult work. Existing manifests retain
+  authority. Resolve routine choices within scope, reuse existing patterns, and
+  finish after relevant checks and required gates pass unless a concrete concern
+  needs investigation. Delegate bounded independent questions when worthwhile;
+  preserve read-only children and depth limits. The primary integrates results.
+- The selector's legacy `sol` output names the mandatory OpenAI lane, now
+  `sdk-review-astra`; its wire format stays stable for existing consumers.
+
 - Package primaries invoke the repository-local `sdk-locator`, `sdk-planner`,
-  `sdk-analyze`, `sdk-research`, `sdk-review-sol`, and `sdk-review-opus` Task
+  `sdk-analyze`, `sdk-research`, `sdk-review-astra`, and `sdk-review-opus` Task
   subagents directly. Never ask a coordinator to select or launch them, and
   never launch a reviewer as an external top-level session.
 - Use `sdk-locator` for mechanical retrieval, `sdk-analyze` for a concrete
@@ -38,14 +47,14 @@ notices, and do not describe this project as official TVHeadend software.
   known evidence, acceptance criteria, required output, and stop condition.
   Children must not read orchestration ledgers, handoffs, or `AGENTS.md` files.
 - The Muse reviewer field test is complete; do not invoke `sdk-review-muse`.
-- Release and lower-stakes packages use Sol only, without Opus. For a critical
+- Release and lower-stakes packages use Astra only, without Opus. For a critical
   or complex package, run
   `./review-provider-route.sh select eligible` immediately before review; when
   it prints `opus`, launch exactly one `sdk-review-opus` alongside the mandatory
-  Sol review with substantively identical scope and evidence. The bounded Opus
+  Astra review with substantively identical scope and evidence. The bounded Opus
   reviewer is fixed at medium effort; do not raise it to match the primary.
 - Execute the review selector; never source it or its credential source into the
-  primary shell. Missing or untrustworthy quota telemetry selects Sol. A
+  primary shell. Missing or untrustworthy quota telemetry selects Astra. A
   skipped, failed, rate-limited, or aborted optional Opus review is non-blocking.
   Independently adjudicate every finding from each completed reviewer.
 - Reviewer packets contain only variable scope, actual relevant diff or exact

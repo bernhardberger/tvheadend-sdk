@@ -1,7 +1,7 @@
 ---
 description: Read-only TVHeadend SDK external-source and provenance research after exact local sources are insufficient
 mode: subagent
-model: openai/gpt-5.6-sol
+model: openai/gpt-6-astra
 variant: low
 steps: 35
 permission:

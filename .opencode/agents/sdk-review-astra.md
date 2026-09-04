@@ -1,8 +1,8 @@
 ---
-description: Mandatory GPT-5.6 Sol high review of a bounded TVHeadend SDK diff
+description: Mandatory GPT-6 Astra medium review of a bounded TVHeadend SDK diff
 mode: subagent
-model: openai/gpt-5.6-sol
-variant: high
+model: openai/gpt-6-astra
+variant: medium
 steps: 45
 permission:
   edit: deny
