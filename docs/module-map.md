@@ -23,13 +23,14 @@ question still spans an unknown flow after these paths are checked.
 
 ## Commands and release tooling
 
-- Build and test through the installed `gradle-run` skill. Do not stream full
-  Gradle output or start a second Gradle workflow concurrently.
+- Build and test through the checked-in Gradle wrapper and `AGENTS.md` gates.
+  This checkout does not bundle `gradle-run`; a sibling workspace is not a build
+  prerequisite. Keep diagnostics bounded and do not start concurrent Gradle work.
 - Use `tools/sdk-device --help` for SDK instrumentation operations. Credential
   provisioning is intentionally outside that tool.
 - For releases, read `docs/releasing.md`, then use command `--help`. Do not read
   the 1,000-line tool implementations unless editing them or diagnosing a
   failure already attributed to the tool.
-- Run `tools/publish-central-release --check-setup` once per release package.
+- Run `tools/publish-central-release --check-setup` once per release attempt.
   Preserve every immutable-tag, single-upload, credential, and stop gate in
   `docs/releasing.md`.
