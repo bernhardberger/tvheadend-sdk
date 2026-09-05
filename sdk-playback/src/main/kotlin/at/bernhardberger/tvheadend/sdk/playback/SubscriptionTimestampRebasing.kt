@@ -219,6 +219,7 @@ internal class SubscriptionTimestampRebaser(private val settings: TimestampRebas
             presentationTimeUs = outputUs,
             durationUs = packet.durationUs,
             payload = packet.payload,
+            serverPresentationTimeUs = packet.serverPresentationTimeUs,
         )
     }
 }

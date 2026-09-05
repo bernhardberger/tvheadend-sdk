@@ -92,6 +92,8 @@ class SubscriptionTimestampRebaseTest {
 
         assertEquals(44_000L, video?.presentationTimeUs)
         assertEquals(49_000L, audio?.presentationTimeUs)
+        assertEquals(580_000L, video?.serverPresentationTimeUs)
+        assertEquals(585_000L, audio?.serverPresentationTimeUs)
         assertEquals(
             585_000L - 580_000L,
             requireNotNull(audio?.presentationTimeUs) -

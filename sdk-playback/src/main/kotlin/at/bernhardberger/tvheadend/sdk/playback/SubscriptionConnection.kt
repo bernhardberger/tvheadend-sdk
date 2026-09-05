@@ -111,6 +111,8 @@ public sealed interface SubscriptionEvent {
         public val presentationTimeUs: Long?,
         public val durationUs: Long,
         public val payload: SubscriptionBinary,
+        /** Original server PTS, retained when output timestamps are rebased. Not UTC. */
+        public val serverPresentationTimeUs: Long? = presentationTimeUs,
     ) : SubscriptionEvent {
         override fun toString(): String = "SubscriptionEvent.Packet(<redacted>)"
     }

@@ -31,6 +31,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Duration.Companion.microseconds
 
 /** Direct suspending consumer of the complete committed subscription event order. */
 @SubscriptionInfrastructureApi
@@ -195,6 +196,15 @@ public enum class SubscriptionSeekInvalidation {
 public sealed interface SubscriptionSeekResult {
     /** The ordered acknowledgement accepted the request and withheld packets were discarded. */
     public data object Accepted : SubscriptionSeekResult
+
+    /** Accepted with a request-correlated absolute server reader coordinate, not displayed content. */
+    public class AcceptedAt(public val position: Duration) : SubscriptionSeekResult {
+        init {
+            require(position.isFinite() && !position.isNegative()) { "Reached position must be finite and non-negative" }
+        }
+
+        override fun toString(): String = "SubscriptionSeekResult.AcceptedAt"
+    }
 
     /** The ordered acknowledgement rejected the request and withheld packets were replayed. */
     public data object Rejected : SubscriptionSeekResult
@@ -927,7 +937,12 @@ private class ActiveSubscriptionImpl(
             is SubscriptionEvent.Skipped -> when (event.outcome) {
                 SkipOutcome.ACCEPTED -> {
                     pending.discard()
-                    resolveSeekLocked(pending, SubscriptionSeekResult.Accepted)
+                    val reached = event.time?.takeIf { event.absolute == true && it >= 0L }
+                    resolveSeekLocked(
+                        pending,
+                        reached?.let { SubscriptionSeekResult.AcceptedAt(it.microseconds) }
+                            ?: SubscriptionSeekResult.Accepted,
+                    )
                     GateDecision.Resolved(emptyList())
                 }
                 SkipOutcome.REJECTED -> {

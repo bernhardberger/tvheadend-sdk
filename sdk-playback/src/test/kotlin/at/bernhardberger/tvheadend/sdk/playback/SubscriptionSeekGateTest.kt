@@ -28,6 +28,25 @@ import kotlin.time.Duration.Companion.seconds
 @OptIn(ExperimentalCoroutinesApi::class)
 class SubscriptionSeekGateTest {
     @Test
+    fun `absolute acknowledgement is correlated in the result before consumer delivery`() = runTest {
+        val releaseDelivery = CompletableDeferred<Unit>()
+        val fixture = openSeekable(onEvent = { if (it is SubscriptionEvent.Skipped) releaseDelivery.await() })
+        val seeking = async { fixture.subscription.seek(absoluteSeek()) }
+        runCurrent()
+        fixture.connection.emit(SubscriptionEvent.Skipped(true, SkipOutcome.ACCEPTED, 39_000_000, null))
+        runCurrent()
+        assertEquals(39.seconds, (seeking.await() as SubscriptionSeekResult.AcceptedAt).position)
+        releaseDelivery.complete(Unit)
+        fixture.close()
+    }
+
+    @Test
+    fun `reached reader coordinate rejects invalid duration`() {
+        assertThrows(IllegalArgumentException::class.java) { SubscriptionSeekResult.AcceptedAt(Duration.INFINITE) }
+        assertThrows(IllegalArgumentException::class.java) { SubscriptionSeekResult.AcceptedAt((-1).seconds) }
+    }
+
+    @Test
     fun `accepted skip discards withheld packets before the acknowledgement`() = runTest {
         val fixture = openSeekable()
         fixture.connection.emit(packet(presentationTimeUs = 10L))

@@ -280,12 +280,14 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionEvent$Gr
 }
 
 public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionEvent$Packet : at/bernhardberger/tvheadend/sdk/playback/SubscriptionEvent {
-	public synthetic fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/MuxFrameType;JLjava/lang/Long;Ljava/lang/Long;JLat/bernhardberger/tvheadend/sdk/playback/SubscriptionBinary;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/MuxFrameType;JLjava/lang/Long;Ljava/lang/Long;JLat/bernhardberger/tvheadend/sdk/playback/SubscriptionBinary;Ljava/lang/Long;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/MuxFrameType;JLjava/lang/Long;Ljava/lang/Long;JLat/bernhardberger/tvheadend/sdk/playback/SubscriptionBinary;Ljava/lang/Long;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getDecodingTimeUs ()Ljava/lang/Long;
 	public final fun getDurationUs ()J
 	public final fun getFrameType ()Lat/bernhardberger/tvheadend/sdk/playback/MuxFrameType;
 	public final fun getPayload ()Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionBinary;
 	public final fun getPresentationTimeUs ()Ljava/lang/Long;
+	public final fun getServerPresentationTimeUs ()Ljava/lang/Long;
 	public final fun getStreamIndex-Kfd5Q9E ()J
 	public fun toString ()Ljava/lang/String;
 }
@@ -582,6 +584,12 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResu
 	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult$Accepted;
 	public fun equals (Ljava/lang/Object;)Z
 	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult$AcceptedAt : at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult {
+	public synthetic fun <init> (JLkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getPosition-UwyO8pc ()J
 	public fun toString ()Ljava/lang/String;
 }
 

@@ -721,6 +721,54 @@ internal class TvheadendPlaybackCoordinatorTest {
         }
 
     @Test
+    fun `content position samples player rather than reader across pause queued seek and replacement`() = runTest {
+        val fixture = CoordinatorFixture()
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+        fixture.coordinator.setLiveTarget(ChannelId(4), LivePlaybackOptions(timeshiftPeriod = 120.seconds))
+        val subscription = FakeTimeshiftSubscription(120.seconds)
+        fixture.player.attachTimeshift(subscription)
+        fixture.player.emitTimeshift(SubscriptionEvent.Timeshift(0, 0, 0, 100_000_000, 100))
+        val selected = (fixture.coordinator.timeshiftState.value as LiveTimeshiftState.Available)
+            .timeline!!.select(5.seconds)!!
+        val attachment = fixture.player.requireTimeshiftControls()
+        attachment.packetMapping.accept(10_000_000, 10_000_000)
+        attachment.packetMapping.accept(20_000_000, 20_000_000)
+        fixture.player.snapshot = snapshot(15, null)
+        assertEquals(
+            15.seconds,
+            (fixture.coordinator.timeshiftPlaybackPosition() as TimeshiftPlaybackPosition.Estimate).target.position,
+        )
+        fixture.coordinator.pauseTimeshift()
+        fixture.player.emitTimeshift(SubscriptionEvent.Timeshift(0, 80_000_000, 0, 110_000_000, 0))
+        subscription.seekAction = {
+            fixture.player.emitTimeshift(
+                SubscriptionEvent.Skipped(
+                    true, at.bernhardberger.tvheadend.sdk.playback.SkipOutcome.ACCEPTED, 5_000_000, null,
+                ),
+            )
+            SubscriptionSeekResult.AcceptedAt(5.seconds)
+        }
+        val seek = fixture.coordinator.seekTimeshift(selected) as TimeshiftContentSeekResult.Completed
+        assertEquals(5.seconds, seek.readerReached!!.position)
+        attachment.packetMapping.accept(21_000_000, 5_000_000)
+        attachment.packetMapping.accept(30_000_000, 14_000_000)
+        assertEquals(
+            15.seconds,
+            (fixture.coordinator.timeshiftPlaybackPosition() as TimeshiftPlaybackPosition.Estimate).target.position,
+        )
+        fixture.player.snapshot = snapshot(25, null)
+        assertEquals(
+            9.seconds,
+            (fixture.coordinator.timeshiftPlaybackPosition() as TimeshiftPlaybackPosition.Estimate).target.position,
+        )
+        fixture.player.replaceTimeshiftPeriod(FakeTimeshiftSubscription(120.seconds))
+        assertSame(TimeshiftPlaybackPosition.Unavailable, fixture.coordinator.timeshiftPlaybackPosition())
+        assertSame(TimeshiftContentSeekResult.Replaced, fixture.coordinator.seekTimeshift(selected))
+        fixture.coordinator.shutdown(1.seconds)
+        owner.join()
+    }
+
+    @Test
     fun `timeshift state and commands use ordered subscription authority without player controls`() =
         runTest {
             val fixture = CoordinatorFixture()
@@ -2356,6 +2404,11 @@ private class TestCoordinatorHarness(
 
     suspend fun seekTimeshift(offset: Duration): TimeshiftCommandResult =
         delegate.seekTimeshift(offset)
+
+    suspend fun seekTimeshift(target: TimeshiftContentTarget): TimeshiftContentSeekResult =
+        delegate.seekTimeshift(target)
+
+    suspend fun timeshiftPlaybackPosition(): TimeshiftPlaybackPosition = delegate.timeshiftPlaybackPosition()
 
     suspend fun returnToLive(): TimeshiftCommandResult = delegate.returnToLive()
 

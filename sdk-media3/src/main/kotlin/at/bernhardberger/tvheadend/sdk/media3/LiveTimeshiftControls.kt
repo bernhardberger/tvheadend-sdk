@@ -24,8 +24,10 @@ public sealed interface LiveTimeshiftState {
     public data class Available internal constructor(
         public val grantedPeriod: Duration,
         public val bufferedDuration: Duration?,
+        /** Server reader shift, not the displayed position or the client queue depth. */
         public val positionBehindLive: Duration?,
         public val serverPaused: Boolean?,
+        public val timeline: TimeshiftTimeline? = null,
     ) : LiveTimeshiftState
 }
 
@@ -233,6 +235,7 @@ internal class LiveTimeshiftControlBridge(
     private var newestBoundSequence = -1L
     private var newestTerminalAttachment: Attachment? = null
     private var activeAttachment: Attachment? = null
+    private var attachedPeriodCount = 0
     private var retired = false
     private var currentState: LiveTimeshiftState = LiveTimeshiftState.Unavailable
     private var currentIssue: SubscriptionIssue? = null
@@ -245,6 +248,7 @@ internal class LiveTimeshiftControlBridge(
 
     internal fun newAttachment(): Attachment = synchronized(lock) {
         check(nextAttachmentSequence != Long.MAX_VALUE) { "Timeshift attachment ids exhausted" }
+        attachedPeriodCount++
         Attachment(nextAttachmentSequence++)
     }
 
@@ -369,6 +373,43 @@ internal class LiveTimeshiftControlBridge(
     suspend fun setSpeed(speed: Int): SubscriptionOperationResult<Unit>? =
         currentHandle()?.subscription?.setSpeed(speed)
 
+    suspend fun seekContent(target: TimeshiftContentTarget): TimeshiftContentSeekResult {
+        val handle = synchronized(lock) {
+            val current = currentHandle() ?: return TimeshiftContentSeekResult.Replaced
+            if (target.owner !== current.attachment) return TimeshiftContentSeekResult.Replaced
+            val timeline = current.attachment.timeline() ?: return TimeshiftContentSeekResult.Unavailable
+            if (target.position !in timeline.start..timeline.end) return TimeshiftContentSeekResult.Expired
+            current
+        }
+        val result = handle.subscription.seek(SubscriptionSeekTarget.Absolute(target.position))
+        return synchronized(lock) {
+            if (currentHandle()?.attachment !== handle.attachment) {
+                return@synchronized TimeshiftContentSeekResult.Replaced
+            }
+            val reached = (result as? SubscriptionSeekResult.AcceptedAt)?.position
+                ?.takeIf { it.isFinite() && !it.isNegative() }
+                ?.let { TimeshiftContentTarget(handle.attachment, it) }
+            if (result is SubscriptionSeekResult.Invalidated || result === SubscriptionSeekResult.SubscriptionEnded) {
+                handle.attachment.terminal(handle.subscription)
+            }
+            TimeshiftContentSeekResult.Completed(result.toPublicTimeshiftResult(), reached)
+        }
+    }
+
+    internal fun mappingAttachment(): Attachment? = synchronized(lock) {
+        currentHandle()?.attachment?.takeIf { attachedPeriodCount == 1 }
+    }
+
+    internal fun playbackPosition(attachment: Attachment, position: Duration): TimeshiftPlaybackPosition =
+        synchronized(lock) {
+            if (mappingAttachment() !== attachment || !position.isFinite() || position.isNegative()) {
+                return@synchronized TimeshiftPlaybackPosition.Unavailable
+            }
+            attachment.packetMapping.map(position.inWholeMicroseconds)?.let {
+                TimeshiftPlaybackPosition.Estimate(TimeshiftContentTarget(attachment, it.microseconds))
+            } ?: TimeshiftPlaybackPosition.Unavailable
+        }
+
     private fun currentHandle(): ControlHandle? = synchronized(lock) {
         val attachment = activeAttachment ?: return@synchronized null
         val subscription = attachment.subscription ?: return@synchronized null
@@ -389,6 +430,7 @@ internal class LiveTimeshiftControlBridge(
         internal var subscription: ActiveSubscription? = null
         internal var grant: Duration? = null
         private var latestStatus: SubscriptionEvent.Timeshift? = null
+        internal val packetMapping = TimeshiftPacketMapping()
         private var latestSpeed: Int? = null
         internal var latestIssue: SubscriptionIssue? = null
         internal var issueObserved = false
@@ -447,6 +489,20 @@ internal class LiveTimeshiftControlBridge(
                     latestDiagnostics = LiveSubscriptionDiagnostics.update(latestDiagnostics, event)
                 }
                 when (event) {
+                    is SubscriptionEvent.Packet -> {
+                        packetMapping.accept(event.presentationTimeUs, event.serverPresentationTimeUs)
+                        return
+                    }
+                    is SubscriptionEvent.Skipped -> {
+                        if (event.outcome == at.bernhardberger.tvheadend.sdk.playback.SkipOutcome.ACCEPTED) {
+                            packetMapping.discontinuity()
+                        }
+                        return
+                    }
+                    is SubscriptionEvent.Dropped -> {
+                        packetMapping.discontinuity()
+                        return
+                    }
                     is SubscriptionEvent.Started -> {
                         issueObserved = true
                         latestIssue = event.issue
@@ -512,6 +568,7 @@ internal class LiveTimeshiftControlBridge(
             synchronized(lock) {
                 if (detached) return
                 detached = true
+                attachedPeriodCount--
                 subscription = null
                 diagnosticsObserved = true
                 latestDiagnostics = null
@@ -581,8 +638,16 @@ internal class LiveTimeshiftControlBridge(
                         NORMAL_SPEED -> false
                         else -> null
                     },
+                    timeline = timeline(),
                 )
             } ?: LiveTimeshiftState.Unavailable
+
+        internal fun timeline(): TimeshiftTimeline? {
+            val start = latestStatus?.start ?: return null
+            val end = latestStatus?.end ?: return null
+            if (start < 0L || end < start) return null
+            return TimeshiftTimeline(this, start.microseconds, end.microseconds)
+        }
     }
 
     private fun updateStateLocked(): LiveTimeshiftState {

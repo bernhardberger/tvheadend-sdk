@@ -220,6 +220,7 @@ internal class TvheadendLiveMediaPeriod(
             } finally {
                 if (terminalEvent) timeshiftControls?.accept(event)
             }
+            // Mapping evidence includes only packets admitted by a supported reader.
             if (!terminalEvent) timeshiftControls?.accept(event)
         } catch (cancellation: CancellationException) {
             failPeriod()

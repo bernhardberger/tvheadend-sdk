@@ -368,11 +368,60 @@ A positive requested timeshift period is only a request. The active server must
 grant a positive period before `timeshiftState` becomes
 `LiveTimeshiftState.Available`. Its buffered duration, position behind live, and
 server-pause fields remain nullable until valid ordered status events arrive.
+`positionBehindLive` is the **server reader's** shift, never displayed content.
+The grant is capacity, not proof of available history. The optional `timeline`
+contains only the latest valid observed absolute `start` and `end`; it does not
+advance with the local clock or expand to fill the grant.
+
+For content-stable selection, retain `timeline.select(position)` and pass that
+opaque `TimeshiftContentTarget` to `seekTimeshift(target)`. Its `position` remains
+the same absolute stream coordinate as the live edge advances. Do not retain a
+relative offset from live and recompute it when the user confirms. Selection
+outside the observed range returns null. At execution, missing history returns
+`Unavailable`, a target outside current history returns `Expired`, and a target
+from a replaced, detached or retired subscription returns `Replaced`. The SDK
+does not clamp or send an old target to a successor, including same-channel
+period recreation and retry. Targets are in-memory subscription capabilities,
+not persistable programme identifiers. History can expire after validation;
+the server's keyframe choice may differ from the requested coordinate.
+
+`TimeshiftContentSeekResult.Completed` carries the command outcome and nullable
+`readerReached`, an absolute acknowledgement in the same coordinate contract.
+Null means unknown, not the requested target. Even a known reader position is
+not a frame-on-screen acknowledgement. An in-flight replacement returns
+`Replaced` rather than attributing the old acknowledgement to the new target.
+
+Call `timeshiftPlaybackPosition()` at the application's chosen observation
+cadence. The coordinator samples Media3 on its application looper, fences the
+subscription before and after sampling, refuses mapping while multiple periods
+coexist, and maps that output coordinate through
+bounded packet-evidence segments. `Estimate.target` uses the same content
+coordinates as selection. It is explicitly an estimate, not rendered-frame
+proof: Media3 samples position in milliseconds, elementary readers may derive
+sample timestamps, and decoder latency is not observed. Pause leaves the
+sampled position in its old segment even if packets or server status advance.
+Queued pre-seek content retains its old mapping while post-seek timestamps use
+their own rebase offset. Gaps, overlapping segments that disagree, missing packet
+timestamps, absent player snapshots, replacement, and evicted mapping history
+return `Unavailable`; no extrapolation beyond observed packet endpoints occurs.
+At most 64 segments are retained. An estimated displayed coordinate can outlive
+its server-seekable history, so a subsequent seek can still return `Expired`.
+
+Wall-clock mapping is separate: `timeline.wallClockMapping` is currently
+`UNAVAILABLE`. Absolute stream durations are not Unix time. There is no supported
+UTC anchor in the inspected status / elementary-packet path, and the SDK does
+not label local receipt time minus a shift as programme time. Thus this path
+offers supported stream-coordinate selection, estimated playback-coordinate
+mapping, and unavailable programme-time mapping, not an authoritative or
+estimated programme timestamp. Consumers must not substitute EPG start time or
+the device clock to imply SDK-supported precision. Kotlin `Duration` supplies
+the maintained unit representation; no new time codec or clock conversion is
+introduced.
 
 `seekTimeshift(offset)` seeks by a signed relative duration. `returnToLive()`
 requests the bounded near-live position, not a separate exact-live mode.
 `pauseTimeshift()` and `resumeTimeshift()` control server delivery only; normal
-Media3 play and pause remain application-owned. Every command returns
+Media3 play and pause remain application-owned. These relative/speed commands return
 `TimeshiftCommandResult`, which distinguishes acceptance or rejection,
 unavailable or pending state, acknowledgement and queue failures, subscription
 end, safe server-operation failures, unsupported behavior, and coordinator

@@ -324,6 +324,8 @@ internal class ModuleBoundaryTest {
             "public suspend fun setLiveTarget( session: TvheadendSession, currentSession: CurrentSessionObservation, channelId: ChannelId, options: LivePlaybackOptions = LivePlaybackOptions(), ): LivePlaybackTargetResult",
             "public suspend fun setRecordingTarget( binding: PlaybackBinding.Recording, start: RecordingPlaybackStart = RecordingPlaybackStart.RESUME, ): PlaybackTargetResult",
             "public suspend fun seekTimeshift(offset: Duration): TimeshiftCommandResult",
+            "public suspend fun seekTimeshift(target: TimeshiftContentTarget): TimeshiftContentSeekResult",
+            "public suspend fun timeshiftPlaybackPosition(): TimeshiftPlaybackPosition",
             "public suspend fun returnToLive(): TimeshiftCommandResult",
             "public suspend fun pauseTimeshift(): TimeshiftCommandResult",
             "public suspend fun resumeTimeshift(): TimeshiftCommandResult",
@@ -423,6 +425,11 @@ internal class ModuleBoundaryTest {
         val expectedMedia3 = setOf(
             "LivePlaybackObservation",
             "LiveTimeshiftState",
+            "TimeshiftContentTarget",
+            "TimeshiftTimeline",
+            "TimeshiftWallClockMapping",
+            "TimeshiftPlaybackPosition",
+            "TimeshiftContentSeekResult",
             "LivePlaybackTargetResult",
             "TimeshiftCommandDisposition",
             "PlaybackOutcomeCategory",
@@ -494,7 +501,7 @@ internal class ModuleBoundaryTest {
             ),
             fakePlaybackFunctions,
         )
-        assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 20)
+        assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 25)
 
         val coordinatorApi = File(
             "../sdk-media3/src/main/kotlin/at/bernhardberger/tvheadend/sdk/media3/" +

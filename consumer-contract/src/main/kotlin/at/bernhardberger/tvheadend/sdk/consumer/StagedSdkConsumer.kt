@@ -56,6 +56,9 @@ import at.bernhardberger.tvheadend.sdk.media3.PlaybackTargetResult
 import at.bernhardberger.tvheadend.sdk.media3.RecordingPlaybackStart
 import at.bernhardberger.tvheadend.sdk.media3.TvheadendPlaybackCoordinator
 import at.bernhardberger.tvheadend.sdk.media3.TimeshiftCommandResult
+import at.bernhardberger.tvheadend.sdk.media3.TimeshiftContentTarget
+import at.bernhardberger.tvheadend.sdk.media3.TimeshiftContentSeekResult
+import at.bernhardberger.tvheadend.sdk.media3.TimeshiftPlaybackPosition
 import at.bernhardberger.tvheadend.sdk.media3.createTvheadendPlaybackCoordinator
 import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionDiagnostics
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionIssue
@@ -316,6 +319,15 @@ public class StagedSdkConsumer(
 
     public suspend fun seekTimeshift(offset: Duration): TimeshiftCommandResult =
         coordinator.seekTimeshift(offset)
+
+    public fun selectTimeshiftContent(position: Duration): TimeshiftContentTarget? =
+        (timeshiftState.value as? LiveTimeshiftState.Available)?.timeline?.select(position)
+
+    public suspend fun seekTimeshift(target: TimeshiftContentTarget): TimeshiftContentSeekResult =
+        coordinator.seekTimeshift(target)
+
+    public suspend fun timeshiftPlaybackPosition(): TimeshiftPlaybackPosition =
+        coordinator.timeshiftPlaybackPosition()
 
     public suspend fun returnToLive(): TimeshiftCommandResult = coordinator.returnToLive()
 

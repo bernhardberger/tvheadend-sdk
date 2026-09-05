@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.6.0]
+
+Live timeshift observations expose an absolute observed history and opaque
+subscription-scoped content targets. A selection keeps its content coordinate
+as the edge advances; execution rejects expired targets and subscription
+replacement without clamping or sending the target to a successor.
+
+The coordinator maps sampled Media3 position through bounded packet-timestamp
+segments, preserving queued pre-seek content through pause and timestamp rebasing.
+Mapping is explicitly estimated or unavailable, never inferred from server-reader
+shift. Seek results carry a request-correlated reached reader coordinate when
+available, which is not proof of displayed content. Programme wall-clock mapping
+remains unavailable because the inspected packet/status path supplies no UTC anchor.
+Capacity grants remain separate from observed seekable history.
+
+The added packet-coordinate and timeshift-state constructor fields are intentional
+provisional ABI changes from `0.5.0`. HTSP remains pinned to `0.7.0`; no protocol
+dependency substitution or new minimum TVHeadend version is introduced.
+
 ## [0.5.0]
 
 This provisional minor line exposes immutable, current-target live diagnostics
