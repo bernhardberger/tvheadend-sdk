@@ -27,6 +27,9 @@ question still spans an unknown flow after these paths are checked.
 - Build and test through the checked-in Gradle wrapper and `AGENTS.md` gates.
   This checkout does not bundle `gradle-run`; a sibling workspace is not a build
   prerequisite. Keep diagnostics bounded and do not start concurrent Gradle work.
+- Ordinary core tests exclude live EPG/DVR verification regardless of inherited
+  credentials. See [offline verification](offline-verification.md) for isolation,
+  selection regressions, and the separately authorized live task.
 - Use `tools/sdk-device --help` for SDK instrumentation operations. Credential
   provisioning is intentionally outside that tool.
 - For releases, read `docs/releasing.md`, then use command `--help`. Do not read

@@ -52,6 +52,25 @@ dependencies {
     testFixturesImplementation(libs.kotlinx.coroutines.test)
 }
 
+tasks.named<Test>("test") {
+    useJUnitPlatform {
+        // Credentials and JUnit condition overrides must not opt ordinary checks into server access.
+        excludeTags("live-soak", "live-dvr")
+    }
+}
+
+tasks.register<Test>("liveServerTest") {
+    description = "Runs live EPG/DVR verification; requires separate server read/mutation authorization."
+    group = "verification"
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    // Server state and credentials are not reproducible Gradle task inputs.
+    outputs.upToDateWhen { false }
+    useJUnitPlatform {
+        includeTags("live-soak", "live-dvr")
+    }
+}
+
 detekt {
     config.setFrom(rootProject.file("detekt.yml"))
     source.setFrom("src/main/kotlin")
