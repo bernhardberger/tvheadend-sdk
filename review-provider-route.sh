@@ -177,7 +177,7 @@ select_eligible_route() {
     printf 'opus\n'
   else
     log_skip "${reason:-trustworthy Claude quota telemetry is unavailable}"
-    printf 'sol\n'
+    printf 'astra\n'
   fi
 }
 
@@ -191,7 +191,7 @@ evaluate_fixture_route() {
     printf 'opus\n'
   else
     log_skip "${reason:-trustworthy Claude quota telemetry is unavailable}"
-    printf 'sol\n'
+    printf 'astra\n'
   fi
 }
 
@@ -203,7 +203,7 @@ case "${1:-select}" in
         select_eligible_route
         ;;
       default|release|lower-stakes)
-        printf 'sol\n'
+        printf 'astra\n'
         ;;
       *)
         printf 'usage: %s select [eligible|release|lower-stakes]\n' "$0" >&2
@@ -212,10 +212,10 @@ case "${1:-select}" in
     esac
     ;;
   fallback)
-    printf 'sol\n'
+    printf 'astra\n'
     ;;
   status)
-    route="sol"
+    route="astra"
     if [[ "$selection" == "eligible" ]]; then
       route="$(select_eligible_route)"
     elif [[ "$selection" != "default" && "$selection" != "release" && "$selection" != "lower-stakes" ]]; then
@@ -223,9 +223,9 @@ case "${1:-select}" in
       exit 2
     fi
     printf 'route=%s\n' "$route"
-    printf 'fallback_route=sol\n'
-    printf 'sol_required=true\n'
-    printf 'opus_optional=%s\n' "$([[ "$selection" == "eligible" ]] && printf true || printf false)"
+    printf 'fallback_route=astra\n'
+    printf 'quota_checked=%s\n' "$([[ "$selection" == "eligible" ]] && printf true || printf false)"
+    printf 'opus_dispatch_allowed=%s\n' "$([[ "$route" == "opus" ]] && printf true || printf false)"
     ;;
   evaluate-fixture)
     evaluate_fixture_route

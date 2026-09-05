@@ -25,21 +25,30 @@ notices, and do not describe this project as official TVHeadend software.
 
 ## Package delegation
 
-- One primary owns the task end-to-end. Routine work and ordinary releases need
-  no planner, reviewer, package chain or coordinator. Split only for a real
+- One primary owns the task end-to-end. Routine low-impact work and release
+  ceremony alone need no mandatory review pair or package chain. Split only for a real
   dependency, ownership or authorization boundary, not for workflow stages.
-- Use read-only advisers for a concrete question that benefits from independence.
-  Require one independent review for security-sensitive changes or substantial
-  protocol, concurrency or public-contract changes; otherwise review is optional.
-  Select one suitable configured reviewer, not a mandatory pair or provider.
+- Non-trivial non-UX work requires an independent Astra primary reviewer and an
+  independent Opus second reviewer on the same bounded change and evidence.
+  Neither is the implementing primary. Keep the second initial packet blind to
+  the first verdict and findings. UX visual review remains distinct.
 - Give children the relevant diff, evidence, question and stop condition. They
   retain their configured permissions and cannot create a new work stream.
-  The primary adjudicates findings and owns fixes. Re-review only a specific fix
-  whose correctness remains uncertain, not the unchanged full packet.
+  The primary adjudicates supported findings and owns fixes. No automatic third
+  review or broad repeat audit; follow up only on unresolved findings or material
+  changes, bounded to affected behavior.
 - Model and effort choices live in OpenCode configuration, not product policy.
-  Changing an assignment does not require editing these instructions. The old
-  quota selector is optional; never source it or its credential file.
-  Its legacy `sol`/`sol_required` output is a route contract, not a review mandate.
+  Before EVERY Opus dispatch, including followups, run
+  `./review-provider-route.sh select eligible`. Only successful stdout `opus`
+  permits dispatch. Never source the script or its credential file. Unknown,
+  unavailable or failed telemetry uses an independent Astra fallback. The guard
+  emits `astra` for fallback. Record the reason and absent
+  Opus coverage. See `docs/review-routing.md` for the guard and abort procedure.
+- On actual Opus quota exhaustion, abort that exact reviewer through the supported
+  session API and verify it stopped. Do not wait for reset, retry/nudge it or
+  repeatedly spawn replacements. Continue fallback and independent work. Never
+  silently substitute for an explicitly non-substitutable admitted gate; reconcile
+  that boundary centrally without changing immutable manifests or results.
 - Existing admitted manifests retain their explicit authority and gates. Do not
   silently weaken an in-flight package or revive a retired field-test role.
 

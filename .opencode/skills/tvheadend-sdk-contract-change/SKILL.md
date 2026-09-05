@@ -38,6 +38,13 @@ fixtures and diagnostics non-sensitive.
 
 - Run the affected module's relevant tests; follow `AGENTS.md` for final checks
   and independent review where the actual change requires it.
+- Non-trivial non-UX changes use independent Astra primary and Opus second review
+  of the same bounded evidence, with the second initial packet blind to the first
+  verdict/findings. Run `./review-provider-route.sh select eligible` before every
+  Opus dispatch, including followups; only explicit `opus` permits it. Follow
+  `docs/review-routing.md` for independent Astra fallback, absent-Opus disclosure
+  and exact-session abort on actual exhaustion. No third or broad repeat audit;
+  preserve non-substitutable admitted gates. Low-impact work needs no mandatory pair.
 - For public API changes, inspect supported ABI changes and affected Kotlin/Java
   consumers. Update dumps through the existing Gradle workflow, not by hand.
   Read the documented Android ABI limitation rather than creating a new checker.

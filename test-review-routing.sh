@@ -99,17 +99,17 @@ weekly_wrong_type='{"ok":true,"configured":true,"usage":{"windows":{"5h":{"remai
 nonstandard_number='{"ok":true,"configured":true,"usage":{"windows":{"5h":{"remainingPercent":100},"7d":{"remainingPercent":100}}},"extra":NaN}'
 
 assert_equal opus "$(route_for "$healthy")" 'healthy eligible quota'
-assert_equal sol "$(route_for "$at_five_hour_guard")" '5h exact guard'
-assert_equal sol "$(route_for "$at_weekly_guard")" '7d exact guard'
-assert_equal sol "$(route_for "$unavailable")" 'provider unavailable'
-assert_equal sol "$(route_for "$missing_five_hour")" 'missing 5h window'
-assert_equal sol "$(route_for "$missing_weekly")" 'missing weekly window'
-assert_equal sol "$(route_for "$five_hour_over_range")" '5h percentage above range'
-assert_equal sol "$(route_for "$weekly_under_range")" '7d percentage below range'
-assert_equal sol "$(route_for "$weekly_wrong_type")" '7d percentage with wrong type'
-assert_equal sol "$(route_for 'not-json')" 'malformed telemetry'
-assert_equal sol "$(route_for "$nonstandard_number")" 'non-standard JSON number'
-assert_equal sol "$(printf '{"ok":tru\0e}' | "$SELECTOR" evaluate-fixture 2>/dev/null)" \
+assert_equal astra "$(route_for "$at_five_hour_guard")" '5h exact guard'
+assert_equal astra "$(route_for "$at_weekly_guard")" '7d exact guard'
+assert_equal astra "$(route_for "$unavailable")" 'provider unavailable'
+assert_equal astra "$(route_for "$missing_five_hour")" 'missing 5h window'
+assert_equal astra "$(route_for "$missing_weekly")" 'missing weekly window'
+assert_equal astra "$(route_for "$five_hour_over_range")" '5h percentage above range'
+assert_equal astra "$(route_for "$weekly_under_range")" '7d percentage below range'
+assert_equal astra "$(route_for "$weekly_wrong_type")" '7d percentage with wrong type'
+assert_equal astra "$(route_for 'not-json')" 'malformed telemetry'
+assert_equal astra "$(route_for "$nonstandard_number")" 'non-standard JSON number'
+assert_equal astra "$(printf '{"ok":tru\0e}' | "$SELECTOR" evaluate-fixture 2>/dev/null)" \
   'malformed telemetry containing NUL'
 
 five_hour_diagnostic="$(diagnostic_for "$at_five_hour_guard")"
@@ -130,15 +130,15 @@ assert_equal 'Opus review skipped: Claude quota telemetry was unavailable' \
   "$unavailable_diagnostic" 'unavailable telemetry diagnostic remains useful'
 assert_text_absent 'Rate limited|Retrying soon' "$unavailable_diagnostic" \
   'unavailable telemetry diagnostic must redact authenticated response content'
-assert_equal sol "$(OPENCHAMBER_ENV_FILE=/tmp/tvheadend-sdk-missing-review-route.env \
+assert_equal astra "$(OPENCHAMBER_ENV_FILE=/tmp/tvheadend-sdk-missing-review-route.env \
   REVIEW_ROUTE_TESTING=1 REVIEW_ROUTE_TEST_QUOTA_JSON="$healthy" \
   "$SELECTOR" select eligible 2>/dev/null)" 'legacy fixture environment cannot bypass production fetch'
-assert_equal sol "$("$SELECTOR" select default)" 'default remains Sol'
-assert_equal sol "$("$SELECTOR" select release)" 'release remains Sol-only'
-assert_equal sol "$("$SELECTOR" select lower-stakes)" 'lower-stakes remains Sol-only'
-assert_equal sol "$("$SELECTOR" fallback)" 'fallback remains Sol'
-assert_equal $'route=sol\nfallback_route=sol\nsol_required=true\nopus_optional=false' \
-  "$("$SELECTOR" status release)" 'release status documents fixed policy'
+assert_equal astra "$("$SELECTOR" select default)" 'default uses Astra'
+assert_equal astra "$("$SELECTOR" select release)" 'release uses Astra'
+assert_equal astra "$("$SELECTOR" select lower-stakes)" 'lower-stakes uses Astra'
+assert_equal astra "$("$SELECTOR" fallback)" 'fallback uses Astra'
+assert_equal $'route=astra\nfallback_route=astra\nquota_checked=false\nopus_dispatch_allowed=false' \
+  "$("$SELECTOR" status release)" 'static release status cannot authorize Opus dispatch'
 
 assert_agent_permissions
 assert_absent '^[[:space:]]*(source|\.)[[:space:]]' "$SELECTOR" \
