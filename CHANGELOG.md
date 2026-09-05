@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.1]
+
+Add the SDK-owned `TimeshiftTestFixture` for application host tests of opaque
+timeshift targets, displayed-position estimates and command results. Tests can
+advance history, expire targets, replace subscriptions and hold dispatch replies
+without reflection, real players or duplicated app timing policy. Production
+constructors remain opaque; this is a backward-compatible consumer-testing fix.
+
 ## [0.6.0]
 
 Live timeshift observations expose an absolute observed history and opaque

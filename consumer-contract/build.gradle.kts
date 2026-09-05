@@ -50,6 +50,13 @@ dependencies {
     implementation("at.bernhardberger.tvheadend:sdk-testing") {
         version { strictly(sdkVersion) }
     }
+    testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testRuntimeOnly(libs.junit.platform.launcher)
+}
+
+tasks.withType<Test>().configureEach {
+    useJUnitPlatform()
 }
 
 configurations.configureEach {

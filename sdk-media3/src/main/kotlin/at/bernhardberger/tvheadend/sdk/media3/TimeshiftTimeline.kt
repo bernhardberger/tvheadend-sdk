@@ -75,6 +75,17 @@ public sealed interface TimeshiftContentSeekResult {
     ) : TimeshiftContentSeekResult
 }
 
+internal fun validateTimeshiftTarget(
+    target: TimeshiftContentTarget,
+    owner: Any?,
+    timeline: TimeshiftTimeline?,
+): TimeshiftContentSeekResult? = when {
+    owner == null || target.owner !== owner -> TimeshiftContentSeekResult.Replaced
+    timeline == null -> TimeshiftContentSeekResult.Unavailable
+    target.position !in timeline.start..timeline.end -> TimeshiftContentSeekResult.Expired
+    else -> null
+}
+
 /** Bounded output-coordinate segments; queued old content retains its own offset after a seek. */
 internal class TimeshiftPacketMapping {
     private class Segment(val start: Long, var end: Long, val offset: Long)

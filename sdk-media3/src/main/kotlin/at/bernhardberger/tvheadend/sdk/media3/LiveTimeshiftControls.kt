@@ -376,9 +376,7 @@ internal class LiveTimeshiftControlBridge(
     suspend fun seekContent(target: TimeshiftContentTarget): TimeshiftContentSeekResult {
         val handle = synchronized(lock) {
             val current = currentHandle() ?: return TimeshiftContentSeekResult.Replaced
-            if (target.owner !== current.attachment) return TimeshiftContentSeekResult.Replaced
-            val timeline = current.attachment.timeline() ?: return TimeshiftContentSeekResult.Unavailable
-            if (target.position !in timeline.start..timeline.end) return TimeshiftContentSeekResult.Expired
+            validateTimeshiftTarget(target, current.attachment, current.attachment.timeline())?.let { return it }
             current
         }
         val result = handle.subscription.seek(SubscriptionSeekTarget.Absolute(target.position))

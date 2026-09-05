@@ -286,6 +286,7 @@ internal class ModuleBoundaryTest {
             "src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/Artwork.kt",
             "src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/ServerProfileStore.kt",
             "../sdk-media3/src/main/kotlin/at/bernhardberger/tvheadend/sdk/media3/TvheadendPlaybackCoordinator.kt",
+            "../sdk-media3/src/main/kotlin/at/bernhardberger/tvheadend/sdk/media3/testing/TimeshiftTestFixture.kt",
         ).joinToString(" ") { path -> File(path).readText() }.replace(Regex("\\s+"), " ")
         val expectedSignatures = listOf(
             "public suspend fun connect(profile: ServerProfile): SessionCommandResult",
@@ -326,6 +327,7 @@ internal class ModuleBoundaryTest {
             "public suspend fun seekTimeshift(offset: Duration): TimeshiftCommandResult",
             "public suspend fun seekTimeshift(target: TimeshiftContentTarget): TimeshiftContentSeekResult",
             "public suspend fun timeshiftPlaybackPosition(): TimeshiftPlaybackPosition",
+            "public suspend fun seek( target: TimeshiftContentTarget, dispatch: suspend (TimeshiftContentTarget) -> TimeshiftContentSeekResult.Completed = { completed() }, ): TimeshiftContentSeekResult",
             "public suspend fun returnToLive(): TimeshiftCommandResult",
             "public suspend fun pauseTimeshift(): TimeshiftCommandResult",
             "public suspend fun resumeTimeshift(): TimeshiftCommandResult",
@@ -430,6 +432,7 @@ internal class ModuleBoundaryTest {
             "TimeshiftWallClockMapping",
             "TimeshiftPlaybackPosition",
             "TimeshiftContentSeekResult",
+            "TimeshiftTestFixture",
             "LivePlaybackTargetResult",
             "TimeshiftCommandDisposition",
             "PlaybackOutcomeCategory",
@@ -501,7 +504,7 @@ internal class ModuleBoundaryTest {
             ),
             fakePlaybackFunctions,
         )
-        assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 25)
+        assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 26)
 
         val coordinatorApi = File(
             "../sdk-media3/src/main/kotlin/at/bernhardberger/tvheadend/sdk/media3/" +
@@ -613,6 +616,7 @@ internal class ModuleBoundaryTest {
             "at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi",
             "at.bernhardberger.tvheadend.sdk.media3.PlaybackRecoveryReason",
             "at.bernhardberger.tvheadend.sdk.media3.TvheadendRecordingException",
+            "at.bernhardberger.tvheadend.sdk.media3.testing.TimeshiftTestFixture",
             "at.bernhardberger.tvheadend.sdk.core.TvheadendSession",
             "at.bernhardberger.tvheadend.sdk.core.EpgRepository",
             "at.bernhardberger.tvheadend.sdk.core.DvrRepository",

@@ -1,16 +1,16 @@
 # Versioning and compatibility
 
-The source is configured for the provisional `0.6.0` release under these
+The source is configured for the provisional `0.6.1` release under these
 coordinates:
 
-- `at.bernhardberger.tvheadend:sdk-android:0.6.0`
-- `at.bernhardberger.tvheadend:sdk-core:0.6.0`
-- `at.bernhardberger.tvheadend:sdk-media3:0.6.0`
-- `at.bernhardberger.tvheadend:sdk-playback:0.6.0`
-- `at.bernhardberger.tvheadend:sdk-testing:0.6.0`
+- `at.bernhardberger.tvheadend:sdk-android:0.6.1`
+- `at.bernhardberger.tvheadend:sdk-core:0.6.1`
+- `at.bernhardberger.tvheadend:sdk-media3:0.6.1`
+- `at.bernhardberger.tvheadend:sdk-playback:0.6.1`
+- `at.bernhardberger.tvheadend:sdk-testing:0.6.1`
 
-The `v0.5.0` tag marks the preceding release line. Source, local staging, and CI
-do not establish that the configured `0.6.0` coordinates are publicly available;
+The `v0.6.0` tag marks the preceding release. Source, local staging, and CI
+do not establish that the configured `0.6.1` coordinates are publicly available;
 check Maven Central before selecting them.
 
 The signed `v0.3.3` tag is retained as development-release evidence after its
@@ -31,9 +31,9 @@ While the major version is zero, the public API and behavior are provisional.
 No source, binary, or behavioral compatibility is promised for the provisional
 0.x line. A known breaking change requires the next minor version, not a patch
 version. Patch versions are reserved for backward-compatible fixes. The
-configured `0.6.0` line is the next provisional minor after the tagged `0.5.0`
-line. It adds content-stable timeshift targeting and packet-coordinate evidence,
-with intentional changes to the provisional packet and timeshift-state constructors.
+configured `0.6.1` patch fixes the missing public consumer-testing route for
+`0.6.0` timeshift contracts without changing existing public signatures or
+production coordinate semantics.
 
 The entire `1.x` line is reserved for a separately attended final stable
 release. Development packages must not select, recommend, tag, publish, or
