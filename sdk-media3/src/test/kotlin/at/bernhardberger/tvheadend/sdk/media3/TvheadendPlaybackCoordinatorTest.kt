@@ -721,6 +721,39 @@ internal class TvheadendPlaybackCoordinatorTest {
         }
 
     @Test
+    fun `sampled content position carries history a consumer can attribute to its subscription`() = runTest {
+        val fixture = CoordinatorFixture()
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+        fixture.coordinator.setLiveTarget(ChannelId(4), LivePlaybackOptions(timeshiftPeriod = 120.seconds))
+        fixture.player.attachTimeshift(FakeTimeshiftSubscription(120.seconds))
+        fixture.player.emitTimeshift(SubscriptionEvent.Timeshift(0, 0, 0, 100_000_000, 100))
+        val attachment = fixture.player.requireTimeshiftControls()
+        attachment.packetMapping.accept(10_000_000, 10_000_000)
+        attachment.packetMapping.accept(20_000_000, 20_000_000)
+        fixture.player.snapshot = snapshot(15, null)
+
+        val sampled = fixture.coordinator.timeshiftPlaybackPosition() as TimeshiftPlaybackPosition.Estimate
+        val observed = (fixture.coordinator.timeshiftState.value as LiveTimeshiftState.Available).timeline
+        assertEquals(100.seconds, sampled.timeline!!.end)
+        assertTrue(sampled.timeline!!.describesSameSubscription(observed))
+
+        // Edge advancement alone must stay attributable to the same subscription, so a consumer
+        // can reject only genuine replacement rather than every ordinary status update.
+        fixture.player.emitTimeshift(SubscriptionEvent.Timeshift(0, 0, 0, 110_000_000, 100))
+        val advanced = (fixture.coordinator.timeshiftState.value as LiveTimeshiftState.Available).timeline
+        assertTrue(sampled.timeline!!.describesSameSubscription(advanced))
+        assertNotEquals(sampled.timeline, advanced)
+
+        fixture.player.replaceTimeshiftPeriod(FakeTimeshiftSubscription(120.seconds))
+        fixture.player.emitTimeshift(SubscriptionEvent.Timeshift(0, 0, 0, 100_000_000, 100))
+        val replaced = (fixture.coordinator.timeshiftState.value as? LiveTimeshiftState.Available)?.timeline
+        assertFalse(sampled.timeline!!.describesSameSubscription(replaced))
+
+        fixture.coordinator.shutdown(1.seconds)
+        owner.join()
+    }
+
+    @Test
     fun `content position samples player rather than reader across pause queued seek and replacement`() = runTest {
         val fixture = CoordinatorFixture()
         val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }

@@ -343,12 +343,16 @@ internal class EpgReducer(
     private val channelAuthorityRevisions = linkedMapOf<ChannelId, Long>()
     private var authorityRevision = 0L
     private var queriesInvalidAfterRevision: Long? = null
+    // The last published snapshot stays valid until retained events, channels or query
+    // coverage change, so unrelated metadata traffic republishes the identical instance.
+    private var cachedSnapshot: EpgSnapshot? = null
 
     init {
         require(maximumRetainedEvents > 0) { "EPG retained-event limit must be positive" }
     }
 
     internal fun clear() {
+        cachedSnapshot = null
         events.clear()
         channelIds.clear()
         queriedToByChannel.clear()
@@ -362,25 +366,31 @@ internal class EpgReducer(
     internal fun accept(event: MetadataEvent) {
         when (event) {
             is MetadataEvent.ChannelAdded -> {
+                cachedSnapshot = null
                 recordChannelAuthority(event.channel.id)
                 channelIds.add(event.channel.id)
             }
             is MetadataEvent.ChannelUpdated -> {
+                cachedSnapshot = null
                 channelIds.add(event.channel.id)
             }
             is MetadataEvent.ChannelDeleted -> {
+                cachedSnapshot = null
                 recordChannelAuthority(event.channelId)
                 removeChannel(event.channelId)
             }
             is MetadataEvent.EventAdded -> {
+                cachedSnapshot = null
                 recordEventAuthority(event.event.id)
                 acceptAdd(event.event)
             }
             is MetadataEvent.EventUpdated -> {
+                cachedSnapshot = null
                 recordEventAuthority(event.event.id)
                 acceptUpdate(event.event)
             }
             is MetadataEvent.EventDeleted -> {
+                cachedSnapshot = null
                 recordEventAuthority(event.eventId)
                 events.remove(event.eventId)
             }
@@ -402,6 +412,7 @@ internal class EpgReducer(
     }
 
     internal fun reconcileChannels(validChannelIds: Collection<ChannelId>) {
+        cachedSnapshot = null
         val valid = validChannelIds.toSet()
         channelIds.clear()
         channelIds.addAll(validChannelIds)
@@ -427,6 +438,7 @@ internal class EpgReducer(
         if (channelId !in channelIds) return
         val previous = queriedToByChannel[channelId]
         if (previous == null || queriedTo > previous) {
+            cachedSnapshot = null
             queriedToByChannel[channelId] = queriedTo
         }
     }
@@ -470,6 +482,7 @@ internal class EpgReducer(
                         stagedEvents[event.id] = candidate
                     }
                 }
+                if (stagedEvents.isNotEmpty()) cachedSnapshot = null
                 stagedEvents.forEach { (eventId, event) -> events[eventId] = event }
                 recordSuccessfulQuery(query.channelId, queriedTo)
                 true
@@ -481,17 +494,42 @@ internal class EpgReducer(
 
     internal fun retainOverlapping(from: Instant, to: Instant) {
         require(to >= from) { "EPG retention stop must not precede start" }
-        events.entries.removeIf { entry -> !entry.value.shouldRetain(from, to) }
+        if (events.entries.removeIf { entry -> !entry.value.shouldRetain(from, to) }) {
+            cachedSnapshot = null
+        }
     }
 
     internal fun snapshot(): EpgSnapshot {
-        val visibleEvents = events.values.mapNotNull(ReducedEpgEvent::toPublicOrNull)
-            .filter { event -> event.channelId == null || event.channelId in channelIds }
-        val coverages = channelIds.map { channelId ->
-            coverage(channelId, visibleEvents)
+        cachedSnapshot?.let { return it }
+        val visibleEvents = ArrayList<EpgEvent>(events.size)
+        val boundsByChannel = HashMap<ChannelId, CoverageBounds>(channelIds.size * 2)
+        for (reduced in events.values) {
+            val event = reduced.toPublicOrNull() ?: continue
+            val channelId = event.channelId
+            if (channelId != null) {
+                if (channelId !in channelIds) continue
+                val bounds = boundsByChannel.getOrPut(channelId) { CoverageBounds(event.start, event.stop) }
+                if (event.start < bounds.from) bounds.from = event.start
+                if (event.stop > bounds.to) bounds.to = event.stop
+            }
+            visibleEvents.add(event)
         }
-        return EpgSnapshot.create(visibleEvents, coverages)
+        val coverages = channelIds.map { channelId ->
+            val queriedTo = queriedToByChannel[channelId]
+            when (val bounds = boundsByChannel[channelId]) {
+                null -> EpgCoverage.empty(channelId, queriedTo)
+                else -> EpgCoverage.create(
+                    channelId = channelId,
+                    coveredFrom = bounds.from,
+                    coveredTo = bounds.to,
+                    queriedTo = queriedTo,
+                )
+            }
+        }
+        return EpgSnapshot.create(visibleEvents, coverages).also { cachedSnapshot = it }
     }
+
+    private class CoverageBounds(var from: Instant, var to: Instant)
 
     private fun acceptAdd(event: GatewayEpgEvent) {
         ReducedEpgEvent.fromAdd(event)?.let { candidate ->
@@ -577,19 +615,6 @@ internal class EpgReducer(
         events.entries.removeIf { entry -> entry.value.channelId == channelId }
     }
 
-    private fun coverage(channelId: ChannelId, visibleEvents: List<EpgEvent>): EpgCoverage {
-        val channelEvents = visibleEvents.filter { event -> event.channelId == channelId }
-        val queriedTo = queriedToByChannel[channelId]
-        if (channelEvents.isEmpty()) {
-            return EpgCoverage.empty(channelId, queriedTo)
-        }
-        return EpgCoverage.create(
-            channelId = channelId,
-            coveredFrom = channelEvents.minOf(EpgEvent::start),
-            coveredTo = channelEvents.maxOf(EpgEvent::stop),
-            queriedTo = queriedTo,
-        )
-    }
 }
 
 private fun <T> Collection<T>.toImmutableList(): List<T> =

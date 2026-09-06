@@ -164,6 +164,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTermination
 import java.util.concurrent.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -2222,6 +2223,56 @@ internal class HtspProtocolGatewayTest {
         }
         assertSame(cancellation, cancelled)
 
+        gateway.shutdown()
+    }
+
+    @Test
+    fun `artwork access keeps at most three file handles open per connection`() = runTest {
+        val sourceGeneration = HtspConnectionGeneration()
+        val release = CompletableDeferred<Unit>()
+        var openHandles = 0
+        var peakOpenHandles = 0
+        var nextHandle = 100L
+        val fake = FakeHtspConnection().apply {
+            liveConnectionValue.value = liveConnection(sourceGeneration)
+            connectOutcome = HtspConnectOutcome.Connected(requireNotNull(liveConnectionValue.value))
+            beforeExecute = { request ->
+                executeResult = when (request) {
+                    is FileOpenRequest -> {
+                        openHandles++
+                        peakOpenHandles = maxOf(peakOpenHandles, openHandles)
+                        HtspResult.Ok(
+                            FileOpenResponse(id = nextHandle++, sizeBytes = 1, modifiedAtUnixSeconds = null),
+                        )
+                    }
+                    is FileReadRequest -> {
+                        release.await()
+                        HtspResult.Ok(FileReadResponse(HtspBinary(byteArrayOf(9))))
+                    }
+                    is FileCloseRequest -> {
+                        openHandles--
+                        HtspResult.Ok(FileCloseResponse)
+                    }
+                    else -> error("Unexpected request type")
+                }
+            }
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+
+        val loads = (1..8).map { index ->
+            backgroundScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                gateway.loadArtwork(generation, ArtworkId(index))
+            }
+        }
+        yield()
+        assertEquals(3, openHandles)
+        release.complete(Unit)
+        loads.forEach { it.join() }
+
+        assertEquals(3, peakOpenHandles)
+        assertEquals(0, openHandles)
         gateway.shutdown()
     }
 

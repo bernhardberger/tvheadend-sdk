@@ -222,6 +222,20 @@ public data class EpgSnapshot private constructor(
     public val events: List<EpgEvent>,
     public val coverages: List<EpgCoverage>,
 ) {
+    // Snapshots hold up to hundreds of thousands of events and are compared by state flows and
+    // UI keys on every publication. The content hash is computed once on the producing thread so
+    // that unequal snapshots are rejected without walking both event lists.
+    private val contentHash: Int = 31 * events.hashCode() + coverages.hashCode()
+
+    override fun equals(other: Any?): Boolean =
+        this === other ||
+            other is EpgSnapshot &&
+            contentHash == other.contentHash &&
+            events == other.events &&
+            coverages == other.coverages
+
+    override fun hashCode(): Int = contentHash
+
     override fun toString(): String = "EpgSnapshot(<redacted>)"
 
     public companion object {

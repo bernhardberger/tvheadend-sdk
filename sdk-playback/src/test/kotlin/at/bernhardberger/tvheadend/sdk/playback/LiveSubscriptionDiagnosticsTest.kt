@@ -85,6 +85,38 @@ internal class LiveSubscriptionDiagnosticsTest {
         assertFalse(current.toString().contains("Adapter A"))
         assertFalse(source.toString().contains("Service E"))
         assertEquals("LiveSubscriptionDiagnostics(<redacted>)", current.toString())
+        assertEquals(0L, current.clientDroppedPacketCount)
+    }
+
+    @Test
+    fun `client queue evictions accumulate separately from server drops`() {
+        var diagnostics = LiveSubscriptionDiagnostics.update(
+            previous = null,
+            event = SubscriptionEvent.Dropped(count = 3L),
+        )
+        assertEquals(3L, requireNotNull(diagnostics).clientDroppedPacketCount)
+        diagnostics = LiveSubscriptionDiagnostics.update(
+            diagnostics,
+            SubscriptionEvent.Queue(
+                packetCount = 1L,
+                byteCount = 2L,
+                delay = null,
+                bFrameDropCount = 40L,
+                pFrameDropCount = 0L,
+                iFrameDropCount = 0L,
+            ),
+        )
+        diagnostics = LiveSubscriptionDiagnostics.update(diagnostics, SubscriptionEvent.Dropped(count = 4L))
+
+        val current = requireNotNull(diagnostics)
+        assertEquals(7L, current.clientDroppedPacketCount)
+        assertEquals(40L, requireNotNull(current.queue).droppedBFrameCount)
+        assertNull(
+            LiveSubscriptionDiagnostics.update(
+                current,
+                SubscriptionEvent.Terminated(SubscriptionTermination.GENERATION_LOST),
+            ),
+        )
     }
 
     @Test

@@ -157,6 +157,19 @@ internal interface SessionMetadata {
 
     public fun acceptMetadata(event: MetadataEvent)
 
+    /**
+     * Accepts [event] while a burst of EPG traffic is being drained. EPG additions, updates and
+     * deletions are reduced immediately but their publication waits for [flushDeferredMetadata],
+     * so a burst of guide updates costs one snapshot instead of one per message. Every other event
+     * publishes as [acceptMetadata] does and carries any deferred EPG change with it.
+     */
+    public fun acceptMetadataDeferringEpg(event: MetadataEvent) {
+        acceptMetadata(event)
+    }
+
+    /** Publishes EPG changes accepted through [acceptMetadataDeferringEpg] since the last publication. */
+    public fun flushDeferredMetadata() {}
+
     public suspend fun awaitMetadataCurrent(generation: GatewayGeneration)
 
     public fun isKnownChannel(
@@ -382,6 +395,7 @@ internal class PhaseOneSessionMetadata(
     private var publishedConfigurations: List<DvrConfiguration>? = null
     private var publishedDiskSpace: DvrDiskSpace? = null
     private var synchronizedCurrent = false
+    private var epgPublicationDeferred = false
     private var serverFacts: GatewayServerFacts? = null
     private var dvrAccess: CapabilityAccess = CapabilityAccess.UNKNOWN
     private var capabilityRevision = 0L
@@ -498,6 +512,7 @@ internal class PhaseOneSessionMetadata(
             val previousFence = initialSync
             initialSync = CompletableDeferred()
             synchronizedCurrent = false
+            epgPublicationDeferred = false
             serverFacts = null
             dvrAccess = CapabilityAccess.UNKNOWN
             capabilityRevision += 1
@@ -536,6 +551,7 @@ internal class PhaseOneSessionMetadata(
             this.generation = generation
             initialSync = CompletableDeferred()
             synchronizedCurrent = false
+            epgPublicationDeferred = false
             serverFacts = null
             dvrAccess = CapabilityAccess.UNKNOWN
             capabilityRevision += 1
@@ -655,6 +671,24 @@ internal class PhaseOneSessionMetadata(
     }
 
     override fun acceptMetadata(event: MetadataEvent) {
+        acceptMetadata(event, deferEpgPublication = false)
+    }
+
+    override fun acceptMetadataDeferringEpg(event: MetadataEvent) {
+        acceptMetadata(event, deferEpgPublication = true)
+    }
+
+    override fun flushDeferredMetadata() {
+        synchronized(lock) {
+            if (!epgPublicationDeferred) return
+            epgPublicationDeferred = false
+            if (synchronizedCurrent) {
+                publishCurrent(reducer.snapshot(), epgReducer.snapshot(), dvrReducer.snapshot())
+            }
+        }
+    }
+
+    private fun acceptMetadata(event: MetadataEvent, deferEpgPublication: Boolean) {
         var acceptedDvrEvent: MetadataEvent? = null
         val completedFence = synchronized(lock) {
             if (event.generation !== generation) {
@@ -735,7 +769,11 @@ internal class PhaseOneSessionMetadata(
                         }
                     }
                     if (synchronizedCurrent) {
-                        publishCurrent(reducer.snapshot(), epgReducer.snapshot(), checkNotNull(dvrSnapshot))
+                        if (deferEpgPublication && event.isEpgEvent()) {
+                            epgPublicationDeferred = true
+                        } else {
+                            publishCurrent(reducer.snapshot(), epgReducer.snapshot(), checkNotNull(dvrSnapshot))
+                        }
                     }
                     if (dvrEventAccepted && event.isDvrMutationConfirmation()) {
                         acceptedDvrEvent = event
@@ -969,6 +1007,7 @@ internal class PhaseOneSessionMetadata(
         epgSnapshot: EpgSnapshot,
         dvrSnapshot: DvrSnapshot,
     ) {
+        epgPublicationDeferred = false
         mutableChannelsAndTags.value = ChannelRepositoryState.Current(catalog)
         publishedCatalog = (mutableChannelsAndTags.value as ChannelRepositoryState.Current).catalog
         mutableEpg.value = EpgRepositoryState.Current(epgSnapshot)
@@ -1067,6 +1106,11 @@ private fun Boolean?.toCapabilityAccess(): CapabilityAccess = when (this) {
     true -> CapabilityAccess.ALLOWED
     false -> CapabilityAccess.DENIED
 }
+
+private fun MetadataEvent.isEpgEvent(): Boolean =
+    this is MetadataEvent.EventAdded ||
+        this is MetadataEvent.EventUpdated ||
+        this is MetadataEvent.EventDeleted
 
 private fun MetadataEvent.isDvrMutationConfirmation(): Boolean = when (this) {
     is MetadataEvent.DvrEntryAdded,

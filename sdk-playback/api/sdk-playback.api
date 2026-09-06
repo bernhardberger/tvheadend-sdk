@@ -64,6 +64,7 @@ public final class at/bernhardberger/tvheadend/sdk/playback/LiveQueueDiagnostics
 public final class at/bernhardberger/tvheadend/sdk/playback/LiveSubscriptionDiagnostics {
 	public static final field Companion Lat/bernhardberger/tvheadend/sdk/playback/LiveSubscriptionDiagnostics$Companion;
 	public fun equals (Ljava/lang/Object;)Z
+	public final fun getClientDroppedPacketCount ()J
 	public final fun getFrontend ()Lat/bernhardberger/tvheadend/sdk/playback/LiveFrontendDiagnostics;
 	public final fun getQueue ()Lat/bernhardberger/tvheadend/sdk/playback/LiveQueueDiagnostics;
 	public final fun getSource ()Lat/bernhardberger/tvheadend/sdk/playback/LiveSubscriptionSource;

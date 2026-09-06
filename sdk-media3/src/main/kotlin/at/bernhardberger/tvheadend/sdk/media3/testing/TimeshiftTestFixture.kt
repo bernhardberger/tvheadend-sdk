@@ -62,8 +62,16 @@ public class TimeshiftTestFixture(public val grantedPeriod: Duration) {
     public fun playbackPosition(position: Duration?): TimeshiftPlaybackPosition = synchronized(lock) {
         require(position == null || (position.isFinite() && position >= Duration.ZERO))
         val current = owner
-        if (position == null || !active) TimeshiftPlaybackPosition.Unavailable
-        else TimeshiftPlaybackPosition.Estimate(TimeshiftContentTarget(current, position))
+        if (position == null || !active) {
+            TimeshiftPlaybackPosition.Unavailable
+        } else {
+            TimeshiftPlaybackPosition.Estimate(
+                target = TimeshiftContentTarget(current, position),
+                // Scripted evidence stays coherent: the sample reports the history currently
+                // scripted for the same subscription.
+                timeline = (mutableState.value as? LiveTimeshiftState.Available)?.timeline,
+            )
+        }
     }
 
     /** Create a scripted reader outcome. Even accepted seeks need not report a reached coordinate. */

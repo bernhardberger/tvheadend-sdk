@@ -196,17 +196,25 @@ public class LiveSubscriptionDiagnostics internal constructor(
     public val frontend: LiveFrontendDiagnostics?,
     /** Most recent server queue observation. */
     public val queue: LiveQueueDiagnostics?,
+    /**
+     * Packets the client's own protocol queue evicted since the subscription
+     * started because the consumer fell behind the server. Server-side drops
+     * are reported separately in [queue].
+     */
+    public val clientDroppedPacketCount: Long = 0L,
 ) {
     override fun equals(other: Any?): Boolean =
         other is LiveSubscriptionDiagnostics &&
             source == other.source &&
             frontend == other.frontend &&
-            queue == other.queue
+            queue == other.queue &&
+            clientDroppedPacketCount == other.clientDroppedPacketCount
 
     override fun hashCode(): Int {
         var result = source?.hashCode() ?: 0
         result = 31 * result + (frontend?.hashCode() ?: 0)
         result = 31 * result + (queue?.hashCode() ?: 0)
+        result = 31 * result + clientDroppedPacketCount.hashCode()
         return result
     }
 
@@ -219,11 +227,12 @@ public class LiveSubscriptionDiagnostics internal constructor(
             previous: LiveSubscriptionDiagnostics?,
             event: SubscriptionEvent,
         ): LiveSubscriptionDiagnostics? = when (event) {
-            is SubscriptionEvent.Started -> createOrNull(event.source, null, null)
+            is SubscriptionEvent.Started -> createOrNull(event.source, null, null, 0L)
             is SubscriptionEvent.Signal -> createOrNull(
                 previous?.source,
                 event.toFrontendDiagnostics(),
                 previous?.queue,
+                previous?.clientDroppedPacketCount ?: 0L,
             )
             is SubscriptionEvent.Queue -> createOrNull(
                 previous?.source,
@@ -239,12 +248,18 @@ public class LiveSubscriptionDiagnostics internal constructor(
                     droppedPFrameCount = event.pFrameDropCount,
                     droppedIFrameCount = event.iFrameDropCount,
                 ),
+                previous?.clientDroppedPacketCount ?: 0L,
+            )
+            is SubscriptionEvent.Dropped -> createOrNull(
+                previous?.source,
+                previous?.frontend,
+                previous?.queue,
+                (previous?.clientDroppedPacketCount ?: 0L) + event.count,
             )
             is SubscriptionEvent.Stopped,
             is SubscriptionEvent.Terminated,
             -> null
             is SubscriptionEvent.Descramble,
-            is SubscriptionEvent.Dropped,
             is SubscriptionEvent.Grace,
             is SubscriptionEvent.Packet,
             is SubscriptionEvent.Skipped,
@@ -258,11 +273,12 @@ public class LiveSubscriptionDiagnostics internal constructor(
             source: LiveSubscriptionSource?,
             frontend: LiveFrontendDiagnostics?,
             queue: LiveQueueDiagnostics?,
+            clientDroppedPacketCount: Long,
         ): LiveSubscriptionDiagnostics? =
-            if (source == null && frontend == null && queue == null) {
+            if (source == null && frontend == null && queue == null && clientDroppedPacketCount == 0L) {
                 null
             } else {
-                LiveSubscriptionDiagnostics(source, frontend, queue)
+                LiveSubscriptionDiagnostics(source, frontend, queue, clientDroppedPacketCount)
             }
     }
 }

@@ -404,7 +404,10 @@ internal class LiveTimeshiftControlBridge(
                 return@synchronized TimeshiftPlaybackPosition.Unavailable
             }
             attachment.packetMapping.map(position.inWholeMicroseconds)?.let {
-                TimeshiftPlaybackPosition.Estimate(TimeshiftContentTarget(attachment, it.microseconds))
+                TimeshiftPlaybackPosition.Estimate(
+                    target = TimeshiftContentTarget(attachment, it.microseconds),
+                    timeline = attachment.timeline(),
+                )
             } ?: TimeshiftPlaybackPosition.Unavailable
         }
 
@@ -497,10 +500,7 @@ internal class LiveTimeshiftControlBridge(
                         }
                         return
                     }
-                    is SubscriptionEvent.Dropped -> {
-                        packetMapping.discontinuity()
-                        return
-                    }
+                    is SubscriptionEvent.Dropped -> packetMapping.discontinuity()
                     is SubscriptionEvent.Started -> {
                         issueObserved = true
                         latestIssue = event.issue
@@ -745,6 +745,7 @@ private fun SubscriptionEvent.isDiagnosticsObservation(): Boolean =
     this is SubscriptionEvent.Started ||
         this is SubscriptionEvent.Queue ||
         this is SubscriptionEvent.Signal ||
+        this is SubscriptionEvent.Dropped ||
         this is SubscriptionEvent.Stopped ||
         this is SubscriptionEvent.Terminated
 

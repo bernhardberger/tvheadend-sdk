@@ -16,6 +16,17 @@ public class TimeshiftTimeline internal constructor(
     public val start: Duration,
     public val end: Duration,
 ) {
+    /**
+     * True when [other] describes the same subscription, whatever its edge has since done.
+     *
+     * A consumer that samples a position and reads history separately can be interrupted by
+     * subscription replacement between the two reads. Coordinates from different subscriptions
+     * are unrelated, so a consumer must be able to reject that pairing without also rejecting
+     * ordinary edge advancement, which equality alone cannot distinguish.
+     */
+    public fun describesSameSubscription(other: TimeshiftTimeline?): Boolean =
+        other != null && owner === other.owner
+
     /** Select once; subsequent edge advancement does not change the selected content coordinate. */
     public fun select(position: Duration): TimeshiftContentTarget? =
         position.takeIf { it.isFinite() && it in start..end }
@@ -50,6 +61,13 @@ public sealed interface TimeshiftPlaybackPosition {
      */
     public class Estimate internal constructor(
         public val target: TimeshiftContentTarget,
+        /**
+         * Seekable history observed in the same sample as [target], null when none was observed.
+         *
+         * Use [TimeshiftTimeline.describesSameSubscription] against separately observed history
+         * to confirm both describe one subscription before combining them.
+         */
+        public val timeline: TimeshiftTimeline?,
     ) : TimeshiftPlaybackPosition
 }
 

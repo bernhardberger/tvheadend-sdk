@@ -29,7 +29,7 @@ plugins {
 }
 
 group = "at.bernhardberger.tvheadend"
-version = "0.6.1"
+version = "0.7.0"
 
 val sdkModules = setOf(
     "sdk-android",

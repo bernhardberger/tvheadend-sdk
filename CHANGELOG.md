@@ -1,5 +1,53 @@
 # Changelog
 
+## [0.7.0]
+
+Guide traffic no longer starves the consuming process. Every HTSP EPG add,
+update or delete used to rebuild the full `EpgSnapshot`, including a per-channel
+coverage scan over all retained events, and publish a new `SessionObservation`
+whose equality walked the whole event list again in every state flow and UI
+comparison. Profiling a small TV showed most of the process busy in that path
+while the player idled. The session now reduces a burst of guide updates and
+publishes once per drained burst (at least every 512 events under a continuous
+stream), the snapshot builds coverage in a single pass and is reused unchanged
+until retained events actually change, and `EpgSnapshot` compares through a
+content hash computed once on the producing thread. Structural equality is
+unchanged: equal snapshots remain equal.
+
+Live recovery no longer treats an ordinary tune as a stall. A target that has
+not yet presented selected audio is still being tuned, descrambled and
+delivered, so it now runs on a separate `preparationDurationMillis` budget
+(20 seconds by default) instead of the six-second stuck-buffering budget. Since
+`0.6.0` that shared budget escalated every tune slower than six seconds to
+`AUDIO_RECOVERY_EXHAUSTED`, and each replacement target restarted the same
+timer, so a slow server produced an unbounded retune loop. The short budget
+still applies once a target has presented audio, and a new target resets that
+observation.
+
+`TimeshiftPlaybackPosition.Estimate` now carries the `timeline` observed in the
+same sample as its content coordinate, and `TimeshiftTimeline` gains
+`describesSameSubscription`. A consumer that samples a position and reads
+history separately can be interrupted by subscription replacement between the
+two reads; combining those coordinates reports a false distance behind live and
+can authorise a seek on the successor derived from its predecessor. Equality
+alone cannot separate that case from ordinary edge advancement.
+
+Artwork loads now hold at most three HTSP file handles open per connection.
+Each load keeps a file open across `fileOpen`, chunked `fileRead` and
+`fileClose` round trips; an unbounded burst, such as a channel list scrolling
+picons, exhausted the server's per-connection file budget and turned every
+further load into a rejection. Additional loads wait for a free handle instead.
+
+`LiveSubscriptionDiagnostics` gains `clientDroppedPacketCount`, the number of
+packets the client's own protocol queue evicted because the consumer fell behind.
+Server-side frame drops were already reported in `queue`; without the client
+count a consumer could not tell a starved server from a slow client.
+
+The added `PlaybackRecoveryPolicy`, `Estimate` and `LiveSubscriptionDiagnostics` constructor fields are
+intentional provisional ABI changes from `0.6.1`. HTSP remains pinned to
+`0.7.0`; no protocol dependency substitution or new minimum TVHeadend version is
+introduced.
+
 ## [0.6.1]
 
 Add the SDK-owned `TimeshiftTestFixture` for application host tests of opaque

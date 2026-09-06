@@ -12,6 +12,14 @@ import androidx.media3.common.Tracks
 public data class PlaybackRecoveryPolicy public constructor(
     public val initialBufferingDurationMillis: Long = 6_000L,
     public val postAudioDisableDurationMillis: Long = 6_000L,
+    /**
+     * Budget for a target that has never presented selected audio.
+     *
+     * A live subscription buffers without any track for as long as the server needs to tune the
+     * mux, descramble it, and deliver the first packets. That is ordinary progress, not a stall,
+     * so it must not share the much shorter stuck-buffering budget.
+     */
+    public val preparationDurationMillis: Long = 20_000L,
 ) {
     init {
         require(initialBufferingDurationMillis > 0L) {
@@ -19,6 +27,9 @@ public data class PlaybackRecoveryPolicy public constructor(
         }
         require(postAudioDisableDurationMillis > 0L) {
             "Post-audio-disable duration must be positive"
+        }
+        require(preparationDurationMillis > 0L) {
+            "Preparation duration must be positive"
         }
     }
 }
@@ -135,6 +146,7 @@ internal class PlaybackRecoveryStateMachine(
     private var active = false
     private var terminal = false
     private var audioDisabled = false
+    private var sawSelectedAudio = false
 
     fun beginPlaybackTarget() {
         targetGeneration += 1L
@@ -143,12 +155,14 @@ internal class PlaybackRecoveryStateMachine(
         active = true
         terminal = false
         audioDisabled = false
+        sawSelectedAudio = false
         setAudioDisabled(false)
     }
 
     fun onPlaybackStateChanged(state: Int) {
         if (!active || terminal) return
         playbackState = state
+        observeSelectedAudio()
         when (state) {
             Player.STATE_BUFFERING -> evaluateBuffering()
             Player.STATE_READY, Player.STATE_IDLE -> cancelTimer()
@@ -157,7 +171,11 @@ internal class PlaybackRecoveryStateMachine(
     }
 
     fun onTracksChanged() {
-        if (!active || terminal || playbackState != Player.STATE_BUFFERING) return
+        if (!active || terminal) return
+        // Audio can be selected while the target is ready and lost again before the next stall.
+        // Latch it whenever it is seen, even though timers are only armed while buffering.
+        observeSelectedAudio()
+        if (playbackState != Player.STATE_BUFFERING) return
         evaluateBuffering()
     }
 
@@ -171,11 +189,18 @@ internal class PlaybackRecoveryStateMachine(
         }
     }
 
+    private fun observeSelectedAudio() {
+        if (hasSelectedAudio()) sawSelectedAudio = true
+    }
+
     private fun evaluateBuffering() {
-        if (audioDisabled) {
-            schedule(TimerStage.POST_AUDIO_DISABLE)
-        } else {
-            schedule(TimerStage.INITIAL_BUFFERING)
+        observeSelectedAudio()
+        when {
+            audioDisabled -> schedule(TimerStage.POST_AUDIO_DISABLE)
+            // A target that has not presented audio yet is still being tuned and prepared.
+            // Only a target that once had audio is treated as stuck on the short budget.
+            sawSelectedAudio -> schedule(TimerStage.INITIAL_BUFFERING)
+            else -> schedule(TimerStage.PREPARATION)
         }
     }
 
@@ -186,6 +211,7 @@ internal class PlaybackRecoveryStateMachine(
         val expectedTimer = timerGeneration
         timerStage = stage
         val delayMillis = when (stage) {
+            TimerStage.PREPARATION -> policy.preparationDurationMillis
             TimerStage.INITIAL_BUFFERING -> policy.initialBufferingDurationMillis
             TimerStage.POST_AUDIO_DISABLE -> policy.postAudioDisableDurationMillis
         }
@@ -200,10 +226,10 @@ internal class PlaybackRecoveryStateMachine(
                 timer = null
                 timerStage = null
                 when (stage) {
+                    TimerStage.PREPARATION,
+                    TimerStage.POST_AUDIO_DISABLE,
+                    -> escalate(PlaybackRecoveryReason.AUDIO_RECOVERY_EXHAUSTED)
                     TimerStage.INITIAL_BUFFERING -> completeInitialRecovery()
-                    TimerStage.POST_AUDIO_DISABLE -> {
-                        escalate(PlaybackRecoveryReason.AUDIO_RECOVERY_EXHAUSTED)
-                    }
                 }
             }
         }
@@ -235,6 +261,7 @@ internal class PlaybackRecoveryStateMachine(
     }
 
     private enum class TimerStage {
+        PREPARATION,
         INITIAL_BUFFERING,
         POST_AUDIO_DISABLE,
     }

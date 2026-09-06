@@ -26,6 +26,7 @@ import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
+import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.ProtocolGateway
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
@@ -39,11 +40,13 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
@@ -390,7 +393,7 @@ internal class ConnectionOwner(
             metadata.applyDvrAccess(connection.generation, connection.dvrAccess)
             metadata.publishServerFacts(connection.generation, connection.serverFacts)
             metadataWorker = launch(start = CoroutineStart.UNDISPATCHED) {
-                gateway.metadata.collect(metadata::acceptMetadata)
+                drainMetadata(gateway.metadata, metadata)
             }
             commitState(token, SessionState.Synchronizing)
             val liveAdmissionCommitted = gateway.commitIfLive(connection.generation) {
@@ -785,3 +788,44 @@ private fun Boolean?.toCapabilityAccess(): CapabilityAccess = when (this) {
     false -> CapabilityAccess.DENIED
     null -> CapabilityAccess.UNKNOWN
 }
+
+/**
+ * Reduces metadata as it arrives but publishes EPG traffic once per drained burst. Guide updates
+ * arrive continuously from broadcast EIT, and each publication rebuilds the full EPG snapshot, so
+ * publishing per message starves the rest of the process on small devices.
+ *
+ * The buffering collector subscribes before this function first suspends so no event is lost
+ * between subscription and the first drain. Publication is bounded by [burstLimit] events so a
+ * continuous stream still surfaces regularly.
+ */
+internal suspend fun drainMetadata(
+    events: Flow<MetadataEvent>,
+    metadata: SessionMetadata,
+    burstLimit: Int = METADATA_BURST_LIMIT,
+) = coroutineScope {
+    val buffered = Channel<MetadataEvent>(METADATA_BUFFER_CAPACITY)
+    launch(start = CoroutineStart.UNDISPATCHED) {
+        try {
+            events.collect { event -> buffered.send(event) }
+        } finally {
+            buffered.close()
+        }
+    }
+    while (true) {
+        val first = buffered.receiveCatching().getOrNull() ?: break
+        metadata.acceptMetadataDeferringEpg(first)
+        var drained = 1
+        while (drained < burstLimit) {
+            val next = buffered.tryReceive().getOrNull() ?: break
+            metadata.acceptMetadataDeferringEpg(next)
+            drained += 1
+        }
+        metadata.flushDeferredMetadata()
+    }
+}
+
+// Enough to absorb an EIT burst without stalling the transport reader; sends suspend past it.
+private const val METADATA_BUFFER_CAPACITY = 4_096
+
+// One publication at least every this many drained events under continuous traffic.
+private const val METADATA_BURST_LIMIT = 512

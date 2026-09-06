@@ -5,6 +5,7 @@ package at.bernhardberger.tvheadend.sdk.media3
 import androidx.media3.common.Player
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -16,12 +17,61 @@ class PlaybackRecoveryStateMachineTest {
 
         assertEquals(6_000L, policy.initialBufferingDurationMillis)
         assertEquals(6_000L, policy.postAudioDisableDurationMillis)
+        assertEquals(20_000L, policy.preparationDurationMillis)
         assertThrows(IllegalArgumentException::class.java) {
             PlaybackRecoveryPolicy(initialBufferingDurationMillis = 0L)
         }
         assertThrows(IllegalArgumentException::class.java) {
             PlaybackRecoveryPolicy(postAudioDisableDurationMillis = -1L)
         }
+        assertThrows(IllegalArgumentException::class.java) {
+            PlaybackRecoveryPolicy(preparationDurationMillis = 0L)
+        }
+    }
+
+    @Test
+    fun `a target that never presented audio buffers on the preparation budget`() {
+        val harness = RecoveryHarness()
+        harness.selectedAudio = false
+        harness.begin()
+
+        harness.playback(Player.STATE_BUFFERING)
+
+        assertEquals(listOf(20_000L), harness.scheduler.activeDelays())
+        assertTrue(harness.reasons.isEmpty())
+    }
+
+    @Test
+    fun `preparation budget does not restart while the target keeps buffering`() {
+        val harness = RecoveryHarness()
+        harness.selectedAudio = false
+        harness.begin()
+
+        harness.playback(Player.STATE_BUFFERING)
+        val original = harness.scheduler.lastScheduled()
+        harness.machine.onTracksChanged()
+        harness.playback(Player.STATE_BUFFERING)
+
+        // The original deadline must survive: rescheduling an equal delay would silently restore
+        // the unbounded timer this stage exists to prevent.
+        assertSame(original, harness.scheduler.lastScheduled())
+        assertFalse(original.cancelled)
+        assertEquals(1, harness.scheduler.scheduledCount())
+    }
+
+    @Test
+    fun `audio selected while ready keeps the short budget for a later stall`() {
+        val harness = RecoveryHarness()
+        harness.selectedAudio = false
+        harness.begin()
+        harness.playback(Player.STATE_BUFFERING)
+
+        harness.selectedAudio = true
+        harness.playback(Player.STATE_READY)
+        harness.selectedAudio = false
+        harness.playback(Player.STATE_BUFFERING)
+
+        assertEquals(listOf(6_000L), harness.scheduler.activeDelays())
     }
 
     @Test
@@ -31,7 +81,7 @@ class PlaybackRecoveryStateMachineTest {
         harness.begin()
 
         harness.playback(Player.STATE_BUFFERING)
-        assertEquals(listOf(6_000L), harness.scheduler.activeDelays())
+        assertEquals(listOf(20_000L), harness.scheduler.activeDelays())
         assertFalse(harness.audioDisabled)
 
         harness.selectedAudio = true
@@ -97,6 +147,33 @@ class PlaybackRecoveryStateMachineTest {
 
         assertFalse(harness.audioDisabled)
         assertEquals(listOf(PlaybackRecoveryReason.AUDIO_RECOVERY_EXHAUSTED), harness.reasons)
+    }
+
+    @Test
+    fun `rebuffering after audio was presented keeps the short stuck budget`() {
+        val harness = RecoveryHarness()
+        harness.begin()
+        harness.playback(Player.STATE_BUFFERING)
+        harness.playback(Player.STATE_READY)
+
+        harness.selectedAudio = false
+        harness.playback(Player.STATE_BUFFERING)
+
+        assertEquals(listOf(6_000L), harness.scheduler.activeDelays())
+    }
+
+    @Test
+    fun `a new target returns to the preparation budget`() {
+        val harness = RecoveryHarness()
+        harness.begin()
+        harness.playback(Player.STATE_BUFFERING)
+        harness.playback(Player.STATE_READY)
+
+        harness.selectedAudio = false
+        harness.begin()
+        harness.playback(Player.STATE_BUFFERING)
+
+        assertEquals(listOf(20_000L), harness.scheduler.activeDelays())
     }
 
     @Test
@@ -219,6 +296,8 @@ private class ManualRecoveryScheduler : RecoveryScheduler {
     fun activeDelays(): List<Long> = tasks.filterNot(ManualRecoveryTask::cancelled).map { it.delayMillis }
 
     fun lastScheduled(): ManualRecoveryTask = tasks.last()
+
+    fun scheduledCount(): Int = tasks.size
 
     fun runNextActive() {
         val task = tasks.firstOrNull { !it.cancelled } ?: error("No active task")

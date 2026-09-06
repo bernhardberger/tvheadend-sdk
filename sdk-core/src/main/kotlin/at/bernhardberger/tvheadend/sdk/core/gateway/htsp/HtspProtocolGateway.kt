@@ -185,6 +185,8 @@ import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.transform
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -202,6 +204,14 @@ internal class HtspProtocolGateway internal constructor(
     ) : this(createHtspConnection(ioDispatcher), epgCoveragePolicy)
 
     private val generationLock = Any()
+
+    /**
+     * Bounds concurrent artwork file handles on this connection. Each artwork load holds an HTSP
+     * file open across several round trips; an unbounded burst (a channel list scrolling picons)
+     * exhausts the server's per-connection file budget and turns every further load into a
+     * rejection.
+     */
+    private val artworkFiles = Semaphore(MAX_CONCURRENT_ARTWORK_FILES)
     private val gatewayGenerations =
         WeakHashMap<HtspConnectionGeneration, WeakReference<GatewayGeneration>>()
     private val htspGenerations = WeakHashMap<GatewayGeneration, HtspConnectionGeneration>()
@@ -584,6 +594,13 @@ internal class HtspProtocolGateway internal constructor(
     ).toCheckedGatewayResult(::acceptedDvrAcknowledgement)
 
     override suspend fun loadArtwork(
+        generation: GatewayGeneration,
+        id: ArtworkId,
+    ): GatewayResult<ByteArray> = artworkFiles.withPermit {
+        loadArtworkFile(generation, id)
+    }
+
+    private suspend fun loadArtworkFile(
         generation: GatewayGeneration,
         id: ArtworkId,
     ): GatewayResult<ByteArray> {
@@ -1793,6 +1810,7 @@ private const val NO_INPUT_STATUS = "No input detected"
 private const val ARTWORK_FILE_SELECTOR_PREFIX = "imagecache/"
 private const val ARTWORK_READ_CHUNK_BYTES = 64 * 1024
 private const val MAX_ARTWORK_BYTES = 16 * 1024 * 1024
+private const val MAX_CONCURRENT_ARTWORK_FILES = 3
 private const val ABSOLUTE_SKIP_FLAG = 1L
 private const val RELATIVE_SKIP_FLAG = 0L
 private const val ASYNC_EPG_MINIMUM_PROTOCOL_VERSION = 6

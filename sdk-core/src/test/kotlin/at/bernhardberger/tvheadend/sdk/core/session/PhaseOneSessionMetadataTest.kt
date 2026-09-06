@@ -27,6 +27,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrUpdateProvenance
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgUpdate
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayServerFacts
@@ -44,6 +45,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotSame
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -973,6 +975,68 @@ internal class PhaseOneSessionMetadataTest {
     private fun PhaseOneSessionMetadata.currentSnapshot() =
         (channelsAndTags.value as ChannelRepositoryState.Current).catalog
 
+    @Test
+    fun `deferred EPG traffic publishes once when flushed`() = runTest {
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(id = 1, name = "one")))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        val synced = metadata.observation.value
+        val syncedEpg = metadata.currentEpgSnapshot()
+
+        metadata.acceptMetadataDeferringEpg(MetadataEvent.EventAdded(generation, epgEvent(4, 1, 0, 10)))
+        metadata.acceptMetadataDeferringEpg(MetadataEvent.EventAdded(generation, epgEvent(5, 1, 10, 20)))
+        assertSame(synced, metadata.observation.value)
+        assertSame(syncedEpg, metadata.currentEpgSnapshot())
+
+        metadata.flushDeferredMetadata()
+        val flushed = metadata.observation.value
+        assertNotSame(synced, flushed)
+        assertEquals(listOf(4L, 5L), metadata.currentEpgSnapshot().events.map { it.id.value })
+        assertEquals(Instant.fromEpochSeconds(0), metadata.currentEpgSnapshot().coverages.single().coveredFrom)
+        assertEquals(Instant.fromEpochSeconds(20), metadata.currentEpgSnapshot().coverages.single().coveredTo)
+
+        metadata.flushDeferredMetadata()
+        assertSame(flushed, metadata.observation.value)
+    }
+
+    @Test
+    fun `a non-EPG event carries deferred EPG changes immediately`() = runTest {
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(id = 1, name = "one")))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+
+        metadata.acceptMetadataDeferringEpg(MetadataEvent.EventAdded(generation, epgEvent(4, 1, 0, 10)))
+        metadata.acceptMetadataDeferringEpg(MetadataEvent.DvrEntryAdded(generation, dvrEntry(8, "one")))
+        assertEquals(listOf(4L), metadata.currentEpgSnapshot().events.map { it.id.value })
+        assertEquals(listOf(8L), metadata.currentDvrSnapshot().entries.map { it.id.value })
+
+        val published = metadata.observation.value
+        metadata.flushDeferredMetadata()
+        assertSame(published, metadata.observation.value)
+    }
+
+    @Test
+    fun `unrelated metadata republishes the identical EPG snapshot instance`() = runTest {
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(id = 1, name = "one")))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(4, 1, 0, 10)))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        val epg = metadata.currentEpgSnapshot()
+
+        metadata.acceptMetadata(MetadataEvent.DvrEntryAdded(generation, dvrEntry(8, "one")))
+        assertSame(epg, metadata.currentEpgSnapshot())
+
+        metadata.acceptMetadata(MetadataEvent.EventUpdated(generation, epgUpdate(4, title = "changed")))
+        assertNotSame(epg, metadata.currentEpgSnapshot())
+        assertEquals("changed", metadata.currentEpgSnapshot().events.single().title)
+    }
+
     private fun PhaseOneSessionMetadata.currentEpgSnapshot() =
         (observation.value.epgState as EpgRepositoryState.Current).snapshot
 
@@ -1046,6 +1110,9 @@ internal class PhaseOneSessionMetadataTest {
         stop = Instant.fromEpochSeconds(stop),
         title = title,
     )
+
+    private fun epgUpdate(id: Long, title: String): GatewayEpgUpdate =
+        GatewayEpgUpdate(id = EventId(id), title = title)
 
     private fun service(name: String): GatewayChannelService = GatewayChannelService(
         name = name,
