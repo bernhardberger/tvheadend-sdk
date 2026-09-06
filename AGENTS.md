@@ -34,6 +34,11 @@ notices, and do not describe this project as official TVHeadend software.
   the first verdict and findings. UX visual review remains distinct.
 - Give children the relevant diff, evidence, question and stop condition. They
   retain their configured permissions and cannot create a new work stream.
+- `sdk-implementer` is the one writable child. It may edit and run Gradle
+  inside a single delegated slice with named paths, tests and gate, but never
+  commits, tags, publishes, reaches a server or runs live-tagged tests. The
+  primary reviews its diff, runs the final gate and owns commits. Never run it
+  while another writer is editing the same worktree.
   The primary adjudicates supported findings and owns fixes. No automatic third
   review or broad repeat audit; follow up only on unresolved findings or material
   changes, bounded to affected behavior.
