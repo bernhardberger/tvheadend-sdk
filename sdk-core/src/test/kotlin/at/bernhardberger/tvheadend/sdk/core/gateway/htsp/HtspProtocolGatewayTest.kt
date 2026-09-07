@@ -1064,6 +1064,9 @@ internal class HtspProtocolGatewayTest {
                 liveConnectionValue.value = liveConnection(sourceGeneration, protocolVersion)
                 connectOutcome = HtspConnectOutcome.Connected(requireNotNull(liveConnectionValue.value))
                 eventsFlow = metadataEvents
+                subscriptionFlow = flowOf(
+                    HtspSubscriptionEvent.Timeshift(HtspTimeshiftStatusMessage(77, 0, 0, 0, 100, 100)),
+                )
                 beforeExecute = { request ->
                     requests += request
                     when (request) {
@@ -1088,6 +1091,8 @@ internal class HtspProtocolGatewayTest {
 
             val result = gateway.enableInitialMetadata(generation)
             assertSame(sourceGeneration, fake.lastExpectedGeneration)
+            val status = gateway.subscription(generation, SubscriptionId(77)).toList().single() as SubscriptionEvent.Timeshift
+            assertEquals(protocolVersion >= 6 && serverTimeResult is HtspResult.Ok, status.estimatedServerTime != null)
             return result to requests
         }
 
@@ -1131,6 +1136,9 @@ internal class HtspProtocolGatewayTest {
         val timeRequestGenerations = mutableListOf<HtspConnectionGeneration?>()
         val fake = FakeHtspConnection().apply {
             eventsFlow = metadataEvents
+            subscriptionFlow = flowOf(
+                HtspSubscriptionEvent.Timeshift(HtspTimeshiftStatusMessage(77, 0, 0, 0, 100, 100)),
+            )
             beforeExecute = { request ->
                 requests += request
                 when (request) {
@@ -1169,8 +1177,15 @@ internal class HtspProtocolGatewayTest {
             val generation = (gateway.connect(ServerConfiguration("host-$index", 9_982))
                 as GatewayConnectResult.Connected).connection.generation
 
+            val before = gateway.subscription(generation, SubscriptionId(77)).toList().single() as SubscriptionEvent.Timeshift
+            assertEquals(null, before.estimatedServerTime)
             assertTrue(gateway.enableInitialMetadata(generation) is GatewayResult.Ok)
             assertSame(sourceGeneration, fake.lastExpectedGeneration)
+            val after = gateway.subscription(generation, SubscriptionId(77)).toList().single() as SubscriptionEvent.Timeshift
+            assertTrue(requireNotNull(after.estimatedServerTime).epochSeconds >= (index + 1) * 1_000_000L)
+            fake.liveConnectionValue.value = null
+            val retired = gateway.subscription(generation, SubscriptionId(77)).toList().single() as SubscriptionEvent.Timeshift
+            assertEquals(null, retired.estimatedServerTime)
         }
 
         val asyncRequests = requests.filterIsInstance<EnableAsyncMetadataRequest>()

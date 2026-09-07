@@ -1,6 +1,7 @@
 package at.bernhardberger.tvheadend.sdk.media3
 
 import kotlin.time.Duration
+import kotlin.time.Instant
 
 /** A content coordinate scoped to one subscription. Never persist or reuse after replacement. */
 public class TimeshiftContentTarget internal constructor(
@@ -15,6 +16,7 @@ public class TimeshiftTimeline internal constructor(
     internal val owner: Any,
     public val start: Duration,
     public val end: Duration,
+    public val wallClockMapping: TimeshiftWallClockMapping = TimeshiftWallClockMapping.Unavailable,
 ) {
     /**
      * True when [other] describes the same subscription, whatever its edge has since done.
@@ -32,21 +34,31 @@ public class TimeshiftTimeline internal constructor(
         position.takeIf { it.isFinite() && it in start..end }
             ?.let { TimeshiftContentTarget(owner, it) }
 
-    /** No UTC anchor is supplied by the supported timeshift status / mux-packet path. */
-    public val wallClockMapping: TimeshiftWallClockMapping
-        get() = TimeshiftWallClockMapping.UNAVAILABLE
-
     override fun equals(other: Any?): Boolean = other is TimeshiftTimeline &&
-        owner === other.owner && start == other.start && end == other.end
+        owner === other.owner && start == other.start && end == other.end && wallClockMapping == other.wallClockMapping
 
     override fun hashCode(): Int = 31 * (31 * System.identityHashCode(owner) + start.hashCode()) + end.hashCode()
 
     override fun toString(): String = "TimeshiftTimeline(start=$start, end=$end)"
 }
 
-/** Programme-time support is separate from stream coordinates. No local-receipt-time guess is made. */
-public enum class TimeshiftWallClockMapping {
-    UNAVAILABLE,
+/** Schedule-grade approximation only: transport, buffering and clock errors have no guaranteed bound. */
+public sealed interface TimeshiftWallClockMapping {
+    /** No usable server-time/live-edge association in this observation. */
+    public data object Unavailable : TimeshiftWallClockMapping
+
+    /** Immutable live-edge association. Retain this snapshot throughout a preview. */
+    public class Estimate internal constructor(
+        private val owner: Any,
+        public val contentAnchor: Duration,
+        public val estimatedWallClockAnchor: Instant,
+    ) : TimeshiftWallClockMapping {
+        /** Null for another subscription. This does not validate current seekability or retarget content. */
+        public fun estimate(target: TimeshiftContentTarget): Instant? =
+            if (target.owner === owner) estimatedWallClockAnchor + (target.position - contentAnchor) else null
+
+        override fun toString(): String = "TimeshiftWallClockMapping.Estimate"
+    }
 }
 
 /** Mapping of the sampled Media3 position, never the server reader or newest queued packet. */

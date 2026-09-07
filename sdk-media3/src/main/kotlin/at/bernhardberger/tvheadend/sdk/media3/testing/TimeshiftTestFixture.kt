@@ -6,6 +6,7 @@ import at.bernhardberger.tvheadend.sdk.media3.TimeshiftContentSeekResult
 import at.bernhardberger.tvheadend.sdk.media3.TimeshiftContentTarget
 import at.bernhardberger.tvheadend.sdk.media3.TimeshiftPlaybackPosition
 import at.bernhardberger.tvheadend.sdk.media3.TimeshiftTimeline
+import at.bernhardberger.tvheadend.sdk.media3.TimeshiftWallClockMapping
 import at.bernhardberger.tvheadend.sdk.media3.validateTimeshiftTarget
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -33,12 +34,16 @@ public class TimeshiftTestFixture(public val grantedPeriod: Duration) {
 
     public val state: StateFlow<LiveTimeshiftState> = mutableState.asStateFlow()
 
-    /** Missing bounds remove history evidence. Late observations after end are ignored. */
+    /**
+     * Missing bounds remove history evidence. Late observations after end are ignored.
+     * Timing scripts availability directly, without production continuity or edge-advance gating.
+     */
     public fun updateHistory(
         start: Duration?,
         end: Duration?,
         readerBehindLive: Duration? = null,
         serverPaused: Boolean? = null,
+        estimatedLiveEdgeTime: kotlin.time.Instant? = null,
     ): Unit = synchronized(lock) {
         require(start == null || start.isFinite())
         require(end == null || end.isFinite())
@@ -53,7 +58,11 @@ public class TimeshiftTestFixture(public val grantedPeriod: Duration) {
             buffered?.let { readerBehindLive?.coerceAtMost(it) },
             serverPaused,
             if (start != null && end != null && start >= Duration.ZERO && end >= start) {
-                TimeshiftTimeline(owner, start, end)
+                TimeshiftTimeline(
+                    owner, start, end,
+                    estimatedLiveEdgeTime?.let { TimeshiftWallClockMapping.Estimate(owner, end, it) }
+                        ?: TimeshiftWallClockMapping.Unavailable,
+                )
             } else null,
         )
     }

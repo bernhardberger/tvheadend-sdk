@@ -431,6 +431,10 @@ internal class LiveTimeshiftControlBridge(
         internal var subscription: ActiveSubscription? = null
         internal var grant: Duration? = null
         private var latestStatus: SubscriptionEvent.Timeshift? = null
+        private var wallClockMapping: TimeshiftWallClockMapping = TimeshiftWallClockMapping.Unavailable
+        private var mappingDiscontinuous = false
+        private var lastObservedEnd: Long? = null
+        private var started = false
         internal val packetMapping = TimeshiftPacketMapping()
         private var latestSpeed: Int? = null
         internal var latestIssue: SubscriptionIssue? = null
@@ -500,8 +504,17 @@ internal class LiveTimeshiftControlBridge(
                         }
                         return
                     }
-                    is SubscriptionEvent.Dropped -> packetMapping.discontinuity()
+                    is SubscriptionEvent.Dropped -> {
+                        packetMapping.discontinuity()
+                        mappingDiscontinuous = true
+                        wallClockMapping = TimeshiftWallClockMapping.Unavailable
+                    }
                     is SubscriptionEvent.Started -> {
+                        if (started) {
+                            mappingDiscontinuous = true
+                            wallClockMapping = TimeshiftWallClockMapping.Unavailable
+                        }
+                        started = true
                         issueObserved = true
                         latestIssue = event.issue
                         diagnosticsInvalidated = replaceDiagnosticsThroughLocked(sequence - 1L)
@@ -511,6 +524,19 @@ internal class LiveTimeshiftControlBridge(
                         latestIssue = event.issue
                     }
                     is SubscriptionEvent.Timeshift -> {
+                        val end = event.end
+                        val start = event.start
+                        val serverTime = event.estimatedServerTime
+                        val previousEnd = lastObservedEnd
+                        if (end != null && previousEnd != null && end < previousEnd) mappingDiscontinuous = true
+                        wallClockMapping = if (
+                            !mappingDiscontinuous && end != null && start != null &&
+                            start >= 0L && end >= start && serverTime != null &&
+                            (previousEnd == null || end > previousEnd)
+                        ) {
+                            TimeshiftWallClockMapping.Estimate(this, end.microseconds, serverTime)
+                        } else TimeshiftWallClockMapping.Unavailable
+                        if (end != null && start != null && start >= 0L && end >= start) lastObservedEnd = end
                         latestStatus = event
                         if (event.speed != null) latestSpeed = event.speed
                     }
@@ -644,7 +670,7 @@ internal class LiveTimeshiftControlBridge(
             val start = latestStatus?.start ?: return null
             val end = latestStatus?.end ?: return null
             if (start < 0L || end < start) return null
-            return TimeshiftTimeline(this, start.microseconds, end.microseconds)
+            return TimeshiftTimeline(this, start.microseconds, end.microseconds, wallClockMapping)
         }
     }
 

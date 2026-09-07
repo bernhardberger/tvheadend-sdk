@@ -174,6 +174,8 @@ public sealed interface SubscriptionEvent {
         public val start: Long?,
         public val end: Long?,
         public val speed: Int?,
+        /** Approximate server time at this status observation, not broadcast UTC. */
+        public val estimatedServerTime: kotlin.time.Instant? = null,
     ) : SubscriptionEvent {
         override fun toString(): String = "SubscriptionEvent.Timeshift(<redacted>)"
     }

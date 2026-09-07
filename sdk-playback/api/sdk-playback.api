@@ -368,8 +368,10 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionEvent$Te
 }
 
 public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionEvent$Timeshift : at/bernhardberger/tvheadend/sdk/playback/SubscriptionEvent {
-	public fun <init> (JJLjava/lang/Long;Ljava/lang/Long;Ljava/lang/Integer;)V
+	public fun <init> (JJLjava/lang/Long;Ljava/lang/Long;Ljava/lang/Integer;Lkotlin/time/Instant;)V
+	public synthetic fun <init> (JJLjava/lang/Long;Ljava/lang/Long;Ljava/lang/Integer;Lkotlin/time/Instant;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getEnd ()Ljava/lang/Long;
+	public final fun getEstimatedServerTime ()Lkotlin/time/Instant;
 	public final fun getFull ()J
 	public final fun getShift ()J
 	public final fun getSpeed ()Ljava/lang/Integer;

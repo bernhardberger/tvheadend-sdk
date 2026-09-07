@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.9.0]
+
+Timeshift timelines expose immutable schedule-grade `TimeshiftWallClockMapping`
+`Estimate` or `Unavailable` state, replacing the unavailable-only enum. Estimates
+associate observed live buffer ends with existing server-time observations and
+monotonic elapsed time, without extra polling. Playback samples carry matching
+history; retaining a mapping during preview keeps labels and media targets stable.
+Reader pause preserves timing evidence. Invalid stream continuity disables new
+estimates until replacement. These are approximations with no UTC error bound;
+seek coordinates and history validation are unchanged. The public host fixture
+can script an estimated live-edge time. See [programme-time estimates](docs/programme-time-estimates.md)
+for the consumer route and limitations.
+The infrastructure `SubscriptionEvent.Timeshift` constructor also changes its
+binary signature; rebuild infrastructure consumers against 0.9.0.
+
 ## [0.8.0]
 
 Sessions can persist catalog and guide metadata between processes. Passing a

@@ -204,6 +204,7 @@ internal class HtspProtocolGateway internal constructor(
     ) : this(createHtspConnection(ioDispatcher), epgCoveragePolicy)
 
     private val generationLock = Any()
+    private val serverTimeEstimate = at.bernhardberger.tvheadend.sdk.core.gateway.ServerTimeEstimate()
 
     /**
      * Bounds concurrent artwork file handles on this connection. Each artwork load holds an HTSP
@@ -286,8 +287,12 @@ internal class HtspProtocolGateway internal constructor(
             protocolVersion >= ASYNC_EPG_MINIMUM_PROTOCOL_VERSION
         val epgMaxTime = if (supportsAsyncEpg) {
             when (val serverTime = connection.getSysTime(expectedGeneration = htspGeneration)) {
-                is HtspResult.Ok -> serverTime.value.unixTimeSeconds +
-                    epgCoveragePolicy.futureHorizon.inWholeSeconds
+                is HtspResult.Ok -> {
+                    connection.commitIfLive(htspGeneration) {
+                        serverTimeEstimate.observe(generation, Instant.fromEpochSeconds(serverTime.value.unixTimeSeconds))
+                    }
+                    serverTime.value.unixTimeSeconds + epgCoveragePolicy.futureHorizon.inWholeSeconds
+                }
                 else -> return serverTime.toGatewayResult {}
             }
         } else {
@@ -831,10 +836,26 @@ internal class HtspProtocolGateway internal constructor(
     override fun subscription(
         generation: GatewayGeneration,
         id: SubscriptionId,
-    ): Flow<SubscriptionEvent> = connection.subscriptionEvents(
-        subscriptionId = id.value,
-        expectedGeneration = htspGenerationFor(generation),
-    ).map(HtspSubscriptionEvent::toGatewayEvent)
+    ): Flow<SubscriptionEvent> {
+        val htspGeneration = htspGenerationFor(generation)
+        return connection.subscriptionEvents(
+            subscriptionId = id.value,
+            expectedGeneration = htspGeneration,
+        ).map { event ->
+            if (event is HtspSubscriptionEvent.Timeshift) {
+                SubscriptionEvent.Timeshift(
+                    full = event.message.full,
+                    shift = event.message.shift,
+                    start = event.message.start,
+                    end = event.message.end,
+                    speed = event.message.speed,
+                    estimatedServerTime = connection.commitIfLive(htspGeneration) {
+                        serverTimeEstimate.atStatus(generation)
+                    },
+                )
+            } else event.toGatewayEvent()
+        }
+    }
 
     override suspend fun subscribe(
         generation: GatewayGeneration,

@@ -15,6 +15,89 @@ import kotlin.time.Duration.Companion.seconds
 
 class TimeshiftTimelineTest {
     @Test
+    fun `estimate snapshots follow status not packets or reader pause and reject replacement`() {
+        var state: LiveTimeshiftState = LiveTimeshiftState.Unavailable
+        val bridge = LiveTimeshiftControlBridge(PlaybackTargetToken()) { state = it }
+        val attachment = bridge.newAttachment()
+        attachment.bind(FakeTimeshiftSubscription(120.seconds))
+        val now = kotlin.time.Instant.fromEpochSeconds(1_000)
+        attachment.accept(SubscriptionEvent.Timeshift(0, 0, 0, 100_000_000, 100, now))
+        val history = (state as LiveTimeshiftState.Available).timeline!!
+        val mapping = history.wallClockMapping as TimeshiftWallClockMapping.Estimate
+        val selected = history.select(40.seconds)!!
+        assertEquals(now - 60.seconds, mapping.estimate(selected))
+        attachment.accept(SubscriptionEvent.Speed(0))
+        assertSame(mapping, (state as LiveTimeshiftState.Available).timeline!!.wallClockMapping)
+        val packet = SubscriptionEvent.Packet(
+            at.bernhardberger.tvheadend.sdk.playback.MuxFrameType.UNKNOWN,
+            at.bernhardberger.tvheadend.sdk.playback.StreamIndex(0), 0, 0, 1,
+            at.bernhardberger.tvheadend.sdk.testing.SubscriptionBinaryFixture(byteArrayOf()),
+        )
+        repeat(100_000) { attachment.accept(packet) }
+        assertSame(mapping, attachment.timeline()!!.wallClockMapping)
+        attachment.accept(SubscriptionEvent.Timeshift(0, 10_000_000, 0, 110_000_000, 0, now + 12.seconds))
+        val sample = bridge.playbackPosition(attachment, 0.seconds) as TimeshiftPlaybackPosition.Estimate
+        assertSame(attachment.timeline()!!.wallClockMapping, sample.timeline!!.wallClockMapping)
+        assertEquals(now - 60.seconds, mapping.estimate(selected))
+        assertEquals(40.seconds, selected.position)
+        val replacement = bridge.newAttachment()
+        replacement.bind(FakeTimeshiftSubscription(120.seconds))
+        replacement.accept(SubscriptionEvent.Timeshift(0, 0, 0, 100_000_000, 100, now))
+        assertNull(mapping.estimate(replacement.timeline()!!.select(40.seconds)!!))
+    }
+
+    @Test
+    fun `missing bounds preserve continuity baseline but advancing recovery is allowed`() {
+        for (nextEnd in listOf(90L, 110L)) {
+            val bridge = LiveTimeshiftControlBridge(PlaybackTargetToken()) {}
+            val attachment = bridge.newAttachment()
+            attachment.bind(FakeTimeshiftSubscription(120.seconds))
+            val now = kotlin.time.Instant.fromEpochSeconds(1_000)
+            attachment.accept(SubscriptionEvent.Timeshift(0, 0, 0, 100, 100, now))
+            attachment.accept(SubscriptionEvent.Timeshift(0, 0, null, null, 100, now))
+            assertNull(attachment.timeline())
+            attachment.accept(SubscriptionEvent.Timeshift(0, 0, 0, nextEnd, 100, now))
+            attachment.accept(SubscriptionEvent.Timeshift(0, 0, 0, 120, 100, now))
+            assertEquals(nextEnd > 100, attachment.timeline()!!.wallClockMapping is TimeshiftWallClockMapping.Estimate)
+        }
+    }
+
+    @Test
+    fun `dropped data and repeated stream starts disable estimates until replacement`() {
+        val started = SubscriptionEvent.Started(
+            null, null, at.bernhardberger.tvheadend.sdk.playback.SubscriptionCondition.NO_DETAIL,
+        )
+        for (event in listOf(SubscriptionEvent.Dropped(1), started)) {
+            val bridge = LiveTimeshiftControlBridge(PlaybackTargetToken()) {}
+            val attachment = bridge.newAttachment()
+            attachment.bind(FakeTimeshiftSubscription(120.seconds))
+            attachment.accept(started)
+            val now = kotlin.time.Instant.fromEpochSeconds(1_000)
+            attachment.accept(SubscriptionEvent.Timeshift(0, 0, 0, 100, 100, now))
+            attachment.accept(event)
+            assertSame(TimeshiftWallClockMapping.Unavailable, attachment.timeline()!!.wallClockMapping)
+            attachment.accept(SubscriptionEvent.Timeshift(0, 0, 0, 110, 100, now))
+            assertSame(TimeshiftWallClockMapping.Unavailable, attachment.timeline()!!.wallClockMapping)
+        }
+    }
+
+    @Test
+    fun `stalled missing and regressing live edges do not fabricate new anchors`() {
+        val bridge = LiveTimeshiftControlBridge(PlaybackTargetToken()) {}
+        val attachment = bridge.newAttachment()
+        attachment.bind(FakeTimeshiftSubscription(120.seconds))
+        val now = kotlin.time.Instant.fromEpochSeconds(1_000)
+        attachment.accept(SubscriptionEvent.Timeshift(0, 0, 0, 100, 100, now))
+        attachment.accept(SubscriptionEvent.Timeshift(0, 0, 0, 100, 100, now + 10.seconds))
+        assertSame(TimeshiftWallClockMapping.Unavailable, attachment.timeline()!!.wallClockMapping)
+        attachment.accept(SubscriptionEvent.Timeshift(0, 0, 0, 110, 100))
+        assertSame(TimeshiftWallClockMapping.Unavailable, attachment.timeline()!!.wallClockMapping)
+        attachment.accept(SubscriptionEvent.Timeshift(0, 0, 0, 90, 100, now))
+        attachment.accept(SubscriptionEvent.Timeshift(0, 0, 0, 120, 100, now))
+        assertSame(TimeshiftWallClockMapping.Unavailable, attachment.timeline()!!.wallClockMapping)
+    }
+
+    @Test
     fun `duplicate status retains stateflow value instead of publishing identity changes`() {
         val state = kotlinx.coroutines.flow.MutableStateFlow<LiveTimeshiftState>(LiveTimeshiftState.Unavailable)
         val bridge = LiveTimeshiftControlBridge(PlaybackTargetToken()) { state.value = it }
@@ -40,7 +123,7 @@ class TimeshiftTimelineTest {
         val timeline = (state as LiveTimeshiftState.Available).timeline!!
         val selected = timeline.select(40.seconds)!!
         assertNull(timeline.select(9.seconds))
-        assertSame(TimeshiftWallClockMapping.UNAVAILABLE, timeline.wallClockMapping)
+        assertSame(TimeshiftWallClockMapping.Unavailable, timeline.wallClockMapping)
         first.accept(SubscriptionEvent.Timeshift(0, 0, 20_000_000, 110_000_000, 100))
         subscription.seekAction = {
             first.accept(SubscriptionEvent.Skipped(true, SkipOutcome.ACCEPTED, 39_000_000, null))
