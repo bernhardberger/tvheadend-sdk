@@ -54,7 +54,7 @@ CI_PROVENANCE = ROOT / "build/ci-staging-provenance.json"
 SECRET_NAMES = ("MAVEN_GPG_PRIVATE_KEY", "MAVEN_GPG_PASSPHRASE", "CENTRAL_PORTAL_TOKEN")
 CREDENTIAL_NAMES = SECRET_NAMES + ("GITHUB_TOKEN",)
 CENTRAL_GET_WORKERS = 8
-CI_WORKFLOW_SHA256 = "ec16636efc8e3e4eee54f08644851c212fd47218886c303ec52e86d21ea2dcfa"
+CI_WORKFLOW_SHA256 = "87e9b191b1b618cf72a31ae996af60f214dadbd355c37140c64847a18f4f9aad"
 RELEASE_WORKFLOW_SHA256 = "91d72c365d07ed16522e04598a89a6e98d4cc268619f51f5d38f292d8156b338"
 ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 ZIP_MODE = (stat.S_IFREG | 0o644) << 16
@@ -1053,6 +1053,14 @@ def self_test() -> list[str]:
     if not workflow_errors(java_step):
         errors.append("self-test accepted tag-time Java workflow drift")
     ci = read_regular(ROOT / ".github/workflows/ci.yml", "CI workflow").decode("utf-8")
+    if not ci_workflow_errors(ci.replace("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", "cancel-in-progress: true")):
+        errors.append("self-test accepted cancellation of main CI staging runs")
+    if not ci_workflow_errors(ci.replace("github.event.pull_request.number || github.run_id", "github.ref")):
+        errors.append("self-test accepted shared main CI staging concurrency group")
+    if not ci_workflow_errors(ci.replace("cache-read-only: ${{ github.event_name != 'push' || github.ref != 'refs/heads/main' }}", "cache-read-only: false")):
+        errors.append("self-test accepted PR cache writes")
+    if not ci_workflow_errors(ci.replace("gradle-home-cache-includes: caches/modules-2", "gradle-home-cache-includes: caches")):
+        errors.append("self-test accepted cross-run task output caching")
     if not ci_workflow_errors(ci.replace("staged-publication-${{ github.run_id }}", "staged-publication-unbound")):
         errors.append("self-test accepted unbound CI staging artifact drift")
     if not ci_workflow_errors(ci.replace("github.run_attempt == 1", "github.run_attempt == 2", 1)):
