@@ -26,6 +26,7 @@ question still spans an unknown flow after these paths are checked.
 ## Commands and release tooling
 
 - Build and test through the checked-in Gradle wrapper and `AGENTS.md` gates.
+  [Ordinary CI](ci.md) documents dependency caching and staging-run isolation.
   This checkout does not bundle `gradle-run`; a sibling workspace is not a build
   prerequisite. Keep diagnostics bounded and do not start concurrent Gradle work.
 - Ordinary core tests exclude live EPG/DVR verification regardless of inherited

@@ -13,6 +13,11 @@ wrapper validator. Wrapper validation still runs before Gradle setup. Only a
 `push` to `refs/heads/main` may write caches; PRs consume them read-only. GitHub's
 cache branch isolation prevents main from restoring PR merge-ref caches.
 
+The explicit `enhanced` provider supports the narrow include list; `basic` does
+not. This is Gradle's proprietary caching component, free for public repositories,
+under its [distribution and data-handling terms](https://github.com/gradle/actions/blob/9c971963bec38e04b3d30dcc455b5382be2fdbfb/DISTRIBUTION.md).
+It processes public dependency artifacts; no release or server secrets are supplied.
+
 The Gradle User Home include list is limited to `caches/modules-2` (downloaded
 dependencies); the action also manages wrapper distributions. Project build
 directories, local task-output caches, configuration-cache state, Gradle user
@@ -20,6 +25,10 @@ properties, init scripts and credentials are not included. No encryption secret,
 dependency submission, PR comment or Build Scan publication is configured.
 Tests and publication outputs are rebuilt rather than restored across runs.
 The [offline/live test boundary](offline-verification.md) remains unchanged.
+Restored dependencies remain subject to the checked-in Gradle dependency
+verification metadata and signature/checksum policy. Compiled build scripts,
+instrumented jars and artifact transforms are also deliberately excluded: this
+first change reuses downloaded inputs only, not derived build state.
 
 Concurrency groups include the workflow and event. PRs share a group only with
 runs of the same PR and cancel obsolete runs. Main pushes use unique run IDs,
@@ -47,3 +56,5 @@ required job is justified by this evidence. Dependency caching targets repeated
 downloads without changing verification. Warm-cache savings require a subsequent
 natural run and remain unmeasured until observed; do not trigger benchmark-only
 reruns. Record final exact-HEAD run timing and cache hit/miss evidence with delivery.
+Also confirm caching was not disabled because of a pre-existing Gradle User Home;
+a successful build alone does not establish that caching was active.
