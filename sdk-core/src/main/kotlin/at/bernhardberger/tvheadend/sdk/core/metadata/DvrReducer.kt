@@ -492,8 +492,10 @@ internal class DvrReducer {
     private val entries = linkedMapOf<DvrEntryId, ReducedDvrEntry>()
     private val autorecRules = linkedMapOf<AutorecRuleId, ReducedAutorecRule>()
     private val timerecRules = linkedMapOf<TimerecRuleId, ReducedTimerecRule>()
+    private var cachedSnapshot: DvrSnapshot? = null
 
     internal fun clear() {
+        cachedSnapshot = null
         entries.clear()
         autorecRules.clear()
         timerecRules.clear()
@@ -535,13 +537,13 @@ internal class DvrReducer {
         is MetadataEvent.EventDeleted,
         is MetadataEvent.InitialSyncCompleted,
         -> false
-    }
+    }.also { accepted -> if (accepted) cachedSnapshot = null }
 
-    internal fun snapshot(): DvrSnapshot = DvrSnapshot.create(
+    internal fun snapshot(): DvrSnapshot = cachedSnapshot ?: DvrSnapshot.create(
         entries = entries.values.mapNotNull(ReducedDvrEntry::toPublicOrNull),
         autorecRules = autorecRules.values.map(ReducedAutorecRule::toPublic),
         timerecRules = timerecRules.values.mapNotNull(ReducedTimerecRule::toPublicOrNull),
-    )
+    ).also { cachedSnapshot = it }
 
     private fun acceptEntryAdd(entry: GatewayDvrEntry): Boolean {
         val current = entries[entry.id]

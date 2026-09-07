@@ -15,6 +15,7 @@ import kotlinx.serialization.protobuf.ProtoBuf
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import kotlin.random.Random
@@ -63,6 +64,40 @@ internal class FileMetadataCacheStoreTest {
 
         assertEquals(catalog, cache.loadCatalog(namespace, storedAt))
         assertEquals(snapshot, cache.loadEpg(namespace, storedAt))
+    }
+
+    @Test
+    fun `versioned identity does not restore legacy bytes and clear preserves unrelated app data`() = runTest {
+        val cache = store()
+        cache.storeCatalog(namespace, sampleCatalog(), storedAt)
+        cache.storeEpg(namespace, sampleSnapshot(), storedAt)
+        val legacyDirectory = File(root, "tvheadend-sdk/${"a".repeat(32)}")
+        assertTrue(catalogFile().parentFile.renameTo(legacyDirectory))
+        val unrelated = File(root, "application-data").apply { writeText("keep") }
+
+        assertNull(cache.loadCatalog(namespace, storedAt))
+        assertNull(cache.loadEpg(namespace, storedAt))
+        assertTrue(legacyDirectory.isDirectory)
+        cache.clear()
+        assertFalse(legacyDirectory.exists())
+        assertEquals("keep", unrelated.readText())
+    }
+
+    @Test
+    fun `formerly ambiguous profiles retain independent catalog and EPG files`() = runTest {
+        val cache = store()
+        val first = cacheNamespace("::1", 2, "3:4:u")
+        val second = cacheNamespace("::1:2:3", 4, "u")
+        val catalog = sampleCatalog()
+        val epg = sampleSnapshot()
+        cache.storeCatalog(first, catalog, storedAt)
+        cache.storeEpg(first, epg, storedAt)
+        assertNull(cache.loadCatalog(second, storedAt))
+        assertNull(cache.loadEpg(second, storedAt))
+        cache.storeCatalog(second, ChannelCatalog.create(), storedAt)
+        cache.storeEpg(second, EpgSnapshot.create(), storedAt)
+        assertEquals(catalog, cache.loadCatalog(first, storedAt))
+        assertEquals(epg, cache.loadEpg(first, storedAt))
     }
 
     @Test

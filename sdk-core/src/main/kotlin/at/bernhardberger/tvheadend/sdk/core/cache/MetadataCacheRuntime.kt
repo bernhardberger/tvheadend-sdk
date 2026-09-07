@@ -138,15 +138,20 @@ internal class MetadataCacheRuntime(
         currentCoroutineContext().ensureActive()
         lifecycle.withLock {
             val active = writer
-            active?.stop()
-            writer = null
-            accessStore {
-                clearEpoch++
-                store.clear()
-                refreshStatistics()
-            }
-            if (active != null) {
-                writer = launchWriter(active.namespace, active.publications)
+            try {
+                // Clear need not flush bytes it will delete, but must finish retiring the old
+                // writer before a cancelled caller can restore persistence.
+                withContext(NonCancellable) { active?.job?.cancelAndJoin() }
+                writer = null
+                accessStore {
+                    clearEpoch++
+                    store.clear()
+                    refreshStatistics()
+                }
+            } finally {
+                if (active != null) {
+                    writer = launchWriter(active.namespace, active.publications)
+                }
             }
         }
     }

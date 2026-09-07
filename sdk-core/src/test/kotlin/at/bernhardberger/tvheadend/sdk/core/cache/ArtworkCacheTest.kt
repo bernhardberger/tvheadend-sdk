@@ -35,6 +35,22 @@ internal class ArtworkCacheTest {
     private val clock = object : Clock { override fun now(): Instant = now }
 
     @Test
+    fun `formerly ambiguous profiles never share artwork bytes`() = runTest {
+        val runtime = runtime()
+        val first = cacheNamespace("::1", 2, "3:4:u")
+        val second = cacheNamespace("::1:2:3", 4, "u")
+        runtime.loadArtwork(first, id, { true }) { available() }
+        val replacement = byteArrayOf(4, 5)
+        val loaded = runtime.loadArtwork(second, id, { true }) {
+            ArtworkLoadResult.Available(ArtworkContent.create(replacement))
+        }
+        assertArrayEquals(replacement, (loaded as ArtworkLoadResult.Available).content.openStream().readBytes())
+        val retained = runtime.loadArtwork(first, id, { true }) { error("Unexpected fetch") }
+        assertArrayEquals(bytes, (retained as ArtworkLoadResult.Available).content.openStream().readBytes())
+        runtime.shutdown()
+    }
+
+    @Test
     fun `restart hits avoid fetch and clear removes metadata and artwork in every namespace`() = runTest {
         val first = runtime()
         first.restore(namespace)

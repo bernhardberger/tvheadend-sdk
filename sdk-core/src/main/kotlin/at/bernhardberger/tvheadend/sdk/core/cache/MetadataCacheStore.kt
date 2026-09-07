@@ -8,19 +8,20 @@ import kotlin.time.Instant
 /**
  * Restart-stable, opaque identity of one server profile's cache namespace.
  *
- * The value is a lowercase hex digest and contains no server identity in clear text. It must
+ * The value is a versioned lowercase hex digest and contains no server identity in clear text. It must
  * never appear in logs, diagnostics, or error messages.
  */
 @JvmInline
 internal value class CacheNamespace(val value: String) {
     init {
-        require(value.length == NAMESPACE_LENGTH && value.all { it in '0'..'9' || it in 'a'..'f' }) {
-            "Cache namespace must be a lowercase hex digest"
+        require(value.startsWith("v2-") && value.length == NAMESPACE_LENGTH &&
+            value.drop(3).all { it in '0'..'9' || it in 'a'..'f' }) {
+            "Cache namespace must be a versioned lowercase hex digest"
         }
     }
 
     companion object {
-        const val NAMESPACE_LENGTH: Int = 32
+        const val NAMESPACE_LENGTH: Int = 35
     }
 }
 

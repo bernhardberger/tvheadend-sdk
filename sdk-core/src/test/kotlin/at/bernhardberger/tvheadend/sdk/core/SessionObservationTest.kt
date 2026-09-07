@@ -215,6 +215,68 @@ internal class SessionObservationTest {
     }
 
     @Test
+    fun `indexed selectors preserve duplicate ambiguity and union relationship semantics`() {
+        val duplicate = event(10, 10, 20, next = 11, dvrEntry = 100)
+        val linked = event(11, 30, 40)
+        val events = listOf(duplicate, duplicate, linked, event(12, 20, 30))
+        val observation = SessionObservation.create(
+            epgState = EpgRepositoryState.Stale(EpgSnapshot.create(events)),
+            dvrState = DvrRepositoryState.Current(DvrSnapshot.create(listOf(DvrEntry.create(DvrEntryId(100))))),
+        )
+        assertNull(observation.event(EventId(10)))
+        assertNull(observation.dvrEntryForEvent(EventId(10)))
+        assertSame(duplicate, observation.eventAt(ChannelId(1), instant(10)))
+        assertSame(linked, observation.nextEvent(ChannelId(1), instant(10)))
+        val ambiguous = SessionObservation.create(
+            epgState = EpgRepositoryState.Current(EpgSnapshot.create(listOf(duplicate, linked, linked, event(12, 20, 30)))),
+            dvrState = DvrRepositoryState.Current(DvrSnapshot.create(listOf(
+                DvrEntry.create(DvrEntryId(100)), DvrEntry.create(DvrEntryId(101), eventId = EventId(10)),
+            ))),
+        )
+        assertEquals(EventId(12), ambiguous.nextEvent(ChannelId(1), instant(10))?.id)
+        assertNull(ambiguous.dvrEntryForEvent(EventId(10)))
+        assertSame(linked, observation.event(EventId(11)))
+    }
+
+    @Test
+    fun `large retained snapshot selectors match scans with channel bounded candidate lists`() {
+        val events = (1L..200).flatMap { channel ->
+            (1L..100).map { slot -> EpgEvent.create(
+                id = EventId((channel - 1) * 100 + slot), channelId = ChannelId(channel),
+                start = instant(slot * 10), stop = instant(slot * 10 + 10),
+            ) }
+        }.reversed()
+        val snapshot = EpgSnapshot.create(events)
+        val observation = SessionObservation.create(epgState = EpgRepositoryState.Current(snapshot))
+        val retained = SessionObservation.create(epgState = EpgRepositoryState.Stale(snapshot))
+        for (channel in listOf(1L, 100L, 200L, 201L)) {
+            for (at in listOf(9L, 10L, 15L, 500L, 1000L, 1010L)) {
+                val channelId = ChannelId(channel)
+                val time = instant(at)
+                val active = events.firstOrNull { it.channelId == channelId && it.start <= time && time < it.stop }
+                val next = events.filter { it.channelId == channelId && it !== active && it.start >= (active?.stop ?: time) }
+                    .minWithOrNull(compareBy<EpgEvent>({ it.start }, { it.stop }, { it.id.value }))
+                assertSame(active, observation.eventAt(channelId, time))
+                assertSame(next, retained.nextEvent(channelId, time))
+            }
+        }
+        assertEquals(20_000, snapshot.eventsById.size)
+        assertEquals(200, snapshot.eventsByChannel.size)
+        assertEquals(100, snapshot.eventsByChannel.getValue(ChannelId(100)).size)
+        assertEquals(20_000, snapshot.eventsByChannel.values.sumOf { it.size })
+        val index = snapshot.eventsById
+        repeat(1_000) { indexValue ->
+            val id = EventId(indexValue.toLong() + 1)
+            assertSame(index[id], retained.event(id))
+            assertNull(retained.dvrEntryForEvent(id))
+        }
+        assertSame(index, retained.epgSnapshotForDisplay?.eventsById)
+        val replacement = SessionObservation.create(epgState = EpgRepositoryState.Current(EpgSnapshot.create()))
+        assertNull(replacement.event(EventId(1)))
+        assertSame(index[EventId(1)], retained.event(EventId(1)))
+    }
+
+    @Test
     fun `store collectors receive complete current and retired observations`() = runTest {
         val store = SessionObservationStore()
         val source = observation()

@@ -13,6 +13,8 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotSame
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -20,6 +22,31 @@ import kotlin.time.Instant
 
 internal class EpgReducerTest {
     private val generation = GatewayGeneration()
+
+    @Test
+    fun `known channel updates reuse snapshot but new channel membership rebuilds coverage`() {
+        val reducer = EpgReducer()
+        addChannel(reducer, 1)
+        reducer.accept(MetadataEvent.EventAdded(generation, event(10, 1, 10, 20)))
+        val retained = reducer.snapshot()
+        repeat(1_000) { index ->
+            reducer.accept(MetadataEvent.ChannelUpdated(
+                generation, GatewayChannelMetadata(
+                    id = ChannelId(1), name = null, uuid = null, number = null, numberMinor = null,
+                    icon = null, currentEventId = EventId(index.toLong() + 1), nextEventId = null,
+                    services = null, tagIds = null,
+                ),
+            ))
+            assertSame(retained, reducer.snapshot())
+        }
+        reducer.accept(MetadataEvent.ChannelUpdated(generation, GatewayChannelMetadata(
+            id = ChannelId(2), name = null, uuid = null, number = null, numberMinor = null,
+            icon = null, currentEventId = null, nextEventId = null, services = null, tagIds = null,
+        )))
+        assertNotSame(retained, reducer.snapshot())
+        assertEquals(listOf(ChannelId(1)), retained.coverages.map { it.channelId })
+        assertEquals(listOf(ChannelId(1), ChannelId(2)), reducer.snapshot().coverages.map { it.channelId })
+    }
 
     @Test
     fun `complete add replaces nullable values while update preserves omissions`() {

@@ -18,6 +18,8 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.TimerecRuleId
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotSame
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 import kotlin.time.Duration.Companion.seconds
@@ -25,6 +27,27 @@ import kotlin.time.Instant
 
 internal class DvrReducerTest {
     private val generation = GatewayGeneration()
+
+    @Test
+    fun `snapshot reconstruction is shared until accepted DVR mutation or clear`() {
+        val reducer = DvrReducer()
+        reducer.accept(MetadataEvent.DvrEntryAdded(generation, entry(id = 1, title = "old")))
+        val retained = reducer.snapshot()
+        repeat(1_000) { index ->
+            reducer.accept(MetadataEvent.EventDeleted(generation, EventId(index.toLong() + 1)))
+            assertSame(retained, reducer.snapshot())
+        }
+        assertFalse(reducer.accept(MetadataEvent.DvrEntryUpdated(
+            generation, entry(id = 1, start = 20, stop = 10), GatewayDvrUpdateProvenance.FULL,
+        )))
+        assertSame(retained, reducer.snapshot())
+        reducer.accept(MetadataEvent.DvrEntryAdded(generation, entry(id = 1, title = "new")))
+        assertNotSame(retained, reducer.snapshot())
+        assertEquals("old", retained.entries.single().title)
+        assertEquals("new", reducer.snapshot().entries.single().title)
+        reducer.clear()
+        assertEquals(emptyList<Any>(), reducer.snapshot().entries)
+    }
 
     @Test
     fun `dvr add null-baselines browse scalars while stats update preserves omissions`() {

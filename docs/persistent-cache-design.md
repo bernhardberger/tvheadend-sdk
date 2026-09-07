@@ -66,8 +66,9 @@ pure JVM and never touches `Context`.
 Cache identity is the same predicate the session already uses to decide whether
 retained metadata survives a reconnect: `ServerProfile.hasSameConfigurationAs`
 (`TvheadendSession.kt:234-237`, host + port + credentials). The on-disk
-namespace is `SHA-256(host ':' port ':' username)` rendered as 32 hex characters,
-computed inside sdk-core next to that predicate. Anonymous profiles use an empty
+namespace is `v2-` followed by the first 32 hex characters of SHA-256 over a
+kotlinx-serialization protobuf list of host, decimal port and username. Field
+boundaries are unambiguous even with colons or embedded separators. Anonymous profiles use an empty
 username. The password never participates. The namespace, host, and username
 must never appear in logs, diagnostics, statistics, or `toString()`
 (`AGENTS.md`, cache keys and paths are sensitive).
@@ -84,8 +85,11 @@ tvheadend-sdk/
       <id>           raw bytes as served by imagecache
 ```
 
-A different profile gets a different namespace; old namespaces age out by
-retention or are removed by `clear()`.
+A different profile gets a different namespace. Legacy unversioned namespaces
+are not read or migrated: their delimiter-based identity cannot safely identify
+the original profile. They remain inside the SDK-owned root until `clear()`;
+legacy artwork remains subject to global retention and byte-budget pruning.
+No unrelated data under the supplied application root is deleted.
 
 ## Serialisation
 

@@ -227,6 +227,18 @@ public data class EpgSnapshot private constructor(
     // that unequal snapshots are rejected without walking both event lists.
     private val contentHash: Int = 31 * events.hashCode() + coverages.hashCode()
 
+    // Built only when queried, shared by every observation retaining this exact snapshot.
+    // Null values preserve singleOrNull semantics for duplicate IDs in consumer-created snapshots.
+    @get:JvmSynthetic
+    internal val eventsById: Map<EventId, EpgEvent?> by lazy {
+        buildMap {
+            for (event in events) put(event.id, if (containsKey(event.id)) null else event)
+        }
+    }
+
+    @get:JvmSynthetic
+    internal val eventsByChannel: Map<ChannelId?, List<EpgEvent>> by lazy { events.groupBy(EpgEvent::channelId) }
+
     override fun equals(other: Any?): Boolean =
         this === other ||
             other is EpgSnapshot &&

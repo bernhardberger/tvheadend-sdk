@@ -8,6 +8,11 @@ import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.MetadataCachePolicy
 import at.bernhardberger.tvheadend.sdk.core.session.PublishedSnapshots
 import java.io.File
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -16,6 +21,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertSame
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
@@ -23,6 +29,7 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class MetadataCacheRuntimeTest {
     private val namespace = cacheNamespace("server", 9_982, "user")
 
@@ -120,7 +127,7 @@ class MetadataCacheRuntimeTest {
     }
 
     private fun TestScope.runtime(
-        store: RecordingStore,
+        store: MetadataCacheStore,
         retentionDays: Int = 7,
         clock: Clock = FixedClock,
     ): MetadataCacheRuntime = MetadataCacheRuntime(
@@ -130,6 +137,78 @@ class MetadataCacheRuntimeTest {
         clock = clock,
         epgWriteInterval = 60.seconds,
     )
+
+    @Test
+    fun `cancelling clear while joining a writer restores persistence after retirement`() = runTest {
+        val store = RecordingStore()
+        val retiring = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        var blockWrite = true
+        val delayedStore = object : MetadataCacheStore by store {
+            override suspend fun storeCatalog(namespace: CacheNamespace, catalog: ChannelCatalog, storedAt: Instant) {
+                if (blockWrite) {
+                    blockWrite = false
+                    try {
+                        awaitCancellation()
+                    } finally {
+                        withContext(NonCancellable) {
+                            retiring.complete(Unit)
+                            release.await()
+                        }
+                    }
+                }
+                store.storeCatalog(namespace, catalog, storedAt)
+            }
+        }
+        val runtime = runtime(delayedStore)
+        val publications = MutableStateFlow<PublishedSnapshots?>(PublishedSnapshots(catalog(1), EpgSnapshot.create()))
+        runtime.start(namespace, publications)
+        runCurrent()
+        val clearing = launch { runtime.clear() }
+        retiring.await()
+        clearing.cancel()
+        runCurrent()
+        assertTrue(store.writes().isEmpty())
+        release.complete(Unit)
+        clearing.join()
+        assertTrue(clearing.isCancelled)
+        val latest = catalog(2)
+        publications.value = PublishedSnapshots(latest, EpgSnapshot.create())
+        runCurrent()
+        assertSame(latest, store.catalog)
+        runtime.shutdown()
+    }
+
+    @Test
+    fun `cancelling clear inside the store restores persistence and stop still retires it`() = runTest {
+        val store = RecordingStore()
+        val deleting = CompletableDeferred<Unit>()
+        val delayedStore = object : MetadataCacheStore by store {
+            override suspend fun clear() {
+                store.clear()
+                deleting.complete(Unit)
+                awaitCancellation()
+            }
+        }
+        val runtime = runtime(delayedStore)
+        val publications = MutableStateFlow<PublishedSnapshots?>(PublishedSnapshots(catalog(1), EpgSnapshot.create()))
+        runtime.start(namespace, publications)
+        runCurrent()
+        val clearing = launch { runtime.clear() }
+        deleting.await()
+        clearing.cancel()
+        clearing.join()
+        assertTrue(clearing.isCancelled)
+        val latest = catalog(2)
+        publications.value = PublishedSnapshots(latest, EpgSnapshot.create())
+        runCurrent()
+        assertSame(latest, store.catalog)
+        runtime.stop()
+        publications.value = PublishedSnapshots(catalog(3), EpgSnapshot.create())
+        runCurrent()
+        assertSame(latest, store.catalog)
+        runtime.shutdown()
+    }
 
     private class TestClock(private val scope: TestScope) : Clock {
         override fun now(): Instant = START + scope.testScheduler.currentTime.milliseconds

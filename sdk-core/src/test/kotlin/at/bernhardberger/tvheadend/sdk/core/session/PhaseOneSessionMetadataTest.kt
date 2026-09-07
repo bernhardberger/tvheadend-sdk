@@ -1079,6 +1079,34 @@ internal class PhaseOneSessionMetadataTest {
     private fun PhaseOneSessionMetadata.currentEpgSnapshot() =
         (observation.value.epgState as EpgRepositoryState.Current).snapshot
 
+    @Test
+    fun `mixed metadata bursts reuse DVR and pointer updates preserve EPG snapshots`() = runTest {
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(id = 1, name = "one")))
+        metadata.acceptMetadata(MetadataEvent.DvrEntryAdded(generation, dvrEntry(8, "old")))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        val retainedDvr = metadata.currentDvrSnapshot()
+        repeat(1_000) { index ->
+            val id = index.toLong() + 1
+            metadata.acceptMetadataDeferringEpg(MetadataEvent.EventAdded(generation, epgEvent(id, 1, id, id + 1)))
+        }
+        metadata.flushDeferredMetadata()
+        assertSame(retainedDvr, metadata.currentDvrSnapshot())
+        val epg = metadata.currentEpgSnapshot()
+        assertEquals(1_000, epg.events.size)
+        repeat(20) { index ->
+            metadata.acceptMetadata(MetadataEvent.ChannelUpdated(generation, channel(1, currentEventId = index.toLong() + 1)))
+            assertSame(epg, metadata.currentEpgSnapshot())
+            assertSame(retainedDvr, metadata.currentDvrSnapshot())
+        }
+        metadata.acceptMetadata(MetadataEvent.DvrEntryUpdated(generation, dvrEntry(8, "new"), GatewayDvrUpdateProvenance.FULL))
+        assertSame(epg, metadata.currentEpgSnapshot())
+        assertEquals("old", retainedDvr.entries.single().title)
+        assertEquals("new", metadata.currentDvrSnapshot().entries.single().title)
+    }
+
     private fun PhaseOneSessionMetadata.currentDvrSnapshot() =
         (observation.value.dvrState as DvrRepositoryState.Current).snapshot
 

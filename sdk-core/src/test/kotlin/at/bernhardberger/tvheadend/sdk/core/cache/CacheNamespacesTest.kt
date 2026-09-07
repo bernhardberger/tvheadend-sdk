@@ -15,10 +15,11 @@ internal class CacheNamespacesTest {
     }
 
     @Test
-    fun `namespace derivation is a 32 character lowercase hex digest`() {
+    fun `namespace derivation is a versioned 32 character lowercase hex digest`() {
         val namespace = cacheNamespace("tvh.example.org", 9982, "alice")
-        assertEquals(32, namespace.value.length)
-        assertTrue(namespace.value.all { char -> char in '0'..'9' || char in 'a'..'f' })
+        assertEquals(35, namespace.value.length)
+        assertTrue(namespace.value.startsWith("v2-"))
+        assertTrue(namespace.value.drop(3).all { char -> char in '0'..'9' || char in 'a'..'f' })
     }
 
     @Test
@@ -34,7 +35,14 @@ internal class CacheNamespacesTest {
         val anonymous = cacheNamespace("tvh.example.org", 9982, "")
         val named = cacheNamespace("tvh.example.org", 9982, "alice")
         assertNotEquals(anonymous, named)
-        assertEquals(32, anonymous.value.length)
+        assertEquals(35, anonymous.value.length)
+    }
+
+    @Test
+    fun `delimiter-containing profile tuples do not share a namespace`() {
+        assertNotEquals(cacheNamespace("::1", 2, "3:4:u"), cacheNamespace("::1:2:3", 4, "u"))
+        assertNotEquals(cacheNamespace("a:1", 2, ""), cacheNamespace("a", 1, "2:"))
+        assertNotEquals(cacheNamespace("a\u0000b", 2, "c"), cacheNamespace("a", 2, "b\u0000c"))
     }
 
     @Test

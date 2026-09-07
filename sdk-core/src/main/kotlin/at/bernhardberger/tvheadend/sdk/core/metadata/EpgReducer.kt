@@ -366,13 +366,11 @@ internal class EpgReducer(
     internal fun accept(event: MetadataEvent) {
         when (event) {
             is MetadataEvent.ChannelAdded -> {
-                cachedSnapshot = null
                 recordChannelAuthority(event.channel.id)
-                channelIds.add(event.channel.id)
+                if (channelIds.add(event.channel.id)) cachedSnapshot = null
             }
             is MetadataEvent.ChannelUpdated -> {
-                cachedSnapshot = null
-                channelIds.add(event.channel.id)
+                if (channelIds.add(event.channel.id)) cachedSnapshot = null
             }
             is MetadataEvent.ChannelDeleted -> {
                 cachedSnapshot = null

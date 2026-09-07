@@ -55,14 +55,14 @@ public class SessionObservation private constructor(
 
     /** Selects exactly one event from this observation's current or retained EPG snapshot. */
     public fun event(id: EventId): EpgEvent? =
-        epgSnapshotForDisplay?.events?.singleOrNull { event -> event.id == id }
+        epgSnapshotForDisplay?.eventsById?.get(id)
 
     /**
      * Selects the first retained event active at [at] using a closed start and open stop boundary.
      */
     public fun eventAt(channelId: ChannelId, at: Instant): EpgEvent? =
-        epgSnapshotForDisplay?.events?.firstOrNull { event ->
-            event.channelId == channelId && event.start <= at && at < event.stop
+        epgSnapshotForDisplay?.eventsByChannel?.get(channelId)?.firstOrNull { event ->
+            event.start <= at && at < event.stop
         }
 
     /**
@@ -73,18 +73,19 @@ public class SessionObservation private constructor(
      */
     public fun nextEvent(channelId: ChannelId, at: Instant): EpgEvent? {
         val snapshot = epgSnapshotForDisplay ?: return null
-        val active = snapshot.events.firstOrNull { event ->
-            event.channelId == channelId && event.start <= at && at < event.stop
+        val channelEvents = snapshot.eventsByChannel[channelId] ?: return null
+        val active = channelEvents.firstOrNull { event ->
+            event.start <= at && at < event.stop
         }
         if (active != null) {
             val linked = active.nextEventId?.let { id ->
-                snapshot.events.singleOrNull { event -> event.id == id }
+                snapshot.eventsById[id]
             }
             if (linked?.channelId == channelId && linked.start >= active.stop) return linked
         }
         val boundary = active?.stop ?: at
-        return snapshot.events.asSequence()
-            .filter { event -> event.channelId == channelId && event !== active && event.start >= boundary }
+        return channelEvents.asSequence()
+            .filter { event -> event !== active && event.start >= boundary }
             .minWithOrNull(compareBy<EpgEvent>({ event -> event.start }, { event -> event.stop }, { event -> event.id.value }))
     }
 
@@ -100,8 +101,10 @@ public class SessionObservation private constructor(
 
     /** Selects the unique DVR entry related to [eventId] within this aggregate observation. */
     public fun dvrEntryForEvent(eventId: EventId): DvrEntry? {
+        val entries = dvrSnapshotForDisplay?.entries ?: return null
+        if (entries.isEmpty()) return null
         val event = event(eventId) ?: return null
-        return dvrSnapshotForDisplay?.entries?.singleOrNull { entry ->
+        return entries.singleOrNull { entry ->
             entry.eventId == eventId || event.dvrEntryId == entry.id
         }
     }
