@@ -10,6 +10,7 @@ import at.bernhardberger.tvheadend.sdk.core.EpgEvent
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.EventId
 import java.io.File
+import java.nio.file.Files
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.protobuf.ProtoBuf
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -97,6 +98,26 @@ internal class FileMetadataCacheStoreTest {
         cache.clear()
         assertFalse(legacyDirectory.exists())
         assertEquals("keep", unrelated.readText())
+    }
+
+    @Test
+    fun `legacy cleanup unlinks namespace and nested symlinks without traversing their targets`() = runTest {
+        val cache = store()
+        cache.storeCatalog(namespace, sampleCatalog(), storedAt)
+        cache.storeEpg(namespace, sampleSnapshot(), storedAt)
+        val sdkRoot = File(root, "tvheadend-sdk")
+        val legacyLink = File(sdkRoot, "a".repeat(32)).toPath()
+        Files.createSymbolicLink(legacyLink, catalogFile().parentFile.toPath())
+        val unrelated = File(root, "application-data").apply { mkdirs() }
+        val sentinel = File(unrelated, "keep").apply { writeText("keep") }
+        val legacyDirectory = File(sdkRoot, "b".repeat(32)).apply { mkdirs() }
+        Files.createSymbolicLink(File(legacyDirectory, "artwork").toPath(), unrelated.toPath())
+
+        assertEquals(sampleCatalog(), cache.loadCatalog(namespace, storedAt))
+        assertEquals(sampleSnapshot(), cache.loadEpg(namespace, storedAt))
+        assertFalse(Files.isSymbolicLink(legacyLink))
+        assertFalse(legacyDirectory.exists())
+        assertEquals("keep", sentinel.readText())
     }
 
     @Test

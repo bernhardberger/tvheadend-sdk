@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalSerializationApi::class)
+@file:OptIn(ExperimentalSerializationApi::class, kotlin.io.path.ExperimentalPathApi::class)
 
 package at.bernhardberger.tvheadend.sdk.core.cache
 
@@ -13,6 +13,7 @@ import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.protobuf.ProtoBuf
+import kotlin.io.path.deleteRecursively
 import kotlin.time.Instant
 
 private const val CACHE_ROOT_DIR_NAME = "tvheadend-sdk"
@@ -36,8 +37,15 @@ internal class FileMetadataCacheStore(root: File) : MetadataCacheStore {
     override suspend fun loadCatalog(namespace: CacheNamespace, notBefore: Instant): ChannelCatalog? {
         // Legacy identities cannot be restored safely and would otherwise never age out.
         namespacesRoot.listFiles().orEmpty()
-            .filter { it.isDirectory && LEGACY_NAMESPACE_PATTERN.matches(it.name) }
-            .forEach { it.deleteRecursively() }
+            .filter { LEGACY_NAMESPACE_PATTERN.matches(it.name) }
+            .forEach {
+                try {
+                    // Path deletion does not traverse symbolic links outside this namespace.
+                    it.toPath().deleteRecursively()
+                } catch (_: IOException) {
+                    // Best effort, like normal cache eviction; retry on a later restore.
+                }
+            }
         val file = catalogFile(namespace)
         val envelope = readEnvelope(file, CatalogEnvelopeDto.serializer()) ?: return null
         if (!envelope.isFreshEnough(CATALOG_SCHEMA_VERSION, notBefore)) {

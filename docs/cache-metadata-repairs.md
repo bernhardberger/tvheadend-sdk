@@ -11,13 +11,14 @@ kotlinx-serialization protobuf list serializer and JDK SHA-256. The `v2-` prefix
 separates new metadata, artwork and derived artwork memory keys from all legacy
 unversioned namespaces. There is no fallback or migration of ambiguous identity.
 Restore deletes recognized legacy namespaces, including metadata and artwork,
-without interpreting their contents. Current namespaces retain normal retention
+without interpreting their contents or following symbolic links. Current namespaces retain normal retention
 and byte-budget pruning. Only the SDK-owned child of the supplied application
 root is cleared. Passwords still do not participate.
 
 `CacheNamespacesTest`, `FileMetadataCacheStoreTest` and `ArtworkCacheTest` cover
 the audited IPv6/username tuple collision, separator-containing fields, distinct
-metadata/artwork bytes, legacy isolation, and preservation of unrelated files.
+metadata/artwork bytes, legacy isolation, and preservation of unrelated files,
+including namespace-level and nested symlink targets.
 Existing expiration, corruption, LRU, stale-generation and clear-epoch tests apply.
 
 SDK-09 retires the old writer before attempting deletion and restores its
