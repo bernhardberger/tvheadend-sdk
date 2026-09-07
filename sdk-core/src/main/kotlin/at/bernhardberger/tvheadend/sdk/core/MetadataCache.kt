@@ -84,7 +84,9 @@ public interface SessionCache {
      *
      * In-memory session state is untouched. A connected session persists its current catalog
      * and EPG snapshot again right away, so clearing resets stale or damaged files rather than
-     * freeing storage for the rest of the session. Returns after deletion completes.
+     * freeing storage for the rest of the session. A normal return follows the deletion attempt.
+     * Cancellation waits for any in-flight writer to retire and does not guarantee deletion;
+     * persistence resumes even when the caller cancels. Filesystem failures are best-effort.
      */
     public suspend fun clear()
 }

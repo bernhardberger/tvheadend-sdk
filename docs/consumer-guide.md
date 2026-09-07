@@ -135,6 +135,10 @@ evicted after writes, and expired entries are pruned on restore and writes.
 Oversized artwork is returned but not persisted. Corrupt bytes and indexes are
 discarded. The root must be app-private storage; cached bytes are not encrypted.
 Use one owning session runtime per root, not multiple application processes.
+Version 0.9.1 discards recognized legacy SDK namespaces on restore rather than
+migrating ambiguous identities. `ArtworkLoader.cacheKey` values change once on
+upgrade, causing one-time misses in application-owned artwork caches; those
+caches retain their own eviction policy and are not cleared by the SDK.
 Removed profiles' files remain subject to retention and the byte budget until
 pruned by cache activity, or can be deleted immediately with the root-wide `clear()`.
 

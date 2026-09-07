@@ -4,9 +4,11 @@
 
 Persistent cache namespaces now encode field boundaries unambiguously and use a
 new namespace version. Legacy metadata and artwork are not restored or migrated
-because the old namespace could identify different profiles. `cache.clear()`
-removes old SDK cache data without touching unrelated application data. Cancelling
-a clear no longer leaves a connected session without a metadata writer.
+because the old namespace could identify different profiles. Restore removes
+recognized legacy SDK namespaces without touching current namespaces or unrelated
+application data. Opaque `ArtworkLoader.cacheKey` values change once on upgrade;
+application-owned artwork caches miss once and retain their own eviction policy.
+Cancelling a clear no longer leaves a connected session without a metadata writer.
 
 DVR snapshots are reused until accepted DVR metadata changes. Known-channel
 pointer updates no longer reconstruct an unchanged EPG snapshot. Observation

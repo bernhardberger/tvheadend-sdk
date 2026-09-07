@@ -10,9 +10,10 @@ SDK-08 replaces ambiguous colon concatenation with the already-used maintained
 kotlinx-serialization protobuf list serializer and JDK SHA-256. The `v2-` prefix
 separates new metadata, artwork and derived artwork memory keys from all legacy
 unversioned namespaces. There is no fallback or migration of ambiguous identity.
-Legacy metadata remains removable with `clear()`; global artwork retention and
-byte-budget pruning still include legacy directories. Only the SDK-owned child
-of the supplied application root is cleared. Passwords still do not participate.
+Restore deletes recognized legacy namespaces, including metadata and artwork,
+without interpreting their contents. Current namespaces retain normal retention
+and byte-budget pruning. Only the SDK-owned child of the supplied application
+root is cleared. Passwords still do not participate.
 
 `CacheNamespacesTest`, `FileMetadataCacheStoreTest` and `ArtworkCacheTest` cover
 the audited IPv6/username tuple collision, separator-containing fields, distinct

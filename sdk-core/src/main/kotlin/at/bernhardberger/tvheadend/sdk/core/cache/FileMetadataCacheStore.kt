@@ -19,6 +19,7 @@ private const val CACHE_ROOT_DIR_NAME = "tvheadend-sdk"
 private const val CATALOG_FILE_NAME = "catalog.bin"
 private const val EPG_FILE_NAME = "epg.bin"
 private const val TMP_FILE_SUFFIX = ".tmp"
+private val LEGACY_NAMESPACE_PATTERN = Regex("[0-9a-f]{32}")
 
 /**
  * File-backed [MetadataCacheStore] rooted at `<root>/tvheadend-sdk/<namespace>/`.
@@ -33,6 +34,10 @@ internal class FileMetadataCacheStore(root: File) : MetadataCacheStore {
     private val namespacesRoot: File = File(root, CACHE_ROOT_DIR_NAME)
 
     override suspend fun loadCatalog(namespace: CacheNamespace, notBefore: Instant): ChannelCatalog? {
+        // Legacy identities cannot be restored safely and would otherwise never age out.
+        namespacesRoot.listFiles().orEmpty()
+            .filter { it.isDirectory && LEGACY_NAMESPACE_PATTERN.matches(it.name) }
+            .forEach { it.deleteRecursively() }
         val file = catalogFile(namespace)
         val envelope = readEnvelope(file, CatalogEnvelopeDto.serializer()) ?: return null
         if (!envelope.isFreshEnough(CATALOG_SCHEMA_VERSION, notBefore)) {

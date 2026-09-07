@@ -87,8 +87,8 @@ tvheadend-sdk/
 
 A different profile gets a different namespace. Legacy unversioned namespaces
 are not read or migrated: their delimiter-based identity cannot safely identify
-the original profile. They remain inside the SDK-owned root until `clear()`;
-legacy artwork remains subject to global retention and byte-budget pruning.
+the original profile. Recognized legacy directories, including metadata and
+artwork, are deleted on restore instead of leaving unreachable files indefinitely.
 No unrelated data under the supplied application root is deleted.
 
 ## Serialisation

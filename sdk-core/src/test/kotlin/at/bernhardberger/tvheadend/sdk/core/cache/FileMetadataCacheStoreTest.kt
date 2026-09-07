@@ -67,17 +67,33 @@ internal class FileMetadataCacheStoreTest {
     }
 
     @Test
-    fun `versioned identity does not restore legacy bytes and clear preserves unrelated app data`() = runTest {
+    fun `restore reclaims legacy namespaces without touching current namespaces or unrelated app data`() = runTest {
         val cache = store()
         cache.storeCatalog(namespace, sampleCatalog(), storedAt)
         cache.storeEpg(namespace, sampleSnapshot(), storedAt)
         val legacyDirectory = File(root, "tvheadend-sdk/${"a".repeat(32)}")
         assertTrue(catalogFile().parentFile.renameTo(legacyDirectory))
+        File(legacyDirectory, "artwork").mkdirs()
+        File(legacyDirectory, "artwork/1").writeBytes(byteArrayOf(1, 2))
         val unrelated = File(root, "application-data").apply { writeText("keep") }
+        val unrecognized = File(root, "tvheadend-sdk/unrecognized").apply { mkdirs() }
+        File(unrecognized, "keep").writeText("keep")
+        val other = cacheNamespace("other.example", 9982, "alice")
+        cache.storeCatalog(other, sampleCatalog(), storedAt)
+        cache.storeEpg(other, sampleSnapshot(), storedAt)
 
         assertNull(cache.loadCatalog(namespace, storedAt))
         assertNull(cache.loadEpg(namespace, storedAt))
-        assertTrue(legacyDirectory.isDirectory)
+        assertFalse(legacyDirectory.exists())
+        assertEquals(sampleCatalog(), cache.loadCatalog(other, storedAt))
+        assertEquals(sampleSnapshot(), cache.loadEpg(other, storedAt))
+        assertEquals("keep", File(unrecognized, "keep").readText())
+        assertEquals(0L, cache.statistics().artworkBytes)
+        val otherDirectory = File(root, "tvheadend-sdk/${other.value}")
+        assertEquals(
+            File(otherDirectory, "catalog.bin").length() + File(otherDirectory, "epg.bin").length(),
+            cache.statistics().metadataBytes,
+        )
         cache.clear()
         assertFalse(legacyDirectory.exists())
         assertEquals("keep", unrelated.readText())
