@@ -6,6 +6,7 @@ from __future__ import annotations
 import base64
 import binascii
 import concurrent.futures
+import contextlib
 import hashlib
 import io
 import json
@@ -736,6 +737,7 @@ class NoStatusRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def status_http(method: str, url: str, headers: dict[str, str], body: bytes | None) -> HttpResponse:
+    # Socket-operation timeout; the workflow bounds the whole process with GNU timeout.
     request = urllib.request.Request(url, data=body, headers=headers, method=method)
     try:
         with urllib.request.build_opener(NoStatusRedirect()).open(request, timeout=30) as response:
@@ -780,6 +782,7 @@ def status_output(provenance_only: bool) -> None:
         state = deployment_status(deployment, os.environ.get("RELEASE_VERSION", ""), token, status_http)
         print(f"CENTRAL_DEPLOYMENT_ID={deployment}")
         print(f"CENTRAL_DEPLOYMENT_STATE={state}")
+        require(state != "FAILED", "Central reports deployment failure; another upload is forbidden")
 
 
 def upload_once(bundle: bytes, identity: Identity, environment: dict[str, str], client: HttpClient, marker: Path = UPLOAD_MARKER) -> str:
@@ -960,7 +963,10 @@ def self_test() -> list[str]:
         status_calls.append((method, url, headers, body))
         return HttpResponse(200, json.dumps(status_value).encode())
 
-    if deployment_status(deployment, "0.1.2", token, status_client) != "PUBLISHED" or status_calls != [
+    status_stdout = io.StringIO()
+    with contextlib.redirect_stdout(status_stdout):
+        state = deployment_status(deployment, "0.1.2", token, status_client)
+    if state != "PUBLISHED" or status_stdout.getvalue() or status_calls != [
         ("POST", f"{STATUS_URL}?id={deployment}", {"Authorization": f"Bearer {token}", "Accept": "application/json"}, None)
     ]:
         errors.append("self-test status must perform exactly one status-only request")
@@ -973,6 +979,13 @@ def self_test() -> list[str]:
     if len(status_calls) != 1:
         errors.append("self-test invalid status input reached transport")
     expect_error(errors, "status redirect", lambda: NoStatusRedirect().redirect_request(None, None, 302, "", {}, "https://example.invalid"))
+    deadline = subprocess.run(
+        ("timeout", "--signal=TERM", "--kill-after=5s", "0.2s", sys.executable, "-c",
+         "import time\nwhile True:\n print('progress', flush=True)\n time.sleep(0.01)"),
+        env=safe_environment(), capture_output=True, timeout=10,
+    )
+    if deadline.returncode != 124:
+        errors.append("self-test status process deadline did not stop continuous progress")
     tag_object = "1" * 40
     tagged_commit = "2" * 40
     if parse_remote_tag(f"{tag_object}\trefs/tags/v0.1.2\n".encode(), "v0.1.2") != tag_object:

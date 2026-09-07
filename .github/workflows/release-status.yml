@@ -39,7 +39,7 @@ jobs:
           CENTRAL_PORTAL_TOKEN: ${{ secrets.CENTRAL_PORTAL_TOKEN }}
           CENTRAL_DEPLOYMENT_ID: ${{ inputs.deployment_id }}
           RELEASE_VERSION: ${{ steps.release.outputs.release_version }}
-        run: ./tools/publish-central-release --deployment-status
+        run: timeout --signal=TERM --kill-after=5s 30s ./tools/publish-central-release --deployment-status
       - name: Record public provenance
         env:
           RELEASE_RUN_ID: ${{ steps.release.outputs.release_run_id }}
