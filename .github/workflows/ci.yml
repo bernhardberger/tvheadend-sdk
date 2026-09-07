@@ -35,6 +35,17 @@ jobs:
           cache-read-only: ${{ github.event_name != 'push' || github.ref != 'refs/heads/main' }}
           # Keep task outputs and configuration state out of cross-run reuse.
           gradle-home-cache-includes: caches/modules-2
+          # Deduplicated entries are managed separately from the include list.
+          gradle-home-cache-excludes: |
+            caches/build-cache-*
+            caches/jars-*
+            caches/transforms-*
+            caches/*/transforms
+            caches/*/kotlin-dsl
+            caches/*/groovy-dsl
+            caches/*/scripts*
+            caches/*/generated-gradle-jars
+            caches/keyrings
           validate-wrappers: false # Validated by the dedicated step above.
       - name: Install pinned Android SDK packages
         run: '"$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"'

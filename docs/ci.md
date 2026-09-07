@@ -29,6 +29,10 @@ Restored dependencies remain subject to the checked-in Gradle dependency
 verification metadata and signature/checksum policy. Compiled build scripts,
 instrumented jars and artifact transforms are also deliberately excluded: this
 first change reuses downloaded inputs only, not derived build state.
+The explicit exclusions are necessary even with the narrow include list:
+the provider manages deduplicated cache entries separately. Run `34091334988`
+passed the build but exposed this distinction by saving derived state. Its cache
+configuration was corrected rather than accepted as dependency-only evidence.
 
 Concurrency groups include the workflow and event. PRs share a group only with
 runs of the same PR and cancel obsolete runs. Main pushes use unique run IDs,
