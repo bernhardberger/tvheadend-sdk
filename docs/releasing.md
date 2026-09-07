@@ -66,6 +66,24 @@ rejected because `github.run_attempt` is no longer one.
 
 ## Operator Completion
 
+Query an already-recorded deployment without signing, uploading, rebuilding or
+changing its tag:
+
+```bash
+gh workflow run release-status.yml --ref main \
+  -f release_run_id=<successful-release-run-id> \
+  -f deployment_id=<CENTRAL_DEPLOYMENT_ID-recorded-by-that-run>
+```
+
+The operator supplies the recorded run/deployment association. The status job
+verifies successful first-attempt release provenance and the returned deployment
+ID/name, then emits only its bounded state and public provenance. The Central
+token stays in the status step's environment, separately from the read-only
+GitHub token; redirects are rejected. One status request is made, with no retry
+or polling. A successful status job is not a publication claim: only
+`CENTRAL_DEPLOYMENT_STATE=PUBLISHED` permits completion. Other states require an
+explicit later observation or checkpoint, never another upload.
+
 After Central reports the recorded deployment as `PUBLISHED`, the release owner
 works from the exact tag and explicitly completes convergence:
 

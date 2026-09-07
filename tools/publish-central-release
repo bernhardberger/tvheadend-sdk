@@ -40,6 +40,7 @@ MODULE_EXTENSIONS = {
 FINGERPRINT = "C20177505D8D21CE86DEF715889A6266E5504130"
 EXPECTED_UID = "Bernhard Berger <bernhard.berger@gmail.com>"
 UPLOAD_URL = "https://central.sonatype.com/api/v1/publisher/upload"
+STATUS_URL = "https://central.sonatype.com/api/v1/publisher/status"
 MAVEN_URL = "https://repo1.maven.org/maven2"
 CENTRAL_ARTIFACT_URL = "https://central.sonatype.com/artifact"
 GITHUB_API_URL = "https://api.github.com"
@@ -711,6 +712,76 @@ def upload_bundle(bundle: bytes, identity: Identity, token: str, client: HttpCli
     return deployment
 
 
+def status_provenance(run_id: str, token: str, client: HttpClient) -> dict[str, str]:
+    require(re.fullmatch(r"[1-9][0-9]*", run_id) is not None, "release run id is invalid")
+    run = github_json(f"{GITHUB_API_URL}/repos/{REPOSITORY}/actions/runs/{run_id}", token, client)
+    repository = run.get("repository")
+    tag = run.get("head_branch")
+    commit = run.get("head_sha")
+    require(
+        run.get("id") == int(run_id) and run.get("run_attempt") == 1
+        and run.get("event") == "push" and run.get("status") == "completed"
+        and run.get("conclusion") == "success" and run.get("path") == ".github/workflows/release.yml"
+        and isinstance(repository, dict) and repository.get("full_name") == REPOSITORY
+        and isinstance(tag, str) and re.fullmatch(r"v0\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", tag) is not None
+        and isinstance(commit, str) and re.fullmatch(r"[0-9a-f]{40}", commit) is not None,
+        "status requires a successful first-attempt tagged SDK release run",
+    )
+    return {"release_run_id": run_id, "release_commit": commit, "release_version": tag[1:]}
+
+
+class NoStatusRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise ReleaseError("Central status redirect is forbidden")
+
+
+def status_http(method: str, url: str, headers: dict[str, str], body: bytes | None) -> HttpResponse:
+    request = urllib.request.Request(url, data=body, headers=headers, method=method)
+    try:
+        with urllib.request.build_opener(NoStatusRedirect()).open(request, timeout=30) as response:
+            return HttpResponse(response.status, response.read(1024 * 1024 + 1))
+    except (OSError, urllib.error.URLError) as error:
+        raise ReleaseError("Central status request failed") from error
+
+
+def deployment_status(deployment: str, version: str, token: str, client: HttpClient) -> str:
+    require(DEPLOYMENT_ID.fullmatch(deployment) is not None, "recorded deployment id is invalid")
+    require(re.fullmatch(r"0\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", version) is not None, "release version is invalid")
+    validate_portal_token(token)
+    response = client("POST", f"{STATUS_URL}?{urllib.parse.urlencode({'id': deployment})}", {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+    }, None)
+    require(response.status == 200 and len(response.body) <= 1024 * 1024, "Central status response is unavailable or oversized")
+    try:
+        value = json.loads(response.body)
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise ReleaseError("Central status response is malformed") from error
+    require(isinstance(value, dict) and value.get("deploymentId") == deployment
+            and value.get("deploymentName") == f"tvheadend-sdk-{version}", "Central status deployment identity differs")
+    state = value.get("deploymentState")
+    require(isinstance(state, str) and state in {"PENDING", "VALIDATING", "VALIDATED", "PUBLISHING", "PUBLISHED", "FAILED"},
+            "Central status state is unknown")
+    return state
+
+
+def status_output(provenance_only: bool) -> None:
+    require(os.environ.get("GITHUB_ACTIONS") == "true"
+            and os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
+            and os.environ.get("GITHUB_REPOSITORY") == REPOSITORY
+            and os.environ.get("GITHUB_REF") == "refs/heads/main", "status requires an explicit main workflow dispatch")
+    if provenance_only:
+        token, = scoped_credentials(("GITHUB_TOKEN",), os.environ)
+        for name, value in status_provenance(os.environ.get("RELEASE_RUN_ID", ""), token, stdlib_http).items():
+            print(f"{name}={value}")
+    else:
+        token, = scoped_credentials(("CENTRAL_PORTAL_TOKEN",), os.environ)
+        deployment = os.environ.get("CENTRAL_DEPLOYMENT_ID", "")
+        state = deployment_status(deployment, os.environ.get("RELEASE_VERSION", ""), token, status_http)
+        print(f"CENTRAL_DEPLOYMENT_ID={deployment}")
+        print(f"CENTRAL_DEPLOYMENT_STATE={state}")
+
+
 def upload_once(bundle: bytes, identity: Identity, environment: dict[str, str], client: HttpClient, marker: Path = UPLOAD_MARKER) -> str:
     token, = scoped_credentials(("CENTRAL_PORTAL_TOKEN",), environment)
     validate_portal_token(token)
@@ -881,6 +952,27 @@ def self_test() -> list[str]:
     except ReleaseError as error:
         errors.append(f"self-test rejected a valid token shape: {error}")
     expect_error(errors, "malformed token", lambda: validate_portal_token("not base64"))
+    deployment = "b6333c32-ed34-49c9-9a9b-209f8d21b653"
+    status_calls = []
+    status_value = {"deploymentId": deployment, "deploymentName": "tvheadend-sdk-0.1.2", "deploymentState": "PUBLISHED", "errors": "must not be emitted"}
+
+    def status_client(method, url, headers, body):
+        status_calls.append((method, url, headers, body))
+        return HttpResponse(200, json.dumps(status_value).encode())
+
+    if deployment_status(deployment, "0.1.2", token, status_client) != "PUBLISHED" or status_calls != [
+        ("POST", f"{STATUS_URL}?id={deployment}", {"Authorization": f"Bearer {token}", "Accept": "application/json"}, None)
+    ]:
+        errors.append("self-test status must perform exactly one status-only request")
+    for key, bad in (("deploymentId", "different"), ("deploymentName", "different"), ("deploymentState", "unknown")):
+        expect_error(errors, "status identity/state mismatch", lambda key=key, bad=bad: deployment_status(deployment, "0.1.2", token,
+                     lambda *_args: HttpResponse(200, json.dumps({**status_value, key: bad}).encode())))
+    for response in (HttpResponse(500, b"private response"), HttpResponse(200, b"[]"), HttpResponse(200, b"invalid"), HttpResponse(200, b"x" * (1024 * 1024 + 1))):
+        expect_error(errors, "invalid status response", lambda response=response: deployment_status(deployment, "0.1.2", token, lambda *_args: response))
+    expect_error(errors, "status input injection", lambda: deployment_status(deployment + "&other=1", "0.1.2", token, status_client))
+    if len(status_calls) != 1:
+        errors.append("self-test invalid status input reached transport")
+    expect_error(errors, "status redirect", lambda: NoStatusRedirect().redirect_request(None, None, 302, "", {}, "https://example.invalid"))
     tag_object = "1" * 40
     tagged_commit = "2" * 40
     if parse_remote_tag(f"{tag_object}\trefs/tags/v0.1.2\n".encode(), "v0.1.2") != tag_object:
@@ -924,6 +1016,13 @@ def self_test() -> list[str]:
         "path": CI_WORKFLOW,
         "repository": {"full_name": REPOSITORY},
     }
+    release_run = {**run, "path": ".github/workflows/release.yml", "head_branch": "v0.1.2"}
+    provenance_client = lambda *_args: HttpResponse(200, json.dumps(release_run).encode())
+    if status_provenance(str(run_id), "token", provenance_client) != {"release_run_id": str(run_id), "release_commit": tagged_commit, "release_version": "0.1.2"}:
+        errors.append("self-test status release provenance differs")
+    for key, bad in (("path", CI_WORKFLOW), ("run_attempt", 2), ("conclusion", "failure"), ("head_branch", "main"), ("head_sha", "invalid"), ("id", 1)):
+        expect_error(errors, "invalid status release provenance", lambda key=key, bad=bad: status_provenance(str(run_id), "token",
+                     lambda *_args: HttpResponse(200, json.dumps({**release_run, key: bad}).encode())))
     artifact = {
         "id": 67890,
         "name": f"staged-publication-{run_id}",
@@ -1164,10 +1263,12 @@ def main() -> int:
         "--prepare",
         "--upload",
         "--verify-published",
+        "--status-provenance",
+        "--deployment-status",
     }
     arguments = sys.argv[1:]
     if len(arguments) != 1 or arguments[0] not in modes:
-        print("usage: publish-central-release --self-test|--check-setup|--write-ci-provenance|--select-ci-run|--verify-ci-staging|--prepare|--upload|--verify-published", file=sys.stderr)
+        print("usage: publish-central-release --self-test|--check-setup|--write-ci-provenance|--select-ci-run|--verify-ci-staging|--prepare|--upload|--verify-published|--status-provenance|--deployment-status", file=sys.stderr)
         return 2
     try:
         mode = arguments[0]
@@ -1189,6 +1290,9 @@ def main() -> int:
             return 0
         elif mode == "--upload":
             upload()
+            return 0
+        elif mode in {"--status-provenance", "--deployment-status"}:
+            status_output(mode == "--status-provenance")
             return 0
         else:
             verify_published()

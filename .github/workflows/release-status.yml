@@ -1,0 +1,50 @@
+name: Release Status
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_run_id:
+        description: Successful first-attempt release run that recorded the deployment
+        required: true
+        type: string
+      deployment_id:
+        description: Existing CENTRAL_DEPLOYMENT_ID from that run (never uploads)
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  status:
+    if: github.repository == 'bernhardberger/tvheadend-sdk' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: central
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check out status tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Verify recorded release provenance
+        id: release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+        run: ./tools/publish-central-release --status-provenance >> "$GITHUB_OUTPUT"
+      - name: Query existing deployment once
+        env:
+          CENTRAL_PORTAL_TOKEN: ${{ secrets.CENTRAL_PORTAL_TOKEN }}
+          CENTRAL_DEPLOYMENT_ID: ${{ inputs.deployment_id }}
+          RELEASE_VERSION: ${{ steps.release.outputs.release_version }}
+        run: ./tools/publish-central-release --deployment-status
+      - name: Record public provenance
+        env:
+          RELEASE_RUN_ID: ${{ steps.release.outputs.release_run_id }}
+          RELEASE_COMMIT: ${{ steps.release.outputs.release_commit }}
+          RELEASE_VERSION: ${{ steps.release.outputs.release_version }}
+        run: |
+          printf 'RELEASE_RUN_ID=%s\nRELEASE_COMMIT=%s\nRELEASE_VERSION=%s\n' \
+            "$RELEASE_RUN_ID" "$RELEASE_COMMIT" "$RELEASE_VERSION"
