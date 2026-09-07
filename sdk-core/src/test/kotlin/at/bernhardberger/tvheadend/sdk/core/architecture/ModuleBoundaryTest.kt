@@ -133,6 +133,9 @@ internal class ModuleBoundaryTest {
             "ArtworkContent",
             "ArtworkLoadResult",
             "ArtworkLoader",
+            "MetadataCachePolicy",
+            "SessionCache",
+            "CacheStatistics",
             "ChannelTagId",
             "EventId",
             "EpgEpisodeId",
@@ -411,6 +414,7 @@ internal class ModuleBoundaryTest {
         )
         val expectedTesting = setOf(
             "FakeArtworkLoader",
+            "FakeSessionCache",
             "FakeDvrRepository",
             "FakeEpgRepository",
             "FakePlaybackApi",
@@ -486,7 +490,7 @@ internal class ModuleBoundaryTest {
         )
         // The codec classification is intentionally stable for sdk-media3 application callbacks.
         assertPublicInfrastructure("sdk-playback", expectedPlayback, unannotatedCount = 9)
-        assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 9)
+        assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 10)
         val fakeSessionSource = File(
             repositoryRoot,
             "sdk-testing/src/main/kotlin/at/bernhardberger/tvheadend/sdk/testing/FakeTvheadendSession.kt",

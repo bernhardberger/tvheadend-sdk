@@ -105,6 +105,37 @@ authorize a proof.
 and idempotent. It affects every holder of the shared session; a later
 `createTvheadendSession()` call creates a fresh owner.
 
+### Persist metadata between processes
+
+By default nothing survives the process. Pass a `MetadataCachePolicy` to keep
+the last published channel catalog and guide on disk:
+
+```kotlin
+val session = createTvheadendSession(
+    epgCoveragePolicy = EpgCoveragePolicy.create(7.days),
+    cachePolicy = MetadataCachePolicy.create(root = context.cacheDir),
+)
+```
+
+The SDK owns the mechanics: files live under `<root>/tvheadend-sdk/<namespace>/`
+where the namespace is a hash of host, port and username, the catalog is written
+on every change, the guide is coalesced to one write per minute and flushed on
+disconnect, and files older than `metadataRetention` (default seven days) or
+that fail to decode are deleted. On the next `connect(profile)` the cached
+snapshots are published as `Stale` repository states before the transport
+connects, so a channel list can render during `Connecting` and `Synchronizing`.
+Cached data is never published as `CURRENT`: tuning, EPG queries and DVR
+mutations still wait for `Ready`. The guide is seeded for display only; the
+initial sync re-sends the configured horizon.
+
+`session.cache` exposes `SessionCache.statistics` for a storage screen and
+`clear()` to delete every cached namespace. Statistics are measured once the
+session first touches the cache, and a connected session persists its current
+snapshots again right after `clear()`, so the control resets stale or damaged
+files rather than freeing storage. A session created without a policy reports
+empty statistics and `clear()` is a no-op. `FakeTvheadendSession.cache`
+is a `FakeSessionCache` whose statistics can be scripted.
+
 ## Read the catalog
 
 `SessionObservation.channelState` is `Empty`, `Synchronizing`, `Current`, or

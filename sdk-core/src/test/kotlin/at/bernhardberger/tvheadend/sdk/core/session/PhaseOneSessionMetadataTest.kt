@@ -2,6 +2,7 @@ package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.Channel
+import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.ChannelService
 import at.bernhardberger.tvheadend.sdk.core.DvrConfigId
@@ -15,6 +16,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverageAcquisitionResult
 import at.bernhardberger.tvheadend.sdk.core.EpgCoveragePolicy
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability
 import at.bernhardberger.tvheadend.sdk.core.ServerCapabilities
 import at.bernhardberger.tvheadend.sdk.core.SessionState
@@ -866,6 +868,43 @@ internal class PhaseOneSessionMetadataTest {
             metadata.observation.value.epgState.toString().contains("private"),
             "Query publication rendering exposed programme data",
         )
+    }
+
+    @Test
+    fun `seeded snapshots publish stale states and are replaced by the first sync`() {
+        val metadata = PhaseOneSessionMetadata()
+        val seededCatalog = ChannelCatalog.create(
+            channels = listOf(Channel.create(id = ChannelId(9), name = "Cached")),
+        )
+        val seededEpg = EpgSnapshot.create()
+
+        assertNull(metadata.publishedSnapshots.value)
+        assertTrue(metadata.seedRetainedSnapshots(seededCatalog, seededEpg))
+        assertFalse(metadata.seedRetainedSnapshots(seededCatalog, seededEpg), "A second seed must be refused")
+
+        val staleChannels = metadata.channelsAndTags.value as ChannelRepositoryState.Stale
+        assertSame(seededCatalog, staleChannels.catalog)
+        val staleEpg = metadata.observation.value.epgState as EpgRepositoryState.Stale
+        assertSame(seededEpg, staleEpg.snapshot)
+        assertNull(metadata.publishedSnapshots.value, "Seeds are not publications")
+
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        val synchronizing = metadata.channelsAndTags.value as ChannelRepositoryState.Synchronizing
+        assertSame(seededCatalog, synchronizing.staleCatalog)
+        assertFalse(metadata.seedRetainedSnapshots(seededCatalog, seededEpg), "A bound generation refuses seeds")
+
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(id = 1)))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+
+        val current = metadata.channelsAndTags.value as ChannelRepositoryState.Current
+        assertEquals(listOf(1L), current.catalog.channels.map { it.id.value })
+        val published = requireNotNull(metadata.publishedSnapshots.value)
+        assertSame(current.catalog, published.catalog)
+        assertSame((metadata.observation.value.epgState as EpgRepositoryState.Current).snapshot, published.epgSnapshot)
+
+        metadata.clearAllState()
+        assertTrue(metadata.seedRetainedSnapshots(seededCatalog, null), "A cleared metadata accepts a seed again")
     }
 
     @Test

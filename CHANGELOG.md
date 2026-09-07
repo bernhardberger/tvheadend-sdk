@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.8.0]
+
+Sessions can persist catalog and guide metadata between processes. Passing a
+`MetadataCachePolicy` to `createTvheadendSession(epgCoveragePolicy, cachePolicy)`
+makes the SDK store the published `ChannelCatalog` and `EpgSnapshot` per server
+namespace (a hash of host, port and username) under the policy root, and seed
+them as `Stale` repository states before the next connection attempt, so a cold
+start can browse channels before the HTSP initial sync completes. The catalog is
+written on every change and the guide is coalesced to one write per minute plus
+a flush on disconnect. Files older than `metadataRetention` or that fail to
+decode are deleted. Nothing served from disk is ever published as `CURRENT`.
+`TvheadendSession.cache` exposes `SessionCache` with `statistics` and `clear()`;
+sessions created without a policy report empty statistics. `FakeTvheadendSession`
+gains `FakeSessionCache`. `docs/persistent-cache-design.md` records the design;
+artwork persistence is a later slice.
+
 ## [0.7.0]
 
 Guide traffic no longer starves the consuming process. Every HTSP EPG add,

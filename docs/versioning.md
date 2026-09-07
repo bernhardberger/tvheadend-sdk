@@ -1,16 +1,16 @@
 # Versioning and compatibility
 
-The source is configured for the provisional `0.7.0` release under these
+The source is configured for the provisional `0.8.0` release under these
 coordinates:
 
-- `at.bernhardberger.tvheadend:sdk-android:0.7.0`
-- `at.bernhardberger.tvheadend:sdk-core:0.7.0`
-- `at.bernhardberger.tvheadend:sdk-media3:0.7.0`
-- `at.bernhardberger.tvheadend:sdk-playback:0.7.0`
-- `at.bernhardberger.tvheadend:sdk-testing:0.7.0`
+- `at.bernhardberger.tvheadend:sdk-android:0.8.0`
+- `at.bernhardberger.tvheadend:sdk-core:0.8.0`
+- `at.bernhardberger.tvheadend:sdk-media3:0.8.0`
+- `at.bernhardberger.tvheadend:sdk-playback:0.8.0`
+- `at.bernhardberger.tvheadend:sdk-testing:0.8.0`
 
 The `v0.6.1` tag marks the preceding release. Source, local staging, and CI
-do not establish that the configured `0.7.0` coordinates are publicly available;
+do not establish that the configured `0.8.0` coordinates are publicly available;
 check Maven Central before selecting them.
 
 The signed `v0.3.3` tag is retained as development-release evidence after its
@@ -31,9 +31,9 @@ While the major version is zero, the public API and behavior are provisional.
 No source, binary, or behavioral compatibility is promised for the provisional
 0.x line. A known breaking change requires the next minor version, not a patch
 version. Patch versions are reserved for backward-compatible fixes. The
-configured `0.7.0` minor release changes live recovery timing behavior and adds
-constructor fields to `PlaybackRecoveryPolicy` and
-`TimeshiftPlaybackPosition.Estimate`, so it is not a patch on `0.6.1`.
+configured `0.8.0` minor release adds `TvheadendSession.cache` to the session
+interface and a `createTvheadendSession` overload taking `MetadataCachePolicy`,
+so it is not a patch on `0.7.0`.
 
 The entire `1.x` line is reserved for a separately attended final stable
 release. Development packages must not select, recommend, tag, publish, or

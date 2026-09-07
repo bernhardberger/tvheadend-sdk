@@ -20,6 +20,7 @@ import at.bernhardberger.tvheadend.sdk.core.PlaybackBinding
 import at.bernhardberger.tvheadend.sdk.core.PlaybackBindingResult
 import at.bernhardberger.tvheadend.sdk.core.ServerCapabilities
 import at.bernhardberger.tvheadend.sdk.core.ServerProfile
+import at.bernhardberger.tvheadend.sdk.core.SessionCache
 import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
 import at.bernhardberger.tvheadend.sdk.core.SessionObservation
 import at.bernhardberger.tvheadend.sdk.core.SessionState
@@ -245,6 +246,7 @@ private class FakeArtworkSession(
 ) : TvheadendSession {
     override val epgRepository: EpgRepository get() = unsupported()
     override val dvrRepository: DvrRepository get() = unsupported()
+    override val cache: SessionCache get() = unsupported()
 
     override fun bindLivePlayback(
         currentSession: CurrentSessionObservation,

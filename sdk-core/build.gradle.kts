@@ -10,6 +10,7 @@ plugins {
     `java-test-fixtures`
     `maven-publish`
     alias(libs.plugins.kotlin.jvm)
+    alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.detekt)
     alias(libs.plugins.dokka)
 }
@@ -43,6 +44,7 @@ dependencies {
     api(libs.kotlinx.coroutines.core)
     api(project(":sdk-playback"))
     implementation(libs.htsp)
+    implementation(libs.kotlinx.serialization.protobuf)
 
     testImplementation(libs.junit)
     testImplementation(libs.konsist)

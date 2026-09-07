@@ -249,6 +249,21 @@ public final class at/bernhardberger/tvheadend/sdk/core/AutorecRuleUpdate {
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class at/bernhardberger/tvheadend/sdk/core/CacheStatistics {
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/CacheStatistics$Companion;
+	public fun <init> (JJI)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getArtworkBytes ()J
+	public final fun getArtworkEntryCount ()I
+	public final fun getMetadataBytes ()J
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/CacheStatistics$Companion {
+	public final fun getEMPTY ()Lat/bernhardberger/tvheadend/sdk/core/CacheStatistics;
+}
+
 public final class at/bernhardberger/tvheadend/sdk/core/CapabilityAccess : java/lang/Enum {
 	public static final field ALLOWED Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
 	public static final field DENIED Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
@@ -1677,6 +1692,19 @@ public final class at/bernhardberger/tvheadend/sdk/core/EventId {
 	public final synthetic fun unbox-impl ()J
 }
 
+public final class at/bernhardberger/tvheadend/sdk/core/MetadataCachePolicy {
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/MetadataCachePolicy$Companion;
+	public final fun getArtworkMaxBytes ()J
+	public final fun getArtworkRetention-UwyO8pc ()J
+	public final fun getMetadataRetention-UwyO8pc ()J
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/MetadataCachePolicy$Companion {
+	public final fun create-vLdBGDU (Ljava/io/File;JJJ)Lat/bernhardberger/tvheadend/sdk/core/MetadataCachePolicy;
+	public static synthetic fun create-vLdBGDU$default (Lat/bernhardberger/tvheadend/sdk/core/MetadataCachePolicy$Companion;Ljava/io/File;JJJILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/MetadataCachePolicy;
+}
+
 public abstract class at/bernhardberger/tvheadend/sdk/core/PlaybackBinding {
 }
 
@@ -1916,6 +1944,11 @@ public abstract interface class at/bernhardberger/tvheadend/sdk/core/ServerProfi
 public final class at/bernhardberger/tvheadend/sdk/core/ServerProfileStore$DefaultImpls {
 	public static synthetic fun storeAnonymous$default (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileStore;Ljava/lang/String;ILkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public static synthetic fun storePassword$default (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileStore;Ljava/lang/String;ILjava/lang/String;Ljava/lang/String;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+}
+
+public abstract interface class at/bernhardberger/tvheadend/sdk/core/SessionCache {
+	public abstract fun clear (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun getStatistics ()Lkotlinx/coroutines/flow/StateFlow;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/SessionCommandResult : java/lang/Enum {
@@ -2365,6 +2398,7 @@ public abstract interface class at/bernhardberger/tvheadend/sdk/core/TvheadendSe
 	public abstract fun connect (Lat/bernhardberger/tvheadend/sdk/core/ServerProfile;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun disconnect (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun getArtwork ()Lat/bernhardberger/tvheadend/sdk/core/ArtworkLoader;
+	public abstract fun getCache ()Lat/bernhardberger/tvheadend/sdk/core/SessionCache;
 	public abstract fun getDvrRepository ()Lat/bernhardberger/tvheadend/sdk/core/DvrRepository;
 	public abstract fun getEpgRepository ()Lat/bernhardberger/tvheadend/sdk/core/EpgRepository;
 	public abstract fun getObservation ()Lkotlinx/coroutines/flow/StateFlow;
@@ -2384,6 +2418,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/TvheadendSession$Default
 public final class at/bernhardberger/tvheadend/sdk/core/TvheadendSessionKt {
 	public static final fun createTvheadendSession ()Lat/bernhardberger/tvheadend/sdk/core/TvheadendSession;
 	public static final fun createTvheadendSession (Lat/bernhardberger/tvheadend/sdk/core/EpgCoveragePolicy;)Lat/bernhardberger/tvheadend/sdk/core/TvheadendSession;
+	public static final fun createTvheadendSession (Lat/bernhardberger/tvheadend/sdk/core/EpgCoveragePolicy;Lat/bernhardberger/tvheadend/sdk/core/MetadataCachePolicy;)Lat/bernhardberger/tvheadend/sdk/core/TvheadendSession;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/TvheadendTestResultFactory {

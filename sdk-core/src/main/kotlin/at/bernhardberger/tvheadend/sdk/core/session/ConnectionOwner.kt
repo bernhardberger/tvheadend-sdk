@@ -14,6 +14,7 @@ import at.bernhardberger.tvheadend.sdk.core.PlaybackBinding
 import at.bernhardberger.tvheadend.sdk.core.PlaybackBindingResult
 import at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability
 import at.bernhardberger.tvheadend.sdk.core.ServerProfile
+import at.bernhardberger.tvheadend.sdk.core.SessionCache
 import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
 import at.bernhardberger.tvheadend.sdk.core.SessionFailure
 import at.bernhardberger.tvheadend.sdk.core.SessionOperationFailure
@@ -23,6 +24,8 @@ import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.StreamProfilesResult
 import at.bernhardberger.tvheadend.sdk.core.SessionPlaybackBindingFactory
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
+import at.bernhardberger.tvheadend.sdk.core.cache.DisabledSessionCache
+import at.bernhardberger.tvheadend.sdk.core.cache.MetadataCacheRuntime
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
@@ -63,6 +66,7 @@ internal class ConnectionOwner(
     private val dvrMutations: DvrMutationLifecycle = DvrMutationLifecycle.None,
     private val dvrProgress: DvrProgressLifecycle = DvrProgressLifecycle.None,
     defaultDispatcher: CoroutineDispatcher,
+    private val cacheRuntime: MetadataCacheRuntime? = null,
     private val backoff: ReconnectBackoff,
     private val beforeDvrCapabilityPublication: suspend (Boolean) -> Unit = {},
     private val onShutdown: () -> Unit = {},
@@ -86,6 +90,7 @@ internal class ConnectionOwner(
     override val epgRepository: EpgRepository = metadata.epgRepository
     override val dvrRepository: DvrRepository = metadata.dvrRepository
     override val artwork: ArtworkLoader = children
+    override val cache: SessionCache = cacheRuntime ?: DisabledSessionCache
     override suspend fun getStreamProfiles(
         currentSession: CurrentSessionObservation,
     ): StreamProfilesResult {
@@ -214,6 +219,10 @@ internal class ConnectionOwner(
                                     children::closeAndJoinSubscriptions,
                                     gateway::disconnect,
                                     gateway::shutdown,
+                                    {
+                                        cacheRuntime?.shutdown()
+                                        Unit
+                                    },
                                     { metadata.clearAllState() },
                                 ),
                             )
@@ -247,6 +256,10 @@ internal class ConnectionOwner(
                 children::cancelAndJoinBackgroundEnrichment,
                 children::closeAndJoinSubscriptions,
                 gateway::disconnect,
+                {
+                    cacheRuntime?.stop()
+                    Unit
+                },
                 {
                     if (retainPublishedCatalog) {
                         metadata.resetWorkingStateRetainingPublishedSnapshot()
@@ -300,8 +313,26 @@ internal class ConnectionOwner(
         }.also(Job::start)
     }
 
+    /**
+     * Seeds retained metadata from the cache and starts persisting publications.
+     *
+     * A same-profile reconnect already retains its snapshots, so the seed is refused and the
+     * writer simply resumes. The store never throws for IO problems, so cache work cannot fail
+     * the connection.
+     */
+    private suspend fun prepareCache(profile: ServerProfile) {
+        val runtime = cacheRuntime ?: return
+        val namespace = profile.cacheNamespace()
+        val restored = runtime.restore(namespace)
+        synchronized(stateLock) {
+            metadata.seedRetainedSnapshots(restored.catalog, restored.epgSnapshot)
+        }
+        runtime.start(namespace, metadata.publishedSnapshots)
+    }
+
     private suspend fun connectionLoop(profile: ServerProfile, token: SessionToken) {
         try {
+            prepareCache(profile)
             connectionLoopBody(profile, token)
         } catch (exception: CancellationException) {
             throw exception

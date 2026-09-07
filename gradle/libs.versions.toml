@@ -18,6 +18,7 @@ konsist = "0.17.3"
 kotlin = "2.4.10"
 media3 = "1.11.0"
 minSdk = "24"
+serialization = "1.11.0"
 targetSdk = "36"
 tink = "1.23.0"
 turbine = "1.2.1"
@@ -33,6 +34,7 @@ junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher
 konsist = { module = "com.lemonappdev:konsist", version.ref = "konsist" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+kotlinx-serialization-protobuf = { module = "org.jetbrains.kotlinx:kotlinx-serialization-protobuf", version.ref = "serialization" }
 media3-exoplayer = { module = "androidx.media3:media3-exoplayer", version.ref = "media3" }
 media3-extractor = { module = "androidx.media3:media3-extractor", version.ref = "media3" }
 tink-android = { module = "com.google.crypto.tink:tink-android", version.ref = "tink" }
@@ -44,3 +46,4 @@ android-library = { id = "com.android.library", version.ref = "agp" }
 detekt = { id = "dev.detekt", version.ref = "detekt" }
 dokka = { id = "org.jetbrains.dokka", version.ref = "dokka" }
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }

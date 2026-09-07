@@ -66,9 +66,16 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeServerProfileStor
 	public static fun values ()[Lat/bernhardberger/tvheadend/sdk/testing/FakeServerProfileStoreCall;
 }
 
+public final class at/bernhardberger/tvheadend/sdk/testing/FakeSessionCache : at/bernhardberger/tvheadend/sdk/core/SessionCache {
+	public fun clear (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun getStatistics ()Lkotlinx/coroutines/flow/StateFlow;
+	public final fun scriptStatistics (Lat/bernhardberger/tvheadend/sdk/core/CacheStatistics;)V
+}
+
 public final class at/bernhardberger/tvheadend/sdk/testing/FakeSessionCall : java/lang/Enum {
 	public static final field BIND_LIVE_PLAYBACK Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
 	public static final field BIND_RECORDING_PLAYBACK Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
+	public static final field CLEAR_CACHE Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
 	public static final field CONNECT Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
 	public static final field DISCONNECT Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
 	public static final field DVR_CANCEL_ENTRY Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
@@ -117,6 +124,8 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeTvheadendSession 
 	public fun disconnect (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public synthetic fun getArtwork ()Lat/bernhardberger/tvheadend/sdk/core/ArtworkLoader;
 	public fun getArtwork ()Lat/bernhardberger/tvheadend/sdk/testing/FakeArtworkLoader;
+	public synthetic fun getCache ()Lat/bernhardberger/tvheadend/sdk/core/SessionCache;
+	public fun getCache ()Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCache;
 	public final fun getCalls ()Ljava/util/List;
 	public synthetic fun getDvrRepository ()Lat/bernhardberger/tvheadend/sdk/core/DvrRepository;
 	public fun getDvrRepository ()Lat/bernhardberger/tvheadend/sdk/testing/FakeDvrRepository;

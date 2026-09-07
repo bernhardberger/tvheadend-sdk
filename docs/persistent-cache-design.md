@@ -127,13 +127,14 @@ metadata lock and never blocks on IO.
 
 On `connect(profile)`, before the gateway connects, the owner loads the
 namespace for that profile. If `catalog.bin` is within `metadataRetention` it
-seeds `publishedCatalog` so `bindGeneration` (`SessionResources.kt:547-572`)
-publishes `ChannelRepositoryState.Synchronizing(previousCatalog)` and the
-consumer can render a channel list immediately. The EPG snapshot is loaded the
-same way with events whose `stop` is in the past dropped and coverages clamped
-to `now`, so `EpgWorker` re-queries only the missing horizon. Authority stays
-`SYNCHRONIZING`/`STALE` until the HTSP initial sync completes; the SDK never
-claims `CURRENT` from disk.
+seeds the published catalog as `ChannelRepositoryState.Stale`, and
+`bindGeneration` (`SessionResources.kt`) then publishes
+`Synchronizing(previousCatalog)`, so the consumer can render a channel list
+immediately. The EPG snapshot is seeded the same way as `EpgRepositoryState.Stale`
+for cold-start display only: `bindGeneration` clears the EPG reducer and the
+HTSP initial sync re-sends the configured horizon, so the cached guide does not
+reduce network traffic. Authority stays `SYNCHRONIZING`/`STALE` until the HTSP
+initial sync completes; the SDK never claims `CURRENT` from disk.
 
 Files older than retention are deleted at load. Corrupt or truncated files are
 deleted and the session proceeds as today.
@@ -170,10 +171,9 @@ scope and returns after deletion.
 ## Tests (all JVM, temp directories)
 
 - Round trip of each DTO with every nullable field set and unset.
-- Cold start publishes `Synchronizing(previousCatalog)` from disk; expired
-  files are ignored and deleted; corrupt file is deleted and ignored.
-- EPG load drops ended events and clamps coverage; `EpgWorker` re-queries only
-  the gap (existing worker tests extended).
+- Cold start publishes `Stale` then `Synchronizing(previousCatalog)` from disk;
+  expired files are ignored and deleted; corrupt or invalid files are deleted
+  and ignored.
 - Writer coalescing: N publications inside 60 s produce one EPG write; the
   disconnect flush writes the latest snapshot.
 - Namespace: same host/port/username maps to the same directory; a password

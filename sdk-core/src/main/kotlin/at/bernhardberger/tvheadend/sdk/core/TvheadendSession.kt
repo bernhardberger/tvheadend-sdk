@@ -1,5 +1,9 @@
 package at.bernhardberger.tvheadend.sdk.core
 
+import at.bernhardberger.tvheadend.sdk.core.cache.CacheNamespace
+import at.bernhardberger.tvheadend.sdk.core.cache.FileMetadataCacheStore
+import at.bernhardberger.tvheadend.sdk.core.cache.MetadataCacheRuntime
+import at.bernhardberger.tvheadend.sdk.core.cache.cacheNamespace
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.ProtocolGateway
 import at.bernhardberger.tvheadend.sdk.core.gateway.ServerAuthentication as GatewayAuthentication
@@ -38,6 +42,14 @@ public interface TvheadendSession {
 
     /** Generation-bound authenticated artwork loader used by platform image integrations. */
     public val artwork: ArtworkLoader
+
+    /**
+     * Persistent cache owned by this session.
+     *
+     * Without a [MetadataCachePolicy] nothing is persisted, statistics stay empty, and
+     * [SessionCache.clear] completes without effect.
+     */
+    public val cache: SessionCache
 
     /**
      * Reports whether [currentSession] is the current proof at this instant without leasing it.
@@ -115,7 +127,7 @@ public interface TvheadendSession {
  * of that shared instance; a later call creates a fresh owner.
  */
 public fun createTvheadendSession(): TvheadendSession =
-    SessionRegistry.acquire(EpgCoveragePolicy.create())
+    SessionRegistry.acquire(EpgCoveragePolicy.create(), cachePolicy = null)
 
 /**
  * Returns the process-wide TVHeadend session owner with [epgCoveragePolicy].
@@ -124,17 +136,42 @@ public fun createTvheadendSession(): TvheadendSession =
  * returns that instance without reconfiguring its connection generation.
  */
 public fun createTvheadendSession(epgCoveragePolicy: EpgCoveragePolicy): TvheadendSession =
-    SessionRegistry.acquire(epgCoveragePolicy)
+    SessionRegistry.acquire(epgCoveragePolicy, cachePolicy = null)
+
+/**
+ * Returns the process-wide TVHeadend session owner with [epgCoveragePolicy] and [cachePolicy].
+ *
+ * With a cache policy the owner restores the last channel catalog and programme guide of a
+ * profile as stale metadata before connecting, and persists published metadata under
+ * [MetadataCachePolicy.root]. Both policies apply only when this call creates a fresh owner.
+ */
+public fun createTvheadendSession(
+    epgCoveragePolicy: EpgCoveragePolicy,
+    cachePolicy: MetadataCachePolicy,
+): TvheadendSession = SessionRegistry.acquire(epgCoveragePolicy, cachePolicy)
 
 internal object SessionRegistry {
     private var active: ConnectionOwner? = null
 
-    internal fun acquire(epgCoveragePolicy: EpgCoveragePolicy): TvheadendSession = synchronized(this) {
-        active ?: createOwner(epgCoveragePolicy).also { active = it }
+    internal fun acquire(
+        epgCoveragePolicy: EpgCoveragePolicy,
+        cachePolicy: MetadataCachePolicy?,
+    ): TvheadendSession = synchronized(this) {
+        active ?: createOwner(epgCoveragePolicy, cacheRuntime = cachePolicy?.let(::createCacheRuntime))
+            .also { active = it }
     }
+
+    private fun createCacheRuntime(policy: MetadataCachePolicy): MetadataCacheRuntime =
+        MetadataCacheRuntime(
+            store = FileMetadataCacheStore(policy.root),
+            policy = policy,
+            ioDispatcher = Dispatchers.IO,
+            clock = Clock.System,
+        )
 
     internal fun createOwner(
         epgCoveragePolicy: EpgCoveragePolicy,
+        cacheRuntime: MetadataCacheRuntime? = null,
         gatewayFactory: (EpgCoveragePolicy) -> ProtocolGateway = { policy ->
             HtspProtocolGateway(Dispatchers.IO, policy)
         },
@@ -189,6 +226,7 @@ internal object SessionRegistry {
             dvrMutations = dvrMutations,
             dvrProgress = dvrProgress,
             defaultDispatcher = Dispatchers.Default,
+            cacheRuntime = cacheRuntime,
             backoff = ExponentialReconnectBackoff(
                 nextJitter = { Random.Default.nextDouble() },
             ),
@@ -229,6 +267,13 @@ public class ServerProfile(
                 password = authentication.password,
             )
         },
+    )
+
+    /** Cache namespace derived from host, port, and username; the password never contributes. */
+    internal fun cacheNamespace(): CacheNamespace = cacheNamespace(
+        host = host,
+        port = port,
+        username = (authentication as? ServerAuthentication.Password)?.username.orEmpty(),
     )
 
     internal fun hasSameConfigurationAs(other: ServerProfile): Boolean =

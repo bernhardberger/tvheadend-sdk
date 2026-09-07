@@ -9,6 +9,7 @@ import at.bernhardberger.tvheadend.sdk.core.ArtworkFailure
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoader
+import at.bernhardberger.tvheadend.sdk.core.CacheStatistics
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleId
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
@@ -29,6 +30,7 @@ import at.bernhardberger.tvheadend.sdk.core.EpgSearchResult
 import at.bernhardberger.tvheadend.sdk.core.PlaybackBinding
 import at.bernhardberger.tvheadend.sdk.core.PlaybackBindingResult
 import at.bernhardberger.tvheadend.sdk.core.ServerProfile
+import at.bernhardberger.tvheadend.sdk.core.SessionCache
 import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
 import at.bernhardberger.tvheadend.sdk.core.SessionGenerationTestAuthority
 import at.bernhardberger.tvheadend.sdk.core.SessionObservation
@@ -42,7 +44,9 @@ import at.bernhardberger.tvheadend.sdk.core.TvheadendTestResultFactory
 import java.util.Collections
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlin.time.Instant
 /** Marks fake playback bindings intended only for playback integration tests. */
 @RequiresOptIn(
@@ -76,6 +80,7 @@ public enum class FakeSessionCall {
     DVR_UPDATE_TIMEREC_RULE,
     DVR_DELETE_TIMEREC_RULE,
     LOAD_ARTWORK,
+    CLEAR_CACHE,
 }
 /**
  * JVM-only, generation-aware implementation of the complete application session boundary.
@@ -102,6 +107,7 @@ public class FakeTvheadendSession(
     override val epgRepository: FakeEpgRepository = FakeEpgRepository(this)
     override val dvrRepository: FakeDvrRepository = FakeDvrRepository(this)
     override val artwork: FakeArtworkLoader = FakeArtworkLoader(this)
+    override val cache: FakeSessionCache = FakeSessionCache(this)
     /** Snapshot of invocation order across the session and its repositories. */
     public val calls: List<FakeSessionCall>
         get() = synchronized(lock) { mutableCalls.toImmutableList() }
@@ -228,7 +234,7 @@ public class FakeTvheadendSession(
     override suspend fun shutdown() {
         command(FakeSessionCall.SHUTDOWN) { Unit }
     }
-    private fun record(call: FakeSessionCall) {
+    internal fun record(call: FakeSessionCall) {
         synchronized(lock) { mutableCalls += call }
     }
     private suspend fun <T> command(call: FakeSessionCall, result: () -> T): T {
@@ -477,6 +483,25 @@ public class FakeArtworkLoader internal constructor(
         FakeSessionCall.LOAD_ARTWORK,
         ArtworkLoadResult.Unavailable(ArtworkFailure.OBSERVATION_EXPIRED),
     ) { synchronized(lock) { result } }
+}
+
+/** Scriptable cache boundary owned by [FakeTvheadendSession]. */
+public class FakeSessionCache internal constructor(
+    private val session: FakeTvheadendSession,
+) : SessionCache {
+    private val mutableStatistics = MutableStateFlow(CacheStatistics.EMPTY)
+    override val statistics: StateFlow<CacheStatistics> = mutableStatistics.asStateFlow()
+
+    /** Publishes [statistics] as the current cache footprint. */
+    public fun scriptStatistics(statistics: CacheStatistics) {
+        mutableStatistics.value = statistics
+    }
+
+    override suspend fun clear() {
+        currentCoroutineContext().ensureActive()
+        session.record(FakeSessionCall.CLEAR_CACHE)
+        mutableStatistics.value = CacheStatistics.EMPTY
+    }
 }
 
 private sealed interface StreamProfilesScript {

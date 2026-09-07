@@ -12,6 +12,7 @@ import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.Channel
 import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
+import at.bernhardberger.tvheadend.sdk.core.CacheStatistics
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
@@ -217,6 +218,9 @@ internal class FakeTvheadendSessionTest {
         )
         results.forEach { result -> assertSame(dvrFailure, result) }
         assertTrue(fake.artwork.loadArtwork(current, ArtworkId(1)) is ArtworkLoadResult.Unavailable)
+        fake.cache.scriptStatistics(CacheStatistics(metadataBytes = 10, artworkBytes = 20, artworkEntryCount = 2))
+        fake.cache.clear()
+        assertEquals(CacheStatistics.EMPTY, fake.cache.statistics.value)
         assertEquals(FakeSessionCall.entries.drop(4), fake.calls)
     }
 

@@ -73,6 +73,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlin.time.Instant
 
+/** Catalog and EPG snapshot published together with current authority. */
+internal class PublishedSnapshots(
+    val catalog: ChannelCatalog,
+    val epgSnapshot: EpgSnapshot,
+)
+
 internal interface SessionMetadata {
     public val observation: StateFlow<SessionObservation>
 
@@ -133,6 +139,23 @@ internal interface SessionMetadata {
     public fun resetWorkingStateRetainingPublishedSnapshot()
 
     public fun clearAllState()
+
+    /**
+     * Latest catalog and EPG snapshot published with current authority, for persistence.
+     *
+     * `null` until the first initial synchronisation of the process. Retained-snapshot resets do
+     * not clear it; a same-profile reconnect republishes the same instances. [clearAllState]
+     * resets it to `null` so a later profile never persists the previous profile's data.
+     */
+    public val publishedSnapshots: StateFlow<PublishedSnapshots?>
+
+    /**
+     * Seeds the retained catalog and EPG snapshot from persistence before any connection.
+     *
+     * Publishes them as stale states. Returns `false` without changes when a generation is bound
+     * or a snapshot is already retained, so a cached copy never replaces live data.
+     */
+    public fun seedRetainedSnapshots(catalog: ChannelCatalog?, epgSnapshot: EpgSnapshot?): Boolean
 
     public fun bindGeneration(generation: GatewayGeneration)
 
@@ -391,6 +414,9 @@ internal class PhaseOneSessionMetadata(
     private var initialSync = CompletableDeferred<Unit>()
     private var publishedCatalog: ChannelCatalog? = null
     private var publishedEpgSnapshot: EpgSnapshot? = null
+    private val mutablePublishedSnapshots = MutableStateFlow<PublishedSnapshots?>(null)
+    override val publishedSnapshots: StateFlow<PublishedSnapshots?> =
+        mutablePublishedSnapshots.asStateFlow()
     private var publishedDvrSnapshot: DvrSnapshot? = null
     private var publishedConfigurations: List<DvrConfiguration>? = null
     private var publishedDiskSpace: DvrDiskSpace? = null
@@ -502,6 +528,22 @@ internal class PhaseOneSessionMetadata(
         resetState(retainPublishedCatalog = true)
     }
 
+    override fun seedRetainedSnapshots(catalog: ChannelCatalog?, epgSnapshot: EpgSnapshot?): Boolean {
+        if (catalog == null && epgSnapshot == null) return false
+        synchronized(lock) {
+            if (generation != null || publishedCatalog != null || publishedEpgSnapshot != null) {
+                return false
+            }
+            publishedCatalog = catalog
+            publishedEpgSnapshot = epgSnapshot
+            mutableChannelsAndTags.value = catalog?.let { ChannelRepositoryState.Stale(it) }
+                ?: ChannelRepositoryState.Empty
+            mutableEpg.value = epgSnapshot?.let(EpgRepositoryState::Stale) ?: EpgRepositoryState.Empty
+            publishMetadataObservation()
+        }
+        return true
+    }
+
     override fun clearAllState() {
         resetState(retainPublishedCatalog = false)
     }
@@ -527,6 +569,7 @@ internal class PhaseOneSessionMetadata(
                 publishedDvrSnapshot = null
                 publishedConfigurations = null
                 publishedDiskSpace = null
+                mutablePublishedSnapshots.value = null
             }
             mutableChannelsAndTags.value = publishedCatalog?.let { catalog ->
                 ChannelRepositoryState.Stale(catalog)
@@ -1014,12 +1057,16 @@ internal class PhaseOneSessionMetadata(
         publishedEpgSnapshot = (mutableEpg.value as EpgRepositoryState.Current).snapshot
         mutableDvr.value = DvrRepositoryState.Current(dvrSnapshot)
         publishedDvrSnapshot = (mutableDvr.value as DvrRepositoryState.Current).snapshot
+        mutablePublishedSnapshots.value = PublishedSnapshots(catalog, epgSnapshot)
         publishMetadataObservation()
     }
 
     private fun publishCurrentEpg(snapshot: EpgSnapshot) {
         mutableEpg.value = EpgRepositoryState.Current(snapshot)
         publishedEpgSnapshot = (mutableEpg.value as EpgRepositoryState.Current).snapshot
+        publishedCatalog?.let { catalog ->
+            mutablePublishedSnapshots.value = PublishedSnapshots(catalog, snapshot)
+        }
         publishMetadataObservation()
     }
 

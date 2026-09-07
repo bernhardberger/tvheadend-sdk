@@ -6,8 +6,15 @@ import at.bernhardberger.tvheadend.sdk.core.AutorecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleId
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
+import at.bernhardberger.tvheadend.sdk.core.Channel
 import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
+import java.io.File
+import at.bernhardberger.tvheadend.sdk.core.cache.MetadataCacheStore
+import at.bernhardberger.tvheadend.sdk.core.cache.MetadataCacheRuntime
+import at.bernhardberger.tvheadend.sdk.core.cache.CacheNamespace
+import at.bernhardberger.tvheadend.sdk.core.MetadataCachePolicy
+import at.bernhardberger.tvheadend.sdk.core.CacheStatistics
 import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
 import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
 import at.bernhardberger.tvheadend.sdk.core.DvrConfigurationsState
@@ -192,6 +199,89 @@ internal class ConnectionOwnerTest {
             ),
             order,
         )
+        owner.shutdown()
+    }
+
+    @Test
+    fun `a cached catalog is browsable before connecting and persisted after sync`() = runTest {
+        val gateway = FakeProtocolGateway(mutableListOf())
+        val generation = GatewayGeneration()
+        gateway.connectResults += connected(generation, streaming = true, dvrAccess = false)
+        val cachedCatalog = ChannelCatalog.create(
+            channels = listOf(Channel.create(id = SdkChannelId(9), name = "Cached")),
+        )
+        val store = InMemoryMetadataCacheStore(catalog = cachedCatalog, epg = EpgSnapshot.create())
+        val cacheRuntime = MetadataCacheRuntime(
+            store = store,
+            policy = MetadataCachePolicy.create(File("unused")),
+            ioDispatcher = StandardTestDispatcher(testScheduler),
+            clock = Clock.System,
+        )
+        val metadata = PhaseOneSessionMetadata()
+        val owner = owner(gateway = gateway, metadata = metadata, cacheRuntime = cacheRuntime)
+        assertSame(cacheRuntime, owner.cache)
+
+        assertEquals(SessionCommandResult.STARTED, owner.connect(ServerProfile("server")))
+        runCurrent()
+
+        assertEquals(SessionState.Synchronizing, owner.observation.value.sessionState)
+        val synchronizing = metadata.channelsAndTags.value as ChannelRepositoryState.Synchronizing
+        assertSame(cachedCatalog, synchronizing.staleCatalog)
+        assertTrue(store.writes.isEmpty(), "Nothing is persisted before the first synchronisation")
+
+        gateway.emitMetadata(MetadataEvent.ChannelAdded(generation, channelMetadata(id = 1)))
+        gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        runCurrent()
+
+        assertEquals(listOf(1L), owner.currentCatalog().channels.map { it.id.value })
+        assertSame(owner.currentCatalog(), store.catalog)
+        assertSame(owner.currentEpgSnapshot(), store.epg)
+
+        owner.cache.clear()
+        runCurrent()
+        assertTrue(store.cleared, "Clear must reach the store")
+        assertSame(owner.currentCatalog(), store.catalog)
+
+        owner.shutdown()
+    }
+
+    @Test
+    fun `a replacement profile never persists the previous profile's snapshots`() = runTest {
+        val gateway = FakeProtocolGateway(mutableListOf())
+        val firstGeneration = GatewayGeneration()
+        val secondGeneration = GatewayGeneration()
+        gateway.connectResults += connected(firstGeneration, streaming = true, dvrAccess = false)
+        gateway.connectResults += connected(secondGeneration, streaming = true, dvrAccess = false)
+        val store = InMemoryMetadataCacheStore(catalog = null, epg = null)
+        val cacheRuntime = MetadataCacheRuntime(
+            store = store,
+            policy = MetadataCachePolicy.create(File("unused")),
+            ioDispatcher = StandardTestDispatcher(testScheduler),
+            clock = Clock.System,
+        )
+        val owner = owner(gateway = gateway, cacheRuntime = cacheRuntime)
+
+        owner.connect(ServerProfile("first"))
+        runCurrent()
+        gateway.emitMetadata(MetadataEvent.ChannelAdded(firstGeneration, channelMetadata(id = 1)))
+        gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(firstGeneration))
+        runCurrent()
+        val firstCatalog = owner.currentCatalog()
+        assertSame(firstCatalog, store.catalog)
+        val firstNamespace = store.writtenNamespaces.single()
+
+        owner.connect(ServerProfile("second"))
+        runCurrent()
+        assertEquals(SessionState.Synchronizing, owner.observation.value.sessionState)
+        assertEquals(setOf(firstNamespace), store.writtenNamespaces)
+        assertSame(firstCatalog, store.catalog, "The second profile must not persist the first catalog")
+
+        gateway.emitMetadata(MetadataEvent.ChannelAdded(secondGeneration, channelMetadata(id = 2)))
+        gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(secondGeneration))
+        runCurrent()
+        assertEquals(listOf(2L), store.catalog?.channels?.map { it.id.value })
+        assertEquals(2, store.writtenNamespaces.size)
+
         owner.shutdown()
     }
 
@@ -1487,6 +1577,7 @@ internal class ConnectionOwnerTest {
         dvrProgress: DvrProgressLifecycle = DvrProgressLifecycle.None,
         defaultDispatcher: CoroutineDispatcher = StandardTestDispatcher(testScheduler),
         beforeDvrCapabilityPublication: suspend (Boolean) -> Unit = {},
+        cacheRuntime: MetadataCacheRuntime? = null,
     ): ConnectionOwner = ConnectionOwner(
         gateway = gateway,
         metadata = metadata,
@@ -1494,9 +1585,43 @@ internal class ConnectionOwnerTest {
         dvrMutations = dvrMutations,
         dvrProgress = dvrProgress,
         defaultDispatcher = defaultDispatcher,
+        cacheRuntime = cacheRuntime,
         backoff = ExponentialReconnectBackoff(nextJitter = { 0.5 }),
         beforeDvrCapabilityPublication = beforeDvrCapabilityPublication,
     )
+}
+
+private class InMemoryMetadataCacheStore(
+    var catalog: ChannelCatalog?,
+    var epg: EpgSnapshot?,
+) : MetadataCacheStore {
+    val writes = mutableListOf<Any>()
+    val writtenNamespaces = mutableSetOf<CacheNamespace>()
+    var cleared = false
+
+    override suspend fun loadCatalog(namespace: CacheNamespace, notBefore: Instant): ChannelCatalog? = catalog
+
+    override suspend fun loadEpg(namespace: CacheNamespace, notBefore: Instant): EpgSnapshot? = epg
+
+    override suspend fun storeCatalog(namespace: CacheNamespace, catalog: ChannelCatalog, storedAt: Instant) {
+        writes += catalog
+        writtenNamespaces += namespace
+        this.catalog = catalog
+    }
+
+    override suspend fun storeEpg(namespace: CacheNamespace, snapshot: EpgSnapshot, storedAt: Instant) {
+        writes += snapshot
+        writtenNamespaces += namespace
+        epg = snapshot
+    }
+
+    override suspend fun clear() {
+        cleared = true
+        catalog = null
+        epg = null
+    }
+
+    override suspend fun statistics(): CacheStatistics = CacheStatistics.EMPTY
 }
 
 private fun ConnectionOwner.currentCatalog(): ChannelCatalog =

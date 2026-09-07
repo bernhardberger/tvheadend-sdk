@@ -24,12 +24,13 @@ plugins {
     base
     alias(libs.plugins.android.library) apply false
     alias(libs.plugins.kotlin.jvm) apply false
+    alias(libs.plugins.kotlin.serialization) apply false
     alias(libs.plugins.detekt) apply false
     alias(libs.plugins.dokka) apply false
 }
 
 group = "at.bernhardberger.tvheadend"
-version = "0.7.0"
+version = "0.8.0"
 
 val sdkModules = setOf(
     "sdk-android",
@@ -171,8 +172,14 @@ val coreResolved = (commonResolved - "org.jetbrains:annotations:13.0") + setOf(
     "org.jetbrains.kotlinx:kotlinx-coroutines-bom:1.10.2",
     "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
     "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.10.2",
+    "org.jetbrains.kotlinx:kotlinx-serialization-bom:1.11.0",
+    "org.jetbrains.kotlinx:kotlinx-serialization-core:1.11.0",
+    "org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.11.0",
+    "org.jetbrains.kotlinx:kotlinx-serialization-protobuf:1.11.0",
+    "org.jetbrains.kotlinx:kotlinx-serialization-protobuf-jvm:1.11.0",
 )
-val coroutineResolved = (coreResolved - "at.bernhardberger.tvheadend:htsp:0.7.0")
+val serializationResolved = coreResolved.filter { "kotlinx-serialization" in it }.toSet()
+val coroutineResolved = (coreResolved - "at.bernhardberger.tvheadend:htsp:0.7.0") - serializationResolved
 val useHtspComposite = providers.gradleProperty("tvheadend.htsp.composite")
     .map(String::toBooleanStrict)
     .getOrElse(false)
@@ -190,6 +197,7 @@ val productionGraphs = sdkModules.associateWith {
             "project::sdk-playback",
             "at.bernhardberger.tvheadend:htsp:0.7.0",
             "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
+            "org.jetbrains.kotlinx:kotlinx-serialization-protobuf:1.11.0",
         ),
         resolved = (if (useHtspComposite) {
             (coreResolved - "at.bernhardberger.tvheadend:htsp:0.7.0") + "project::tvheadend-htsp"
@@ -259,11 +267,8 @@ val productionGraphs = sdkModules.associateWith {
             "io.coil-kt.coil3:coil-core-android:3.5.0",
             "io.coil-kt.coil3:coil-core:3.5.0",
             "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2",
-            "org.jetbrains.kotlinx:kotlinx-serialization-bom:1.7.3",
-            "org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.7.3",
-            "org.jetbrains.kotlinx:kotlinx-serialization-core:1.7.3",
-            "org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:1.7.3",
-            "org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3",
+            "org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:1.11.0",
+            "org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0",
             "org.jspecify:jspecify:1.0.0",
             "project::sdk-core",
             "project::sdk-playback",
@@ -325,6 +330,7 @@ val scopedDirectDependencies = sdkModules.associateWith { emptySet<String>() }.t
         "api=project::sdk-playback",
         "api=org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
         "implementation=at.bernhardberger.tvheadend:htsp:0.7.0",
+        "implementation=org.jetbrains.kotlinx:kotlinx-serialization-protobuf:1.11.0",
     )
     this["sdk-android"] = setOf(
         "api=project::sdk-core",
