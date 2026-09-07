@@ -8,18 +8,14 @@ specified in [releasing](releasing.md). No release credentials enter ordinary CI
 
 ## Cache and cancellation boundaries
 
-`setup-gradle` is pinned to the same Gradle Actions v6.3.0 commit as the separate
-wrapper validator. Wrapper validation still runs before Gradle setup. Only a
-`push` to `refs/heads/main` may write caches; PRs consume them read-only. GitHub's
-cache branch isolation prevents main from restoring PR merge-ref caches.
+SHA-pinned `actions/cache/restore` and `actions/cache/save` use explicit paths.
+Wrapper validation still runs before cache restoration. Only a successful
+`push` to `refs/heads/main` may save caches; PRs only run restore. GitHub's cache
+branch isolation prevents main from restoring PR merge-ref caches. The
+`sdk-dependencies-v1` namespace cannot match prior Gradle Actions cache entries.
 
-The explicit `enhanced` provider supports the narrow include list; `basic` does
-not. This is Gradle's proprietary caching component, free for public repositories,
-under its [distribution and data-handling terms](https://github.com/gradle/actions/blob/9c971963bec38e04b3d30dcc455b5382be2fdbfb/DISTRIBUTION.md).
-It processes public dependency artifacts; no release or server secrets are supplied.
-
-The Gradle User Home include list is limited to `caches/modules-2` (downloaded
-dependencies); the action also manages wrapper distributions. Project build
+The cached paths are limited to `~/.gradle/caches/modules-2` (downloaded
+dependencies) and `~/.gradle/wrapper/dists` (wrapper distributions). Project build
 directories, local task-output caches, configuration-cache state, Gradle user
 properties, init scripts and credentials are not included. No encryption secret,
 dependency submission, PR comment or Build Scan publication is configured.
@@ -29,10 +25,12 @@ Restored dependencies remain subject to the checked-in Gradle dependency
 verification metadata and signature/checksum policy. Compiled build scripts,
 instrumented jars and artifact transforms are also deliberately excluded: this
 first change reuses downloaded inputs only, not derived build state.
-The explicit exclusions are necessary even with the narrow include list:
-the provider manages deduplicated cache entries separately. Run `34091334988`
-passed the build but exposed this distinction by saving derived state. Its cache
-configuration was corrected rather than accepted as dependency-only evidence.
+`setup-gradle` was evaluated first. Run `34091334988` showed its enhanced provider
+saving independently managed derived entries despite the narrow include list.
+Explicit exclusions stopped those saves in `34092236058`, but that run still
+restored prior derived entries. The basic provider does not support custom paths.
+The maintained path-based GitHub cache actions avoid both behaviors without
+deleting old remote caches, adding secrets, or depending on proprietary caching.
 
 Concurrency groups include the workflow and event. PRs share a group only with
 runs of the same PR and cancel obsolete runs. Main pushes use unique run IDs,
@@ -60,5 +58,5 @@ required job is justified by this evidence. Dependency caching targets repeated
 downloads without changing verification. Warm-cache savings require a subsequent
 natural run and remain unmeasured until observed; do not trigger benchmark-only
 reruns. Record final exact-HEAD run timing and cache hit/miss evidence with delivery.
-Also confirm caching was not disabled because of a pre-existing Gradle User Home;
-a successful build alone does not establish that caching was active.
+A successful build alone does not establish that cache restoration or saving
+worked; inspect the named cache steps and their exact matched keys.

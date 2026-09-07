@@ -54,7 +54,7 @@ CI_PROVENANCE = ROOT / "build/ci-staging-provenance.json"
 SECRET_NAMES = ("MAVEN_GPG_PRIVATE_KEY", "MAVEN_GPG_PASSPHRASE", "CENTRAL_PORTAL_TOKEN")
 CREDENTIAL_NAMES = SECRET_NAMES + ("GITHUB_TOKEN",)
 CENTRAL_GET_WORKERS = 8
-CI_WORKFLOW_SHA256 = "7b36dd7e5f17b99d2d9bb28a649de84ef76585cc91649275da1085427d62956f"
+CI_WORKFLOW_SHA256 = "f59640a2783a159692615ffcfa9eedb008f5c0c9d892b7072707ba18a6a4aaf3"
 RELEASE_WORKFLOW_SHA256 = "91d72c365d07ed16522e04598a89a6e98d4cc268619f51f5d38f292d8156b338"
 ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 ZIP_MODE = (stat.S_IFREG | 0o644) << 16
@@ -1057,12 +1057,10 @@ def self_test() -> list[str]:
         errors.append("self-test accepted cancellation of main CI staging runs")
     if not ci_workflow_errors(ci.replace("github.event.pull_request.number || github.run_id", "github.ref")):
         errors.append("self-test accepted shared main CI staging concurrency group")
-    if not ci_workflow_errors(ci.replace("cache-read-only: ${{ github.event_name != 'push' || github.ref != 'refs/heads/main' }}", "cache-read-only: false")):
+    if not ci_workflow_errors(ci.replace("if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.dependencies.outputs.cache-hit != 'true'", "if: always()")):
         errors.append("self-test accepted PR cache writes")
-    if not ci_workflow_errors(ci.replace("gradle-home-cache-includes: caches/modules-2", "gradle-home-cache-includes: caches")):
+    if not ci_workflow_errors(ci.replace("~/.gradle/caches/modules-2", "~/.gradle/caches")):
         errors.append("self-test accepted cross-run task output caching")
-    if not ci_workflow_errors(ci.replace("            caches/build-cache-*\n", "")):
-        errors.append("self-test accepted removal of the task output cache exclusion")
     if not ci_workflow_errors(ci.replace("staged-publication-${{ github.run_id }}", "staged-publication-unbound")):
         errors.append("self-test accepted unbound CI staging artifact drift")
     if not ci_workflow_errors(ci.replace("github.run_attempt == 1", "github.run_attempt == 2", 1)):
