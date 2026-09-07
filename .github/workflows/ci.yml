@@ -8,6 +8,11 @@ on:
 permissions:
   contents: read
 
+# PRs supersede only their own PR; every main run retains staging provenance.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   verify:
     runs-on: ubuntu-24.04
@@ -23,6 +28,13 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+      - name: Set up Gradle dependency cache
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          cache-read-only: ${{ github.event_name != 'push' || github.ref != 'refs/heads/main' }}
+          # Keep task outputs and configuration state out of cross-run reuse.
+          gradle-home-cache-includes: caches/modules-2
+          validate-wrappers: false # Validated by the dedicated step above.
       - name: Install pinned Android SDK packages
         run: '"$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"'
       - name: Verify release tool self-tests
