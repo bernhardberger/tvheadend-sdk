@@ -85,7 +85,10 @@ internal class FileMetadataCacheStore(root: File) : MetadataCacheStore {
         val metadataBytes = namespaceDirs.sumOf { dir ->
             File(dir, CATALOG_FILE_NAME).lengthIfFile() + File(dir, EPG_FILE_NAME).lengthIfFile()
         }
-        return CacheStatistics(metadataBytes = metadataBytes, artworkBytes = 0L, artworkEntryCount = 0)
+        val artwork = namespaceDirs.flatMap { dir ->
+            File(dir, "artwork").listFiles().orEmpty().filter { it.isFile && it.name.toIntOrNull()?.let { id -> id > 0 } == true }
+        }
+        return CacheStatistics(metadataBytes, artwork.sumOf { it.length() }, artwork.size)
     }
 
     private fun catalogFile(namespace: CacheNamespace): File = File(namespaceDir(namespace), CATALOG_FILE_NAME)

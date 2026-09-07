@@ -137,6 +137,7 @@ def pom_dependencies(module: str, version: str) -> set[tuple[str, str, str, str]
             (GROUP, "sdk-playback", version, "compile"),
             ("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.10", "compile"),
             (GROUP, "htsp", "0.7.0", "runtime"),
+            ("org.jetbrains.kotlinx", "kotlinx-serialization-protobuf-jvm", "1.11.0", "runtime"),
         },
         "sdk-media3": {
             (GROUP, "sdk-core", version, "compile"),
@@ -166,7 +167,7 @@ def module_variants(module: str, version: str) -> dict[str, tuple[str, set[tuple
         if scope == "compile"
     }
     runtime = api | {
-        (group, artifact, dependency_version)
+        (group, "kotlinx-serialization-protobuf" if artifact == "kotlinx-serialization-protobuf-jvm" else artifact, dependency_version)
         for group, artifact, dependency_version, scope in pom
         if scope == "runtime"
     }
@@ -459,6 +460,72 @@ def self_test() -> list[str]:
     }
     if PUBLICATION_NAMES != expected_publication_names:
         errors.append("self-test rejected the configured human-readable publication names")
+    core_dependencies = [
+        ("org.jetbrains.kotlinx", "kotlinx-coroutines-core-jvm", "1.10.2", "compile"),
+        (GROUP, "sdk-playback", "0.8.0", "compile"),
+        ("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.10", "compile"),
+        (GROUP, "htsp", "0.7.0", "runtime"),
+        ("org.jetbrains.kotlinx", "kotlinx-serialization-protobuf-jvm", "1.11.0", "runtime"),
+    ]
+    core_pom = ET.fromstring(f"""<project>
+        <modelVersion>4.0.0</modelVersion><groupId>{GROUP}</groupId><artifactId>sdk-core</artifactId>
+        <version>0.8.0</version><name>{PUBLICATION_NAMES['sdk-core']}</name>
+        <description>Fixture</description><url>{PROJECT_URL}</url>
+        <licenses><license><name>GNU General Public License v3.0</name>
+        <url>https://www.gnu.org/licenses/gpl-3.0.html</url><distribution>repo</distribution></license></licenses>
+        <developers><developer><id>bernhardberger</id><name>Bernhard Berger</name>
+        <url>https://github.com/bernhardberger</url></developer></developers>
+        <scm><connection>scm:git:https://github.com/bernhardberger/tvheadend-sdk.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/bernhardberger/tvheadend-sdk.git</developerConnection>
+        <url>{PROJECT_URL}</url></scm><issueManagement><system>GitHub Issues</system>
+        <url>{PROJECT_URL}/issues</url></issueManagement><dependencies/></project>""")
+    dependency_nodes = core_pom.find("dependencies")
+    for coordinate in core_dependencies:
+        node = ET.SubElement(dependency_nodes, "dependency")
+        for name, value in zip(("groupId", "artifactId", "version", "scope"), coordinate):
+            ET.SubElement(node, name).text = value
+    try:
+        verify_pom(ET.tostring(core_pom), "sdk-core", "0.8.0")
+    except VerificationError as error:
+        errors.append(f"self-test rejected core protobuf POM: {error}")
+    protobuf_node = dependency_nodes[-1]
+    for field, wrong in (("version", "1.10.0"), ("scope", "compile"), ("artifactId", "kotlinx-serialization-core-jvm")):
+        child = protobuf_node.find(field)
+        original = child.text
+        child.text = wrong
+        expect_error(errors, f"wrong protobuf POM {field}", lambda: verify_pom(ET.tostring(core_pom), "sdk-core", "0.8.0"))
+        child.text = original
+    dependency_nodes.remove(protobuf_node)
+    expect_error(errors, "missing protobuf POM dependency", lambda: verify_pom(ET.tostring(core_pom), "sdk-core", "0.8.0"))
+
+    core_artifacts = {label: b"fixture" for label in ("main", "sources", "javadoc")}
+    variants = []
+    for variant_name, label, scope in (("apiElements", "main", "compile"), ("runtimeElements", "main", "runtime"),
+                                        ("sourcesElements", "sources", "none"), ("javadocElements", "javadoc", "none")):
+        dependencies = [{"group": group, "module": artifact.removesuffix("-jvm") if group == "org.jetbrains.kotlinx" else artifact,
+                         "version": {"requires": version}}
+                        for group, artifact, version, dependency_scope in core_dependencies
+                        if dependency_scope == scope or scope == "runtime"]
+        name = artifact_names("sdk-core", "0.8.0")[label]
+        attributes = {"org.gradle.category": "library", "org.gradle.libraryelements": "jar", "org.gradle.jvm.version": 17}
+        if scope == "none":
+            attributes = {"org.gradle.category": "documentation", "org.gradle.docstype": label}
+        variants.append({"name": variant_name, "attributes": attributes, "dependencies": dependencies,
+                         "files": [{"name": name, "url": name, "size": 7, "sha256": sha256(b"fixture")}]})
+    core_metadata = {"formatVersion": "1.1", "component": {"group": GROUP, "module": "sdk-core", "version": "0.8.0",
+                     "attributes": {"org.gradle.status": "release"}}, "variants": variants}
+    def verify_core_metadata() -> None:
+        verify_module_metadata(json.dumps(core_metadata).encode(), "sdk-core", "0.8.0", core_artifacts)
+    try:
+        verify_core_metadata()
+    except VerificationError as error:
+        errors.append(f"self-test rejected core protobuf module metadata: {error}")
+    protobuf_dependency = variants[1]["dependencies"][-1]
+    protobuf_dependency["version"]["requires"] = "1.10.0"
+    expect_error(errors, "wrong protobuf module version", verify_core_metadata)
+    protobuf_dependency["version"]["requires"] = "1.11.0"
+    variants[1]["dependencies"].remove(protobuf_dependency)
+    expect_error(errors, "missing protobuf module dependency", verify_core_metadata)
     for module, name in expected_publication_names.items():
         root = ET.fromstring(f"<project><name>{name}</name></project>")
         try:

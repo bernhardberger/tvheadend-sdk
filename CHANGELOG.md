@@ -13,8 +13,19 @@ a flush on disconnect. Files older than `metadataRetention` or that fail to
 decode are deleted. Nothing served from disk is ever published as `CURRENT`.
 `TvheadendSession.cache` exposes `SessionCache` with `statistics` and `clear()`;
 sessions created without a policy report empty statistics. `FakeTvheadendSession`
-gains `FakeSessionCache`. `docs/persistent-cache-design.md` records the design;
-artwork persistence is a later slice.
+gains `FakeSessionCache`.
+
+Artwork bytes now persist under the same namespace. Hits avoid HTSP file loads;
+entries expire after `artworkRetention` (30 days by default), with root-wide LRU
+eviction against `artworkMaxBytes` (64 MiB by default). Statistics include encoded
+artwork bytes and entry count, and `clear()` deletes artwork in every namespace
+without allowing an already-pending fetch to repopulate it. Corrupt files and
+indexes are discarded. In `sdk-android`, Coil models capture the opaque
+`ArtworkLoader.cacheKey` derived from namespace and image ID for consistent
+memory identity across sessions. Restart persistence comes from the SDK byte
+store, not Coil memory. Without a policy keys remain process-local.
+Fetches reject retired observations; Coil memory hits can reuse decoded content.
+Persistence belongs to the SDK, not Coil's disk cache.
 
 ## [0.7.0]
 

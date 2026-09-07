@@ -1,6 +1,10 @@
 package at.bernhardberger.tvheadend.sdk.core.cache
 
 import at.bernhardberger.tvheadend.sdk.core.CacheStatistics
+import at.bernhardberger.tvheadend.sdk.core.ArtworkContent
+import at.bernhardberger.tvheadend.sdk.core.ArtworkFailure
+import at.bernhardberger.tvheadend.sdk.core.ArtworkId
+import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
 import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.MetadataCachePolicy
@@ -54,18 +58,61 @@ internal class MetadataCacheRuntime(
     private val rootJob = SupervisorJob()
     private val scope = CoroutineScope(ioDispatcher + rootJob)
     private val lifecycle = Mutex()
+    private val storeAccess = Mutex()
+    private val artworkStore = FileArtworkCacheStore(policy.root)
+    private var clearEpoch = 0L
     private val mutableStatistics = MutableStateFlow(CacheStatistics.EMPTY)
     private var writer: Writer? = null
 
     override val statistics: StateFlow<CacheStatistics> = mutableStatistics.asStateFlow()
 
     /** Restores snapshots for [namespace] that are within the metadata retention. */
-    suspend fun restore(namespace: CacheNamespace): RestoredSnapshots = withContext(ioDispatcher) {
+    suspend fun restore(namespace: CacheNamespace): RestoredSnapshots = accessStore {
         val notBefore = clock.now() - policy.metadataRetention
         val catalog = store.loadCatalog(namespace, notBefore)
         val epgSnapshot = store.loadEpg(namespace, notBefore)
+        artworkStore.prune(clock.now() - policy.artworkRetention, policy.artworkMaxBytes)
         refreshStatistics()
         RestoredSnapshots(catalog, epgSnapshot)
+    }
+
+    suspend fun loadArtwork(
+        namespace: CacheNamespace,
+        id: ArtworkId,
+        isCurrent: () -> Boolean,
+        fetch: suspend () -> ArtworkLoadResult,
+    ): ArtworkLoadResult {
+        var epoch = 0L
+        val cached = accessStore {
+            epoch = clearEpoch
+            val now = clock.now()
+            val bytes = artworkStore.load(namespace, id, now, now - policy.artworkRetention)
+            refreshStatistics()
+            bytes
+        }
+        if (!isCurrent()) return ArtworkLoadResult.Unavailable(ArtworkFailure.CONNECTION_CHANGED)
+        if (cached != null) return ArtworkLoadResult.Available(ArtworkContent.create(cached))
+        val result = fetch()
+        accessStore {
+            if (epoch == clearEpoch && isCurrent()) {
+                val now = clock.now()
+                when (result) {
+                    is ArtworkLoadResult.Available -> artworkStore.store(
+                        namespace, id, result.content.openStream().use { it.readBytes() }, now,
+                        now - policy.artworkRetention, policy.artworkMaxBytes,
+                    )
+                    is ArtworkLoadResult.Unavailable -> if (result.failure == ArtworkFailure.FILE_UNAVAILABLE) {
+                        artworkStore.remove(namespace, id, now - policy.artworkRetention)
+                    }
+                }
+                refreshStatistics()
+            }
+        }
+        return if (isCurrent()) result else ArtworkLoadResult.Unavailable(ArtworkFailure.CONNECTION_CHANGED)
+    }
+
+    private suspend fun <T> accessStore(block: suspend () -> T): T = withContext(ioDispatcher) {
+        storeAccess.withLock { block() }
     }
 
     /** Starts writing [publications] for [namespace]; a previous writer is stopped first. */
@@ -93,7 +140,8 @@ internal class MetadataCacheRuntime(
             val active = writer
             active?.stop()
             writer = null
-            withContext(ioDispatcher) {
+            accessStore {
+                clearEpoch++
                 store.clear()
                 refreshStatistics()
             }
@@ -151,17 +199,21 @@ internal class MetadataCacheRuntime(
             snapshots.catalog !== writtenCatalog || snapshots.epgSnapshot !== writtenEpg
 
         private suspend fun writeCatalog(catalog: ChannelCatalog) {
-            store.storeCatalog(namespace, catalog, clock.now())
+            accessStore {
+                store.storeCatalog(namespace, catalog, clock.now())
+                refreshStatistics()
+            }
             writtenCatalog = catalog
-            refreshStatistics()
         }
 
         private suspend fun writeEpg(snapshot: EpgSnapshot) {
             val now = clock.now()
-            store.storeEpg(namespace, snapshot, now)
+            accessStore {
+                store.storeEpg(namespace, snapshot, now)
+                refreshStatistics()
+            }
             writtenEpg = snapshot
             lastEpgWrite = now
-            refreshStatistics()
         }
     }
 

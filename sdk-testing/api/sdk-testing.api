@@ -1,4 +1,5 @@
 public final class at/bernhardberger/tvheadend/sdk/testing/FakeArtworkLoader : at/bernhardberger/tvheadend/sdk/core/ArtworkLoader {
+	public fun cacheKey-noSgMNw (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;I)Ljava/lang/String;
 	public fun loadArtwork-j_U-F9s (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;ILkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun scriptLoad (Lat/bernhardberger/tvheadend/sdk/core/ArtworkLoadResult;)V
 }

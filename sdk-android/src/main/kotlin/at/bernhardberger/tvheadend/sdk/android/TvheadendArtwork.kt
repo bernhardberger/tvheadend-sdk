@@ -18,6 +18,8 @@ import coil3.request.Options
 import java.io.IOException
 import java.util.UUID
 import java.util.WeakHashMap
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import okio.FileSystem
 import okio.buffer
 import okio.source
@@ -28,6 +30,8 @@ public class TvheadendArtwork private constructor(
     internal val currentSession: CurrentSessionObservation,
     internal val id: ArtworkId,
 ) {
+    internal val persistentKey: String? = session.artwork.cacheKey(currentSession, id)
+
     override fun toString(): String = "TvheadendArtwork(<redacted>)"
 
     override fun equals(other: Any?): Boolean =
@@ -67,10 +71,10 @@ public class TvheadendArtwork private constructor(
 /**
  * Registers the Coil memory key and fetcher for [TvheadendArtwork].
  *
- * Keys are opaque, process-local, and scoped to one connection-generation authority. Fetches use
- * a stream source without a disk cache key; this integration does not authorize persistent caching
- * of authenticated artwork. A decoder can request a source-lifetime temporary file, which Coil
- * deletes when it closes the source.
+ * With an SDK cache policy, keys are opaque and restart-stable for the profile and artwork ID.
+ * Otherwise they are process-local and generation-scoped. Fetches validate current authority and
+ * use a stream source without a Coil disk cache key: the SDK owns persistent bytes, retention,
+ * eviction and clearing. Coil memory hits may reuse already-decoded content without a fetch.
  */
 public fun ComponentRegistry.Builder.addTvheadendArtwork(): ComponentRegistry.Builder = apply {
     add(TvheadendArtworkKeyer)
@@ -87,8 +91,7 @@ private data object TvheadendArtworkKeyer : Keyer<TvheadendArtwork> {
 }
 
 internal fun TvheadendArtwork.memoryCacheKey(): String? {
-    if (!session.isCurrent(currentSession)) return null
-    return TvheadendArtworkMemoryKeys.key(currentSession.generationIdentity, id)
+    return persistentKey ?: TvheadendArtworkMemoryKeys.key(currentSession.generationIdentity, id)
 }
 
 private object TvheadendArtworkMemoryKeys {
@@ -118,6 +121,10 @@ internal class TvheadendArtworkFetcher(
     private val artwork: TvheadendArtwork,
 ) : Fetcher {
     override suspend fun fetch(): FetchResult {
+        currentCoroutineContext().ensureActive()
+        if (!artwork.session.isCurrent(artwork.currentSession)) {
+            throw TvheadendArtworkLoadException(ArtworkFailure.OBSERVATION_EXPIRED)
+        }
         val content = when (
             val loaded = artwork.session.artwork.loadArtwork(artwork.currentSession, artwork.id)
         ) {

@@ -95,7 +95,7 @@ internal class TvheadendArtworkTest {
     }
 
     @Test
-    fun `component registration provides generation scoped current only memory keys`() {
+    fun `component registration provides generation scoped keys without persistence`() {
         val loader = FakeArtworkLoader()
         val initialObservation = currentObservation()
         val observations = MutableStateFlow(initialObservation)
@@ -126,12 +126,36 @@ internal class TvheadendArtworkTest {
                 "imagecache/2147483647",
             ),
         )
-        assertNull(first.memoryCacheKey())
+        assertEquals(firstKey, first.memoryCacheKey())
         assertNotEquals(firstKey, replacement.memoryCacheKey())
 
         val registry = ComponentRegistry.Builder().addTvheadendArtwork().build()
         assertEquals(1, registry.keyers.size)
         assertEquals(1, registry.fetcherFactories.size)
+    }
+
+    @Test
+    fun `persistent keys survive replacement owners and stale fetch still fails`() {
+        val firstObservation = currentObservation()
+        val observations = MutableStateFlow(firstObservation)
+        val loader = FakeArtworkLoader().apply { persistentKey = "opaque-cache-key" }
+        val first = requireNotNull(TvheadendArtwork.create(
+            sessionWith(loader, observations), requireNotNull(firstObservation.currentSession), "imagecache/1",
+        ))
+        val nextObservation = currentObservation()
+        val restarted = requireNotNull(TvheadendArtwork.create(
+            sessionWith(FakeArtworkLoader().apply { persistentKey = "opaque-cache-key" }, MutableStateFlow(nextObservation)),
+            requireNotNull(nextObservation.currentSession), "imagecache/1",
+        ))
+        assertEquals(first.memoryCacheKey(), restarted.memoryCacheKey())
+        observations.value = nextObservation
+        loader.persistentKey = "replacement-profile-key"
+        assertEquals(first.memoryCacheKey(), restarted.memoryCacheKey())
+        val failure = assertThrows(TvheadendArtworkLoadException::class.java) {
+            runTest { TvheadendArtworkFetcher(first).fetch() }
+        }
+        assertEquals(ArtworkFailure.OBSERVATION_EXPIRED, failure.failure)
+        assertNull(loader.lastId)
     }
 
     @Test
@@ -188,7 +212,7 @@ internal class TvheadendArtworkTest {
 
         assertSame(ArtworkFailure.OBSERVATION_EXPIRED, failure.failure)
         assertEquals("TVHeadend artwork load failed", failure.message)
-        assertSame(original, loader.lastCurrentSession)
+        assertNull(loader.lastCurrentSession)
     }
 
     @Test
@@ -276,6 +300,9 @@ private class FakeArtworkLoader(
     internal var lastId: ArtworkId? = null
     internal var lastCurrentSession: CurrentSessionObservation? = null
     internal var cancellation: CancellationException? = null
+    internal var persistentKey: String? = null
+
+    override fun cacheKey(currentSession: CurrentSessionObservation, artworkId: ArtworkId): String? = persistentKey
 
     override suspend fun loadArtwork(
         currentSession: CurrentSessionObservation,

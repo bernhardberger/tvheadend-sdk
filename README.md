@@ -205,11 +205,13 @@ val channel = requireNotNull(observed.channel(channelId))
 val artwork = TvheadendArtwork.create(session, currentSession, channel.icon)
 ```
 
-The model rejects external URLs and malformed selectors. The SDK installs an
-opaque process-local memory key scoped to the current connection generation;
-selectors and connection details do not enter the key. The streamed result has
-no disk identity, so this component does not authorize persistent authenticated
-artwork caching. Coil owns decoding and closes every successfully returned
+The model rejects external URLs and malformed selectors. With an opt-in
+`MetadataCachePolicy`, the SDK persists artwork bytes with retention and a
+root-wide LRU byte budget, and Coil uses an opaque restart-stable key. Without
+a policy, keys remain process-local and generation-scoped. The streamed result
+has no Coil disk identity; the SDK owns persistent storage and clearing through
+`session.cache`. See [cache policy](docs/consumer-guide.md#persist-metadata-between-processes).
+Coil owns decoding and closes every successfully returned
 image source. `TvheadendArtworkLoadException.failure` preserves typed failures
 such as `ACCESS_DENIED` without parsing exception text.
 

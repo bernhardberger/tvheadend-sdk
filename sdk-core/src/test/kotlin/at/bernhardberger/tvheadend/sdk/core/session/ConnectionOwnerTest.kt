@@ -203,6 +203,58 @@ internal class ConnectionOwnerTest {
     }
 
     @Test
+    fun `artwork survives owner restart without gateway traffic and isolates profile switches`(
+        @org.junit.jupiter.api.io.TempDir root: File,
+    ) = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        fun create(gateway: FakeProtocolGateway): ConnectionOwner {
+            val metadata = PhaseOneSessionMetadata()
+            return owner(
+                gateway = gateway,
+                metadata = metadata,
+                children = PlaybackSessionChildren(gateway, metadata, dispatcher, Clock.System),
+                cacheRuntime = MetadataCacheRuntime(
+                    at.bernhardberger.tvheadend.sdk.core.cache.FileMetadataCacheStore(root),
+                    MetadataCachePolicy.create(root), dispatcher, Clock.System,
+                ),
+            )
+        }
+        suspend fun ready(owner: ConnectionOwner, gateway: FakeProtocolGateway, profile: ServerProfile) {
+            val generation = GatewayGeneration()
+            gateway.connectResults += connected(generation)
+            owner.connect(profile)
+            runCurrent()
+            gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+            runCurrent()
+        }
+        val id = at.bernhardberger.tvheadend.sdk.core.ArtworkId(1)
+        val firstGateway = FakeProtocolGateway()
+        val first = create(firstGateway)
+        ready(first, firstGateway, ServerProfile("fixture"))
+        val firstProof = requireNotNull(first.observation.value.currentSession)
+        val firstKey = requireNotNull(first.artwork.cacheKey(firstProof, id))
+        assertTrue(first.artwork.loadArtwork(firstProof, id) is at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult.Available)
+        assertEquals(1, firstGateway.artworkCalls)
+        first.shutdown()
+
+        val nextGateway = FakeProtocolGateway()
+        val next = create(nextGateway)
+        ready(next, nextGateway, ServerProfile("fixture"))
+        val nextProof = requireNotNull(next.observation.value.currentSession)
+        assertEquals(firstKey, next.artwork.cacheKey(nextProof, id))
+        assertTrue(next.artwork.loadArtwork(nextProof, id) is at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult.Available)
+        assertEquals(0, nextGateway.artworkCalls)
+        ready(next, nextGateway, ServerProfile("other"))
+        val otherProof = requireNotNull(next.observation.value.currentSession)
+        assertTrue(firstKey != next.artwork.cacheKey(otherProof, id), "Different profiles must not share keys")
+        assertNull(next.artwork.cacheKey(nextProof, id))
+        assertTrue(next.artwork.loadArtwork(nextProof, id) is at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult.Unavailable)
+        assertTrue(next.artwork.loadArtwork(otherProof, id) is at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult.Available)
+        assertEquals(1, nextGateway.artworkCalls)
+        next.shutdown()
+    }
+
+    @Test
     fun `a cached catalog is browsable before connecting and persisted after sync`() = runTest {
         val gateway = FakeProtocolGateway(mutableListOf())
         val generation = GatewayGeneration()
@@ -1769,6 +1821,15 @@ private class FakeProtocolGateway(
     ) -> GatewayResult<Unit> = { _, _, _ -> GatewayResult.NotSupported }
     internal var progressReportCount: Int = 0
     internal var connectCalls: Int = 0
+    internal var artworkCalls: Int = 0
+
+    override suspend fun loadArtwork(
+        generation: GatewayGeneration,
+        id: at.bernhardberger.tvheadend.sdk.core.ArtworkId,
+    ): GatewayResult<ByteArray> {
+        artworkCalls++
+        return GatewayResult.Ok(byteArrayOf(1, 2, 3))
+    }
     internal var maximumConcurrentConnects: Int = 0
     internal var invalidateOnReadyCommit: Boolean = false
     internal var beforeReadyCommit: () -> Unit = {}

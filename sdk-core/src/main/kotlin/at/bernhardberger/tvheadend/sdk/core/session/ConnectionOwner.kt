@@ -3,6 +3,10 @@
 package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoader
+import at.bernhardberger.tvheadend.sdk.core.ArtworkId
+import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
+import at.bernhardberger.tvheadend.sdk.core.cache.CacheNamespace
+import java.util.UUID
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
 import at.bernhardberger.tvheadend.sdk.core.DVR_PROGRESS_MINIMUM_PROTOCOL_VERSION
@@ -89,7 +93,35 @@ internal class ConnectionOwner(
     override val observation: StateFlow<SessionObservation> = metadata.observation
     override val epgRepository: EpgRepository = metadata.epgRepository
     override val dvrRepository: DvrRepository = metadata.dvrRepository
-    override val artwork: ArtworkLoader = children
+    private var artworkNamespace: CacheNamespace? = null
+    override val artwork: ArtworkLoader = object : ArtworkLoader {
+        override fun cacheKey(currentSession: CurrentSessionObservation, artworkId: ArtworkId): String? {
+            val namespace = synchronized(stateLock) {
+                artworkNamespace?.takeIf { isCurrent(currentSession) }
+            } ?: return null
+            return UUID.nameUUIDFromBytes(
+                "tvheadend-artwork:${namespace.value}:${artworkId.value}".toByteArray(Charsets.UTF_8),
+            ).toString()
+        }
+
+        override suspend fun loadArtwork(
+            currentSession: CurrentSessionObservation,
+            artworkId: ArtworkId,
+        ): ArtworkLoadResult {
+            currentCoroutineContext().ensureActive()
+            val namespace = synchronized(stateLock) {
+                artworkNamespace.takeIf { isCurrent(currentSession) }
+            }
+            val runtime = cacheRuntime
+            return if (namespace == null || runtime == null) {
+                children.loadArtwork(currentSession, artworkId)
+            } else {
+                runtime.loadArtwork(namespace, artworkId, { isCurrent(currentSession) }) {
+                    children.loadArtwork(currentSession, artworkId)
+                }
+            }
+        }
+    }
     override val cache: SessionCache = cacheRuntime ?: DisabledSessionCache
     override suspend fun getStreamProfiles(
         currentSession: CurrentSessionObservation,
@@ -280,6 +312,7 @@ internal class ConnectionOwner(
         val admissionFailure = synchronized(stateLock) {
             if (terminal) closed = true
             activeToken = null
+            artworkNamespace = null
             activeGeneration = null
             latestDvrCapabilityRevision = null
             retryDisposition = null
@@ -305,6 +338,7 @@ internal class ConnectionOwner(
         val token = SessionToken()
         synchronized(stateLock) {
             activeToken = token
+            artworkNamespace = if (cacheRuntime != null) profile.cacheNamespace() else null
             latestDvrCapabilityRevision = null
             retryDisposition = null
         }

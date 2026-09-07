@@ -52,7 +52,12 @@ public final class at/bernhardberger/tvheadend/sdk/core/ArtworkLoadResult$Unavai
 }
 
 public abstract interface class at/bernhardberger/tvheadend/sdk/core/ArtworkLoader {
+	public fun cacheKey-noSgMNw (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;I)Ljava/lang/String;
 	public abstract fun loadArtwork-j_U-F9s (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;ILkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ArtworkLoader$DefaultImpls {
+	public static fun cacheKey-noSgMNw (Lat/bernhardberger/tvheadend/sdk/core/ArtworkLoader;Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;I)Ljava/lang/String;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/AutorecRule {

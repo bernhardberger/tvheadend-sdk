@@ -108,7 +108,7 @@ and idempotent. It affects every holder of the shared session; a later
 ### Persist metadata between processes
 
 By default nothing survives the process. Pass a `MetadataCachePolicy` to keep
-the last published channel catalog and guide on disk:
+the last published channel catalog, guide and encoded artwork on disk:
 
 ```kotlin
 val session = createTvheadendSession(
@@ -128,6 +128,16 @@ Cached data is never published as `CURRENT`: tuning, EPG queries and DVR
 mutations still wait for `Ready`. The guide is seeded for display only; the
 initial sync re-sends the configured horizon.
 
+Artwork hits avoid a server file load. `artworkRetention` defaults to 30 days
+from storage (reads do not extend it); `artworkMaxBytes` defaults to 64 MiB
+across every namespace under the root. Least recently accessed entries are
+evicted after writes, and expired entries are pruned on restore and writes.
+Oversized artwork is returned but not persisted. Corrupt bytes and indexes are
+discarded. The root must be app-private storage; cached bytes are not encrypted.
+Use one owning session runtime per root, not multiple application processes.
+Removed profiles' files remain subject to retention and the byte budget until
+pruned by cache activity, or can be deleted immediately with the root-wide `clear()`.
+
 `session.cache` exposes `SessionCache.statistics` for a storage screen and
 `clear()` to delete every cached namespace. Statistics are measured once the
 session first touches the cache, and a connected session persists its current
@@ -135,6 +145,10 @@ snapshots again right after `clear()`, so the control resets stale or damaged
 files rather than freeing storage. A session created without a policy reports
 empty statistics and `clear()` is a no-op. `FakeTvheadendSession.cache`
 is a `FakeSessionCache` whose statistics can be scripted.
+Statistics include encoded artwork bytes and entry count (excluding index
+overhead). Clearing deletes artwork, including other profiles, and fences writes
+from fetches already pending at deletion. New loads can cache again. It does not
+clear Coil's application-owned memory cache or already-displayed images.
 
 ## Read the catalog
 
@@ -653,12 +667,15 @@ val artwork = TvheadendArtwork.create(
 binds the authenticated load to the captured session generation. TVHeadend
 requires recorder access for this file API; denied loads fail safely.
 
-The SDK derives an opaque process-local memory key from the current generation
-and artwork identity. The key contains no selector, endpoint, hostname,
-username, path, ticket, credential, or stable cross-process history. Retired
-proofs do not produce keys, and replacement generations cannot reuse old
-entries. Fetches return stream sources without disk identities, so this
-component does not authorize persistent authenticated artwork caching. Catch
+With a cache policy, the model captures `ArtworkLoader.cacheKey`, an opaque
+restart-stable digest of the profile namespace and artwork identity. Without a
+policy, keys remain process-local and generation-scoped. Keys never contain raw
+connection details or selectors and must not be logged. A model keeps its key
+when its observation retires, but a new fetch rejects the retired proof. Coil
+memory hits may reuse already-decoded images; retention and `clear()` govern SDK
+disk bytes, not application-owned decoded memory. Fetches return stream sources
+without Coil disk identities. Do not configure Coil disk caching for this
+integration; the SDK policy owns persistence. Catch
 `TvheadendArtworkLoadException` and inspect its typed `failure`; do not parse
 exception text. Coil owns decoding and closes successful image sources. This
 component is not a URI factory or a generic image cache.

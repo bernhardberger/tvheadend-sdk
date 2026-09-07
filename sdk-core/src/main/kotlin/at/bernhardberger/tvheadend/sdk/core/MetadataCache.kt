@@ -48,7 +48,8 @@ public class MetadataCachePolicy private constructor(
          * Creates a policy rooted at [root], which must be app-private storage.
          *
          * The SDK creates the directory on first write. The consumer must not place other files
-         * under it.
+         * under it. A root must have one owning session runtime; do not share it between
+         * independently running application processes.
          */
         public fun create(
             root: File,

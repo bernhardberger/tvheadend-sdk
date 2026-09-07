@@ -63,6 +63,13 @@ public sealed interface ArtworkLoadResult {
  * [ArtworkFailure.ACCESS_DENIED] when that permission is unavailable.
  */
 public interface ArtworkLoader {
+    /**
+     * Opaque restart-stable image key when persistence is enabled and [currentSession] is current.
+     * Returns null otherwise. Image integrations may retain this key with their request model;
+     * it is not load authority and must not be logged or interpreted as a path or namespace.
+     */
+    public fun cacheKey(currentSession: CurrentSessionObservation, artworkId: ArtworkId): String? = null
+
     /** Loads [artworkId] without exposing an endpoint, credential, or protocol file selector. */
     public suspend fun loadArtwork(
         currentSession: CurrentSessionObservation,

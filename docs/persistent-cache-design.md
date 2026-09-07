@@ -1,6 +1,6 @@
 # Persistent metadata and artwork cache
 
-Status: approved design, not implemented. Target release: 0.8.0 (new public API).
+Status: slices 1 and 2 implemented. Target release: 0.8.0 (new public API).
 Consumer plan: `tvheadend-player/docs/persistent-cache-plan.md`.
 
 ## Problem
@@ -80,7 +80,7 @@ tvheadend-sdk/
     catalog.bin      channel catalog + tags
     epg.bin          EPG snapshot
     artwork/
-      index.bin      id -> size, lastAccess, storedAt
+      index.bin      schema version, id -> size, lastAccess, storedAt, SHA-256 digest
       <id>           raw bytes as served by imagecache
 ```
 
@@ -145,16 +145,20 @@ deleted and the session proceeds as today.
 gateway: hit within `artworkRetention` returns bytes from disk and touches
 `lastAccess`; miss fetches through the existing three-handle semaphore
 (`HtspProtocolGateway.kt:214`) and stores the bytes. Eviction is LRU by bytes
-against `artworkMaxBytes`, run after each store on the writer scope.
+against `artworkMaxBytes` across all namespaces, run after each store on the IO
+dispatcher under the runtime store mutex. Restore also prunes expired entries.
 `ArtworkFailure.FILE_UNAVAILABLE` from the server removes any stale entry.
 
 sdk-android `TvheadendArtwork` changes:
 
-- `TvheadendArtworkKeyer` returns a stable key
+- `TvheadendArtworkKeyer` returns an opaque UUID digest of
   `tvheadend-artwork:<namespace>:<id>` when a cache policy is active, otherwise
   the current process-local key. The `isCurrent` gate moves from the keyer
   (`:85-92`) into the fetcher so a stale observation causes a fetch failure, not
-  a key change.
+  a key change. The model captures `ArtworkLoader.cacheKey` while current, so
+  an old model never acquires a replacement profile's key. The namespace itself
+  does not cross the core boundary. Coil memory hits can reuse decoded images;
+  policy retention and clear apply to SDK disk bytes, not Coil memory.
 - The fetcher keeps returning a stream `SourceFetchResult` with no Coil disk
   cache key. Persistence is the SDK store, not Coil's disk cache; consumers
   should not configure a Coil disk cache for artwork.
@@ -166,7 +170,8 @@ sdk-android `TvheadendArtwork` changes:
 `SessionCache.clear()` deletes every namespace under the root and resets
 statistics. While connected the in-memory state is untouched; the next write
 recreates the files. It is safe to call from any thread; it runs on the writer
-scope and returns after deletion.
+IO dispatcher under the store mutex and returns after deletion. An epoch fences
+artwork fetches already pending at deletion from repopulating cleared files.
 
 ## Tests (all JVM, temp directories)
 
