@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.12.0]
+
+Accepted content seeks now discard old Media3 queues and deliver a playback
+discontinuity only after usable new selected A/V samples arrive. Paused playback
+can render a new first frame without an unsolicited Player or server resume.
+No new media means no optimistic settlement or decoded-frame claim.
+
+Accepted `TimeshiftContentSeekResult.Completed.seek` and sampled
+`TimeshiftPlaybackPosition.Estimate.seek` provide opaque command correlation,
+including when `readerReached` is unknown. Match non-null token identity rather
+than a timer or reader coordinate. Recompile consumers for the updated
+`TimeshiftTestFixture.playbackPosition` signature. See
+[settlement semantics and offline evidence](docs/content-seek-settlement.md).
+HTSP 0.10.0, Media3 1.11.0 and bundled FFmpeg/native payloads are unchanged.
+
 ## [0.11.0]
 
 Propagate HTSP queue data errors through `SubscriptionEvent.Queue.errorCount`
