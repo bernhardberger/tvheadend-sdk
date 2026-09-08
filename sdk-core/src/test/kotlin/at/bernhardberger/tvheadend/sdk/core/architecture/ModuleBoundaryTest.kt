@@ -432,6 +432,7 @@ internal class ModuleBoundaryTest {
             "LivePlaybackObservation",
             "LiveTimeshiftState",
             "TimeshiftContentTarget",
+            "TimeshiftSeekToken",
             "TimeshiftTimeline",
             "TimeshiftWallClockMapping",
             "TimeshiftPlaybackPosition",
@@ -508,7 +509,7 @@ internal class ModuleBoundaryTest {
             ),
             fakePlaybackFunctions,
         )
-        assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 26)
+        assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 27)
 
         val coordinatorApi = File(
             "../sdk-media3/src/main/kotlin/at/bernhardberger/tvheadend/sdk/media3/" +
