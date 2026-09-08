@@ -128,10 +128,14 @@ internal class TvheadendLiveMediaPeriod(
                 streams[index] = null
                 continue
             }
-            val output = outputs.firstOrNull { it.trackGroup === selection.trackGroup }
+            check(selection.length() == 1 && selection.getIndexInTrackGroup(0) == 0) {
+                "Selected Media3 track index is unavailable"
+            }
+            // Media3 overrides can carry an equal group from an earlier period.
+            val output = outputs.firstOrNull { it.trackGroup == selection.trackGroup }
                 ?: error("Selected Media3 track is unavailable")
             output.enabled = true
-            if (streams[index] == null || !mayRetainStreamFlags[index]) {
+            if (!mayRetainStreamFlags[index] || (streams[index] as? QueueSampleStream)?.queue !== output.queue) {
                 output.queue.seekTo(positionUs, true)
                 streams[index] = QueueSampleStream(output.queue, { cleanEndOfStream }, ::currentError, { interrupted || released })
                 streamResetFlags[index] = true
@@ -470,7 +474,7 @@ private class QueueExtractorOutput(
 }
 
 private class QueueSampleStream(
-    private val queue: SampleQueue,
+    val queue: SampleQueue,
     private val loadingFinished: () -> Boolean,
     private val sourceError: () -> IOException?,
     private val invalidated: () -> Boolean,

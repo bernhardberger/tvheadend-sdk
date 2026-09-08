@@ -5,6 +5,8 @@ package at.bernhardberger.tvheadend.sdk.media3
 
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
+import androidx.media3.common.TrackGroup
+import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -25,6 +27,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -63,8 +66,23 @@ internal class LiveStreamRestartInstrumentationTest {
             }
             withTimeout(10_000L) { connection.awaitCollectionRegistered() }
             var previousUid: Any? = null
-            repeat(3) { segment ->
-                if (segment > 0) connection.emit(SubscriptionEvent.Stopped(SubscriptionCondition.NO_DETAIL))
+            var earlierGroup: TrackGroup? = null
+            repeat(4) { segment ->
+                if (segment == 3) {
+                    instrumentation.runOnMainSync {
+                        checkNotNull(player).apply {
+                            setMediaSource(createTvheadendLiveMediaSource(
+                                FixedSubscriptionLiveTarget(manager, SubscriptionChannelId(2))))
+                            prepare()
+                        }
+                    }
+                    withTimeout(10_000L) {
+                        while (connection.subscribeCount != 2) delay(20)
+                        connection.awaitCollectionRegistered()
+                    }
+                } else if (segment > 0) {
+                    connection.emit(SubscriptionEvent.Stopped(SubscriptionCondition.NO_DETAIL))
+                }
                 val changed = segment == 2
                 val count = if (changed) 2 else 1
                 val type = if (changed) SubscriptionStreamType.AC3 else SubscriptionStreamType.MPEG2_AUDIO
@@ -103,6 +121,16 @@ internal class LiveStreamRestartInstrumentationTest {
                 var position = 0L
                 instrumentation.runOnMainSync {
                     val current = checkNotNull(player)
+                    val selectedGroup = current.currentTracks.groups.first { it.isSelected }.mediaTrackGroup
+                    if (segment == 0) {
+                        earlierGroup = selectedGroup
+                        current.trackSelectionParameters = current.trackSelectionParameters.buildUpon()
+                            .setOverrideForType(TrackSelectionOverride(selectedGroup, 0)).build()
+                    } else if (!changed) {
+                        assertEquals(earlierGroup, selectedGroup)
+                        assertNotSame(earlierGroup, selectedGroup)
+                        assertTrue(current.trackSelectionParameters.overrides.containsKey(earlierGroup))
+                    }
                     previousUid = current.currentTimeline.getUidOfPeriod(current.currentPeriodIndex)
                     assertEquals(playing, current.playWhenReady)
                     assertEquals(playing, current.isPlaying)
@@ -116,13 +144,13 @@ internal class LiveStreamRestartInstrumentationTest {
                     if (playing) assertTrue("Intended playback resumes", current.currentPosition > position)
                     else assertEquals("Paused restart must not autoplay", position, current.currentPosition)
                 }
-                assertEquals(1, connection.subscribeCount)
-                assertEquals(0, connection.unsubscribeCount)
+                assertEquals(if (segment == 3) 2 else 1, connection.subscribeCount)
+                assertEquals(if (segment == 3) 1 else 0, connection.unsubscribeCount)
             }
         } finally {
             instrumentation.runOnMainSync { player?.release() }
             withTimeout(10_000L) { manager.closeAndJoin() }
         }
-        assertEquals(1, connection.unsubscribeCount)
+        assertEquals(2, connection.unsubscribeCount)
     }
 }

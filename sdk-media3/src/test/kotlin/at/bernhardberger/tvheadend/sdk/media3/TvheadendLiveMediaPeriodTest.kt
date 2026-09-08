@@ -8,12 +8,14 @@ package at.bernhardberger.tvheadend.sdk.media3
 
 import androidx.media3.common.C
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.TrackGroup
 import androidx.media3.common.util.ParsableByteArray
 import androidx.media3.decoder.DecoderInputBuffer
 import androidx.media3.exoplayer.FormatHolder
 import androidx.media3.exoplayer.source.MediaPeriod
 import androidx.media3.exoplayer.source.SampleStream
 import androidx.media3.exoplayer.trackselection.FixedTrackSelection
+import androidx.media3.exoplayer.trackselection.ExoTrackSelection
 import androidx.media3.exoplayer.upstream.DefaultAllocator
 import at.bernhardberger.tvheadend.sdk.playback.ActiveSubscription
 import at.bernhardberger.tvheadend.sdk.playback.MuxFrameType
@@ -53,6 +55,8 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertSame
+import org.junit.jupiter.api.Assertions.assertNotSame
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -61,6 +65,77 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 
 internal class TvheadendLiveMediaPeriodTest {
+    @Test
+    fun `equal fresh group retains only its current queue and supports deselection`() = runTest {
+        val harness = PeriodHarness(this)
+        try {
+            harness.start(SubscriptionStreamType.MPEG2_AUDIO, SubscriptionStreamType.AAC)
+            harness.audio()
+            harness.packet(1, PeriodCountingBinary(fixture("aac-adts.bin")))
+            harness.looper.runAll()
+            val group = harness.period.trackGroups[0]
+            val fresh = TrackGroup(group.id, group.getFormat(0).buildUpon().build())
+            assertEquals(group, fresh)
+            assertNotSame(group, fresh)
+            val streams = arrayOf<SampleStream?>(harness.select(0))
+            val original = streams[0]
+            val reset = booleanArrayOf(false)
+            harness.period.selectTracks(arrayOf(FixedTrackSelection(fresh, 0)), booleanArrayOf(true), streams, reset, 0)
+            assertSame(original, streams[0])
+            assertFalse(reset[0])
+            harness.period.selectTracks(
+                arrayOf(FixedTrackSelection(harness.period.trackGroups[1], 0)), booleanArrayOf(true), streams, reset, 0,
+            )
+            assertNotSame(original, streams[0])
+            assertTrue(reset[0])
+            val holder = FormatHolder()
+            assertEquals(C.RESULT_FORMAT_READ, checkNotNull(streams[0]).readData(
+                holder, DecoderInputBuffer(DecoderInputBuffer.BUFFER_REPLACEMENT_MODE_NORMAL), 0,
+            ))
+            assertEquals(MimeTypes.AUDIO_AAC, holder.format?.sampleMimeType)
+            reset[0] = false
+            harness.period.selectTracks(arrayOfNulls<ExoTrackSelection>(1), booleanArrayOf(true), streams, reset, 0)
+            assertNull(streams[0])
+            assertFalse(reset[0])
+            harness.period.selectTracks(arrayOf(FixedTrackSelection(fresh, 0)), booleanArrayOf(false), streams, reset, 0)
+            assertTrue(reset[0])
+            harness.period.interrupt()
+            assertFalse(checkNotNull(streams[0]).isReady)
+            assertEquals(C.RESULT_NOTHING_READ, checkNotNull(streams[0]).readData(
+                holder, DecoderInputBuffer(DecoderInputBuffer.BUFFER_REPLACEMENT_MODE_NORMAL), 0,
+            ))
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `unavailable group and invalid single track indices are rejected`() = runTest {
+        val harness = PeriodHarness(this)
+        try {
+            harness.start(SubscriptionStreamType.MPEG2_AUDIO)
+            harness.audio()
+            harness.looper.runAll()
+            val group = harness.period.trackGroups[0]
+            val valid = FixedTrackSelection(group, 0)
+            val invalidSelections = listOf(
+                FixedTrackSelection(TrackGroup("unavailable", group.getFormat(0)), 0),
+                object : ExoTrackSelection by valid { override fun getIndexInTrackGroup(index: Int): Int = 1 },
+                object : ExoTrackSelection by valid { override fun getIndexInTrackGroup(index: Int): Int = -1 },
+                object : ExoTrackSelection by valid { override fun length(): Int = 2 },
+            )
+            invalidSelections.forEach { selection ->
+                assertThrows(IllegalStateException::class.java) {
+                    harness.period.selectTracks(arrayOf(selection), booleanArrayOf(false),
+                        arrayOfNulls<SampleStream>(1), booleanArrayOf(false), 0)
+                }
+            }
+            harness.select(0).maybeThrowError()
+        } finally {
+            harness.close()
+        }
+    }
+
     companion object {
         @BeforeAll
         @JvmStatic

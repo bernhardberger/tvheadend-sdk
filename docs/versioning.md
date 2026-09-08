@@ -1,16 +1,16 @@
 # Versioning and compatibility
 
-The source is configured for the provisional `0.10.0` release under these
+The source is configured for the provisional `0.10.1` release under these
 coordinates:
 
-- `at.bernhardberger.tvheadend:sdk-android:0.10.0`
-- `at.bernhardberger.tvheadend:sdk-core:0.10.0`
-- `at.bernhardberger.tvheadend:sdk-media3:0.10.0`
-- `at.bernhardberger.tvheadend:sdk-playback:0.10.0`
-- `at.bernhardberger.tvheadend:sdk-testing:0.10.0`
+- `at.bernhardberger.tvheadend:sdk-android:0.10.1`
+- `at.bernhardberger.tvheadend:sdk-core:0.10.1`
+- `at.bernhardberger.tvheadend:sdk-media3:0.10.1`
+- `at.bernhardberger.tvheadend:sdk-playback:0.10.1`
+- `at.bernhardberger.tvheadend:sdk-testing:0.10.1`
 
-The `v0.9.1` tag marks the preceding published release. Source, local staging, and CI
-do not establish that the configured `0.10.0` coordinates are publicly available;
+The `v0.10.0` tag marks the preceding published release. Source, local staging, and CI
+do not establish that the configured `0.10.1` coordinates are publicly available;
 check Maven Central before selecting them.
 
 The signed `v0.3.3` tag is retained as development-release evidence after its
@@ -31,9 +31,11 @@ While the major version is zero, the public API and behavior are provisional.
 No source, binary, or behavioral compatibility is promised for the provisional
 0.x line. A known breaking change requires the next minor version, not a patch
 version. Patch versions are reserved for backward-compatible fixes. The
-configured `0.10.0` minor release adds segment-aware subscription seek admission
-and restart semantics, including a new seek outcome that affects exhaustive consumers,
-so it is not a patch on `0.9.1`.
+configured `0.10.1` patch repairs Media3 selection of equal track groups without
+changing public declarations, dependencies, native bytes, or segment semantics.
+It rejects invalid selection indices rather than silently selecting track zero.
+The preceding `0.10.0` minor release added segment-aware subscription seek
+admission and a new seek outcome affecting exhaustive consumers.
 
 The entire `1.x` line is reserved for a separately attended final stable
 release. Development packages must not select, recommend, tag, publish, or
