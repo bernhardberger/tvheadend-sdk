@@ -15,6 +15,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -48,6 +49,9 @@ public fun interface SubscriptionEventConsumer {
      * [SubscriptionEvent.Dropped] are withheld and every other event is still delivered
      * immediately. Withheld events keep their relative order and are either replayed before the
      * rejecting acknowledgement or discarded before the accepting one.
+     * The exception is a stop/start boundary intersecting an unresolved seek: uncertain request
+     * provenance disables consumer delivery, including that boundary and later controls. Observe
+     * [ActiveSubscription.state] for the terminal seek invalidation; no unsafe replay is attempted.
      *
      * After an accepted [SubscriptionEvent.Skipped], packets are discarded until the timeline
      * re-anchors, and one shared offset is then applied to the presentation and decoding
@@ -66,9 +70,12 @@ public fun interface SubscriptionEventConsumer {
     public fun tracksReady(tracks: SubscriptionTracks): Unit = Unit
 }
 
-/** Immutable validated track set that made a subscription playable. */
+/**
+ * Immutable validated tracks and identity of one playable segment. A restart produces a new instance
+ * even for identical streams. The public constructor lets infrastructure fakes model this boundary.
+ */
 @SubscriptionInfrastructureApi
-public class SubscriptionTracks internal constructor(streams: List<SubscriptionStream>) {
+public class SubscriptionTracks public constructor(streams: List<SubscriptionStream>) {
     /** Ordered immutable stream descriptions. */
     public val streams: List<SubscriptionStream> = streams.toImmutableList()
 
@@ -85,7 +92,7 @@ public class SubscriptionTracks internal constructor(streams: List<SubscriptionS
 /** Durable state of one admitted subscription. */
 @SubscriptionInfrastructureApi
 public sealed interface SubscriptionState {
-    /** Collection is registered but acknowledgement or tracks are still pending. */
+    /** Acknowledgement or segment tracks are pending, including a nonterminal stream interruption. */
     public data object Starting : SubscriptionState
 
     /** Subscribe was acknowledged and a valid immutable track set was committed. */
@@ -105,7 +112,7 @@ public sealed interface SubscriptionTerminalReason {
     /** Explicit local close completed. */
     public data object Closed : SubscriptionTerminalReason
 
-    /** TVHeadend sent an ordered graceful stop. */
+    /** Legacy terminal classification; an ordered stream stop now interrupts rather than ends it. */
     public data object Stopped : SubscriptionTerminalReason
 
     /** The owning connection generation was replaced. */
@@ -141,7 +148,7 @@ public sealed interface SubscriptionTerminalReason {
     /** Started did not contain a usable nonempty unique track set. */
     public data object InvalidTracks : SubscriptionTerminalReason
 
-    /** A second Started attempted to replace initialized tracks. */
+    /** Legacy terminal classification; validated replacement tracks now start a new segment. */
     public data object TrackReconfigurationUnsupported : SubscriptionTerminalReason
 
     /** The ordered stream completed without a terminal event or local unsubscribe. */
@@ -187,6 +194,8 @@ public enum class SubscriptionSeekInvalidation {
      * Only a packet carrying a presentation time can define the shared offset, so a segment that
      * omits them entirely ends the subscription instead of discarding every remaining packet
      * while still reporting a playable state.
+     * This also covers a restarted segment that repeatedly falls below an established seek floor
+     * until its bounded discard budget is exhausted.
      */
     RESUMED_SEGMENT_UNANCHORABLE,
 }
@@ -232,6 +241,9 @@ public sealed interface SubscriptionSeekResult {
 
     /** The subscription became terminal before the request resolved. */
     public data object SubscriptionEnded : SubscriptionSeekResult
+
+    /** The expected segment was replaced or has no playable tracks. No request was registered. */
+    public data object SegmentUnavailable : SubscriptionSeekResult
 }
 
 /** Payload-free subscription operation failure. */
@@ -335,8 +347,19 @@ public interface ActiveSubscription {
      * Requests are serialized: a second call while one is pending returns
      * [SubscriptionSeekResult.AlreadyPending]. Caller cancellation propagates and leaves the
      * pending gate under subscription ownership.
+     * A stop or repeated start during an unresolved seek invalidates this subscription because the
+     * protocol acknowledgement has no request or segment correlation. Otherwise stop is nonterminal.
      */
     public suspend fun seek(target: SubscriptionSeekTarget): SubscriptionSeekResult
+
+    /**
+     * Registers a seek only if [expectedTracks] is still the playable segment, atomically with
+     * the seek gate. Retained content coordinates must use this overload across stream restarts.
+     */
+    public suspend fun seek(
+        target: SubscriptionSeekTarget,
+        expectedTracks: SubscriptionTracks,
+    ): SubscriptionSeekResult
 
     /**
      * Requests server-side pause (`0`) or normal delivery (`100`).
@@ -445,6 +468,7 @@ internal class SeekGateSettings(
 }
 
 private val DEFAULT_SEEK_ACKNOWLEDGEMENT_TIMEOUT = 5.seconds
+private val DEFAULT_RESTART_TIMEOUT = 5.seconds
 private const val DEFAULT_SEEK_PENDING_EVENTS = 2_048
 private const val DEFAULT_SEEK_PENDING_BYTES = 16L * 1024L * 1024L
 private const val PAUSED_SUBSCRIPTION_SPEED = 0
@@ -622,6 +646,8 @@ private class ActiveSubscriptionImpl(
     private var terminal: SubscriptionTerminalReason? = null
     private var closeRequestedFlag = false
     private var playablePublished = false
+    private var interruptionDeadline: Job? = null
+    private var interruption: Any? = null
     private var terminalCancellation: CancellationException? = null
     private var stopEventCollection = false
     private var collectionJob: Job? = null
@@ -666,7 +692,17 @@ private class ActiveSubscriptionImpl(
         return FinishedOutcome(result, synchronized(lock) { terminalCancellation })
     }
 
-    override suspend fun seek(target: SubscriptionSeekTarget): SubscriptionSeekResult {
+    override suspend fun seek(target: SubscriptionSeekTarget): SubscriptionSeekResult = seekSegment(target, null)
+
+    override suspend fun seek(
+        target: SubscriptionSeekTarget,
+        expectedTracks: SubscriptionTracks,
+    ): SubscriptionSeekResult = seekSegment(target, expectedTracks)
+
+    private suspend fun seekSegment(
+        target: SubscriptionSeekTarget,
+        expectedTracks: SubscriptionTracks?,
+    ): SubscriptionSeekResult {
         check(!ownsDeliveryJob(currentCoroutineContext()[Job])) {
             "Subscription seek cannot join from its event consumer"
         }
@@ -675,10 +711,12 @@ private class ActiveSubscriptionImpl(
             if (
                 terminal != null ||
                 closeRequestedFlag ||
-                seekAdmissionClosed ||
-                !playablePublished
+                seekAdmissionClosed
             ) {
                 return SubscriptionSeekResult.SubscriptionEnded
+            }
+            if (!playablePublished || (expectedTracks != null && tracks !== expectedTracks)) {
+                return SubscriptionSeekResult.SegmentUnavailable
             }
             if ((grantedTimeshiftSeconds ?: 0L) <= 0L) return SubscriptionSeekResult.NotSeekable
             if (pendingSeek != null) return SubscriptionSeekResult.AlreadyPending
@@ -896,6 +934,12 @@ private class ActiveSubscriptionImpl(
 
     private suspend fun acceptEvent(event: SubscriptionEvent): Boolean {
         deliveryMutex.withLock {
+            // Fence the segment and its seek admission before any boundary callback can re-enter.
+            if (event is SubscriptionEvent.Stopped ||
+                (event is SubscriptionEvent.Started && synchronized(lock) { tracks != null || interruption != null })
+            ) {
+                interruptSegment()
+            }
             when (val decision = admitToGate(event)) {
                 GateDecision.Pass -> deliverToConsumer(event)
                 GateDecision.Withheld, GateDecision.Discarded -> Unit
@@ -904,6 +948,7 @@ private class ActiveSubscriptionImpl(
                     deliverToConsumer(event)
                 }
             }
+            // Ordered terminal delivery precedes terminal state so consumers can preserve clean EOS.
             applyEventState(event)
         }
         return synchronized(lock) { !stopEventCollection }
@@ -916,6 +961,9 @@ private class ActiveSubscriptionImpl(
      * event is delivered immediately so terminal handling is never delayed by a gate.
      */
     private fun admitToGate(event: SubscriptionEvent): GateDecision = synchronized(lock) {
+        if (interruption != null && tracks == null && (event is SubscriptionEvent.Packet || event is SubscriptionEvent.Dropped)) {
+            return GateDecision.Discarded
+        }
         val pending = pendingSeek ?: return GateDecision.Pass
         when (event) {
             is SubscriptionEvent.Packet, is SubscriptionEvent.Dropped -> {
@@ -992,23 +1040,41 @@ private class ActiveSubscriptionImpl(
      */
     private suspend fun driveSeek(pending: PendingSeek) {
         if (synchronized(lock) { pendingSeek !== pending }) return
-        val bounded = withTimeoutOrNull(seekGate.acknowledgementTimeout) {
-            when (val result = invokeSkip(pending.target)) {
-                null -> SeekResolution.Invalidate(
-                    SubscriptionSeekInvalidation.UNCERTAIN_REQUEST_OUTCOME,
-                )
-                is SubscriptionOperationResult.Ok -> {
-                    pending.outcome.await()
-                    SeekResolution.Acknowledged
+        val bounded = try {
+            withTimeoutOrNull(seekGate.acknowledgementTimeout) {
+                when (val result = invokeSkip(pending.target)) {
+                    null -> SeekResolution.Invalidate(
+                        SubscriptionSeekInvalidation.UNCERTAIN_REQUEST_OUTCOME,
+                    )
+                    is SubscriptionOperationResult.Ok -> {
+                        pending.outcome.await()
+                        SeekResolution.Acknowledged
+                    }
+                    // A timed out command may still have executed, so replaying could mix packets.
+                    SubscriptionOperationResult.Timeout -> SeekResolution.Invalidate(
+                        SubscriptionSeekInvalidation.UNCERTAIN_REQUEST_OUTCOME,
+                    )
+                    else -> SeekResolution.Replay(
+                        SubscriptionSeekResult.Refused(result.toFailure()),
+                    )
                 }
-                // A timed out command may still have executed, so replaying could mix packets.
-                SubscriptionOperationResult.Timeout -> SeekResolution.Invalidate(
-                    SubscriptionSeekInvalidation.UNCERTAIN_REQUEST_OUTCOME,
-                )
-                else -> SeekResolution.Replay(
-                    SubscriptionSeekResult.Refused(result.toFailure()),
-                )
             }
+        } catch (cancellation: CancellationException) {
+            synchronized(lock) {
+                // An ordered acknowledgement or owner teardown may already own settlement.
+                if (pendingSeek === pending && terminal == null && !closeRequestedFlag && !seekAdmissionClosed) {
+                    pendingSeek = null
+                    pending.discard()
+                    consumerEnabled = false
+                    pending.outcome.completeExceptionally(cancellation)
+                    setTerminalLocked(
+                        SubscriptionTerminalReason.SeekInvalidated(SubscriptionSeekInvalidation.UNCERTAIN_REQUEST_OUTCOME),
+                        stopCollection = true,
+                        completeOpen = false,
+                    )
+                }
+            }
+            throw cancellation
         }
         val resolution = bounded
             ?: SeekResolution.Invalidate(SubscriptionSeekInvalidation.ACKNOWLEDGEMENT_TIMEOUT)
@@ -1130,7 +1196,6 @@ private class ActiveSubscriptionImpl(
             is SubscriptionEvent.Dropped -> addDroppedPackets(event.count)
             is SubscriptionEvent.Stopped -> {
                 updateDiagnostics(condition = event.condition)
-                setStreamTerminal(SubscriptionTerminalReason.Stopped)
             }
             is SubscriptionEvent.Terminated -> setStreamTerminal(
                 when (event.reason) {
@@ -1181,15 +1246,6 @@ private class ActiveSubscriptionImpl(
         val candidate = SubscriptionTracks(streams)
         synchronized(lock) {
             if (terminal != null || closeRequestedFlag) return
-            if (tracks != null) {
-                consumerEnabled = false
-                setTerminalLocked(
-                    SubscriptionTerminalReason.TrackReconfigurationUnsupported,
-                    stopCollection = false,
-                    completeOpen = false,
-                )
-                return
-            }
         }
         // The committed track set decides which stream indices may end an anchor wait.
         rebaser.onTracks(candidate)
@@ -1237,6 +1293,9 @@ private class ActiveSubscriptionImpl(
                     !playablePublished
                 ) {
                     playablePublished = true
+                    interruption = null
+                    interruptionDeadline?.cancel()
+                    interruptionDeadline = null
                     mutableState.value = SubscriptionState.Playable(currentTracks)
                     openCompletion.complete(SubscriptionOpenResult.Opened(this))
                 }
@@ -1252,6 +1311,41 @@ private class ActiveSubscriptionImpl(
 
     private fun setStreamTerminal(reason: SubscriptionTerminalReason) {
         synchronized(lock) { setTerminalLocked(reason, stopCollection = true, completeOpen = false) }
+    }
+
+    /** Repeated stops share one deadline; a validated Started ends that interruption. */
+    private fun interruptSegment() {
+        synchronized(lock) {
+            if (terminal != null || closeRequestedFlag) return
+            pendingSeek?.let { pending ->
+                consumerEnabled = false
+                pending.discard()
+                val cause = SubscriptionSeekInvalidation.UNCERTAIN_REQUEST_OUTCOME
+                resolveSeekLocked(pending, SubscriptionSeekResult.Invalidated(cause),
+                    SubscriptionTerminalReason.SeekInvalidated(cause))
+                return
+            }
+            tracks = null
+            playablePublished = false
+            mutableState.value = SubscriptionState.Starting
+            if (interruption == null) {
+                val epoch = Any()
+                interruption = epoch
+                interruptionDeadline = scope.launch {
+                    delay(DEFAULT_RESTART_TIMEOUT)
+                    synchronized(lock) {
+                        if (interruption === epoch && terminal == null) {
+                            consumerEnabled = false
+                            setTerminalLocked(
+                                SubscriptionTerminalReason.Timeout,
+                                stopCollection = true,
+                                completeOpen = false,
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private fun setLocalFailure(reason: SubscriptionTerminalReason) {
@@ -1279,6 +1373,9 @@ private class ActiveSubscriptionImpl(
         if (stopCollection) stopEventCollection = true
         if (terminal != null) return
         terminal = reason
+        interruption = null
+        interruptionDeadline?.cancel()
+        interruptionDeadline = null
         mutableState.value = SubscriptionState.Terminal(reason)
         pendingSeek?.let { pending ->
             pendingSeek = null

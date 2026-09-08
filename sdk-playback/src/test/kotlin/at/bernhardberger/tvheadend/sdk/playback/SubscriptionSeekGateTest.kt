@@ -494,6 +494,60 @@ class SubscriptionSeekGateTest {
     }
 
     @Test
+    fun `transport cancellation settles the seek and discards uncertain packets`() = runTest {
+        val fixture = openSeekable()
+        val release = CompletableDeferred<Unit>()
+        val cancellation = CancellationException("scripted skip cancellation")
+        fixture.connection.skipAction = {
+            release.await()
+            throw cancellation
+        }
+        try {
+            val seeking = async { fixture.subscription.seek(absoluteSeek()) }
+            runCurrent()
+            fixture.connection.emit(packet(presentationTimeUs = 130L))
+            runCurrent()
+            release.complete(Unit)
+            runCurrent()
+
+            assertTrue(seeking.isCompleted, "Transport cancellation must not strand the seek gate")
+            val caught = runCatching { seeking.await() }.exceptionOrNull()
+            assertTrue(caught === cancellation || caught?.cause === cancellation)
+            val terminal = fixture.subscription.state.value as SubscriptionState.Terminal
+            assertEquals(
+                SubscriptionSeekInvalidation.UNCERTAIN_REQUEST_OUTCOME,
+                (terminal.reason as SubscriptionTerminalReason.SeekInvalidated).cause,
+            )
+            assertEquals(listOf("started"), fixture.received)
+            assertSame(SubscriptionSeekResult.SubscriptionEnded, fixture.subscription.seek(absoluteSeek()))
+            advanceTimeBy(GATE_TIMEOUT)
+            runCurrent()
+            assertEquals(terminal, fixture.subscription.state.value)
+        } finally {
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun `transport cancellation after ordered acknowledgement does not invalidate settled seek`() = runTest {
+        val fixture = openSeekable()
+        val release = CompletableDeferred<Unit>()
+        fixture.connection.skipAction = {
+            release.await()
+            throw CancellationException("scripted late skip cancellation")
+        }
+        val seeking = async { fixture.subscription.seek(absoluteSeek()) }
+        runCurrent()
+        fixture.connection.emit(skipped(SkipOutcome.REJECTED))
+        runCurrent()
+        assertSame(SubscriptionSeekResult.Rejected, seeking.await())
+        release.complete(Unit)
+        runCurrent()
+        assertTrue(fixture.subscription.state.value is SubscriptionState.Playable)
+        fixture.close()
+    }
+
+    @Test
     fun `caller cancellation propagates and leaves the gate under subscription ownership`() =
         runTest {
             val fixture = openSeekable()
@@ -533,7 +587,7 @@ class SubscriptionSeekGateTest {
     @Test
     fun `seek is rejected after the subscription reached a terminal state`() = runTest {
         val fixture = openSeekable()
-        fixture.connection.emit(SubscriptionEvent.Stopped(SubscriptionCondition.NO_DETAIL))
+        fixture.connection.emit(SubscriptionEvent.Terminated(SubscriptionTermination.LOCAL_RETIREMENT))
         runCurrent()
 
         assertSame(

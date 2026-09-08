@@ -415,6 +415,11 @@ private class ObservedSubscriptionTarget(
                         target: SubscriptionSeekTarget,
                     ): SubscriptionSeekResult = result.subscription.seek(target)
 
+                    override suspend fun seek(
+                        target: SubscriptionSeekTarget,
+                        expectedTracks: SubscriptionTracks,
+                    ): SubscriptionSeekResult = result.subscription.seek(target, expectedTracks)
+
                     override suspend fun close(): SubscriptionCloseResult = try {
                         result.subscription.close().also { closeResult ->
                             cleanClose.set(closeResult == SubscriptionCloseResult.CLOSED)

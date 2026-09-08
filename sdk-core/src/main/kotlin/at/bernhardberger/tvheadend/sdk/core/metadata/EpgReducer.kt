@@ -331,6 +331,12 @@ internal class EpgQueryFence(
     override fun toString(): String = "EpgQueryFence(<redacted>)"
 }
 
+internal enum class EpgQueryAcceptance {
+    APPLIED,
+    CAPACITY_REJECTED,
+    STALE,
+}
+
 internal class EpgReducer(
     private val maximumRetainedEvents: Int = EpgCoveragePolicy.create().maximumRetainedEvents,
 ) {
@@ -445,8 +451,8 @@ internal class EpgReducer(
         query: EpgQueryFence,
         queriedTo: Instant,
         queriedEvents: List<GatewayEpgQueryEvent>,
-    ): Boolean {
-        if (!activeQueries.remove(query)) return false
+    ): EpgQueryAcceptance {
+        if (!activeQueries.remove(query)) return EpgQueryAcceptance.STALE
         return try {
             if (
                 query.channelId !in channelIds ||
@@ -455,7 +461,7 @@ internal class EpgReducer(
                 channelAuthorityRevisions[query.channelId]
                     ?.let { revision -> revision > query.authorityRevision } == true
             ) {
-                false
+                EpgQueryAcceptance.STALE
             } else {
                 val stagedEvents = linkedMapOf<EventId, ReducedEpgEvent>()
                 var stagedNewEventCount = 0
@@ -473,7 +479,7 @@ internal class EpgReducer(
                     if (candidate != null) {
                         if (event.id !in events && event.id !in stagedEvents) {
                             if (events.size + stagedNewEventCount >= maximumRetainedEvents) {
-                                return false
+                                return EpgQueryAcceptance.CAPACITY_REJECTED
                             }
                             stagedNewEventCount += 1
                         }
@@ -483,7 +489,7 @@ internal class EpgReducer(
                 if (stagedEvents.isNotEmpty()) cachedSnapshot = null
                 stagedEvents.forEach { (eventId, event) -> events[eventId] = event }
                 recordSuccessfulQuery(query.channelId, queriedTo)
-                true
+                EpgQueryAcceptance.APPLIED
             }
         } finally {
             pruneQueryAuthority()

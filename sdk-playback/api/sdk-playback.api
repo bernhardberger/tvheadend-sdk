@@ -3,6 +3,7 @@ public abstract interface class at/bernhardberger/tvheadend/sdk/playback/ActiveS
 	public abstract fun getDiagnostics ()Lkotlinx/coroutines/flow/StateFlow;
 	public abstract fun getGrantedTimeshiftPeriod-FghU774 ()Lkotlin/time/Duration;
 	public abstract fun getState ()Lkotlinx/coroutines/flow/StateFlow;
+	public abstract fun seek (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekTarget;Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionTracks;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun seek (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekTarget;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun setSpeed (ILkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
@@ -636,6 +637,13 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResu
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult$SegmentUnavailable : at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult$SegmentUnavailable;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult$SubscriptionEnded : at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult {
 	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult$SubscriptionEnded;
 	public fun equals (Ljava/lang/Object;)Z
@@ -900,6 +908,7 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminat
 }
 
 public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionTracks {
+	public fun <init> (Ljava/util/List;)V
 	public final fun getStreams ()Ljava/util/List;
 	public fun toString ()Ljava/lang/String;
 }

@@ -27,6 +27,7 @@ public class TimeshiftTestFixture(public val grantedPeriod: Duration) {
 
     private val lock = Any()
     private var owner: Any = Any()
+    private var subscriptionOwner: Any = owner
     private var active = true
     private val mutableState = MutableStateFlow<LiveTimeshiftState>(
         LiveTimeshiftState.Available(grantedPeriod, null, null, null),
@@ -62,6 +63,7 @@ public class TimeshiftTestFixture(public val grantedPeriod: Duration) {
                     owner, start, end,
                     estimatedLiveEdgeTime?.let { TimeshiftWallClockMapping.Estimate(owner, end, it) }
                         ?: TimeshiftWallClockMapping.Unavailable,
+                    subscriptionOwner,
                 )
             } else null,
         )
@@ -126,6 +128,14 @@ public class TimeshiftTestFixture(public val grantedPeriod: Duration) {
 
     /** Retire every old target and begin with no observed history. */
     public fun replaceSubscription(): Unit = synchronized(lock) {
+        owner = Any()
+        subscriptionOwner = owner
+        active = true
+        mutableState.value = LiveTimeshiftState.Available(grantedPeriod, null, null, null)
+    }
+
+    /** Restart the stream on the same transport, invalidating old targets and all mapping evidence. */
+    public fun restartSegment(): Unit = synchronized(lock) {
         owner = Any()
         active = true
         mutableState.value = LiveTimeshiftState.Available(grantedPeriod, null, null, null)

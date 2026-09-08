@@ -516,6 +516,8 @@ internal class GatewaySubscriptionConnection(
             .onEach { event ->
                 if (event is SubscriptionEvent.Timeshift) {
                     synchronized(lock) { timeshiftStatuses[id.value] = event }
+                } else if (event is SubscriptionEvent.Stopped || event is SubscriptionEvent.Started) {
+                    synchronized(lock) { timeshiftStatuses.remove(id.value) }
                 }
             }
             .onCompletion {

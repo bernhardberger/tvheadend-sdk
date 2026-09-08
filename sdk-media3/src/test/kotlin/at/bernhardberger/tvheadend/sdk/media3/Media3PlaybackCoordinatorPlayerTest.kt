@@ -21,6 +21,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import java.io.IOException
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
@@ -33,6 +34,8 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.CsvSource
 
 internal class Media3PlaybackCoordinatorPlayerTest {
     @Test
@@ -403,6 +406,119 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             ),
             access.operations,
         )
+    }
+
+    @ParameterizedTest
+    @CsvSource(
+        "false,false,false", "false,true,false", "true,false,false", "true,true,false",
+        "false,false,true", "false,true,true", "true,false,true", "true,true,true",
+    )
+    fun `failed replacement preserves consumed recording resume position and subsequent reports`(
+        replaceWithRecording: Boolean,
+        failPrepare: Boolean,
+        restoreFails: Boolean,
+    ) = runTest {
+        val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
+        access.snapshot = access.snapshot.copy(duration = 100.seconds, playbackState = Player.STATE_READY)
+        val events = PlaybackPlayerEventAccumulator()
+        val player = Media3PlaybackCoordinatorPlayer(access, events) { _, start ->
+            RecordingAdmission.Completed(if (start == RecordingPlaybackStart.RESUME) 10.seconds else null)
+        }
+        val coordinator = TvheadendPlaybackCoordinator(
+            player, events, DvrProgressPolicy(), {}, SystemPlaybackCoordinatorTimeSource,
+        )
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { coordinator.run() }
+        try {
+            val target = TestCoordinatorRecordingTarget()
+            assertSame(PlaybackTargetResult.STARTED, coordinator.setRecordingTarget(target, RecordingPlaybackStart.RESUME))
+            assertEquals(listOf(10.seconds), access.resumeSeeks)
+            assertEquals(10.seconds, access.snapshot.position)
+            access.snapshot = access.snapshot.copy(position = 40.seconds)
+            val previousListener = access.applicationListener
+            if (failPrepare) {
+                access.prepareAction = {
+                    access.prepareAction = null
+                    throw IOException("scripted replacement preparation failure")
+                }
+            } else {
+                access.failNextSetMediaSource = true
+            }
+            if (restoreFails) {
+                var installations = 0
+                access.setMediaSourceAction = {
+                    installations += 1
+                    if (installations == 2) {
+                        access.snapshot = access.snapshot.copy(
+                            position = Duration.ZERO, duration = 1.seconds, playbackState = Player.STATE_ENDED,
+                        )
+                        throw IOException("scripted restoration failure")
+                    }
+                }
+            }
+
+            val result = if (replaceWithRecording) {
+                coordinator.setRecordingTarget(TestCoordinatorRecordingTarget(), RecordingPlaybackStart.START_OVER)
+            } else {
+                coordinator.setLiveTarget(TestCoordinatorLiveTarget())
+            }
+            assertSame(PlaybackTargetResult.PLAYER_UNAVAILABLE, result)
+            if (restoreFails) {
+                runCurrent()
+                assertNull(access.applicationListener)
+                assertEquals("none", access.currentSourceKind)
+                val finalReport = target.reports.single().second
+                assertEquals(40.seconds, finalReport.position)
+                assertFalse(finalReport.markWatched)
+                return@runTest
+            }
+            assertSame(previousListener, access.applicationListener)
+            assertEquals("recording", access.currentSourceKind)
+            assertEquals(40.seconds, access.snapshot.position)
+            assertEquals(listOf(10.seconds), access.resumeSeeks)
+            assertTrue(target.reports.isEmpty(), "Rollback must retain the recording report target")
+
+            access.applicationListener?.onPlayWhenReadyChanged(false, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
+            runCurrent()
+            assertEquals(40.seconds, target.reports.single().second.position)
+            coordinator.stop()
+            runCurrent()
+            assertEquals(listOf(40.seconds, 40.seconds), target.reports.map { it.second.position })
+        } finally {
+            coordinator.shutdown(1.seconds)
+            owner.join()
+        }
+    }
+
+    @Test
+    fun `restoring an ended recording does not duplicate terminal progress`() = runTest {
+        val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
+        val events = PlaybackPlayerEventAccumulator()
+        val player = Media3PlaybackCoordinatorPlayer(access, events) { _, _ -> RecordingAdmission.Completed(null) }
+        val coordinator = TvheadendPlaybackCoordinator(
+            player, events, DvrProgressPolicy(), {}, SystemPlaybackCoordinatorTimeSource,
+        )
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { coordinator.run() }
+        val target = TestCoordinatorRecordingTarget()
+        try {
+            coordinator.setRecordingTarget(target, RecordingPlaybackStart.START_OVER)
+            access.snapshot = access.snapshot.copy(
+                position = 100.seconds, duration = 100.seconds, playbackState = Player.STATE_ENDED,
+            )
+            access.applicationListener?.onPlaybackStateChanged(Player.STATE_ENDED)
+            runCurrent()
+            assertTrue(target.reports.single().second.markWatched)
+            access.failNextSetMediaSource = true
+            access.prepareAction = { access.applicationListener?.onPlaybackStateChanged(Player.STATE_ENDED) }
+
+            assertSame(PlaybackTargetResult.PLAYER_UNAVAILABLE, coordinator.setLiveTarget(TestCoordinatorLiveTarget()))
+            runCurrent()
+            assertEquals(100.seconds, access.snapshot.position)
+            assertEquals(1, target.reports.size)
+        } finally {
+            coordinator.shutdown(1.seconds)
+            owner.join()
+        }
+        assertEquals(1, target.reports.size)
     }
 
     @Test
@@ -799,6 +915,7 @@ private class FakeCoordinatorPlaybackAccess(
     var prepareAction: (() -> Unit)? = null
     var removeListenerAction: (() -> Unit)? = null
     var setMediaSourceAction: ((String) -> Unit)? = null
+    val resumeSeeks = mutableListOf<Duration>()
 
     override fun requireApplicationLooper() {
         check(looperQueue.isCurrent())
@@ -881,22 +998,30 @@ private class FakeCoordinatorPlaybackAccess(
     override fun createResume(identity: RecordingMediaIdentity): CoordinatorRecordingResume {
         requireApplicationLooper()
         operations += "create-resume"
+        val resume = RecordingResumeStateMachine { positionMillis ->
+            resumeSeeks += positionMillis.milliseconds
+            snapshot = snapshot.copy(position = positionMillis.milliseconds)
+        }
         return object : CoordinatorRecordingResume {
             override fun beginPlaybackTarget(position: Duration?) {
                 requireApplicationLooper()
                 operations += "begin-resume:${position?.inWholeSeconds ?: 0}"
+                resume.beginPlaybackTarget(position?.inWholeMilliseconds)
+                resume.onMediaState(true, snapshot.duration?.inWholeMilliseconds, isSeekable = true)
             }
 
             override fun close() {
                 requireApplicationLooper()
                 operations += "close-resume"
+                resume.close()
             }
         }
     }
 
-    override fun setMediaSource(source: CoordinatorMediaSource) {
+    override fun setMediaSource(source: CoordinatorMediaSource, startPosition: Duration?) {
         requireApplicationLooper()
         sourceKind = (source as FakeCoordinatorMediaSource).kind
+        snapshot = snapshot.copy(position = startPosition ?: Duration.ZERO)
         operations += "set-$sourceKind"
         setMediaSourceAction?.invoke(sourceKind)
         if (failNextSetMediaSource) {

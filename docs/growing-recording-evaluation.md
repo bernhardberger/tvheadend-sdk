@@ -148,12 +148,15 @@ release is indicated by the evaluated evidence.
 - `../tvheadend-htsp/src/test/kotlin/at/bernhardberger/tvheadend/htsp/HtspProtocolCoreTest.kt:475-539`
   covers finite and omitted stat fields, malformed replies, unsupported
   protocol, and stale-generation cancellation.
-- The exact default-resolved `at.bernhardberger.tvheadend:htsp:0.7.0` JAR is
-  pinned at `gradle/verification-metadata.xml:642-643` with SHA-256
+- In the 2026-08-25 evaluation snapshot, the default-resolved
+  `at.bernhardberger.tvheadend:htsp:0.7.0` JAR was pinned at
+  `gradle/verification-metadata.xml:642-643` with SHA-256
   `4243755adac1e86177b7d5a76ab2a8282790ff1dfe63f32c7e4f70179cf7e44e`.
   Its bytecode contains `FileStatRequest`, `FileStatResponse`, and the public
   `HtspFileRequestsKt.fileStat` extension. The required API is therefore in the
-  released coordinate consumed by the default SDK build.
+  released coordinate consumed by that evaluated SDK build. This is historical
+  evidence, not the current default dependency; the current pin is recorded in
+  `gradle/libs.versions.toml`.
 - `../tvheadend-upstream/src/htsp_server.c:2995-3042` maps `read(2) == 0` to a
   successful empty binary payload. The wire response alone cannot distinguish
   current EOF from final EOF.

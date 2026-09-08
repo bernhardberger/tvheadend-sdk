@@ -730,7 +730,8 @@ internal class TvheadendPlaybackCoordinatorTest {
         val attachment = fixture.player.requireTimeshiftControls()
         attachment.packetMapping.accept(10_000_000, 10_000_000)
         attachment.packetMapping.accept(20_000_000, 20_000_000)
-        fixture.player.snapshot = snapshot(15, null)
+        attachment.periodUid = Any()
+        fixture.player.snapshot = snapshot(15, null).copy(periodUid = attachment.periodUid)
 
         val sampled = fixture.coordinator.timeshiftPlaybackPosition() as TimeshiftPlaybackPosition.Estimate
         val observed = (fixture.coordinator.timeshiftState.value as LiveTimeshiftState.Available).timeline
@@ -766,7 +767,8 @@ internal class TvheadendPlaybackCoordinatorTest {
         val attachment = fixture.player.requireTimeshiftControls()
         attachment.packetMapping.accept(10_000_000, 10_000_000)
         attachment.packetMapping.accept(20_000_000, 20_000_000)
-        fixture.player.snapshot = snapshot(15, null)
+        attachment.periodUid = Any()
+        fixture.player.snapshot = snapshot(15, null).copy(periodUid = attachment.periodUid)
         assertEquals(
             15.seconds,
             (fixture.coordinator.timeshiftPlaybackPosition() as TimeshiftPlaybackPosition.Estimate).target.position,
@@ -789,7 +791,7 @@ internal class TvheadendPlaybackCoordinatorTest {
             15.seconds,
             (fixture.coordinator.timeshiftPlaybackPosition() as TimeshiftPlaybackPosition.Estimate).target.position,
         )
-        fixture.player.snapshot = snapshot(25, null)
+        fixture.player.snapshot = snapshot(25, null).copy(periodUid = attachment.periodUid)
         assertEquals(
             9.seconds,
             (fixture.coordinator.timeshiftPlaybackPosition() as TimeshiftPlaybackPosition.Estimate).target.position,
@@ -799,6 +801,59 @@ internal class TvheadendPlaybackCoordinatorTest {
         assertSame(TimeshiftContentSeekResult.Replaced, fixture.coordinator.seekTimeshift(selected))
         fixture.coordinator.shutdown(1.seconds)
         owner.join()
+    }
+
+    @Test
+    fun `same numeric position from old player period cannot map to restarted segment`() = runTest {
+        val fixture = CoordinatorFixture()
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+        try {
+            fixture.coordinator.setLiveTarget(ChannelId(4), LivePlaybackOptions(timeshiftPeriod = 120.seconds))
+            val subscription = FakeTimeshiftSubscription(120.seconds)
+            fixture.player.attachTimeshift(subscription)
+            val old = fixture.player.requireTimeshiftControls()
+            old.periodUid = Any()
+            old.packetMapping.accept(0, 1_000_000)
+            fixture.player.snapshot = snapshot(0, null).copy(periodUid = old.periodUid)
+            assertTrue(fixture.coordinator.timeshiftPlaybackPosition() is TimeshiftPlaybackPosition.Estimate)
+            val oldTracks = (subscription.state.value as SubscriptionState.Playable).tracks
+            subscription.mutableState.value = SubscriptionState.Playable(
+                at.bernhardberger.tvheadend.sdk.playback.SubscriptionTracks(oldTracks.streams))
+            fixture.player.replaceTimeshiftPeriod(subscription)
+            old.detach()
+            val current = fixture.player.requireTimeshiftControls()
+            current.periodUid = Any()
+            current.packetMapping.accept(0, 10_000_000)
+            assertSame(TimeshiftPlaybackPosition.Unavailable, fixture.coordinator.timeshiftPlaybackPosition())
+            fixture.player.snapshot = snapshot(0, null).copy(periodUid = current.periodUid)
+            assertEquals(10.seconds,
+                (fixture.coordinator.timeshiftPlaybackPosition() as TimeshiftPlaybackPosition.Estimate).target.position)
+        } finally {
+            fixture.coordinator.shutdown(1.seconds)
+            owner.join()
+        }
+    }
+
+    @Test
+    fun `missing player and attachment period identities cannot authorize a position sample`() = runTest {
+        val fixture = CoordinatorFixture()
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+        try {
+            fixture.coordinator.setLiveTarget(ChannelId(4), LivePlaybackOptions(timeshiftPeriod = 120.seconds))
+            fixture.player.attachTimeshift(FakeTimeshiftSubscription(120.seconds))
+            val attachment = fixture.player.requireTimeshiftControls()
+            attachment.periodUid = null
+            attachment.packetMapping.accept(0, 1_000_000)
+            fixture.player.snapshot = snapshot(0, null).copy(periodUid = null)
+            assertSame(TimeshiftPlaybackPosition.Unavailable, fixture.coordinator.timeshiftPlaybackPosition())
+            attachment.periodUid = Any()
+            assertSame(TimeshiftPlaybackPosition.Unavailable, fixture.coordinator.timeshiftPlaybackPosition())
+            fixture.player.snapshot = fixture.player.snapshot.copy(periodUid = attachment.periodUid)
+            assertTrue(fixture.coordinator.timeshiftPlaybackPosition() is TimeshiftPlaybackPosition.Estimate)
+        } finally {
+            fixture.coordinator.shutdown(1.seconds)
+            owner.join()
+        }
     }
 
     @Test
@@ -1777,13 +1832,14 @@ internal class TvheadendPlaybackCoordinatorTest {
         runTest {
             suspend fun verify(
                 configure: (FakeTimeshiftSubscription, CancellationException) -> Unit,
-                command: suspend (TestCoordinatorHarness) -> TimeshiftCommandResult,
+                command: suspend (TestCoordinatorHarness) -> Any?,
             ) {
                 val fixture = CoordinatorFixture()
                 val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
                 fixture.coordinator.setLiveTarget(ChannelId(1))
                 val subscription = FakeTimeshiftSubscription(60.seconds)
                 fixture.player.attachTimeshift(subscription)
+                fixture.player.emitTimeshift(SubscriptionEvent.Timeshift(0, 0, 0, 60_000_000, 100))
                 val cancellation = CancellationException("scripted operation cancellation")
                 configure(subscription, cancellation)
 
@@ -1811,6 +1867,16 @@ internal class TvheadendPlaybackCoordinatorTest {
                     subscription.speedAction = { throw cancellation }
                 },
                 command = { coordinator -> coordinator.pauseTimeshift() },
+            )
+            verify(
+                configure = { subscription, cancellation ->
+                    subscription.seekAction = { throw cancellation }
+                },
+                command = { coordinator ->
+                    val target = (coordinator.timeshiftState.value as LiveTimeshiftState.Available)
+                        .timeline!!.select(5.seconds)!!
+                    coordinator.seekTimeshift(target)
+                },
             )
         }
 
@@ -2717,7 +2783,13 @@ internal class FakeTimeshiftSubscription(
         SubscriptionOperationResult.Ok(Unit)
     }
     val mutableState = kotlinx.coroutines.flow.MutableStateFlow<SubscriptionState>(
-        SubscriptionState.Starting,
+        SubscriptionState.Playable(at.bernhardberger.tvheadend.sdk.playback.SubscriptionTracks(listOf(
+            at.bernhardberger.tvheadend.sdk.playback.SubscriptionStream(
+                at.bernhardberger.tvheadend.sdk.playback.StreamIndex(0),
+                at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType.MPEG2_AUDIO, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null,
+            ),
+        ))),
     )
     var closeCount = 0
 
@@ -2729,6 +2801,13 @@ internal class FakeTimeshiftSubscription(
         seekTargets += target
         return seekAction(target)
     }
+
+    override suspend fun seek(
+        target: SubscriptionSeekTarget,
+        expectedTracks: at.bernhardberger.tvheadend.sdk.playback.SubscriptionTracks,
+    ): SubscriptionSeekResult = if ((state.value as? SubscriptionState.Playable)?.tracks === expectedTracks) {
+        seek(target)
+    } else SubscriptionSeekResult.SegmentUnavailable
 
     override suspend fun setSpeed(speed: Int): SubscriptionOperationResult<Unit> {
         speeds += speed

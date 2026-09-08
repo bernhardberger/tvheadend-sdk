@@ -254,6 +254,7 @@ internal data class PlaybackPlayerSnapshot(
     val duration: Duration?,
     val playbackState: Int,
     val failed: Boolean,
+    val periodUid: Any? = null,
 )
 
 internal data class PlaybackPlayerEvent(

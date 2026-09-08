@@ -205,7 +205,8 @@ internal class EpgReducerTest {
         reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20)))
 
         val rejected = requireNotNull(reducer.beginQuery(ChannelId(1)))
-        assertFalse(
+        assertEquals(
+            EpgQueryAcceptance.CAPACITY_REJECTED,
             reducer.acceptSuccessfulQuery(
                 query = rejected,
                 queriedTo = instant(100),
@@ -218,7 +219,8 @@ internal class EpgReducerTest {
 
         reducer.accept(MetadataEvent.EventDeleted(generation, EventId(1)))
         val accepted = requireNotNull(reducer.beginQuery(ChannelId(1)))
-        assertTrue(
+        assertEquals(
+            EpgQueryAcceptance.APPLIED,
             reducer.acceptSuccessfulQuery(
                 query = accepted,
                 queriedTo = instant(100),
@@ -238,7 +240,8 @@ internal class EpgReducerTest {
 
         reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20)))
         reducer.accept(MetadataEvent.EventAdded(generation, event(2, 1, 20, 30)))
-        assertFalse(
+        assertEquals(
+            EpgQueryAcceptance.STALE,
             reducer.acceptSuccessfulQuery(
                 query = overtaken,
                 queriedTo = instant(100),
@@ -247,7 +250,8 @@ internal class EpgReducerTest {
         )
 
         val current = requireNotNull(reducer.beginQuery(ChannelId(1)))
-        assertTrue(
+        assertEquals(
+            EpgQueryAcceptance.APPLIED,
             reducer.acceptSuccessfulQuery(
                 query = current,
                 queriedTo = instant(100),
@@ -267,7 +271,8 @@ internal class EpgReducerTest {
         val overtaken = requireNotNull(reducer.beginQuery(ChannelId(1)))
 
         reducer.accept(MetadataEvent.EventAdded(generation, event(2, 1, 20, 30)))
-        assertFalse(
+        assertEquals(
+            EpgQueryAcceptance.STALE,
             reducer.acceptSuccessfulQuery(
                 query = overtaken,
                 queriedTo = instant(100),
@@ -377,14 +382,16 @@ internal class EpgReducerTest {
         reducer.accept(MetadataEvent.EventUpdated(generation, update(1, title = "async")))
         val newer = requireNotNull(reducer.beginQuery(ChannelId(1)))
 
-        assertTrue(
+        assertEquals(
+            EpgQueryAcceptance.APPLIED,
             reducer.acceptSuccessfulQuery(
                 query = newer,
                 queriedTo = instant(200),
                 queriedEvents = listOf(queryEvent(1, 1, 10, 20, title = "async")),
             ),
         )
-        assertTrue(
+        assertEquals(
+            EpgQueryAcceptance.APPLIED,
             reducer.acceptSuccessfulQuery(
                 query = older,
                 queriedTo = instant(100),
@@ -396,14 +403,16 @@ internal class EpgReducerTest {
         assertEquals(instant(200), snapshot.coverages.single().queriedTo)
 
         val afterPrune = requireNotNull(reducer.beginQuery(ChannelId(1)))
-        assertTrue(
+        assertEquals(
+            EpgQueryAcceptance.APPLIED,
             reducer.acceptSuccessfulQuery(
                 query = afterPrune,
                 queriedTo = instant(300),
                 queriedEvents = listOf(queryEvent(1, 1, 10, 20, title = "after")),
             ),
         )
-        assertFalse(
+        assertEquals(
+            EpgQueryAcceptance.STALE,
             reducer.acceptSuccessfulQuery(
                 query = afterPrune,
                 queriedTo = instant(400),

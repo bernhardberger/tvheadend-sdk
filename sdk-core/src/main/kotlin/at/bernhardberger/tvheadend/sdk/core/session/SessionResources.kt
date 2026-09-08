@@ -52,6 +52,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayServerFacts
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.metadata.ChannelTagReducer
 import at.bernhardberger.tvheadend.sdk.core.metadata.DvrReducer
+import at.bernhardberger.tvheadend.sdk.core.metadata.EpgQueryAcceptance
 import at.bernhardberger.tvheadend.sdk.core.metadata.EpgQueryFence
 import at.bernhardberger.tvheadend.sdk.core.metadata.EpgReducer
 import at.bernhardberger.tvheadend.sdk.core.metadata.ReducedEpgEvent
@@ -235,7 +236,7 @@ internal interface SessionMetadata {
         query: EpgQueryFence,
         queriedTo: Instant,
         events: List<GatewayEpgQueryEvent>,
-    )
+    ): EpgQueryAcceptance
 
     public fun retainEpgEvents(generation: GatewayGeneration, from: Instant, to: Instant)
 
@@ -981,13 +982,15 @@ internal class PhaseOneSessionMetadata(
         query: EpgQueryFence,
         queriedTo: Instant,
         events: List<GatewayEpgQueryEvent>,
-    ) {
-        synchronized(lock) {
-            if (this.generation === generation && synchronizedCurrent) {
-                if (epgReducer.acceptSuccessfulQuery(query, queriedTo, events)) {
+    ): EpgQueryAcceptance = synchronized(lock) {
+        if (this.generation === generation && synchronizedCurrent) {
+            epgReducer.acceptSuccessfulQuery(query, queriedTo, events).also { acceptance ->
+                if (acceptance == EpgQueryAcceptance.APPLIED) {
                     publishCurrentEpg(epgReducer.snapshot())
                 }
             }
+        } else {
+            EpgQueryAcceptance.STALE
         }
     }
 

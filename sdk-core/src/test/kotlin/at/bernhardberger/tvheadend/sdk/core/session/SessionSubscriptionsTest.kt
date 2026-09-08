@@ -84,12 +84,72 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SessionSubscriptionsTest {
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `stream replacement preserves its subscription without waiting for producer completion`(
+        stoppedFirst: Boolean,
+    ) = runTest {
+        val gateway = SubscriptionGateway()
+        val metadata = PhaseOneSessionMetadata()
+        val children = PlaybackSessionChildren(gateway, metadata, StandardTestDispatcher(testScheduler))
+        val generation = GatewayGeneration()
+        val received = mutableListOf<SubscriptionEvent>()
+        metadata.bindKnownChannels(generation, 1L)
+        children.bindGeneration(generation)
+        assertTrue(children.startLiveAdmission(generation, CapabilityAccess.ALLOWED))
+        try {
+            val opening = async {
+                children.open(
+                    generation, SubscriptionChannelId(1L), SubscriptionEventConsumer { received += it },
+                    SubscriptionOptions(),
+                )
+            }
+            runCurrent()
+            gateway.emitStarted(generation)
+            runCurrent()
+            val subscription = (opening.await() as SubscriptionOpenResult.Opened).subscription
+
+            // The producer stays open and already has the replacement queued when stop is consumed.
+            if (stoppedFirst) gateway.emitStopped(generation)
+            gateway.emitStarted(generation)
+            gateway.emitPacket(generation)
+            runCurrent()
+
+            assertTrue(subscription.state.value is SubscriptionState.Playable)
+            assertEquals(2, received.filterIsInstance<SubscriptionEvent.Started>().size)
+            assertEquals(if (stoppedFirst) 1 else 0, received.filterIsInstance<SubscriptionEvent.Stopped>().size)
+            assertEquals(1, received.filterIsInstance<SubscriptionEvent.Packet>().size)
+            assertEquals(0, gateway.unsubscribeCount)
+            subscription.close()
+            assertSame(generation, gateway.unsubscribedGenerations.single())
+            assertEquals(1, gateway.unsubscribeCount)
+            assertTrue(subscription.state.value is SubscriptionState.Terminal)
+
+            val replacement = async {
+                children.open(
+                    generation, SubscriptionChannelId(1L), SubscriptionEventConsumer {}, SubscriptionOptions(),
+                )
+            }
+            runCurrent()
+            gateway.emitStarted(generation)
+            runCurrent()
+            assertTrue(replacement.await() is SubscriptionOpenResult.Opened)
+            assertTrue(gateway.collectedIds.first() != gateway.collectedIds.last())
+            assertSame(generation, gateway.collectedGenerations.last())
+        } finally {
+            children.closeAndJoinSubscriptions()
+        }
+        assertEquals(2, gateway.unsubscribeCount)
+    }
+
     @Test
     fun `children bind admission and teardown one exact generation at a time`() = runTest {
         val gateway = SubscriptionGateway()
@@ -619,6 +679,29 @@ class SessionSubscriptionsTest {
             connection.skip(id, SubscriptionSeekTarget.Live),
         )
         assertEquals(1, gateway.nearLiveStatuses.size, "Completed collection must clear its status")
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `restart boundary clears cached near live status before downstream delivery`(stopFirst: Boolean) = runTest {
+        val gateway = SubscriptionGateway()
+        val generation = GatewayGeneration()
+        val id = SubscriptionId(1)
+        val connection = GatewaySubscriptionConnection(gateway, generation)
+        val collected = async { connection.events(id).toList() }
+        runCurrent()
+        gateway.emitTimeshift(generation, start = 0, end = 90_000_000)
+        runCurrent()
+        if (stopFirst) gateway.emitStopped(generation) else gateway.emitStarted(generation)
+        runCurrent()
+        assertSame(SubscriptionOperationResult.NotSupported, connection.skip(id, SubscriptionSeekTarget.Live))
+        assertTrue(gateway.nearLiveStatuses.isEmpty())
+        gateway.emitTimeshift(generation, start = 0, end = 100_000_000)
+        runCurrent()
+        assertTrue(connection.skip(id, SubscriptionSeekTarget.Live) is SubscriptionOperationResult.Ok)
+        assertEquals(100_000_000L, gateway.nearLiveStatuses.single().end)
+        gateway.complete(generation)
+        collected.await()
     }
 
     @Test
@@ -1565,6 +1648,11 @@ private class SubscriptionGateway : ProtocolGateway {
                 condition = SubscriptionCondition.NO_DETAIL,
             ),
         )
+    }
+
+    internal suspend fun emitStopped(generation: GatewayGeneration) {
+        val stream = synchronized(lock) { streams.getValue(generation) }
+        stream.send(SubscriptionEvent.Stopped(SubscriptionCondition.NO_DETAIL))
     }
 
 

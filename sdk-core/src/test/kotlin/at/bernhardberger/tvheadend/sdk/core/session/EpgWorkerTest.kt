@@ -21,6 +21,8 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgUpdate
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
+import at.bernhardberger.tvheadend.sdk.core.metadata.EpgQueryAcceptance
+import at.bernhardberger.tvheadend.sdk.core.metadata.EpgQueryFence
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -37,6 +39,8 @@ import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
@@ -593,6 +597,187 @@ internal class EpgWorkerTest {
     }
 
     @Test
+    fun `capacity rejection settles repository single and batch waiters atomically and retries after cooldown`() = runTest {
+        val generation = GatewayGeneration()
+        val policy = EpgCoveragePolicy.create(24.hours, maximumRetainedEvents = 2)
+        val metadata = synchronizedMetadata(generation, 1L..2L, policy) {
+            acceptMetadata(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20)))
+            acceptMetadata(MetadataEvent.EventAdded(generation, event(2, 1, 20, 30)))
+        }
+        val before = requireNotNull(metadata.currentEpgSnapshot(generation))
+        val release = CompletableDeferred<Unit>()
+        val starts = mutableListOf<ChannelId>()
+        val worker = EpgWorker(
+            generation = generation,
+            metadata = metadata,
+            clock = SchedulerClock { testScheduler.currentTime },
+            settings = EpgWorkerSettings(coveragePolicy = policy, requestSpacing = 1.milliseconds),
+            queryEpg = { _, channelId, _ ->
+                starts += channelId
+                if (channelId == ChannelId(1)) {
+                    release.await()
+                    GatewayResult.Ok(
+                        listOf(
+                            queryEvent(1, 1, 10, 40, title = "replacement"),
+                            queryEvent(3, 1, 40, 50),
+                        ),
+                    )
+                } else {
+                    GatewayResult.Ok(emptyList())
+                }
+            },
+        )
+        assertTrue(metadata.bindEpgCoverageRequester(generation, worker))
+        val repository = metadata.epgRepository
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
+        val target = instant(0) + 8.hours
+        val single = backgroundScope.async {
+            repository.acquireCoverage(currentSession, ChannelId(1), target)
+        }
+        val batch = backgroundScope.async {
+            repository.acquireCoverageBatch(currentSession, listOf(ChannelId(1), ChannelId(2)), target)
+        }
+        val cancelled = backgroundScope.async {
+            repository.acquireCoverage(currentSession, ChannelId(1), target)
+        }
+        runCurrent()
+        val job = backgroundScope.launch { worker.run() }
+        runCurrent()
+        cancelled.cancelAndJoin()
+        release.complete(Unit)
+        advanceTimeBy(2.milliseconds)
+        runCurrent()
+
+        assertTrue(single.isCompleted, "Capacity rejection must settle without waiting for cooldown")
+        assertTrue(batch.isCompleted, "A rejected channel must not hold the batch open")
+        assertSame(EpgCoverageAcquisitionResult.Ineligible, single.await())
+        val settlements = batch.await().settlements
+        assertEquals(listOf(ChannelId(1), ChannelId(2)), settlements.map { it.channelId })
+        assertTrue(settlements[0] is EpgCoverageBatchSettlement.Rejected)
+        assertTrue(settlements[1] is EpgCoverageBatchSettlement.CoveredEmpty)
+        assertTrue(cancelled.isCancelled)
+        val rejected = requireNotNull(metadata.currentEpgSnapshot(generation))
+        assertEquals(before.events, rejected.events)
+        assertEquals(before.coverages.first(), rejected.coverages.first())
+        assertEquals(target, rejected.coverages.last().queriedTo)
+        assertEquals(listOf(ChannelId(1), ChannelId(2)), starts)
+
+        metadata.acceptMetadata(MetadataEvent.EventDeleted(generation, EventId(2)))
+        val retry = backgroundScope.async {
+            repository.acquireCoverage(currentSession, ChannelId(1), target)
+        }
+        runCurrent()
+        advanceTimeBy(10.minutes - 3.milliseconds)
+        runCurrent()
+        assertFalse(retry.isCompleted)
+        assertEquals(1, starts.count { it == ChannelId(1) })
+        advanceTimeBy(1.milliseconds)
+        runCurrent()
+
+        assertTrue(retry.isCompleted)
+        assertTrue(retry.await() is EpgCoverageAcquisitionResult.CoveredWithData)
+        assertEquals(2, starts.count { it == ChannelId(1) })
+        val accepted = requireNotNull(metadata.currentEpgSnapshot(generation))
+        assertEquals(listOf(EventId(1), EventId(3)), accepted.events.map { it.id })
+        assertEquals("replacement", accepted.events.first().title)
+        assertEquals(target, accepted.coverages.first().queriedTo)
+        job.cancelAndJoin()
+    }
+
+    @Test
+    fun `stale query authority at full capacity keeps repository acquisition pending until retry`() = runTest {
+        val generation = GatewayGeneration()
+        val policy = EpgCoveragePolicy.create(24.hours, maximumRetainedEvents = 1)
+        val metadata = synchronizedMetadata(generation, 1L..1L, policy) {
+            acceptMetadata(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20)))
+        }
+        val before = requireNotNull(metadata.currentEpgSnapshot(generation))
+        val release = CompletableDeferred<Unit>()
+        var attempts = 0
+        val worker = EpgWorker(
+            generation = generation,
+            metadata = metadata,
+            clock = SchedulerClock { testScheduler.currentTime },
+            settings = EpgWorkerSettings(coveragePolicy = policy, requestSpacing = 1.milliseconds),
+            queryEpg = { _, _, _ ->
+                attempts += 1
+                if (attempts == 1) {
+                    release.await()
+                    GatewayResult.Ok(listOf(queryEvent(3, 1, 30, 40)))
+                } else {
+                    GatewayResult.Ok(emptyList())
+                }
+            },
+        )
+        assertTrue(metadata.bindEpgCoverageRequester(generation, worker))
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
+        val acquisition = backgroundScope.async {
+            metadata.epgRepository.acquireCoverage(currentSession, ChannelId(1), instant(0) + 8.hours)
+        }
+        runCurrent()
+        val job = backgroundScope.launch { worker.run() }
+        runCurrent()
+        assertEquals(1, attempts)
+        // An async event dropped at capacity invalidates the older query's authority.
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, event(2, 1, 20, 30)))
+        release.complete(Unit)
+        advanceTimeBy(1.milliseconds)
+        runCurrent()
+
+        assertFalse(acquisition.isCompleted)
+        assertEquals(before, metadata.currentEpgSnapshot(generation))
+        advanceTimeBy(10.minutes - 1.milliseconds)
+        runCurrent()
+
+        assertTrue(acquisition.isCompleted)
+        assertTrue(acquisition.await() is EpgCoverageAcquisitionResult.CoveredWithData)
+        assertEquals(2, attempts)
+        job.cancelAndJoin()
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `capacity rejection preserves repository waiter expiry on retirement`(retireAfterReduction: Boolean) = runTest {
+        val generation = GatewayGeneration()
+        val policy = EpgCoveragePolicy.create(24.hours, maximumRetainedEvents = 1)
+        val delegate = synchronizedMetadata(generation, 1L..1L, policy) {
+            acceptMetadata(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20)))
+        }
+        val metadata = object : SessionMetadata by delegate {
+            override fun applySuccessfulEpgQuery(
+                generation: GatewayGeneration,
+                query: EpgQueryFence,
+                queriedTo: Instant,
+                events: List<GatewayEpgQueryEvent>,
+            ): EpgQueryAcceptance {
+                if (!retireAfterReduction) delegate.resetWorkingStateRetainingPublishedSnapshot()
+                return delegate.applySuccessfulEpgQuery(generation, query, queriedTo, events).also {
+                    if (retireAfterReduction) delegate.resetWorkingStateRetainingPublishedSnapshot()
+                }
+            }
+        }
+        val worker = EpgWorker(
+            generation = generation,
+            metadata = metadata,
+            clock = SchedulerClock { testScheduler.currentTime },
+            settings = EpgWorkerSettings(coveragePolicy = policy),
+            queryEpg = { _, _, _ -> GatewayResult.Ok(listOf(queryEvent(2, 1, 20, 30))) },
+        )
+        assertTrue(metadata.bindEpgCoverageRequester(generation, worker))
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
+        val acquisition = backgroundScope.async {
+            metadata.epgRepository.acquireCoverage(currentSession, ChannelId(1), instant(0) + 8.hours)
+        }
+        runCurrent()
+        val job = backgroundScope.launch { worker.run() }
+        runCurrent()
+
+        assertTrue(acquisition.isCompleted)
+        assertSame(EpgCoverageAcquisitionResult.ObservationExpired, acquisition.await())
+        job.cancelAndJoin()
+    }
+
+    @Test
     fun `worker staggers six in flight requests and starts the next batch afterward`() = runTest {
         val generation = GatewayGeneration()
         val metadata = synchronizedMetadata(generation, 1L..8L)
@@ -1006,8 +1191,9 @@ private class MutableClock(
 private fun synchronizedMetadata(
     generation: GatewayGeneration,
     channelIds: LongRange,
+    coveragePolicy: EpgCoveragePolicy = EpgCoveragePolicy.create(),
     beforeFence: PhaseOneSessionMetadata.() -> Unit = {},
-): PhaseOneSessionMetadata = PhaseOneSessionMetadata().apply {
+): PhaseOneSessionMetadata = PhaseOneSessionMetadata(epgCoveragePolicy = coveragePolicy).apply {
     bindGeneration(generation)
     channelIds.forEach { id ->
         acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(id)))

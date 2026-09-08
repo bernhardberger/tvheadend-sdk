@@ -12,6 +12,7 @@ import at.bernhardberger.tvheadend.sdk.core.SessionObservation
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
+import at.bernhardberger.tvheadend.sdk.core.metadata.EpgQueryAcceptance
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -336,7 +337,12 @@ internal class EpgWorker(
                                 query = query,
                                 queriedTo = plan.target,
                                 events = result.value,
-                            ).also { settleCoveredWaiters(plan.channelId) }
+                            ).also { acceptance ->
+                                settleCoveredWaiters(plan.channelId)
+                                if (acceptance == EpgQueryAcceptance.CAPACITY_REJECTED) {
+                                    settleIneligible(plan.channelId, rememberIneligible = false)
+                                }
+                            }
                             GatewayResult.AccessDenied,
                             GatewayResult.NotSupported,
                             -> settleIneligible(plan.channelId)
@@ -390,9 +396,10 @@ internal class EpgWorker(
         }
     }
 
-    private fun settleIneligible(channelId: ChannelId) {
+    private fun settleIneligible(channelId: ChannelId, rememberIneligible: Boolean = true) {
         val retired = synchronized(activityLock) {
-            ineligible += channelId
+            // Capacity can become available later; only server capability denial is latched.
+            if (rememberIneligible) ineligible += channelId
             priorityTargets.remove(channelId)
             waiters.remove(channelId)?.toList().orEmpty()
         }

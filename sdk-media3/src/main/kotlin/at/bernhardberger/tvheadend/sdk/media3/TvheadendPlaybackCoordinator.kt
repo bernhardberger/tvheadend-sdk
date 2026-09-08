@@ -842,11 +842,17 @@ private class CoordinatorActor(
         }
         is CoordinatorCommand.ContentSeek -> {
             if (command.ticket.claim()) {
-                val target = activeTarget as? ActorTarget.Live
-                command.reply.complete(
-                    target?.timeshiftControls?.seekContent(command.target) ?: TimeshiftContentSeekResult.Replaced,
-                )
-                command.ticket.complete()
+                try {
+                    val target = activeTarget as? ActorTarget.Live
+                    command.reply.complete(
+                        target?.timeshiftControls?.seekContent(command.target) ?: TimeshiftContentSeekResult.Replaced,
+                    )
+                    command.ticket.complete()
+                } catch (cancellation: CancellationException) {
+                    command.ticket.complete()
+                    command.reply.completeExceptionally(cancellation)
+                    throw cancellation
+                }
             }
             false
         }
@@ -856,7 +862,9 @@ private class CoordinatorActor(
                 val attachment = target?.timeshiftControls?.mappingAttachment()
                 val snapshot = target?.let { player.snapshot(it.token) }
                 command.reply.complete(
-                    if (target != null && attachment != null && snapshot != null && !snapshot.failed) {
+                    if (target != null && attachment != null && snapshot != null && !snapshot.failed &&
+                        attachment.periodUid != null && snapshot.periodUid == attachment.periodUid
+                    ) {
                         target.timeshiftControls.playbackPosition(attachment, snapshot.position)
                     } else {
                         TimeshiftPlaybackPosition.Unavailable
@@ -1299,6 +1307,7 @@ internal fun SubscriptionSeekResult.toPublicTimeshiftResult(): TimeshiftCommandR
             TimeshiftCommandResult.RESUMED_SEGMENT_UNANCHORABLE
     }
     SubscriptionSeekResult.SubscriptionEnded -> TimeshiftCommandResult.SUBSCRIPTION_ENDED
+    SubscriptionSeekResult.SegmentUnavailable -> TimeshiftCommandResult.UNAVAILABLE
 }
 
 private fun SubscriptionOperationResult<Unit>.toPublicTimeshiftResult(): TimeshiftCommandResult =

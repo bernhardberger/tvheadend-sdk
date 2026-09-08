@@ -68,3 +68,6 @@ included. HTSP-01 remains an integration dependency: the SDK currently treats
 track reconfiguration. A producer-only repair or dependency bump does not prove
 decoder reconfiguration. This change retains released HTSP 0.7.0 and does not
 substitute unpublished protocol source.
+
+Subsequent [playback and EPG repairs](audit-defect-repairs.md) address SDK-01
+through SDK-05 and SDK-10; they are not part of the cache repair scope above.

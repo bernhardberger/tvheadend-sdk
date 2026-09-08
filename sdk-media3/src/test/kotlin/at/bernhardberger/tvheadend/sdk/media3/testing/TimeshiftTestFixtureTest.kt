@@ -22,6 +22,20 @@ class TimeshiftTestFixtureTest {
     private fun TimeshiftTestFixture.timeline() = (state.value as LiveTimeshiftState.Available).timeline!!
 
     @Test
+    fun `restart retains transport identity but replaces segment targets and history`() = runTest {
+        val fixture = TimeshiftTestFixture(120.seconds)
+        fixture.updateHistory(0.seconds, 100.seconds)
+        val old = fixture.timeline()
+        val target = old.select(40.seconds)!!
+        fixture.restartSegment()
+        assertNull((fixture.state.value as LiveTimeshiftState.Available).timeline)
+        fixture.updateHistory(0.seconds, 100.seconds)
+        assertTrue(old.describesSameSubscription(fixture.timeline()))
+        org.junit.jupiter.api.Assertions.assertFalse(old.describesSameSegment(fixture.timeline()))
+        assertSame(TimeshiftContentSeekResult.Replaced, fixture.seek(target) { error("Must not dispatch") })
+    }
+
+    @Test
     fun `history advances without changing retained targets and grant is not history`() = runTest {
         val fixture = TimeshiftTestFixture(120.seconds)
         assertNull((fixture.state.value as LiveTimeshiftState.Available).timeline)

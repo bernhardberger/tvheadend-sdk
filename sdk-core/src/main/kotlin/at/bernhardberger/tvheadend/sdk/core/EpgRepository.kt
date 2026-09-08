@@ -388,7 +388,7 @@ public sealed interface EpgCoverageAcquisitionResult {
         override fun toString(): String = "EpgCoverageAcquisitionResult.CoveredEmpty(<redacted>)"
     }
 
-    /** The channel, configured future window, or server query capability is not eligible. */
+    /** The channel, configured future window or retention capacity, or server query capability is not eligible. */
     public data object Ineligible : EpgCoverageAcquisitionResult
 
     /** The originating observation is no longer current for its owning session. */
@@ -427,7 +427,7 @@ public sealed interface EpgCoverageBatchSettlement {
         override fun toString(): String = "EpgCoverageBatchSettlement.TargetAbsent(<redacted>)"
     }
 
-    /** The target horizon or server query capability rejected this channel request. */
+    /** The target horizon, configured retention capacity, or server query capability rejected this channel request. */
     public class Rejected(
         override val channelId: ChannelId,
     ) : EpgCoverageBatchSettlement {

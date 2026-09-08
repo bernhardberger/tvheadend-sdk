@@ -18,7 +18,7 @@ The SDK is split into five libraries:
 | `sdk-android` | Android | Discovery, connectivity, atomic server-profile storage, and authenticated artwork |
 | `sdk-testing` | Kotlin/JVM | Aggregate observation fakes, scripted events, and packet fixtures |
 
-The source is configured for release `0.8.0`. The normal build never publishes.
+The source is configured for release `0.10.0`. The normal build never publishes.
 `./gradlew clean build check stageLocalPublication` verifies the repository and
 stages all five modules under `build/local-maven`; the Maven Central badge, not
 local source or staging, reports the latest publicly available version.
@@ -79,7 +79,7 @@ missing, and unavailable behavior without Android `Context` or Android runtime
 internals.
 
 The default build resolves
-`at.bernhardberger.tvheadend:htsp:0.7.0` from Maven Central. Maintainers working
+`at.bernhardberger.tvheadend:htsp:0.9.0` from Maven Central. Maintainers working
 across adjacent checkouts may explicitly opt into source substitution with
 `-Ptvheadend.htsp.composite=true`; CI and release builds do not use that
 property.
@@ -302,6 +302,15 @@ target's positive server grant and ordered server observations. Buffered
 duration, position behind live, and server pause state remain `null` until valid
 status events arrive. Timeshift pause and resume send server speeds `0` and
 `100`; ordinary Media3 play/pause remains application-owned.
+
+Live stream stop/start and repeated-start events replace the Media3 period and
+track groups on the same subscription and application-owned Player. Retained
+timeshift targets are segment-scoped: use `TimeshiftTimeline.describesSameSegment`
+when combining sampled content and history across restarts.
+`describesSameSubscription` checks only transport identity. Infrastructure
+consumers must rebuild for 0.10.0 and handle the new `SegmentUnavailable` seek
+outcome. See the [stream restart contract](docs/stream-restart-contract.md) for
+interruption bounds, seek safety, and the outstanding device evidence.
 
 `TvheadendPlaybackCoordinator.subscriptionIssue` reports only the current live
 target's canonical TVHeadend issue. Known server codes map to safe non-exhaustive

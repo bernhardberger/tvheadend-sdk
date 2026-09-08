@@ -322,10 +322,7 @@ class SubscriptionStateMachineTest {
         assertEquals(12L, active.diagnostics.value.graceTimeoutSeconds)
         assertEquals(Long.MAX_VALUE, active.diagnostics.value.droppedPacketCount)
         assertTrue(active.diagnostics.value.droppedPacketCountOverflowed)
-        assertSame(
-            SubscriptionTerminalReason.Stopped,
-            (active.state.value as SubscriptionState.Terminal).reason,
-        )
+        assertSame(SubscriptionState.Starting, active.state.value)
         manager.closeAndJoin()
     }
 
@@ -823,7 +820,7 @@ class SubscriptionStateMachineTest {
     }
 
     @Test
-    fun `invalid and replacement tracks terminate without later event delivery`() = runTest {
+    fun `invalid tracks terminate but valid replacement tracks keep ordered delivery`() = runTest {
         val invalidConnection = RecordingSubscriptionConnection()
         val invalidReceived = ArrayList<SubscriptionEvent>()
         val invalidManager = manager(invalidConnection)
@@ -862,12 +859,9 @@ class SubscriptionStateMachineTest {
         replacementConnection.emit(started(stream(1L)))
         replacementConnection.emit(SubscriptionEvent.Status(SubscriptionCondition.STATUS_REPORTED))
         runCurrent()
-        assertSame(
-            SubscriptionTerminalReason.TrackReconfigurationUnsupported,
-            (active.state.value as SubscriptionState.Terminal).reason,
-        )
+        assertEquals(StreamIndex(1L), (active.state.value as SubscriptionState.Playable).tracks.streams.single().index)
         replacementManager.closeAndJoin()
-        assertEquals(2, replacementReceived.size)
+        assertEquals(3, replacementReceived.size)
     }
 
     @Test

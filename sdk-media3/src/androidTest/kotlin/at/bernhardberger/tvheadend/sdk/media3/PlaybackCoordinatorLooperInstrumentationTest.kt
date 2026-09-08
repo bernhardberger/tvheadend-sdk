@@ -143,7 +143,7 @@ private class MainLooperCoordinatorPlaybackAccess : CoordinatorPlaybackAccess {
     override fun createResume(identity: RecordingMediaIdentity): CoordinatorRecordingResume =
         error("Recording resume is not expected")
 
-    override fun setMediaSource(source: CoordinatorMediaSource) {
+    override fun setMediaSource(source: CoordinatorMediaSource, startPosition: Duration?) {
         requireApplicationLooper()
         operations += "set-source"
     }

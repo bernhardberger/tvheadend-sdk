@@ -3,7 +3,7 @@ package at.bernhardberger.tvheadend.sdk.media3
 import kotlin.time.Duration
 import kotlin.time.Instant
 
-/** A content coordinate scoped to one subscription. Never persist or reuse after replacement. */
+/** A content coordinate scoped to one stream segment. Never reuse after stop or replacement. */
 public class TimeshiftContentTarget internal constructor(
     internal val owner: Any,
     public val position: Duration,
@@ -17,6 +17,7 @@ public class TimeshiftTimeline internal constructor(
     public val start: Duration,
     public val end: Duration,
     public val wallClockMapping: TimeshiftWallClockMapping = TimeshiftWallClockMapping.Unavailable,
+    internal val subscriptionOwner: Any = owner,
 ) {
     /**
      * True when [other] describes the same subscription, whatever its edge has since done.
@@ -25,8 +26,14 @@ public class TimeshiftTimeline internal constructor(
      * subscription replacement between the two reads. Coordinates from different subscriptions
      * are unrelated, so a consumer must be able to reject that pairing without also rejecting
      * ordinary edge advancement, which equality alone cannot distinguish.
+     * This does not establish segment validity after a stream restart; use [describesSameSegment]
+     * when combining displayed-content evidence with separately sampled history.
      */
     public fun describesSameSubscription(other: TimeshiftTimeline?): Boolean =
+        other != null && subscriptionOwner === other.subscriptionOwner
+
+    /** True only for the same playable segment; unlike transport identity, this changes on restart. */
+    public fun describesSameSegment(other: TimeshiftTimeline?): Boolean =
         other != null && owner === other.owner
 
     /** Select once; subsequent edge advancement does not change the selected content coordinate. */
@@ -76,8 +83,8 @@ public sealed interface TimeshiftPlaybackPosition {
         /**
          * Seekable history observed in the same sample as [target], null when none was observed.
          *
-         * Use [TimeshiftTimeline.describesSameSubscription] against separately observed history
-         * to confirm both describe one subscription before combining them.
+         * Use [TimeshiftTimeline.describesSameSegment] against separately observed history
+         * to confirm both describe one playable segment before combining them.
          */
         public val timeline: TimeshiftTimeline?,
     ) : TimeshiftPlaybackPosition
@@ -85,7 +92,7 @@ public sealed interface TimeshiftPlaybackPosition {
 
 /** Result of seeking a selected content coordinate. */
 public sealed interface TimeshiftContentSeekResult {
-    /** The owning subscription was replaced, detached or retired. Nothing was sent to its successor. */
+    /** The owning segment restarted, or its subscription was replaced, detached or retired. */
     public data object Replaced : TimeshiftContentSeekResult
 
     /** Latest observed history no longer contains the target. The SDK does not clamp or retarget it. */

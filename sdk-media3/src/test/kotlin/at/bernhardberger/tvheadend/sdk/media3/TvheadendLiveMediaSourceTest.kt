@@ -8,6 +8,8 @@ package at.bernhardberger.tvheadend.sdk.media3
 
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.upstream.DefaultAllocator
+import androidx.media3.exoplayer.upstream.BandwidthMeter
+import androidx.media3.exoplayer.analytics.PlayerId
 import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionDiagnostics
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
@@ -44,7 +46,7 @@ internal class TvheadendLiveMediaSourceTest {
         val bridge = LiveTimeshiftControlBridge(PlaybackTargetToken()) {}
         val attachment = bridge.newAttachment()
         val period = TvheadendLiveMediaPeriod(
-            CapturingLiveTarget(), SubscriptionOptions(), DefaultAllocator(false, 1_024), attachment, {},
+            DefaultAllocator(false, 1_024), attachment, {},
         )
         val connection = ScriptedSubscriptionConnection()
         connection.scriptSubscribe(SubscriptionOperationResult.Ok(SubscriptionConfirmation(null, null, null, 120)))
@@ -79,36 +81,42 @@ internal class TvheadendLiveMediaSourceTest {
         seeking.await()
         packet(5_000_000)
         packet(14_000_000)
-        assertEquals(15.seconds, (bridge.playbackPosition(attachment, 15.seconds) as TimeshiftPlaybackPosition.Estimate).target.position)
-        assertEquals(9.seconds, (bridge.playbackPosition(attachment, 25.seconds) as TimeshiftPlaybackPosition.Estimate).target.position)
+        assertEquals(15.seconds, (bridge.playbackPosition(attachment, 5.seconds) as TimeshiftPlaybackPosition.Estimate).target.position)
+        assertEquals(9.seconds, (bridge.playbackPosition(attachment, 15.seconds) as TimeshiftPlaybackPosition.Estimate).target.position)
         period.release()
         subscription.close()
         manager.closeAndJoin()
     }
 
     @Test
-    fun `explicit source options reach the subscription opener through its media period`() = runTest {
+    fun `explicit source options reach the subscription opener owned by the source`() = runTest {
         val target = CapturingLiveTarget()
         val options = SubscriptionOptions(
             streamProfileUuid = "0123456789abcdef0123456789abcdef",
             timeshiftPeriod = 600.seconds,
         )
-        val period = createPeriod(liveSource(target, options))
-
-        assertSame(SubscriptionOpenResult.NotReady, period.openSubscription())
-        assertSame(period, target.consumer)
+        val source = TvheadendLiveMediaSource(target, options, null, {}, StandardTestDispatcher(testScheduler), { QueuedCoordinatorLooper() })
+        val caller = MediaSource.MediaSourceCaller { _, _ -> }
+        source.prepareSource(caller, PlayerId.UNSET, BandwidthMeter.NO_OP)
+        runCurrent()
+        assertTrue(target.consumer != null)
         assertSame(options, target.options)
+        source.releaseSource(caller)
+        runCurrent()
     }
 
     @Test
     fun `default source options reach the bound target`() = runTest {
         val target = CapturingLiveTarget()
-        val period = createPeriod(liveSource(target, SubscriptionOptions()))
-
-        assertSame(SubscriptionOpenResult.NotReady, period.openSubscription())
-        assertSame(period, target.consumer)
+        val source = TvheadendLiveMediaSource(target, SubscriptionOptions(), null, {}, StandardTestDispatcher(testScheduler), { QueuedCoordinatorLooper() })
+        val caller = MediaSource.MediaSourceCaller { _, _ -> }
+        source.prepareSource(caller, PlayerId.UNSET, BandwidthMeter.NO_OP)
+        runCurrent()
+        assertTrue(target.consumer != null)
         assertNull(target.options?.streamProfileUuid)
         assertEquals(Duration.ZERO, target.options?.timeshiftPeriod)
+        source.releaseSource(caller)
+        runCurrent()
     }
 
     @Test
@@ -125,13 +133,7 @@ internal class TvheadendLiveMediaSourceTest {
             accept(SubscriptionEvent.Queue(1L, 10L, 100L, 0L, 0L, 0L))
         }
         assertEquals(1L, publishedDiagnostics?.queue?.packetCount)
-        val period = createPeriod(
-            createTvheadendLiveMediaSource(
-                target = CapturingLiveTarget(),
-                options = SubscriptionOptions(),
-                timeshiftControls = bridge,
-            ),
-        )
+        val period = TvheadendLiveMediaPeriod(DefaultAllocator(false, 1_024), bridge.newAttachment(), {})
 
         val failure = runCatching {
             period.accept(SubscriptionEvent.Terminated(SubscriptionTermination.GENERATION_LOST))

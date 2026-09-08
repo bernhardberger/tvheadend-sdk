@@ -140,7 +140,7 @@ internal interface CoordinatorPlaybackAccess {
 
     fun createResume(identity: RecordingMediaIdentity): CoordinatorRecordingResume
 
-    fun setMediaSource(source: CoordinatorMediaSource)
+    fun setMediaSource(source: CoordinatorMediaSource, startPosition: Duration? = null)
 
     fun prepare()
 
@@ -273,7 +273,7 @@ internal class Media3PlaybackCoordinatorPlayer(
                 retiredRecording = retirement.retiredRecording,
             )
         } catch (_: Exception) {
-            rollbackReplacementOnLooper(installed, previous, observationReplacement)
+            rollbackReplacementOnLooper(installed, previous, previousSnapshot, observationReplacement)
         }
     }
 
@@ -355,7 +355,7 @@ internal class Media3PlaybackCoordinatorPlayer(
                 installedRecording = accepted,
             )
         } catch (_: Exception) {
-            rollbackReplacementOnLooper(installed, previous, observationReplacement)
+            rollbackReplacementOnLooper(installed, previous, previousSnapshot, observationReplacement)
         }
     }
 
@@ -442,6 +442,7 @@ internal class Media3PlaybackCoordinatorPlayer(
     private fun rollbackReplacementOnLooper(
         installed: InstalledPlayerTarget,
         previous: InstalledPlayerTarget?,
+        previousSnapshot: PlaybackPlayerSnapshot,
         observationReplacement: LiveTimeshiftControlBridge.ObservationReplacement?,
     ): PlaybackPlayerInstallResult {
         if (active !== installed) {
@@ -457,7 +458,7 @@ internal class Media3PlaybackCoordinatorPlayer(
         )
         if (!stagedRetirement.playerAvailable) {
             commitObservationReplacement(previous, observationReplacement)
-            val retirement = retireActiveOnLooper()
+            val retirement = retireActiveOnLooper(previousSnapshot.copy(failed = true))
             return retirement.failedInstall()
         }
         if (previous == null) {
@@ -473,19 +474,22 @@ internal class Media3PlaybackCoordinatorPlayer(
         }
         return try {
             val restored = restorablePrevious.token.runIfActive {
-                access.setMediaSource(restorablePrevious.source)
+                access.setMediaSource(
+                    restorablePrevious.source,
+                    previousSnapshot.position.takeIf { restorablePrevious is InstalledPlayerTarget.Recording },
+                )
                 if (!restorablePrevious.token.isActive()) return@runIfActive
                 access.prepare()
             }
             if (!restored) {
                 commitObservationReplacement(previous, observationReplacement)
-                return retireActiveOnLooper().failedInstall()
+                return retireActiveOnLooper(previousSnapshot.copy(failed = true)).failedInstall()
             }
             rollbackObservationReplacement(restorablePrevious, observationReplacement)
             PlaybackPlayerInstallResult(PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE)
         } catch (_: Exception) {
             commitObservationReplacement(previous, observationReplacement)
-            retireActiveOnLooper().failedInstall()
+            retireActiveOnLooper(previousSnapshot.copy(failed = true)).failedInstall()
         }
     }
 
@@ -507,11 +511,12 @@ internal class Media3PlaybackCoordinatorPlayer(
         }
     }
 
-    private fun retireActiveOnLooper(): PlayerRetirement {
+    private fun retireActiveOnLooper(snapshotOverride: PlaybackPlayerSnapshot? = null): PlayerRetirement {
         access.requireApplicationLooper()
         val installed = active ?: return PlayerRetirement()
         var available = true
-        val snapshot = try {
+        // A failed restoration leaves the player's current snapshot attributable to neither source.
+        val snapshot = snapshotOverride ?: try {
             access.snapshot()
         } catch (_: Exception) {
             available = false
@@ -638,6 +643,7 @@ internal class ExoPlayerCoordinatorPlaybackAccess(
 
     override fun snapshot(): PlaybackPlayerSnapshot {
         requireApplicationLooper()
+        val before = currentPeriodUid()
         val position = player.currentPosition.takeIf { it >= 0L }?.milliseconds ?: Duration.ZERO
         val duration = player.duration
             .takeIf { it != C.TIME_UNSET && it > 0L }
@@ -647,7 +653,18 @@ internal class ExoPlayerCoordinatorPlaybackAccess(
             duration = duration,
             playbackState = player.playbackState,
             failed = player.playerError != null,
+            periodUid = before?.takeIf { it == currentPeriodUid() },
         )
+    }
+
+    private fun currentPeriodUid(): Any? {
+        val timeline = player.currentTimeline
+        val index = player.currentPeriodIndex
+        if (index !in 0 until timeline.periodCount) return null
+        val uid = timeline.getUidOfPeriod(index)
+        return if (timeline is androidx.media3.exoplayer.AbstractConcatenatedTimeline) {
+            androidx.media3.exoplayer.AbstractConcatenatedTimeline.getChildPeriodUidFromConcatenatedUid(uid)
+        } else uid
     }
 
     override fun addListener(listener: Player.Listener) {
@@ -722,9 +739,14 @@ internal class ExoPlayerCoordinatorPlaybackAccess(
         }
     }
 
-    override fun setMediaSource(source: CoordinatorMediaSource) {
+    override fun setMediaSource(source: CoordinatorMediaSource, startPosition: Duration?) {
         requireApplicationLooper()
-        player.setMediaSource((source as Media3CoordinatorMediaSource).source)
+        val mediaSource = (source as Media3CoordinatorMediaSource).source
+        if (startPosition == null) {
+            player.setMediaSource(mediaSource)
+        } else {
+            player.setMediaSource(mediaSource, startPosition.inWholeMilliseconds)
+        }
     }
 
     override fun prepare() {

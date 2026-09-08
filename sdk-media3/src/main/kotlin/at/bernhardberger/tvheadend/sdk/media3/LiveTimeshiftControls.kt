@@ -10,6 +10,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionState
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTracks
 import java.util.Collections
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.microseconds
@@ -361,7 +362,7 @@ internal class LiveTimeshiftControlBridge(
 
     suspend fun seek(target: SubscriptionSeekTarget): SubscriptionSeekResult? {
         val handle = currentHandle() ?: return null
-        val result = handle.subscription.seek(target)
+        val result = handle.subscription.seek(target, handle.tracks)
         if (result is SubscriptionSeekResult.Invalidated ||
             result === SubscriptionSeekResult.SubscriptionEnded
         ) {
@@ -379,9 +380,9 @@ internal class LiveTimeshiftControlBridge(
             validateTimeshiftTarget(target, current.attachment, current.attachment.timeline())?.let { return it }
             current
         }
-        val result = handle.subscription.seek(SubscriptionSeekTarget.Absolute(target.position))
+        val result = handle.subscription.seek(SubscriptionSeekTarget.Absolute(target.position), handle.tracks)
         return synchronized(lock) {
-            if (currentHandle()?.attachment !== handle.attachment) {
+            if (currentHandle()?.attachment !== handle.attachment || result === SubscriptionSeekResult.SegmentUnavailable) {
                 return@synchronized TimeshiftContentSeekResult.Replaced
             }
             val reached = (result as? SubscriptionSeekResult.AcceptedAt)?.position
@@ -414,6 +415,8 @@ internal class LiveTimeshiftControlBridge(
     private fun currentHandle(): ControlHandle? = synchronized(lock) {
         val attachment = activeAttachment ?: return@synchronized null
         val subscription = attachment.subscription ?: return@synchronized null
+        val tracks = attachment.tracks ?: return@synchronized null
+        if ((subscription.state.value as? SubscriptionState.Playable)?.tracks !== tracks) return@synchronized null
         if (
             retired ||
             !token.isActive() ||
@@ -421,7 +424,7 @@ internal class LiveTimeshiftControlBridge(
         ) {
             null
         } else {
-            ControlHandle(attachment, subscription)
+            ControlHandle(attachment, subscription, tracks)
         }
     }
 
@@ -429,6 +432,11 @@ internal class LiveTimeshiftControlBridge(
         internal val sequence: Long,
     ) {
         internal var subscription: ActiveSubscription? = null
+        internal var tracks: SubscriptionTracks? = null
+        internal var periodUid: Any? = null
+        private var sampleOriginUs = 0L
+        internal fun sampleOrigin(originUs: Long) { synchronized(lock) { sampleOriginUs = originUs } }
+        internal fun tracksReady(validated: SubscriptionTracks) { synchronized(lock) { tracks = validated } }
         internal var grant: Duration? = null
         private var latestStatus: SubscriptionEvent.Timeshift? = null
         private var wallClockMapping: TimeshiftWallClockMapping = TimeshiftWallClockMapping.Unavailable
@@ -470,6 +478,7 @@ internal class LiveTimeshiftControlBridge(
                     "Timeshift attachment already has a subscription"
                 }
                 subscription = activeSubscription
+                if (tracks == null) tracks = (activeSubscription.state.value as? SubscriptionState.Playable)?.tracks
                 grant = activeSubscription.grantedTimeshiftPeriod
                 pendingRestoredObservations?.takeIf { sequence > it.afterSequence }?.let { pending ->
                     if (!issueObserved) latestIssue = pending.issue
@@ -495,7 +504,8 @@ internal class LiveTimeshiftControlBridge(
                 }
                 when (event) {
                     is SubscriptionEvent.Packet -> {
-                        packetMapping.accept(event.presentationTimeUs, event.serverPresentationTimeUs)
+                        val output = event.presentationTimeUs?.let { Math.subtractExact(it, sampleOriginUs) }
+                        packetMapping.accept(output, event.serverPresentationTimeUs)
                         return
                     }
                     is SubscriptionEvent.Skipped -> {
@@ -667,10 +677,11 @@ internal class LiveTimeshiftControlBridge(
             } ?: LiveTimeshiftState.Unavailable
 
         internal fun timeline(): TimeshiftTimeline? {
+            val owner = subscription ?: return null
             val start = latestStatus?.start ?: return null
             val end = latestStatus?.end ?: return null
             if (start < 0L || end < start) return null
-            return TimeshiftTimeline(this, start.microseconds, end.microseconds, wallClockMapping)
+            return TimeshiftTimeline(this, start.microseconds, end.microseconds, wallClockMapping, owner)
         }
     }
 
@@ -764,6 +775,7 @@ internal class LiveTimeshiftControlBridge(
     private data class ControlHandle(
         val attachment: Attachment,
         val subscription: ActiveSubscription,
+        val tracks: SubscriptionTracks,
     )
 }
 

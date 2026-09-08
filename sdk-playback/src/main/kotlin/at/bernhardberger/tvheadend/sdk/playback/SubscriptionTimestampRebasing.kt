@@ -92,9 +92,14 @@ internal class SubscriptionTimestampRebaser(private val settings: TimestampRebas
     /** Every packet discarded since the discontinuity, bounding the wait itself. */
     private var unanchoredPackets = 0
     private var anchorCandidates: Set<StreamIndex>? = null
+    private var boundRestartFloorDiscards = false
+    private var restartFloorDiscards = 0
 
     /** Records the committed track set so only a stream that may carry video can anchor. */
     internal fun onTracks(tracks: SubscriptionTracks) {
+        // Preserve the established offset/floor, but do not silently discard a restarted clock
+        // forever. Repeated metadata without media progress must not replenish this budget.
+        if (anchorCandidates != null && floorUs != null) boundRestartFloorDiscards = true
         anchorCandidates = tracks.streams
             .filter { stream -> stream.type.mayCarryVideo() }
             .map(SubscriptionStream::index)
@@ -197,7 +202,14 @@ internal class SubscriptionTimestampRebaser(private val settings: TimestampRebas
         val outputUs = packet.presentationTimeUs?.let { time -> saturatingAdd(time, offsetUs) }
         val floor = floorUs
         // Tracks interleaved before the anchor rebase below the timeline already handed over.
-        if (outputUs != null && floor != null && outputUs <= floor) return RebaseDecision.Discard
+        if (outputUs != null && floor != null && outputUs <= floor) {
+            if (boundRestartFloorDiscards) {
+                restartFloorDiscards += 1
+                if (restartFloorDiscards >= settings.anchorDiscardLimit) return RebaseDecision.Unanchorable
+            }
+            return RebaseDecision.Discard
+        }
+        if (outputUs != null) restartFloorDiscards = 0
         val previousOutputUs = lastOutputUs
         if (outputUs != null && (previousOutputUs == null || outputUs > previousOutputUs)) {
             lastOutputUs = outputUs

@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.10.0]
+
+Live playback now surfaces state-only subscription termination to Media3 instead
+of silently stalling. Transport cancellation settles an unresolved seek without
+replaying uncertain packets, and content-seek cancellation reaches its caller
+instead of becoming an ordinary unavailable result. Operation cancellation through
+the playback coordinator retires that coordinator owner.
+
+Failed target replacement restores the recording's captured position rather than
+restarting its source at zero. If restoration also fails, final progress uses the
+pre-replacement snapshot and does not mistake partially replaced player state for
+a natural recording end.
+
+Live preparation waits for one initialized stream in each advertised supported
+audio/video category, then allows unresolved alternatives up to one second for
+format discovery. It prepares immediately when all supported formats are ready.
+Alternatives still unresolved at the deadline are omitted for that period, so a
+silent secondary track cannot block preparation indefinitely. Output retirement
+and playback-side queries share the reader lock.
+
+EPG capacity rejection now settles waiting single and batch acquisition requests
+without partial retention updates or a permanent capability-denial latch. Existing
+cooldown, stale-query authority, observation expiry, and cancellation rules remain.
+
+The SDK now resolves published HTSP 0.9.0, retaining stricter reply-sequence
+validation and safer JSON diagnostics. Stop/start and repeated-start stream
+sequences replace Media3 readers and track groups in a new period on the same
+subscription and application-owned Player. Stop fences the old segment without
+EOS or unsubscribe; missing restart metadata has a five-second deadline. An
+unresolved seek intersecting restart fails closed because protocol skip
+acknowledgements carry no segment correlation.
+
+This minor release changes the provisional infrastructure API: `SubscriptionTracks`
+has a public constructor for boundary fakes, `ActiveSubscription.seek` gains an
+expected-tracks overload, and exhaustive seek outcomes gain `SegmentUnavailable`.
+Infrastructure consumers must rebuild and handle that outcome. Timeshift content
+targets are segment-scoped; consumers combining sampled content and history must
+check `TimeshiftTimeline.describesSameSegment`, not just `describesSameSubscription`.
+`TimeshiftTestFixture.restartSegment()` models replacement without changing
+transport identity. See [repair behavior and evidence](docs/audit-defect-repairs.md)
+and the [stream restart contract](docs/stream-restart-contract.md). Host regressions
+cover restart ownership and stale-coordinate fences; real ExoPlayer restart tests
+pass on the configured Android device with recorded MPEG-audio and AC-3 fixtures.
+This verifies audio track reselection and play/pause intent, not live-server video
+restart or interruption-free playback across all codecs.
+
 ## [0.9.1]
 
 Persistent cache namespaces now encode field boundaries unambiguously and use a
