@@ -13,6 +13,31 @@ import org.junit.jupiter.api.Test
 
 internal class LiveSubscriptionDiagnosticsTest {
     @Test
+    fun `queue errors preserve presence unsigned range equality and separate counters`() {
+        var previous = LiveSubscriptionDiagnostics.update(null, SubscriptionEvent.Dropped(7L))
+        val snapshots = listOf(null, 0L, 0x8000_0000L, 0xffff_ffffL, null).map { errors ->
+            val event = SubscriptionEvent.Queue(1L, 2L, 3L, 4L, 5L, 6L, errorCount = errors)
+            val current = requireNotNull(LiveSubscriptionDiagnostics.update(previous, event))
+            val queue = requireNotNull(current.queue)
+            assertEquals(errors, queue.errorCount)
+            assertEquals(4L, queue.droppedBFrameCount)
+            assertEquals(5L, queue.droppedPFrameCount)
+            assertEquals(6L, queue.droppedIFrameCount)
+            assertEquals(7L, current.clientDroppedPacketCount)
+            assertEquals("SubscriptionEvent.Queue(<redacted>)", event.toString())
+            assertEquals("LiveQueueDiagnostics(<redacted>)", queue.toString())
+            assertEquals("LiveSubscriptionDiagnostics(<redacted>)", current.toString())
+            val repeated = LiveSubscriptionDiagnostics.update(current, event)
+            assertEquals(current, repeated)
+            assertEquals(current.hashCode(), repeated.hashCode())
+            previous = current
+            current
+        }
+        assertEquals(4, snapshots.toSet().size)
+        assertEquals(snapshots.first(), snapshots.last())
+    }
+
+    @Test
     fun `ordered observations preserve safe source frontend units and queue depth`() {
         val source = requireNotNull(
             LiveSubscriptionSource.create(
@@ -248,7 +273,7 @@ internal class LiveSubscriptionDiagnosticsTest {
     fun `new generation and terminal events clear stale observations`() {
         val queued = LiveSubscriptionDiagnostics.update(
             null,
-            SubscriptionEvent.Queue(1L, 2L, null, 3L, 4L, 5L),
+            SubscriptionEvent.Queue(1L, 2L, null, 3L, 4L, 5L, errorCount = 0xffff_ffffL),
         )
         assertEquals(1L, queued?.queue?.packetCount)
 

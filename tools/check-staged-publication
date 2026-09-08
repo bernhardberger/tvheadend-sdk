@@ -136,7 +136,7 @@ def pom_dependencies(module: str, version: str) -> set[tuple[str, str, str, str]
             ("org.jetbrains.kotlinx", "kotlinx-coroutines-core-jvm", "1.10.2", "compile"),
             (GROUP, "sdk-playback", version, "compile"),
             ("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.10", "compile"),
-            (GROUP, "htsp", "0.9.0", "runtime"),
+            (GROUP, "htsp", "0.10.0", "runtime"),
             ("org.jetbrains.kotlinx", "kotlinx-serialization-protobuf-jvm", "1.11.0", "runtime"),
         },
         "sdk-media3": {
@@ -464,7 +464,7 @@ def self_test() -> list[str]:
         ("org.jetbrains.kotlinx", "kotlinx-coroutines-core-jvm", "1.10.2", "compile"),
         (GROUP, "sdk-playback", "0.8.0", "compile"),
         ("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.10", "compile"),
-        (GROUP, "htsp", "0.9.0", "runtime"),
+        (GROUP, "htsp", "0.10.0", "runtime"),
         ("org.jetbrains.kotlinx", "kotlinx-serialization-protobuf-jvm", "1.11.0", "runtime"),
     ]
     core_pom = ET.fromstring(f"""<project>

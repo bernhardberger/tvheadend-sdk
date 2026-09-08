@@ -18,7 +18,7 @@ The SDK is split into five libraries:
 | `sdk-android` | Android | Discovery, connectivity, atomic server-profile storage, and authenticated artwork |
 | `sdk-testing` | Kotlin/JVM | Aggregate observation fakes, scripted events, and packet fixtures |
 
-The source is configured for release `0.10.1`. The normal build never publishes.
+The source is configured for release `0.11.0`. The normal build never publishes.
 `./gradlew clean build check stageLocalPublication` verifies the repository and
 stages all five modules under `build/local-maven`; the Maven Central badge, not
 local source or staging, reports the latest publicly available version.
@@ -79,7 +79,7 @@ missing, and unavailable behavior without Android `Context` or Android runtime
 internals.
 
 The default build resolves
-`at.bernhardberger.tvheadend:htsp:0.9.0` from Maven Central. Maintainers working
+`at.bernhardberger.tvheadend:htsp:0.10.0` from Maven Central. Maintainers working
 across adjacent checkouts may explicitly opt into source substitution with
 `-Ptvheadend.htsp.composite=true`; CI and release builds do not use that
 property.

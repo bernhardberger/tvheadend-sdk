@@ -192,6 +192,35 @@ import kotlin.time.Instant
 
 internal class HtspProtocolGatewayTest {
     @Test
+    fun `queue projection preserves absent zero and unsigned data errors`() = runTest {
+        val counts = listOf(null, 0L, 0x8000_0000L, 0xffff_ffffL)
+        val sourceGeneration = HtspConnectionGeneration()
+        val fake = FakeHtspConnection().apply {
+            subscriptionFlow = flowOf(*counts.map { errors ->
+                HtspSubscriptionEvent.Queue(HtspQueueStatusMessage(77, 8, 9, 10, 1, 2, 3, errors))
+            }.toTypedArray())
+            liveConnectionValue.value = liveConnection(sourceGeneration)
+            connectOutcome = HtspConnectOutcome.Connected(requireNotNull(liveConnectionValue.value))
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+        val events = gateway.subscription(generation, SubscriptionId(77)).toList()
+        assertEquals(counts.size, events.size)
+        events.zip(counts).forEach { (event, errors) ->
+            val queue = event as SubscriptionEvent.Queue
+            assertEquals(errors, queue.errorCount)
+            assertEquals(8L, queue.packetCount)
+            assertEquals(9L, queue.byteCount)
+            assertEquals(10L, queue.delay)
+            assertEquals(1L, queue.bFrameDropCount)
+            assertEquals(2L, queue.pFrameDropCount)
+            assertEquals(3L, queue.iFrameDropCount)
+            assertEquals("SubscriptionEvent.Queue(<redacted>)", queue.toString())
+        }
+    }
+
+    @Test
     fun `configuration validates normalizes and redacts endpoint secrets`() {
         val authentication = ServerAuthentication.Password(
             username = "  alice  ",
@@ -2815,7 +2844,7 @@ internal class HtspProtocolGatewayTest {
         assertEquals(1L, queue.bFrameDropCount)
         assertEquals(2L, queue.pFrameDropCount)
         assertEquals(3L, queue.iFrameDropCount)
-        assertFalse(queue.javaClass.methods.any { it.name == "getErrors" })
+        assertEquals(null, queue.errorCount)
         val signal = events[9] as SubscriptionEvent.Signal
         assertTrue(signal.frontendStatusReported)
         assertTrue(requireNotNull(signal.frontendState).locked)

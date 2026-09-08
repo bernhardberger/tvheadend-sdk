@@ -1646,6 +1646,7 @@ private fun HtspSubscriptionEvent.toGatewayEvent(): SubscriptionEvent = when (th
         bFrameDropCount = message.bFrameDropCount,
         pFrameDropCount = message.pFrameDropCount,
         iFrameDropCount = message.iFrameDropCount,
+        errorCount = message.errorCount,
     )
     is HtspSubscriptionEvent.Signal -> SubscriptionEvent.Signal(
         relativeSnr = message.relativeSnr,

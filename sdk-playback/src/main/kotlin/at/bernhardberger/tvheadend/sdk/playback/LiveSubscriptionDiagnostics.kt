@@ -161,6 +161,8 @@ public class LiveQueueDiagnostics internal constructor(
     public val droppedPFrameCount: Long,
     /** Number of dropped I frames reported by the server. */
     public val droppedIFrameCount: Long,
+    /** Cumulative server data errors, 0..4294967295; `null` means unknown, not zero. Not frame or client packet drops. */
+    public val errorCount: Long?,
 ) {
     /** Queued media timestamp span in microseconds for Java callers, or `null` when unavailable. */
     public val mediaSpanMicroseconds: Long?
@@ -173,7 +175,8 @@ public class LiveQueueDiagnostics internal constructor(
             mediaSpan == other.mediaSpan &&
             droppedBFrameCount == other.droppedBFrameCount &&
             droppedPFrameCount == other.droppedPFrameCount &&
-            droppedIFrameCount == other.droppedIFrameCount
+            droppedIFrameCount == other.droppedIFrameCount &&
+            errorCount == other.errorCount
 
     override fun hashCode(): Int {
         var result = packetCount.hashCode()
@@ -182,6 +185,7 @@ public class LiveQueueDiagnostics internal constructor(
         result = 31 * result + droppedBFrameCount.hashCode()
         result = 31 * result + droppedPFrameCount.hashCode()
         result = 31 * result + droppedIFrameCount.hashCode()
+        result = 31 * result + (errorCount?.hashCode() ?: 0)
         return result
     }
 
@@ -247,6 +251,7 @@ public class LiveSubscriptionDiagnostics internal constructor(
                     droppedBFrameCount = event.bFrameDropCount,
                     droppedPFrameCount = event.pFrameDropCount,
                     droppedIFrameCount = event.iFrameDropCount,
+                    errorCount = event.errorCount,
                 ),
                 previous?.clientDroppedPacketCount ?: 0L,
             )

@@ -188,6 +188,8 @@ public sealed interface SubscriptionEvent {
         public val bFrameDropCount: Long,
         public val pFrameDropCount: Long,
         public val iFrameDropCount: Long,
+        /** Cumulative server data errors, 0..4294967295; `null` means unknown, not zero. Not frame or client packet drops. */
+        public val errorCount: Long? = null,
     ) : SubscriptionEvent {
         override fun toString(): String = "SubscriptionEvent.Queue(<redacted>)"
     }

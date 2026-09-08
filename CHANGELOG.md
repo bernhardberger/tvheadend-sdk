@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.11.0]
+
+Propagate HTSP queue data errors through `SubscriptionEvent.Queue.errorCount`
+and `LiveQueueDiagnostics.errorCount`. The nullable `Long` preserves unknown
+versus zero and the entire unsigned-u32 range 0..4294967295. This cumulative
+server count is separate from B/P/I frame drops and client packet drops.
+Rendering stays redacted and subscription lifecycle behavior is unchanged.
+
+Resolve publicly verified HTSP 0.10.0. Recompile all SDK consumers together:
+the SDK queue-event constructor and HTSP `HtspQueueStatusMessage` constructor
+and generated `copy` JVM signatures change. Kotlin queue-event construction
+may omit the new argument (unknown); Java construction supplies a nullable
+`Long`. This known ABI break requires a minor 0.x release. Media3 and native
+payloads are unchanged. See [queue errors](docs/queue-error-diagnostics.md).
+
 ## [0.10.1]
 
 Live Media3 periods accept equal, non-identical track groups carried by retained

@@ -315,6 +315,8 @@ public class StagedSdkConsumer(
 
     public fun currentLiveQueuePackets(): Long? = liveDiagnostics.value?.queue?.packetCount
 
+    public fun currentLiveQueueErrors(): Long? = liveDiagnostics.value?.queue?.errorCount
+
     public fun currentLiveQueueSpan(): Duration? = liveDiagnostics.value?.queue?.mediaSpan
 
     public suspend fun seekTimeshift(offset: Duration): TimeshiftCommandResult =

@@ -55,6 +55,7 @@ public final class at/bernhardberger/tvheadend/sdk/playback/LiveQueueDiagnostics
 	public final fun getDroppedBFrameCount ()J
 	public final fun getDroppedIFrameCount ()J
 	public final fun getDroppedPFrameCount ()J
+	public final fun getErrorCount ()Ljava/lang/Long;
 	public final fun getMediaSpan-FghU774 ()Lkotlin/time/Duration;
 	public final fun getMediaSpanMicroseconds ()Ljava/lang/Long;
 	public final fun getPacketCount ()J
@@ -295,10 +296,12 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionEvent$Pa
 }
 
 public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionEvent$Queue : at/bernhardberger/tvheadend/sdk/playback/SubscriptionEvent {
-	public fun <init> (JJLjava/lang/Long;JJJ)V
+	public fun <init> (JJLjava/lang/Long;JJJLjava/lang/Long;)V
+	public synthetic fun <init> (JJLjava/lang/Long;JJJLjava/lang/Long;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getBFrameDropCount ()J
 	public final fun getByteCount ()J
 	public final fun getDelay ()Ljava/lang/Long;
+	public final fun getErrorCount ()Ljava/lang/Long;
 	public final fun getIFrameDropCount ()J
 	public final fun getPFrameDropCount ()J
 	public final fun getPacketCount ()J

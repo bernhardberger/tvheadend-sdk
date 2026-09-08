@@ -70,7 +70,7 @@ automatically. CI (`.github/workflows/ci.yml`) is the authoritative gate.
 - Use JDK 21. JVM publications target Java 17 and class-file major 61.
 - Update ABI dumps only through the Gradle ABI validation workflow.
 - Local cross-repository HTSP substitution is opt-in. CI and releases always
-  resolve the pinned `at.bernhardberger.tvheadend:htsp:0.9.0` coordinate.
+  resolve the pinned `at.bernhardberger.tvheadend:htsp:0.10.0` coordinate.
 - Start repository discovery with `docs/module-map.md`. Use direct search from
   its named entry points before delegating a locator or rebuilding a broad map.
 
