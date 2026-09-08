@@ -6,9 +6,13 @@ It does not change pause intent, resume a Player, or send a server resume.
 ## Consumer Contract
 
 `TimeshiftContentSeekResult.Completed` describes the command outcome, not a
-completed playback or rendered frame. For `ACCEPTED`, `seek` is a non-null opaque
+completed playback or rendered frame. For `TimeshiftCommandResult.ACCEPTED`,
+`seek` is a non-null opaque
 identity for that command, even when `readerReached` is null. A null reader
 coordinate means unknown, not failure and not the requested position.
+An accepted disposition (`command.isAccepted`) alone does not guarantee a token:
+the terminal `RESUMED_SEGMENT_UNANCHORABLE` outcome carries none. Always check
+the token for null before comparing it.
 
 Retain the accepted `seek` identity. A subsequently sampled
 `TimeshiftPlaybackPosition.Estimate` belongs to that seek only when
@@ -31,7 +35,9 @@ There are four distinct observations:
 - Reader coordinate: optional `readerReached`, derived from that acknowledgement.
   It does not prove that post-command bytes have arrived at an elementary reader.
 - Playback-position settlement: a matching seek token on a sampled estimate.
-  Missing, incomplete, or delayed media can leave this unavailable indefinitely.
+  Missing or delayed media can leave this unavailable indefinitely. If one stream
+  keeps supplying data while another never supplies a usable sample, the existing
+  sample/allocator bounds terminate the period instead of growing queues forever.
 - Decoded paused frame: requires renderer/output evidence. The SDK does not expose
   a seek-correlated frame acknowledgement. Neither acceptance nor a matching
   estimate proves physical display, and no app or TV acceptance is claimed here.
@@ -40,6 +46,9 @@ At either history edge the SDK validates the selected coordinate against the
 latest observed bounds; it does not clamp, extrapolate, or invent media at the
 edge. No decodable post-command data means no new paused frame. A paused server
 may withhold data; this implementation never overrides that pause to obtain it.
+During the queue-reset window, `Player.bufferedPosition` can transiently report
+zero until the selected queues contain new samples. It is not a content-seek
+settlement signal; use the correlated estimate instead.
 
 `TimeshiftTestFixture.completed()` supplies an acceptance token without moving
 the displayed estimate. Script an old/unavailable estimate, then use
