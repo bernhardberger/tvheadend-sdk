@@ -362,7 +362,7 @@ internal class LiveTimeshiftControlBridge(
 
     suspend fun seek(target: SubscriptionSeekTarget): SubscriptionSeekResult? {
         val handle = currentHandle() ?: return null
-        val result = handle.subscription.seek(target, handle.tracks)
+        val result = performSeek(handle, target, null)
         if (result is SubscriptionSeekResult.Invalidated ||
             result === SubscriptionSeekResult.SubscriptionEnded
         ) {
@@ -380,7 +380,8 @@ internal class LiveTimeshiftControlBridge(
             validateTimeshiftTarget(target, current.attachment, current.attachment.timeline())?.let { return it }
             current
         }
-        val result = handle.subscription.seek(SubscriptionSeekTarget.Absolute(target.position), handle.tracks)
+        val seek = TimeshiftSeekToken(handle.attachment)
+        val result = performSeek(handle, SubscriptionSeekTarget.Absolute(target.position), seek)
         return synchronized(lock) {
             if (currentHandle()?.attachment !== handle.attachment || result === SubscriptionSeekResult.SegmentUnavailable) {
                 return@synchronized TimeshiftContentSeekResult.Replaced
@@ -391,9 +392,30 @@ internal class LiveTimeshiftControlBridge(
             if (result is SubscriptionSeekResult.Invalidated || result === SubscriptionSeekResult.SubscriptionEnded) {
                 handle.attachment.terminal(handle.subscription)
             }
-            TimeshiftContentSeekResult.Completed(result.toPublicTimeshiftResult(), reached)
+            TimeshiftContentSeekResult.Completed(result.toPublicTimeshiftResult(), reached,
+                seek.takeIf { result is SubscriptionSeekResult.AcceptedAt || result === SubscriptionSeekResult.Accepted })
         }
     }
+
+    private suspend fun performSeek(
+        handle: ControlHandle,
+        target: SubscriptionSeekTarget,
+        token: TimeshiftSeekToken?,
+    ): SubscriptionSeekResult {
+        val attempt = SeekAttempt(token)
+        synchronized(lock) { handle.attachment.pendingSeeks.addLast(attempt) }
+        var orderedAcknowledgement = false
+        try {
+            val result = handle.subscription.seek(target, handle.tracks)
+            orderedAcknowledgement = result === SubscriptionSeekResult.Accepted ||
+                result is SubscriptionSeekResult.AcceptedAt || result === SubscriptionSeekResult.Rejected
+            return result
+        } finally {
+            if (!orderedAcknowledgement) synchronized(lock) { handle.attachment.pendingSeeks.remove(attempt) }
+        }
+    }
+
+    internal class SeekAttempt(val token: TimeshiftSeekToken?)
 
     internal fun mappingAttachment(): Attachment? = synchronized(lock) {
         currentHandle()?.attachment?.takeIf { attachedPeriodCount == 1 }
@@ -401,13 +423,16 @@ internal class LiveTimeshiftControlBridge(
 
     internal fun playbackPosition(attachment: Attachment, position: Duration): TimeshiftPlaybackPosition =
         synchronized(lock) {
-            if (mappingAttachment() !== attachment || !position.isFinite() || position.isNegative()) {
+            if (mappingAttachment() !== attachment || !position.isFinite() || position.isNegative() ||
+                attachment.pendingPlaybackDiscontinuity
+            ) {
                 return@synchronized TimeshiftPlaybackPosition.Unavailable
             }
             attachment.packetMapping.map(position.inWholeMicroseconds)?.let {
                 TimeshiftPlaybackPosition.Estimate(
                     target = TimeshiftContentTarget(attachment, it.microseconds),
                     timeline = attachment.timeline(),
+                    seek = attachment.appliedSeek,
                 )
             } ?: TimeshiftPlaybackPosition.Unavailable
         }
@@ -445,6 +470,12 @@ internal class LiveTimeshiftControlBridge(
         private var started = false
         internal val packetMapping = TimeshiftPacketMapping()
         private var latestSpeed: Int? = null
+        internal var pendingPlaybackDiscontinuity: Boolean = false
+        internal val pendingSeeks = ArrayDeque<SeekAttempt>()
+        internal var appliedSeek: TimeshiftSeekToken? = null
+        internal fun playbackDiscontinuity() {
+            synchronized(lock) { pendingPlaybackDiscontinuity = false }
+        }
         internal var latestIssue: SubscriptionIssue? = null
         internal var issueObserved = false
         internal var latestDiagnostics: LiveSubscriptionDiagnostics? = null
@@ -509,8 +540,11 @@ internal class LiveTimeshiftControlBridge(
                         return
                     }
                     is SubscriptionEvent.Skipped -> {
+                        val attempt = pendingSeeks.removeFirstOrNull()
                         if (event.outcome == at.bernhardberger.tvheadend.sdk.playback.SkipOutcome.ACCEPTED) {
-                            packetMapping.discontinuity()
+                            appliedSeek = attempt?.token
+                            packetMapping.clear()
+                            pendingPlaybackDiscontinuity = true
                         }
                         return
                     }

@@ -116,6 +116,11 @@ public class StagedSdkConsumer(
 
     public suspend fun run(): Unit = coordinator.run()
 
+    public fun isPostSeekSample(
+        result: TimeshiftContentSeekResult.Completed,
+        position: TimeshiftPlaybackPosition,
+    ): Boolean = result.seek != null && position is TimeshiftPlaybackPosition.Estimate && position.seek === result.seek
+
     public fun launchCoordinator(scope: CoroutineScope): PlaybackCoordinatorLifetime =
         coordinator.launchIn(scope)
 

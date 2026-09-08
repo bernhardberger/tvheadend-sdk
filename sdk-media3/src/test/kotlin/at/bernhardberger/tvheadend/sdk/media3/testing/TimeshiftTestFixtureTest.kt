@@ -19,6 +19,22 @@ import kotlin.time.Duration.Companion.seconds
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class TimeshiftTestFixtureTest {
+    @Test
+    fun `accepted token scripts delayed post-seek samples independently of unknown reader position`() {
+        val fixture = TimeshiftTestFixture(120.seconds)
+        val old = fixture.playbackPosition(20.seconds) as TimeshiftPlaybackPosition.Estimate
+        val accepted = fixture.completed()
+        assertNull(accepted.readerReached)
+        assertNull(old.seek)
+        org.junit.jupiter.api.Assertions.assertNotNull(accepted.seek)
+        val resumed = fixture.playbackPosition(40.seconds, accepted.seek) as TimeshiftPlaybackPosition.Estimate
+        assertSame(accepted.seek, resumed.seek)
+        fixture.restartSegment()
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException::class.java) {
+            fixture.playbackPosition(40.seconds, accepted.seek)
+        }
+    }
+
     private fun TimeshiftTestFixture.timeline() = (state.value as LiveTimeshiftState.Available).timeline!!
 
     @Test

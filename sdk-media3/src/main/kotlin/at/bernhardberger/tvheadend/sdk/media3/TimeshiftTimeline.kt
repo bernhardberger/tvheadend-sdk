@@ -68,6 +68,11 @@ public sealed interface TimeshiftWallClockMapping {
     }
 }
 
+/** Opaque identity of one accepted content seek. Compare by identity, never persist it. */
+public class TimeshiftSeekToken internal constructor(internal val owner: Any) {
+    override fun toString(): String = "TimeshiftSeekToken"
+}
+
 /** Mapping of the sampled Media3 position, never the server reader or newest queued packet. */
 public sealed interface TimeshiftPlaybackPosition {
     /** No usable packet evidence, a gap, replacement, or an unavailable player snapshot. */
@@ -87,6 +92,12 @@ public sealed interface TimeshiftPlaybackPosition {
          * to confirm both describe one playable segment before combining them.
          */
         public val timeline: TimeshiftTimeline?,
+        /**
+         * The accepted seek whose discontinuity has been consumed and whose new packet range
+         * contains this sampled playback position. Null before a content seek or after an
+         * uncorrelated seek. This fences old samples; it does not acknowledge a decoded frame.
+         */
+        public val seek: TimeshiftSeekToken? = null,
     ) : TimeshiftPlaybackPosition
 }
 
@@ -109,6 +120,8 @@ public sealed interface TimeshiftContentSeekResult {
     public class Completed internal constructor(
         public val command: TimeshiftCommandResult,
         public val readerReached: TimeshiftContentTarget?,
+        /** Non-null only for acceptance. Match against [TimeshiftPlaybackPosition.Estimate.seek]. */
+        public val seek: TimeshiftSeekToken? = null,
     ) : TimeshiftContentSeekResult
 }
 
@@ -131,6 +144,11 @@ internal class TimeshiftPacketMapping {
 
     fun discontinuity() {
         newSegment = true
+    }
+
+    fun clear() {
+        segments.clear()
+        newSegment = false
     }
 
     fun accept(output: Long?, server: Long?) {

@@ -776,22 +776,23 @@ internal class TvheadendPlaybackCoordinatorTest {
         fixture.coordinator.pauseTimeshift()
         fixture.player.emitTimeshift(SubscriptionEvent.Timeshift(0, 80_000_000, 0, 110_000_000, 0))
         subscription.seekAction = {
-            fixture.player.emitTimeshift(
-                SubscriptionEvent.Skipped(
-                    true, at.bernhardberger.tvheadend.sdk.playback.SkipOutcome.ACCEPTED, 5_000_000, null,
-                ),
-            )
             SubscriptionSeekResult.AcceptedAt(5.seconds)
         }
         val seek = fixture.coordinator.seekTimeshift(selected) as TimeshiftContentSeekResult.Completed
         assertEquals(5.seconds, seek.readerReached!!.position)
+        org.junit.jupiter.api.Assertions.assertNotNull(seek.seek)
+        val oldPosition = fixture.coordinator.timeshiftPlaybackPosition() as TimeshiftPlaybackPosition.Estimate
+        org.junit.jupiter.api.Assertions.assertNotSame(seek.seek, oldPosition.seek)
+        fixture.player.emitTimeshift(SubscriptionEvent.Skipped(
+            true, at.bernhardberger.tvheadend.sdk.playback.SkipOutcome.ACCEPTED, 5_000_000, null,
+        ))
         attachment.packetMapping.accept(21_000_000, 5_000_000)
         attachment.packetMapping.accept(30_000_000, 14_000_000)
-        assertEquals(
-            15.seconds,
-            (fixture.coordinator.timeshiftPlaybackPosition() as TimeshiftPlaybackPosition.Estimate).target.position,
-        )
+        assertSame(TimeshiftPlaybackPosition.Unavailable, fixture.coordinator.timeshiftPlaybackPosition())
         fixture.player.snapshot = snapshot(25, null).copy(periodUid = attachment.periodUid)
+        assertSame(TimeshiftPlaybackPosition.Unavailable, fixture.coordinator.timeshiftPlaybackPosition())
+        attachment.playbackDiscontinuity()
+        assertSame(seek.seek, (fixture.coordinator.timeshiftPlaybackPosition() as TimeshiftPlaybackPosition.Estimate).seek)
         assertEquals(
             9.seconds,
             (fixture.coordinator.timeshiftPlaybackPosition() as TimeshiftPlaybackPosition.Estimate).target.position,

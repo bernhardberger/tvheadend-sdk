@@ -65,6 +65,40 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 
 internal class TvheadendLiveMediaPeriodTest {
+    @ParameterizedTest
+    @ValueSource(longs = [0, 120])
+    fun `accepted edge seek discards old queues and waits for complete new samples`(edge: Long) = runTest {
+        val harness = PeriodHarness(this)
+        try {
+            harness.start(SubscriptionStreamType.MPEG2_AUDIO)
+            harness.audio()
+            harness.looper.runAll()
+            val stream = harness.select(0)
+            val holder = FormatHolder()
+            val buffer = DecoderInputBuffer(DecoderInputBuffer.BUFFER_REPLACEMENT_MODE_NORMAL)
+            assertTrue(stream.isReady)
+            harness.seek(edge.seconds)
+            assertFalse(stream.isReady)
+            assertEquals(C.RESULT_NOTHING_READ, stream.readData(holder, buffer, 0))
+            assertEquals(0, stream.skipData(Long.MAX_VALUE))
+            assertEquals(C.TIME_UNSET, harness.period.readDiscontinuity())
+            // A timestamp anchor with no elementary sample cannot settle the seek.
+            harness.packet(0, PeriodCountingBinary(byteArrayOf()), edge * 1_000_000)
+            assertEquals(C.TIME_UNSET, harness.period.readDiscontinuity())
+            harness.packet(0, PeriodCountingBinary(fixture("mpeg-audio.bin")), edge * 1_000_000 + 40_000)
+            assertFalse(stream.isReady)
+            val resumed = harness.period.readDiscontinuity()
+            assertTrue(resumed >= 40_000, "Discontinuity uses the new rebased period coordinate")
+            assertEquals(C.TIME_UNSET, harness.period.readDiscontinuity())
+            assertEquals(C.RESULT_FORMAT_READ, stream.readData(holder, buffer, 0))
+            assertEquals(C.RESULT_BUFFER_READ, stream.readData(holder, buffer, 0))
+            assertEquals(resumed, buffer.timeUs)
+            assertTrue(buffer.isKeyFrame)
+        } finally {
+            harness.close()
+        }
+    }
+
     @Test
     fun `equal fresh group retains only its current queue and supports deselection`() = runTest {
         val harness = PeriodHarness(this)
@@ -484,9 +518,20 @@ private class PeriodHarness(private val scope: TestScope) {
 
     suspend fun video() = packet(1, PeriodCountingBinary(fixture("channel-016-stream-01-packet-001.bin")))
 
-    suspend fun packet(index: Long, payload: SubscriptionBinary) {
-        connection.emit(packetEvent(index, payload))
+    suspend fun packet(index: Long, payload: SubscriptionBinary, timeUs: Long = 1_117_733) {
+        connection.emit(packetEvent(index, payload, timeUs))
         scope.runCurrent()
+    }
+
+    suspend fun seek(position: kotlin.time.Duration, outcome: SkipOutcome = SkipOutcome.ACCEPTED) {
+        val seeking = scope.async { subscription.seek(SubscriptionSeekTarget.Absolute(position)) }
+        scope.runCurrent()
+        // A packet already in flight before the acknowledgement must not enter the resumed queues.
+        connection.emit(packetEvent(0, PeriodCountingBinary(fixture("mpeg-audio.bin")), 9_000_000))
+        scope.runCurrent()
+        connection.emit(SubscriptionEvent.Skipped(true, outcome, position.inWholeMicroseconds, null))
+        scope.runCurrent()
+        seeking.await()
     }
 
     fun select(index: Int): SampleStream {

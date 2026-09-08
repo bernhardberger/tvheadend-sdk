@@ -35,6 +35,10 @@ import at.bernhardberger.tvheadend.sdk.playback.StreamIndex
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionBinary
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionCondition
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionConfirmation
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
+import at.bernhardberger.tvheadend.sdk.playback.SkipOutcome
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStream
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
@@ -54,12 +58,140 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Duration.Companion.milliseconds
 
 @RunWith(AndroidJUnit4::class)
 internal class Media3SampleQueueInstrumentationTest {
+    @Test
+    fun playing_content_seek_settles_at_both_edges_after_delayed_media() = assertContentSeeks(paused = false)
+
+    @Test
+    fun paused_content_seek_renders_new_first_frame_at_both_edges_without_resume() = assertContentSeeks(paused = true)
+
+    private fun assertContentSeeks(paused: Boolean) = runBlocking {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val assets = instrumentation.context.assets
+        val channel = RecordedMuxCapture.load(assets).channel(16, 1, 2)
+        val connection = ScriptedSubscriptionConnection()
+        connection.scriptSubscribe(SubscriptionOperationResult.Ok(SubscriptionConfirmation(null, null, null, 120)))
+        val manager = createSubscriptionManager(connection, Dispatchers.Default).apply { startAdmission() }
+        val controls = LiveTimeshiftControlBridge(PlaybackTargetToken()) {}
+        val frames = AtomicInteger()
+        val discontinuities = AtomicInteger()
+        val error = AtomicBoolean()
+        val texture = SurfaceTexture(0)
+        val surface = Surface(texture)
+        lateinit var player: ExoPlayer
+        var initialized = false
+        fun position(): Long {
+            var result = 0L
+            instrumentation.runOnMainSync {
+                assertEquals("Seek must preserve application pause intent", !paused, player.playWhenReady)
+                result = player.currentPosition
+            }
+            return result
+        }
+        suspend fun awaitCondition(message: String, condition: () -> Boolean) {
+            val met = withTimeoutOrNull(15_000) {
+                while (!condition()) {
+                    assertTrue(message, !error.get())
+                    delay(10)
+                }
+                true
+            }
+            assertEquals(message, true, met)
+        }
+        try {
+            instrumentation.runOnMainSync {
+                player = ExoPlayer.Builder(instrumentation.targetContext,
+                    createTvheadendRenderersFactory(instrumentation.targetContext))
+                    .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(100, 2_000, 50, 50).build())
+                    .build()
+                initialized = true
+                player.volume = 0f
+                player.setVideoSurface(surface)
+                player.playWhenReady = !paused
+                player.addListener(object : Player.Listener {
+                    override fun onRenderedFirstFrame() { frames.incrementAndGet() }
+                    override fun onPlayerError(failure: PlaybackException) { error.set(true) }
+                    override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
+                        if (reason == Player.DISCONTINUITY_REASON_INTERNAL) discontinuities.incrementAndGet()
+                    }
+                })
+                player.setMediaSource(createTvheadendLiveMediaSource(
+                    FixedSubscriptionLiveTarget(manager, SubscriptionChannelId(1)),
+                    SubscriptionOptions(timeshiftPeriod = 120.seconds), controls,
+                ))
+                player.prepare()
+            }
+            val registration = withTimeout(10_000) { connection.awaitCollectionRegistered() }
+            connection.emit(registration, SubscriptionEvent.Started(channel.streams, null, SubscriptionCondition.NO_DETAIL))
+            channel.packets.forEach { connection.emit(registration, it.toEvent(assets)) }
+            awaitCondition("Initial frame", { frames.get() > 0 })
+            val attachment = checkNotNull(controls.mappingAttachment())
+            connection.emit(registration, SubscriptionEvent.Timeshift(0, 0, 0, 120_000_000, if (paused) 0 else 100))
+            if (paused) controls.setSpeed(0)
+            for (edge in listOf(0L, 120L)) {
+                val target = TimeshiftContentTarget(attachment, edge.seconds)
+                val beforeFrames = frames.get()
+                val beforeDiscontinuities = discontinuities.get()
+                val beforeCommands = connection.seekTargets.size
+                val seek = async { controls.seekContent(target) }
+                awaitCondition("Seek command admission", { connection.seekTargets.size > beforeCommands })
+                // Old in-flight packets preceding the ordered acknowledgement must be discarded.
+                channel.packets.take(3).forEach { connection.emit(registration, it.toEvent(assets)) }
+                connection.emit(registration, SubscriptionEvent.Skipped(true, SkipOutcome.ACCEPTED,
+                    if (edge == 0L) 0 else null, null))
+                val result = seek.await() as TimeshiftContentSeekResult.Completed
+                assertEquals(TimeshiftCommandResult.ACCEPTED, result.command)
+                assertNotNull(result.seek)
+                if (edge != 0L) assertNull(result.readerReached)
+                delay(250)
+                assertEquals("Acknowledgement alone must not settle playback", beforeDiscontinuities, discontinuities.get())
+                assertEquals("Acknowledgement alone must not render a new first frame", beforeFrames, frames.get())
+                assertEquals(TimeshiftPlaybackPosition.Unavailable, controls.playbackPosition(attachment, position().milliseconds))
+                // Capture streams have independent timestamp origins. Align the scripted resumed
+                // A/V segment while preserving each stream's sample spacing and decode offsets.
+                val origins = channel.packets.groupBy { it.streamOrdinal }
+                    .mapValues { (_, packets) -> packets.minOf { it.presentationTimeUs } }
+                channel.packets.forEach {
+                    val origin = origins.getValue(it.streamOrdinal)
+                    val packet = it.toEvent(assets)
+                    connection.emit(registration, SubscriptionEvent.Packet(
+                        frameType = packet.frameType, streamIndex = packet.streamIndex,
+                        durationUs = packet.durationUs, payload = packet.payload,
+                        presentationTimeUs = edge * 1_000_000 + it.presentationTimeUs - origin,
+                        decodingTimeUs = it.decodingTimeUs?.let { time -> edge * 1_000_000 + time - origin },
+                    ))
+                }
+                awaitCondition("New period discontinuity", { discontinuities.get() > beforeDiscontinuities })
+                awaitCondition("New decoded first frame", { frames.get() > beforeFrames })
+                awaitCondition("Correlated post-command playback sample", {
+                    (controls.playbackPosition(attachment, position().milliseconds) as? TimeshiftPlaybackPosition.Estimate)
+                        ?.seek === result.seek
+                })
+                val settled = position()
+                if (paused) {
+                    delay(250)
+                    assertEquals("Paused seek must not advance the playback clock", settled, position())
+                }
+                assertTrue("No player failure", !error.get())
+                assertEquals("No unsolicited server resume", if (paused) listOf(0) else emptyList<Int>(), connection.speeds)
+            }
+        } finally {
+            instrumentation.runOnMainSync { if (initialized) player.release() }
+            manager.closeAndJoin()
+            surface.release()
+            texture.release()
+        }
+    }
+
     @Test
     fun bundledFfmpegContingencySupportsRequiredAudioFormats() {
         assertTrue("FFmpeg native library must load", FfmpegLibrary.isAvailable())

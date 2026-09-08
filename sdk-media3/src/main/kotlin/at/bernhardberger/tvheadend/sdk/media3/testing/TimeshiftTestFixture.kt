@@ -5,6 +5,7 @@ import at.bernhardberger.tvheadend.sdk.media3.TimeshiftCommandResult
 import at.bernhardberger.tvheadend.sdk.media3.TimeshiftContentSeekResult
 import at.bernhardberger.tvheadend.sdk.media3.TimeshiftContentTarget
 import at.bernhardberger.tvheadend.sdk.media3.TimeshiftPlaybackPosition
+import at.bernhardberger.tvheadend.sdk.media3.TimeshiftSeekToken
 import at.bernhardberger.tvheadend.sdk.media3.TimeshiftTimeline
 import at.bernhardberger.tvheadend.sdk.media3.TimeshiftWallClockMapping
 import at.bernhardberger.tvheadend.sdk.media3.validateTimeshiftTarget
@@ -70,8 +71,9 @@ public class TimeshiftTestFixture(public val grantedPeriod: Duration) {
     }
 
     /** Script displayed-content evidence independently from history and reader movement. Null means unavailable. */
-    public fun playbackPosition(position: Duration?): TimeshiftPlaybackPosition = synchronized(lock) {
+    public fun playbackPosition(position: Duration?, seek: TimeshiftSeekToken? = null): TimeshiftPlaybackPosition = synchronized(lock) {
         require(position == null || (position.isFinite() && position >= Duration.ZERO))
+        require(seek == null || seek.owner === owner) { "Seek belongs to another segment" }
         val current = owner
         if (position == null || !active) {
             TimeshiftPlaybackPosition.Unavailable
@@ -81,6 +83,7 @@ public class TimeshiftTestFixture(public val grantedPeriod: Duration) {
                 // Scripted evidence stays coherent: the sample reports the history currently
                 // scripted for the same subscription.
                 timeline = (mutableState.value as? LiveTimeshiftState.Available)?.timeline,
+                seek = seek,
             )
         }
     }
@@ -95,6 +98,7 @@ public class TimeshiftTestFixture(public val grantedPeriod: Duration) {
         TimeshiftContentSeekResult.Completed(
             command,
             readerReached?.let { TimeshiftContentTarget(owner, it) },
+            if (command === TimeshiftCommandResult.ACCEPTED) TimeshiftSeekToken(owner) else null,
         )
     }
 
@@ -119,6 +123,7 @@ public class TimeshiftTestFixture(public val grantedPeriod: Duration) {
             require(result.readerReached == null || result.readerReached.owner === current) {
                 "Reader outcome belongs to another subscription"
             }
+            require(result.seek == null || result.seek.owner === current) { "Seek belongs to another segment" }
             if (result.command.isTerminal) endSubscription()
             result
         }

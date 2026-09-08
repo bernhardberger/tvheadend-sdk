@@ -42,7 +42,7 @@ import org.junit.jupiter.api.Test
 
 internal class TvheadendLiveMediaSourceTest {
     @Test
-    fun `real subscription period path preserves mapping across an audio seek rebase`() = runTest {
+    fun `packet arrival after accepted seek cannot restore a mapping before usable queued media`() = runTest {
         val bridge = LiveTimeshiftControlBridge(PlaybackTargetToken()) {}
         val attachment = bridge.newAttachment()
         val period = TvheadendLiveMediaPeriod(
@@ -81,8 +81,9 @@ internal class TvheadendLiveMediaSourceTest {
         seeking.await()
         packet(5_000_000)
         packet(14_000_000)
-        assertEquals(15.seconds, (bridge.playbackPosition(attachment, 5.seconds) as TimeshiftPlaybackPosition.Estimate).target.position)
-        assertEquals(9.seconds, (bridge.playbackPosition(attachment, 15.seconds) as TimeshiftPlaybackPosition.Estimate).target.position)
+        assertSame(TimeshiftPlaybackPosition.Unavailable, bridge.playbackPosition(attachment, 5.seconds))
+        assertSame(TimeshiftPlaybackPosition.Unavailable, bridge.playbackPosition(attachment, 15.seconds))
+        assertEquals(androidx.media3.common.C.TIME_UNSET, period.readDiscontinuity())
         period.release()
         subscription.close()
         manager.closeAndJoin()

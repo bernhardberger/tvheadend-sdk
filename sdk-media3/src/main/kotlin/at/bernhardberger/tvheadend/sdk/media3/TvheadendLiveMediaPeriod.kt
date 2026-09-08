@@ -23,6 +23,7 @@ import androidx.media3.extractor.TrackOutput
 import androidx.media3.extractor.text.DefaultSubtitleParserFactory
 import androidx.media3.extractor.text.SubtitleTranscodingExtractorOutput
 import at.bernhardberger.tvheadend.sdk.playback.ActiveSubscription
+import at.bernhardberger.tvheadend.sdk.playback.SkipOutcome
 import at.bernhardberger.tvheadend.sdk.playback.StreamIndex
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
@@ -73,6 +74,7 @@ internal class TvheadendLiveMediaPeriod(
     @Volatile private var cleanEndOfStream = false
     @Volatile private var prepareError: IOException? = null
     private var trackGroups = TrackGroupArray.EMPTY
+    private var seekDiscontinuityPending = false
 
     override fun prepare(callback: MediaPeriod.Callback, positionUs: Long) {
         synchronized(lock) {
@@ -137,7 +139,8 @@ internal class TvheadendLiveMediaPeriod(
             output.enabled = true
             if (!mayRetainStreamFlags[index] || (streams[index] as? QueueSampleStream)?.queue !== output.queue) {
                 output.queue.seekTo(positionUs, true)
-                streams[index] = QueueSampleStream(output.queue, { cleanEndOfStream }, ::currentError, { interrupted || released })
+                streams[index] = QueueSampleStream(output.queue, lock, { cleanEndOfStream }, ::currentError,
+                    { interrupted || released || seekDiscontinuityPending })
                 streamResetFlags[index] = true
             }
         }
@@ -150,7 +153,18 @@ internal class TvheadendLiveMediaPeriod(
         }
     }
 
-    override fun readDiscontinuity(): Long = C.TIME_UNSET
+    override fun readDiscontinuity(): Long = synchronized(lock) {
+        if (!seekDiscontinuityPending || interrupted || released || prepareError != null) return C.TIME_UNSET
+        val selected = outputs.filter { it.enabled }
+        val required = selected.filter { it.trackType == C.TRACK_TYPE_AUDIO || it.trackType == C.TRACK_TYPE_VIDEO }
+            .ifEmpty { selected }
+        if (required.isEmpty() || required.any { it.queue.firstTimestampUs == Long.MIN_VALUE }) return C.TIME_UNSET
+        // SampleQueue reset requires a keyframe. Reader arrival alone cannot establish this point.
+        val positionUs = required.minOf { it.queue.firstTimestampUs }
+        seekDiscontinuityPending = false
+        timeshiftControls?.playbackDiscontinuity()
+        positionUs
+    }
 
     override fun seekToUs(positionUs: Long): Long = positionUs
 
@@ -180,7 +194,7 @@ internal class TvheadendLiveMediaPeriod(
 
     override suspend fun accept(event: SubscriptionEvent) = acceptOrdered(event)
 
-    internal fun acceptOrdered(event: SubscriptionEvent) {
+    internal fun acceptOrdered(event: SubscriptionEvent): Unit = synchronized(lock) {
         if (released || interrupted) return
         if (event is SubscriptionEvent.Stopped) {
             interrupt()
@@ -238,6 +252,11 @@ internal class TvheadendLiveMediaPeriod(
             is SubscriptionEvent.Stopped,
             is SubscriptionEvent.Terminated,
             -> {
+                if (event is SubscriptionEvent.Skipped && event.outcome == SkipOutcome.ACCEPTED) {
+                    outputs.forEach { it.queue.reset() }
+                    clearPreOriginEvents()
+                    seekDiscontinuityPending = true
+                }
                 if (terminalEvent) clearPreOriginEvents()
                 if (sampleOriginUs == null && preOriginEvents.isNotEmpty()) {
                     // Keep discontinuity controls in their original position among retained bytes.
@@ -475,18 +494,23 @@ private class QueueExtractorOutput(
 
 private class QueueSampleStream(
     val queue: SampleQueue,
+    private val lock: Any,
     private val loadingFinished: () -> Boolean,
     private val sourceError: () -> IOException?,
     private val invalidated: () -> Boolean,
 ) : SampleStream {
-    override fun isReady(): Boolean = !invalidated() && queue.isReady(loadingFinished())
-    override fun maybeThrowError() {
+    override fun isReady(): Boolean = synchronized(lock) { !invalidated() && queue.isReady(loadingFinished()) }
+    override fun maybeThrowError(): Unit = synchronized(lock) {
         sourceError()?.let { throw it }
         queue.maybeThrowError()
     }
     override fun readData(holder: FormatHolder, buffer: androidx.media3.decoder.DecoderInputBuffer, readFlags: Int): Int =
-        if (invalidated()) C.RESULT_NOTHING_READ else queue.read(holder, buffer, readFlags, loadingFinished())
+        synchronized(lock) {
+            if (invalidated()) C.RESULT_NOTHING_READ else queue.read(holder, buffer, readFlags, loadingFinished())
+        }
 
     override fun skipData(positionUs: Long): Int =
-        if (invalidated()) 0 else queue.getSkipCount(positionUs, loadingFinished()).also(queue::skip)
+        synchronized(lock) {
+            if (invalidated()) 0 else queue.getSkipCount(positionUs, loadingFinished()).also(queue::skip)
+        }
 }

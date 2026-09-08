@@ -15,6 +15,35 @@ import kotlin.time.Duration.Companion.seconds
 
 class TimeshiftTimelineTest {
     @Test
+    fun `ordered delayed skip delivery correlates each accepted command without reader times`() = runTest {
+        val bridge = LiveTimeshiftControlBridge(PlaybackTargetToken()) {}
+        val attachment = bridge.newAttachment()
+        val subscription = FakeTimeshiftSubscription(120.seconds)
+        attachment.bind(subscription)
+        attachment.accept(SubscriptionEvent.Timeshift(0, 0, 0, 120_000_000, 0))
+        val target = attachment.timeline()!!.select(0.seconds)!!
+        subscription.seekAction = { SubscriptionSeekResult.Accepted }
+        val first = bridge.seekContent(target) as TimeshiftContentSeekResult.Completed
+        val second = bridge.seekContent(target) as TimeshiftContentSeekResult.Completed
+        org.junit.jupiter.api.Assertions.assertNotNull(first.seek)
+        org.junit.jupiter.api.Assertions.assertNotSame(first.seek, second.seek)
+        for (expected in listOf(first, second)) {
+            attachment.accept(SubscriptionEvent.Skipped(true, SkipOutcome.ACCEPTED, null, null))
+            attachment.packetMapping.accept(1_000_000, 0)
+            assertSame(TimeshiftPlaybackPosition.Unavailable, bridge.playbackPosition(attachment, 1.seconds))
+            attachment.playbackDiscontinuity()
+            assertSame(expected.seek, (bridge.playbackPosition(attachment, 1.seconds) as TimeshiftPlaybackPosition.Estimate).seek)
+        }
+        subscription.seekAction = { SubscriptionSeekResult.Rejected }
+        assertNull((bridge.seekContent(target) as TimeshiftContentSeekResult.Completed).seek)
+        attachment.accept(SubscriptionEvent.Skipped(true, SkipOutcome.REJECTED, null, null))
+        assertSame(second.seek, (bridge.playbackPosition(attachment, 1.seconds) as TimeshiftPlaybackPosition.Estimate).seek)
+        subscription.seekAction = { SubscriptionSeekResult.NotSeekable }
+        bridge.seekContent(target)
+        assertEquals(0, attachment.pendingSeeks.size)
+    }
+
+    @Test
     fun `estimate snapshots follow status not packets or reader pause and reject replacement`() {
         var state: LiveTimeshiftState = LiveTimeshiftState.Unavailable
         val bridge = LiveTimeshiftControlBridge(PlaybackTargetToken()) { state = it }
