@@ -5,6 +5,11 @@ existing `SubscriptionEvent.Queue` to `LiveQueueDiagnostics`. `null` is unknown
 or absent, not zero. Present values retain the full unsigned-u32 range
 0..4294967295, including values above signed `Int.MAX_VALUE`.
 
+HTSP 0.10.0 supplies this range guarantee through strict `optionalU32`
+decoding. Producer P36-H1 verified absent, zero, high-bit, maximum and malformed
+wire values. SDK regressions verify lossless projection of that typed contract,
+not wire decoding; the SDK does not reinterpret or clamp the decoded count.
+
 The value is the server's cumulative data-error count, not queue depth, a
 B/P/I frame-drop count, or `clientDroppedPacketCount`. A later absent queue
 observation replaces the prior error count with unknown. Restart and terminal
