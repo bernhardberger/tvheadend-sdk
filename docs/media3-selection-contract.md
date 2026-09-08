@@ -27,9 +27,10 @@ release, cancellation propagation, and segment/restart fences remain unchanged.
   reflection or a new test framework.
 - `LiveStreamRestartInstrumentationTest`: both playing and paused cases pass on
   the identity-verified offline LXC119 Android TV emulator. The real ExoPlayer
-  retains an explicit first-period override across an equal fresh restart group,
-  falls back for changed AC-3 groups, and reuses the override on a new-channel
-  MPEG-audio retune. Track selection, READY state, play/pause intent, position,
+  carries a stored first-period override across an equal fresh restart group,
+  changed AC-3 groups, and a new-channel MPEG-audio retune without a Player error.
+  The single-group cases prove this selector path accepts the stored override,
+  not a preference between competing audio groups. Track selection, READY state, play/pause intent, position,
   and subscribe/unsubscribe counts are asserted.
 - Restoring only the old identity lookup makes the paused real-Player case fail
   with `Restart must not produce a Player error` (one test, one failure). The

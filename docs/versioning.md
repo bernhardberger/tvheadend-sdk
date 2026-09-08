@@ -34,6 +34,9 @@ version. Patch versions are reserved for backward-compatible fixes. The
 configured `0.10.1` patch repairs Media3 selection of equal track groups without
 changing public declarations, dependencies, native bytes, or segment semantics.
 It rejects invalid selection indices rather than silently selecting track zero.
+That new validation affects only malformed selections: each advertised group has
+one track, so a valid Media3 selector can select only index zero. Valid consumer
+behavior remains compatible with 0.10.0.
 The preceding `0.10.0` minor release added segment-aware subscription seek
 admission and a new seek outcome affecting exhaustive consumers.
 

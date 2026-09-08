@@ -3,7 +3,7 @@
 ## [0.10.1]
 
 Live Media3 periods accept equal, non-identical track groups carried by retained
-Media3 overrides across restart or retune. Selection still requires an available
+Media3 overrides across restart or retune. Selection validates an available
 group containing the selected single track at index zero. Retained sample streams
 must belong to the selected current queue; switching tracks or periods resets the
 stream instead of reusing another queue. Public APIs, HTSP 0.9.0, Media3 1.11.0,
@@ -11,8 +11,8 @@ native binaries, cancellation, and segment/seek contracts are unchanged.
 
 Owning JVM regressions cover current/equal-fresh/unavailable groups, invalid
 indices, retention, switching, deselection, and interruption. Offline real
-ExoPlayer tests retain an explicit override across unchanged and changed restart
-tracks and a new-channel retune, in playing and paused states. These establish
+ExoPlayer tests carry a stored override across unchanged and changed restart
+tracks and a new-channel retune without a Player error, in playing and paused states. These establish
 the SDK selector path, not the Player application's route or physical audio.
 See [selection contract and evidence](docs/media3-selection-contract.md).
 
