@@ -92,7 +92,7 @@ internal class Media3SampleQueueInstrumentationTest {
         val error = AtomicBoolean()
         val videoCounters = AtomicReference<DecoderCounters>()
         val codecStarts = AtomicInteger()
-        val renderedTimes = java.util.concurrent.CopyOnWriteArrayList<Long>()
+        val renderedFrames = java.util.concurrent.CopyOnWriteArrayList<Pair<Long, Int>>()
         val expectedSpeeds = mutableListOf<Int>()
         val textureThread = android.os.HandlerThread("finite-preview-surface").apply { start() }
         val textureHandler = android.os.Handler(textureThread.looper)
@@ -131,7 +131,9 @@ internal class Media3SampleQueueInstrumentationTest {
                 initialized = true
                 player.volume = 0f
                 player.setVideoSurface(surface)
-                player.setVideoFrameMetadataListener { presentationTimeUs, _, _, _ -> renderedTimes.add(presentationTimeUs) }
+                player.setVideoFrameMetadataListener { presentationTimeUs, _, _, _ ->
+                    renderedFrames.add(presentationTimeUs to surfaceFrames.get())
+                }
                 player.playWhenReady = finitePaused || !paused
                 player.addAnalyticsListener(object : AnalyticsListener {
                     override fun onVideoEnabled(eventTime: AnalyticsListener.EventTime, counters: DecoderCounters) {
@@ -200,7 +202,7 @@ internal class Media3SampleQueueInstrumentationTest {
                     awaitCondition("Finite paused renderer frame", { frames.get() > beforeFrames })
                     awaitCondition("Finite paused surface frame", { surfaceFrames.get() > beforeSurfaceFrames })
                     awaitCondition("Maintained codec recreation", { codecStarts.get() > beforeCodecStarts })
-                    val previewTime = renderedTimes.last()
+                    val previewTime = renderedFrames.last().first
                     lateinit var snapshot: PlaybackPlayerSnapshot
                     instrumentation.runOnMainSync {
                         snapshot = ExoPlayerCoordinatorPlaybackAccess(player, PlaybackRecoveryPolicy()) {}.snapshot()
@@ -213,11 +215,11 @@ internal class Media3SampleQueueInstrumentationTest {
                     delay(300)
                     assertEquals("Paused clock", settled, position())
                     assertEquals("No automatic resume", expectedSpeeds, connection.speeds)
+                    val continuationStart = renderedFrames.size
                     controls.setSpeed(100)
                     expectedSpeeds += 100
                     connection.emit(registration, SubscriptionEvent.Speed(100))
                     instrumentation.runOnMainSync { player.play() }
-                    val beforeContinuationFrames = surfaceFrames.get()
                     videos.drop(1).forEach { connection.emit(registration, it.toEvent(assets)); delay(10) }
                     delay(300)
                     instrumentation.runOnMainSync { assertTrue("Audio still absent", !player.isPlaying) }
@@ -228,7 +230,9 @@ internal class Media3SampleQueueInstrumentationTest {
                         advancing
                     })
                     awaitCondition("Dependent continuation reaches surface", {
-                        surfaceFrames.get() > beforeContinuationFrames && renderedTimes.any { it > previewTime + 80_000 }
+                        renderedFrames.drop(continuationStart).any { (timeUs, surfacesAtCallback) ->
+                            timeUs > previewTime + 80_000 && surfaceFrames.get() > surfacesAtCallback
+                        }
                     })
                     instrumentation.runOnMainSync { player.pause() }
                     controls.setSpeed(0)

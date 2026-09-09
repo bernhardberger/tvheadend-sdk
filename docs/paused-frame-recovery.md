@@ -75,7 +75,10 @@ injected as evidence of a frame.
 
 An explicit test resume supplies dependent video individually while audio is
 delayed; the player does not advance until audio arrives. Later video timestamps
-and new surface images accompany the resumed clock. A second paused seek repeats
+and new surface images accompany the resumed clock. The continuation assertion
+uses only metadata callbacks after that resume boundary and requires a fresh
+surface image after a qualifying later-timestamp callback; prior playback and
+the replayed IDR cannot satisfy its timestamp predicate. A second paused seek repeats
 the finite path. Source replacement retires the old collector and mapping before
 the replacement produces its own frame; release retires that collector too. The
 fake rejects delivery to retired collectors, so this is collector cancellation
@@ -114,6 +117,14 @@ or skips. Built and installed APK SHA-256:
 This APK predates the version-only 0.12.1 preparation. The old evidence branch's
 13-test count, including direct codec-EOS diagnostics, is not attributed to this
 tree; that diagnostic was not copied or rerun.
+
+Independent review identified that the initial continuation assertion could reuse
+an earlier timestamp. After restricting it to fresh continuation callbacks and
+subsequent surface delivery, the focused finite test passed again (1 test, no
+skips, 5.843 s), as did `:sdk-media3:check :sdk-media3:assembleDebugAndroidTest`.
+Corrected built/installed APK SHA-256:
+`197ae39c5b6bbc51784068413d34826b27a74bcbbdb33fc6f910feabfe3f3941`.
+The unchanged other nine methods retain their preceding successful evidence.
 
 Source analysis `ses_f7a11c3cfffesYM4g5JVExWt2B` used primary-supplied pinned
 excerpts after its external read was denied. Public-API research
