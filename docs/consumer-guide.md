@@ -467,10 +467,14 @@ the device clock to imply SDK-supported precision. Kotlin `Duration` supplies
 the maintained unit representation; no new time codec or clock conversion is
 introduced.
 
-`seekTimeshift(offset)` seeks by a signed relative duration. `returnToLive()`
+`seekTimeshiftBy(offset)` captures a client playback-position anchor, resolves a
+clamped selection and returns `TimeshiftContentSeekResult`. For a key-driven
+preview, use the latest timeline's `resolveSelection(anchor, previous, delta)`
+and commit with `seekTimeshift(selection)`. See the README for moving-edge and
+stage-outcome semantics. `returnToLive()`
 requests the bounded near-live position, not a separate exact-live mode.
 `pauseTimeshift()` and `resumeTimeshift()` control server delivery only; normal
-Media3 play and pause remain application-owned. These relative/speed commands return
+Media3 play and pause remain application-owned. Return-to-live and speed commands return
 `TimeshiftCommandResult`, which distinguishes acceptance or rejection,
 unavailable or pending state, acknowledgement and queue failures, subscription
 end, safe server-operation failures, unsupported behavior, and coordinator

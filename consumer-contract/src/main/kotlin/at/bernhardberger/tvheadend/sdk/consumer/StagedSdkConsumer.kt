@@ -324,8 +324,18 @@ public class StagedSdkConsumer(
 
     public fun currentLiveQueueSpan(): Duration? = liveDiagnostics.value?.queue?.mediaSpan
 
-    public suspend fun seekTimeshift(offset: Duration): TimeshiftCommandResult =
-        coordinator.seekTimeshift(offset)
+    public suspend fun seekTimeshiftBy(offset: Duration): TimeshiftContentSeekResult =
+        coordinator.seekTimeshiftBy(offset)
+
+    public fun resolveTimeshiftSelection(
+        anchor: TimeshiftContentTarget,
+        previous: at.bernhardberger.tvheadend.sdk.media3.TimeshiftSeekSelection?,
+        delta: Duration,
+    ): at.bernhardberger.tvheadend.sdk.media3.TimeshiftSeekSelection? =
+        (timeshiftState.value as? LiveTimeshiftState.Available)?.timeline?.resolveSelection(anchor, previous, delta)
+
+    public suspend fun seekTimeshift(selection: at.bernhardberger.tvheadend.sdk.media3.TimeshiftSeekSelection): TimeshiftContentSeekResult =
+        coordinator.seekTimeshift(selection)
 
     public fun selectTimeshiftContent(position: Duration): TimeshiftContentTarget? =
         (timeshiftState.value as? LiveTimeshiftState.Available)?.timeline?.select(position)
