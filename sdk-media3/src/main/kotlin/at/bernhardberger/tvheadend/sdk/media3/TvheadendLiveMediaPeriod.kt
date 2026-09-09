@@ -145,7 +145,8 @@ internal class TvheadendLiveMediaPeriod(
                 output.preview = null
                 output.queue.seekTo(positionUs, true)
                 streams[index] = QueueSampleStream(output, lock, { cleanEndOfStream }, ::currentError,
-                    { interrupted || released || seekDiscontinuityPending })
+                    { interrupted || released || seekDiscontinuityPending },
+                    { timeUs -> timeshiftControls?.frameRendered(timeUs) })
                 streamResetFlags[index] = true
             }
         }
@@ -266,8 +267,10 @@ internal class TvheadendLiveMediaPeriod(
                 }
                 if (event is SubscriptionEvent.Skipped && event.outcome == SkipOutcome.ACCEPTED) {
                     outputs.forEach { it.preview = null; it.queue.reset() }
+                    updateBufferingCapacity()
                     finitePausedInputPending =
-                        (timeshiftControls?.availableState() as? LiveTimeshiftState.Available)?.serverPaused == true
+                        timeshiftControls?.bufferingSeek != true &&
+                            (timeshiftControls?.availableState() as? LiveTimeshiftState.Available)?.serverPaused == true
                     finitePausedVideoReady = false
                     clearPreOriginEvents()
                     seekDiscontinuityPending = true
@@ -311,23 +314,23 @@ internal class TvheadendLiveMediaPeriod(
 
     /** Called under the period lock, including during pre-origin replay. */
     private fun consumePacket(packet: SubscriptionEvent.Packet) {
+        updateBufferingCapacity()
         val adapter = adapterFor(packet.streamIndex) ?: return
-        check(allocator.totalBytesAllocated < MAX_ALLOCATED_BYTES) { "Media3 sample buffer limit reached" }
-        check(adapter.output.queue.writeIndex - adapter.output.queue.readIndex < MAX_BUFFERED_SAMPLES) {
-            "Media3 sample buffer limit reached"
-        }
         if (finitePausedInputPending && adapter.output.enabled &&
             adapter.output.format?.sampleMimeType == MimeTypes.VIDEO_H264 && packet.frameType == MuxFrameType.I
         ) {
-            finitePausedInputPending = false
             val index = adapter.output.queue.writeIndex
-            if (adapter.adapter.acceptFiniteIdr(packet) && adapter.output.queue.writeIndex == index + 1) {
-                adapter.output.preview = FinitePreview(index)
+            val finiteIdr = adapter.adapter.acceptFiniteIdr(packet)
+            val endIndex = adapter.output.queue.writeIndex
+            if (finiteIdr && endIndex > index) {
+                finitePausedInputPending = false
+                adapter.output.preview = FinitePreview(index, endIndex)
                 finitePausedVideoReady = true
             }
         } else {
             adapter.adapter.accept(packet)
         }
+        updateBufferingCapacity()
     }
 
     private fun retainPreOriginEvent(event: SubscriptionEvent) {
@@ -400,6 +403,12 @@ internal class TvheadendLiveMediaPeriod(
         timeshiftControls?.detach()
         scope.cancel()
         onRelease(this)
+    }
+
+    private fun updateBufferingCapacity() {
+        timeshiftControls?.bufferingCapacityAvailable = allocator.totalBytesAllocated < MAX_ALLOCATED_BYTES / 2 &&
+            outputs.all { it.queue.writeIndex - it.queue.readIndex < MAX_BUFFERED_SAMPLES / 2 }
+        timeshiftControls?.bufferingCapacitySeek = timeshiftControls?.currentSeek()
     }
 
     private fun maybeFinishPreparation() {
@@ -478,16 +487,17 @@ internal class TvheadendLiveMediaPeriod(
     )
 
     private companion object {
-        const val MAX_BUFFERED_SAMPLES = 4_096
         const val MAX_PRE_ORIGIN_EVENTS = 256
         const val MAX_PRE_ORIGIN_BYTES = 4L * 1024L * 1024L
         const val MAX_PACKET_BYTES = 1024 * 1024
-        const val MAX_ALLOCATED_BYTES = 64 * 1024 * 1024
     }
 }
 
+private const val MAX_ALLOCATED_BYTES = 64 * 1024 * 1024
+private const val MAX_BUFFERED_SAMPLES = 4_096
+
 private class QueueExtractorOutput(
-    allocator: Allocator,
+    private val allocator: Allocator,
 ) : ExtractorOutput {
     internal val queue: SampleQueue = SampleQueue.createWithoutDrm(allocator)
     internal var preview: FinitePreview? = null
@@ -499,6 +509,38 @@ private class QueueExtractorOutput(
     internal var trackType: Int = C.TRACK_TYPE_UNKNOWN
         private set
     private var formatFrozen = false
+    private val boundedOutput = object : TrackOutput by queue {
+        private fun checkBytes(length: Int) {
+            val block = allocator.individualAllocationLength.toLong()
+            val reservation = (length.toLong() + block - 1) / block * block
+            check(allocator.totalBytesAllocated.toLong() + reservation <= MAX_ALLOCATED_BYTES) {
+                "Media3 sample buffer limit reached"
+            }
+        }
+
+        override fun sampleData(data: androidx.media3.common.util.ParsableByteArray, length: Int) =
+            sampleData(data, length, TrackOutput.SAMPLE_DATA_PART_MAIN)
+
+        override fun sampleData(data: androidx.media3.common.util.ParsableByteArray, length: Int, sampleDataPart: Int) {
+            checkBytes(length)
+            queue.sampleData(data, length, sampleDataPart)
+        }
+
+        override fun sampleData(input: androidx.media3.common.DataReader, length: Int, allowEndOfInput: Boolean): Int =
+            sampleData(input, length, allowEndOfInput, TrackOutput.SAMPLE_DATA_PART_MAIN)
+
+        override fun sampleData(input: androidx.media3.common.DataReader, length: Int, allowEndOfInput: Boolean, sampleDataPart: Int): Int {
+            checkBytes(length)
+            return queue.sampleData(input, length, allowEndOfInput, sampleDataPart)
+        }
+
+        override fun sampleMetadata(timeUs: Long, flags: Int, size: Int, offset: Int, cryptoData: TrackOutput.CryptoData?) {
+            check(queue.writeIndex - queue.readIndex < MAX_BUFFERED_SAMPLES) {
+                "Media3 sample buffer limit reached"
+            }
+            queue.sampleMetadata(timeUs, flags, size, offset, cryptoData)
+        }
+    }
 
     init {
         queue.setUpstreamFormatChangeListener { newFormat ->
@@ -515,13 +557,13 @@ private class QueueExtractorOutput(
 
     override fun track(id: Int, type: Int): TrackOutput {
         trackType = type
-        return queue
+        return boundedOutput
     }
     override fun endTracks(): Unit = Unit
     override fun seekMap(seekMap: SeekMap): Unit = Unit
 }
 
-private class FinitePreview(val index: Int) {
+private class FinitePreview(val index: Int, val endIndex: Int) {
     var queued = false
 }
 
@@ -531,6 +573,7 @@ private class QueueSampleStream(
     private val loadingFinished: () -> Boolean,
     private val sourceError: () -> IOException?,
     private val invalidated: () -> Boolean,
+    private val onFrameRendered: (Long) -> Unit,
 ) : SampleStream, FinitePreviewSampleStream {
     val queue: SampleQueue get() = output.queue
     private var readPreview: FinitePreview? = null
@@ -542,6 +585,10 @@ private class QueueSampleStream(
     override fun inputQueued(): Unit = synchronized(lock) {
         readPreview?.takeIf { it === output.preview }?.queued = true
         readPreview = null
+    }
+
+    override fun frameRendered(presentationTimeUs: Long): Unit = synchronized(lock) {
+        if (output.trackType == C.TRACK_TYPE_VIDEO && outputAllowed()) onFrameRendered(presentationTimeUs)
     }
 
     override fun drainAndRewind(): Boolean = synchronized(lock) {
@@ -562,7 +609,7 @@ private class QueueSampleStream(
                 val index = queue.readIndex
                 queue.read(holder, buffer, readFlags, loadingFinished()).also { result ->
                     if (result == C.RESULT_BUFFER_READ && queue.readIndex > index) {
-                        readPreview = output.preview?.takeIf { it.index == index }
+                        readPreview = output.preview?.takeIf { it.endIndex == queue.readIndex }
                     }
                 }
             }

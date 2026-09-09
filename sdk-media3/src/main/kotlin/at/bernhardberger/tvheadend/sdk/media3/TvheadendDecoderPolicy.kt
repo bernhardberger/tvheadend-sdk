@@ -17,7 +17,7 @@ import androidx.media3.exoplayer.video.VideoRendererEventListener
 /**
  * Creates renderers that prefer platform codecs and use the bundled FFmpeg audio decoder only
  * when no platform renderer supports the format.
- * Includes finite paused H.264 IDR draining for the SDK live sample streams.
+ * Includes finite paused H.264 sample draining for the SDK live sample streams.
  */
 @androidx.media3.common.util.UnstableApi
 public fun createTvheadendRenderersFactory(context: Context): RenderersFactory =
@@ -51,6 +51,14 @@ public fun createTvheadendRenderersFactory(context: Context): RenderersFactory =
                     // The next feed invocation follows successful submission of onQueueInputBuffer's sample.
                     (stream as? FinitePreviewSampleStream)?.drainAndRewind() == true || super.shouldReinitCodec()
 
+                override fun renderOutputBufferV21(
+                    codec: MediaCodecAdapter, index: Int, presentationTimeUs: Long, releaseTimeNs: Long,
+                ) {
+                    super.renderOutputBufferV21(codec, index, presentationTimeUs, releaseTimeNs)
+                    // Use the released frame's period coordinate, not a possibly stale Player position.
+                    (stream as? FinitePreviewSampleStream)?.frameRendered(presentationTimeUs)
+                }
+
                 override fun processOutputBuffer(
                     positionUs: Long, elapsedRealtimeUs: Long, codec: MediaCodecAdapter?, buffer: java.nio.ByteBuffer?,
                     bufferIndex: Int, bufferFlags: Int, sampleCount: Int, bufferPresentationTimeUs: Long,
@@ -72,4 +80,5 @@ internal interface FinitePreviewSampleStream {
     fun outputAllowed(): Boolean
     fun inputQueued()
     fun drainAndRewind(): Boolean
+    fun frameRendered(presentationTimeUs: Long)
 }

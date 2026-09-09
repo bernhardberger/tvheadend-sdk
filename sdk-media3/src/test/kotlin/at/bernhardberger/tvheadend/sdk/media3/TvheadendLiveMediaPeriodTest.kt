@@ -65,6 +65,91 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 
 internal class TvheadendLiveMediaPeriodTest {
+    @Test
+    fun `paused buffering reserves sample-count headroom before the hard cap`() = runTest {
+        val bridge = LiveTimeshiftControlBridge(PlaybackTargetToken()) {}
+        val attachment = bridge.newAttachment()
+        val harness = PeriodHarness(this, attachment)
+        try {
+            harness.start(SubscriptionStreamType.MPEG2_AUDIO)
+            repeat(2_050) { harness.audio() }
+            assertFalse(attachment.bufferingCapacityAvailable)
+            harness.period.maybeThrowPrepareError()
+        } finally {
+            harness.close()
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["idr", "multiple"])
+    fun `paused finite video releases discontinuity without audio and drains only after last sample`(shape: String) = runTest {
+        val bridge = LiveTimeshiftControlBridge(PlaybackTargetToken()) {}
+        val harness = PeriodHarness(this, bridge.newAttachment())
+        try {
+            harness.start(SubscriptionStreamType.MPEG2_AUDIO, SubscriptionStreamType.H264)
+            harness.audio()
+            val idr = checkNotNull(javaClass.getResourceAsStream("/synthetic-idr.h264")).use { it.readBytes() }
+            harness.packet(1, PeriodCountingBinary(idr + idr))
+            harness.looper.runAll()
+            val streams = arrayOfNulls<SampleStream>(2)
+            harness.period.selectTracks(
+                Array(2) { FixedTrackSelection(harness.period.trackGroups[it], 0) },
+                BooleanArray(2), streams, BooleanArray(2), 0,
+            )
+            val video = requireNotNull(streams[1])
+            val preview = video as FinitePreviewSampleStream
+            harness.connection.emit(SubscriptionEvent.Timeshift(0, 0, 0, 120_000_000, 0))
+            runCurrent()
+            harness.seek(0.seconds)
+            // A candidate with no sample must not spend the opportunity for the following input.
+            harness.packet(1, PeriodCountingBinary(byteArrayOf()))
+            assertEquals(C.TIME_UNSET, harness.period.readDiscontinuity())
+            val frame = when (shape) {
+                "multiple" -> idr + idr
+                else -> idr
+            }
+            harness.packet(1, PeriodCountingBinary(frame))
+            assertTrue(harness.period.readDiscontinuity() != C.TIME_UNSET)
+            val holder = FormatHolder()
+            val buffer = DecoderInputBuffer(DecoderInputBuffer.BUFFER_REPLACEMENT_MODE_NORMAL)
+            assertEquals(C.RESULT_FORMAT_READ, video.readData(holder, buffer, 0))
+            val original = mutableListOf<Triple<ByteArray, Long, Boolean>>()
+            val peek = DecoderInputBuffer(DecoderInputBuffer.BUFFER_REPLACEMENT_MODE_NORMAL)
+            assertFalse(preview.drainAndRewind())
+            while (true) {
+                buffer.clear()
+                val result = video.readData(holder, buffer, 0)
+                assertEquals(C.RESULT_BUFFER_READ, result)
+                assertFalse(buffer.isEndOfStream)
+                buffer.flip()
+                original += Triple(ByteArray(checkNotNull(buffer.data).remaining()).also {
+                    checkNotNull(buffer.data).get(it)
+                }, buffer.timeUs, buffer.isKeyFrame)
+                assertTrue(original.size <= 8)
+                assertFalse(preview.drainAndRewind())
+                preview.inputQueued()
+                peek.clear()
+                val more = video.readData(holder, peek, SampleStream.FLAG_PEEK) == C.RESULT_BUFFER_READ
+                assertEquals(!more, preview.drainAndRewind())
+                if (!more) break
+            }
+            assertTrue(original.size >= if (shape == "multiple") 2 else 1)
+            assertFalse(preview.drainAndRewind())
+            original.forEach { (bytes, time, keyframe) ->
+                buffer.clear()
+                assertEquals(C.RESULT_BUFFER_READ, video.readData(holder, buffer, 0))
+                buffer.flip()
+                assertArrayEquals(bytes, ByteArray(checkNotNull(buffer.data).remaining()).also {
+                    checkNotNull(buffer.data).get(it)
+                })
+                assertEquals(time, buffer.timeUs)
+                assertEquals(keyframe, buffer.isKeyFrame)
+            }
+        } finally {
+            harness.close()
+        }
+    }
+
     @ParameterizedTest
     @ValueSource(strings = ["replay", "second-seek", "interrupt", "release", "deselect"])
     fun `finite IDR retains exact sample once and fences stale queue callbacks`(boundary: String) = runTest {

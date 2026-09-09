@@ -5,6 +5,13 @@ package at.bernhardberger.tvheadend.sdk.core
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTracks
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.StateFlow
@@ -57,22 +64,60 @@ public class SessionGenerationTestAuthority(
 /** Validated factories for otherwise opaque playback bindings used by session fakes. */
 @TvheadendTestingApi
 public object TvheadendTestResultFactory {
-    /** Creates a live binding tied to [currentSession] while [session] retains that proof. */
+    /** Creates an authority-only binding whose subscription opens return NotReady. */
     @JvmStatic
     public fun boundLivePlayback(
         session: TvheadendSession,
         currentSession: CurrentSessionObservation,
         channelId: ChannelId,
+    ): PlaybackBindingResult<PlaybackBinding.Live> = boundLivePlayback(
+        session, currentSession, channelId, SubscriptionOpener { _, _, _ -> SubscriptionOpenResult.NotReady },
+    )
+
+    /**
+     * Creates a live binding tied to [currentSession] while [session] retains that proof.
+     * [opener] supplies real offline media; the test owns its manager and teardown.
+     */
+    @JvmStatic
+    public fun boundLivePlayback(
+        session: TvheadendSession,
+        currentSession: CurrentSessionObservation,
+        channelId: ChannelId,
+        opener: SubscriptionOpener,
     ): PlaybackBindingResult<PlaybackBinding.Live> {
         val initial = currentObservation(session, currentSession)
             ?: return PlaybackBindingResult.ObservationExpired
         if (initial.channel(channelId) == null) return PlaybackBindingResult.TargetUnavailable
+        fun current(): Boolean = currentObservation(session, currentSession)?.channel(channelId) != null
         return PlaybackBindingResult.Bound(
             PlaybackBinding.Live(
-                current = {
-                    currentObservation(session, currentSession)?.channel(channelId) != null
+                current = ::current,
+                openTarget = open@ { consumer, options ->
+                    currentCoroutineContext().ensureActive()
+                    if (!current()) return@open SubscriptionOpenResult.NotReady
+                    val result = opener.open(SubscriptionChannelId(channelId.value), object : SubscriptionEventConsumer {
+                        override suspend fun accept(event: SubscriptionEvent) {
+                            if (current()) consumer.accept(event)
+                        }
+                        override fun tracksReady(tracks: SubscriptionTracks) {
+                            if (current()) consumer.tracksReady(tracks)
+                        }
+                    }, options)
+                    var transferred = false
+                    try {
+                        currentCoroutineContext().ensureActive()
+                        if (current()) {
+                            transferred = true
+                            result
+                        } else {
+                            SubscriptionOpenResult.NotReady
+                        }
+                    } finally {
+                        if (!transferred && result is SubscriptionOpenResult.Opened) {
+                            withContext(NonCancellable) { result.subscription.close() }
+                        }
+                    }
                 },
-                openTarget = { _, _ -> cancellationAware { SubscriptionOpenResult.NotReady } },
             ),
         )
     }

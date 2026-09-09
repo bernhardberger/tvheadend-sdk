@@ -45,6 +45,8 @@ import kotlinx.coroutines.channels.ClosedSendChannelException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.delay
+import androidx.media3.common.Player
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -471,15 +473,21 @@ public class TvheadendPlaybackCoordinator internal constructor(
         return submit(command, reply) { state -> state.targetUnavailableResult() }
     }
 
-    /** Rewinds or advances the current live timeshift target by signed [offset]. */
-    public suspend fun seekTimeshift(offset: Duration): TimeshiftCommandResult {
-        val reply = CompletableDeferred<TimeshiftCommandResult>()
-        val command = CoordinatorCommand.TimeshiftSeek(
-            target = SubscriptionSeekTarget.Relative(offset),
-            ticket = PlayerOperationTicket(),
-            reply = reply,
-        )
-        return submit(command, reply) { state -> state.timeshiftUnavailableResult() }
+    /** Convenience seek with one client-position anchor and SDK-owned clamping. */
+    public suspend fun seekTimeshiftBy(offset: Duration): TimeshiftContentSeekResult {
+        val sample = timeshiftPlaybackPosition() as? TimeshiftPlaybackPosition.Estimate
+            ?: return TimeshiftContentSeekResult.Unavailable
+        val selection = sample.timeline?.resolveSelection(sample.target, delta = offset)
+            ?: return TimeshiftContentSeekResult.Unavailable
+        return seekTimeshift(selection)
+    }
+
+    /** Commit a preview, refreshing its bounds and preserving latest-edge intent. */
+    public suspend fun seekTimeshift(selection: TimeshiftSeekSelection): TimeshiftContentSeekResult {
+        val reply = CompletableDeferred<TimeshiftContentSeekResult>()
+        return submit(CoordinatorCommand.ContentSeek(selection.target, PlayerOperationTicket(), reply, selection), reply) {
+            TimeshiftContentSeekResult.Unavailable
+        }
     }
 
     /** Seeks the originally selected content, rejecting expired or replaced subscription targets. */
@@ -828,8 +836,21 @@ private class CoordinatorActor(
         }
         is CoordinatorCommand.TimeshiftSeek -> {
             processTimeshiftCommand(command) { controls ->
-                controls.seek(command.target)?.toPublicTimeshiftResult()
-                    ?: TimeshiftCommandResult.UNAVAILABLE
+                val attachment = controls.mappingAttachment()
+                val seek = attachment?.let(::TimeshiftSeekToken)
+                attachment?.bufferingSeek =
+                    (attachment?.availableState() as? LiveTimeshiftState.Available)?.playbackPaused == true
+                try {
+                    val result = controls.seek(command.target, seek)?.toPublicTimeshiftResult()
+                        ?: TimeshiftCommandResult.UNAVAILABLE
+                    val target = activeTarget as? ActorTarget.Live
+                    if (result.isAccepted && seek != null && target != null) {
+                        bufferPausedSeek(target, TimeshiftContentSeekResult.Completed(result, null, seek), command.ticket).command
+                    }
+                    else result
+                } finally {
+                    attachment?.bufferingSeek = false
+                }
             }
             false
         }
@@ -844,9 +865,20 @@ private class CoordinatorActor(
             if (command.ticket.claim()) {
                 try {
                     val target = activeTarget as? ActorTarget.Live
-                    command.reply.complete(
-                        target?.timeshiftControls?.seekContent(command.target) ?: TimeshiftContentSeekResult.Replaced,
-                    )
+                    val attachment = target?.timeshiftControls?.mappingAttachment()
+                    attachment?.bufferingSeek =
+                        (attachment?.availableState() as? LiveTimeshiftState.Available)?.playbackPaused == true
+                    try {
+                        val result = target?.timeshiftControls?.seekContent(command.target, command.selection)
+                            ?: TimeshiftContentSeekResult.Replaced
+                        command.reply.complete(if (target != null && result is TimeshiftContentSeekResult.Completed &&
+                            result.command.isAccepted && result.seek != null
+                        ) {
+                            bufferPausedSeek(target, result, command.ticket)
+                        } else result)
+                    } finally {
+                        attachment?.bufferingSeek = false
+                    }
                     command.ticket.complete()
                 } catch (cancellation: CancellationException) {
                     command.ticket.complete()
@@ -935,6 +967,64 @@ private class CoordinatorActor(
             rejectRemainingCommands()
             true
         }
+    }
+
+    private suspend fun bufferPausedSeek(
+        target: ActorTarget.Live,
+        accepted: TimeshiftContentSeekResult.Completed,
+        ticket: PlayerOperationTicket,
+    ): TimeshiftContentSeekResult.Completed {
+        val seek = checkNotNull(accepted.seek)
+        val controls = target.timeshiftControls
+        val attachment = controls.mappingAttachment() ?: return TimeshiftContentSeekResult.Completed(
+            TimeshiftCommandResult.UNAVAILABLE, accepted.readerReached, seek, accepted.command,
+            selection = accepted.selection,
+        )
+        if ((attachment.availableState() as? LiveTimeshiftState.Available)?.playbackPaused != true) {
+            return accepted
+        }
+        // Presentation stays paused while normal transport delivery replenishes both A/V queues.
+        var result = TimeshiftCommandResult.TIMEOUT
+        var stopped = TimeshiftCommandResult.UNAVAILABLE
+        try {
+            val started = controls.setBufferingSpeed(attachment, NORMAL_SPEED)?.toPublicTimeshiftResult()
+                ?: TimeshiftCommandResult.UNAVAILABLE
+            result = if (!started.isAccepted) started else withTimeoutOrNull(5_000) {
+                while (target.token.isActive()) {
+                    if (ticket.isCancellationRequested()) return@withTimeoutOrNull TimeshiftCommandResult.UNAVAILABLE
+                    if (controls.mappingAttachment() !== attachment) return@withTimeoutOrNull TimeshiftCommandResult.UNAVAILABLE
+                    if (attachment.bufferingCapacitySeek === seek && !attachment.bufferingCapacityAvailable) {
+                        return@withTimeoutOrNull TimeshiftCommandResult.UNAVAILABLE
+                    }
+                    val snapshot = player.snapshot(target.token) ?: return@withTimeoutOrNull TimeshiftCommandResult.UNAVAILABLE
+                    if (snapshot.failed || snapshot.periodUid != attachment.periodUid) {
+                        return@withTimeoutOrNull TimeshiftCommandResult.UNAVAILABLE
+                    }
+                    val position = controls.playbackPosition(attachment, snapshot.position, snapshot.positionResolutionUs)
+                    if (snapshot.playbackState == Player.STATE_READY &&
+                        (position as? TimeshiftPlaybackPosition.Estimate)?.seek === seek &&
+                        (!snapshot.videoSelected || attachment.hasRenderedSeek(seek))
+                    ) return@withTimeoutOrNull TimeshiftCommandResult.ACCEPTED
+                    delay(20)
+                }
+                TimeshiftCommandResult.UNAVAILABLE
+            } ?: TimeshiftCommandResult.TIMEOUT
+        } finally {
+            stopped = withContext(NonCancellable) {
+                val outcome = controls.setBufferingSpeed(attachment, PAUSED_SPEED)?.toPublicTimeshiftResult()
+                    ?: TimeshiftCommandResult.UNAVAILABLE
+                if (!outcome.isAccepted && activeTarget === target && controls.closeIfCurrent(attachment)) {
+                    // A failed pause must not leave unsolicited input filling a paused player's queues.
+                    val retirement = player.stop(PlayerOperationTicket())
+                    applyRetirement(retirement.retiredTarget, retirement.retiredRecording)
+                }
+                outcome
+            }
+        }
+        return TimeshiftContentSeekResult.Completed(
+            if (stopped.isAccepted) result else stopped,
+            accepted.readerReached, seek, accepted.command, result, stopped, accepted.selection,
+        )
     }
 
     private suspend fun processTimeshiftCommand(
@@ -1215,6 +1305,7 @@ private sealed class CoordinatorCommand(
         val target: TimeshiftContentTarget,
         override val ticket: PlayerOperationTicket,
         val reply: CompletableDeferred<TimeshiftContentSeekResult>,
+        val selection: TimeshiftSeekSelection? = null,
     ) : CoordinatorCommand(ticket)
 
     data class ContentPosition(

@@ -77,7 +77,8 @@ internal class SubscriptionElementaryStreamAdapter(
         reader.consume(ParsableByteArray(bytes))
         reader.packetFinished()
         if (!finiteInput) return false
-        // HTSP I is not necessarily random access. Inspect NAL types with Media3, not a slice parser.
+        // The first picture must start at an IDR. Later dependent pictures are valid input
+        // for that decoder state and may share the same finite packet (including field pairs).
         var offset = 0
         var idr = false
         val prefixFlags = BooleanArray(3)
@@ -85,7 +86,10 @@ internal class SubscriptionElementaryStreamAdapter(
             val start = NalUnitUtil.findNalUnit(bytes, offset, bytes.size, prefixFlags)
             if (start + 3 >= bytes.size) break
             when (NalUnitUtil.getNalUnitType(bytes, start)) {
-                NalUnitUtil.H264_NAL_UNIT_TYPE_IDR -> idr = true
+                NalUnitUtil.H264_NAL_UNIT_TYPE_IDR -> {
+                    idr = true
+                    break
+                }
                 NalUnitUtil.H264_NAL_UNIT_TYPE_NON_IDR -> return false
             }
             offset = start + 4

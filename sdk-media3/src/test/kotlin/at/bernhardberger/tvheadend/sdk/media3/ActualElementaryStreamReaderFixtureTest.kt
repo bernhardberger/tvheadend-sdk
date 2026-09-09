@@ -224,15 +224,48 @@ class ActualElementaryStreamReaderFixtureTest {
                     "000001674d401e9662816849b044a0a0a0be000007d0000186a1c90000cfb60007ca14d6b019a0884516",
                     "00000168ff7c80",
                 ),
-                sampleCount = 49,
+                sampleCount = 16,
                 firstSamples = listOf(
-                    CapturedSampleMetadata(1_117_733L, 0, 66, 36_120, null),
-                    CapturedSampleMetadata(1_117_733L, C.BUFFER_FLAG_KEY_FRAME, 29_419, 6_701, null),
-                    CapturedSampleMetadata(1_237_733L, 0, 5, 6_696, null),
+                    CapturedSampleMetadata(1_117_733L, C.BUFFER_FLAG_KEY_FRAME, 29_535, 6_701, null),
+                    CapturedSampleMetadata(1_237_733L, 0, 6_701, 628, null),
+                    CapturedSampleMetadata(1_157_733L, 0, 628, 622, null),
                 ),
             ),
             readRecordedVideo(16, 1, SubscriptionStreamType.H264),
         )
+    }
+
+    @Test
+    fun `H264 recovery prefixes stay with their picture across fragmented input AUD and EOF`() {
+        val idr = javaClass.getResourceAsStream("/synthetic-idr.h264")!!.use { it.readBytes() }
+        val nonIdr = javaClass.getResourceAsStream("/synthetic-nonidr.h264")!!.use { it.readBytes() }
+        val aud = byteArrayOf(0, 0, 0, 1, 9, 0xf0.toByte())
+        for (delimiter in listOf(byteArrayOf(), aud)) {
+            val expected = listOf(delimiter + idr, delimiter + nonIdr, delimiter + nonIdr)
+            val input = expected.fold(byteArrayOf()) { all, part -> all + part }
+            for (reset in listOf(false, true)) for (chunkSize in listOf(1, 2, 3, 7, input.size)) {
+                val output = CapturingExtractorOutput()
+                val reader = (createElementaryStreamReader(stream(SubscriptionStreamType.H264)) as ReaderResult.Supported).reader
+                reader.createTracks(output, androidx.media3.extractor.ts.TsPayloadReader.TrackIdGenerator(7, 1))
+                if (reset) {
+                    reader.packetStarted(900, androidx.media3.extractor.ts.TsPayloadReader.FLAG_RANDOM_ACCESS_INDICATOR)
+                    reader.consume(ParsableByteArray(idr + aud))
+                    reader.seek()
+                    output.trackOutput.bytes.clear()
+                    output.trackOutput.metadata.clear()
+                    output.trackOutput.samples.clear()
+                }
+                reader.packetStarted(1_000, androidx.media3.extractor.ts.TsPayloadReader.FLAG_RANDOM_ACCESS_INDICATOR)
+                input.asList().chunked(chunkSize).forEach { reader.consume(ParsableByteArray(it.toByteArray())) }
+                reader.endOfInputReached()
+                reader.endOfInputReached()
+                assertEquals(expected.size, output.trackOutput.samples.size, "chunk=$chunkSize AUD=${delimiter.isNotEmpty()}")
+                expected.zip(output.trackOutput.samples).forEach { (want, actual) ->
+                    assertArrayEquals(want, actual, "chunk=$chunkSize AUD=${delimiter.isNotEmpty()}")
+                }
+                assertTrue(output.trackOutput.metadata.all { it.timeUs == 1_000L })
+            }
+        }
     }
 
     @Test
@@ -464,6 +497,7 @@ private class CapturingTrackOutput : TrackOutput {
     var format: Format? = null
     val bytes = mutableListOf<Byte>()
     val metadata = mutableListOf<CapturedSampleMetadata>()
+    val samples = mutableListOf<ByteArray>()
 
     override fun format(format: Format) {
         this.format = format
@@ -495,6 +529,7 @@ private class CapturingTrackOutput : TrackOutput {
         cryptoData: TrackOutput.CryptoData?,
     ) {
         metadata += CapturedSampleMetadata(timeUs, flags, size, offset, cryptoData)
+        samples += bytes.subList(bytes.size - offset - size, bytes.size - offset).toByteArray()
     }
 }
 

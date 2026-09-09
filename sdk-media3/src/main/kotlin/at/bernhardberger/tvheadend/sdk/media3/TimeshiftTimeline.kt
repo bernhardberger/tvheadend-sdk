@@ -41,6 +41,13 @@ public class TimeshiftTimeline internal constructor(
         position.takeIf { it.isFinite() && it in start..end }
             ?.let { TimeshiftContentTarget(owner, it) }
 
+    /** Resolve a key step against this fresh history snapshot; ZERO refreshes moving boundaries. */
+    public fun resolveSelection(
+        anchor: TimeshiftContentTarget,
+        previous: TimeshiftSeekSelection? = null,
+        delta: Duration = Duration.ZERO,
+    ): TimeshiftSeekSelection? = resolveTimeshiftSelection(this, anchor, previous, delta)
+
     override fun equals(other: Any?): Boolean = other is TimeshiftTimeline &&
         owner === other.owner && start == other.start && end == other.end && wallClockMapping == other.wallClockMapping
 
@@ -106,7 +113,7 @@ public sealed interface TimeshiftContentSeekResult {
     /** The owning segment restarted, or its subscription was replaced, detached or retired. */
     public data object Replaced : TimeshiftContentSeekResult
 
-    /** Latest observed history no longer contains the target. The SDK does not clamp or retarget it. */
+    /** Latest history no longer contains an exact target. Selection commits instead clamp within their segment. */
     public data object Expired : TimeshiftContentSeekResult
 
     /** Current history cannot validate the target. */
@@ -122,6 +129,14 @@ public sealed interface TimeshiftContentSeekResult {
         public val readerReached: TimeshiftContentTarget?,
         /** Non-null only for acceptance. Match against [TimeshiftPlaybackPosition.Estimate.seek]. */
         public val seek: TimeshiftSeekToken? = null,
+        /** Seek acknowledgement, retained even if subsequent buffering or transport pause fails. */
+        public val seekCommand: TimeshiftCommandResult = command,
+        /** Correlated readiness outcome; null when paused buffering was not needed. */
+        public val buffering: TimeshiftCommandResult? = null,
+        /** Final transport-pause outcome, independently retained from readiness. */
+        public val pauseRestoration: TimeshiftCommandResult? = null,
+        /** Selection resolved against commit-time history, distinct from the server acknowledgement. */
+        public val selection: TimeshiftSeekSelection? = null,
     ) : TimeshiftContentSeekResult
 }
 

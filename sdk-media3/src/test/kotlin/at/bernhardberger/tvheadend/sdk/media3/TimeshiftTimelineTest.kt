@@ -137,8 +137,9 @@ class TimeshiftTimelineTest {
         attachment.bind(FakeTimeshiftSubscription(120.seconds))
         val now = kotlin.time.Instant.fromEpochSeconds(1_000)
         attachment.accept(SubscriptionEvent.Timeshift(0, 0, 0, 100, 100, now))
+        val originalMapping = attachment.timeline()!!.wallClockMapping
         attachment.accept(SubscriptionEvent.Timeshift(0, 0, 0, 100, 100, now + 10.seconds))
-        assertSame(TimeshiftWallClockMapping.Unavailable, attachment.timeline()!!.wallClockMapping)
+        assertSame(originalMapping, attachment.timeline()!!.wallClockMapping)
         attachment.accept(SubscriptionEvent.Timeshift(0, 0, 0, 110, 100))
         assertSame(TimeshiftWallClockMapping.Unavailable, attachment.timeline()!!.wallClockMapping)
         attachment.accept(SubscriptionEvent.Timeshift(0, 0, 0, 90, 100, now))

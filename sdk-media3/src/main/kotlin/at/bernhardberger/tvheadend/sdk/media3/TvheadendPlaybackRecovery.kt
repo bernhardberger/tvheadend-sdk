@@ -67,6 +67,7 @@ public class TvheadendPlaybackRecovery internal constructor(
                 .build()
         },
         onRecoveryRequired = onRecoveryRequired,
+        playWhenReady = player.playWhenReady,
     )
     private val listener = object : Player.Listener {
         override fun onPlaybackStateChanged(playbackState: Int) {
@@ -75,6 +76,10 @@ public class TvheadendPlaybackRecovery internal constructor(
 
         override fun onTracksChanged(tracks: Tracks) {
             stateMachine.onTracksChanged()
+        }
+
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            stateMachine.onPlayWhenReadyChanged(playWhenReady)
         }
     }
     private var closed = false
@@ -137,6 +142,7 @@ internal class PlaybackRecoveryStateMachine(
     private val hasSelectedAudio: () -> Boolean,
     private val setAudioDisabled: (Boolean) -> Unit,
     private val onRecoveryRequired: (PlaybackRecoveryReason) -> Unit,
+    private var playWhenReady: Boolean = true,
 ) {
     private var targetGeneration = 0L
     private var timerGeneration = 0L
@@ -179,6 +185,13 @@ internal class PlaybackRecoveryStateMachine(
         evaluateBuffering()
     }
 
+    fun onPlayWhenReadyChanged(value: Boolean) {
+        playWhenReady = value
+        if (!active || terminal) return
+        if (!value) cancelTimer()
+        else if (playbackState == Player.STATE_BUFFERING) evaluateBuffering()
+    }
+
     fun close() {
         active = false
         terminal = true
@@ -194,6 +207,12 @@ internal class PlaybackRecoveryStateMachine(
     }
 
     private fun evaluateBuffering() {
+        // A paused HTSP seek may deliver video without the audio needed to leave BUFFERING.
+        // Waiting for explicit resume is not a stalled playing target.
+        if (!playWhenReady) {
+            cancelTimer()
+            return
+        }
         observeSelectedAudio()
         when {
             audioDisabled -> schedule(TimerStage.POST_AUDIO_DISABLE)
@@ -219,6 +238,7 @@ internal class PlaybackRecoveryStateMachine(
             if (
                 active &&
                 !terminal &&
+                playWhenReady &&
                 targetGeneration == expectedTarget &&
                 timerGeneration == expectedTimer &&
                 playbackState == Player.STATE_BUFFERING

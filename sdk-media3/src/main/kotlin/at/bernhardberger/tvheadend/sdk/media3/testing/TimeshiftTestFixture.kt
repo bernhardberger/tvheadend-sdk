@@ -92,13 +92,19 @@ public class TimeshiftTestFixture(public val grantedPeriod: Duration) {
     public fun completed(
         command: TimeshiftCommandResult = TimeshiftCommandResult.ACCEPTED,
         readerReached: Duration? = null,
+        selection: at.bernhardberger.tvheadend.sdk.media3.TimeshiftSeekSelection? = null,
+        seekCommand: TimeshiftCommandResult = command,
+        buffering: TimeshiftCommandResult? = null,
+        pauseRestoration: TimeshiftCommandResult? = null,
     ): TimeshiftContentSeekResult.Completed = synchronized(lock) {
         require(readerReached == null || (readerReached.isFinite() && readerReached >= Duration.ZERO))
-        require(readerReached == null || command === TimeshiftCommandResult.ACCEPTED)
+        require(readerReached == null || seekCommand === TimeshiftCommandResult.ACCEPTED)
+        require(selection == null || selection.target.owner === owner)
         TimeshiftContentSeekResult.Completed(
             command,
             readerReached?.let { TimeshiftContentTarget(owner, it) },
-            if (command === TimeshiftCommandResult.ACCEPTED) TimeshiftSeekToken(owner) else null,
+            if (seekCommand === TimeshiftCommandResult.ACCEPTED) TimeshiftSeekToken(owner) else null,
+            seekCommand, buffering, pauseRestoration, selection,
         )
     }
 

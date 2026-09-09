@@ -143,6 +143,7 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeTvheadendSession 
 	public final fun scriptConnect (Lat/bernhardberger/tvheadend/sdk/core/SessionCommandResult;)V
 	public final fun scriptLivePlaybackFailure (Lat/bernhardberger/tvheadend/sdk/core/PlaybackBindingResult;)V
 	public final fun scriptLivePlaybackSuccess ()V
+	public final fun scriptLivePlaybackSuccess (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOpener;)V
 	public final fun scriptRecordingPlaybackFailure (Lat/bernhardberger/tvheadend/sdk/core/PlaybackBindingResult;)V
 	public final fun scriptRecordingPlaybackSuccess ()V
 	public final fun scriptRetry (Lat/bernhardberger/tvheadend/sdk/core/SessionCommandResult;)V

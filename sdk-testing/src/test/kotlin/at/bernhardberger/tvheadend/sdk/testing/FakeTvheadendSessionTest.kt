@@ -62,10 +62,79 @@ import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStream
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTracks
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionCondition
+import at.bernhardberger.tvheadend.sdk.playback.StreamIndex
+import at.bernhardberger.tvheadend.sdk.playback.createSubscriptionManager
+import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
 internal class FakeTvheadendSessionTest {
+    @Test
+    fun `media opener transfers ownership or closes on replacement and cancellation`() = runTest {
+        for (boundary in listOf("transfer", "replace", "cancel")) {
+            val fake = FakeTvheadendSession(currentObservation())
+            val connection = ScriptedSubscriptionConnection()
+            val manager = createSubscriptionManager(connection, StandardTestDispatcher(testScheduler)).apply { startAdmission() }
+            val delivered = mutableListOf<SubscriptionEvent>()
+            val tracks = mutableListOf<SubscriptionTracks>()
+            lateinit var callback: SubscriptionEventConsumer
+            fake.scriptLivePlaybackSuccess(SubscriptionOpener { id, consumer, period ->
+                assertEquals(1L, id.value)
+                assertEquals(120.seconds, period)
+                callback = consumer
+                manager.open(id, consumer, period).also {
+                    if (boundary == "replace") fake.replaceGeneration(currentObservation())
+                    if (boundary == "cancel") currentCoroutineContext().cancel()
+                }
+            })
+            val binding = (fake.bindLivePlayback(fake.captureCurrentSession(), ChannelId(1)) as PlaybackBindingResult.Bound).binding
+            val opened = async { binding.open(object : SubscriptionEventConsumer {
+                override suspend fun accept(event: SubscriptionEvent) { delivered += event }
+                override fun tracksReady(value: SubscriptionTracks) { tracks += value }
+            }, SubscriptionOptions(timeshiftPeriod = 120.seconds)) }
+            val registration = connection.awaitCollectionRegistered()
+            connection.emit(registration, SubscriptionEvent.Started(listOf(SubscriptionStream(
+                StreamIndex(1), SubscriptionStreamType.H264, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null,
+            )), null, SubscriptionCondition.NO_DETAIL))
+            try {
+                if (boundary == "cancel") {
+                    var cancelled = false
+                    try { opened.await() } catch (_: CancellationException) { cancelled = true }
+                    assertTrue(cancelled)
+                } else if (boundary == "replace") {
+                    assertSame(SubscriptionOpenResult.NotReady, opened.await())
+                } else {
+                    val active = (opened.await() as SubscriptionOpenResult.Opened).subscription
+                    assertEquals(0, connection.unsubscribeCount)
+                    val before = delivered.size
+                    callback.accept(SubscriptionEvent.Speed(0))
+                    assertEquals(before + 1, delivered.size)
+                    fake.retire()
+                    callback.accept(SubscriptionEvent.Speed(100))
+                    assertEquals(before + 1, delivered.size)
+                    assertEquals(1, tracks.size)
+                    callback.tracksReady(tracks.single())
+                    assertEquals(1, tracks.size)
+                    assertSame(SubscriptionOpenResult.NotReady, binding.open(SubscriptionEventConsumer {}, SubscriptionOptions()))
+                    active.close()
+                }
+                assertEquals(1, connection.unsubscribeCount)
+            } finally {
+                manager.closeAndJoin()
+            }
+        }
+    }
+
     @Test
     fun `scripts successful session repository and binding results and records calls`() = runTest {
         val supplied = currentObservation()

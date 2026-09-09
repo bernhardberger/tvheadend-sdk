@@ -23,8 +23,22 @@ import org.junit.jupiter.api.Test
 
 class SubscriptionElementaryStreamAdapterTest {
     @Test
+    fun `finite packet can contain dependent pictures after its IDR but not before it`() {
+        val idr = byteArrayOf(0, 0, 0, 1, 0x65, 0x10)
+        val dependent = byteArrayOf(0, 0, 1, 0x61, 0x10)
+        for ((bytes, accepted) in listOf((idr + dependent) to true, (dependent + idr) to false)) {
+            val reader = RecordingReader()
+            val adapter = SubscriptionElementaryStreamAdapter(reader, EmptyExtractorOutput, 0)
+            assertEquals(accepted, adapter.acceptFiniteIdr(packet(CountingBinary(bytes), MuxFrameType.I, 0)))
+            assertEquals(accepted, "flush" in reader.calls)
+            assertEquals(0, reader.seekCount)
+        }
+    }
+
+    @Test
     fun `finite flush requires actual IDR NAL and never resets continuation reader`() {
-        for (bytes in listOf(byteArrayOf(), byteArrayOf(0, 0, 1), byteArrayOf(0, 0, 1, 0x61, 0x10))) {
+        val nonIdr = checkNotNull(javaClass.getResourceAsStream("/synthetic-nonidr.h264")).use { it.readBytes() }
+        for (bytes in listOf(byteArrayOf(), byteArrayOf(0, 0, 1), byteArrayOf(0, 0, 1, 0x61, 0x10), nonIdr)) {
             val reader = RecordingReader()
             val adapter = SubscriptionElementaryStreamAdapter(reader, EmptyExtractorOutput, 0)
             assertFalse(adapter.acceptFiniteIdr(packet(CountingBinary(bytes), MuxFrameType.I, 0)))

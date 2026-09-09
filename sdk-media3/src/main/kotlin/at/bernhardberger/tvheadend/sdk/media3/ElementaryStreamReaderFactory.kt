@@ -11,7 +11,7 @@ import androidx.media3.extractor.ts.AdtsReader
 import androidx.media3.extractor.ts.DvbSubtitleReader
 import androidx.media3.extractor.ts.ElementaryStreamReader
 import androidx.media3.extractor.ts.H262Reader
-import androidx.media3.extractor.ts.H264Reader
+import androidx.media3.extractor.ts.PrefixPreservingH264Reader
 import androidx.media3.extractor.ts.H265Reader
 import androidx.media3.extractor.ts.MpegAudioReader
 import androidx.media3.extractor.ts.SeiReader
@@ -30,7 +30,7 @@ internal fun createElementaryStreamReader(stream: SubscriptionStream): ReaderRes
             H262Reader(MimeTypes.VIDEO_MP2T),
         )
         SubscriptionStreamType.H264 -> ReaderResult.Supported(
-            H264Reader(emptySeiReader(), false, true, MimeTypes.VIDEO_MP2T),
+            PrefixPreservingH264Reader(emptySeiReader(), false, true, MimeTypes.VIDEO_MP2T),
         )
         SubscriptionStreamType.H265 -> ReaderResult.Supported(
             H265Reader(emptySeiReader(), MimeTypes.VIDEO_MP2T),

@@ -655,6 +655,7 @@ internal class ExoPlayerCoordinatorPlaybackAccess(
             failed = player.playerError != null,
             periodUid = before?.takeIf { it == currentPeriodUid() },
             positionResolutionUs = 1_000L,
+            videoSelected = player.currentTracks.groups.any { it.type == C.TRACK_TYPE_VIDEO && it.isSelected },
         )
     }
 

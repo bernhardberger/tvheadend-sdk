@@ -1,6 +1,7 @@
 @file:OptIn(
     at.bernhardberger.tvheadend.sdk.core.TvheadendTestingApi::class,
     at.bernhardberger.tvheadend.sdk.testing.FakePlaybackApi::class,
+    at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class,
 )
 
 package at.bernhardberger.tvheadend.sdk.testing
@@ -150,10 +151,15 @@ public class FakeTvheadendSession(
             streamProfilesScript = StreamProfilesScript.Available(profiles.toImmutableList())
         }
     }
-    /** Scripts a generation-bound live binding. */
+    /** Scripts a generation-bound authority-only live binding. */
     @FakePlaybackApi
     public fun scriptLivePlaybackSuccess() {
-        synchronized(lock) { liveBindingScript = PlaybackBindingScript.Live }
+        synchronized(lock) { liveBindingScript = PlaybackBindingScript.Live(null) }
+    }
+    /** Scripts a generation-bound live binding using a test-owned media opener. */
+    @FakePlaybackApi
+    public fun scriptLivePlaybackSuccess(opener: at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener) {
+        synchronized(lock) { liveBindingScript = PlaybackBindingScript.Live(opener) }
     }
     /** Scripts a generation-bound completed-recording binding. */
     @FakePlaybackApi
@@ -198,8 +204,11 @@ public class FakeTvheadendSession(
         record(FakeSessionCall.BIND_LIVE_PLAYBACK)
         if (!isCurrent(currentSession)) return PlaybackBindingResult.ObservationExpired
         return when (val script = synchronized(lock) { liveBindingScript }) {
-            PlaybackBindingScript.Live ->
+            is PlaybackBindingScript.Live -> if (script.opener == null) {
                 TvheadendTestResultFactory.boundLivePlayback(this, currentSession, channelId)
+            } else {
+                TvheadendTestResultFactory.boundLivePlayback(this, currentSession, channelId, script.opener)
+            }
             is PlaybackBindingScript.Failure -> script.result
             is PlaybackBindingScript.CompletedRecording,
             -> error("Invalid live playback script")
@@ -219,7 +228,7 @@ public class FakeTvheadendSession(
                     recordingId,
                 )
             is PlaybackBindingScript.Failure -> script.result
-            PlaybackBindingScript.Live -> error("Invalid recording playback script")
+            is PlaybackBindingScript.Live -> error("Invalid recording playback script")
         }
     }
     override suspend fun connect(profile: ServerProfile): SessionCommandResult = command(
@@ -515,7 +524,7 @@ private sealed interface EpgSearchScript {
 }
 
 private sealed interface PlaybackBindingScript {
-    data object Live : PlaybackBindingScript
+    class Live(val opener: at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener?) : PlaybackBindingScript
     data object CompletedRecording : PlaybackBindingScript
     class Failure(val result: PlaybackBindingResult<Nothing>) : PlaybackBindingScript
 }

@@ -12,6 +12,41 @@ import org.junit.jupiter.api.Test
 
 class PlaybackRecoveryStateMachineTest {
     @Test
+    fun `paused seek never disables audio or requests retune and resume restores recovery`() {
+        val harness = RecoveryHarness()
+        harness.begin()
+        harness.playback(Player.STATE_READY)
+        harness.machine.onPlayWhenReadyChanged(false)
+        harness.playback(Player.STATE_BUFFERING)
+        harness.machine.onTracksChanged()
+
+        assertTrue(harness.scheduler.activeDelays().isEmpty())
+        harness.scheduler.runAllIncludingCancelled()
+        assertFalse(harness.audioDisabled)
+        assertTrue(harness.reasons.isEmpty())
+
+        harness.machine.onPlayWhenReadyChanged(true)
+        assertEquals(listOf(6_000L), harness.scheduler.activeDelays())
+        harness.scheduler.runNextActive()
+        harness.scheduler.runNextActive()
+        assertEquals(listOf(PlaybackRecoveryReason.AUDIO_RECOVERY_EXHAUSTED), harness.reasons)
+    }
+
+    @Test
+    fun `pause cancels an already armed buffering timeout including stale callbacks`() {
+        val harness = RecoveryHarness()
+        harness.begin()
+        harness.playback(Player.STATE_BUFFERING)
+        val stale = harness.scheduler.lastScheduled()
+        harness.machine.onPlayWhenReadyChanged(false)
+        stale.runEvenIfCancelled()
+        harness.machine.onTracksChanged()
+        assertTrue(harness.scheduler.activeDelays().isEmpty())
+        assertFalse(harness.audioDisabled)
+        assertTrue(harness.reasons.isEmpty())
+    }
+
+    @Test
     fun `policy defaults to two six second recovery stages`() {
         val policy = PlaybackRecoveryPolicy()
 

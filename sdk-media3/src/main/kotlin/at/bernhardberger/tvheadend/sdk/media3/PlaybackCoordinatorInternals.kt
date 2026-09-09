@@ -119,9 +119,11 @@ private fun RecordingPlaybackAdmission.toCoordinatorAdmission(): CoordinatorReco
 
 internal class PlayerOperationTicket {
     private val state = AtomicReference(OperationState.QUEUED)
+    private val cancellationRequested = AtomicBoolean()
     private val cancellationAction = AtomicReference<(() -> Unit)?>(null)
 
     fun cancel(): Boolean {
+        cancellationRequested.set(true)
         if (!state.compareAndSet(OperationState.QUEUED, OperationState.CANCELLED)) return false
         cancellationAction.get()?.invoke()
         return true
@@ -137,6 +139,9 @@ internal class PlayerOperationTicket {
         state.compareAndSet(OperationState.QUEUED, OperationState.COMPLETED)
 
     fun isCancelled(): Boolean = state.get() == OperationState.CANCELLED
+
+    /** Claimed wire commands still settle; optional post-command buffering may stop early. */
+    fun isCancellationRequested(): Boolean = cancellationRequested.get()
 
     fun onCancellation(action: () -> Unit) {
         val once = AtomicBoolean()
@@ -256,6 +261,7 @@ internal data class PlaybackPlayerSnapshot(
     val failed: Boolean,
     val periodUid: Any? = null,
     val positionResolutionUs: Long = 1L,
+    val videoSelected: Boolean = false,
 )
 
 internal data class PlaybackPlayerEvent(

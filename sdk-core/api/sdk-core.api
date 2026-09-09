@@ -2430,6 +2430,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/TvheadendTestResultFacto
 	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/TvheadendTestResultFactory;
 	public static final fun boundCompletedRecordingPlayback-Vwn9FyE (Lat/bernhardberger/tvheadend/sdk/core/TvheadendSession;Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;J)Lat/bernhardberger/tvheadend/sdk/core/PlaybackBindingResult;
 	public static final fun boundLivePlayback-Qb8jNZ8 (Lat/bernhardberger/tvheadend/sdk/core/TvheadendSession;Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;J)Lat/bernhardberger/tvheadend/sdk/core/PlaybackBindingResult;
+	public static final fun boundLivePlayback-RIni1Gk (Lat/bernhardberger/tvheadend/sdk/core/TvheadendSession;Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;JLat/bernhardberger/tvheadend/sdk/playback/SubscriptionOpener;)Lat/bernhardberger/tvheadend/sdk/core/PlaybackBindingResult;
 }
 
 public abstract interface annotation class at/bernhardberger/tvheadend/sdk/core/TvheadendTestingApi : java/lang/annotation/Annotation {

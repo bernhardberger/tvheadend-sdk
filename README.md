@@ -18,7 +18,7 @@ The SDK is split into five libraries:
 | `sdk-android` | Android | Discovery, connectivity, atomic server-profile storage, and authenticated artwork |
 | `sdk-testing` | Kotlin/JVM | Aggregate observation fakes, scripted events, and packet fixtures |
 
-The source is configured for release `0.12.1`. The normal build never publishes.
+The source is configured for release `0.13.0`. The normal build never publishes.
 `./gradlew clean build check stageLocalPublication` verifies the repository and
 stages all five modules under `build/local-maven`; the Maven Central badge, not
 local source or staging, reports the latest publicly available version.
@@ -263,7 +263,7 @@ val shutdownResult = coordinator.withLifetime(2.seconds) { coordinator ->
             ),
         )
     }
-    handleTimeshiftCommandResult(coordinator.seekTimeshift((-30).seconds))
+    handleTimeshiftContentSeekResult(coordinator.seekTimeshiftBy((-30).seconds))
     handleTimeshiftCommandResult(coordinator.returnToLive()) // bounded near-live position
     handleTimeshiftCommandResult(coordinator.pauseTimeshift()) // pauses server delivery only
     handleTimeshiftCommandResult(coordinator.resumeTimeshift())
@@ -302,6 +302,35 @@ target's positive server grant and ordered server observations. Buffered
 duration, position behind live, and server pause state remain `null` until valid
 status events arrive. Timeshift pause and resume send server speeds `0` and
 `100`; ordinary Media3 play/pause remains application-owned.
+
+For immediate relative seeking, `seekTimeshiftBy(offset)` samples the client's
+playback position, clamps within observed history and commits a selection. It
+does not send a relative offset from the server reader, which may be ahead of
+the displayed content.
+
+For a preview gesture, retain the first playback sample's target as the anchor
+and pass each key's delta to `latestTimeline.resolveSelection(anchor, previous,
+delta)`. Use the latest observed timeline on every update, not the first
+snapshot. The returned immutable `TimeshiftSeekSelection` exposes its resolved
+`target`, total effective `displacement` and `boundary` (`START`, `NONE`, or
+`LATEST`). A zero delta refreshes the preview without adding a key step. Null
+means the supplied segment or range cannot resolve the selection.
+
+Boundary overshoot is discarded. A latest-edge selection follows observed edge
+advancement; a reverse key immediately steps back from that fresh edge.
+Interior targets remain fixed until history eviction requires clamping. Commit
+with `coordinator.seekTimeshift(selection)`: it revalidates against current
+history, rejects segment replacement, and routes `LATEST` through the live
+operation. `Completed.selection` describes the commit-time resolution;
+`readerReached`, `seekCommand`, `buffering` and `pauseRestoration` separately
+describe server acknowledgement and the subsequent buffering work. None is
+proof of a displayed frame. The exact-target overload remains available and
+returns `Expired` rather than silently clamping a fixed target.
+
+During paused seeks, transport may temporarily run to obtain sufficient audio
+and video data, while `playbackPaused` retains requested presentation intent.
+Consumers must not mirror the temporary `serverPaused` transport observation
+into `Player.playWhenReady`. The SDK does not start presentation playback.
 
 Live stream stop/start and repeated-start events replace the Media3 period and
 track groups on the same subscription and application-owned Player. Retained

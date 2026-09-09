@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.13.0]
+
+Add SDK-owned timeshift selections with clamped displacement feedback, moving
+edge tracking, immediate direction reversal and same-segment commit validation.
+The client-position-relative `seekTimeshiftBy` replaces the old server-reader
+relative overload. Exact-target seeking and return-to-live remain available.
+Consumers must recompile and use `playbackPaused` for presentation intent;
+`serverPaused` describes transport delivery, which can temporarily run during
+a paused seek.
+
+Paused seeks obtain bounded normal-stream input while presentation stays paused,
+wait for correlated readiness and video-buffer release, and restore transport
+pause. Outcomes retain seek acknowledgement, buffering and pause-restoration
+results separately. Failed pause restoration retires the owned target. Recovery
+timers no longer treat deliberate pause as a playing-stream stall.
+
+Preserve H.264 access-unit recovery prefixes with a version-pinned adaptation of
+Media3's reader, retaining its slice parser and Apache attribution. Preserve
+wall-clock mapping across repeated observations of the same buffer edge. Add a
+public media-producing fake binding for offline consumer integration tests.
+
+JVM and real ExoPlayer regressions cover repeated playing and paused seeks,
+reference continuation, cancellation, replacement and boundary selection.
+Consumer physical checks confirmed paused-picture updates on tested SD and HD
+streams. These checks are not universal stream or device guarantees. HTSP 0.10.0,
+Media3 1.11.0 and native decoder binaries remain unchanged.
+
 ## [0.12.1]
 
 The SDK renderer factory uses Media3's maintained nonterminal decoder lifecycle
