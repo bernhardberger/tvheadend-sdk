@@ -5,6 +5,7 @@ package at.bernhardberger.tvheadend.sdk.media3
 
 import androidx.media3.common.C
 import androidx.media3.common.util.ParsableByteArray
+import androidx.media3.container.NalUnitUtil
 import androidx.media3.extractor.ExtractorOutput
 import androidx.media3.extractor.ts.ElementaryStreamReader
 import androidx.media3.extractor.ts.TsPayloadReader
@@ -52,12 +53,17 @@ internal class SubscriptionElementaryStreamAdapter(
         reader.endOfInputReached()
     }
 
+    fun acceptFiniteIdr(packet: SubscriptionEvent.Packet): Boolean {
+        check(!ended)
+        return consume(packet, finiteInput = true)
+    }
+
     private fun resetForDiscontinuity() {
         reader.seek()
         onDiscontinuity?.invoke()
     }
 
-    private fun consume(packet: SubscriptionEvent.Packet) {
+    private fun consume(packet: SubscriptionEvent.Packet, finiteInput: Boolean = false): Boolean {
         val bytes = payloadAllocator(packet.payload.size)
         check(bytes.size == packet.payload.size) { "Subscription payload allocation size was invalid" }
         check(packet.payload.copyInto(bytes) == bytes.size) { "Subscription payload copy was incomplete" }
@@ -70,5 +76,21 @@ internal class SubscriptionElementaryStreamAdapter(
         reader.packetStarted(packet.presentationTimeUs ?: C.TIME_UNSET, flags)
         reader.consume(ParsableByteArray(bytes))
         reader.packetFinished()
+        if (!finiteInput) return false
+        // HTSP I is not necessarily random access. Inspect NAL types with Media3, not a slice parser.
+        var offset = 0
+        var idr = false
+        val prefixFlags = BooleanArray(3)
+        while (offset < bytes.size) {
+            val start = NalUnitUtil.findNalUnit(bytes, offset, bytes.size, prefixFlags)
+            if (start + 3 >= bytes.size) break
+            when (NalUnitUtil.getNalUnitType(bytes, start)) {
+                NalUnitUtil.H264_NAL_UNIT_TYPE_IDR -> idr = true
+                NalUnitUtil.H264_NAL_UNIT_TYPE_NON_IDR -> return false
+            }
+            offset = start + 4
+        }
+        if (idr) reader.endOfInputReached()
+        return idr
     }
 }

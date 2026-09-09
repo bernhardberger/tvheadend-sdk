@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.12.1]
+
+The SDK renderer factory uses Media3's maintained nonterminal decoder lifecycle
+to drain a finite paused post-seek H.264 IDR sample. The period retains and
+replays the actual sample once for fresh-decoder reference continuation. Audio
+readiness is unchanged; no Player or server resume is requested by the repair.
+Non-IDR input stays on the existing path. Real millisecond Player snapshots now
+map within their observed timestamp bucket, without inventing a landing target.
+
+Offline evidence covers a captured full-frame IDR, surface delivery, resumed
+dependent video, delayed audio, second seek, replacement and release on the
+standard emulator. It is not G10/server acceptance or universal H.264 field-picture
+support. Public signatures, HTSP 0.10.0, Media3 1.11.0 and native payloads are
+unchanged. See [implementation and evidence](docs/paused-frame-recovery.md).
+
 ## [0.12.0]
 
 Accepted content seeks now discard old Media3 queues and deliver a playback

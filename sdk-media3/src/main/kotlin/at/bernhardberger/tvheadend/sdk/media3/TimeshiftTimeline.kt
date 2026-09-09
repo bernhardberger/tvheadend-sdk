@@ -168,12 +168,18 @@ internal class TimeshiftPacketMapping {
         newSegment = false
     }
 
-    fun map(output: Long): Long? {
-        val matches = segments.filter { output in it.start..it.end }
+    fun map(output: Long, positionResolutionUs: Long = 1L): Long? {
+        if (output < 0L || positionResolutionUs !in 1L..1_000L) return null
+        // A truncated Player clock represents a bucket, not a point below the first sample.
+        // Intersect only observed packet ranges; never extend their upper bounds or bridge ambiguity.
+        val matches = segments.filter {
+            output <= it.end && (output >= it.start || it.start - output < positionResolutionUs)
+        }
         val offset = matches.firstOrNull()?.offset ?: return null
         if (matches.any { it.offset != offset }) return null
+        val observed = maxOf(output, matches.minOf { it.start })
         return try {
-            Math.addExact(output, offset).takeIf { it >= 0L }
+            Math.addExact(observed, offset).takeIf { it >= 0L }
         } catch (_: ArithmeticException) {
             null
         }

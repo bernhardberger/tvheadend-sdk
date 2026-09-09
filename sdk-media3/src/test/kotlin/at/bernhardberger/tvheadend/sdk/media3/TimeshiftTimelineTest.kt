@@ -15,6 +15,26 @@ import kotlin.time.Duration.Companion.seconds
 
 class TimeshiftTimelineTest {
     @Test
+    fun `truncated clock intersects only observed unambiguous packet bounds`() {
+        val mapping = TimeshiftPacketMapping()
+        mapping.accept(10_000_633, 20_000_633)
+        mapping.accept(10_100_633, 20_100_633)
+        assertNull(mapping.map(10_000_000))
+        assertEquals(20_000_633, mapping.map(10_000_000, 1_000))
+        assertNull(mapping.map(9_999_000, 1_000))
+        assertNull(mapping.map(10_101_000, 1_000))
+        assertEquals(20_001_000, mapping.map(10_001_000, 1_000))
+        mapping.discontinuity()
+        mapping.accept(10_000_999, 30_000_999)
+        assertNull(mapping.map(10_000_000, 1_000))
+        mapping.clear()
+        assertNull(mapping.map(10_000_000, 1_000))
+        mapping.accept(Long.MAX_VALUE, Long.MAX_VALUE)
+        assertEquals(Long.MAX_VALUE, mapping.map(Long.MAX_VALUE - 100, 1_000))
+        assertNull(mapping.map(-1, 1_000))
+    }
+
+    @Test
     fun `ordered delayed skip delivery correlates each accepted command without reader times`() = runTest {
         val bridge = LiveTimeshiftControlBridge(PlaybackTargetToken()) {}
         val attachment = bridge.newAttachment()

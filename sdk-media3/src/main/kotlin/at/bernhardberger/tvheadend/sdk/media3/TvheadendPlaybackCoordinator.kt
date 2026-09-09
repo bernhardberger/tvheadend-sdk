@@ -865,7 +865,7 @@ private class CoordinatorActor(
                     if (target != null && attachment != null && snapshot != null && !snapshot.failed &&
                         attachment.periodUid != null && snapshot.periodUid == attachment.periodUid
                     ) {
-                        target.timeshiftControls.playbackPosition(attachment, snapshot.position)
+                        target.timeshiftControls.playbackPosition(attachment, snapshot.position, snapshot.positionResolutionUs)
                     } else {
                         TimeshiftPlaybackPosition.Unavailable
                     },

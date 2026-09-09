@@ -654,6 +654,7 @@ internal class ExoPlayerCoordinatorPlaybackAccess(
             playbackState = player.playbackState,
             failed = player.playerError != null,
             periodUid = before?.takeIf { it == currentPeriodUid() },
+            positionResolutionUs = 1_000L,
         )
     }
 

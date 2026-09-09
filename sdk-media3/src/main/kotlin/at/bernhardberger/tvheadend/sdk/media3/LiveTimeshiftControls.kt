@@ -421,14 +421,14 @@ internal class LiveTimeshiftControlBridge(
         currentHandle()?.attachment?.takeIf { attachedPeriodCount == 1 }
     }
 
-    internal fun playbackPosition(attachment: Attachment, position: Duration): TimeshiftPlaybackPosition =
+    internal fun playbackPosition(attachment: Attachment, position: Duration, positionResolutionUs: Long = 1L): TimeshiftPlaybackPosition =
         synchronized(lock) {
             if (mappingAttachment() !== attachment || !position.isFinite() || position.isNegative() ||
                 attachment.pendingPlaybackDiscontinuity
             ) {
                 return@synchronized TimeshiftPlaybackPosition.Unavailable
             }
-            attachment.packetMapping.map(position.inWholeMicroseconds)?.let {
+            attachment.packetMapping.map(position.inWholeMicroseconds, positionResolutionUs)?.let {
                 TimeshiftPlaybackPosition.Estimate(
                     target = TimeshiftContentTarget(attachment, it.microseconds),
                     timeline = attachment.timeline(),

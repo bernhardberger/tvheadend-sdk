@@ -23,6 +23,7 @@ import androidx.media3.extractor.TrackOutput
 import androidx.media3.extractor.text.DefaultSubtitleParserFactory
 import androidx.media3.extractor.text.SubtitleTranscodingExtractorOutput
 import at.bernhardberger.tvheadend.sdk.playback.ActiveSubscription
+import at.bernhardberger.tvheadend.sdk.playback.MuxFrameType
 import at.bernhardberger.tvheadend.sdk.playback.SkipOutcome
 import at.bernhardberger.tvheadend.sdk.playback.StreamIndex
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
@@ -75,6 +76,8 @@ internal class TvheadendLiveMediaPeriod(
     @Volatile private var prepareError: IOException? = null
     private var trackGroups = TrackGroupArray.EMPTY
     private var seekDiscontinuityPending = false
+    private var finitePausedInputPending = false
+    private var finitePausedVideoReady = false
 
     override fun prepare(callback: MediaPeriod.Callback, positionUs: Long) {
         synchronized(lock) {
@@ -104,6 +107,7 @@ internal class TvheadendLiveMediaPeriod(
     internal fun interrupt() {
         synchronized(lock) {
             interrupted = true
+            outputs.forEach { it.preview = null }
             clearPreOriginEvents()
             alternativeFormatsWait?.cancel()
             timeshiftControls?.detach()
@@ -138,25 +142,29 @@ internal class TvheadendLiveMediaPeriod(
                 ?: error("Selected Media3 track is unavailable")
             output.enabled = true
             if (!mayRetainStreamFlags[index] || (streams[index] as? QueueSampleStream)?.queue !== output.queue) {
+                output.preview = null
                 output.queue.seekTo(positionUs, true)
-                streams[index] = QueueSampleStream(output.queue, lock, { cleanEndOfStream }, ::currentError,
+                streams[index] = QueueSampleStream(output, lock, { cleanEndOfStream }, ::currentError,
                     { interrupted || released || seekDiscontinuityPending })
                 streamResetFlags[index] = true
             }
         }
+        outputs.filter { !it.enabled }.forEach { it.preview = null }
         positionUs
     }
 
     override fun discardBuffer(positionUs: Long, toKeyframe: Boolean) {
         synchronized(lock) {
-            outputs.forEach { it.queue.discardTo(positionUs, toKeyframe, it.enabled) }
+            outputs.forEach { if (it.preview == null) it.queue.discardTo(positionUs, toKeyframe, it.enabled) }
         }
     }
 
     override fun readDiscontinuity(): Long = synchronized(lock) {
         if (!seekDiscontinuityPending || interrupted || released || prepareError != null) return C.TIME_UNSET
         val selected = outputs.filter { it.enabled }
-        val required = selected.filter { it.trackType == C.TRACK_TYPE_AUDIO || it.trackType == C.TRACK_TYPE_VIDEO }
+        val required = selected.filter {
+            it.trackType == C.TRACK_TYPE_VIDEO || (!finitePausedVideoReady && it.trackType == C.TRACK_TYPE_AUDIO)
+        }
             .ifEmpty { selected }
         if (required.isEmpty() || required.any { it.queue.firstTimestampUs == Long.MIN_VALUE }) return C.TIME_UNSET
         // SampleQueue reset requires a keyframe. Reader arrival alone cannot establish this point.
@@ -252,8 +260,15 @@ internal class TvheadendLiveMediaPeriod(
             is SubscriptionEvent.Stopped,
             is SubscriptionEvent.Terminated,
             -> {
+                if (event is SubscriptionEvent.Dropped || terminalEvent) {
+                    outputs.forEach { it.preview = null }
+                    finitePausedInputPending = false
+                }
                 if (event is SubscriptionEvent.Skipped && event.outcome == SkipOutcome.ACCEPTED) {
-                    outputs.forEach { it.queue.reset() }
+                    outputs.forEach { it.preview = null; it.queue.reset() }
+                    finitePausedInputPending =
+                        (timeshiftControls?.availableState() as? LiveTimeshiftState.Available)?.serverPaused == true
+                    finitePausedVideoReady = false
                     clearPreOriginEvents()
                     seekDiscontinuityPending = true
                 }
@@ -301,7 +316,18 @@ internal class TvheadendLiveMediaPeriod(
         check(adapter.output.queue.writeIndex - adapter.output.queue.readIndex < MAX_BUFFERED_SAMPLES) {
             "Media3 sample buffer limit reached"
         }
-        adapter.adapter.accept(packet)
+        if (finitePausedInputPending && adapter.output.enabled &&
+            adapter.output.format?.sampleMimeType == MimeTypes.VIDEO_H264 && packet.frameType == MuxFrameType.I
+        ) {
+            finitePausedInputPending = false
+            val index = adapter.output.queue.writeIndex
+            if (adapter.adapter.acceptFiniteIdr(packet) && adapter.output.queue.writeIndex == index + 1) {
+                adapter.output.preview = FinitePreview(index)
+                finitePausedVideoReady = true
+            }
+        } else {
+            adapter.adapter.accept(packet)
+        }
     }
 
     private fun retainPreOriginEvent(event: SubscriptionEvent) {
@@ -366,6 +392,7 @@ internal class TvheadendLiveMediaPeriod(
         synchronized(lock) {
             if (released) return
             released = true
+            outputs.forEach { it.preview = null }
             clearPreOriginEvents()
             alternativeFormatsWait?.cancel()
             outputs.forEach { it.queue.release() }
@@ -437,6 +464,7 @@ internal class TvheadendLiveMediaPeriod(
 
     private fun failPeriod() {
         synchronized(lock) {
+            outputs.forEach { it.preview = null }
             clearPreOriginEvents()
             if (!released && prepareError == null) prepareError = IOException("Live subscription preparation failed")
         }
@@ -462,6 +490,7 @@ private class QueueExtractorOutput(
     allocator: Allocator,
 ) : ExtractorOutput {
     internal val queue: SampleQueue = SampleQueue.createWithoutDrm(allocator)
+    internal var preview: FinitePreview? = null
     internal var format: Format? = null
         private set
     internal var trackGroup: TrackGroup? = null
@@ -492,13 +521,36 @@ private class QueueExtractorOutput(
     override fun seekMap(seekMap: SeekMap): Unit = Unit
 }
 
+private class FinitePreview(val index: Int) {
+    var queued = false
+}
+
 private class QueueSampleStream(
-    val queue: SampleQueue,
+    private val output: QueueExtractorOutput,
     private val lock: Any,
     private val loadingFinished: () -> Boolean,
     private val sourceError: () -> IOException?,
     private val invalidated: () -> Boolean,
-) : SampleStream {
+) : SampleStream, FinitePreviewSampleStream {
+    val queue: SampleQueue get() = output.queue
+    private var readPreview: FinitePreview? = null
+
+    override fun outputAllowed(): Boolean = synchronized(lock) {
+        !invalidated() && output.enabled && sourceError() == null
+    }
+
+    override fun inputQueued(): Unit = synchronized(lock) {
+        readPreview?.takeIf { it === output.preview }?.queued = true
+        readPreview = null
+    }
+
+    override fun drainAndRewind(): Boolean = synchronized(lock) {
+        val preview = output.preview ?: return false
+        if (invalidated() || !preview.queued) return false
+        output.preview = null
+        check(queue.seekTo(preview.index)) { "Finite preview sample is unavailable" }
+        true
+    }
     override fun isReady(): Boolean = synchronized(lock) { !invalidated() && queue.isReady(loadingFinished()) }
     override fun maybeThrowError(): Unit = synchronized(lock) {
         sourceError()?.let { throw it }
@@ -506,7 +558,14 @@ private class QueueSampleStream(
     }
     override fun readData(holder: FormatHolder, buffer: androidx.media3.decoder.DecoderInputBuffer, readFlags: Int): Int =
         synchronized(lock) {
-            if (invalidated()) C.RESULT_NOTHING_READ else queue.read(holder, buffer, readFlags, loadingFinished())
+            if (invalidated()) C.RESULT_NOTHING_READ else {
+                val index = queue.readIndex
+                queue.read(holder, buffer, readFlags, loadingFinished()).also { result ->
+                    if (result == C.RESULT_BUFFER_READ && queue.readIndex > index) {
+                        readPreview = output.preview?.takeIf { it.index == index }
+                    }
+                }
+            }
         }
 
     override fun skipData(positionUs: Long): Int =

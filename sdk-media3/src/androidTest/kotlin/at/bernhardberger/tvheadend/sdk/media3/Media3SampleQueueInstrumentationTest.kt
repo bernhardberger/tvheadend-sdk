@@ -74,19 +74,33 @@ internal class Media3SampleQueueInstrumentationTest {
     @Test
     fun paused_content_seek_renders_new_first_frame_at_both_edges_without_resume() = assertContentSeeks(paused = true)
 
-    private fun assertContentSeeks(paused: Boolean) = runBlocking {
+    @Test
+    fun finite_paused_IDR_renders_and_continues() = assertContentSeeks(paused = true, finitePaused = true)
+
+    private fun assertContentSeeks(paused: Boolean, finitePaused: Boolean = false) = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val assets = instrumentation.context.assets
         val channel = RecordedMuxCapture.load(assets).channel(16, 1, 2)
+        val rawPackets = h264PacketsWithContinuedAudio(channel)
         val connection = ScriptedSubscriptionConnection()
         connection.scriptSubscribe(SubscriptionOperationResult.Ok(SubscriptionConfirmation(null, null, null, 120)))
         val manager = createSubscriptionManager(connection, Dispatchers.Default).apply { startAdmission() }
         val controls = LiveTimeshiftControlBridge(PlaybackTargetToken()) {}
         val frames = AtomicInteger()
+        val surfaceFrames = AtomicInteger()
         val discontinuities = AtomicInteger()
         val error = AtomicBoolean()
-        val texture = SurfaceTexture(0)
-        val surface = Surface(texture)
+        val videoCounters = AtomicReference<DecoderCounters>()
+        val codecStarts = AtomicInteger()
+        val renderedTimes = java.util.concurrent.CopyOnWriteArrayList<Long>()
+        val expectedSpeeds = mutableListOf<Int>()
+        val textureThread = android.os.HandlerThread("finite-preview-surface").apply { start() }
+        val textureHandler = android.os.Handler(textureThread.looper)
+        val texture = androidx.media3.common.util.EGLSurfaceTexture(textureHandler) { surfaceFrames.incrementAndGet() }
+        val textureReady = CountDownLatch(1)
+        textureHandler.post { texture.init(androidx.media3.common.util.EGLSurfaceTexture.SECURE_MODE_NONE); textureReady.countDown() }
+        assertTrue(textureReady.await(5, TimeUnit.SECONDS))
+        val surface = Surface(texture.surfaceTexture)
         lateinit var player: ExoPlayer
         var initialized = false
         fun position(): Long {
@@ -105,7 +119,8 @@ internal class Media3SampleQueueInstrumentationTest {
                 }
                 true
             }
-            assertEquals(message, true, met)
+            val counters = videoCounters.get()
+            assertEquals("$message frames=${frames.get()} surface=${surfaceFrames.get()} discontinuities=${discontinuities.get()} queued=${counters?.queuedInputBufferCount} rendered=${counters?.renderedOutputBufferCount} codecs=${codecStarts.get()}", true, met)
         }
         try {
             instrumentation.runOnMainSync {
@@ -116,7 +131,15 @@ internal class Media3SampleQueueInstrumentationTest {
                 initialized = true
                 player.volume = 0f
                 player.setVideoSurface(surface)
-                player.playWhenReady = !paused
+                player.setVideoFrameMetadataListener { presentationTimeUs, _, _, _ -> renderedTimes.add(presentationTimeUs) }
+                player.playWhenReady = finitePaused || !paused
+                player.addAnalyticsListener(object : AnalyticsListener {
+                    override fun onVideoEnabled(eventTime: AnalyticsListener.EventTime, counters: DecoderCounters) {
+                        videoCounters.set(counters)
+                    }
+                    override fun onVideoDecoderInitialized(eventTime: AnalyticsListener.EventTime, decoderName: String,
+                        initializedTimestampMs: Long, initializationDurationMs: Long) { codecStarts.incrementAndGet() }
+                })
                 player.addListener(object : Player.Listener {
                     override fun onRenderedFirstFrame() { frames.incrementAndGet() }
                     override fun onPlayerError(failure: PlaybackException) { error.set(true) }
@@ -132,14 +155,25 @@ internal class Media3SampleQueueInstrumentationTest {
             }
             val registration = withTimeout(10_000) { connection.awaitCollectionRegistered() }
             connection.emit(registration, SubscriptionEvent.Started(channel.streams, null, SubscriptionCondition.NO_DETAIL))
-            channel.packets.forEach { connection.emit(registration, it.toEvent(assets)) }
+            (if (finitePaused) rawPackets else channel.packets).forEach { connection.emit(registration, it.toEvent(assets)) }
             awaitCondition("Initial frame", { frames.get() > 0 })
+            if (finitePaused) {
+                awaitCondition("Initially playing", {
+                    var playing = false
+                    instrumentation.runOnMainSync { playing = player.isPlaying && player.currentPosition > 0 }
+                    playing
+                })
+                instrumentation.runOnMainSync { player.pause() }
+            }
             val attachment = checkNotNull(controls.mappingAttachment())
             connection.emit(registration, SubscriptionEvent.Timeshift(0, 0, 0, 120_000_000, if (paused) 0 else 100))
-            if (paused) controls.setSpeed(0)
+            awaitCondition("Observed bounds", { attachment.timeline() != null })
+            if (paused) { controls.setSpeed(0); expectedSpeeds += 0 }
             for (edge in listOf(0L, 120L)) {
                 val target = TimeshiftContentTarget(attachment, edge.seconds)
                 val beforeFrames = frames.get()
+                val beforeSurfaceFrames = surfaceFrames.get()
+                val beforeCodecStarts = codecStarts.get()
                 val beforeDiscontinuities = discontinuities.get()
                 val beforeCommands = connection.seekTargets.size
                 val seek = async { controls.seekContent(target) }
@@ -160,6 +194,49 @@ internal class Media3SampleQueueInstrumentationTest {
                 // A/V segment while preserving each stream's sample spacing and decode offsets.
                 val origins = channel.packets.groupBy { it.streamOrdinal }
                     .mapValues { (_, packets) -> packets.minOf { it.presentationTimeUs } }
+                if (finitePaused) {
+                    val videos = rawPackets.filter { it.streamOrdinal == 1 }
+                    connection.emit(registration, videos.first().toEvent(assets))
+                    awaitCondition("Finite paused renderer frame", { frames.get() > beforeFrames })
+                    awaitCondition("Finite paused surface frame", { surfaceFrames.get() > beforeSurfaceFrames })
+                    awaitCondition("Maintained codec recreation", { codecStarts.get() > beforeCodecStarts })
+                    val previewTime = renderedTimes.last()
+                    lateinit var snapshot: PlaybackPlayerSnapshot
+                    instrumentation.runOnMainSync {
+                        snapshot = ExoPlayerCoordinatorPlaybackAccess(player, PlaybackRecoveryPolicy()) {}.snapshot()
+                    }
+                    assertEquals("Old exact mapping cannot represent truncated first sample", TimeshiftPlaybackPosition.Unavailable,
+                        controls.playbackPosition(attachment, snapshot.position))
+                    assertTrue("Real clock precision maps only observed sample", (controls.playbackPosition(attachment,
+                        snapshot.position, snapshot.positionResolutionUs) as? TimeshiftPlaybackPosition.Estimate)?.seek === result.seek)
+                    val settled = position()
+                    delay(300)
+                    assertEquals("Paused clock", settled, position())
+                    assertEquals("No automatic resume", expectedSpeeds, connection.speeds)
+                    controls.setSpeed(100)
+                    expectedSpeeds += 100
+                    connection.emit(registration, SubscriptionEvent.Speed(100))
+                    instrumentation.runOnMainSync { player.play() }
+                    val beforeContinuationFrames = surfaceFrames.get()
+                    videos.drop(1).forEach { connection.emit(registration, it.toEvent(assets)); delay(10) }
+                    delay(300)
+                    instrumentation.runOnMainSync { assertTrue("Audio still absent", !player.isPlaying) }
+                    rawPackets.filter { it.streamOrdinal == 2 }.forEach { connection.emit(registration, it.toEvent(assets)); delay(10) }
+                    awaitCondition("Resume advances with references", {
+                        var advancing = false
+                        instrumentation.runOnMainSync { advancing = player.isPlaying && player.currentPosition > settled + 100 }
+                        advancing
+                    })
+                    awaitCondition("Dependent continuation reaches surface", {
+                        surfaceFrames.get() > beforeContinuationFrames && renderedTimes.any { it > previewTime + 80_000 }
+                    })
+                    instrumentation.runOnMainSync { player.pause() }
+                    controls.setSpeed(0)
+                    expectedSpeeds += 0
+                    connection.emit(registration, SubscriptionEvent.Speed(0))
+                    assertTrue("No decoder failure through continuation", !error.get())
+                    continue
+                }
                 channel.packets.forEach {
                     val origin = origins.getValue(it.streamOrdinal)
                     val packet = it.toEvent(assets)
@@ -184,11 +261,89 @@ internal class Media3SampleQueueInstrumentationTest {
                 assertTrue("No player failure", !error.get())
                 assertEquals("No unsolicited server resume", if (paused) listOf(0) else emptyList<Int>(), connection.speeds)
             }
+            if (finitePaused) {
+                val retired = attachment
+                instrumentation.runOnMainSync {
+                    player.setMediaSource(createTvheadendLiveMediaSource(
+                        FixedSubscriptionLiveTarget(manager, SubscriptionChannelId(1)),
+                        SubscriptionOptions(timeshiftPeriod = 120.seconds), controls,
+                    ))
+                    player.prepare()
+                }
+                val replacement = withTimeout(10_000) { connection.awaitCollectionRegistered() }
+                assertEquals(TimeshiftPlaybackPosition.Unavailable, controls.playbackPosition(retired, position().milliseconds, 1_000))
+                val beforeLateFrames = frames.get()
+                var oldCollectorRetired = false
+                try {
+                    connection.emit(registration, rawPackets.first().toEvent(assets))
+                } catch (_: IllegalStateException) {
+                    oldCollectorRetired = true
+                }
+                assertTrue("Replacement retires old collector", oldCollectorRetired)
+                delay(300)
+                assertEquals("Retired subscription cannot render into replacement", beforeLateFrames, frames.get())
+                connection.emit(replacement, SubscriptionEvent.Started(channel.streams, null, SubscriptionCondition.NO_DETAIL))
+                rawPackets.forEach { connection.emit(replacement, it.toEvent(assets)) }
+                awaitCondition("Replacement owns new rendered frame", { frames.get() > beforeLateFrames })
+                instrumentation.runOnMainSync { player.release(); initialized = false }
+                delay(100)
+                val releasedFrames = frames.get()
+                var releasedCollector = false
+                try {
+                    connection.emit(replacement, rawPackets.first().toEvent(assets))
+                } catch (_: IllegalStateException) {
+                    releasedCollector = true
+                }
+                assertTrue("Release retires collector", releasedCollector)
+                delay(300)
+                assertEquals("Release fences late media", releasedFrames, frames.get())
+                assertEquals("Only explicit test speed commands", expectedSpeeds, connection.speeds)
+            }
         } finally {
             instrumentation.runOnMainSync { if (initialized) player.release() }
             manager.closeAndJoin()
             surface.release()
-            texture.release()
+            textureHandler.post { texture.release(); textureThread.quitSafely() }
+            textureThread.join(5_000)
+        }
+    }
+
+    private fun h264PacketsWithContinuedAudio(channel: CapturedChannel): List<CapturedPacket> {
+        // The capture's audio ends before its first video. Continue it at the recorded cadence,
+        // retaining the common raw timeline rather than independently aligning A/V origins.
+        val audio = channel.packets.filter { it.streamOrdinal == 2 }
+        val cycleUs = audio.last().presentationTimeUs + audio.last().durationUs - audio.first().presentationTimeUs
+        return channel.packets + (1L..4L).flatMap { cycle ->
+            audio.map { packet -> packet.copy(
+                presentationTimeUs = packet.presentationTimeUs + cycle * cycleUs,
+                decodingTimeUs = packet.decodingTimeUs?.plus(cycle * cycleUs),
+            ) }
+        }
+    }
+
+    @Test
+    fun finite_IDR_flush_preserves_complete_reader_continuation() {
+        val assets = InstrumentationRegistry.getInstrumentation().context.assets
+        val channel = RecordedMuxCapture.load(assets).channel(16, 1)
+        val queue = SampleQueue.createWithoutDrm(DefaultAllocator(true, 64 * 1024))
+        try {
+            val reader = (createElementaryStreamReader(channel.streams.single()) as ReaderResult.Supported).reader
+            val adapter = SubscriptionElementaryStreamAdapter(reader, QueueOutput(queue), 0)
+            adapter.accept(channel.packets.first().toEvent(assets))
+            assertEquals("packetFinished is not sampleMetadata", 0, queue.writeIndex)
+            channel.packets.drop(1).forEach { adapter.accept(it.toEvent(assets)) }
+            reader.endOfInputReached()
+            val expected = readSamples(queue, FormatHolder(), DecoderInputBuffer(DecoderInputBuffer.BUFFER_REPLACEMENT_MODE_NORMAL))
+            queue.reset()
+            adapter.accept(SubscriptionEvent.Skipped(true, SkipOutcome.ACCEPTED, null, null))
+            assertTrue(adapter.acceptFiniteIdr(channel.packets.first().toEvent(assets)))
+            assertEquals("Finite IDR flush commits one sample", 1, queue.writeIndex)
+            channel.packets.drop(1).forEach { adapter.accept(it.toEvent(assets)) }
+            adapter.end()
+            val actual = readSamples(queue, FormatHolder(), DecoderInputBuffer(DecoderInputBuffer.BUFFER_REPLACEMENT_MODE_NORMAL))
+            assertEquals("Continuation preserves sample timestamps, sizes and keyframe flags", expected, actual)
+        } finally {
+            queue.release()
         }
     }
 
@@ -225,7 +380,7 @@ internal class Media3SampleQueueInstrumentationTest {
         assertChannelRenders(
             instrumentation,
             assets,
-            capture.channel(16, 1, 2),
+            capture.channel(16, 1, 2).let { it.copy(packets = h264PacketsWithContinuedAudio(it)) },
             MimeTypes.AUDIO_MPEG_L2,
         )
     }

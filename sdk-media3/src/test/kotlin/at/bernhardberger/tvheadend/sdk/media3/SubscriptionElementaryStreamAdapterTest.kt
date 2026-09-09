@@ -23,6 +23,23 @@ import org.junit.jupiter.api.Test
 
 class SubscriptionElementaryStreamAdapterTest {
     @Test
+    fun `finite flush requires actual IDR NAL and never resets continuation reader`() {
+        for (bytes in listOf(byteArrayOf(), byteArrayOf(0, 0, 1), byteArrayOf(0, 0, 1, 0x61, 0x10))) {
+            val reader = RecordingReader()
+            val adapter = SubscriptionElementaryStreamAdapter(reader, EmptyExtractorOutput, 0)
+            assertFalse(adapter.acceptFiniteIdr(packet(CountingBinary(bytes), MuxFrameType.I, 0)))
+            assertFalse("flush" in reader.calls)
+        }
+        val reader = RecordingReader()
+        val adapter = SubscriptionElementaryStreamAdapter(reader, EmptyExtractorOutput, 0)
+        assertTrue(adapter.acceptFiniteIdr(packet(CountingBinary(byteArrayOf(0, 0, 0, 1, 0x65, 0x10)), MuxFrameType.I, 0)))
+        assertEquals(listOf("started", "consume", "finished", "flush"), reader.calls)
+        adapter.accept(packet(CountingBinary(byteArrayOf(0, 0, 1, 0x61, 0x10)), MuxFrameType.P, 40_000))
+        assertEquals(0, reader.seekCount)
+        assertEquals(1, reader.calls.count { it == "flush" })
+    }
+
+    @Test
     fun `packet allocates exact payload once and copies once`() {
         val reader = RecordingReader()
         val binary = CountingBinary(byteArrayOf(1, 2, 3))
@@ -139,6 +156,10 @@ private class RecordingReader(
 
     override fun packetFinished() {
         calls += "finished"
+    }
+
+    override fun endOfInputReached() {
+        calls += "flush"
     }
 }
 

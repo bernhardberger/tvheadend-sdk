@@ -66,6 +66,61 @@ import org.junit.jupiter.params.provider.ValueSource
 
 internal class TvheadendLiveMediaPeriodTest {
     @ParameterizedTest
+    @ValueSource(strings = ["replay", "second-seek", "interrupt", "release", "deselect"])
+    fun `finite IDR retains exact sample once and fences stale queue callbacks`(boundary: String) = runTest {
+        val bridge = LiveTimeshiftControlBridge(PlaybackTargetToken()) {}
+        val harness = PeriodHarness(this, bridge.newAttachment())
+        try {
+            harness.start(SubscriptionStreamType.MPEG2_AUDIO, SubscriptionStreamType.H264)
+            harness.audio()
+            harness.video()
+            harness.looper.runAll()
+            val stream = harness.select(1)
+            val preview = stream as FinitePreviewSampleStream
+            harness.connection.emit(SubscriptionEvent.Timeshift(0, 0, 0, 120_000_000, 0))
+            runCurrent()
+            harness.seek(0.seconds)
+            assertFalse(preview.outputAllowed())
+            harness.video()
+            assertTrue(harness.period.readDiscontinuity() != C.TIME_UNSET)
+            val holder = FormatHolder()
+            val buffer = DecoderInputBuffer(DecoderInputBuffer.BUFFER_REPLACEMENT_MODE_NORMAL)
+            assertEquals(C.RESULT_FORMAT_READ, stream.readData(holder, buffer, 0))
+            assertEquals(C.RESULT_BUFFER_READ, stream.readData(holder, buffer, 0))
+            buffer.flip()
+            val original = ByteArray(checkNotNull(buffer.data).remaining()).also { checkNotNull(buffer.data).get(it) }
+            val time = buffer.timeUs
+            assertFalse(preview.drainAndRewind())
+            harness.period.discardBuffer(Long.MAX_VALUE, true)
+            when (boundary) {
+                "second-seek" -> harness.seek(120.seconds)
+                "interrupt" -> harness.period.interrupt()
+                "release" -> harness.period.release()
+                "deselect" -> harness.period.selectTracks(arrayOfNulls<ExoTrackSelection>(1), booleanArrayOf(false),
+                    arrayOf<SampleStream?>(stream), booleanArrayOf(false), 0)
+            }
+            preview.inputQueued()
+            assertEquals(boundary == "replay", preview.drainAndRewind())
+            assertFalse(preview.drainAndRewind())
+            if (boundary == "replay") {
+                buffer.clear()
+                assertEquals(C.RESULT_BUFFER_READ, stream.readData(holder, buffer, 0))
+                buffer.flip()
+                val replay = ByteArray(checkNotNull(buffer.data).remaining()).also { checkNotNull(buffer.data).get(it) }
+                assertArrayEquals(original, replay)
+                assertEquals(time, buffer.timeUs)
+                assertTrue(buffer.isKeyFrame)
+                preview.inputQueued()
+                assertFalse(preview.drainAndRewind())
+            } else {
+                assertFalse(preview.outputAllowed())
+            }
+        } finally {
+            harness.close()
+        }
+    }
+
+    @ParameterizedTest
     @ValueSource(longs = [0, 120])
     fun `accepted edge seek discards old queues and waits for complete new samples`(edge: Long) = runTest {
         val harness = PeriodHarness(this)
@@ -468,7 +523,7 @@ internal class TvheadendLiveMediaPeriodTest {
     }
 }
 
-private class PeriodHarness(private val scope: TestScope) {
+private class PeriodHarness(private val scope: TestScope, attachment: LiveTimeshiftControlBridge.Attachment? = null) {
     val looper = QueuedCoordinatorLooper()
     val allocator = DefaultAllocator(false, 1_024)
     val connection = ScriptedSubscriptionConnection()
@@ -478,6 +533,7 @@ private class PeriodHarness(private val scope: TestScope) {
     var preparations = 0
     val period = TvheadendLiveMediaPeriod(
         allocator = allocator,
+        timeshiftControls = attachment,
         onUnsupportedStream = {},
         workerDispatcher = dispatcher,
         callbackSchedulerFactory = { looper },

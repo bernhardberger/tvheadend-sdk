@@ -1,16 +1,16 @@
 # Versioning and compatibility
 
-The source is configured for the provisional `0.12.0` release under these
+The source is configured for the provisional `0.12.1` release under these
 coordinates:
 
-- `at.bernhardberger.tvheadend:sdk-android:0.12.0`
-- `at.bernhardberger.tvheadend:sdk-core:0.12.0`
-- `at.bernhardberger.tvheadend:sdk-media3:0.12.0`
-- `at.bernhardberger.tvheadend:sdk-playback:0.12.0`
-- `at.bernhardberger.tvheadend:sdk-testing:0.12.0`
+- `at.bernhardberger.tvheadend:sdk-android:0.12.1`
+- `at.bernhardberger.tvheadend:sdk-core:0.12.1`
+- `at.bernhardberger.tvheadend:sdk-media3:0.12.1`
+- `at.bernhardberger.tvheadend:sdk-playback:0.12.1`
+- `at.bernhardberger.tvheadend:sdk-testing:0.12.1`
 
 Source, local staging, and CI
-do not establish that the configured `0.12.0` coordinates are publicly available;
+do not establish that the configured `0.12.1` coordinates are publicly available;
 check Maven Central before selecting them.
 
 The signed `v0.3.3` tag is retained as development-release evidence after its
@@ -30,7 +30,10 @@ must never be replaced.
 While the major version is zero, the public API and behavior are provisional.
 No source, binary, or behavioral compatibility is promised for the provisional
 0.x line. A known breaking change requires the next minor version, not a patch
-version. Patch versions are reserved for backward-compatible fixes. The
+version. Patch versions are reserved for backward-compatible fixes. The `0.12.1`
+patch adds maintained finite paused IDR draining and clock precision repair without
+changing public signatures. Use `createTvheadendRenderersFactory` for the decoder
+integration; see [paused frame recovery](paused-frame-recovery.md) for limits. The
 `0.12.0` minor adds opaque seek-correlation properties and changes the public
 `TimeshiftTestFixture.playbackPosition` JVM signature. Recompile consumers; see
 [content seek settlement](content-seek-settlement.md) for the changed behavior.
