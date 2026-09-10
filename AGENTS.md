@@ -34,6 +34,12 @@ notices, and do not describe this project as official TVHeadend software.
   the first verdict and findings. UX visual review remains distinct.
 - Give children the relevant diff, evidence, question and stop condition. They
   retain their configured permissions and cannot create a new work stream.
+  For the optional read-only `sdk-planner`, instead supply the coherent outcome,
+  hard constraints, hypotheses, entry paths and evidence once. Its remit includes
+  interacting decisions and directly relevant dependencies, with permitted
+  source/test/call-chain inspection to establish feasibility and a proportional,
+  decision-ready implementation/verification plan. The primary retains scope
+  authority and final decisions. Reviewer evidence contracts are unchanged.
 - `sdk-implementer` is the one writable child. It may edit and run Gradle
   inside a single delegated slice with named paths, tests and gate, but never
   commits, tags, publishes, reaches a server or runs live-tagged tests. The
