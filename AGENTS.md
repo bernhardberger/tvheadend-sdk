@@ -11,6 +11,10 @@ notices, and do not describe this project as official TVHeadend software.
 - Behavior changes ship with a focused regression test.
 - Repository rules, the orchestration handoff, and tests override skill
   guidance.
+- Resolve routine implementation choices within accepted requirements and writable
+  scope. Return consequential product/authority gaps or missing load-bearing
+  evidence; an unspecified routine choice alone is not a stop condition. Preserve
+  exact writable boundaries, delegation limits, budgets, and verification gates.
 - Use constructor-injected fakes. Do not add dependency injection, mocking,
   screenshot, coverage, or UI frameworks without a concrete package need.
 - Before writing a parser, codec, crypto implementation, discovery stack,
@@ -51,6 +55,9 @@ notices, and do not describe this project as official TVHeadend software.
   review or broad repeat audit; follow up only on unresolved findings or material
   changes, bounded to affected behavior.
 - Model and effort choices live in OpenCode configuration, not product policy.
+  Use each child's configured effort unless the task warrants an explicit override;
+  choose appropriate effort up front for evident difficulty, without prerequisite
+  failed attempts at lower effort. See `docs/review-routing.md` for caller guidance.
   Before EVERY Opus dispatch, including followups, run
   `./review-provider-route.sh select eligible`. Only successful stdout `opus`
   permits dispatch. Never source the script or its credential file. Unknown,

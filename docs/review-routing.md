@@ -9,6 +9,18 @@ repeat audit; followups cover unresolved findings or material changes only.
 Routine low-impact work and release ceremony alone do not require a pair.
 Screenshot-first UX roles are separate from engineering review.
 
+## Effort Selection
+
+Repository-local OpenCode configuration owns Build defaults; agent files own child
+defaults. Dispatch children with their configured model and effort unless the task
+warrants an explicit override. For implementers, Low is explicitly mechanical work,
+Medium is ordinary implementation, and High is evident difficult implementation.
+Choose effort up front; do not require Low or Medium failures first. Max is
+exceptional for a concrete unresolved hard case. An effort override never changes
+permissions, writable scope, delegation depth, finite budgets, or review evidence
+limits. Preserve the optional planner's coherent-outcome contract and independent
+review judgments; the primary owns routine decisions and adjudication.
+
 ## Dispatch Guard
 
 Before every Opus dispatch, including followups and UX requests, execute:

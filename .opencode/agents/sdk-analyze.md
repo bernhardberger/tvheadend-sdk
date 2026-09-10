@@ -2,7 +2,7 @@
 description: Read-only TVHeadend SDK implementation diagnosis for concrete local behavior, ownership, concurrency, lifecycle, and invariant failures
 mode: subagent
 model: openai/gpt-6-astra
-variant: medium
+variant: high
 steps: 30
 permission:
   edit: deny
@@ -38,9 +38,9 @@ assessing the local API or ABI consequence of one proposed correction.
   delegate another agent.
 - OpenCode must reload the SDK project configuration before this cached-
   dependency access policy is relied upon.
-- Analyze only the bounded question and directly relevant source, tests, and
-  documentation supplied by the caller. Do not perform broad repository
-  archaeology.
+- Start from the bounded question and caller-supplied evidence. Within existing
+  permissions, follow directly relevant source/test call chains and documentation
+  far enough to diagnose it. Do not perform broad repository archaeology.
 - Distinguish direct evidence from inference. Cite exact files and line ranges,
   and report contradictions or missing evidence rather than guessing.
 - Do not scope the package, choose its architecture or public API, produce an

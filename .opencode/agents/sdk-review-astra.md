@@ -2,7 +2,7 @@
 description: Independent Astra primary or quota-fallback review of a bounded TVHeadend SDK diff
 mode: subagent
 model: openai/gpt-6-astra
-variant: medium
+variant: high
 steps: 45
 permission:
   edit: deny
