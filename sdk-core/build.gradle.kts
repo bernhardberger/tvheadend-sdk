@@ -55,6 +55,11 @@ dependencies {
 }
 
 tasks.named<Test>("test") {
+    // Architecture tests inspect sibling source directly, outside this module's test classpath.
+    inputs.files(rootProject.fileTree(".") {
+        include("sdk-*/src/main/**/*.kt", "sdk-*/src/main/**/*.java")
+        include("sdk-*/build.gradle.kts", "build.gradle.kts", "settings.gradle.kts", "gradle/libs.versions.toml")
+    }).withPropertyName("architectureSources").withPathSensitivity(PathSensitivity.RELATIVE)
     useJUnitPlatform {
         // Credentials and JUnit condition overrides must not opt ordinary checks into server access.
         excludeTags("live-soak", "live-dvr")

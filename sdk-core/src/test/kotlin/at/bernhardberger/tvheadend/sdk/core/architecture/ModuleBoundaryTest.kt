@@ -37,12 +37,18 @@ internal class ModuleBoundaryTest {
     @Test
     fun `production sources stay inside their module package`() {
         modulePackages.forEach { (module, packagePrefix) ->
-            val hasJavaProductionSource = File(repositoryRoot, "$module/src/main")
+            val javaProductionSources = File(repositoryRoot, "$module/src/main")
                 .walkTopDown()
-                .any { file -> file.isFile && file.extension == "java" }
-            assertFalse(
-                hasJavaProductionSource,
-                "$module must use Kotlin production sources",
+                .filter { file -> file.isFile && file.extension == "java" }
+                .map { it.relativeTo(repositoryRoot).invariantSeparatorsPath }
+                .toSet()
+            // Keep the attributed Media3 adaptation in its upstream package for package-private
+            // parsing helpers; no other Java or out-of-module production sources are admitted.
+            val maintainedReader = "sdk-media3/src/main/java/androidx/media3/extractor/ts/PrefixPreservingH264Reader.java"
+            assertEquals(
+                if (module == "sdk-media3") setOf(maintainedReader) else emptySet(),
+                javaProductionSources,
+                "$module has an unexpected Java production source",
             )
             val files = productionScope(module).files
             assertFalse(files.isEmpty(), "$module must have production source")
@@ -327,8 +333,9 @@ internal class ModuleBoundaryTest {
             "public suspend fun setLiveTarget( binding: PlaybackBinding.Live, options: LivePlaybackOptions = LivePlaybackOptions(), ): PlaybackTargetResult",
             "public suspend fun setLiveTarget( session: TvheadendSession, currentSession: CurrentSessionObservation, channelId: ChannelId, options: LivePlaybackOptions = LivePlaybackOptions(), ): LivePlaybackTargetResult",
             "public suspend fun setRecordingTarget( binding: PlaybackBinding.Recording, start: RecordingPlaybackStart = RecordingPlaybackStart.RESUME, ): PlaybackTargetResult",
-            "public suspend fun seekTimeshift(offset: Duration): TimeshiftCommandResult",
+            "public suspend fun seekTimeshiftBy(offset: Duration): TimeshiftContentSeekResult",
             "public suspend fun seekTimeshift(target: TimeshiftContentTarget): TimeshiftContentSeekResult",
+            "public suspend fun seekTimeshift(selection: TimeshiftSeekSelection): TimeshiftContentSeekResult",
             "public suspend fun timeshiftPlaybackPosition(): TimeshiftPlaybackPosition",
             "public suspend fun seek( target: TimeshiftContentTarget, dispatch: suspend (TimeshiftContentTarget) -> TimeshiftContentSeekResult.Completed = { completed() }, ): TimeshiftContentSeekResult",
             "public suspend fun returnToLive(): TimeshiftCommandResult",
@@ -432,6 +439,7 @@ internal class ModuleBoundaryTest {
             "LivePlaybackObservation",
             "LiveTimeshiftState",
             "TimeshiftContentTarget",
+            "TimeshiftSeekSelection",
             "TimeshiftSeekToken",
             "TimeshiftTimeline",
             "TimeshiftWallClockMapping",
@@ -509,7 +517,7 @@ internal class ModuleBoundaryTest {
             ),
             fakePlaybackFunctions,
         )
-        assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 27)
+        assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 28)
 
         val coordinatorApi = File(
             "../sdk-media3/src/main/kotlin/at/bernhardberger/tvheadend/sdk/media3/" +
