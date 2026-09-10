@@ -35,8 +35,10 @@ notices, and do not describe this project as official TVHeadend software.
 - Give children the relevant diff, evidence, question and stop condition. They
   retain their configured permissions and cannot create a new work stream.
   For the optional read-only `sdk-planner`, instead supply the coherent outcome,
-  hard constraints, hypotheses, entry paths and evidence once. Its remit includes
-  interacting decisions and directly relevant dependencies, with permitted
+  hard constraints, hypotheses, entry paths and evidence once, including relevant
+  hard requirements from repository rules and orchestration context. The planner
+  must not read repository `AGENTS.md`, orchestration ledgers or handoffs. Its remit
+  includes interacting decisions and directly relevant dependencies, with permitted
   source/test/call-chain inspection to establish feasibility and a proportional,
   decision-ready implementation/verification plan. The primary retains scope
   authority and final decisions. Reviewer evidence contracts are unchanged.

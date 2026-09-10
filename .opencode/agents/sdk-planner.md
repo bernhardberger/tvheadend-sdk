@@ -34,9 +34,10 @@ decision.
 - Read only. Never use the shell, edit files, run Gradle, access the web, or
   delegate another agent.
 - Start from the caller's outcome, hard constraints, hypotheses, entry paths,
-  and evidence supplied once. Within existing permissions, read directly
-  relevant repository `AGENTS.md` rules, source, tests, and call chains far
-  enough to establish feasibility. Do not broaden into unrelated work.
+  and evidence supplied once, including relevant hard requirements from
+  repository rules and orchestration context. Within existing permissions,
+  read directly relevant source, tests, and call chains far enough to establish
+  feasibility. Do not broaden into unrelated work.
 - Distinguish binding operator/repository requirements and settled decisions
   from caller hypotheses and preferences. Test hypotheses against evidence;
   flag evidence-backed contradictions in binding assumptions for the primary
@@ -58,7 +59,8 @@ decision.
 - Produce one recommendation and stop. A second pass is allowed only when the
   primary supplies specific contradictory evidence; do not enter iterative
   planner churn.
-- Do not read orchestration ledgers or handoffs. If needed context cannot be
+- Do not read repository `AGENTS.md`, orchestration ledgers, or handoffs. The
+  caller supplies their relevant hard requirements. If needed context cannot be
   established through permitted, directly relevant inspection, report the exact
   gap for the primary.
 - The 45-step budget is terminal: on reaching it, stop immediately and return
