@@ -410,8 +410,8 @@ internal class PhaseOneSessionMetadata(
         mutations = mutationCommands,
         resolveGeneration = ::resolveGeneration,
     ) {}
-    // Published-observation readers must not wait for reducer maintenance. The volatile
-    // generation fences those reads; the observation store owns the atomic snapshot/proof.
+    // Observation readers use volatile generation plus the store's atomic snapshot/proof.
+    // Retirement writes generation before requester; acquisition reads requester before generation.
     @Volatile private var generation: GatewayGeneration? = null
     private var generationBindRevision = 0L
     private var initialSync = CompletableDeferred<Unit>()

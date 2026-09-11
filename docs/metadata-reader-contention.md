@@ -10,21 +10,28 @@ reducer state.
 
 They now use the existing `SessionObservationStore` synchronization and a volatile
 metadata generation fence. The coverage requester is safely published through a
-volatile reference, read before checking that generation. The store still checks
-owner, generation and exact current-session proof together with the snapshot.
+volatile reference, read before checking that generation. Retirement writers must
+update generation before clearing the requester; both orderings are load-bearing.
+The store still checks owner, generation and exact current-session proof together with the snapshot.
 An overlapping reset can therefore expire a read or allow the preceding complete
 observation; it cannot authorize a replacement generation with an old proof.
 Reducer writes, query/live-update ordering and publication keep their existing
 monitor and lifecycle. Public declarations are unchanged.
 
+The EPG search fence still acquires the reducer monitor: it pairs the generation
+with mutable `generationBindRevision`. Search and other reducer-backed operations
+are outside this repair's published-observation and coverage-reader measurement.
+
 ## Representative before/after evidence
 
 `PhaseOneSessionMetadataContentionTest` runs 40 contended query/publication and
-retention cycles over 100 channels with 20,000 initial events. Each reader starts
+retention cycles over 100 channels with 20,000 initial events. Each interval starts
 while the query is inside the reducer monitor. A list fixture releases the writer
-at the start of the measured interval; no sleep or artificial delay is included.
+before the actual read, so writer completion races the read; no sleep or artificial delay is included.
 The interval includes that release, generation resolution and observation read.
 Both versions run the identical workload on the same JDK 21 JVM host.
+This is a reproducible measurement workload without a timing threshold; the
+separate paused-query test below provides the deterministic regression gate.
 
 | Implementation | Samples | Median reader interval | Maximum reader interval |
 | --- | ---: | ---: | ---: |

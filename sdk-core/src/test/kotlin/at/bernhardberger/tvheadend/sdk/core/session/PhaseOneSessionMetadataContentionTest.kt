@@ -124,8 +124,8 @@ internal class PhaseOneSessionMetadataContentionTest {
                 val query = requireNotNull(metadata.beginEpgQuery(generation, ChannelId(0)))
                 val entered = CountDownLatch(1)
                 val release = CountDownLatch(1)
-                // Start the reader inside real query reduction. No sleep or artificial delay
-                // is included in the measured interval; the writer is released at its start.
+                // Reproducible measurement only: release races the read, with no timing threshold.
+                // The separate paused-query test gates progress before the writer is released.
                 val writer = executor.submit {
                     metadata.applySuccessfulEpgQuery(generation, query, instant(400_000), gatedEvents(
                         listOf(queryEvent(0, "query-$iteration")), entered, release,
