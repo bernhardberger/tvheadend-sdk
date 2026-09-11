@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.13.1]
+
+Current metadata observations and EPG coverage requests use the existing atomic
+observation store without acquiring the EPG reducer's maintenance monitor. A
+volatile generation fence preserves reset and replacement authority. Reducer
+mutation and publication remain serialized, and retained snapshots stay immutable.
+
+A representative 100-channel, 20,000-event JVM workload and paused-publication
+regressions cover reader progress, live updates, retention, generation replacement,
+batch ordering and cancellation. See [measurement and scope](docs/metadata-reader-contention.md).
+Public signatures and dependency versions are unchanged.
+
 ## [0.13.0]
 
 Add SDK-owned timeshift selections with clamped displacement feedback, moving

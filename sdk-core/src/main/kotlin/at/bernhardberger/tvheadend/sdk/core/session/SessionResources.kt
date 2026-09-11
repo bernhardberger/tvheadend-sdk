@@ -410,7 +410,9 @@ internal class PhaseOneSessionMetadata(
         mutations = mutationCommands,
         resolveGeneration = ::resolveGeneration,
     ) {}
-    private var generation: GatewayGeneration? = null
+    // Published-observation readers must not wait for reducer maintenance. The volatile
+    // generation fences those reads; the observation store owns the atomic snapshot/proof.
+    @Volatile private var generation: GatewayGeneration? = null
     private var generationBindRevision = 0L
     private var initialSync = CompletableDeferred<Unit>()
     private var publishedCatalog: ChannelCatalog? = null
@@ -426,7 +428,7 @@ internal class PhaseOneSessionMetadata(
     private var serverFacts: GatewayServerFacts? = null
     private var dvrAccess: CapabilityAccess = CapabilityAccess.UNKNOWN
     private var capabilityRevision = 0L
-    private var epgCoverageRequester: EpgCoverageRequester? = null
+    @Volatile private var epgCoverageRequester: EpgCoverageRequester? = null
     private val dvrEntryIncarnations = HashMap<DvrEntryId, DvrEntryIncarnation>()
 
     override val observation: StateFlow<SessionObservation> = observationStore.observation
@@ -437,9 +439,9 @@ internal class PhaseOneSessionMetadata(
 
     override fun resolveGeneration(
         currentSession: CurrentSessionObservation,
-    ): GatewayGeneration? = synchronized(lock) {
-        val expectedGeneration = generation ?: return@synchronized null
-        observationStore.resolve(currentSession, expectedGeneration) as? GatewayGeneration
+    ): GatewayGeneration? {
+        val expectedGeneration = generation ?: return null
+        return observationStore.resolve(currentSession, expectedGeneration) as? GatewayGeneration
     }
 
     private fun resolveSearchGeneration(
@@ -454,9 +456,9 @@ internal class PhaseOneSessionMetadata(
     override fun currentObservation(
         generation: GatewayGeneration,
         currentSession: CurrentSessionObservation,
-    ): SessionObservation? = synchronized(lock) {
-        if (this.generation !== generation) return@synchronized null
-        observationStore.currentObservation(currentSession, generation)
+    ): SessionObservation? {
+        if (this.generation !== generation) return null
+        return observationStore.currentObservation(currentSession, generation)
     }
 
     private fun hasReplacementGeneration(generationFence: EpgSearchGenerationFence): Boolean =
@@ -1093,9 +1095,8 @@ internal class PhaseOneSessionMetadata(
         channelId: ChannelId,
         through: Instant,
     ): EpgCoverageAcquisitionResult {
-        val requester = synchronized(lock) {
-            epgCoverageRequester.takeIf { this.generation === generation }
-        } ?: return EpgCoverageAcquisitionResult.ObservationExpired
+        val requester = epgCoverageRequester.takeIf { this.generation === generation }
+            ?: return EpgCoverageAcquisitionResult.ObservationExpired
         return requester.acquireCoverage(currentSession, channelId, through)
     }
 
@@ -1105,9 +1106,8 @@ internal class PhaseOneSessionMetadata(
         channelIds: List<ChannelId>,
         through: Instant,
     ): EpgCoverageBatchResult {
-        val requester = synchronized(lock) {
-            epgCoverageRequester.takeIf { this.generation === generation }
-        } ?: return expiredEpgCoverageBatch(channelIds)
+        val requester = epgCoverageRequester.takeIf { this.generation === generation }
+            ?: return expiredEpgCoverageBatch(channelIds)
         return requester.acquireCoverageBatch(currentSession, channelIds, through)
     }
 }
