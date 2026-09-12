@@ -1,13 +1,27 @@
 ---
 name: tvheadend-sdk-contract-change
-description: Use for TVHeadend SDK public API, repository observation, profile lifecycle, playback state-machine, gateway mapping, or consumer-contract changes. Routes implementation and verification across SDK modules without leaking protocol or application policy into the wrong layer.
+description: Use when changing observable TVHeadend SDK public API, repository observation, profile lifecycle, playback state-machine, gateway mapping, or consumer contracts. Routes implementation and verification across SDK modules. Do not load for unrelated documentation, instruction-harness maintenance, or release ceremony alone.
 ---
 
 # SDK contract changes
 
-Start with the requested observable behavior and `docs/module-map.md`, then the
-owning declaration, implementation and nearest regression. `AGENTS.md` owns the
-module, privacy, review and release rules; this skill does not replace them.
+Start with the requested observable behavior, supplied paths, owning declaration,
+implementation and nearest regression. Use `docs/module-map.md` if ownership or
+entry paths are unknown. `AGENTS.md` owns module, privacy, review and authority
+rules; this skill does not replace them.
+
+Read only the references needed for the affected workflow:
+
+| Change or verification need | Reference |
+|---|---|
+| Application-facing API or consumer usage | `docs/consumer-guide.md` and the affected contract document |
+| Offline core checks or live-test selection | `docs/offline-verification.md`; live work still needs separate authority |
+| Media3 selection or stream replacement | `docs/media3-selection-contract.md` or `docs/stream-restart-contract.md`, respectively |
+| Review dispatch | `docs/review-routing.md` |
+| Published-coordinate verification or publication | `docs/releasing.md` and existing consumer-contract tasks |
+
+Follow a reference's relevant section rather than loading the whole document
+stack. Other contracts can be located from the affected source or module map.
 
 ## Locate the boundary before implementing
 
@@ -38,21 +52,11 @@ fixtures and diagnostics non-sensitive.
 
 - Run the affected module's relevant tests; follow `AGENTS.md` for final checks
   and independent review where the actual change requires it.
-- Non-trivial non-UX changes use independent Astra primary and Opus second review
-  of the same bounded evidence, with the second initial packet blind to the first
-  verdict/findings. Run `./review-provider-route.sh select eligible` before every
-  Opus dispatch, including followups; only explicit `opus` permits it. Follow
-  `docs/review-routing.md` for independent Astra fallback, absent-Opus disclosure
-  and exact-session abort on actual exhaustion. No third or broad repeat audit;
-  preserve non-substitutable admitted gates. Low-impact work needs no mandatory pair.
 - For public API changes, inspect supported ABI changes and affected Kotlin/Java
   consumers. Update dumps through the existing Gradle workflow, not by hand.
   Read the documented Android ABI limitation rather than creating a new checker.
-- For dependency/publication changes, consult `docs/releasing.md` and existing
-  consumer-contract tasks. Local substitution or staging proves only that local
-  configuration; do not claim a published-coordinate result from it.
-- Reuse unchanged passing checks. Do not add tests for skill prose or repeat a
-  full build after a documentation-only correction.
+- For dependency/publication changes, local substitution or staging proves only
+  that local configuration; do not claim a published-coordinate result from it.
 - Report the changed contract, consumer consequences and exact remaining gap.
   An authorized app migration may accompany a clean pre-1.0 API change; do not
   add compatibility layers speculatively. Commit/push/publication authority is

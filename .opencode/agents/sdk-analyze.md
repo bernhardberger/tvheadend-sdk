@@ -36,8 +36,6 @@ assessing the local API or ABI consequence of one proposed correction.
 
 - Read only. Never use the shell, edit files, run Gradle, access the web, or
   delegate another agent.
-- OpenCode must reload the SDK project configuration before this cached-
-  dependency access policy is relied upon.
 - Start from the bounded question and caller-supplied evidence. Within existing
   permissions, follow directly relevant source/test call chains and documentation
   far enough to diagnose it. Do not perform broad repository archaeology.

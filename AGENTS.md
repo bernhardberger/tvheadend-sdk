@@ -15,14 +15,17 @@ notices, and do not describe this project as official TVHeadend software.
   scope. Return consequential product/authority gaps or missing load-bearing
   evidence; an unspecified routine choice alone is not a stop condition. Preserve
   exact writable boundaries, delegation limits, budgets, and verification gates.
+  Continue through ordinary in-scope failures to the authorized outcome.
+  For centrally admitted work, repository/resource overlap alone does not block
+  execution. Coordinate actual conflicting edits and Git/build/device actions,
+  preserving existing work attribution and target identity.
 - Use constructor-injected fakes. Do not add dependency injection, mocking,
   screenshot, coverage, or UI frameworks without a concrete package need.
 - Before writing a parser, codec, crypto implementation, discovery stack,
   serializer, or time conversion, identify the maintained library that should
   provide it and explain why it does not fit. If none exists, say so in the
-  commit body. The predecessor hand-wrote an H.265 SPS parser despite Media3
-  already providing `androidx.media3.container.NalUnitUtil`; do not repeat that
-  failure.
+  commit body. For example, Media3 provides
+  `androidx.media3.container.NalUnitUtil` for H.265 SPS parsing.
 - Prefer standard maintained tooling: Gradle, Kotlin plugins, detekt, Konsist,
   Dokka, Kotlin ABI validation, and GitHub Actions. Do not add bespoke checkers,
   generators, scripts, languages, or repository frameworks.
@@ -36,6 +39,9 @@ notices, and do not describe this project as official TVHeadend software.
   independent Opus second reviewer on the same bounded change and evidence.
   Neither is the implementing primary. Keep the second initial packet blind to
   the first verdict and findings. UX visual review remains distinct.
+  Before dispatching reviews, read `docs/review-routing.md`: it owns effort
+  selection, the mandatory fresh guard before every Opus call, fallback,
+  exact-session abort on exhaustion, and bounded followup procedures.
 - Give children the relevant diff, evidence, question and stop condition. They
   retain their configured permissions and cannot create a new work stream.
   For the optional read-only `sdk-planner`, instead supply the coherent outcome,
@@ -51,24 +57,8 @@ notices, and do not describe this project as official TVHeadend software.
   commits, tags, publishes, reaches a server or runs live-tagged tests. The
   primary reviews its diff, runs the final gate and owns commits. Never run it
   while another writer is editing the same worktree.
-  The primary adjudicates supported findings and owns fixes. No automatic third
-  review or broad repeat audit; follow up only on unresolved findings or material
-  changes, bounded to affected behavior.
-- Model and effort choices live in OpenCode configuration, not product policy.
-  Use each child's configured effort unless the task warrants an explicit override;
-  choose appropriate effort up front for evident difficulty, without prerequisite
-  failed attempts at lower effort. See `docs/review-routing.md` for caller guidance.
-  Before EVERY Opus dispatch, including followups, run
-  `./review-provider-route.sh select eligible`. Only successful stdout `opus`
-  permits dispatch. Never source the script or its credential file. Unknown,
-  unavailable or failed telemetry uses an independent Astra fallback. The guard
-  emits `astra` for fallback. Record the reason and absent
-  Opus coverage. See `docs/review-routing.md` for the guard and abort procedure.
-- On actual Opus quota exhaustion, abort that exact reviewer through the supported
-  session API and verify it stopped. Do not wait for reset, retry/nudge it or
-  repeatedly spawn replacements. Continue fallback and independent work. Never
-  silently substitute for an explicitly non-substitutable admitted gate; reconcile
-  that boundary centrally without changing immutable manifests or results.
+- Model and effort choices live in OpenCode configuration. For child dispatch,
+  use the effort-selection guidance in `docs/review-routing.md`.
 - Existing admitted manifests retain their explicit authority and gates. Do not
   silently weaken an in-flight package or revive a retired field-test role.
 
@@ -82,12 +72,26 @@ automatically. CI (`.github/workflows/ci.yml`) is the authoritative gate.
   or a release. Do not clean by default or rerun successful unchanged checks for
   each review. CI remains authoritative; add tests for concrete behavior, not
   scaffolding, model names, prompt prose or hypothetical acceptance expansion.
+- Documentation/instruction-only changes use affected existing static/routing
+  checks and relevant fresh-loading checks, without a product build or new prose
+  tests. Explicit task gates still apply. See `docs/instruction-harness.md` when
+  changing the instruction harness.
 - Use JDK 21. JVM publications target Java 17 and class-file major 61.
 - Update ABI dumps only through the Gradle ABI validation workflow.
 - Local cross-repository HTSP substitution is opt-in. CI and releases always
   resolve the pinned `at.bernhardberger.tvheadend:htsp:0.10.0` coordinate.
-- Start repository discovery with `docs/module-map.md`. Use direct search from
-  its named entry points before delegating a locator or rebuilding a broad map.
+
+## Context routing
+
+- Start from supplied paths and evidence. Use `docs/module-map.md` when the
+  owning module or call path is unknown, before broad source exploration.
+- Load `tvheadend-sdk-contract-change` for changes to observable SDK API,
+  lifecycle, playback, gateway or consumer contracts. Its workflow references
+  are contextual; unrelated documentation or harness edits do not need it.
+- Read `docs/review-routing.md` for review/child dispatch and
+  `docs/instruction-harness.md` for agent, skill or instruction maintenance.
+- Release and device procedures below apply only when those operations are
+  authorized and relevant. Loading guidance grants no operational authority.
 
 ## Module boundaries
 
@@ -138,16 +142,20 @@ automatically. CI (`.github/workflows/ci.yml`) is the authoritative gate.
 ## Release trust boundary
 
 - Staging a local Maven repository is verification, not publication.
-- Never tag, push, create a pull request, sign, publish, release, or access
-  credentials without an explicit maintainer instruction for that exact
-  operation.
+- Commits, tags, pushes, pull requests, signing, publication, releases and
+  credential access require explicit maintainer authority covering the operation
+  and target. An already-authorized task or package may cover multiple delivery
+  steps and ordinary follow-up commits; no repeated approval is needed within
+  that authority. Delivery authority does not authorize unrelated release,
+  server or device operations.
 - Never print secrets or place them in source, arguments, artifacts, logs,
   reports, generated output, or Gradle dependency verification metadata.
 - For release work, read `docs/releasing.md` and command `--help` output. Do not
   read `tools/publish-central-release` unless the package edits that tool or a
-  reproduced failure has been attributed to its implementation. Run release
-  setup validation once per release attempt, not once per review. One authorized
-  task may prepare, verify, tag, publish and confirm availability; these stages
+  reproduced failure has been attributed to its implementation. Run
+  `tools/publish-central-release --check-setup` once per release attempt, not once
+  per review. One authorized task may prepare, verify, tag, publish and confirm
+  availability; these stages
   do not require separate packages or model reviews. Publication still requires
   the exact maintainer authorization and artifact checks in `docs/releasing.md`.
 

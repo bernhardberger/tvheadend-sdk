@@ -1,6 +1,7 @@
 # SDK module map
 
-Use this map before broad repository exploration. Start with the named entry
+Use this map when the owning module or call path is unknown, before broad source
+exploration. Supplied paths can be searched directly. Start with the named entry
 point and search directly for its callers or tests. Delegate mapping only when a
 question still spans an unknown flow after these paths are checked.
 
@@ -34,9 +35,6 @@ question still spans an unknown flow after these paths are checked.
   selection regressions, and the separately authorized live task.
 - Use `tools/sdk-device --help` for SDK instrumentation operations. Credential
   provisioning is intentionally outside that tool.
-- For releases, read `docs/releasing.md`, then use command `--help`. Do not read
-  the 1,000-line tool implementations unless editing them or diagnosing a
+- For releases, follow `AGENTS.md` and `docs/releasing.md`, then use command
+  `--help`. Do not read tool implementations unless editing them or diagnosing a
   failure already attributed to the tool.
-- Run `tools/publish-central-release --check-setup` once per release attempt.
-  Preserve every immutable-tag, single-upload, credential, and stop gate in
-  `docs/releasing.md`.

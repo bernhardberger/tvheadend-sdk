@@ -42,8 +42,9 @@ explicitly absent Opus coverage. `status` reports routing eligibility, not revie
 requirements; its static modes cannot authorize Opus.
 
 Fallback cannot satisfy an explicitly non-substitutable admitted gate. Report
-that exact boundary centrally for supported reconciliation. Do not edit immutable
-manifests/results, waive a gate or report fallback as Opus review.
+that exact boundary to the task owner (centrally for admitted work) for supported
+reconciliation. Do not edit immutable manifests/results, waive a gate or report
+fallback as Opus review.
 
 ## Actual Exhaustion
 
@@ -53,13 +54,15 @@ Verify that exact session is no longer busy/retrying before proceeding. Never
 abort the implementing primary or unrelated sessions. Do not wait hours for a
 reset, nudge/retry the exhausted reviewer or repeatedly spawn replacements.
 Continue the independent Astra fallback and authorized independent work.
-The `opencode-headless-sessions` skill describes the supported transport.
+When available, use the `opencode-headless-sessions` skill's stop/recovery
+reference for the supported transport. A standalone caller uses its runtime's
+documented authenticated session API; if that transport is unavailable, report
+the exact gap rather than inventing credentials or claiming the reviewer stopped.
 
 ## Checks
 
 Run `bash -n review-provider-route.sh test-review-routing.sh` and
 `./test-review-routing.sh` after changes to this route. Reuse its existing quota,
 redaction and permission fixtures; do not add tests that mirror model names or
-policy prose. Config-time agent/skill changes apply to newly loaded sessions;
-the runtime owner must reload through its supported mechanism, not an unapproved
-shared-server restart by a product worker.
+policy prose. For instruction loading and role-settings checks, see
+[Instruction harness](instruction-harness.md#verification-and-loading).
