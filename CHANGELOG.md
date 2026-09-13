@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.14.0]
+
+Track the full verified growing-recording seek extent using Media3's maintained
+TS binary seeker. Retain one continuity-bound probe reader, cache the starting
+PCR, and skip tail reads when size is unchanged. Confirm size and finality
+together before retiring the probe so completion cannot freeze an earlier,
+shorter extent. Playback seeks remain limited to verified media bounds.
+
+Add abstract `isFinal`, `refreshSize` and `seek` members to
+`GrowingRecordingFileReader` and expose `RecordingFileContinuity.isFinal`.
+These are pre-1.0 breaking API additions: recompile consumers and update reader
+fakes. Dependencies and native decoder payloads are unchanged.
+
+Focused JVM regressions and actual Media3 MPEG2/H264 source checks cover growing
+extent, paused/playing growth, seeks, retry and completion. Existing real Player
+staged integration evidence applies to this source. Pathological regressing tail
+PCR may retain an estimated extent and polling; explicit size refresh does not
+share the read-path throttle. These remain nonblocking review observations.
+
 ## [0.13.1]
 
 Current metadata observations and EPG coverage requests use the existing atomic
