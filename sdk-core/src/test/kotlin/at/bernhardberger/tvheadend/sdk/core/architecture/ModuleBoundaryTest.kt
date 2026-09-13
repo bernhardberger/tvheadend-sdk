@@ -42,11 +42,11 @@ internal class ModuleBoundaryTest {
                 .filter { file -> file.isFile && file.extension == "java" }
                 .map { it.relativeTo(repositoryRoot).invariantSeparatorsPath }
                 .toSet()
-            // Keep the attributed Media3 adaptation in its upstream package for package-private
-            // parsing helpers; no other Java or out-of-module production sources are admitted.
+            // Narrow package-private access to maintained Media3 parsing/seeking helpers.
             val maintainedReader = "sdk-media3/src/main/java/androidx/media3/extractor/ts/PrefixPreservingH264Reader.java"
+            val maintainedSeeker = "sdk-media3/src/main/java/androidx/media3/extractor/ts/GrowingTsBinarySearch.java"
             assertEquals(
-                if (module == "sdk-media3") setOf(maintainedReader) else emptySet(),
+                if (module == "sdk-media3") setOf(maintainedReader, maintainedSeeker) else emptySet(),
                 javaProductionSources,
                 "$module has an unexpected Java production source",
             )

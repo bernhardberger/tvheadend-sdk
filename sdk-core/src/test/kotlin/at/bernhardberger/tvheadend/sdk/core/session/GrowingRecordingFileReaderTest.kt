@@ -37,6 +37,35 @@ import org.junit.jupiter.api.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class GrowingRecordingFileReaderTest {
     @Test
+    fun `retained reader stats and repositions with absolute reads and confirmed finality`() = runTest {
+        val fixture = GrowingFixture(fileSizeBytes = 64L, statSizeBytes = 64L, readCounts = listOf(2))
+        assertOk(64L, fixture.reader.refreshSize())
+        assertFalse(fixture.reader.isFinal)
+        assertOk(Unit, fixture.reader.seek(40L))
+        assertOk(2, fixture.reader.read(ByteArray(2), 0, 2))
+        assertEquals(listOf(40L), fixture.transport.readPositions)
+        fixture.update(state = DvrEntryState.COMPLETED, fileSizeBytes = 64L)
+        assertOk(64L, fixture.reader.refreshSize())
+        assertTrue(fixture.reader.isFinal)
+        assertFailed(RecordingFileFailure.FILE_UNAVAILABLE, fixture.reader.seek(65L))
+        fixture.reader.close()
+        assertFailed(RecordingFileFailure.FILE_UNAVAILABLE, fixture.reader.refreshSize())
+    }
+
+    @Test
+    fun `older in flight stat does not fence a concurrent readers newer proven extent`() = runTest {
+        val fixture = GrowingFixture(readCounts = listOf(0, 2), statSizeBytes = 2L)
+        fixture.transport.beforeStatResult = { fixture.tracker.observeTransportExtent(4L) }
+        assertOk(2, fixture.reader.read(ByteArray(2), 0, 2))
+        assertEquals(4L, fixture.tracker.transportExtentBeforeRequest())
+        assertTrue(fixture.tracker.validate() is GrowingMetadataValidation.Valid)
+        assertEquals(
+            RecordingFileFailure.FILE_UNAVAILABLE,
+            fixture.tracker.validateTransportSize(2L, fixture.tracker.transportExtentBeforeRequest()),
+        )
+    }
+
+    @Test
     fun `temporary end waits for stat growth and returns appended bytes`() = runTest {
         val fixture = GrowingFixture(readCounts = listOf(0, 3), statSizeBytes = 3L)
         val destination = ByteArray(4)
@@ -543,6 +572,7 @@ private class GrowingFixture(
 ) {
     internal val generation = GatewayGeneration()
     internal val metadata = PhaseOneSessionMetadata()
+    internal val tracker = GrowingRecordingMetadataTracker(metadata, generation, RECORDING_ID)
     internal val transport = ScriptedGrowingTransport(runtime, readCounts, statSizeBytes, statModifiedAtSeconds)
     internal val reader: CoreGrowingRecordingFileReader
 
@@ -557,7 +587,7 @@ private class GrowingFixture(
         metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
         reader = CoreGrowingRecordingFileReader(
             transport = transport,
-            metadata = GrowingRecordingMetadataTracker(metadata, generation, RECORDING_ID),
+            metadata = tracker,
             position = 0L,
             openSizeBytes = openSizeBytes,
             runtime = runtime,

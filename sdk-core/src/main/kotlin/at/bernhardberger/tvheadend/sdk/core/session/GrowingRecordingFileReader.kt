@@ -69,13 +69,17 @@ internal class GrowingRecordingMetadataTracker(
         }
     }
 
-    internal fun validateTransportSize(sizeBytes: Long): RecordingFileFailure? = synchronized(lock) {
+    internal fun transportExtentBeforeRequest(): Long = synchronized(lock) { maximumTransportExtentBytes }
+
+    internal fun validateTransportSize(sizeBytes: Long, extentBeforeRequest: Long): RecordingFileFailure? = synchronized(lock) {
         terminalFailure?.let { failure -> return@synchronized failure }
-        if (sizeBytes < 0L || sizeBytes < maximumTransportExtentBytes) {
+        // Concurrent readers can finish a newer read while this open/stat snapshot is in flight.
+        // Only evidence already established before that request can prove its response shrank.
+        if (sizeBytes < 0L || sizeBytes < extentBeforeRequest) {
             terminalFailure = RecordingFileFailure.FILE_UNAVAILABLE
             return@synchronized RecordingFileFailure.FILE_UNAVAILABLE
         }
-        maximumTransportExtentBytes = sizeBytes
+        maximumTransportExtentBytes = maxOf(maximumTransportExtentBytes, sizeBytes)
         null
     }
 
@@ -355,6 +359,7 @@ internal class CoreGrowingRecordingFileReader(
     openSizeBytes: Long?,
     private val runtime: GrowingRecordingRuntime = SystemGrowingRecordingRuntime(),
 ) : GrowingRecordingFileReader {
+    override val sizeBytes: Long? = openSizeBytes
     private var position: Long = position
     private var maximumProvenSizeBytes: Long = maxOf(position, openSizeBytes ?: position)
     private var noProgressSinceNanos: Long? = null
@@ -418,6 +423,7 @@ internal class CoreGrowingRecordingFileReader(
             val completedBeforeStat = observed.completed
             ensureReadActive()
             lastStatStartNanos = runtime.nowNanos()
+            val extentBeforeStat = metadata.transportExtentBeforeRequest()
             val statResult = withinNoProgressBudget { transport.stat() }
                 ?: return terminate(RecordingFileFailure.TIMEOUT)
             val stat = when (statResult) {
@@ -429,7 +435,7 @@ internal class CoreGrowingRecordingFileReader(
                 is GrowingMetadataValidation.Failed -> return terminate(validation.failure)
                 is GrowingMetadataValidation.Valid -> validation
             }
-            val statSize = when (val validation = validateStat(stat)) {
+            val statSize = when (val validation = validateStat(stat, extentBeforeStat)) {
                 is StatValidation.Failed -> return terminate(validation.failure)
                 is StatValidation.Valid -> validation.sizeBytes
             }
@@ -467,6 +473,54 @@ internal class CoreGrowingRecordingFileReader(
         val result = withContext(NonCancellable) { transport.close() }
         coroutineContext.ensureActive()
         return result
+    }
+
+    override val isFinal: Boolean get() = finalStatCompleted && finalSizeBytes != null
+
+    override suspend fun refreshSize(): RecordingFileResult<Long?> {
+        ensureReadActive()
+        if (closed) return failed(RecordingFileFailure.FILE_UNAVAILABLE)
+        terminalFailure?.let { return failed(it) }
+        val before = when (val validation = metadata.validate()) {
+            is GrowingMetadataValidation.Failed -> return terminate(validation.failure)
+            is GrowingMetadataValidation.Valid -> validation
+        }
+        val extentBeforeRequest = metadata.transportExtentBeforeRequest()
+        val stat = when (val result = transport.stat()) {
+            is RecordingFileResult.Failed -> return terminate(result.failure)
+            is RecordingFileResult.Ok -> result.value
+        }
+        ensureReadActive()
+        val after = when (val validation = metadata.validate()) {
+            is GrowingMetadataValidation.Failed -> return terminate(validation.failure)
+            is GrowingMetadataValidation.Valid -> validation
+        }
+        val size = when (val validation = validateStat(stat, extentBeforeRequest)) {
+            is StatValidation.Failed -> return terminate(validation.failure)
+            is StatValidation.Valid -> validation.sizeBytes
+        }
+        if (before.completed && after.completed) {
+            finalStatCompleted = true
+            finalSizeBytes = size
+        }
+        return RecordingFileResult.Ok(size)
+    }
+
+    override suspend fun seek(position: Long): RecordingFileResult<Unit> {
+        require(position >= 0L)
+        ensureReadActive()
+        if (closed) return failed(RecordingFileFailure.FILE_UNAVAILABLE)
+        terminalFailure?.let { return failed(it) }
+        when (val validation = metadata.validate()) {
+            is GrowingMetadataValidation.Failed -> return terminate(validation.failure)
+            is GrowingMetadataValidation.Valid -> Unit
+        }
+        if (position > maximumProvenSizeBytes) return failed(RecordingFileFailure.FILE_UNAVAILABLE)
+        this.position = position
+        endOfInput = false
+        noProgressSinceNanos = null
+        // Gateway reads already carry absolute positions; no server cursor needs synchronizing.
+        return RecordingFileResult.Ok(Unit)
     }
 
     private suspend fun readOnce(
@@ -534,7 +588,7 @@ internal class CoreGrowingRecordingFileReader(
         }
     }
 
-    private fun validateStat(stat: GatewayRecordingFileStat): StatValidation {
+    private fun validateStat(stat: GatewayRecordingFileStat, extentBeforeRequest: Long): StatValidation {
         val size = stat.sizeBytes
         val modified = stat.modifiedAtUnixSeconds
         if ((size == null) != (modified == null)) {
@@ -544,7 +598,7 @@ internal class CoreGrowingRecordingFileReader(
             return StatValidation.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
         }
         if (size != null) {
-            metadata.validateTransportSize(size)?.let { failure ->
+            metadata.validateTransportSize(size, extentBeforeRequest)?.let { failure ->
                 return StatValidation.Failed(failure)
             }
         }

@@ -1,4 +1,5 @@
 @file:androidx.media3.common.util.UnstableApi
+@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class)
 
 package at.bernhardberger.tvheadend.sdk.media3
 
@@ -14,6 +15,11 @@ import androidx.media3.extractor.ExtractorOutput
 import androidx.media3.extractor.PositionHolder
 import androidx.media3.extractor.SeekMap
 import androidx.media3.extractor.TrackOutput
+import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.CopyOnWriteArrayList
+import kotlinx.coroutines.awaitCancellation
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
@@ -22,6 +28,79 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class GrowingTsIndexTest {
+    companion object {
+        @org.junit.jupiter.api.BeforeAll
+        @JvmStatic
+        fun enableStrictMedia3BoundsChecks() {
+            ParsableByteArray.setShouldEnforceLimitOnLegacyMethods(true)
+        }
+    }
+
+    @Test
+    fun `confirmed completion publishes final extent and retires probe without extractor release`() {
+        val bytes = File("src/androidTest/assets/p7-f3/h264-synthetic.ts").readBytes()
+        val closed = CountDownLatch(1)
+        val lease = ProbeLease(bytes, bytes.size).apply {
+            completed = true
+            afterClose = { closed.countDown() }
+        }
+        val output = CapturingSeekMapOutput()
+        val extractor = GrowingTsExtractor(delegate = WindowedKeyframeExtractor(), lease = lease)
+        try {
+            extractor.init(output)
+            assertTrue(closed.await(5, TimeUnit.SECONDS))
+            assertTrue(output.maps.last().isSeekable)
+            assertFalse(output.maps.last().isEstimated)
+            assertEquals(1, lease.opens)
+            assertEquals(1, lease.closes)
+        } finally { extractor.release() }
+    }
+
+    @Test
+    fun `lease driven map is retracted on continuity loss even with no playback consumption`() {
+        val bytes = File("src/androidTest/assets/p7-f3/h264-synthetic.ts").readBytes()
+        val lease = ProbeLease(bytes, bytes.size)
+        val output = CapturingSeekMapOutput()
+        val extractor = GrowingTsExtractor(
+            delegate = WindowedKeyframeExtractor(),
+            lease = lease,
+        )
+        try {
+            extractor.init(output)
+            val initialDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+            while (System.nanoTime() < initialDeadline && output.maps.none { it.isSeekable }) Thread.sleep(10)
+            assertTrue(output.maps.last().isSeekable)
+            lease.current = false
+            // No further media consumption is required: poll exit retracts the existing map.
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(7)
+            while (System.nanoTime() < deadline && output.maps.last().isSeekable) Thread.sleep(10)
+            assertFalse(output.maps.last().isSeekable)
+            assertTrue(output.maps.last().durationUs > 23_000_000L)
+        } finally {
+            extractor.release()
+        }
+    }
+
+    @Test
+    fun `extractor release cancels a suspended probe and closes its reader without publishing`() {
+        val reading = CountDownLatch(1)
+        val closed = CountDownLatch(1)
+        val lease = ProbeLease(ByteArray(188 * 600), 188 * 600).apply {
+            beforeRead = { reading.countDown(); awaitCancellation() }
+            afterClose = { closed.countDown() }
+        }
+        val output = CapturingSeekMapOutput()
+        val extractor = GrowingTsExtractor(delegate = WindowedKeyframeExtractor(), lease = lease)
+        try {
+            extractor.init(output)
+            assertTrue(reading.await(5, TimeUnit.SECONDS))
+        } finally {
+            extractor.release()
+        }
+        assertTrue(closed.await(5, TimeUnit.SECONDS))
+        assertTrue(output.maps.none { it.isSeekable })
+    }
+
     @Test
     fun `validated video codecs publish estimated maps from preceding observed keyframes`() {
         listOf(MimeTypes.VIDEO_MPEG2, MimeTypes.VIDEO_H264, MimeTypes.VIDEO_H265).forEach { mimeType ->
@@ -313,7 +392,7 @@ private class DormantSecondVideoExtractor : Extractor {
 }
 
 private class CapturingSeekMapOutput : ExtractorOutput {
-    val maps = ArrayList<SeekMap>()
+    val maps = CopyOnWriteArrayList<SeekMap>()
 
     override fun track(id: Int, type: Int): TrackOutput = EmptyTrackOutput
 

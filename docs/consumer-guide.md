@@ -564,7 +564,15 @@ stable `.ts` file, and explicit `RecordingPlaybackStart.START_OVER`. `RESUME`
 returns `GROWING_RECORDING_RESUME_UNSUPPORTED`; active recordings outside that
 path return `GROWING_RECORDING_DEFERRED`. Growing seek is approximate and starts
 only after the maintained MPEG-TS extractor has validated MPEG-2, H.264, or HEVC
-and indexed parsed keyframes. Other MPEG-TS codecs remain forward-only.
+and bounded head/tail PCR reads establish the existing recorded extent. The timeline
+includes content not yet consumed by playback and refreshes while playing or paused.
+The probe retains one continuity-bound reader, caches the initial PCR, and checks
+file size before reading the tail. Unchanged extents need no further media reads;
+a confirmed final extent retires the probe. Probe failure closes its handle before
+retrying. Normal playback and the probe use separate sequential readers;
+Media3's PCR binary seeker resolves targets within that extent. Scheduled programme
+duration does not grant seek access. Missing file-size or usable PCR evidence keeps
+the recording forward-only, as do other MPEG-TS codecs.
 Temporary EOF does not end playback or mark the recording watched.
 
 ### Ownership and shutdown

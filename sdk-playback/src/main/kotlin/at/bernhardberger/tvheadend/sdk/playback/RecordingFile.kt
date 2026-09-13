@@ -91,6 +91,18 @@ public interface RecordingFile {
  */
 @SubscriptionInfrastructureApi
 public interface GrowingRecordingFileReader {
+    /** Validated file extent when this reader opened; null if the server omitted its size. */
+    public val sizeBytes: Long?
+
+    /** True only after a stat made wholly after completion establishes the final size. */
+    public val isFinal: Boolean
+
+    /** Refreshes the validated size on this handle without reading media data. */
+    public suspend fun refreshSize(): RecordingFileResult<Long?>
+
+    /** Repositions this sequential reader within its validated extent; no new handle is opened. */
+    public suspend fun seek(position: Long): RecordingFileResult<Unit>
+
     /**
      * Reads into [destination], waiting across temporary end of file when necessary.
      *

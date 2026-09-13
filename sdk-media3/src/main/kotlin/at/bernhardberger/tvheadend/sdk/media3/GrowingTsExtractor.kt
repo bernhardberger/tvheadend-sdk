@@ -1,4 +1,5 @@
 @file:androidx.media3.common.util.UnstableApi
+@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class)
 
 package at.bernhardberger.tvheadend.sdk.media3
 
@@ -8,6 +9,7 @@ import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.ParsableByteArray
 import androidx.media3.extractor.Extractor
+import androidx.media3.extractor.BinarySearchSeeker
 import androidx.media3.extractor.ExtractorInput
 import androidx.media3.extractor.ExtractorOutput
 import androidx.media3.extractor.ExtractorsFactory
@@ -17,11 +19,20 @@ import androidx.media3.extractor.SeekPoint
 import androidx.media3.extractor.TrackOutput
 import androidx.media3.extractor.text.SubtitleParser
 import androidx.media3.extractor.ts.TsExtractor
+import androidx.media3.extractor.ts.GrowingTsBinarySearch
+import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 internal fun createGrowingTsExtractorsFactory(
     onSeekMap: (SeekMap) -> Unit = {},
+    lease: GrowingRecordingFileLease? = null,
 ): ExtractorsFactory = ExtractorsFactory {
-    arrayOf(GrowingTsExtractor(onSeekMap = onSeekMap))
+    arrayOf(GrowingTsExtractor(onSeekMap = onSeekMap, lease = lease))
 }
 
 /** Thin indexing decorator; Media3's maintained [TsExtractor] still owns all TS parsing. */
@@ -29,7 +40,15 @@ internal class GrowingTsExtractor(
     private val delegate: Extractor = TsExtractor(SubtitleParser.Factory.UNSUPPORTED),
     private val index: GrowingTsIndex = GrowingTsIndex(),
     private val onSeekMap: (SeekMap) -> Unit = {},
+    private val lease: GrowingRecordingFileLease? = null,
 ) : Extractor {
+    private val publicationLock = Any()
+    private var probeJob: Job? = null
+    private var released = false
+    @Volatile private var extent: GrowingTsExtent? = null
+    private var publishedExtent: GrowingTsExtent? = null
+    private var publishedSeekable = false
+    private var binarySeeker: BinarySearchSeeker? = null
     private val trackOutputs = ArrayList<GrowingTsTrackOutput>()
     private var downstream: ExtractorOutput? = null
     private var conservativeReadPosition = 0L
@@ -58,39 +77,107 @@ internal class GrowingTsExtractor(
                 override fun endTracks() = output.endTracks()
 
                 override fun seekMap(seekMap: SeekMap) {
-                    if (!sentInitialMap) {
-                        sentInitialMap = true
-                        // ProgressiveMediaSource rejects estimated updates after a definitive map.
-                        onSeekMap(EstimatedUnseekableGrowingTsSeekMap)
-                        output.seekMap(EstimatedUnseekableGrowingTsSeekMap)
+                    synchronized(publicationLock) {
+                        if (!sentInitialMap && publishedExtent == null) {
+                            sentInitialMap = true
+                            // ProgressiveMediaSource rejects estimated updates after a definitive map.
+                            onSeekMap(EstimatedUnseekableGrowingTsSeekMap)
+                            output.seekMap(EstimatedUnseekableGrowingTsSeekMap)
+                        }
                     }
                 }
             },
         )
+        if (lease != null) {
+            // Extractor init/release is the synchronous Media3 lifecycle boundary. The probe has
+            // its own readers and continues while playback loading is stopped (including pause).
+            probeJob = CoroutineScope(Dispatchers.IO).launch {
+                val probe = GrowingTsExtentProbe(lease)
+                try {
+                while (isActive && lease.isCurrent) {
+                    val next = probe.sample()
+                    synchronized(publicationLock) {
+                        val previous = extent
+                        if (!released && next != null &&
+                            (previous == null || next.firstPcr == previous.firstPcr &&
+                                next.pcrPid == previous.pcrPid && next.sizeBytes >= previous.sizeBytes &&
+                                next.durationUs >= previous.durationUs)
+                        ) {
+                            extent = next
+                            publishExtent()
+                        }
+                    }
+                    if (extent?.isFinal == true) break
+                    delay(5_000L)
+                }
+                synchronized(publicationLock) { publishExtent() }
+                } finally {
+                    probe.close()
+                }
+            }
+        }
     }
 
     override fun read(input: ExtractorInput, seekPosition: PositionHolder): Int {
+        val seeker = binarySeeker
+        if (seeker != null && seeker.isSeeking) {
+            val limit = checkNotNull(extent).sizeBytes
+            val boundedInput = object : ExtractorInput by input {
+                override fun getLength(): Long = limit
+            }
+            return seeker.handlePendingSeek(boundedInput, seekPosition)
+        }
         val readStartPosition = input.position
         val result = delegate.read(input, seekPosition)
         if (input.position > readStartPosition) {
             // TsExtractor reads ahead, so only the start of that input window is a safe lower bound.
             conservativeReadPosition = readStartPosition
         }
-        index.nextSeekMap()?.let { map ->
-            onSeekMap(map)
-            checkNotNull(downstream).seekMap(map)
+        if (lease == null) {
+            index.nextSeekMap()?.let { map ->
+                onSeekMap(map)
+                checkNotNull(downstream).seekMap(map)
+            }
+        } else {
+            synchronized(publicationLock) { publishExtent() }
         }
         return result
     }
 
     override fun seek(position: Long, timeUs: Long) {
+        binarySeeker = extent?.takeIf { index.seekingAllowed && timeUs > 0L }?.let {
+            GrowingTsBinarySearch.create(it.firstPcr, it.durationUs, it.sizeBytes, it.pcrPid, GROWING_TS_SEARCH_BYTES)
+                .apply { setSeekTargetUs(timeUs) }
+        }
         conservativeReadPosition = position
         trackOutputs.forEach(GrowingTsTrackOutput::resetForSeek)
         index.onExtractorSeek()
         delegate.seek(position, timeUs)
     }
 
-    override fun release() = delegate.release()
+    override fun release() {
+        synchronized(publicationLock) { released = true }
+        probeJob?.cancel()
+        delegate.release()
+    }
+
+    private fun publishExtent() {
+        val current = extent ?: return
+        val seekable = index.seekingAllowed && lease?.isCurrent == true
+        if (released || current == publishedExtent && seekable == publishedSeekable) return
+        publishedExtent = current
+        publishedSeekable = seekable
+        val nativeMap = GrowingTsBinarySearch.create(
+            current.firstPcr, current.durationUs, current.sizeBytes, current.pcrPid, GROWING_TS_SEARCH_BYTES,
+        ).seekMap
+        val map = object : SeekMap by nativeMap {
+            override fun isEstimated(): Boolean = !current.isFinal
+            override fun isSeekable(): Boolean = seekable
+        }
+        // ProgressiveMediaPeriod marshals seekMap updates onto its playback-thread handler.
+        onSeekMap(map)
+        checkNotNull(downstream).seekMap(map)
+    }
 }
 
 private class GrowingTsTrackOutput(
@@ -164,7 +251,8 @@ internal class GrowingTsIndex(
     private val points = ArrayList<GrowingTsIndexPoint>()
     private var selectedVideoTrackId: Int? = null
     private var selectedVideoMimeType: String? = null
-    private var codecState = GrowingTsCodecState.UNKNOWN
+    @Volatile private var codecState = GrowingTsCodecState.UNKNOWN
+    val seekingAllowed: Boolean get() = codecState == GrowingTsCodecState.SUPPORTED
     private var previousKeyframe: GrowingTsKeyframe? = null
     private var seekablePointCount = 0
     private var publishedSeekableMap = false

@@ -256,6 +256,7 @@ internal class PlaybackSessionChildren(
                 is GrowingMetadataValidation.Valid -> Unit
             }
 
+            val extentBeforeOpen = tracker.transportExtentBeforeRequest()
             val opened = when (
                 val opening = gateway.openRecordingFile(boundGeneration, boundRecordingId)
                     .toRecordingFileResult { file -> file }
@@ -274,7 +275,7 @@ internal class PlaybackSessionChildren(
                     return failed(RecordingFileFailure.FILE_UNAVAILABLE)
                 }
                 if (openSize != null) {
-                    tracker.validateTransportSize(openSize)?.let { failure ->
+                    tracker.validateTransportSize(openSize, extentBeforeOpen)?.let { failure ->
                         return RecordingFileResult.Failed(failure)
                     }
                 }

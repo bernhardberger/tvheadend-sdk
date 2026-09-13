@@ -19,7 +19,11 @@ public abstract interface class at/bernhardberger/tvheadend/sdk/playback/Growing
 
 public abstract interface class at/bernhardberger/tvheadend/sdk/playback/GrowingRecordingFileReader {
 	public abstract fun close (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun getSizeBytes ()Ljava/lang/Long;
+	public abstract fun isFinal ()Z
 	public abstract fun read ([BIILkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun refreshSize (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun seek (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/playback/LiveFrontendDiagnostics {

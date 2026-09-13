@@ -1142,6 +1142,33 @@ class SessionSubscriptionsTest {
     }
 
     @Test
+    fun `in flight probe open can return its older extent after playback reads appended bytes`() = runTest {
+        val gateway = SubscriptionGateway()
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        metadata.bindCurrentRecording(generation, id = 5L, sizeBytes = 64L)
+        val children = PlaybackSessionChildren(gateway, metadata, StandardTestDispatcher(testScheduler))
+        children.bindGeneration(generation)
+        val lease = (children.bindGrowingRecording(generation, DvrEntryId(5L)) as RecordingFileResult.Ok).value
+        val playback = (lease.open(64L) as RecordingFileResult.Ok).value
+        gateway.beforeRecordingOpenResult = {
+            assertEquals(2, (playback.read(ByteArray(2), 0, 2) as RecordingFileResult.Ok).value)
+        }
+
+        val probe = (lease.open(0L) as RecordingFileResult.Ok).value
+        assertEquals(64L, probe.sizeBytes)
+        assertTrue(lease.isCurrent)
+        probe.close()
+        playback.close()
+
+        gateway.beforeRecordingOpenResult = null
+        // A subsequent request must still reject a size below the now-proven extent of 66.
+        assertSame(RecordingFileFailure.FILE_UNAVAILABLE, (lease.open(0L) as RecordingFileResult.Failed).failure)
+        assertFalse(lease.isCurrent)
+        children.closeAndJoinSubscriptions()
+    }
+
+    @Test
     fun `growing recording open requires fresh current DVR metadata`() = runTest {
         val gateway = SubscriptionGateway()
         val metadata = PhaseOneSessionMetadata()
@@ -1380,7 +1407,7 @@ private class SubscriptionGateway : ProtocolGateway {
     internal val loadedArtworkIds = ArrayList<ArtworkId>()
     internal var recordingOpenResult: GatewayResult<GatewayRecordingFile> =
         GatewayResult.Ok(GatewayRecordingFile(handleId = 7L, sizeBytes = 64L, protocolVersion = 27))
-    internal var beforeRecordingOpenResult: (() -> Unit)? = null
+    internal var beforeRecordingOpenResult: (suspend () -> Unit)? = null
     internal var artworkLoadResult: GatewayResult<ByteArray> = GatewayResult.NotSupported
     internal var artworkLoadAction:
         suspend (GatewayGeneration, ArtworkId) -> GatewayResult<ByteArray> = { _, _ ->

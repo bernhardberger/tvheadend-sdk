@@ -55,7 +55,7 @@ internal fun createTvheadendGrowingRecordingMediaSource(
     onFinalEnd: () -> Unit = {},
 ): MediaSource = ProgressiveMediaSource.Factory(
     createTvheadendGrowingRecordingDataSourceFactory(lease, identity, readAheadBytes, onFinalEnd),
-    createGrowingTsExtractorsFactory(onSeekMap),
+    createGrowingTsExtractorsFactory(onSeekMap, lease),
 ).createMediaSource(tvheadendRecordingMediaItem(identity))
 
 /**
@@ -79,6 +79,7 @@ private class TvheadendGrowingRecordingDataSource(
     private var deliveryOffset = 0
     private var deliveryLimit = 0
     private var bufferedLimit = 0
+    private var openingSkipBytes = 0
 
     override fun open(dataSpec: DataSpec): Long {
         checkGrowingLoaderThread()
@@ -88,18 +89,19 @@ private class TvheadendGrowingRecordingDataSource(
             throw TvheadendRecordingException(RecordingFileFailure.FILE_UNAVAILABLE)
         }
         if (
-            dataSpec.position % GROWING_TS_PACKET_BYTES != 0L ||
+            dataSpec.position < 0L ||
             dataSpec.length != C.LENGTH_UNSET.toLong()
         ) {
             throw TvheadendRecordingException(RecordingFileFailure.FILE_UNAVAILABLE)
         }
         val openedReader = growingBlockingIo {
-            lease.open(dataSpec.position)
+            lease.open(dataSpec.position - dataSpec.position % GROWING_TS_PACKET_BYTES)
         }.orThrowGrowing()
         reader = openedReader
         openUri = dataSpec.uri
         opened = true
         resetBuffer()
+        openingSkipBytes = (dataSpec.position % GROWING_TS_PACKET_BYTES).toInt()
         transferStarted(dataSpec)
         return C.LENGTH_UNSET.toLong()
     }
@@ -114,6 +116,10 @@ private class TvheadendGrowingRecordingDataSource(
             ?: throw TvheadendRecordingException(RecordingFileFailure.FILE_UNAVAILABLE)
         if (deliveryOffset == deliveryLimit && !fillCompletePackets(activeReader)) {
             return C.RESULT_END_OF_INPUT
+        }
+        if (openingSkipBytes != 0) {
+            deliveryOffset += openingSkipBytes
+            openingSkipBytes = 0
         }
         val copied = minOf(length, deliveryLimit - deliveryOffset)
         packetBuffer.copyInto(buffer, offset, deliveryOffset, deliveryOffset + copied)

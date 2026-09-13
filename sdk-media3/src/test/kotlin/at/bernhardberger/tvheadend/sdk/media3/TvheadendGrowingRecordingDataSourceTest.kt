@@ -109,11 +109,10 @@ class TvheadendGrowingRecordingDataSourceTest {
     }
 
     @Test
-    fun `non-packet offsets and bounded requests fail before opening transport`() {
+    fun `bounded requests fail before opening transport`() {
         val opener = ScriptedGrowingLease(ReadStep.End)
 
         listOf(
-            recordingSpec(position = 1L),
             recordingSpec(length = GROWING_TS_PACKET_BYTES.toLong()),
         ).forEach { spec ->
             val failure = assertThrows(TvheadendRecordingException::class.java) {
@@ -123,6 +122,19 @@ class TvheadendGrowingRecordingDataSourceTest {
         }
 
         assertTrue(opener.openPositions.isEmpty())
+    }
+
+    @Test
+    fun `binary seek offsets reopen at packet boundary and omit only the requested prefix`() {
+        val packet = ByteArray(GROWING_TS_PACKET_BYTES) { it.toByte() }
+        val opener = ScriptedGrowingLease(ReadStep.Bytes(packet), ReadStep.End)
+        val source = dataSource(opener, GROWING_TS_PACKET_BYTES)
+        source.open(recordingSpec(position = 189L))
+        val bytes = ByteArray(187)
+        assertEquals(187, source.read(bytes, 0, bytes.size))
+        assertArrayEquals(packet.copyOfRange(1, packet.size), bytes)
+        assertEquals(listOf(188L), opener.openPositions)
+        source.close()
     }
 
     @Test
@@ -337,6 +349,10 @@ private class ScriptedGrowingLease(
     private inner class Reader(
         private val steps: MutableList<ReadStep>,
     ) : GrowingRecordingFileReader {
+        override val sizeBytes: Long? = null
+        override val isFinal: Boolean = false
+        override suspend fun refreshSize(): RecordingFileResult<Long?> = RecordingFileResult.Ok(null)
+        override suspend fun seek(position: Long): RecordingFileResult<Unit> = error("Playback fixture does not reposition")
         override suspend fun read(
             destination: ByteArray,
             destinationOffset: Int,
@@ -373,6 +389,10 @@ private class BlockingGrowingLease : GrowingRecordingFileLease {
         position: Long,
     ): RecordingFileResult<GrowingRecordingFileReader> = RecordingFileResult.Ok(
         object : GrowingRecordingFileReader {
+            override val sizeBytes: Long? = null
+            override val isFinal: Boolean = false
+            override suspend fun refreshSize(): RecordingFileResult<Long?> = RecordingFileResult.Ok(null)
+            override suspend fun seek(position: Long): RecordingFileResult<Unit> = error("Playback fixture does not reposition")
             override suspend fun read(
                 destination: ByteArray,
                 destinationOffset: Int,

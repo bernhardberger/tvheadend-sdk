@@ -26,12 +26,10 @@ import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -67,9 +65,8 @@ internal class GrowingTsSourceInstrumentationTest {
         val texture = SurfaceTexture(0)
         val surface = Surface(texture)
         val failure = AtomicReference<PlaybackException?>()
-        val latestSeekMap = AtomicReference<GrowingTsSeekMap?>()
         val videoMimeTypes = Collections.synchronizedSet(mutableSetOf<String>())
-        val durations = Collections.synchronizedSet(mutableSetOf<Long>())
+        val durations = Collections.synchronizedList(mutableListOf<Long>())
         lateinit var player: ExoPlayer
         var playerCreated = false
 
@@ -80,7 +77,7 @@ internal class GrowingTsSourceInstrumentationTest {
                     createTvheadendRenderersFactory(instrumentation.targetContext),
                 ).setLoadControl(
                     DefaultLoadControl.Builder()
-                        .setBufferDurationsMs(500, 60_000, 100, 100)
+                        .setBufferDurationsMs(500, 1_000, 100, 100)
                         .setPrioritizeTimeOverSizeThresholds(true)
                         .setBackBuffer(0, false)
                         .build(),
@@ -114,76 +111,65 @@ internal class GrowingTsSourceInstrumentationTest {
                         lease = recording,
                         identity = mediaIdentity,
                         readAheadBytes = FIXTURE_READ_AHEAD_BYTES,
-                        onSeekMap = { map ->
-                            if (map is GrowingTsSeekMap) latestSeekMap.set(map)
-                        },
                     ),
                 )
                 player.prepare()
-                player.setPlaybackSpeed(FIXTURE_PLAYBACK_SPEED)
-                player.play()
             }
 
-            assertTrue("Production source did not reach temporary EOF", recording.awaitTemporaryEnd())
             val initialTimeline = awaitFixtureState(instrumentation, player, failure) { snapshot ->
-                snapshot.seekable && snapshot.durationMs > 0L && snapshot.renderedFrames > 0L &&
-                    fixture.mimeType in videoMimeTypes && latestSeekMap.get() != null
+                snapshot.seekable && snapshot.durationMs > 5_000L && snapshot.renderedFrames > 0L &&
+                    fixture.mimeType in videoMimeTypes && snapshot.playbackState == Player.STATE_READY
             }
-            val map = checkNotNull(latestSeekMap.get())
-            val candidates = map.points.filter { point -> point.position > 0L && point.timeUs > 0L }
-            assertTrue("Fixture must expose multiple nonzero production seek points", candidates.size >= 3)
-            val target = candidates[candidates.size / 2]
-            val targetMs = (target.timeUs + 999L) / 1_000L
-            val expectedSeekPosition = map.getSeekPoints(targetMs * 1_000L).first.position
-            val playUntilMs = minOf(
-                initialTimeline.durationMs - PLAYBACK_TAIL_MS,
-                targetMs + PLAY_PAST_SEEK_TARGET_MS,
-            )
-            assertTrue(
-                "Fixture must play far enough past the seek target to discard it",
-                playUntilMs - targetMs >= MINIMUM_PLAY_PAST_SEEK_TARGET_MS,
-            )
-            val beforeSeek = awaitFixtureState(instrumentation, player, failure) { snapshot ->
-                snapshot.positionMs >= playUntilMs
-            }
-            val frameBaseline = beforeSeek.renderedFrames
+            assertEquals("Duration discovery must not move paused playback", 0L, initialTimeline.positionMs)
+            assertTrue("Initial recorded extent must be about12s", kotlin.math.abs(initialTimeline.durationMs - 12_000L) < 500L)
+            val targetMs = initialTimeline.durationMs * 3 / 4
+            val frameBaseline = initialTimeline.renderedFrames
             instrumentation.runOnMainSync { player.seekTo(targetMs) }
-            assertTrue("Estimated map did not cause a nonzero reopen", recording.awaitNonzeroOpen())
-            val seekPosition = recording.firstNonzeroOpenPosition()
-            assertTrue("Seek byte must be positive", seekPosition > 0L)
-            assertEquals("Seek byte must remain packet-aligned", 0L, seekPosition % GROWING_TS_PACKET_BYTES)
-            assertTrue("Seek byte must stay inside parsed bytes", seekPosition < initialBytes)
-            assertEquals("Reopen must use the selected production map point", expectedSeekPosition, seekPosition)
-            awaitFixtureState(instrumentation, player, failure) { snapshot ->
-                snapshot.renderedFrames > frameBaseline && snapshot.positionMs >= targetMs - SEEK_POSITION_TOLERANCE_MS
+            val sought = awaitFixtureState(instrumentation, player, failure) { snapshot ->
+                snapshot.renderedFrames > frameBaseline && snapshot.playbackState == Player.STATE_READY &&
+                    kotlin.math.abs(snapshot.positionMs - targetMs) <= SEEK_POSITION_TOLERANCE_MS
             }
-
-            val durationBeforeGrowth = synchronized(durations) {
-                durations.maxOrNull()
-            } ?: initialTimeline.durationMs
-            recording.appendRemaining()
-            assertTrue("Recoverable transport failure did not trigger a retry reopen", recording.awaitRetryOpen())
-            val retryPosition = recording.retryOpenPosition()
-            assertTrue("Retry byte must be positive", retryPosition > 0L)
-            assertEquals("Retry byte must remain packet-aligned", 0L, retryPosition % GROWING_TS_PACKET_BYTES)
-            val retrySnapshot = fixturePlayerSnapshot(instrumentation, player)
-            assertTrue("Production source did not read appended bytes", recording.awaitGrowthRead())
+            instrumentation.runOnMainSync { assertTrue("Seek must preserve pause", !player.playWhenReady) }
+            recording.appendThreeQuarters()
             val afterGrowth = awaitFixtureState(instrumentation, player, failure) { snapshot ->
-                val latestDuration = synchronized(durations) { durations.maxOrNull() ?: 0L }
-                latestDuration > durationBeforeGrowth &&
-                    snapshot.renderedFrames > retrySnapshot.renderedFrames &&
-                    snapshot.playbackState != Player.STATE_ENDED
+                snapshot.durationMs > initialTimeline.durationMs + 5_000L
             }
-            assertNotEquals("Temporary EOF or append ended playback", Player.STATE_ENDED, afterGrowth.playbackState)
+            assertEquals("Growth must not reset position", sought.positionMs, afterGrowth.positionMs)
+            assertTrue("Three-quarter extent must be about18s", kotlin.math.abs(afterGrowth.durationMs - 18_000L) < 500L)
+            val appendedTargetMs = afterGrowth.durationMs * 3 / 4
+            instrumentation.runOnMainSync { player.seekTo(appendedTargetMs); player.play() }
+            awaitFixtureState(instrumentation, player, failure) { snapshot ->
+                snapshot.renderedFrames > afterGrowth.renderedFrames + 5 &&
+                    snapshot.positionMs >= appendedTargetMs && snapshot.playbackState == Player.STATE_READY
+            }
+            recording.appendRemaining()
+            var previous = fixturePlayerSnapshot(instrumentation, player)
+            val observeUntil = SystemClock.elapsedRealtime() + 7_000L
+            while (SystemClock.elapsedRealtime() < observeUntil) {
+                SystemClock.sleep(100L)
+                val next = fixturePlayerSnapshot(instrumentation, player)
+                assertNull("Playback failed during growth", failure.get())
+                assertTrue("Unsolicited position reset during growth", next.positionMs >= previous.positionMs)
+                assertTrue("Timeline end regressed during growth", next.durationMs >= previous.durationMs)
+                previous = next
+            }
+            assertTrue("Full recorded extent must be about24s", kotlin.math.abs(previous.durationMs - 24_000L) < 500L)
+            assertTrue("Playback transport failure must retry", recording.awaitRetryOpen())
+            assertTrue("Ordered duration events must not regress", synchronized(durations) {
+                durations.zipWithNext().all { (before, after) -> after >= before }
+            })
+            recording.finish()
+            awaitFixtureState(instrumentation, player, failure) { it.playbackState == Player.STATE_ENDED }
+            val beforeBackwardSeek = fixturePlayerSnapshot(instrumentation, player)
+            instrumentation.runOnMainSync { player.pause(); player.seekTo(2_000L) }
+            awaitFixtureState(instrumentation, player, failure) {
+                it.playbackState == Player.STATE_READY && it.renderedFrames > beforeBackwardSeek.renderedFrames &&
+                    kotlin.math.abs(it.positionMs - 2_000L) <= SEEK_POSITION_TOLERANCE_MS
+            }
             assertNull("Production fixture playback failed", failure.get())
             val distinctMapUpdates = durations.size
-            val maximumExpectedUpdates = (afterGrowth.durationMs / MAP_UPDATE_BOUND_MS).toInt() + 3
-            assertTrue(
-                "Estimated map updates exceeded the indexed-horizon bound",
-                distinctMapUpdates <= maximumExpectedUpdates,
-            )
             assertTrue(recording.openPositions().all { position -> position % GROWING_TS_PACKET_BYTES == 0L })
-            return FixtureResult(fixture.mimeType, distinctMapUpdates, seekPosition)
+            return FixtureResult(fixture.mimeType, distinctMapUpdates, recording.openPositions().max())
         } finally {
             recording.finish()
             if (playerCreated) instrumentation.runOnMainSync { player.release() }
@@ -219,12 +205,7 @@ private class AppendableGrowingRecording(
 ) : GrowingRecordingFileLease {
     private val lock = ReentrantLock()
     private val changed = lock.newCondition()
-    private val temporaryEnd = CountDownLatch(1)
-    private val nonzeroOpen = CountDownLatch(1)
-    private val growthRead = CountDownLatch(1)
     private val retryOpen = CountDownLatch(1)
-    private val firstNonzeroOpen = AtomicLong(NO_OPEN_POSITION)
-    private val retryOpenByte = AtomicLong(NO_OPEN_POSITION)
     private val retryFailureDelivered = AtomicBoolean(false)
     private val opens = Collections.synchronizedList(mutableListOf<Long>())
 
@@ -246,14 +227,6 @@ private class AppendableGrowingRecording(
             return RecordingFileResult.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
         }
         opens += position
-        if (retryFailureDelivered.get()) {
-            retryOpenByte.compareAndSet(NO_OPEN_POSITION, position)
-            retryOpen.countDown()
-        }
-        if (position > 0L) {
-            firstNonzeroOpen.compareAndSet(NO_OPEN_POSITION, position)
-            nonzeroOpen.countDown()
-        }
         return RecordingFileResult.Ok(Reader(position.toInt()))
     }
 
@@ -266,6 +239,13 @@ private class AppendableGrowingRecording(
         }
     }
 
+    fun appendThreeQuarters() {
+        lock.withLock {
+            availableBytes = bytes.size * 3 / 4 / GROWING_TS_PACKET_BYTES * GROWING_TS_PACKET_BYTES
+            changed.signalAll()
+        }
+    }
+
     fun finish() {
         lock.withLock {
             availableBytes = bytes.size
@@ -274,27 +254,22 @@ private class AppendableGrowingRecording(
         }
     }
 
-    fun awaitTemporaryEnd(): Boolean = temporaryEnd.await(FIXTURE_ASSERTION_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-
-    fun awaitNonzeroOpen(): Boolean = nonzeroOpen.await(FIXTURE_ASSERTION_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-
-    fun awaitGrowthRead(): Boolean = growthRead.await(FIXTURE_ASSERTION_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-
     fun awaitRetryOpen(): Boolean = retryOpen.await(FIXTURE_ASSERTION_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-
-    fun firstNonzeroOpenPosition(): Long = firstNonzeroOpen.get().also { position ->
-        check(position != NO_OPEN_POSITION)
-    }
-
-    fun retryOpenPosition(): Long = retryOpenByte.get().also { position ->
-        check(position != NO_OPEN_POSITION)
-    }
 
     fun openPositions(): List<Long> = synchronized(opens) { opens.toList() }
 
     private inner class Reader(
         private var position: Int,
     ) : GrowingRecordingFileReader {
+        override val sizeBytes: Long = availableBytes.toLong()
+        override val isFinal: Boolean get() = finished
+        override suspend fun refreshSize(): RecordingFileResult<Long?> = RecordingFileResult.Ok(availableBytes.toLong())
+        override suspend fun seek(position: Long): RecordingFileResult<Unit> = lock.withLock {
+            check(position in 0..availableBytes.toLong())
+            this.position = position.toInt()
+            RecordingFileResult.Ok(Unit)
+        }
+        private val openedAfterRetry = retryFailureDelivered.get()
         @Volatile
         private var closed = false
 
@@ -303,14 +278,16 @@ private class AppendableGrowingRecording(
             destinationOffset: Int,
             length: Int,
         ): RecordingFileResult<Int> = lock.withLock {
+            if (openedAfterRetry && length == FIXTURE_READ_AHEAD_BYTES) retryOpen.countDown()
             while (!closed && !finished && position >= availableBytes) {
-                temporaryEnd.countDown()
                 changed.await()
             }
             if (closed || position >= availableBytes && finished) {
                 return@withLock RecordingFileResult.Ok(RECORDING_END_OF_INPUT)
             }
-            if (retryFailureArmed && position >= retryFailurePosition()) {
+            // Only the playback reader uses this configured chunk size; duration probes must
+            // not consume the deliberately injected playback-loader retry.
+            if (retryFailureArmed && length == FIXTURE_READ_AHEAD_BYTES && position >= retryFailurePosition()) {
                 retryFailureArmed = false
                 retryFailureDelivered.set(true)
                 return@withLock RecordingFileResult.Failed(RecordingFileFailure.TIMEOUT)
@@ -318,7 +295,6 @@ private class AppendableGrowingRecording(
             val copied = minOf(length, availableBytes - position)
             bytes.copyInto(destination, destinationOffset, position, position + copied)
             position += copied
-            if (position > bytes.size / 2) growthRead.countDown()
             RecordingFileResult.Ok(copied)
         }
 
@@ -387,13 +363,7 @@ private val FIXTURES = listOf(
     ),
 )
 private const val FIXTURE_READ_AHEAD_BYTES: Int = GROWING_TS_PACKET_BYTES * 256
-private const val NO_OPEN_POSITION: Long = -1L
 private const val SEEK_POSITION_TOLERANCE_MS: Long = 2_000L
-private const val PLAY_PAST_SEEK_TARGET_MS: Long = 4_000L
-private const val MINIMUM_PLAY_PAST_SEEK_TARGET_MS: Long = 1_000L
-private const val PLAYBACK_TAIL_MS: Long = 500L
-private const val MAP_UPDATE_BOUND_MS: Long = MINIMUM_GROWING_TS_MAP_ADVANCE_US / 1_000L
-private const val FIXTURE_PLAYBACK_SPEED: Float = 4f
 private const val FIXTURE_ASSERTION_TIMEOUT_SECONDS: Long = 45L
 private const val FIXTURE_POLL_INTERVAL_MS: Long = 50L
 private const val FIXTURE_TEST_TIMEOUT_MS: Long = 180_000L
