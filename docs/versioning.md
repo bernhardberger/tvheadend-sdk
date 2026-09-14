@@ -1,16 +1,16 @@
 # Versioning and compatibility
 
-The source is configured for the provisional `0.14.0` release under these
+The source is configured for the provisional `0.15.0` release under these
 coordinates:
 
-- `at.bernhardberger.tvheadend:sdk-android:0.14.0`
-- `at.bernhardberger.tvheadend:sdk-core:0.14.0`
-- `at.bernhardberger.tvheadend:sdk-media3:0.14.0`
-- `at.bernhardberger.tvheadend:sdk-playback:0.14.0`
-- `at.bernhardberger.tvheadend:sdk-testing:0.14.0`
+- `at.bernhardberger.tvheadend:sdk-android:0.15.0`
+- `at.bernhardberger.tvheadend:sdk-core:0.15.0`
+- `at.bernhardberger.tvheadend:sdk-media3:0.15.0`
+- `at.bernhardberger.tvheadend:sdk-playback:0.15.0`
+- `at.bernhardberger.tvheadend:sdk-testing:0.15.0`
 
 Source, local staging, and CI
-do not establish that the configured `0.14.0` coordinates are publicly available;
+do not establish that the configured `0.15.0` coordinates are publicly available;
 check Maven Central before selecting them.
 
 The signed `v0.3.3` tag is retained as development-release evidence after its
@@ -30,7 +30,11 @@ must never be replaced.
 While the major version is zero, the public API and behavior are provisional.
 No source, binary, or behavioral compatibility is promised for the provisional
 0.x line. A known breaking change requires the next minor version, not a patch
-version. Patch versions are reserved for backward-compatible fixes. The `0.14.0`
+version. Patch versions are reserved for backward-compatible fixes. The `0.15.0`
+minor changes the JVM signature of `boundCompletedRecordingPlayback` to accept a
+defaulted suspending cutpoint provider. Existing Kotlin calls can omit it, but
+consumers must recompile. See [recording cutpoint fixtures](recording-cutpoint-fixtures.md).
+The `0.14.0`
 minor adds abstract `isFinal`, `refreshSize` and `seek` members to
 `GrowingRecordingFileReader` and `RecordingFileContinuity.isFinal`. Recompile
 consumers and implement the new reader members in application fakes. It preserves

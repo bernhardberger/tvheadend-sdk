@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.15.0]
+
+### Changed
+
+- `TvheadendTestResultFactory.boundCompletedRecordingPlayback` accepts a suspending
+  `cutpoints` lambda for fake-backed recording-marker tests. The binding retains
+  cancellation, generation and recording-identity checks around the response and
+  rejects scripts that counterfeit observation expiry. The omitted-lambda response
+  remains `NotReady`.
+- The factory's JVM signature changes; recompile consumers against 0.15.0.
+  See [recording cutpoint fixtures](docs/recording-cutpoint-fixtures.md).
+
 ## [0.14.0]
 
 Track the full verified growing-recording seek extent using Media3's maintained
