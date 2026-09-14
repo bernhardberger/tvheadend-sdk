@@ -2428,7 +2428,8 @@ public final class at/bernhardberger/tvheadend/sdk/core/TvheadendSessionKt {
 
 public final class at/bernhardberger/tvheadend/sdk/core/TvheadendTestResultFactory {
 	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/TvheadendTestResultFactory;
-	public static final fun boundCompletedRecordingPlayback-Vwn9FyE (Lat/bernhardberger/tvheadend/sdk/core/TvheadendSession;Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;J)Lat/bernhardberger/tvheadend/sdk/core/PlaybackBindingResult;
+	public static final fun boundCompletedRecordingPlayback-DDWaaB4 (Lat/bernhardberger/tvheadend/sdk/core/TvheadendSession;Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;JLkotlin/jvm/functions/Function1;)Lat/bernhardberger/tvheadend/sdk/core/PlaybackBindingResult;
+	public static synthetic fun boundCompletedRecordingPlayback-DDWaaB4$default (Lat/bernhardberger/tvheadend/sdk/core/TvheadendSession;Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;JLkotlin/jvm/functions/Function1;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/PlaybackBindingResult;
 	public static final fun boundLivePlayback-Qb8jNZ8 (Lat/bernhardberger/tvheadend/sdk/core/TvheadendSession;Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;J)Lat/bernhardberger/tvheadend/sdk/core/PlaybackBindingResult;
 	public static final fun boundLivePlayback-RIni1Gk (Lat/bernhardberger/tvheadend/sdk/core/TvheadendSession;Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;JLat/bernhardberger/tvheadend/sdk/playback/SubscriptionOpener;)Lat/bernhardberger/tvheadend/sdk/core/PlaybackBindingResult;
 }

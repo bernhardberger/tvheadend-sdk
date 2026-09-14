@@ -328,6 +328,121 @@ internal class FakeTvheadendSessionTest {
     }
 
     @Test
+    @OptIn(at.bernhardberger.tvheadend.sdk.core.TvheadendTestingApi::class)
+    fun `scripted cutpoints retain authority across suspended responses`() = runTest {
+        for (retirement in listOf("none", "generation", "removal", "cancel")) {
+            val fake = FakeTvheadendSession(currentObservation())
+            val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val entered = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val points = at.bernhardberger.tvheadend.sdk.core.DvrCutpointsResult.Available.create(listOf(
+                at.bernhardberger.tvheadend.sdk.core.DvrCutpoint(
+                    kotlin.time.Duration.ZERO, 10.seconds,
+                    at.bernhardberger.tvheadend.sdk.core.DvrCutpointAction.SCENE_MARKER,
+                ),
+            ))
+            val binding = (at.bernhardberger.tvheadend.sdk.core.TvheadendTestResultFactory.boundCompletedRecordingPlayback(
+                fake, fake.captureCurrentSession(), DvrEntryId(1),
+                cutpoints = { entered.complete(Unit); release.await(); points },
+            ) as PlaybackBindingResult.Bound).binding
+            val response = async { binding.cutpoints() }
+            entered.await()
+            when (retirement) {
+                "generation" -> fake.replaceGeneration(currentObservation())
+                "removal" -> fake.publish(currentObservation(includeTargets = false))
+                "cancel" -> response.cancel()
+            }
+            release.complete(Unit)
+            when (retirement) {
+                "none" -> assertSame(points, response.await(), retirement)
+                "generation" -> assertSame(at.bernhardberger.tvheadend.sdk.core.DvrCutpointsResult.ObservationExpired, response.await(), retirement)
+                "removal" -> assertSame(at.bernhardberger.tvheadend.sdk.core.DvrCutpointsResult.NotReady, response.await(), retirement)
+                "cancel" -> { response.join(); assertTrue(response.isCancelled) }
+            }
+        }
+    }
+
+    @Test
+    @OptIn(at.bernhardberger.tvheadend.sdk.core.TvheadendTestingApi::class)
+    fun `cutpoints reject cancellation after a noncancellable script returns`() = runTest {
+        val fake = FakeTvheadendSession(currentObservation())
+        val entered = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        var scriptReturned = false
+        var cancellationCaught = false
+        var resultReturned = false
+        val binding = (at.bernhardberger.tvheadend.sdk.core.TvheadendTestResultFactory.boundCompletedRecordingPlayback(
+            fake, fake.captureCurrentSession(), DvrEntryId(1),
+            cutpoints = {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                    entered.complete(Unit)
+                    release.await()
+                }
+                scriptReturned = true
+                at.bernhardberger.tvheadend.sdk.core.DvrCutpointsResult.NotReady
+            },
+        ) as PlaybackBindingResult.Bound).binding
+        val response = launch {
+            try {
+                binding.cutpoints()
+                resultReturned = true
+            } catch (failure: CancellationException) {
+                cancellationCaught = true
+                throw failure
+            }
+        }
+        entered.await()
+        response.cancel()
+        release.complete(Unit)
+        response.join()
+        assertTrue(scriptReturned)
+        assertTrue(cancellationCaught)
+        assertFalse(resultReturned)
+    }
+
+    @Test
+    @OptIn(at.bernhardberger.tvheadend.sdk.core.TvheadendTestingApi::class)
+    fun `cutpoint admission rejects stale targets before invoking scripts`() = runTest {
+        for (retirement in listOf("generation", "removal", "replacement")) {
+            val fake = FakeTvheadendSession(currentObservation())
+            var calls = 0
+            val current = fake.captureCurrentSession()
+            val defaultBinding = (at.bernhardberger.tvheadend.sdk.core.TvheadendTestResultFactory.boundCompletedRecordingPlayback(
+                fake, current, DvrEntryId(1),
+            ) as PlaybackBindingResult.Bound).binding
+            assertSame(at.bernhardberger.tvheadend.sdk.core.DvrCutpointsResult.NotReady, defaultBinding.cutpoints())
+            val binding = (at.bernhardberger.tvheadend.sdk.core.TvheadendTestResultFactory.boundCompletedRecordingPlayback(
+                fake, current, DvrEntryId(1),
+                cutpoints = { calls++; at.bernhardberger.tvheadend.sdk.core.DvrCutpointsResult.NotReady },
+            ) as PlaybackBindingResult.Bound).binding
+            when (retirement) {
+                "generation" -> fake.replaceGeneration(currentObservation())
+                "removal" -> fake.publish(currentObservation(includeTargets = false))
+                "replacement" -> fake.publish(currentObservation(recordingTitle = "replacement"))
+            }
+            val expected = if (retirement == "generation") {
+                at.bernhardberger.tvheadend.sdk.core.DvrCutpointsResult.ObservationExpired
+            } else {
+                at.bernhardberger.tvheadend.sdk.core.DvrCutpointsResult.NotReady
+            }
+            assertSame(expected, binding.cutpoints(), retirement)
+            assertEquals(0, calls, retirement)
+        }
+    }
+
+    @Test
+    @OptIn(at.bernhardberger.tvheadend.sdk.core.TvheadendTestingApi::class)
+    fun `cutpoint scripts cannot counterfeit observation expiry`() = runTest {
+        val fake = FakeTvheadendSession(currentObservation())
+        val binding = (at.bernhardberger.tvheadend.sdk.core.TvheadendTestResultFactory.boundCompletedRecordingPlayback(
+            fake, fake.captureCurrentSession(), DvrEntryId(1),
+            cutpoints = { at.bernhardberger.tvheadend.sdk.core.DvrCutpointsResult.ObservationExpired },
+        ) as PlaybackBindingResult.Bound).binding
+        var rejected = false
+        try { binding.cutpoints() } catch (_: IllegalArgumentException) { rejected = true }
+        assertTrue(rejected)
+    }
+
+    @Test
     fun `retirement and failure scripts cannot counterfeit expiration`() = runTest {
         val fake = FakeTvheadendSession(currentObservation())
         val current = fake.captureCurrentSession()
@@ -355,7 +470,7 @@ internal class FakeTvheadendSessionTest {
 private fun scheduleRequest(): DvrScheduleRequest =
     DvrScheduleRequest(DvrSchedule.Programme(EventId(1)))
 
-private fun currentObservation(includeTargets: Boolean = true): SessionObservation = SessionObservation.create(
+private fun currentObservation(includeTargets: Boolean = true, recordingTitle: String? = null): SessionObservation = SessionObservation.create(
     sessionState = SessionState.Ready(
         ServerCapabilities.create(CapabilityAccess.ALLOWED, CapabilityAccess.ALLOWED),
     ),
@@ -366,7 +481,7 @@ private fun currentObservation(includeTargets: Boolean = true): SessionObservati
     dvrState = DvrRepositoryState.Current(
         DvrSnapshot.create(
             if (includeTargets) {
-                listOf(DvrEntry.create(DvrEntryId(1), state = DvrEntryState.COMPLETED))
+                listOf(DvrEntry.create(DvrEntryId(1), state = DvrEntryState.COMPLETED, title = recordingTitle))
             } else {
                 emptyList()
             },

@@ -121,21 +121,30 @@ public object TvheadendTestResultFactory {
             ),
         )
     }
-    /** Creates a completed-recording binding tied to [currentSession]. */
+    /**
+     * Creates a completed-recording binding tied to [currentSession].
+     * [cutpoints] supplies test-owned responses while the same recording remains available.
+     * The binding checks cancellation and authority before and after the suspending response.
+     * Scripts must not return [DvrCutpointsResult.ObservationExpired]; expiry belongs to the binding.
+     * Omitting [cutpoints] retains the default [DvrCutpointsResult.NotReady] response.
+     */
     @JvmStatic
     public fun boundCompletedRecordingPlayback(
         session: TvheadendSession,
         currentSession: CurrentSessionObservation,
         recordingId: DvrEntryId,
+        cutpoints: suspend () -> DvrCutpointsResult = { DvrCutpointsResult.NotReady },
     ): PlaybackBindingResult<PlaybackBinding.Recording> = boundRecordingPlayback(
         session,
         currentSession,
         recordingId,
+        cutpoints,
     )
     private fun boundRecordingPlayback(
         session: TvheadendSession,
         currentSession: CurrentSessionObservation,
         recordingId: DvrEntryId,
+        cutpoints: suspend () -> DvrCutpointsResult,
     ): PlaybackBindingResult<PlaybackBinding.Recording> {
         val initial = currentObservation(session, currentSession)
             ?: return PlaybackBindingResult.ObservationExpired
@@ -182,13 +191,24 @@ public object TvheadendTestResultFactory {
                         }
                     }
                 },
-                loadTargetCutpoints = {
-                    cancellationAware {
-                        if (admission() == RecordingPlaybackAdmission.ObservationExpired) {
-                            DvrCutpointsResult.ObservationExpired
-                        } else {
-                            DvrCutpointsResult.NotReady
+                loadTargetCutpoints = cutpoints@{
+                    currentCoroutineContext().ensureActive()
+                    when (admission()) {
+                        RecordingPlaybackAdmission.ObservationExpired -> return@cutpoints DvrCutpointsResult.ObservationExpired
+                        is RecordingPlaybackAdmission.Completed -> Unit
+                        else -> return@cutpoints DvrCutpointsResult.NotReady
+                    }
+                    val result = cutpoints()
+                    currentCoroutineContext().ensureActive()
+                    when (admission()) {
+                        RecordingPlaybackAdmission.ObservationExpired -> DvrCutpointsResult.ObservationExpired
+                        is RecordingPlaybackAdmission.Completed -> {
+                            require(result !== DvrCutpointsResult.ObservationExpired) {
+                                "Scripted cutpoint responses cannot counterfeit observation expiry"
+                            }
+                            result
                         }
+                        else -> DvrCutpointsResult.NotReady
                     }
                 },
             ),
