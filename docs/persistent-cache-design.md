@@ -99,12 +99,16 @@ internal `@Serializable` DTOs in `sdk-core/.../cache/`. The public models
 (`Channel`, `ChannelTag`, `ChannelService`, `EpgEvent`, `EpgCoverage`,
 `EpgRating`, `EpgEpisode`) keep their private constructors and redacted
 `toString()`; DTO mapping is one internal function per type, in both
-directions, covered by a round-trip test. Every file starts with a schema
-version; a mismatch discards the file silently.
+directions, covered by a round-trip test. Catalog and artwork envelopes carry a
+schema version. The EPG file starts with the versioned `EPG2` magic and a timestamp,
+followed by length-prefixed protobuf records using standard data streams. Bump
+the magic for incompatible framing or DTO changes; an unrecognized format is
+discarded and rebuilt from server metadata.
 
 Explain the library choice in the commit body as the guide requires.
-Room and DataStore are rejected: sdk-core is JVM-only and neither suits a
-100k-event snapshot written as one unit.
+Room and DataStore are not used for this JVM-only cache. Per-record protobuf
+encoding avoids holding a whole-guide DTO graph and encoded buffer alongside
+the live snapshot.
 
 DVR entries are not cached. They carry `owner`, `creator`, and `path`
 (`DvrRepository.kt:98-138`), change quickly, and are small to resync.

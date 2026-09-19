@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.15.1]
+
+### Fixed
+
+- Reuse unchanged public EPG events across snapshots to reduce whole-guide
+  allocation during metadata updates, preserving immutable retained snapshots.
+- Prepare EPG lookup indexes before publishing observations and reuse equal
+  snapshots rather than rebuilding their indexes.
+- Skip redundant persistent-cache restoration when reconnecting with retained
+  metadata. Stream EPG cache records to avoid whole-guide serialization buffers.
+  The previous internal EPG cache format is discarded and rebuilt automatically.
+- Preserve public APIs, event limits and configured Guide coverage. These changes
+  reduce avoidable allocation; they do not impose a new process-heap budget.
+
 ## [0.15.0]
 
 ### Changed

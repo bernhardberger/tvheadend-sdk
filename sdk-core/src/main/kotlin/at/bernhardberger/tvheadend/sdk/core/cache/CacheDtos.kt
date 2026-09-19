@@ -15,7 +15,6 @@ import at.bernhardberger.tvheadend.sdk.core.EpgEpisodeId
 import at.bernhardberger.tvheadend.sdk.core.EpgEvent
 import at.bernhardberger.tvheadend.sdk.core.EpgRating
 import at.bernhardberger.tvheadend.sdk.core.EpgSeriesLinkId
-import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.EventId
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
@@ -25,21 +24,11 @@ import kotlin.time.Instant
 /** Schema version stamped into every persisted [CatalogEnvelopeDto]. */
 internal const val CATALOG_SCHEMA_VERSION: Int = 1
 
-/** Schema version stamped into every persisted [EpgEnvelopeDto]. */
-internal const val EPG_SCHEMA_VERSION: Int = 1
-
 @Serializable
 internal data class CatalogEnvelopeDto(
     @ProtoNumber(1) val schemaVersion: Int,
     @ProtoNumber(2) val storedAtEpochMillis: Long,
     @ProtoNumber(3) val payload: ChannelCatalogDto,
-)
-
-@Serializable
-internal data class EpgEnvelopeDto(
-    @ProtoNumber(1) val schemaVersion: Int,
-    @ProtoNumber(2) val storedAtEpochMillis: Long,
-    @ProtoNumber(3) val payload: EpgSnapshotDto,
 )
 
 @Serializable
@@ -81,12 +70,6 @@ internal data class ChannelTagDto(
     @ProtoNumber(5) val icon: String? = null,
     @ProtoNumber(6) val titledIcon: Boolean? = null,
     @ProtoNumber(7) val channelIds: List<Long>? = null,
-)
-
-@Serializable
-internal data class EpgSnapshotDto(
-    @ProtoNumber(1) val events: List<EpgEventDto>,
-    @ProtoNumber(2) val coverages: List<EpgCoverageDto>,
 )
 
 @Serializable
@@ -342,13 +325,3 @@ internal fun EpgCoverageDto.toModel(): EpgCoverage {
         )
     }
 }
-
-internal fun EpgSnapshot.toDto(): EpgSnapshotDto = EpgSnapshotDto(
-    events = events.map { event -> event.toDto() },
-    coverages = coverages.map { coverage -> coverage.toDto() },
-)
-
-internal fun EpgSnapshotDto.toModel(): EpgSnapshot = EpgSnapshot.create(
-    events = events.map { event -> event.toModel() },
-    coverages = coverages.map { coverage -> coverage.toModel() },
-)

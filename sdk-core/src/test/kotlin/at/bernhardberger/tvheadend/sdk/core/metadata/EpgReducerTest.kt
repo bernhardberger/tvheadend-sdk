@@ -24,6 +24,27 @@ internal class EpgReducerTest {
     private val generation = GatewayGeneration()
 
     @Test
+    fun `changing one event preserves unchanged public events in retained snapshots`() {
+        val reducer = EpgReducer()
+        addChannel(reducer, 1)
+        repeat(1_000) { index ->
+            reducer.accept(MetadataEvent.EventAdded(generation,
+                event(index.toLong() + 1, 1, 10, 20, title = "original")))
+        }
+        val retained = reducer.snapshot()
+        reducer.accept(MetadataEvent.EventUpdated(generation, update(1, title = "updated")))
+        val current = reducer.snapshot()
+
+        assertNotSame(retained.events.first(), current.events.first())
+        assertEquals("original", retained.events.first().title)
+        assertEquals("updated", current.events.first().title)
+        for (index in 1 until retained.events.size) {
+            assertSame(retained.events[index], current.events[index],
+                "An unchanged programme must not be copied for every publication")
+        }
+    }
+
+    @Test
     fun `known channel updates reuse snapshot but new channel membership rebuilds coverage`() {
         val reducer = EpgReducer()
         addChannel(reducer, 1)

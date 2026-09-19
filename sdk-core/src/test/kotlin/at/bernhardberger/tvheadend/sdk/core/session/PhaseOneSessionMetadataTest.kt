@@ -849,7 +849,8 @@ internal class PhaseOneSessionMetadataTest {
         )
         var snapshot = metadata.currentEpgSnapshot(current)
         assertEquals(listOf(10L), snapshot?.events?.map { it.id.value })
-        assertEquals(Instant.fromEpochSeconds(100), snapshot?.coverages?.single()?.queriedTo)
+        assertIndexesPrepared(requireNotNull(snapshot))
+        assertEquals(Instant.fromEpochSeconds(100), snapshot.coverages.single().queriedTo)
 
         val overtakenQuery = requireNotNull(metadata.beginEpgQuery(current, ChannelId(1)))
         metadata.acceptMetadata(MetadataEvent.ChannelDeleted(current, ChannelId(1)))
@@ -870,6 +871,15 @@ internal class PhaseOneSessionMetadataTest {
         )
     }
 
+    private fun assertIndexesPrepared(snapshot: EpgSnapshot) {
+        for (name in listOf("eventsById", "eventsByChannel")) {
+            val field = EpgSnapshot::class.java.getDeclaredField("$name\$delegate")
+            field.isAccessible = true
+            assertTrue((field.get(snapshot) as Lazy<*>).isInitialized(),
+                "Published $name must not defer a full-guide allocation to its first UI consumer")
+        }
+    }
+
     @Test
     fun `seeded snapshots publish stale states and are replaced by the first sync`() {
         val metadata = PhaseOneSessionMetadata()
@@ -886,6 +896,7 @@ internal class PhaseOneSessionMetadataTest {
         assertSame(seededCatalog, staleChannels.catalog)
         val staleEpg = metadata.observation.value.epgState as EpgRepositoryState.Stale
         assertSame(seededEpg, staleEpg.snapshot)
+        assertIndexesPrepared(staleEpg.snapshot)
         assertNull(metadata.publishedSnapshots.value, "Seeds are not publications")
 
         val generation = GatewayGeneration()
@@ -902,6 +913,20 @@ internal class PhaseOneSessionMetadataTest {
         val published = requireNotNull(metadata.publishedSnapshots.value)
         assertSame(current.catalog, published.catalog)
         assertSame((metadata.observation.value.epgState as EpgRepositoryState.Current).snapshot, published.epgSnapshot)
+        assertIndexesPrepared(published.epgSnapshot)
+
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(1, 1, 10, 20)))
+        val updated = requireNotNull(metadata.publishedSnapshots.value).epgSnapshot
+        assertIndexesPrepared(updated)
+        assertSame(updated.events.single(), updated.eventsById[EventId(1)])
+        assertSame(updated.events.single(), updated.eventsByChannel[ChannelId(1)]?.single())
+
+        repeat(10) {
+            metadata.acceptMetadata(MetadataEvent.EventDeleted(generation, EventId(999)))
+            assertSame(updated, (metadata.observation.value.epgState as EpgRepositoryState.Current).snapshot)
+            assertSame(updated, metadata.publishedSnapshots.value?.epgSnapshot,
+                "An equal, suppressed candidate must not retain a second set of prepared indexes")
+        }
 
         metadata.clearAllState()
         assertTrue(metadata.seedRetainedSnapshots(seededCatalog, null), "A cleared metadata accepts a seed again")

@@ -350,16 +350,18 @@ internal class ConnectionOwner(
     /**
      * Seeds retained metadata from the cache and starts persisting publications.
      *
-     * A same-profile reconnect already retains its snapshots, so the seed is refused and the
+     * A same-profile reconnect already retains its snapshots, so restoration is skipped and the
      * writer simply resumes. The store never throws for IO problems, so cache work cannot fail
      * the connection.
      */
     private suspend fun prepareCache(profile: ServerProfile) {
         val runtime = cacheRuntime ?: return
         val namespace = profile.cacheNamespace()
-        val restored = runtime.restore(namespace)
-        synchronized(stateLock) {
-            metadata.seedRetainedSnapshots(restored.catalog, restored.epgSnapshot)
+        if (synchronized(stateLock) { metadata.canSeedRetainedSnapshots() }) {
+            val restored = runtime.restore(namespace)
+            synchronized(stateLock) {
+                metadata.seedRetainedSnapshots(restored.catalog, restored.epgSnapshot)
+            }
         }
         runtime.start(namespace, metadata.publishedSnapshots)
     }

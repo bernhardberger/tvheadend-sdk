@@ -139,7 +139,10 @@ internal class CacheDtosTest {
             coverages = listOf(populatedCoverage, emptyCoverage),
         )
 
-        val restored = snapshot.toDto().toModel()
+        val restored = EpgSnapshot.create(
+            events = snapshot.events.map { it.toDto().toModel() },
+            coverages = snapshot.coverages.map { it.toDto().toModel() },
+        )
 
         assertEquals(snapshot, restored)
         assertTrue(restored.coverages[1].isEmpty)

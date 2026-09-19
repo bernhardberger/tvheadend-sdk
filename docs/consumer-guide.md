@@ -128,6 +128,14 @@ Cached data is never published as `CURRENT`: tuning, EPG queries and DVR
 mutations still wait for `Ready`. The guide is seeded for display only; the
 initial sync re-sends the configured horizon.
 
+Guide persistence streams individual protobuf records rather than buffering an
+encoded copy of the entire guide. The record-stream format replaces the earlier
+whole-guide envelope; an older guide cache is discarded and repopulated by normal
+synchronization, without affecting the catalog, artwork or application settings.
+Cache records are bounded to 1 MiB each and 250,000 events/coverage entries per
+snapshot. An oversized replacement is not persisted; the last complete cache
+remains available. These storage limits do not truncate live guide metadata.
+
 Artwork hits avoid a server file load. `artworkRetention` defaults to 30 days
 from storage (reads do not extend it); `artworkMaxBytes` defaults to 64 MiB
 across every namespace under the root. Least recently accessed entries are

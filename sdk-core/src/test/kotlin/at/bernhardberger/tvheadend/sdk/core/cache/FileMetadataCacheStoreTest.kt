@@ -7,9 +7,11 @@ import at.bernhardberger.tvheadend.sdk.core.Channel
 import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.EpgEvent
+import at.bernhardberger.tvheadend.sdk.core.EpgCoverage
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.EventId
 import java.io.File
+import java.io.RandomAccessFile
 import java.nio.file.Files
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.protobuf.ProtoBuf
@@ -42,10 +44,16 @@ internal class FileMetadataCacheStoreTest {
             events = listOf(
                 EpgEvent.create(
                     id = EventId(1L),
+                    channelId = ChannelId(1L),
                     start = start,
                     stop = stop,
                     title = "Title",
+                    description = "Programme — Beschreibung",
                 ),
+            ),
+            coverages = listOf(
+                EpgCoverage.create(ChannelId(1L), start, stop, stop),
+                EpgCoverage.empty(ChannelId(2L), stop),
             ),
         )
     }
@@ -53,6 +61,84 @@ internal class FileMetadataCacheStoreTest {
     private fun catalogFile(): File = File(File(File(root, "tvheadend-sdk"), namespace.value), "catalog.bin")
 
     private fun epgFile(): File = File(File(File(root, "tvheadend-sdk"), namespace.value), "epg.bin")
+
+    @Test
+    fun `large guide round trips through the record stream`() = runTest {
+        val snapshot = EpgSnapshot.create(events = List(10_000) { index ->
+            EpgEvent.create(
+                id = EventId(index.toLong() + 1),
+                start = storedAt,
+                stop = storedAt,
+                description = "$index:" + "programme description ".repeat(100),
+            )
+        })
+        val cache = store()
+        cache.storeEpg(namespace, snapshot, storedAt)
+        val restored = requireNotNull(cache.loadEpg(namespace, storedAt))
+        restored.prepareForObservation()
+        assertEquals(snapshot, restored)
+        assertEquals(10_000, restored.eventsById.size)
+        assertEquals(10_000, restored.eventsByChannel[null]?.size)
+        assertFalse(File(epgFile().parentFile, "epg.bin.tmp").exists())
+    }
+
+    @Test
+    fun `unrecognized EPG format is discarded and can be replaced`() = runTest {
+        val cache = store()
+        cache.storeEpg(namespace, sampleSnapshot(), storedAt)
+        RandomAccessFile(epgFile(), "rw").use { it.writeInt(0) }
+
+        assertNull(cache.loadEpg(namespace, storedAt))
+        assertFalse(epgFile().exists())
+
+        cache.storeEpg(namespace, sampleSnapshot(), storedAt)
+        assertEquals(sampleSnapshot(), cache.loadEpg(namespace, storedAt))
+    }
+
+    @Test
+    fun `invalid EPG record counts and lengths are rejected before allocation`() = runTest {
+        for (offset in listOf(12L, 16L)) {
+            for (invalid in listOf(-1, Int.MAX_VALUE)) {
+                val cache = store()
+                cache.storeEpg(namespace, sampleSnapshot(), storedAt)
+                RandomAccessFile(epgFile(), "rw").use { file ->
+                    file.seek(offset)
+                    file.writeInt(invalid)
+                }
+                assertNull(cache.loadEpg(namespace, storedAt))
+                assertFalse(epgFile().exists())
+            }
+        }
+    }
+
+    @Test
+    fun `EPG truncation trailing bytes and expired timestamps invalidate the cache`() = runTest {
+        val cache = store()
+        cache.storeEpg(namespace, sampleSnapshot(), storedAt)
+        RandomAccessFile(epgFile(), "rw").use { it.setLength(it.length() - 1) }
+        assertNull(cache.loadEpg(namespace, storedAt))
+        cache.storeEpg(namespace, sampleSnapshot(), storedAt)
+        epgFile().appendBytes(byteArrayOf(1))
+        assertNull(cache.loadEpg(namespace, storedAt))
+        cache.storeEpg(namespace, sampleSnapshot(), storedAt)
+        assertNull(cache.loadEpg(namespace, Instant.fromEpochMilliseconds(
+            storedAt.toEpochMilliseconds() + 1)))
+        assertFalse(epgFile().exists())
+    }
+
+    @Test
+    fun `oversized EPG replacement preserves the last complete cache`() = runTest {
+        val cache = store()
+        val previous = sampleSnapshot()
+        cache.storeEpg(namespace, previous, storedAt)
+        val oversized = EpgSnapshot.create(events = listOf(EpgEvent.create(
+            id = EventId(2), start = storedAt, stop = storedAt,
+            description = "x".repeat(1_048_577),
+        )))
+        cache.storeEpg(namespace, oversized, storedAt)
+        assertEquals(previous, cache.loadEpg(namespace, storedAt))
+        assertFalse(File(epgFile().parentFile, "epg.bin.tmp").exists())
+    }
 
     @Test
     fun `stored catalog and EPG snapshot load back equal`() = runTest {

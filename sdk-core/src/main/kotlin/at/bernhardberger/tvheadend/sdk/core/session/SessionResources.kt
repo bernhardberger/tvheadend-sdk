@@ -158,6 +158,9 @@ internal interface SessionMetadata {
      */
     public fun seedRetainedSnapshots(catalog: ChannelCatalog?, epgSnapshot: EpgSnapshot?): Boolean
 
+    /** Whether a cache seed is currently eligible, without reading or publishing cache data. */
+    public fun canSeedRetainedSnapshots(): Boolean
+
     public fun bindGeneration(generation: GatewayGeneration)
 
     public fun applyDvrAccess(generation: GatewayGeneration, access: Boolean?)
@@ -531,12 +534,17 @@ internal class PhaseOneSessionMetadata(
         resetState(retainPublishedCatalog = true)
     }
 
+    override fun canSeedRetainedSnapshots(): Boolean = synchronized(lock) {
+        generation == null && publishedCatalog == null && publishedEpgSnapshot == null
+    }
+
     override fun seedRetainedSnapshots(catalog: ChannelCatalog?, epgSnapshot: EpgSnapshot?): Boolean {
         if (catalog == null && epgSnapshot == null) return false
         synchronized(lock) {
-            if (generation != null || publishedCatalog != null || publishedEpgSnapshot != null) {
+            if (!canSeedRetainedSnapshots()) {
                 return false
             }
+            epgSnapshot?.prepareForObservation()
             publishedCatalog = catalog
             publishedEpgSnapshot = epgSnapshot
             mutableChannelsAndTags.value = catalog?.let { ChannelRepositoryState.Stale(it) }
@@ -1055,24 +1063,33 @@ internal class PhaseOneSessionMetadata(
         epgSnapshot: EpgSnapshot,
         dvrSnapshot: DvrSnapshot,
     ) {
+        val preparedEpg = prepareEpgForPublication(epgSnapshot)
         epgPublicationDeferred = false
         mutableChannelsAndTags.value = ChannelRepositoryState.Current(catalog)
         publishedCatalog = (mutableChannelsAndTags.value as ChannelRepositoryState.Current).catalog
-        mutableEpg.value = EpgRepositoryState.Current(epgSnapshot)
+        mutableEpg.value = EpgRepositoryState.Current(preparedEpg)
         publishedEpgSnapshot = (mutableEpg.value as EpgRepositoryState.Current).snapshot
         mutableDvr.value = DvrRepositoryState.Current(dvrSnapshot)
         publishedDvrSnapshot = (mutableDvr.value as DvrRepositoryState.Current).snapshot
-        mutablePublishedSnapshots.value = PublishedSnapshots(catalog, epgSnapshot)
+        mutablePublishedSnapshots.value = PublishedSnapshots(catalog, preparedEpg)
         publishMetadataObservation()
     }
 
     private fun publishCurrentEpg(snapshot: EpgSnapshot) {
-        mutableEpg.value = EpgRepositoryState.Current(snapshot)
+        val preparedEpg = prepareEpgForPublication(snapshot)
+        mutableEpg.value = EpgRepositoryState.Current(preparedEpg)
         publishedEpgSnapshot = (mutableEpg.value as EpgRepositoryState.Current).snapshot
         publishedCatalog?.let { catalog ->
-            mutablePublishedSnapshots.value = PublishedSnapshots(catalog, snapshot)
+            mutablePublishedSnapshots.value = PublishedSnapshots(catalog, preparedEpg)
         }
         publishMetadataObservation()
+    }
+
+    private fun prepareEpgForPublication(candidate: EpgSnapshot): EpgSnapshot {
+        // Match StateFlow conflation before allocating indexes, including no-op EPG updates.
+        val snapshot = publishedEpgSnapshot?.takeIf { it == candidate } ?: candidate
+        snapshot.prepareForObservation()
+        return snapshot
     }
 
     private fun publishMetadataObservation() {

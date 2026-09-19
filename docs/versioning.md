@@ -1,16 +1,16 @@
 # Versioning and compatibility
 
-The source is configured for the provisional `0.15.0` release under these
+The source is configured for the provisional `0.15.1` release under these
 coordinates:
 
-- `at.bernhardberger.tvheadend:sdk-android:0.15.0`
-- `at.bernhardberger.tvheadend:sdk-core:0.15.0`
-- `at.bernhardberger.tvheadend:sdk-media3:0.15.0`
-- `at.bernhardberger.tvheadend:sdk-playback:0.15.0`
-- `at.bernhardberger.tvheadend:sdk-testing:0.15.0`
+- `at.bernhardberger.tvheadend:sdk-android:0.15.1`
+- `at.bernhardberger.tvheadend:sdk-core:0.15.1`
+- `at.bernhardberger.tvheadend:sdk-media3:0.15.1`
+- `at.bernhardberger.tvheadend:sdk-playback:0.15.1`
+- `at.bernhardberger.tvheadend:sdk-testing:0.15.1`
 
 Source, local staging, and CI
-do not establish that the configured `0.15.0` coordinates are publicly available;
+do not establish that the configured `0.15.1` coordinates are publicly available;
 check Maven Central before selecting them.
 
 The signed `v0.3.3` tag is retained as development-release evidence after its

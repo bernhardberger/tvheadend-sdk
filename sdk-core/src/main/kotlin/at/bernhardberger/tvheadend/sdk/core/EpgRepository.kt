@@ -239,6 +239,12 @@ public data class EpgSnapshot private constructor(
     @get:JvmSynthetic
     internal val eventsByChannel: Map<ChannelId?, List<EpgEvent>> by lazy { events.groupBy(EpgEvent::channelId) }
 
+    /** Session producers prepare lookup storage before exposing a snapshot to UI observers. */
+    internal fun prepareForObservation() {
+        eventsById
+        eventsByChannel
+    }
+
     override fun equals(other: Any?): Boolean =
         this === other ||
             other is EpgSnapshot &&

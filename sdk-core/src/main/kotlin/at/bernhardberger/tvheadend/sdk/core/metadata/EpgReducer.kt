@@ -56,6 +56,10 @@ internal data class ReducedEpgEvent private constructor(
     internal val dvrEntryId: DvrEntryId?,
     internal val nextEventId: EventId?,
 ) {
+    // Reducer-owned immutable events can share their public projection across snapshots.
+    // A metadata update creates a new ReducedEpgEvent, leaving retained snapshots untouched.
+    private var publicEvent: EpgEvent? = null
+
     override fun toString(): String = "ReducedEpgEvent(<redacted>)"
 
     internal fun merge(update: GatewayEpgUpdate): ReducedEpgEvent? {
@@ -108,6 +112,7 @@ internal data class ReducedEpgEvent private constructor(
         )
 
     internal fun toPublicOrNull(): EpgEvent? {
+        publicEvent?.let { return it }
         val start = start ?: return null
         val stop = stop ?: return null
         if (stop < start) return null
@@ -134,7 +139,7 @@ internal data class ReducedEpgEvent private constructor(
             image = image,
             dvrEntryId = dvrEntryId,
             nextEventId = nextEventId,
-        )
+        ).also { publicEvent = it }
     }
 
     private fun hasInvalidTiming(): Boolean = start != null && stop != null && stop < start

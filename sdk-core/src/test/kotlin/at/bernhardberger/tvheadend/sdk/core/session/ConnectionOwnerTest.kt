@@ -298,6 +298,75 @@ internal class ConnectionOwnerTest {
     }
 
     @Test
+    fun `retained guide skips cache decoding on reconnect and explicit retry`() = runTest {
+        val gateway = FakeProtocolGateway()
+        val first = GatewayGeneration()
+        val second = GatewayGeneration()
+        gateway.connectResults += connected(first)
+        gateway.connectResults += failed(GatewayConnectionFailure.SERVER_UNREACHABLE)
+        gateway.connectResults += connected(second)
+        gateway.connectResults += connected(GatewayGeneration())
+        val store = InMemoryMetadataCacheStore(null, null)
+        val runtime = MetadataCacheRuntime(store, MetadataCachePolicy.create(File("unused")),
+            StandardTestDispatcher(testScheduler), Clock.System)
+        val owner = owner(gateway, cacheRuntime = runtime)
+        try {
+            owner.connect(ServerProfile("first"))
+            runCurrent()
+            assertEquals(1, store.epgLoads)
+            gateway.emitMetadata(MetadataEvent.ChannelAdded(first, channelMetadata(id = 1)))
+            gateway.emitMetadata(MetadataEvent.EventAdded(first, epgMetadata(1, 1)))
+            gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(first))
+            runCurrent()
+            val retained = owner.currentEpgSnapshot()
+
+            owner.disconnect()
+            owner.connect(ServerProfile("first"))
+            runCurrent()
+            assertSame(retained, owner.observedEpgSnapshot())
+            assertEquals(1, store.epgLoads, "Retained reconnect must not decode a discarded guide")
+            assertEquals(SessionCommandResult.STARTED, owner.retry())
+            runCurrent()
+            assertSame(retained, owner.observedEpgSnapshot())
+            assertEquals(1, store.epgLoads, "Explicit retry must not decode a discarded guide")
+            gateway.emitMetadata(MetadataEvent.ChannelAdded(second, channelMetadata(id = 2)))
+            gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(second))
+            runCurrent()
+            advanceTimeBy(61.seconds)
+            runCurrent()
+            assertSame(owner.currentEpgSnapshot(), store.epg, "Persistence must resume after retry")
+
+            owner.connect(ServerProfile("different"))
+            runCurrent()
+            assertEquals(2, store.epgLoads, "A different profile still restores its own cache")
+        } finally {
+            owner.shutdown()
+        }
+    }
+
+    @Test
+    fun `retry preserves a cache seed even before the first successful sync`() = runTest {
+        val gateway = FakeProtocolGateway().apply {
+            defaultConnectResult = failed(GatewayConnectionFailure.SERVER_UNREACHABLE)
+        }
+        val seed = EpgSnapshot.create()
+        val store = InMemoryMetadataCacheStore(null, seed)
+        val runtime = MetadataCacheRuntime(store, MetadataCachePolicy.create(File("unused")),
+            StandardTestDispatcher(testScheduler), Clock.System)
+        val owner = owner(gateway, cacheRuntime = runtime)
+        try {
+            owner.connect(ServerProfile("first"))
+            runCurrent()
+            assertEquals(SessionCommandResult.STARTED, owner.retry())
+            runCurrent()
+            assertSame(seed, owner.observedEpgSnapshot())
+            assertEquals(1, store.epgLoads)
+        } finally {
+            owner.shutdown()
+        }
+    }
+
+    @Test
     fun `a replacement profile never persists the previous profile's snapshots`() = runTest {
         val gateway = FakeProtocolGateway(mutableListOf())
         val firstGeneration = GatewayGeneration()
@@ -1650,10 +1719,14 @@ private class InMemoryMetadataCacheStore(
     val writes = mutableListOf<Any>()
     val writtenNamespaces = mutableSetOf<CacheNamespace>()
     var cleared = false
+    var epgLoads = 0
 
     override suspend fun loadCatalog(namespace: CacheNamespace, notBefore: Instant): ChannelCatalog? = catalog
 
-    override suspend fun loadEpg(namespace: CacheNamespace, notBefore: Instant): EpgSnapshot? = epg
+    override suspend fun loadEpg(namespace: CacheNamespace, notBefore: Instant): EpgSnapshot? {
+        epgLoads++
+        return epg
+    }
 
     override suspend fun storeCatalog(namespace: CacheNamespace, catalog: ChannelCatalog, storedAt: Instant) {
         writes += catalog
