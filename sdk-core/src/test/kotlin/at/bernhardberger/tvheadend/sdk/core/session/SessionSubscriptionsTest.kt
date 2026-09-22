@@ -32,6 +32,9 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailureEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
+import at.bernhardberger.tvheadend.sdk.core.gateway.EventId
+import at.bernhardberger.tvheadend.sdk.core.gateway.ServerTimeEstimate
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrRecordingFile
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrUpdateProvenance
@@ -87,11 +90,54 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import kotlin.time.Duration
+import kotlin.time.Clock
+import kotlin.time.TestTimeSource
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SessionSubscriptionsTest {
+    @Test
+    fun `worker uses generation server time despite skewed device clock before expiry deletion`() = runTest {
+        val generation = GatewayGeneration()
+        val timeSource = TestTimeSource()
+        val estimate = ServerTimeEstimate(timeSource)
+        estimate.observe(generation, Instant.fromEpochSeconds(20))
+        val gateway = SubscriptionGateway().apply { serverTime = estimate::atStatus }
+        val metadata = PhaseOneSessionMetadata(estimatedServerTime = gateway::estimatedServerTime)
+        val children = PlaybackSessionChildren(
+            gateway, metadata, StandardTestDispatcher(testScheduler),
+            clock = object : Clock {
+                override fun now(): Instant = Instant.fromEpochSeconds(1_000_000)
+            },
+        )
+        metadata.bindKnownChannels(generation, 1)
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, GatewayEpgEvent(
+            EventId(10), ChannelId(1), Instant.fromEpochSeconds(10), Instant.fromEpochSeconds(20),
+            title = "A",
+        )))
+        children.bindGeneration(generation)
+        try {
+            assertTrue(children.prepareBackgroundEnrichment(generation) {})
+            assertTrue(children.startBackgroundEnrichment(generation))
+            runCurrent()
+            assertEquals("A", metadata.observation.value.event(EventId(10))?.title)
+            metadata.acceptMetadata(MetadataEvent.EventDeleted(generation, EventId(10)))
+            assertEquals("A", metadata.observation.value.eventAt(ChannelId(1), Instant.fromEpochSeconds(15))?.title)
+            assertTrue(gateway.epgTargets.all { it < Instant.fromEpochSeconds(100_000) })
+            assertTrue(gateway.epgTargets.isNotEmpty())
+        } finally {
+            children.cancelAndJoinBackgroundEnrichment()
+            children.closeAndJoinSubscriptions()
+        }
+        val replacement = GatewayGeneration()
+        assertEquals(null, gateway.estimatedServerTime(replacement))
+        estimate.observe(replacement, Instant.fromEpochSeconds(100))
+        assertEquals(null, gateway.estimatedServerTime(generation))
+        metadata.bindKnownChannels(replacement, 1)
+        assertTrue(metadata.observation.value.epgSnapshotForDisplay!!.historicalEvents.isEmpty())
+    }
+
     @ParameterizedTest
     @ValueSource(booleans = [false, true])
     fun `stream replacement preserves its subscription without waiting for producer completion`(
@@ -1378,6 +1424,9 @@ class SessionSubscriptionsTest {
 }
 
 private class SubscriptionGateway : ProtocolGateway {
+    internal var serverTime: (GatewayGeneration) -> Instant? = { null }
+    internal val epgTargets = mutableListOf<Instant>()
+    override fun estimatedServerTime(generation: GatewayGeneration): Instant? = serverTime(generation)
     private val lock = Any()
     private val live = java.util.Collections.newSetFromMap(
         IdentityHashMap<GatewayGeneration, Boolean>(),
@@ -1448,7 +1497,10 @@ private class SubscriptionGateway : ProtocolGateway {
         generation: GatewayGeneration,
         channelId: ChannelId,
         maxTime: Instant,
-    ): GatewayResult<List<GatewayEpgQueryEvent>> = GatewayResult.Ok(emptyList())
+    ): GatewayResult<List<GatewayEpgQueryEvent>> {
+        epgTargets += maxTime
+        return GatewayResult.Ok(emptyList())
+    }
 
     override suspend fun getDvrConfigs(
         generation: GatewayGeneration,

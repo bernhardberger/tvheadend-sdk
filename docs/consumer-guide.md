@@ -298,6 +298,41 @@ The default `EpgCoveragePolicy` keeps a 24-hour future horizon and at most
 request 24 hours through 7 days and 1 through 250,000 retained events. The
 policy applies only when that call creates a fresh process-wide session owner.
 
+### Already-received programme history
+
+`observation.epgSnapshotForDisplay?.historicalEvents` contains deleted, ended
+programmes retained for guide history and rewind labels. `observation.eventAt`
+searches the live schedule first, then this history, using `[start, stop)` timing.
+For a guide's past window, combine `events` and `historicalEvents` and select
+the desired time range: ended events still present on the server remain in `events`.
+Both are display APIs: a historical event ID never proves that the server still
+has the event or can record it. `events`, `event(id)`, `nextEvent`, coverage and
+DVR associations continue to use the server schedule, excluding this archive.
+
+The SDK retains only programmes already received in the active generation whose
+stop is at or before the generation's estimated server time when deletion arrives,
+or whose end is proven by the server's channel-current event advancing to a
+non-overlapping successor. That channel evidence handles the whole-second time
+estimate lagging just behind an actual stop boundary.
+Unknown-time, current and future deletions are removed without archival. HTSP
+does not identify the deletion reason: a correction deleting an already-ended
+programme is indistinguishable from expiry. Accepted same-ID corrections or
+same-channel overlapping replacements supersede archived metadata.
+
+History uses the existing six-hour past window, with an additional bounded pool
+of at most `maximumRetainedEvents` entries (oldest stop first eviction). It does
+not consume live-schedule capacity. Pruning occurs on metadata traffic and the
+EPG worker's maintenance cycle (normally at most ten minutes when idle); captured
+immutable observations do not change with time. Channel deletion removes its
+history. Reconnect starts a fresh archive and the new authoritative snapshot
+replaces prior history; prior same-profile snapshots can remain explicitly stale
+during synchronization. Profile reset clears the repositories. History is not
+persisted across processes. Cold starts and reconnects can therefore have gaps;
+server queries cannot recover programmes the server has already destroyed.
+
+This metadata lookup does not provide a timeshift-stream-to-UTC mapping or prove
+that a programme remains in the server's seekable buffer.
+
 ## Read and mutate DVR state
 
 `SessionObservation.dvrState` carries immutable entries, automatic-recording

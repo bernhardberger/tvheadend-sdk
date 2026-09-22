@@ -30,6 +30,9 @@ internal interface ProtocolGateway {
     public val metadata: Flow<MetadataEvent>
     public val connectionFailures: Flow<GatewayConnectionFailureEvent>
 
+    /** Generation-scoped server time advanced by monotonic elapsed time, or unknown. */
+    public fun estimatedServerTime(generation: GatewayGeneration): Instant? = null
+
     public suspend fun connect(server: ServerConfiguration): GatewayConnectResult
 
     public suspend fun disconnect()

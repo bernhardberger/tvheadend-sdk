@@ -58,12 +58,16 @@ public class SessionObservation private constructor(
         epgSnapshotForDisplay?.eventsById?.get(id)
 
     /**
-     * Selects the first retained event active at [at] using a closed start and open stop boundary.
+     * Display-only lookup using closed start and open stop boundaries. Live schedule wins over
+     * bounded, already-received history. A result never authorizes recording or other actions.
      */
     public fun eventAt(channelId: ChannelId, at: Instant): EpgEvent? =
         epgSnapshotForDisplay?.eventsByChannel?.get(channelId)?.firstOrNull { event ->
             event.start <= at && at < event.stop
         }
+            ?: epgSnapshotForDisplay?.historyByChannel?.get(channelId)?.firstOrNull { event ->
+                event.start <= at && at < event.stop
+            }
 
     /**
      * Selects the event after the event active at [at], or the earliest future event in a gap.

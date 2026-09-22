@@ -1671,16 +1671,18 @@ public final class at/bernhardberger/tvheadend/sdk/core/EpgSnapshot {
 	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/EpgSnapshot$Companion;
 	public final fun component1 ()Ljava/util/List;
 	public final fun component2 ()Ljava/util/List;
+	public final fun component3 ()Ljava/util/List;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getCoverages ()Ljava/util/List;
 	public final fun getEvents ()Ljava/util/List;
+	public final fun getHistoricalEvents ()Ljava/util/List;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/EpgSnapshot$Companion {
-	public final fun create (Ljava/util/List;Ljava/util/List;)Lat/bernhardberger/tvheadend/sdk/core/EpgSnapshot;
-	public static synthetic fun create$default (Lat/bernhardberger/tvheadend/sdk/core/EpgSnapshot$Companion;Ljava/util/List;Ljava/util/List;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/EpgSnapshot;
+	public final fun create (Ljava/util/List;Ljava/util/List;Ljava/util/List;)Lat/bernhardberger/tvheadend/sdk/core/EpgSnapshot;
+	public static synthetic fun create$default (Lat/bernhardberger/tvheadend/sdk/core/EpgSnapshot$Companion;Ljava/util/List;Ljava/util/List;Ljava/util/List;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/EpgSnapshot;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/EventId {

@@ -59,6 +59,97 @@ import kotlin.time.Instant
 @OptIn(ExperimentalCoroutinesApi::class)
 internal class PhaseOneSessionMetadataTest {
     @Test
+    fun `complete channel add clears current link while update omission preserves successor evidence`() {
+        for (completeAdd in listOf(false, true)) {
+            val metadata = PhaseOneSessionMetadata(estimatedServerTime = { Instant.fromEpochSeconds(19) })
+            val generation = GatewayGeneration()
+            metadata.bindGeneration(generation)
+            metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(1, currentEventId = 11)))
+            metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(10, 1, 10, 20)))
+            metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(11, 1, 20, 30)))
+            metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+            metadata.acceptMetadata(if (completeAdd) {
+                MetadataEvent.ChannelAdded(generation, channel(1))
+            } else {
+                MetadataEvent.ChannelUpdated(generation, channel(1))
+            })
+            metadata.acceptMetadata(MetadataEvent.EventDeleted(generation, EventId(10)))
+            assertEquals(if (completeAdd) 0 else 1,
+                metadata.observation.value.epgSnapshotForDisplay!!.historicalEvents.size)
+        }
+    }
+
+    @Test
+    fun `deleted current link cannot become successor evidence when event id reappears`() {
+        val metadata = PhaseOneSessionMetadata(estimatedServerTime = { Instant.fromEpochSeconds(19) })
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(1, currentEventId = 11)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(10, 1, 10, 20)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(11, 1, 20, 30)))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        metadata.acceptMetadata(MetadataEvent.EventDeleted(generation, EventId(11)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(11, 1, 20, 30)))
+        metadata.acceptMetadata(MetadataEvent.EventDeleted(generation, EventId(10)))
+        assertTrue(metadata.observation.value.epgSnapshotForDisplay!!.historicalEvents.isEmpty())
+    }
+
+    @Test
+    fun `expired programme survives channel advance and deletion only as display history`() {
+        var now = Instant.fromEpochSeconds(19, 500_000_000)
+        val metadata = PhaseOneSessionMetadata(estimatedServerTime = { now })
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(1, currentEventId = 10)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(10, 1, 10, 20, "A")))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(11, 1, 20, 30, "B")))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        metadata.acceptMetadata(MetadataEvent.ChannelUpdated(generation, channel(1, currentEventId = 11)))
+        metadata.acceptMetadata(MetadataEvent.EventDeleted(generation, EventId(10)))
+        val observed = metadata.observation.value
+        assertEquals("A", observed.eventAt(ChannelId(1), Instant.fromEpochSeconds(10))?.title)
+        assertNull(observed.eventAt(ChannelId(1), Instant.fromEpochSeconds(9)))
+        assertEquals("B", observed.eventAt(ChannelId(1), Instant.fromEpochSeconds(20))?.title)
+        assertNull(observed.eventAt(ChannelId(1), Instant.fromEpochSeconds(30)))
+        assertNull(observed.event(EventId(10)))
+        assertEquals(listOf(EventId(10)), observed.epgSnapshotForDisplay?.historicalEvents?.map { it.id })
+        assertEquals(Instant.fromEpochSeconds(20), observed.coverage(ChannelId(1))?.coveredFrom)
+        metadata.acceptMetadata(MetadataEvent.EventDeleted(generation, EventId(11)))
+        assertNull(metadata.observation.value.eventAt(ChannelId(1), Instant.fromEpochSeconds(25)))
+        now = Instant.fromEpochSeconds(20) + 6.hours
+        metadata.retainEpgEvents(generation, now - 6.hours, now + 24.hours)
+        assertTrue(metadata.observation.value.epgSnapshotForDisplay!!.historicalEvents.isEmpty())
+        assertEquals("A", observed.eventAt(ChannelId(1), Instant.fromEpochSeconds(10))?.title)
+    }
+
+    @Test
+    fun `history is removed by channel deletion and never seeded into replacement generation`() {
+        val metadata = PhaseOneSessionMetadata(estimatedServerTime = { Instant.fromEpochSeconds(20) })
+        val first = GatewayGeneration()
+        fun populate(generation: GatewayGeneration) {
+            metadata.bindGeneration(generation)
+            metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(1)))
+            metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(10, 1, 10, 20)))
+            metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+            metadata.acceptMetadata(MetadataEvent.EventDeleted(generation, EventId(10)))
+        }
+        populate(first)
+        assertEquals(1, metadata.observation.value.epgSnapshotForDisplay!!.historicalEvents.size)
+        metadata.acceptMetadata(MetadataEvent.ChannelDeleted(first, ChannelId(1)))
+        assertTrue(metadata.observation.value.epgSnapshotForDisplay!!.historicalEvents.isEmpty())
+        populate(first)
+        val second = GatewayGeneration()
+        metadata.bindGeneration(second)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(second, channel(1)))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(second))
+        metadata.acceptMetadata(MetadataEvent.EventDeleted(first, EventId(10)))
+        assertTrue(metadata.observation.value.epgSnapshotForDisplay!!.historicalEvents.isEmpty())
+        populate(second)
+        metadata.clearAllState()
+        assertNull(metadata.observation.value.epgSnapshotForDisplay)
+    }
+
+    @Test
     fun `mutation confirmation is delivered only after authoritative DVR publication`() = runTest {
         val gateway = MutationGateway()
         val coordinator = DvrMutationCoordinator(gateway)

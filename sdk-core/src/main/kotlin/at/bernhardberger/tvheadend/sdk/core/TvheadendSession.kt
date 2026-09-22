@@ -211,6 +211,7 @@ internal object SessionRegistry {
         )
         metadata = PhaseOneSessionMetadata(
             epgCoveragePolicy = epgCoveragePolicy,
+            estimatedServerTime = gateway::estimatedServerTime,
             mutationCommands = dvrMutations,
             searchCommands = EpgSearchCommands { generation, request ->
                 gateway.searchEpg(generation, request)

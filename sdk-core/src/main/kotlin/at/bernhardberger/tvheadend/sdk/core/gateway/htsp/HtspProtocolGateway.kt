@@ -206,6 +206,9 @@ internal class HtspProtocolGateway internal constructor(
     private val generationLock = Any()
     private val serverTimeEstimate = at.bernhardberger.tvheadend.sdk.core.gateway.ServerTimeEstimate()
 
+    override fun estimatedServerTime(generation: GatewayGeneration): Instant? =
+        serverTimeEstimate.atStatus(generation)
+
     /**
      * Bounds concurrent artwork file handles on this connection. Each artwork load holds an HTSP
      * file open across several round trips; an unbounded burst (a channel list scrolling picons)

@@ -17,6 +17,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgUpdate
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import java.util.Collections
 import kotlin.time.Instant
+import kotlin.time.Duration.Companion.hours
 
 @ConsistentCopyVisibility
 internal data class ReducedEpgEvent private constructor(
@@ -346,6 +347,8 @@ internal class EpgReducer(
     private val maximumRetainedEvents: Int = EpgCoveragePolicy.create().maximumRetainedEvents,
 ) {
     private val events = linkedMapOf<EventId, ReducedEpgEvent>()
+    private val history = linkedMapOf<EventId, ReducedEpgEvent>()
+    private val currentEventByChannel = linkedMapOf<ChannelId, EventId>()
     private val channelIds = linkedSetOf<ChannelId>()
     private val queriedToByChannel = linkedMapOf<ChannelId, Instant>()
     // Mutation revisions exist only while an older in-flight query can still observe them.
@@ -365,6 +368,8 @@ internal class EpgReducer(
     internal fun clear() {
         cachedSnapshot = null
         events.clear()
+        history.clear()
+        currentEventByChannel.clear()
         channelIds.clear()
         queriedToByChannel.clear()
         activeQueries.clear()
@@ -374,13 +379,17 @@ internal class EpgReducer(
         queriesInvalidAfterRevision = null
     }
 
-    internal fun accept(event: MetadataEvent) {
+    internal fun accept(event: MetadataEvent, serverNow: Instant? = null) {
+        serverNow?.let(::pruneHistory)
         when (event) {
             is MetadataEvent.ChannelAdded -> {
+                currentEventByChannel.remove(event.channel.id)
+                event.channel.currentEventId?.let { currentEventByChannel[event.channel.id] = it }
                 recordChannelAuthority(event.channel.id)
                 if (channelIds.add(event.channel.id)) cachedSnapshot = null
             }
             is MetadataEvent.ChannelUpdated -> {
+                event.channel.currentEventId?.let { currentEventByChannel[event.channel.id] = it }
                 if (channelIds.add(event.channel.id)) cachedSnapshot = null
             }
             is MetadataEvent.ChannelDeleted -> {
@@ -401,7 +410,25 @@ internal class EpgReducer(
             is MetadataEvent.EventDeleted -> {
                 cachedSnapshot = null
                 recordEventAuthority(event.eventId)
-                events.remove(event.eventId)
+                currentEventByChannel.entries.removeIf { it.value == event.eventId }
+                val removed = events.remove(event.eventId)
+                if (removed != null && serverNow != null) {
+                    val programme = removed.toPublicOrNull()
+                    // channelUpdate can prove the next programme is current before the
+                    // whole-second getSysTime estimate reaches the exact stop boundary.
+                    val currentStart = currentEventByChannel[removed.channelId]
+                        ?.let(events::get)?.takeIf { it.channelId == removed.channelId }?.start
+                    val ended = programme != null && (programme.stop <= serverNow ||
+                        currentStart?.let { programme.stop <= it } == true)
+                    if (programme != null && programme.start < programme.stop &&
+                        ended && programme.stop > serverNow - 6.hours &&
+                        programme.channelId in channelIds &&
+                        events.values.none { overlaps(it, removed) }
+                    ) {
+                        history[event.eventId] = removed
+                        trimHistory()
+                    }
+                }
             }
             is MetadataEvent.TagAdded,
             is MetadataEvent.TagUpdated,
@@ -425,10 +452,12 @@ internal class EpgReducer(
         val valid = validChannelIds.toSet()
         channelIds.clear()
         channelIds.addAll(validChannelIds)
+        currentEventByChannel.keys.retainAll(valid)
         events.entries.removeIf { entry ->
             entry.value.toPublicOrNull() == null ||
                 entry.value.channelId?.let { it !in valid } == true
         }
+        history.entries.removeIf { it.value.channelId !in valid }
         queriedToByChannel.keys.retainAll(valid)
     }
 
@@ -492,7 +521,10 @@ internal class EpgReducer(
                     }
                 }
                 if (stagedEvents.isNotEmpty()) cachedSnapshot = null
-                stagedEvents.forEach { (eventId, event) -> events[eventId] = event }
+                stagedEvents.forEach { (eventId, event) ->
+                    supersedeHistory(event)
+                    events[eventId] = event
+                }
                 recordSuccessfulQuery(query.channelId, queriedTo)
                 EpgQueryAcceptance.APPLIED
             }
@@ -506,6 +538,29 @@ internal class EpgReducer(
         if (events.entries.removeIf { entry -> !entry.value.shouldRetain(from, to) }) {
             cachedSnapshot = null
         }
+    }
+
+    internal fun pruneHistory(serverNow: Instant) {
+        if (history.entries.removeIf { (_, event) ->
+                event.stop?.let { it <= serverNow - 6.hours } != false
+            }
+        ) cachedSnapshot = null
+    }
+
+    private fun trimHistory() {
+        while (history.size > maximumRetainedEvents) {
+            val oldest = history.values.minWith(compareBy({ it.stop }, { it.id.value }))
+            history.remove(oldest.id)
+        }
+    }
+
+    private fun overlaps(left: ReducedEpgEvent, right: ReducedEpgEvent): Boolean =
+        left.channelId != null && left.channelId == right.channelId &&
+            left.start != null && left.stop != null && right.start != null && right.stop != null &&
+            left.start < right.stop && right.start < left.stop
+
+    private fun supersedeHistory(event: ReducedEpgEvent) {
+        history.entries.removeIf { it.key == event.id || overlaps(it.value, event) }
     }
 
     internal fun snapshot(): EpgSnapshot {
@@ -535,13 +590,19 @@ internal class EpgReducer(
                 )
             }
         }
-        return EpgSnapshot.create(visibleEvents, coverages).also { cachedSnapshot = it }
+        return EpgSnapshot.create(
+            visibleEvents, coverages,
+            history.values.mapNotNull { it.toPublicOrNull() }.sortedWith(
+                compareBy({ it.start }, { it.stop }, { it.id.value }),
+            ),
+        ).also { cachedSnapshot = it }
     }
 
     private class CoverageBounds(var from: Instant, var to: Instant)
 
     private fun acceptAdd(event: GatewayEpgEvent) {
         ReducedEpgEvent.fromAdd(event)?.let { candidate ->
+            supersedeHistory(candidate)
             if (event.id !in events && events.size >= maximumRetainedEvents) {
                 invalidateActiveQueriesAfterCapacityDrop()
                 return
@@ -551,14 +612,15 @@ internal class EpgReducer(
     }
 
     private fun acceptUpdate(update: GatewayEpgUpdate) {
-        val current = events[update.id]
+        val current = events[update.id] ?: history[update.id]
         val candidate = if (current == null) {
             ReducedEpgEvent.fromUpdate(update)
         } else {
             current.merge(update)
         } ?: return
+        supersedeHistory(candidate)
         if (current == null && candidate.start == null && candidate.stop == null) return
-        if (current == null && events.size >= maximumRetainedEvents) {
+        if (update.id !in events && events.size >= maximumRetainedEvents) {
             invalidateActiveQueriesAfterCapacityDrop()
             return
         }
@@ -620,8 +682,10 @@ internal class EpgReducer(
 
     private fun removeChannel(channelId: ChannelId) {
         channelIds.remove(channelId)
+        currentEventByChannel.remove(channelId)
         queriedToByChannel.remove(channelId)
         events.entries.removeIf { entry -> entry.value.channelId == channelId }
+        history.entries.removeIf { entry -> entry.value.channelId == channelId }
     }
 
 }

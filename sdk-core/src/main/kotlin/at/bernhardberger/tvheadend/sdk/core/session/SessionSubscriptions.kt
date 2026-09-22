@@ -53,6 +53,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.time.Clock
+import kotlin.time.Instant
 import kotlin.time.Duration
 
 internal interface GenerationBoundGrowingRecordingFileLease : GrowingRecordingFileLease {
@@ -380,7 +381,9 @@ internal class PlaybackSessionChildren(
             val worker = EpgWorker(
                 generation = generation,
                 metadata = metadata,
-                clock = clock,
+                clock = object : Clock {
+                    override fun now(): Instant = gateway.estimatedServerTime(generation) ?: clock.now()
+                },
                 settings = epgSettings,
                 queryEpg = gateway::queryEpg,
             )

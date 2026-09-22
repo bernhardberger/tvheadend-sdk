@@ -24,6 +24,56 @@ internal class EpgReducerTest {
     private val generation = GatewayGeneration()
 
     @Test
+    fun `replacement invalidates history even when live capacity rejects replacement`() {
+        val reducer = EpgReducer(maximumRetainedEvents = 1)
+        addChannel(reducer, 1)
+        reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20)))
+        reducer.accept(MetadataEvent.EventDeleted(generation, EventId(1)), Instant.fromEpochSeconds(20))
+        reducer.accept(MetadataEvent.EventAdded(generation, event(2, 1, 30, 40)))
+        reducer.accept(MetadataEvent.EventAdded(generation, event(3, 1, 10, 20)))
+        assertTrue(reducer.snapshot().historicalEvents.isEmpty())
+        assertEquals(listOf(EventId(2)), reducer.snapshot().events.map { it.id })
+    }
+
+    @Test
+    fun `history evicts oldest at capacity and rejects unknown time or premature deletion`() {
+        val reducer = EpgReducer(maximumRetainedEvents = 2)
+        addChannel(reducer, 1)
+        for (id in 1L..3L) {
+            reducer.accept(MetadataEvent.EventAdded(generation, event(id, 1, id * 10, id * 10 + 10)))
+            reducer.accept(MetadataEvent.EventDeleted(generation, EventId(id)), Instant.fromEpochSeconds(40))
+        }
+        assertEquals(listOf(EventId(2), EventId(3)), reducer.snapshot().historicalEvents.map { it.id })
+        reducer.accept(MetadataEvent.EventAdded(generation, event(4, 1, 50, 60)))
+        reducer.accept(MetadataEvent.EventDeleted(generation, EventId(4)), Instant.fromEpochSeconds(40))
+        reducer.accept(MetadataEvent.EventAdded(generation, event(5, 1, 1, 5)))
+        reducer.accept(MetadataEvent.EventDeleted(generation, EventId(5)))
+        assertEquals(listOf(EventId(2), EventId(3)), reducer.snapshot().historicalEvents.map { it.id })
+        reducer.clear()
+        assertTrue(reducer.snapshot().historicalEvents.isEmpty())
+    }
+
+    @Test
+    fun `corrections and replacement supersede history and stale queries cannot restore deletion`() {
+        val reducer = EpgReducer()
+        addChannel(reducer, 1)
+        reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20)))
+        val query = requireNotNull(reducer.beginQuery(ChannelId(1)))
+        reducer.accept(MetadataEvent.EventDeleted(generation, EventId(1)), Instant.fromEpochSeconds(20))
+        reducer.acceptSuccessfulQuery(query, Instant.fromEpochSeconds(30), listOf(
+            GatewayEpgQueryEvent(EventId(1), ChannelId(1), Instant.fromEpochSeconds(10), Instant.fromEpochSeconds(20)),
+        ))
+        assertTrue(reducer.snapshot().events.isEmpty())
+        reducer.accept(MetadataEvent.EventUpdated(generation, update(1, title = "corrected")))
+        assertTrue(reducer.snapshot().historicalEvents.isEmpty())
+        assertEquals("corrected", reducer.snapshot().events.single().title)
+        reducer.accept(MetadataEvent.EventDeleted(generation, EventId(1)), Instant.fromEpochSeconds(20))
+        reducer.accept(MetadataEvent.EventAdded(generation, event(2, 1, 15, 25)))
+        assertTrue(reducer.snapshot().historicalEvents.isEmpty())
+        assertEquals(EventId(2), reducer.snapshot().events.single().id)
+    }
+
+    @Test
     fun `changing one event preserves unchanged public events in retained snapshots`() {
         val reducer = EpgReducer()
         addChannel(reducer, 1)

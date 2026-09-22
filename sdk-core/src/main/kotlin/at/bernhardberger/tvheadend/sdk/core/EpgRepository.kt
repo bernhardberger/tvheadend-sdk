@@ -221,11 +221,13 @@ public data class EpgCoverage private constructor(
 public data class EpgSnapshot private constructor(
     public val events: List<EpgEvent>,
     public val coverages: List<EpgCoverage>,
+    /** Deleted, ended programmes retained for display only; never live schedule or action authority. */
+    public val historicalEvents: List<EpgEvent>,
 ) {
     // Snapshots hold up to hundreds of thousands of events and are compared by state flows and
     // UI keys on every publication. The content hash is computed once on the producing thread so
     // that unequal snapshots are rejected without walking both event lists.
-    private val contentHash: Int = 31 * events.hashCode() + coverages.hashCode()
+    private val contentHash: Int = 31 * (31 * events.hashCode() + coverages.hashCode()) + historicalEvents.hashCode()
 
     // Built only when queried, shared by every observation retaining this exact snapshot.
     // Null values preserve singleOrNull semantics for duplicate IDs in consumer-created snapshots.
@@ -239,10 +241,14 @@ public data class EpgSnapshot private constructor(
     @get:JvmSynthetic
     internal val eventsByChannel: Map<ChannelId?, List<EpgEvent>> by lazy { events.groupBy(EpgEvent::channelId) }
 
+    @get:JvmSynthetic
+    internal val historyByChannel: Map<ChannelId?, List<EpgEvent>> by lazy { historicalEvents.groupBy(EpgEvent::channelId) }
+
     /** Session producers prepare lookup storage before exposing a snapshot to UI observers. */
     internal fun prepareForObservation() {
         eventsById
         eventsByChannel
+        historyByChannel
     }
 
     override fun equals(other: Any?): Boolean =
@@ -250,7 +256,8 @@ public data class EpgSnapshot private constructor(
             other is EpgSnapshot &&
             contentHash == other.contentHash &&
             events == other.events &&
-            coverages == other.coverages
+            coverages == other.coverages &&
+            historicalEvents == other.historicalEvents
 
     override fun hashCode(): Int = contentHash
 
@@ -261,9 +268,11 @@ public data class EpgSnapshot private constructor(
         public fun create(
             events: List<EpgEvent> = emptyList(),
             coverages: List<EpgCoverage> = emptyList(),
+            historicalEvents: List<EpgEvent> = emptyList(),
         ): EpgSnapshot = EpgSnapshot(
             events = events.toEpgImmutableList(),
             coverages = coverages.toEpgImmutableList(),
+            historicalEvents = historicalEvents.toEpgImmutableList(),
         )
     }
 }

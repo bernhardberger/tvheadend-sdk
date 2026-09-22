@@ -3,6 +3,17 @@
 Releases remain provisional during the major-zero line. Local staging is
 verification, not publication, and published bytes are immutable.
 
+For authorized local consumer verification, stage all modules with one uniquely
+named candidate without changing the release version:
+
+```bash
+./gradlew -PsdkCandidateVersion=0.15.2-epg-history-SNAPSHOT stageLocalPublication
+```
+
+The repository is `build/local-maven`; consumers must pin that same candidate for
+all SDK modules. The property accepts named `-SNAPSHOT` versions only and does
+not authorize remote publication or release tooling.
+
 One authorized owner performs preparation, CI/tagging, publication and completion
 in the same task. No planner, model review, convergence package or verification
 package is required for an ordinary release through this existing path. Obtain

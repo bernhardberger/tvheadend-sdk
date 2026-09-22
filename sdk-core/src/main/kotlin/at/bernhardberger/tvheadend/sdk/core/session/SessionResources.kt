@@ -357,6 +357,7 @@ internal class PhaseOneSessionMetadata(
     private val onDvrMetadataAccepted: (MetadataEvent) -> Unit = {},
     private val observationStore: SessionObservationStore = SessionObservationStore(),
     epgCoveragePolicy: EpgCoveragePolicy = EpgCoveragePolicy.create(),
+    private val estimatedServerTime: (GatewayGeneration) -> Instant? = { null },
 ) : SessionMetadata {
     private val lock = Any()
     private val reducer = ChannelTagReducer()
@@ -790,7 +791,7 @@ internal class PhaseOneSessionMetadata(
                             ?.singleOrNull { entry -> entry.id == id }
                     }
                     reducer.accept(event)
-                    epgReducer.accept(event)
+                    epgReducer.accept(event, estimatedServerTime(event.generation))
                     val dvrEventAccepted = dvrReducer.accept(event)
                     val dvrSnapshot = if (synchronizedCurrent) dvrReducer.snapshot() else null
                     if (dvrEventAccepted && synchronizedCurrent) {
@@ -1008,6 +1009,7 @@ internal class PhaseOneSessionMetadata(
         synchronized(lock) {
             if (this.generation === generation) {
                 epgReducer.retainOverlapping(from, to)
+                estimatedServerTime(generation)?.let(epgReducer::pruneHistory)
                 if (synchronizedCurrent) publishCurrentEpg(epgReducer.snapshot())
             }
         }

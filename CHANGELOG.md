@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.15.2]
+
+### Fixed
+
+- Retain already-received expired programmes for rewind labels and guide history
+  after server deletion, using generation-scoped server time and valid channel
+  successor evidence. Current and future correction deletions remain removals.
+- Bound display-only history to six hours and a separate configured event-count
+  limit; invalidate corrected, replaced, deleted-channel and previous-generation
+  history without restoring live schedule or recording authority.
+
+### Added
+
+- `EpgSnapshot.historicalEvents` exposes immutable display history.
+  `SessionObservation.eventAt` searches live schedule first, then history, using
+  closed-start/open-stop boundaries. Guide consumers can combine `events` and
+  `historicalEvents`. Cold starts and reconnects may have missing past metadata;
+  history does not provide stream-to-UTC mapping or prove seekable buffer content.
+- `EpgSnapshot.create` has a new defaulted history parameter. Its JVM signature
+  changes; recompile consumers against 0.15.2.
+
 ## [0.15.1]
 
 ### Fixed

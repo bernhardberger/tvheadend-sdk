@@ -30,7 +30,13 @@ plugins {
 }
 
 group = "at.bernhardberger.tvheadend"
-version = "0.15.1"
+version = "0.15.2"
+providers.gradleProperty("sdkCandidateVersion").orNull?.let { candidate ->
+    require(candidate.matches(Regex("[0-9]+\\.[0-9]+\\.[0-9]+-[A-Za-z0-9.-]+-SNAPSHOT"))) {
+        "sdkCandidateVersion must be a uniquely named snapshot candidate"
+    }
+    version = candidate
+}
 
 val sdkModules = setOf(
     "sdk-android",
