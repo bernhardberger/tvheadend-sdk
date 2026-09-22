@@ -1,7 +1,7 @@
 ---
 description: Mechanical TVHeadend SDK locator for exact files, symbols, usages, declarations, and test locations without analysis
 mode: subagent
-model: openai/gpt-5.6-luna
+model: openai/gpt-6-luna
 variant: low
 steps: 20
 permission:

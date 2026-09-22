@@ -1,7 +1,10 @@
 # Review Routing
 
 For non-trivial non-UX work, use an independent Astra primary reviewer and an
-independent Opus second reviewer, neither the implementing primary. Supply the
+independent Opus second reviewer, neither the implementing primary. There is no
+named Opus agent: dispatch a separate `sdk-review-astra` session with task
+override `model: anthropic/claude-opus-5-5`, `reasoning: medium` (`high` for
+evidently hard packets; never above `xhigh`). Supply the
 same bounded change, acceptance criteria and test evidence. The second initial
 packet must not disclose the first verdict or findings. The primary adjudicates
 supported defects and owns corrections. No automatic third review or broad
