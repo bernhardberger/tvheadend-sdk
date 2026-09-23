@@ -460,6 +460,7 @@ internal class ModuleBoundaryTest {
             "RecordingPlaybackStart",
             "LivePlaybackOptions",
             "TvheadendPlaybackRecovery",
+            "TvheadendAudioOutputProvider",
             "TvheadendPlaybackCoordinator",
             "TvheadendRecordingException",
             "createTvheadendPlaybackRecovery",
@@ -517,7 +518,7 @@ internal class ModuleBoundaryTest {
             ),
             fakePlaybackFunctions,
         )
-        assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 28)
+        assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 29)
 
         val coordinatorApi = File(
             "../sdk-media3/src/main/kotlin/at/bernhardberger/tvheadend/sdk/media3/" +

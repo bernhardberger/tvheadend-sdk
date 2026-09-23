@@ -8,7 +8,12 @@ import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
 
-/** Timings used to recover a live target that remains stuck in buffering. */
+/**
+ * Timings used to recover a live target that remains stuck in buffering.
+ *
+ * Audio is disabled at most once per target and restored when playback becomes ready or idle.
+ * Later stalls use [postAudioDisableDurationMillis] without disabling audio again.
+ */
 public data class PlaybackRecoveryPolicy public constructor(
     public val initialBufferingDurationMillis: Long = 6_000L,
     public val postAudioDisableDurationMillis: Long = 6_000L,
@@ -152,6 +157,7 @@ internal class PlaybackRecoveryStateMachine(
     private var active = false
     private var terminal = false
     private var audioDisabled = false
+    private var audioRecoveryAttempted = false
     private var sawSelectedAudio = false
 
     fun beginPlaybackTarget() {
@@ -161,6 +167,7 @@ internal class PlaybackRecoveryStateMachine(
         active = true
         terminal = false
         audioDisabled = false
+        audioRecoveryAttempted = false
         sawSelectedAudio = false
         setAudioDisabled(false)
     }
@@ -171,7 +178,10 @@ internal class PlaybackRecoveryStateMachine(
         observeSelectedAudio()
         when (state) {
             Player.STATE_BUFFERING -> evaluateBuffering()
-            Player.STATE_READY, Player.STATE_IDLE -> cancelTimer()
+            Player.STATE_READY, Player.STATE_IDLE -> {
+                cancelTimer()
+                restoreAudio()
+            }
             Player.STATE_ENDED -> escalate(PlaybackRecoveryReason.LIVE_ENDED)
         }
     }
@@ -196,6 +206,10 @@ internal class PlaybackRecoveryStateMachine(
         active = false
         terminal = true
         cancelTimer()
+        restoreAudio()
+    }
+
+    private fun restoreAudio() {
         if (audioDisabled) {
             audioDisabled = false
             setAudioDisabled(false)
@@ -215,7 +229,8 @@ internal class PlaybackRecoveryStateMachine(
         }
         observeSelectedAudio()
         when {
-            audioDisabled -> schedule(TimerStage.POST_AUDIO_DISABLE)
+            // Restoring audio must not refill the disable budget and start a mute/unmute loop.
+            audioRecoveryAttempted -> schedule(TimerStage.POST_AUDIO_DISABLE)
             // A target that has not presented audio yet is still being tuned and prepared.
             // Only a target that once had audio is treated as stuck on the short budget.
             sawSelectedAudio -> schedule(TimerStage.INITIAL_BUFFERING)
@@ -256,14 +271,17 @@ internal class PlaybackRecoveryStateMachine(
     }
 
     private fun completeInitialRecovery() {
-        if (audioDisabled) return
+        if (audioRecoveryAttempted) return
         if (!hasSelectedAudio()) {
             escalate(PlaybackRecoveryReason.AUDIO_RECOVERY_EXHAUSTED)
             return
         }
+        audioRecoveryAttempted = true
         audioDisabled = true
-        setAudioDisabled(true)
+        // Install the timer first: changing selection can synchronously report READY or retire
+        // the target, and those callbacks must be able to cancel this attempt completely.
         schedule(TimerStage.POST_AUDIO_DISABLE)
+        setAudioDisabled(true)
     }
 
     private fun escalate(reason: PlaybackRecoveryReason) {

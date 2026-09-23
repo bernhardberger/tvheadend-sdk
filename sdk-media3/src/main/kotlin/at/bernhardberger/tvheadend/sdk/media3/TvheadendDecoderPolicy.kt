@@ -9,6 +9,8 @@ import androidx.media3.common.Format
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.RenderersFactory
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.mediacodec.MediaCodecAdapter
 import androidx.media3.exoplayer.video.MediaCodecVideoRenderer
@@ -20,8 +22,21 @@ import androidx.media3.exoplayer.video.VideoRendererEventListener
  * Includes finite paused H.264 sample draining for the SDK live sample streams.
  */
 @androidx.media3.common.util.UnstableApi
-public fun createTvheadendRenderersFactory(context: Context): RenderersFactory =
+public fun createTvheadendRenderersFactory(
+    context: Context,
+    audioOutputProvider: TvheadendAudioOutputProvider = TvheadendAudioOutputProvider(context),
+): RenderersFactory =
     object : DefaultRenderersFactory(context) {
+        override fun buildAudioSink(
+            context: Context,
+            enableFloatOutput: Boolean,
+            enableAudioOutputPlaybackParameters: Boolean,
+        ): AudioSink = DefaultAudioSink.Builder(context)
+            .setEnableFloatOutput(enableFloatOutput)
+            .setEnableAudioOutputPlaybackParameters(enableAudioOutputPlaybackParameters)
+            .setAudioOutputProvider(audioOutputProvider)
+            .build()
+
         override fun buildVideoRenderers(
             context: Context,
             extensionRendererMode: Int,

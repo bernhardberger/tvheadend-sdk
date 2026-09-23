@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.16.0]
+
+### Fixed
+
+- Restore audio when live playback becomes ready or idle after buffering recovery.
+  Keep recovery bounded to one audio-disable attempt per target, including paused
+  playback, synchronous callbacks and stale timers.
+- Avoid stale direct AC-3 playback-head positions after repeated timeshift seeks
+  on TCL G10 / G10_4K_GB with Android 12. Use a fresh audio session for each direct
+  AC-3 output on that platform; PCM, other devices, offload and tunneling retain
+  their existing behavior.
+
+### Added
+
+- `TvheadendAudioOutputProvider` exposes optional passthrough, asynchronous startup
+  configuration and bounded in-place audio-mode changes. Switching resets only
+  audio renderers, preserving the source, live subscription and play intent.
+  Audio overrides are cleared before re-enabling; consumers may restore remembered
+  choices after fresh track support is reported. Cancellation and timeout do not
+  allow a late mode change.
+
+### Changed
+
+- `createTvheadendRenderersFactory` accepts a defaulted audio-output provider.
+  Its JVM signature changes; recompile consumers against 0.16.0. Media3 1.11.0,
+  HTSP 0.10.0 and native decoder payloads are unchanged.
+
 ## [0.15.2]
 
 ### Fixed

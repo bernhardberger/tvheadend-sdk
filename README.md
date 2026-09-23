@@ -18,7 +18,7 @@ The SDK is split into five libraries:
 | `sdk-android` | Android | Discovery, connectivity, atomic server-profile storage, and authenticated artwork |
 | `sdk-testing` | Kotlin/JVM | Aggregate observation fakes, scripted events, and packet fixtures |
 
-The source is configured for release `0.15.1`. The normal build never publishes.
+The source is configured for release `0.16.0`. The normal build never publishes.
 `./gradlew clean build check stageLocalPublication` verifies the repository and
 stages all five modules under `build/local-maven`; the Maven Central badge, not
 local source or staging, reports the latest publicly available version.
@@ -37,6 +37,25 @@ See the [consumer API guide](docs/consumer-guide.md) for module selection and
 end-to-end usage, [versioning](docs/versioning.md) for the provisional 0.x
 compatibility policy, and [releasing](docs/releasing.md) for the publication
 trust boundary.
+
+## Audio passthrough
+
+`sdk-media3` provides `TvheadendAudioOutputProvider`, shared by the application's
+player and `createTvheadendRenderersFactory(context, audioOutputProvider)`.
+Passthrough is enabled by default. Disabling it uses local decoding to PCM while
+retaining the platform's PCM output capabilities.
+
+For asynchronously loaded preferences, call `configurePassthrough` before the
+first source is prepared. Later, call the suspending
+`setPassthroughEnabled(player, enabled)` on the player's application looper.
+It restarts only audio, without replacing the source or changing play intent;
+keep the borrowed player alive through completion or cancellation. A `false`
+result means the change could not be applied and can be retried.
+
+The transition clears audio track overrides before re-enabling audio. Applications
+that remember explicit choices should restore them only after `onTracksChanged`
+reports support in the new mode. A track playable through passthrough may have
+no local decoder. Other track-selection parameters are retained.
 
 ## Server profile storage
 
