@@ -1,16 +1,16 @@
 # Versioning and compatibility
 
-The source is configured for the provisional `0.15.1` release under these
+The source is configured for the provisional `0.16.0` release under these
 coordinates:
 
-- `at.bernhardberger.tvheadend:sdk-android:0.15.1`
-- `at.bernhardberger.tvheadend:sdk-core:0.15.1`
-- `at.bernhardberger.tvheadend:sdk-media3:0.15.1`
-- `at.bernhardberger.tvheadend:sdk-playback:0.15.1`
-- `at.bernhardberger.tvheadend:sdk-testing:0.15.1`
+- `at.bernhardberger.tvheadend:sdk-android:0.16.0`
+- `at.bernhardberger.tvheadend:sdk-core:0.16.0`
+- `at.bernhardberger.tvheadend:sdk-media3:0.16.0`
+- `at.bernhardberger.tvheadend:sdk-playback:0.16.0`
+- `at.bernhardberger.tvheadend:sdk-testing:0.16.0`
 
 Source, local staging, and CI
-do not establish that the configured `0.15.1` coordinates are publicly available;
+do not establish that the configured `0.16.0` coordinates are publicly available;
 check Maven Central before selecting them.
 
 The signed `v0.3.3` tag is retained as development-release evidence after its
@@ -30,7 +30,11 @@ must never be replaced.
 While the major version is zero, the public API and behavior are provisional.
 No source, binary, or behavioral compatibility is promised for the provisional
 0.x line. A known breaking change requires the next minor version, not a patch
-version. Patch versions are reserved for backward-compatible fixes. The `0.15.0`
+version. Patch versions are reserved for backward-compatible fixes. The `0.16.0`
+minor adds `TvheadendAudioOutputProvider` and changes the JVM signature of
+`createTvheadendRenderersFactory` with a defaulted provider parameter. Recompile
+consumers; applications using in-place mode changes must restore audio choices
+only after the new mode's track capabilities are reported. The `0.15.0`
 minor changes the JVM signature of `boundCompletedRecordingPlayback` to accept a
 defaulted suspending cutpoint provider. Existing Kotlin calls can omit it, but
 consumers must recompile. See [recording cutpoint fixtures](recording-cutpoint-fixtures.md).
