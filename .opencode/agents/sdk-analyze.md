@@ -6,8 +6,8 @@ variant: high
 steps: 30
 permission:
   edit: deny
-  bash: deny
-  task: deny
+  shell: deny
+  subagent: deny
   external_directory:
     "*": deny
     "/root/.gradle/caches": allow

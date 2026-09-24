@@ -6,8 +6,8 @@ variant: xhigh
 steps: 45
 permission:
   edit: deny
-  bash: deny
-  task: deny
+  shell: deny
+  subagent: deny
   webfetch: deny
   websearch: deny
   todowrite: deny

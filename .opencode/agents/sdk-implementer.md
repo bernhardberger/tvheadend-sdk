@@ -6,8 +6,8 @@ variant: medium
 steps: 150
 permission:
   edit: allow
-  bash: allow
-  task:
+  shell: allow
+  subagent:
     "*": deny
     sdk-locator: allow
   external_directory:
