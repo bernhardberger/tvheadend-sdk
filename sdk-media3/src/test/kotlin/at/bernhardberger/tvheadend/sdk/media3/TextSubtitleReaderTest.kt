@@ -19,6 +19,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStream
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -120,10 +121,10 @@ class TextSubtitleReaderTest {
     fun `colour runs become colour ranges and white stays unstyled`() {
         assertEquals(
             TextSubtitlePage(
-                "Gelb weiß\n Cyan",
+                "Gelb weiß\nCyan",
                 listOf(
                     TextSubtitleColourRun(0, 4, 0xffffff00.toInt()),
-                    TextSubtitleColourRun(10, 15, 0xff00ffff.toInt()),
+                    TextSubtitleColourRun(10, 14, 0xff00ffff.toInt()),
                 ),
             ),
             parse("<font color=\"#ffff00\">Gelb</font> weiß\n<font color=\"#00ffff\"> Cyan</font>\n\u0000"),
@@ -154,14 +155,42 @@ class TextSubtitleReaderTest {
     fun `empty runs are dropped and an unclosed run stops at the visible text`() {
         assertEquals(
             TextSubtitlePage(
-                "  Hi\nrot",
+                "Hi\nrot",
                 listOf(
-                    TextSubtitleColourRun(0, 4, 0xff00ff00.toInt()),
-                    TextSubtitleColourRun(5, 8, 0xffff0000.toInt()),
+                    TextSubtitleColourRun(0, 2, 0xff00ff00.toInt()),
+                    TextSubtitleColourRun(3, 6, 0xffff0000.toInt()),
                 ),
             ),
             parse("<font color=\"#ff0000\"></font><font color=\"#00ff00\">  Hi</font>\n<font color=\"#ff0000\">rot\n\u0000"),
         )
+    }
+
+    @Test
+    fun `row edge spaces are trimmed and colour ranges follow the remaining text`() {
+        assertEquals(
+            TextSubtitlePage(
+                "Gelb\nCyan weiß grün",
+                listOf(
+                    TextSubtitleColourRun(0, 4, 0xffffff00.toInt()),
+                    TextSubtitleColourRun(5, 9, 0xff00ffff.toInt()),
+                    TextSubtitleColourRun(15, 19, 0xff00ff00.toInt()),
+                ),
+            ),
+            parse(
+                "<font color=\"#ffff00\">  Gelb  </font>\n" +
+                    "   <font color=\"#00ffff\">Cyan</font> weiß <font color=\"#00ff00\">grün </font>" +
+                    "<font color=\"#ff0000\">  </font> \n\u0000",
+            ),
+        )
+    }
+
+    @Test
+    fun `page descriptions never contain subtitle text`() {
+        val page = checkNotNull(parse("<font color=\"#ffff00\">SENTINEL-4711 geheim</font>\n\u0000"))
+
+        assertEquals("TextSubtitlePage(length=20, colourRuns=1)", page.toString())
+        assertFalse(page.toString().contains("SENTINEL"))
+        assertFalse(page.colourRuns.toString().contains("SENTINEL"))
     }
 
     @Test

@@ -87,7 +87,9 @@ internal class TextSubtitleReader(
 internal data class TextSubtitlePage(
     val text: String,
     val colourRuns: List<TextSubtitleColourRun>,
-)
+) {
+    override fun toString(): String = "TextSubtitlePage(length=${text.length}, colourRuns=${colourRuns.size})"
+}
 
 internal data class TextSubtitleColourRun(
     val start: Int,
@@ -133,12 +135,32 @@ internal fun parseTextSubtitlePage(payload: ByteArray): TextSubtitlePage? {
         index++
     }
     closeRun()
-    val visible = text.trimEnd('\n').toString()
+    // TVHeadend keeps leading spaces only on colour-tagged rows, which would shift centred rows.
+    val kept = BooleanArray(text.length)
+    var rowStart = 0
+    while (rowStart <= text.length) {
+        val rowEnd = text.indexOf('\n', rowStart).takeIf { it >= 0 } ?: text.length
+        var first = rowStart
+        while (first < rowEnd && text[first] == ' ') first++
+        var last = rowEnd
+        while (last > first && text[last - 1] == ' ') last--
+        for (position in first until last) kept[position] = true
+        if (rowEnd < text.length) kept[rowEnd] = true
+        rowStart = rowEnd + 1
+    }
+    val offsets = IntArray(text.length + 1)
+    val trimmed = StringBuilder(text.length)
+    for (position in text.indices) {
+        if (kept[position]) trimmed.append(text[position])
+        offsets[position + 1] = trimmed.length
+    }
+    val visible = trimmed.trimEnd('\n').toString()
     if (visible.isBlank()) return null
     return TextSubtitlePage(
         visible,
         runs.mapNotNull { run ->
-            run.copy(end = minOf(run.end, visible.length)).takeIf { it.start < it.end }
+            TextSubtitleColourRun(offsets[run.start], minOf(offsets[run.end], visible.length), run.colour)
+                .takeIf { it.start < it.end }
         },
     )
 }

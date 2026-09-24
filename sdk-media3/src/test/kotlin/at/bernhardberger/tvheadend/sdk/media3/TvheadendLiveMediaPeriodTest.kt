@@ -38,6 +38,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStream
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTerminalReason
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTermination
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTracks
 import at.bernhardberger.tvheadend.sdk.playback.createSubscriptionManager
 import at.bernhardberger.tvheadend.sdk.testing.ScriptedSubscriptionConnection
 import java.io.IOException
@@ -536,6 +537,70 @@ internal class TvheadendLiveMediaPeriodTest {
     }
 
     @Test
+    fun `text page ahead of audio and video neither anchors the sample origin nor is queued`() = runTest {
+        val harness = PeriodHarness(this)
+        try {
+            harness.start(SubscriptionStreamType.MPEG2_AUDIO, SubscriptionStreamType.H264, SubscriptionStreamType.TEXT_SUBTITLE)
+            val early = PeriodCountingBinary("Früh\n\u0000".toByteArray())
+            harness.packet(2, early, 2_000_000)
+            assertEquals(0, early.copies)
+            harness.audio()
+            harness.video()
+            harness.looper.runAll()
+            assertEquals(1, harness.preparations)
+            val textGroup = (0 until harness.period.trackGroups.length).single { index ->
+                harness.period.trackGroups[index].type == C.TRACK_TYPE_TEXT
+            }
+
+            val text = harness.select(textGroup)
+            val holder = FormatHolder()
+            val buffer = DecoderInputBuffer(DecoderInputBuffer.BUFFER_REPLACEMENT_MODE_NORMAL)
+            assertEquals(C.RESULT_FORMAT_READ, text.readData(holder, buffer, 0))
+            assertEquals(C.RESULT_NOTHING_READ, text.readData(holder, buffer, 0))
+            harness.packet(2, PeriodCountingBinary("Später\n\u0000".toByteArray()), 1_617_733)
+            assertEquals(C.RESULT_BUFFER_READ, text.readData(holder, buffer, 0))
+            // Audio and video at 1_117_733 us anchored the timeline.
+            assertEquals(500_000L, buffer.timeUs)
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `text subtitles alone fail as unsupported while DVB subtitles alone still prepare`() = runTest {
+        val textOnly = PeriodHarness(this)
+        try {
+            val error = assertThrows(IllegalStateException::class.java) {
+                textOnly.period.tracksReady(
+                    SubscriptionTracks(
+                        listOf(
+                            subscriptionStream(0, SubscriptionStreamType.UNKNOWN),
+                            subscriptionStream(1, SubscriptionStreamType.UNKNOWN),
+                            subscriptionStream(2, SubscriptionStreamType.TEXT_SUBTITLE),
+                        ),
+                    ),
+                )
+            }
+            assertEquals("Subscription contains no supported Media3 streams", error.message)
+        } finally {
+            textOnly.close()
+        }
+        val dvbOnly = PeriodHarness(this)
+        try {
+            dvbOnly.period.tracksReady(
+                SubscriptionTracks(
+                    listOf(
+                        subscriptionStream(0, SubscriptionStreamType.UNKNOWN),
+                        subscriptionStream(1, SubscriptionStreamType.DVB_SUBTITLE),
+                    ),
+                ),
+            )
+        } finally {
+            dvbOnly.close()
+        }
+    }
+
+    @Test
     fun `unsupported packets are ignored but unknown indices still fail the period`() = runTest {
         val harness = PeriodHarness(this)
         try {
@@ -703,13 +768,7 @@ private class PeriodHarness(private val scope: TestScope, attachment: LiveTimesh
         val opening = scope.async { manager.open(SubscriptionChannelId(1), period, 120.seconds) }
         scope.runCurrent()
         connection.emit(SubscriptionEvent.Started(types.mapIndexed { index, type ->
-            SubscriptionStream(
-                StreamIndex(index.toLong()), type, languages.getOrNull(index),
-                if (type == SubscriptionStreamType.DVB_SUBTITLE) 1L else null,
-                if (type == SubscriptionStreamType.DVB_SUBTITLE) 2L else null,
-                null, null,
-                null, null, null, audioTypes.getOrNull(index), null, null, null, null, null,
-            )
+            subscriptionStream(index.toLong(), type, languages.getOrNull(index), audioTypes.getOrNull(index))
         }, null, SubscriptionCondition.NO_DETAIL))
         scope.runCurrent()
         subscription = (opening.await() as SubscriptionOpenResult.Opened).subscription
@@ -774,6 +833,19 @@ private class PeriodHarness(private val scope: TestScope, attachment: LiveTimesh
         manager.closeAndJoin()
     }
 }
+
+private fun subscriptionStream(
+    index: Long,
+    type: SubscriptionStreamType,
+    language: String? = null,
+    audioType: Long? = null,
+) = SubscriptionStream(
+    StreamIndex(index), type, language,
+    if (type == SubscriptionStreamType.DVB_SUBTITLE) 1L else null,
+    if (type == SubscriptionStreamType.DVB_SUBTITLE) 2L else null,
+    null, null,
+    null, null, null, audioType, null, null, null, null, null,
+)
 
 private fun packetEvent(index: Long, payload: SubscriptionBinary, timeUs: Long? = 1_117_733) =
     SubscriptionEvent.Packet(MuxFrameType.I, StreamIndex(index), timeUs, timeUs, 40_000, payload)

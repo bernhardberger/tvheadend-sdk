@@ -231,9 +231,12 @@ internal class TvheadendLiveMediaPeriod(
         if (released || interrupted || prepareError != null || cleanEndOfStream) return false
         when (event) {
             is SubscriptionEvent.Packet -> {
-                if (adapterFor(event.streamIndex) == null) return false
+                val binding = adapterFor(event.streamIndex) ?: return false
                 check(event.payload.size <= MAX_PACKET_BYTES) { "Media3 packet size limit reached" }
                 if (sampleOriginUs == null) {
+                    // TVHeadend stamps text pages from the PCR, usually ahead of audio and video.
+                    // Such an early page cannot anchor the timeline; the next page replaces it.
+                    if (binding.type == SubscriptionStreamType.TEXT_SUBTITLE) return false
                     val origin = event.presentationTimeUs?.takeUnless { it == C.TIME_UNSET || it == Long.MIN_VALUE }
                     if (origin == null) {
                         retainPreOriginEvent(event)
@@ -375,6 +378,7 @@ internal class TvheadendLiveMediaPeriod(
                                 onDiscontinuity = subtitleOutput?.let { it::resetSubtitleParsers },
                             ),
                             output,
+                            stream.type,
                         )
                         nextTrackId += 1
                     }
@@ -384,7 +388,10 @@ internal class TvheadendLiveMediaPeriod(
                     }
                 }
             }
-            check(adapters.isNotEmpty()) { "Subscription contains no supported Media3 streams" }
+            // Text pages never anchor the timeline, so they cannot carry a period on their own.
+            check(adapters.values.any { it.type != SubscriptionStreamType.TEXT_SUBTITLE }) {
+                "Subscription contains no supported Media3 streams"
+            }
             tracksInitialized = true
             timeshiftControls?.tracksReady(tracks)
         }
@@ -484,6 +491,7 @@ internal class TvheadendLiveMediaPeriod(
     private class ReaderBinding(
         val adapter: SubscriptionElementaryStreamAdapter,
         val output: QueueExtractorOutput,
+        val type: SubscriptionStreamType,
     )
 
     private companion object {
