@@ -100,6 +100,8 @@ internal class TvheadendLiveMediaSource(
                 period = null
                 refreshPosted = false
                 drainPosted = false
+                // A stop reason of the released subscription does not describe the new one.
+                timeshiftControls?.subscriptionEnded()
             }
             handler = callbackSchedulerFactory()
             preparation
@@ -219,6 +221,7 @@ internal class TvheadendLiveMediaSource(
                     return
                 }
                 is SubscriptionEvent.Started -> {
+                    timeshiftControls?.subscriptionRestarted(event.issue)
                     if (started) replaceEpochLocked()
                     started = true
                     stopped = false

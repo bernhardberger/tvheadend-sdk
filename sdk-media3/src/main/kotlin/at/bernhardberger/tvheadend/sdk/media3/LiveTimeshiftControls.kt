@@ -465,7 +465,20 @@ internal class LiveTimeshiftControlBridge(
         }
     }
 
-    /** Releases the issue held by [subscriptionStopped] once the stopped subscription ends. */
+    /** Replaces a held stop reason with the restart's issue until a period observes the restart. */
+    internal fun subscriptionRestarted(issue: SubscriptionIssue?) {
+        synchronized(lock) {
+            if (!stoppedIssueHeld || retired || !token.isActive()) return
+            stoppedIssue = issue
+            val previous = currentIssue
+            if (updateIssueLocked() != previous) publishCurrentLocked()
+        }
+    }
+
+    /**
+     * Releases the issue held by [subscriptionStopped] once the stopped subscription ends or a new
+     * subscription replaces it.
+     */
     internal fun subscriptionEnded() {
         synchronized(lock) {
             if (!stoppedIssueHeld) return

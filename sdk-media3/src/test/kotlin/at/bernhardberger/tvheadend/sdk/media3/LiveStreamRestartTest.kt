@@ -488,6 +488,52 @@ internal class LiveStreamRestartTest {
     }
 
     @Test
+    fun `restart replaces the held stop reason before a replacement period exists`() = runTest {
+        val harness = RestartSourceHarness(this)
+        try {
+            harness.start()
+            harness.createPeriod()
+            harness.started(SubscriptionStreamType.MPEG2_AUDIO)
+            harness.audio(0)
+            harness.flush()
+            val overridden = SubscriptionEvent.Stopped(
+                SubscriptionCondition.ERROR_REPORTED,
+                SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN,
+            )
+            harness.emit(overridden)
+            harness.flush()
+            assertSame(SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN, harness.observedIssues.last())
+
+            harness.started(SubscriptionStreamType.MPEG2_AUDIO)
+            harness.flush()
+            assertEquals(null, harness.observedIssues.last())
+            harness.emit(overridden)
+            harness.emit(
+                SubscriptionEvent.Started(
+                    listOf(
+                        SubscriptionStream(StreamIndex(0), SubscriptionStreamType.MPEG2_AUDIO, null, null, null, null, null,
+                            null, null, null, null, null, null, null, null, null),
+                    ),
+                    null,
+                    SubscriptionCondition.ERROR_REPORTED,
+                    SubscriptionIssue.BAD_SIGNAL,
+                ),
+            )
+            harness.flush()
+            assertEquals(
+                listOf(
+                    null,
+                    SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN,
+                    null,
+                    SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN,
+                    SubscriptionIssue.BAD_SIGNAL,
+                ),
+                harness.observedIssues,
+            )
+        } finally { harness.close() }
+    }
+
+    @Test
     fun `stop reason is released when the stopped subscription ends`() = runTest {
         val harness = RestartSourceHarness(this)
         try {

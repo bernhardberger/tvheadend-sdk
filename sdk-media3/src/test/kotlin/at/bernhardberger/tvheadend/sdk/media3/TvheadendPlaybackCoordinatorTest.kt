@@ -69,8 +69,10 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runTest
@@ -2088,6 +2090,35 @@ internal class TvheadendPlaybackCoordinatorTest {
     }
 
     @Test
+    fun `held stop reason reaches subscription issue and is the final issue of stop`() = runTest {
+        val fixture = CoordinatorFixture()
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+        val issues = mutableListOf<SubscriptionIssue?>()
+        val collector = launch(UnconfinedTestDispatcher(testScheduler)) {
+            fixture.coordinator.subscriptionIssue.toList(issues)
+        }
+        fixture.coordinator.setLiveTarget(ChannelId(4))
+        fixture.player.attachTimeshift(FakeTimeshiftSubscription(60.seconds))
+        fixture.player.emitTimeshift(
+            SubscriptionEvent.Started(streams = null, codecMetadata = null, condition = SubscriptionCondition.NO_DETAIL),
+        )
+
+        fixture.player.stopLiveStream(SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN)
+        assertSame(SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN, fixture.coordinator.subscriptionIssue.value)
+        fixture.player.statusWhileStopped(SubscriptionIssue.NO_FREE_ADAPTER)
+        assertSame(SubscriptionIssue.NO_FREE_ADAPTER, fixture.coordinator.subscriptionIssue.value)
+
+        assertEquals(PlaybackStopResult.Stopped(SubscriptionIssue.NO_FREE_ADAPTER), fixture.coordinator.stop())
+        assertEquals(
+            listOf(null, SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN, SubscriptionIssue.NO_FREE_ADAPTER, null),
+            issues,
+        )
+        collector.cancel()
+        fixture.coordinator.shutdown(1.seconds)
+        owner.join()
+    }
+
+    @Test
     fun `live priority is sticky for the live target and resets for new targets`() = runTest {
         val fixture = CoordinatorFixture()
         assertSame(
@@ -3181,6 +3212,17 @@ private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
 
     fun emitTimeshift(event: SubscriptionEvent) {
         requireTimeshiftControls().accept(event)
+    }
+
+    /** Mirrors the live source on a server stop: hold the reason, then interrupt the period. */
+    fun stopLiveStream(issue: SubscriptionIssue?) {
+        checkNotNull(timeshiftControls).subscriptionStopped(issue)
+        requireTimeshiftControls().detach()
+    }
+
+    /** Mirrors the live source receiving a status while the stream is stopped. */
+    fun statusWhileStopped(issue: SubscriptionIssue?) {
+        checkNotNull(timeshiftControls).subscriptionStopped(issue)
     }
 
     private fun retire(): Pair<Boolean, RetiredRecordingTarget?> {

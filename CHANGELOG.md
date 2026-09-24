@@ -42,7 +42,9 @@
 - When TVHeadend stops a live subscription, for example because another
   subscription took its tuner, `subscriptionIssue` and the live observation now
   report the stop reason, and later status updates, until the stream starts
-  again or ends. Previously the issue was cleared while the stream was stopped.
+  again or ends, and the final subscription issue returned by `stop()` can now
+  be that stop reason. Previously the issue was cleared while the stream was
+  stopped.
 
 ## [0.18.0]
 

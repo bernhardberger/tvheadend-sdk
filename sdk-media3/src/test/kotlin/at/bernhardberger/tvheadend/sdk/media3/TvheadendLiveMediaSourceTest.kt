@@ -14,6 +14,7 @@ import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionDiagnostics
 import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionPriority
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionIssue
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTermination
@@ -215,6 +216,38 @@ internal class TvheadendLiveMediaSourceTest {
         runCurrent()
         assertSame(LiveSubscriptionPriority.NORMAL, target.options?.priority)
         assertTrue(reopened.priorities.isEmpty())
+        source.releaseSource(caller)
+        runCurrent()
+    }
+
+    @Test
+    fun `held stop reason survives release but not a new preparation`() = runTest {
+        val target = CapturingLiveTarget()
+        var issue: SubscriptionIssue? = null
+        val bridge = LiveTimeshiftControlBridge(
+            token = PlaybackTargetToken(),
+            publish = {},
+            publishIssue = {},
+            publishObservation = { observation -> issue = observation.subscriptionIssue },
+        )
+        val source = TvheadendLiveMediaSource(target, SubscriptionOptions(), bridge, {}, StandardTestDispatcher(testScheduler), { QueuedCoordinatorLooper() })
+        val caller = MediaSource.MediaSourceCaller { _, _ -> }
+        target.openResult = { SubscriptionOpenResult.Opened(FakeTimeshiftSubscription(null)) }
+        source.prepareSource(caller, PlayerId.UNSET, BandwidthMeter.NO_OP)
+        runCurrent()
+        checkNotNull(target.consumer).accept(
+            SubscriptionEvent.Stopped(SubscriptionCondition.ERROR_REPORTED, SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN),
+        )
+        assertSame(SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN, issue)
+
+        source.releaseSource(caller)
+        runCurrent()
+        assertSame(SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN, issue)
+
+        target.openResult = { SubscriptionOpenResult.NotReady }
+        source.prepareSource(caller, PlayerId.UNSET, BandwidthMeter.NO_OP)
+        runCurrent()
+        assertNull(issue)
         source.releaseSource(caller)
         runCurrent()
     }
