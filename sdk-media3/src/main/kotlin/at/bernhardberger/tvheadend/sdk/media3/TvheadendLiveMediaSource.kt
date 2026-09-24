@@ -125,11 +125,14 @@ internal class TvheadendLiveMediaSource(
                         if (closeLate) {
                             withContext(NonCancellable) { result.subscription.close() }
                         } else {
-                            timeshiftControls?.subscriptionOpened(result.subscription, openOptions.priority)
+                            timeshiftControls?.subscriptionOpened(result.subscription, openOptions.priority) {
+                                synchronized(lock) { !released && preparation === owner }
+                            }
                             result.subscription.state.first { it is SubscriptionState.Terminal }
                             synchronized(lock) {
                                 if (!released && preparation === owner) {
                                     if (period == null) failLocked() else period?.terminal(result.subscription)
+                                    timeshiftControls?.subscriptionEnded()
                                 }
                             }
                         }
@@ -189,6 +192,7 @@ internal class TvheadendLiveMediaSource(
             period?.interrupt()
             Triple(opening, subscription.also { subscription = null }, scope)
         }
+        handle?.let { timeshiftControls?.subscriptionClosing(it) }
         job?.cancel()
         ownerScope.launch {
             try {
@@ -207,6 +211,8 @@ internal class TvheadendLiveMediaSource(
             if (released || error != null || preparation !== owner) return
             when (event) {
                 is SubscriptionEvent.Stopped -> {
+                    // The stop reason stays observable while no period receives events.
+                    timeshiftControls?.subscriptionStopped(event.issue)
                     if (!stopped) replaceEpochLocked()
                     stopped = true
                     started = false
@@ -218,10 +224,13 @@ internal class TvheadendLiveMediaSource(
                     stopped = false
                 }
                 is SubscriptionEvent.Packet, is SubscriptionEvent.Dropped -> if (!started) return
-                is SubscriptionEvent.Terminated -> Unit
+                is SubscriptionEvent.Terminated -> timeshiftControls?.subscriptionEnded()
                 // Interruption observations have no successor segment provenance. Only Started
                 // can reopen observation ingress; terminal events retain their ordered route.
-                else -> if (stopped) return
+                else -> if (stopped) {
+                    if (event is SubscriptionEvent.Status) timeshiftControls?.subscriptionStopped(event.issue)
+                    return
+                }
             }
             enqueueLocked(event)
             drainLocked()

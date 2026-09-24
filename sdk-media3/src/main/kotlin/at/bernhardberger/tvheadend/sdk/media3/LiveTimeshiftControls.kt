@@ -255,8 +255,11 @@ internal class LiveTimeshiftControlBridge(
     private var pendingRestoredObservations: PendingRestoredObservations? = null
     private val priorityMutex = Mutex()
     private var desiredPriority = LiveSubscriptionPriority.NORMAL
-    private var appliedPriority = LiveSubscriptionPriority.NORMAL
+    // Null when an inconclusive change leaves the server's weight unknown.
+    private var appliedPriority: LiveSubscriptionPriority? = LiveSubscriptionPriority.NORMAL
     private var prioritySubscription: ActiveSubscription? = null
+    private var stoppedIssue: SubscriptionIssue? = null
+    private var stoppedIssueHeld = false
 
     internal fun newAttachment(): Attachment = synchronized(lock) {
         check(nextAttachmentSequence != Long.MAX_VALUE) { "Timeshift attachment ids exhausted" }
@@ -357,6 +360,8 @@ internal class LiveTimeshiftControlBridge(
             retired = true
             activeAttachment = null
             prioritySubscription = null
+            stoppedIssue = null
+            stoppedIssueHeld = false
             newestTerminalAttachment = null
             currentState = LiveTimeshiftState.Unavailable
             currentIssue = null
@@ -420,18 +425,66 @@ internal class LiveTimeshiftControlBridge(
         }
     }
 
-    /** Registers an opened subscription and corrects a priority changed while it was opening. */
+    /**
+     * Registers an opened subscription and corrects a priority changed while it was opening.
+     *
+     * [isCurrent] must not take this bridge's lock; a superseded opener is ignored.
+     */
     internal suspend fun subscriptionOpened(
         subscription: ActiveSubscription,
         requestedPriority: LiveSubscriptionPriority,
+        isCurrent: () -> Boolean = { true },
     ) {
         priorityMutex.withLock {
+            if (!isCurrent()) return
             synchronized(lock) {
                 if (retired || !token.isActive()) return
                 prioritySubscription = subscription
                 appliedPriority = requestedPriority
             }
+            // A release racing the registration may have missed it.
+            if (!isCurrent()) {
+                subscriptionClosing(subscription)
+                return
+            }
             reconcilePriorityLocked()
+        }
+    }
+
+    /**
+     * Publishes the issue of a server-stopped subscription, or of a status received while it is
+     * stopped, until a period observes a later start or the subscription ends.
+     */
+    internal fun subscriptionStopped(issue: SubscriptionIssue?) {
+        synchronized(lock) {
+            if (retired || !token.isActive()) return
+            stoppedIssueHeld = true
+            stoppedIssue = issue
+            val previous = currentIssue
+            if (updateIssueLocked() != previous) publishCurrentLocked()
+        }
+    }
+
+    /** Releases the issue held by [subscriptionStopped] once the stopped subscription ends. */
+    internal fun subscriptionEnded() {
+        synchronized(lock) {
+            if (!stoppedIssueHeld) return
+            releaseStoppedIssueLocked()
+            if (retired) return
+            val previous = currentIssue
+            if (updateIssueLocked() != previous) publishCurrentLocked()
+        }
+    }
+
+    private fun releaseStoppedIssueLocked() {
+        stoppedIssueHeld = false
+        stoppedIssue = null
+    }
+
+    /** Forgets [subscription] once its owner closes it, so recorded priorities no longer target it. */
+    internal fun subscriptionClosing(subscription: ActiveSubscription) {
+        synchronized(lock) {
+            if (prioritySubscription === subscription) prioritySubscription = null
         }
     }
 
@@ -449,12 +502,23 @@ internal class LiveTimeshiftControlBridge(
         val result = try {
             subscription.setPriority(desired)
         } catch (cancellation: CancellationException) {
+            synchronized(lock) { if (prioritySubscription === subscription) appliedPriority = null }
             throw cancellation
         } catch (_: Exception) {
             SubscriptionOperationResult.TransportUnavailable
         }
-        if (result is SubscriptionOperationResult.Ok) synchronized(lock) {
-            if (prioritySubscription === subscription) appliedPriority = desired
+        synchronized(lock) {
+            if (prioritySubscription !== subscription || subscription.state.value is SubscriptionState.Terminal) {
+                // The subscription ended meanwhile; the recorded priority reaches its successor.
+                return SubscriptionOperationResult.Ok(Unit)
+            }
+            appliedPriority = when (result) {
+                is SubscriptionOperationResult.Ok -> desired
+                // No request was sent, so the server keeps the previous weight.
+                SubscriptionOperationResult.NotSupported -> appliedPriority
+                // TVHeadend may apply a change before its reply is lost or rejected.
+                else -> null
+            }
         }
         return result
     }
@@ -531,6 +595,7 @@ internal class LiveTimeshiftControlBridge(
         val subscription = synchronized(lock) {
             attachment.subscription.takeIf { activeAttachment === attachment }
         } ?: return false
+        subscriptionClosing(subscription)
         subscription.close()
         return true
     }
@@ -692,6 +757,7 @@ internal class LiveTimeshiftControlBridge(
                         started = true
                         issueObserved = true
                         latestIssue = event.issue
+                        releaseStoppedIssueLocked()
                         diagnosticsInvalidated = replaceDiagnosticsThroughLocked(sequence - 1L)
                     }
                     is SubscriptionEvent.Status -> {
@@ -731,6 +797,7 @@ internal class LiveTimeshiftControlBridge(
                     is SubscriptionEvent.Terminated -> {
                         issueObserved = true
                         latestIssue = null
+                        if (activeAttachment === this) releaseStoppedIssueLocked()
                         diagnosticsInvalidated = terminalLocked()
                         consumePendingTerminalLocked()
                     }
@@ -756,6 +823,7 @@ internal class LiveTimeshiftControlBridge(
                 if (subscription !== activeSubscription || terminal) return
                 issueObserved = true
                 latestIssue = null
+                if (activeAttachment === this) releaseStoppedIssueLocked()
                 val diagnosticsInvalidated = terminalLocked()
                 if (activeAttachment === this) {
                     updateStateLocked()
@@ -873,7 +941,12 @@ internal class LiveTimeshiftControlBridge(
     }
 
     private fun updateIssueLocked(): SubscriptionIssue? {
-        currentIssue = if (retired) null else activeAttachment?.latestIssue
+        val attachment = activeAttachment
+        currentIssue = when {
+            retired -> null
+            stoppedIssueHeld && attachment?.issueObserved != true -> stoppedIssue
+            else -> attachment?.latestIssue
+        }
         return currentIssue
     }
 

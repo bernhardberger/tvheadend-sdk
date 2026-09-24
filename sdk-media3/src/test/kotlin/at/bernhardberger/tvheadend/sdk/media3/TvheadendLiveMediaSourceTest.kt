@@ -22,6 +22,8 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionCondition
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionConfirmation
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionState
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTerminalReason
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStream
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import at.bernhardberger.tvheadend.sdk.playback.StreamIndex
@@ -158,6 +160,115 @@ internal class TvheadendLiveMediaSourceTest {
         source.releaseSource(caller)
         runCurrent()
         assertEquals(1, opened.closeCount)
+    }
+
+    @Test
+    fun `failed opening correction leaves the priority unknown so the same priority is re-sent`() = runTest {
+        val target = CapturingLiveTarget()
+        val bridge = LiveTimeshiftControlBridge(PlaybackTargetToken()) {}
+        val source = TvheadendLiveMediaSource(target, SubscriptionOptions(), bridge, {}, StandardTestDispatcher(testScheduler), { QueuedCoordinatorLooper() })
+        val caller = MediaSource.MediaSourceCaller { _, _ -> }
+        val opened = FakeTimeshiftSubscription(null)
+        opened.priorityAction = { SubscriptionOperationResult.Timeout }
+        val release = CompletableDeferred<Unit>()
+        target.openResult = {
+            release.await()
+            SubscriptionOpenResult.Opened(opened)
+        }
+        source.prepareSource(caller, PlayerId.UNSET, BandwidthMeter.NO_OP)
+        runCurrent()
+        assertSame(LiveSubscriptionPriority.NORMAL, target.options?.priority)
+
+        assertTrue(bridge.setPriority(LiveSubscriptionPriority.YIELD) is SubscriptionOperationResult.Ok)
+        release.complete(Unit)
+        runCurrent()
+        assertEquals(listOf(LiveSubscriptionPriority.YIELD), opened.priorities)
+
+        opened.priorityAction = { SubscriptionOperationResult.Ok(Unit) }
+        assertTrue(bridge.setPriority(LiveSubscriptionPriority.YIELD) is SubscriptionOperationResult.Ok)
+        assertEquals(List(2) { LiveSubscriptionPriority.YIELD }, opened.priorities)
+        source.releaseSource(caller)
+        runCurrent()
+    }
+
+    @Test
+    fun `released source subscription no longer receives recorded priorities`() = runTest {
+        val target = CapturingLiveTarget()
+        val bridge = LiveTimeshiftControlBridge(PlaybackTargetToken()) {}
+        val source = TvheadendLiveMediaSource(target, SubscriptionOptions(), bridge, {}, StandardTestDispatcher(testScheduler), { QueuedCoordinatorLooper() })
+        val caller = MediaSource.MediaSourceCaller { _, _ -> }
+        val opened = FakeTimeshiftSubscription(null)
+        target.openResult = { SubscriptionOpenResult.Opened(opened) }
+        source.prepareSource(caller, PlayerId.UNSET, BandwidthMeter.NO_OP)
+        runCurrent()
+        assertTrue(bridge.setPriority(LiveSubscriptionPriority.YIELD) is SubscriptionOperationResult.Ok)
+        assertEquals(listOf(LiveSubscriptionPriority.YIELD), opened.priorities)
+
+        source.releaseSource(caller)
+        assertTrue(bridge.setPriority(LiveSubscriptionPriority.NORMAL) is SubscriptionOperationResult.Ok)
+        runCurrent()
+        assertEquals(listOf(LiveSubscriptionPriority.YIELD), opened.priorities)
+        assertEquals(1, opened.closeCount)
+        val reopened = FakeTimeshiftSubscription(null)
+        target.openResult = { SubscriptionOpenResult.Opened(reopened) }
+        source.prepareSource(caller, PlayerId.UNSET, BandwidthMeter.NO_OP)
+        runCurrent()
+        assertSame(LiveSubscriptionPriority.NORMAL, target.options?.priority)
+        assertTrue(reopened.priorities.isEmpty())
+        source.releaseSource(caller)
+        runCurrent()
+    }
+
+    @Test
+    fun `inconclusive priority results never suppress a later change`() = runTest {
+        val bridge = LiveTimeshiftControlBridge(PlaybackTargetToken()) {}
+        val subscription = FakeTimeshiftSubscription(null)
+        bridge.subscriptionOpened(subscription, LiveSubscriptionPriority.NORMAL)
+        assertTrue(subscription.priorities.isEmpty())
+
+        // TVHeadend applied YIELD but its reply was lost.
+        subscription.priorityAction = { SubscriptionOperationResult.Timeout }
+        assertSame(SubscriptionOperationResult.Timeout, bridge.setPriority(LiveSubscriptionPriority.YIELD))
+        subscription.priorityAction = { SubscriptionOperationResult.TransportUnavailable }
+        assertSame(SubscriptionOperationResult.TransportUnavailable, bridge.setPriority(LiveSubscriptionPriority.NORMAL))
+        subscription.priorityAction = { SubscriptionOperationResult.Ok(Unit) }
+        assertTrue(bridge.setPriority(LiveSubscriptionPriority.NORMAL) is SubscriptionOperationResult.Ok)
+        assertEquals(
+            listOf(LiveSubscriptionPriority.YIELD, LiveSubscriptionPriority.NORMAL, LiveSubscriptionPriority.NORMAL),
+            subscription.priorities,
+        )
+
+        // Unsupported changes send nothing, so the server keeps the confirmed weight.
+        subscription.priorityAction = { SubscriptionOperationResult.NotSupported }
+        assertSame(SubscriptionOperationResult.NotSupported, bridge.setPriority(LiveSubscriptionPriority.YIELD))
+        assertTrue(bridge.setPriority(LiveSubscriptionPriority.NORMAL) is SubscriptionOperationResult.Ok)
+        assertEquals(4, subscription.priorities.size)
+
+        subscription.priorityAction = {
+            subscription.mutableState.value = SubscriptionState.Terminal(SubscriptionTerminalReason.ConsumerFailed)
+            SubscriptionOperationResult.TransportUnavailable
+        }
+        assertTrue(bridge.setPriority(LiveSubscriptionPriority.YIELD) is SubscriptionOperationResult.Ok)
+        assertSame(LiveSubscriptionPriority.YIELD, bridge.subscriptionOptions(SubscriptionOptions()).priority)
+    }
+
+    @Test
+    fun `superseded opener cannot replace the registered subscription`() = runTest {
+        val bridge = LiveTimeshiftControlBridge(PlaybackTargetToken()) {}
+        val current = FakeTimeshiftSubscription(null)
+        bridge.subscriptionOpened(current, LiveSubscriptionPriority.NORMAL)
+        val stale = FakeTimeshiftSubscription(null)
+        bridge.subscriptionOpened(stale, LiveSubscriptionPriority.NORMAL) { false }
+        assertTrue(bridge.setPriority(LiveSubscriptionPriority.YIELD) is SubscriptionOperationResult.Ok)
+        assertEquals(listOf(LiveSubscriptionPriority.YIELD), current.priorities)
+        assertTrue(stale.priorities.isEmpty())
+
+        // A release between the opener's check and its registration still unregisters it.
+        var checks = 0
+        val racing = FakeTimeshiftSubscription(null)
+        bridge.subscriptionOpened(racing, LiveSubscriptionPriority.NORMAL) { checks++ == 0 }
+        assertTrue(bridge.setPriority(LiveSubscriptionPriority.NORMAL) is SubscriptionOperationResult.Ok)
+        assertTrue(racing.priorities.isEmpty())
     }
 
     @Test

@@ -22,7 +22,15 @@
 - Subscription infrastructure: `SubscriptionOptions.priority`,
   `SubscriptionConnection.changePriority` and `ActiveSubscription.setPriority`;
   `ScriptedSubscriptionConnection` records `requestedPriority` and
-  `priorityChanges` and can `scriptPriority` results.
+  `priorityChanges` and can `scriptPriority` results. The default
+  `SubscriptionConnection.subscribe(id, channelId, options)` ignores the priority,
+  so adapters that support it must override that overload.
+
+### Changed
+
+- `SubscriptionOptions` gained a defaulted `priority` constructor parameter. This
+  is source compatible but a binary break: recompile subscription infrastructure
+  adapters against this release.
 
 ### Fixed
 
@@ -31,6 +39,10 @@
   `C.ROLE_FLAG_ENHANCED_DIALOG_INTELLIGIBILITY` and `3` to
   `C.ROLE_FLAG_DESCRIBES_VIDEO`. Other, missing or out-of-range values keep no
   role flags.
+- When TVHeadend stops a live subscription, for example because another
+  subscription took its tuner, `subscriptionIssue` and the live observation now
+  report the stop reason, and later status updates, until the stream starts
+  again or ends. Previously the issue was cleared while the stream was stopped.
 
 ## [0.18.0]
 

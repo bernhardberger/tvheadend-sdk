@@ -560,9 +560,14 @@ public class TvheadendPlaybackCoordinator internal constructor(
      * application policy.
      *
      * Returns [TimeshiftCommandResult.ACCEPTED] once the server accepted the change, or once it was
-     * recorded while no subscription is currently open for the target.
+     * recorded while no subscription is currently open or the subscription ends meanwhile.
      * [TimeshiftCommandResult.UNAVAILABLE] means no live target is current, as for recordings.
      * Servers or stream profiles that force their own priority accept the request but ignore it.
+     *
+     * A priority recorded while a subscription is opening is applied best-effort once it opens;
+     * a failure there is not reported. After any failed or inconclusive result the server's
+     * priority is unknown, so calling again with the same priority re-sends it. Re-asserting the
+     * priority is the recovery.
      */
     public suspend fun setLivePriority(priority: LiveSubscriptionPriority): TimeshiftCommandResult {
         val reply = CompletableDeferred<TimeshiftCommandResult>()

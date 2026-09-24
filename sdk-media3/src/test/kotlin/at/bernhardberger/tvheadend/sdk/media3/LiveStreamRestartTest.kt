@@ -25,6 +25,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionCondition
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionConfirmation
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionIssue
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
@@ -435,6 +436,74 @@ internal class LiveStreamRestartTest {
         assertEquals(null, attachment.timeline())
     }
 
+    @Test
+    fun `server stop reason and later status stay observable until the stream starts again`() = runTest {
+        val harness = RestartSourceHarness(this)
+        try {
+            harness.start()
+            harness.createPeriod()
+            harness.started(SubscriptionStreamType.MPEG2_AUDIO)
+            harness.audio(0)
+            harness.flush()
+            harness.emit(
+                SubscriptionEvent.Stopped(SubscriptionCondition.ERROR_REPORTED, SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN),
+            )
+            harness.flush()
+            assertSame(SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN, harness.observedIssues.last())
+            harness.emit(SubscriptionEvent.Status(SubscriptionCondition.ERROR_REPORTED, SubscriptionIssue.NO_FREE_ADAPTER))
+            harness.flush()
+            assertSame(SubscriptionIssue.NO_FREE_ADAPTER, harness.observedIssues.last())
+
+            val waiting = harness.createPeriod()
+            harness.audio(0, 2_000_000)
+            harness.flush()
+            assertEquals(0, harness.preparations(waiting))
+            assertSame(SubscriptionIssue.NO_FREE_ADAPTER, harness.observedIssues.last())
+
+            harness.emit(
+                SubscriptionEvent.Started(
+                    listOf(
+                        SubscriptionStream(StreamIndex(0), SubscriptionStreamType.MPEG2_AUDIO, null, null, null, null, null,
+                            null, null, null, null, null, null, null, null, null),
+                    ),
+                    null,
+                    SubscriptionCondition.ERROR_REPORTED,
+                    SubscriptionIssue.BAD_SIGNAL,
+                ),
+            )
+            harness.audio(0, 10_000_000)
+            harness.releaseOldPeriods()
+            harness.flush()
+            assertEquals(1, harness.preparations(waiting))
+            assertEquals(
+                listOf(
+                    null,
+                    SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN,
+                    SubscriptionIssue.NO_FREE_ADAPTER,
+                    SubscriptionIssue.BAD_SIGNAL,
+                ),
+                harness.observedIssues,
+            )
+        } finally { harness.close() }
+    }
+
+    @Test
+    fun `stop reason is released when the stopped subscription ends`() = runTest {
+        val harness = RestartSourceHarness(this)
+        try {
+            harness.start()
+            harness.started(SubscriptionStreamType.MPEG2_AUDIO)
+            harness.emit(
+                SubscriptionEvent.Stopped(SubscriptionCondition.ERROR_REPORTED, SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN),
+            )
+            harness.flush()
+            assertSame(SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN, harness.observedIssues.last())
+            harness.connection.loseGeneration()
+            harness.flush()
+            assertEquals(null, harness.observedIssues.last())
+        } finally { harness.close() }
+    }
+
     @ParameterizedTest
     @ValueSource(booleans = [false, true])
     fun `missing restart and generation loss terminate waiting period without resurrection`(generationLost: Boolean) = runTest {
@@ -467,7 +536,17 @@ private class RestartSourceHarness(private val scope: TestScope) {
     private val periods = mutableListOf<TvheadendLiveMediaPeriod>()
     private val preparations = mutableMapOf<MediaPeriod, Int>()
     var state: LiveTimeshiftState = LiveTimeshiftState.Unavailable
-    val bridge = LiveTimeshiftControlBridge(PlaybackTargetToken()) { state = it }
+    val observedIssues = mutableListOf<SubscriptionIssue?>()
+    val bridge = LiveTimeshiftControlBridge(
+        token = PlaybackTargetToken(),
+        publish = { state = it },
+        publishIssue = {},
+        publishObservation = { observation ->
+            if (observedIssues.lastOrNull() != observation.subscriptionIssue || observedIssues.isEmpty()) {
+                observedIssues += observation.subscriptionIssue
+            }
+        },
+    )
     val source = TvheadendLiveMediaSource(object : CoordinatorLiveTarget {
         override val isCurrent = true
         override suspend fun open(consumer: SubscriptionEventConsumer, options: SubscriptionOptions): SubscriptionOpenResult =

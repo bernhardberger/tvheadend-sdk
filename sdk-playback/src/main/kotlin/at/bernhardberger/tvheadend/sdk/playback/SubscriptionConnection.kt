@@ -547,7 +547,8 @@ public interface SubscriptionConnection {
      * Issues subscribe with optional profile selection while preserving legacy adapters.
      *
      * The default ignores [SubscriptionOptions.priority] so legacy adapters subscribe at normal
-     * priority instead of failing.
+     * priority instead of failing. Callers cannot detect this: an adapter that supports priority
+     * must override this overload, or a non-normal priority is silently not requested.
      */
     public suspend fun subscribe(
         id: SubscriptionId,

@@ -373,7 +373,8 @@ public interface ActiveSubscription {
      * Requests a server priority change for this accepted subscription.
      *
      * Returns [SubscriptionOperationResult.TransportUnavailable] before the server accepted the
-     * subscription or after it ended or began closing.
+     * subscription or after it ended or began closing. The default implementation returns
+     * [SubscriptionOperationResult.NotSupported].
      */
     public suspend fun setPriority(priority: LiveSubscriptionPriority): SubscriptionOperationResult<Unit> =
         SubscriptionOperationResult.NotSupported
