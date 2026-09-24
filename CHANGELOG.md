@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Live playback exposes TVHeadend text subtitle streams, the subtitle pages
+  TVHeadend extracts from teletext, as selectable Media3 text tracks with the
+  stream language. Each page replaces the previous one, keeps its line breaks
+  and TVHeadend's colours, and a blank page clears it. Recordings are not
+  covered, and raw teletext streams remain unsupported.
+
 ## [0.19.0]
 
 ### Added

@@ -258,6 +258,7 @@ class ActualElementaryStreamReaderFixtureTest {
                 SubscriptionStreamType.EAC3,
                 SubscriptionStreamType.MPEG2_AUDIO,
                 SubscriptionStreamType.DVB_SUBTITLE,
+                SubscriptionStreamType.TEXT_SUBTITLE,
             ),
             supported,
         )

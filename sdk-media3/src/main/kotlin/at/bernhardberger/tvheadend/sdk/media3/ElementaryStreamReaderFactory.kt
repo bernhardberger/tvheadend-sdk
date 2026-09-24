@@ -47,7 +47,7 @@ internal fun createElementaryStreamReader(stream: SubscriptionStream): ReaderRes
             AdtsReader(false, stream.language, stream.audioRoleFlags(), MimeTypes.VIDEO_MP2T),
         )
         SubscriptionStreamType.DVB_SUBTITLE -> createDvbReader(stream)
-        SubscriptionStreamType.TEXT_SUBTITLE,
+        SubscriptionStreamType.TEXT_SUBTITLE -> ReaderResult.Supported(TextSubtitleReader(stream.language))
         SubscriptionStreamType.TELETEXT,
         SubscriptionStreamType.UNKNOWN,
         -> ReaderResult.Unsupported

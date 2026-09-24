@@ -500,6 +500,42 @@ internal class TvheadendLiveMediaPeriodTest {
     }
 
     @Test
+    fun `text subtitle track is prepared before its first page and queues pages at their presentation time`() = runTest {
+        val harness = PeriodHarness(this)
+        try {
+            harness.start(
+                SubscriptionStreamType.MPEG2_AUDIO,
+                SubscriptionStreamType.H264,
+                SubscriptionStreamType.TEXT_SUBTITLE,
+                languages = listOf(null, null, "ger"),
+            )
+            harness.audio()
+            harness.video()
+            harness.looper.runAll()
+            assertEquals(1, harness.preparations)
+            assertEquals(3, harness.period.trackGroups.length)
+            val textGroup = (0 until harness.period.trackGroups.length).single { index ->
+                harness.period.trackGroups[index].type == C.TRACK_TYPE_TEXT
+            }
+            val format = harness.period.trackGroups[textGroup].getFormat(0)
+            assertEquals(MimeTypes.APPLICATION_MEDIA3_CUES, format.sampleMimeType)
+            assertEquals("de", format.language)
+
+            val text = harness.select(textGroup)
+            harness.packet(2, PeriodCountingBinary("Hallo\n\u0000".toByteArray()), 1_617_733)
+            val holder = FormatHolder()
+            val buffer = DecoderInputBuffer(DecoderInputBuffer.BUFFER_REPLACEMENT_MODE_NORMAL)
+            assertEquals(C.RESULT_FORMAT_READ, text.readData(holder, buffer, 0))
+            assertEquals(MimeTypes.APPLICATION_MEDIA3_CUES, holder.format?.sampleMimeType)
+            assertEquals(C.RESULT_BUFFER_READ, text.readData(holder, buffer, 0))
+            assertEquals(500_000L, buffer.timeUs)
+            assertTrue(buffer.isKeyFrame)
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
     fun `unsupported packets are ignored but unknown indices still fail the period`() = runTest {
         val harness = PeriodHarness(this)
         try {
@@ -650,7 +686,11 @@ private class PeriodHarness(private val scope: TestScope, attachment: LiveTimesh
         callbackSchedulerFactory = { looper },
     )
 
-    suspend fun start(vararg types: SubscriptionStreamType, audioTypes: List<Long?> = emptyList()) {
+    suspend fun start(
+        vararg types: SubscriptionStreamType,
+        audioTypes: List<Long?> = emptyList(),
+        languages: List<String?> = emptyList(),
+    ) {
         connection.scriptSubscribe(SubscriptionOperationResult.Ok(SubscriptionConfirmation(null, null, null, 120)))
         manager.startAdmission()
         period.prepare(object : MediaPeriod.Callback {
@@ -664,7 +704,7 @@ private class PeriodHarness(private val scope: TestScope, attachment: LiveTimesh
         scope.runCurrent()
         connection.emit(SubscriptionEvent.Started(types.mapIndexed { index, type ->
             SubscriptionStream(
-                StreamIndex(index.toLong()), type, null,
+                StreamIndex(index.toLong()), type, languages.getOrNull(index),
                 if (type == SubscriptionStreamType.DVB_SUBTITLE) 1L else null,
                 if (type == SubscriptionStreamType.DVB_SUBTITLE) 2L else null,
                 null, null,

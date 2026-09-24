@@ -622,7 +622,6 @@ private val AUDIO_VIDEO_STREAMS = VIDEO_STREAMS + setOf(
     SubscriptionStreamType.MPEG2_AUDIO,
 )
 private val UNSUPPORTED_STREAMS = setOf(
-    SubscriptionStreamType.TEXT_SUBTITLE,
     SubscriptionStreamType.TELETEXT,
     SubscriptionStreamType.UNKNOWN,
 )
