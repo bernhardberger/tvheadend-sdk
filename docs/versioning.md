@@ -1,16 +1,16 @@
 # Versioning and compatibility
 
-The source is configured for the provisional `0.17.0` release under these
+The source is configured for the provisional `0.18.0` release under these
 coordinates:
 
-- `at.bernhardberger.tvheadend:sdk-android:0.17.0`
-- `at.bernhardberger.tvheadend:sdk-core:0.17.0`
-- `at.bernhardberger.tvheadend:sdk-media3:0.17.0`
-- `at.bernhardberger.tvheadend:sdk-playback:0.17.0`
-- `at.bernhardberger.tvheadend:sdk-testing:0.17.0`
+- `at.bernhardberger.tvheadend:sdk-android:0.18.0`
+- `at.bernhardberger.tvheadend:sdk-core:0.18.0`
+- `at.bernhardberger.tvheadend:sdk-media3:0.18.0`
+- `at.bernhardberger.tvheadend:sdk-playback:0.18.0`
+- `at.bernhardberger.tvheadend:sdk-testing:0.18.0`
 
 Source, local staging, and CI
-do not establish that the configured `0.17.0` coordinates are publicly available;
+do not establish that the configured `0.18.0` coordinates are publicly available;
 check Maven Central before selecting them.
 
 The signed `v0.3.3` tag is retained as development-release evidence after its
@@ -30,7 +30,11 @@ must never be replaced.
 While the major version is zero, the public API and behavior are provisional.
 No source, binary, or behavioral compatibility is promised for the provisional
 0.x line. A known breaking change requires the next minor version, not a patch
-version. Patch versions are reserved for backward-compatible fixes. The `0.17.0`
+version. Patch versions are reserved for backward-compatible fixes. The `0.18.0`
+minor turns `PlaybackStopResult.PlayerUnavailable` into a data class whose
+`finalSubscriptionIssue` keeps the retired live target's final subscription issue
+when player cleanup fails after retirement. Recompile consumers and replace
+`PlaybackStopResult.PlayerUnavailable` value matches with type checks. The `0.17.0`
 minor types `Channel.icon` and `ChannelTag.icon` as `ArtworkId`, replaces the
 string `TvheadendArtwork.create` overload with an `ArtworkId` parameter, and turns
 `PlaybackStopResult` into a sealed result whose `Stopped` case carries the retired

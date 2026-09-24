@@ -1505,6 +1505,56 @@ internal class TvheadendPlaybackCoordinatorTest {
     }
 
     @Test
+    fun `stop reports the final subscription issue when player cleanup fails after retirement`() = runTest {
+        val fixture = CoordinatorFixture()
+        fixture.player.stopCleanupFails = true
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+        assertSame(PlaybackTargetResult.STARTED, fixture.coordinator.setLiveTarget(ChannelId(1)))
+        fixture.player.attachTimeshift(FakeTimeshiftSubscription(60.seconds))
+        fixture.player.emitTimeshift(
+            SubscriptionEvent.Status(
+                SubscriptionCondition.ERROR_REPORTED,
+                SubscriptionIssue.NO_FREE_ADAPTER,
+            ),
+        )
+        assertSame(SubscriptionIssue.NO_FREE_ADAPTER, fixture.coordinator.subscriptionIssue.value)
+
+        assertEquals(
+            PlaybackStopResult.PlayerUnavailable(finalSubscriptionIssue = SubscriptionIssue.NO_FREE_ADAPTER),
+            fixture.coordinator.stop(),
+        )
+        assertSame(LivePlaybackObservation.NoTarget, fixture.coordinator.livePlaybackObservation.value)
+        assertNull(fixture.coordinator.subscriptionIssue.value)
+        fixture.player.stopCleanupFails = false
+        assertSame(PlaybackShutdownResult.DRAINED, fixture.coordinator.shutdown(1.seconds))
+        owner.join()
+    }
+
+    @Test
+    fun `stop reports no final subscription issue when the player is unavailable before retirement`() = runTest {
+        val fixture = CoordinatorFixture()
+        fixture.player.stopUnavailable = true
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+        assertSame(PlaybackTargetResult.STARTED, fixture.coordinator.setLiveTarget(ChannelId(1)))
+        fixture.player.attachTimeshift(FakeTimeshiftSubscription(60.seconds))
+        fixture.player.emitTimeshift(
+            SubscriptionEvent.Status(
+                SubscriptionCondition.ERROR_REPORTED,
+                SubscriptionIssue.NO_FREE_ADAPTER,
+            ),
+        )
+
+        assertEquals(
+            PlaybackStopResult.PlayerUnavailable(finalSubscriptionIssue = null),
+            fixture.coordinator.stop(),
+        )
+        assertSame(SubscriptionIssue.NO_FREE_ADAPTER, fixture.coordinator.subscriptionIssue.value)
+        fixture.player.stopUnavailable = false
+        assertSame(PlaybackShutdownResult.DRAINED, fixture.coordinator.shutdown(1.seconds))
+        owner.join()
+    }
+
+    @Test
     fun `replacement rollback keeps newer diagnostics observations`() {
         var publishedDiagnostics: LiveSubscriptionDiagnostics? = null
         val bridge = LiveTimeshiftControlBridge(
@@ -2887,6 +2937,8 @@ private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
     var liveInstallStatus: PlaybackPlayerInstallStatus = PlaybackPlayerInstallStatus.STARTED
     var simulateFailedReplacementPeriodTurnover = false
     var detachTimeshiftOnStop = false
+    var stopCleanupFails = false
+    var stopUnavailable = false
     var liveInstallEntered: CompletableDeferred<Unit>? = null
     var liveInstallRelease: CompletableDeferred<Unit>? = null
     private var timeshiftControls: LiveTimeshiftControlBridge? = null
@@ -2961,6 +3013,10 @@ private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
 
     override suspend fun stop(ticket: PlayerOperationTicket): PlaybackPlayerStopResult {
         if (!ticket.claim()) return PlaybackPlayerStopResult(cancelled = true)
+        if (stopUnavailable) {
+            ticket.complete()
+            return PlaybackPlayerStopResult(playerAvailable = false)
+        }
         val releasedAttachment = timeshiftAttachment.takeIf { detachTimeshiftOnStop }
         val retirement = retire()
         // Media3 releases the live period after the token retires; its detach publishes cleanup state.
@@ -2968,6 +3024,7 @@ private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
         operations += "stop"
         ticket.complete()
         return PlaybackPlayerStopResult(
+            playerAvailable = !stopCleanupFails,
             retiredTarget = retirement.first,
             retiredRecording = retirement.second,
         )

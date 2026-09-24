@@ -783,6 +783,39 @@ internal class Media3PlaybackCoordinatorPlayerTest {
     }
 
     @Test
+    fun `stop cleanup failure retires the live target and reports the player unavailable`() = runTest {
+        val access = FakeCoordinatorPlaybackAccess()
+        val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator()) { _, _ ->
+            RecordingAdmission.Completed(null)
+        }
+        val liveToken = PlaybackTargetToken()
+        val live = async {
+            player.installLive(
+                PlayerOperationTicket(),
+                liveToken,
+                TestCoordinatorLiveTarget(),
+                timeshiftControls = controls(liveToken),
+            )
+        }
+        runCurrent()
+        access.looperQueue.runAll()
+        runCurrent()
+        live.await()
+        access.failRecoveryClose = true
+
+        val stop = async { player.stop(PlayerOperationTicket()) }
+        runCurrent()
+        access.looperQueue.runAll()
+        runCurrent()
+
+        val result = stop.await()
+        assertFalse(result.playerAvailable)
+        assertTrue(result.retiredTarget)
+        assertFalse(liveToken.isActive())
+        assertEquals("none", access.currentSourceKind)
+    }
+
+    @Test
     fun `callbacks capture explicit pause and recording terminals but not buffering`() = runTest {
         val access = FakeCoordinatorPlaybackAccess()
         val events = PlaybackPlayerEventAccumulator()

@@ -18,7 +18,7 @@ The SDK is split into five libraries:
 | `sdk-android` | Android | Discovery, connectivity, atomic server-profile storage, and authenticated artwork |
 | `sdk-testing` | Kotlin/JVM | Aggregate observation fakes, scripted events, and packet fixtures |
 
-The source is configured for release `0.17.0`. The normal build never publishes.
+The source is configured for release `0.18.0`. The normal build never publishes.
 `./gradlew clean build check stageLocalPublication` verifies the repository and
 stages all five modules under `build/local-maven`; the Maven Central badge, not
 local source or staging, reports the latest publicly available version.
@@ -368,8 +368,9 @@ target's canonical TVHeadend issue. Known server codes map to safe non-exhaustiv
 server text is never exposed. The exact no-input status maps to `NO_INPUT`
 unless a conflicting known canonical error is present. The state clears on
 period retry, target replacement, recording playback, stop, and shutdown;
-`PlaybackStopResult.Stopped.finalSubscriptionIssue` keeps the retired live
-target's last issue.
+`finalSubscriptionIssue` on `PlaybackStopResult.Stopped` and
+`PlaybackStopResult.PlayerUnavailable` keeps the retired live target's last issue,
+including when player cleanup fails after retirement.
 
 `TvheadendPlaybackCoordinator.liveDiagnostics` conditionally reports immutable
 source display metadata, frontend state and

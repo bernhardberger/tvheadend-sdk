@@ -550,7 +550,10 @@ a conflicting known canonical error is present. The state clears when the
 target or lifecycle no longer owns that issue. `stop()` returns
 `PlaybackStopResult.Stopped` carrying the retired live target's last issue as
 `finalSubscriptionIssue`, so a consumer that gives up on a stuck target can
-report why without reading the flow first. `SubscriptionIssue` exact values
+report why without reading the flow first. When the target is retired but player
+cleanup fails, `PlaybackStopResult.PlayerUnavailable` carries the same
+`finalSubscriptionIssue`; it is `null` when the player was unavailable before any
+live target was retired. `SubscriptionIssue` exact values
 are also non-exhaustive. Its stable `category` and
 `isConfigurationOrAccessRelated` predicate support broad handling; retry and
 terminal behavior depend on the surrounding subscription event.

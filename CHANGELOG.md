@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.18.0]
+
+### Changed
+
+- `PlaybackStopResult.PlayerUnavailable` is a data class carrying
+  `finalSubscriptionIssue`. This is a source and binary break: replace
+  `PlaybackStopResult.PlayerUnavailable` value matches with
+  `is PlaybackStopResult.PlayerUnavailable`, read `finalSubscriptionIssue`, and
+  recompile consumers against 0.18.0.
+
+### Fixed
+
+- `stop()` no longer discards the retired live target's final `SubscriptionIssue`
+  when the target is retired but player cleanup fails. `PlayerUnavailable` is
+  still reported in preference to `Stopped`; its issue is `null` when no live
+  target was retired.
+
 ## [0.17.0]
 
 ### Added

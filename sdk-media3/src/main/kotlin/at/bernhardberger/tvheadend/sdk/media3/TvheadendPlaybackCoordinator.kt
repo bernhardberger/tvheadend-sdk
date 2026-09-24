@@ -215,7 +215,7 @@ public sealed interface LivePlaybackObservation {
 /** Typed outcome of retiring the coordinator's current target. */
 public sealed interface PlaybackStopResult {
     /**
-     * The installed target was retired.
+     * The installed target was retired and the player was cleaned up.
      *
      * [finalSubscriptionIssue] is the last [SubscriptionIssue] published for the retired live target,
      * so a consumer that stops a failing target can report why without reading
@@ -235,8 +235,17 @@ public sealed interface PlaybackStopResult {
     /** The coordinator was shut down. */
     public data object ShutDown : PlaybackStopResult
 
-    /** The application-owned player was unavailable. */
-    public data object PlayerUnavailable : PlaybackStopResult
+    /**
+     * The application-owned player was unavailable.
+     *
+     * The installed target may still have been retired before or while player cleanup failed. In
+     * that case [finalSubscriptionIssue] is the last [SubscriptionIssue] published for the retired
+     * live target, as for [Stopped]. It is null when no live target was retired, for a recording
+     * target, or when no issue was current for the retired live target.
+     */
+    public data class PlayerUnavailable(
+        public val finalSubscriptionIssue: SubscriptionIssue?,
+    ) : PlaybackStopResult
 }
 
 /** Typed outcome of terminal coordinator shutdown and its best-effort progress drain. */
@@ -959,7 +968,7 @@ private class CoordinatorActor(
             if (!result.cancelled) {
                 command.reply.complete(
                     when {
-                        !result.playerAvailable -> PlaybackStopResult.PlayerUnavailable
+                        !result.playerAvailable -> PlaybackStopResult.PlayerUnavailable(finalSubscriptionIssue)
                         result.retiredTarget -> PlaybackStopResult.Stopped(finalSubscriptionIssue)
                         else -> PlaybackStopResult.AlreadyStopped
                     },
