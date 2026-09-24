@@ -85,6 +85,7 @@ import at.bernhardberger.tvheadend.htsp.requests.getProfiles
 import at.bernhardberger.tvheadend.htsp.requests.getSysTime
 import at.bernhardberger.tvheadend.htsp.requests.stopDvrEntry
 import at.bernhardberger.tvheadend.htsp.requests.subscribe
+import at.bernhardberger.tvheadend.htsp.requests.subscriptionChangeWeight
 import at.bernhardberger.tvheadend.htsp.requests.subscriptionSkip
 import at.bernhardberger.tvheadend.htsp.requests.subscriptionSkipNearLive
 import at.bernhardberger.tvheadend.htsp.requests.subscriptionSpeed
@@ -154,6 +155,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.TagId
 import at.bernhardberger.tvheadend.sdk.core.gateway.TimerecRuleId
 import at.bernhardberger.tvheadend.sdk.playback.MAX_RECORDING_READ_BYTES
 import at.bernhardberger.tvheadend.sdk.playback.LiveFrontendState
+import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionPriority
 import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionSource
 import at.bernhardberger.tvheadend.sdk.playback.MuxFrameType
 import at.bernhardberger.tvheadend.sdk.playback.SkipOutcome
@@ -879,10 +881,28 @@ internal class HtspProtocolGateway internal constructor(
         channelId: ChannelId,
         streamProfileUuid: String?,
         timeshiftPeriod: Duration,
+    ): SubscriptionOperationResult<SubscriptionConfirmation> = subscribe(
+        generation = generation,
+        id = id,
+        channelId = channelId,
+        streamProfileUuid = streamProfileUuid,
+        timeshiftPeriod = timeshiftPeriod,
+        priority = LiveSubscriptionPriority.NORMAL,
+    )
+
+    /** Normal priority omits the weight so the server applies the stream profile default. */
+    override suspend fun subscribe(
+        generation: GatewayGeneration,
+        id: SubscriptionId,
+        channelId: ChannelId,
+        streamProfileUuid: String?,
+        timeshiftPeriod: Duration,
+        priority: LiveSubscriptionPriority,
     ): SubscriptionOperationResult<SubscriptionConfirmation> = connection.subscribe(
         subscriptionId = id.value,
         channelId = channelId.value,
         profile = streamProfileUuid,
+        weight = priority.subscribeWeight(),
         timeshiftPeriodSeconds = timeshiftPeriod.inWholeSeconds.takeIf { seconds -> seconds > 0L },
         expectedGeneration = htspGenerationFor(generation),
     ).toSubscriptionResult(SubscribeResponse::toGatewayConfirmation)
@@ -952,6 +972,20 @@ internal class HtspProtocolGateway internal constructor(
     ): SubscriptionOperationResult<Unit> = connection.subscriptionSpeed(
         subscriptionId = id.value,
         speed = speed,
+        expectedGeneration = htspGenerationFor(generation),
+    ).toSubscriptionResult {}
+
+    /** A zero weight restores the stream profile default, matching a subscribe without weight. */
+    override suspend fun changeSubscriptionPriority(
+        generation: GatewayGeneration,
+        id: SubscriptionId,
+        priority: LiveSubscriptionPriority,
+    ): SubscriptionOperationResult<Unit> = connection.subscriptionChangeWeight(
+        subscriptionId = id.value,
+        weight = when (priority) {
+            LiveSubscriptionPriority.NORMAL -> PROFILE_DEFAULT_SUBSCRIPTION_WEIGHT
+            LiveSubscriptionPriority.YIELD -> YIELD_SUBSCRIPTION_WEIGHT
+        },
         expectedGeneration = htspGenerationFor(generation),
     ).toSubscriptionResult {}
 
@@ -1838,6 +1872,15 @@ private const val MAX_ARTWORK_BYTES = 16 * 1024 * 1024
 private const val MAX_CONCURRENT_ARTWORK_FILES = 3
 private const val ABSOLUTE_SKIP_FLAG = 1L
 private const val RELATIVE_SKIP_FLAG = 0L
+private const val PROFILE_DEFAULT_SUBSCRIPTION_WEIGHT = 0L
+
+// Server SUBSCRIPTION_PRIO_MIN: the lowest weight still treated as a normal subscription.
+private const val YIELD_SUBSCRIPTION_WEIGHT = 10L
+
+private fun LiveSubscriptionPriority.subscribeWeight(): Long? = when (this) {
+    LiveSubscriptionPriority.NORMAL -> null
+    LiveSubscriptionPriority.YIELD -> YIELD_SUBSCRIPTION_WEIGHT
+}
 private const val ASYNC_EPG_MINIMUM_PROTOCOL_VERSION = 6
 private const val ASYNC_EPG_ENABLED = 1L
 

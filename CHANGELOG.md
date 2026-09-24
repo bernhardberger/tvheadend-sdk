@@ -10,6 +10,19 @@
   number `0`, by collator-ordered name; missing or blank names last; `ChannelId`
   as the final tie-break. `Channel.hasChannelNumber` reports whether a channel
   has a user-visible number greater than zero.
+- `TvheadendPlaybackCoordinator.setLivePriority(LiveSubscriptionPriority)` asks
+  TVHeadend to let the current live subscription yield its tuner (`YIELD`, server
+  weight 10) or restores the stream profile's default weight (`NORMAL`). The
+  priority sticks to the current live target, including subscriptions the SDK
+  re-opens for it, and resets to `NORMAL` for a new target or after `stop()`.
+  Recordings and idle coordinators return `UNAVAILABLE`; servers without
+  `subscriptionChangeWeight` return `NOT_SUPPORTED`. Stream profiles with
+  TVHeadend's "force priority" option accept the request but ignore it. When to
+  yield stays an application decision.
+- Subscription infrastructure: `SubscriptionOptions.priority`,
+  `SubscriptionConnection.changePriority` and `ActiveSubscription.setPriority`;
+  `ScriptedSubscriptionConnection` records `requestedPriority` and
+  `priorityChanges` and can `scriptPriority` results.
 
 ### Fixed
 

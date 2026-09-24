@@ -2,6 +2,7 @@
 
 package at.bernhardberger.tvheadend.sdk.testing
 
+import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionPriority
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionCondition
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
@@ -82,25 +83,35 @@ class ScriptedSubscriptionConnectionTest {
         val subscribe = connection.subscribe(
             id,
             SubscriptionChannelId(4L),
-            SubscriptionOptions("0123456789abcdef0123456789abcdef", 120.seconds),
+            SubscriptionOptions(
+                "0123456789abcdef0123456789abcdef",
+                120.seconds,
+                LiveSubscriptionPriority.YIELD,
+            ),
         )
         val status = SubscriptionEvent.Status(SubscriptionCondition.STATUS_REPORTED)
         connection.emit(status)
         val skip = connection.skip(id, SubscriptionSeekTarget.Absolute(30.seconds))
         val speed = connection.speed(id, 0)
+        connection.scriptPriority(SubscriptionOperationResult.NotSupported)
+        val priority = connection.changePriority(id, LiveSubscriptionPriority.NORMAL)
         val unsubscribe = connection.unsubscribe(id)
 
         assertTrue(subscribe is SubscriptionOperationResult.Ok)
         assertTrue(skip is SubscriptionOperationResult.Ok)
         assertTrue(speed is SubscriptionOperationResult.Ok)
+        assertTrue(priority is SubscriptionOperationResult.NotSupported)
         assertTrue(unsubscribe is SubscriptionOperationResult.Ok)
         assertEquals(listOf(status), collected.await())
+        assertEquals(LiveSubscriptionPriority.YIELD, connection.requestedPriority)
+        assertEquals(listOf(LiveSubscriptionPriority.NORMAL), connection.priorityChanges)
         assertEquals(
             listOf(
                 ScriptedSubscriptionCall.COLLECTION_REGISTERED,
                 ScriptedSubscriptionCall.SUBSCRIBE,
                 ScriptedSubscriptionCall.SKIP,
                 ScriptedSubscriptionCall.SPEED,
+                ScriptedSubscriptionCall.PRIORITY,
                 ScriptedSubscriptionCall.UNSUBSCRIBE,
             ),
             connection.calls,

@@ -155,6 +155,7 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeTvheadendSession 
 public final class at/bernhardberger/tvheadend/sdk/testing/ScriptedSubscriptionCall : java/lang/Enum {
 	public static final field COLLECTION_REGISTERED Lat/bernhardberger/tvheadend/sdk/testing/ScriptedSubscriptionCall;
 	public static final field LIVE_COMMIT Lat/bernhardberger/tvheadend/sdk/testing/ScriptedSubscriptionCall;
+	public static final field PRIORITY Lat/bernhardberger/tvheadend/sdk/testing/ScriptedSubscriptionCall;
 	public static final field SKIP Lat/bernhardberger/tvheadend/sdk/testing/ScriptedSubscriptionCall;
 	public static final field SPEED Lat/bernhardberger/tvheadend/sdk/testing/ScriptedSubscriptionCall;
 	public static final field SUBSCRIBE Lat/bernhardberger/tvheadend/sdk/testing/ScriptedSubscriptionCall;
@@ -167,12 +168,15 @@ public final class at/bernhardberger/tvheadend/sdk/testing/ScriptedSubscriptionC
 public final class at/bernhardberger/tvheadend/sdk/testing/ScriptedSubscriptionConnection : at/bernhardberger/tvheadend/sdk/playback/SubscriptionConnection {
 	public fun <init> ()V
 	public final fun awaitCollectionRegistered (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun changePriority-BrKCP9I (JLat/bernhardberger/tvheadend/sdk/playback/LiveSubscriptionPriority;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun commitIfLive (Lkotlin/jvm/functions/Function0;)Ljava/lang/Object;
 	public final fun completeStreams ()V
 	public final fun emit (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionEvent;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun emit (Lat/bernhardberger/tvheadend/sdk/testing/ScriptedSubscriptionRegistration;Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionEvent;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun events-QsRD2oE (J)Lkotlinx/coroutines/flow/Flow;
 	public final fun getCalls ()Ljava/util/List;
+	public final fun getPriorityChanges ()Ljava/util/List;
+	public final fun getRequestedPriority ()Lat/bernhardberger/tvheadend/sdk/playback/LiveSubscriptionPriority;
 	public final fun getRequestedStreamProfileUuid ()Ljava/lang/String;
 	public final fun getRequestedTimeshiftSeconds ()Ljava/lang/Long;
 	public final fun getSeekTargets ()Ljava/util/List;
@@ -180,6 +184,7 @@ public final class at/bernhardberger/tvheadend/sdk/testing/ScriptedSubscriptionC
 	public final fun getSubscribeCount ()I
 	public final fun getUnsubscribeCount ()I
 	public final fun loseGeneration (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun scriptPriority (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult;)V
 	public final fun scriptSkip (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult;)V
 	public final fun scriptSpeed (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult;)V
 	public final fun scriptSubscribe (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult;)V

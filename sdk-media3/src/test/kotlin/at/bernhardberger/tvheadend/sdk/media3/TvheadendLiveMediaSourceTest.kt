@@ -11,6 +11,7 @@ import androidx.media3.exoplayer.upstream.DefaultAllocator
 import androidx.media3.exoplayer.upstream.BandwidthMeter
 import androidx.media3.exoplayer.analytics.PlayerId
 import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionDiagnostics
+import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionPriority
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
@@ -33,6 +34,7 @@ import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
@@ -121,6 +123,44 @@ internal class TvheadendLiveMediaSourceTest {
     }
 
     @Test
+    fun `re-preparation re-subscribes with the sticky priority and corrects changes during opening`() = runTest {
+        val target = CapturingLiveTarget()
+        val bridge = LiveTimeshiftControlBridge(PlaybackTargetToken()) {}
+        val options = SubscriptionOptions(
+            streamProfileUuid = "0123456789abcdef0123456789abcdef",
+            timeshiftPeriod = 600.seconds,
+        )
+        val source = TvheadendLiveMediaSource(target, options, bridge, {}, StandardTestDispatcher(testScheduler), { QueuedCoordinatorLooper() })
+        val caller = MediaSource.MediaSourceCaller { _, _ -> }
+        source.prepareSource(caller, PlayerId.UNSET, BandwidthMeter.NO_OP)
+        runCurrent()
+        assertSame(options, target.options)
+        source.releaseSource(caller)
+        runCurrent()
+
+        assertTrue(bridge.setPriority(LiveSubscriptionPriority.YIELD) is SubscriptionOperationResult.Ok)
+        val opened = FakeTimeshiftSubscription(null)
+        val release = CompletableDeferred<Unit>()
+        target.openResult = {
+            release.await()
+            SubscriptionOpenResult.Opened(opened)
+        }
+        source.prepareSource(caller, PlayerId.UNSET, BandwidthMeter.NO_OP)
+        runCurrent()
+        assertSame(LiveSubscriptionPriority.YIELD, target.options?.priority)
+        assertEquals(options.streamProfileUuid, target.options?.streamProfileUuid)
+        assertEquals(600.seconds, target.options?.timeshiftPeriod)
+
+        assertTrue(bridge.setPriority(LiveSubscriptionPriority.NORMAL) is SubscriptionOperationResult.Ok)
+        release.complete(Unit)
+        runCurrent()
+        assertEquals(listOf(LiveSubscriptionPriority.NORMAL), opened.priorities)
+        source.releaseSource(caller)
+        runCurrent()
+        assertEquals(1, opened.closeCount)
+    }
+
+    @Test
     fun `terminal delivery clears diagnostics when media adapters are not initialized`() = runTest {
         var publishedDiagnostics: LiveSubscriptionDiagnostics? = null
         val bridge = LiveTimeshiftControlBridge(
@@ -168,6 +208,7 @@ private class CapturingLiveTarget : CoordinatorLiveTarget {
     override val isCurrent: Boolean = true
     internal var consumer: SubscriptionEventConsumer? = null
     internal var options: SubscriptionOptions? = null
+    internal var openResult: suspend () -> SubscriptionOpenResult = { SubscriptionOpenResult.NotReady }
 
     override suspend fun open(
         consumer: SubscriptionEventConsumer,
@@ -175,6 +216,6 @@ private class CapturingLiveTarget : CoordinatorLiveTarget {
     ): SubscriptionOpenResult {
         this.consumer = consumer
         this.options = options
-        return SubscriptionOpenResult.NotReady
+        return openResult()
     }
 }

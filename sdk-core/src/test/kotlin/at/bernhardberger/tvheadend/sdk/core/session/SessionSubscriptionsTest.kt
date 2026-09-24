@@ -45,6 +45,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayState
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.ProtocolGateway
 import at.bernhardberger.tvheadend.sdk.core.gateway.ServerConfiguration
+import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionPriority
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.SkipOutcome
@@ -427,7 +428,10 @@ class SessionSubscriptionsTest {
                     generation,
                     SubscriptionChannelId(4L),
                     SubscriptionEventConsumer {},
-                    SubscriptionOptions(timeshiftPeriod = 600.seconds),
+                    SubscriptionOptions(
+                        timeshiftPeriod = 600.seconds,
+                        priority = LiveSubscriptionPriority.YIELD,
+                    ),
                 )
             }
             runCurrent()
@@ -437,6 +441,12 @@ class SessionSubscriptionsTest {
                 (opening.await() as SubscriptionOpenResult.Opened).subscription
 
             assertEquals(listOf(600.seconds), gateway.requestedTimeshiftPeriods)
+            assertEquals(listOf(LiveSubscriptionPriority.YIELD), gateway.requestedPriorities)
+            assertTrue(
+                subscription.setPriority(LiveSubscriptionPriority.NORMAL) is SubscriptionOperationResult.Ok,
+            )
+            assertEquals(listOf(LiveSubscriptionPriority.NORMAL), gateway.priorityChanges)
+            assertEquals(listOf(generation), gateway.priorityChangeGenerations)
             assertEquals(600.seconds, subscription.grantedTimeshiftPeriod)
 
             val seeking = async {
@@ -1446,6 +1456,9 @@ private class SubscriptionGateway : ProtocolGateway {
     internal val nearLiveStatuses = ArrayList<SubscriptionEvent.Timeshift>()
     internal val nearLiveMargins = ArrayList<Long>()
     internal val subscriptionSpeeds = ArrayList<Int>()
+    internal val requestedPriorities = ArrayList<LiveSubscriptionPriority>()
+    internal val priorityChanges = ArrayList<LiveSubscriptionPriority>()
+    internal val priorityChangeGenerations = ArrayList<GatewayGeneration>()
     internal val openedRecordingGenerations = ArrayList<GatewayGeneration>()
     internal val openedRecordingIds = ArrayList<DvrEntryId>()
     internal val seekedRecordingGenerations = ArrayList<GatewayGeneration>()
@@ -1670,6 +1683,30 @@ private class SubscriptionGateway : ProtocolGateway {
     ): SubscriptionOperationResult<SubscriptionConfirmation> {
         requestedStreamProfileUuids += streamProfileUuid
         return subscribe(generation, id, channelId, timeshiftPeriod)
+    }
+
+    override suspend fun subscribe(
+        generation: GatewayGeneration,
+        id: SubscriptionId,
+        channelId: ChannelId,
+        streamProfileUuid: String?,
+        timeshiftPeriod: Duration,
+        priority: LiveSubscriptionPriority,
+    ): SubscriptionOperationResult<SubscriptionConfirmation> {
+        synchronized(lock) { requestedPriorities += priority }
+        return subscribe(generation, id, channelId, streamProfileUuid, timeshiftPeriod)
+    }
+
+    override suspend fun changeSubscriptionPriority(
+        generation: GatewayGeneration,
+        id: SubscriptionId,
+        priority: LiveSubscriptionPriority,
+    ): SubscriptionOperationResult<Unit> {
+        synchronized(lock) {
+            priorityChangeGenerations += generation
+            priorityChanges += priority
+        }
+        return SubscriptionOperationResult.Ok(Unit)
     }
 
     override suspend fun skipSubscription(

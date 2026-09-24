@@ -33,6 +33,7 @@ import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
 import at.bernhardberger.tvheadend.sdk.playback.LiveFrontendState
 import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionDiagnostics
+import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionPriority
 import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionSource
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFile
@@ -2087,6 +2088,114 @@ internal class TvheadendPlaybackCoordinatorTest {
     }
 
     @Test
+    fun `live priority is sticky for the live target and resets for new targets`() = runTest {
+        val fixture = CoordinatorFixture()
+        assertSame(
+            TimeshiftCommandResult.NOT_RUNNING,
+            fixture.coordinator.setLivePriority(LiveSubscriptionPriority.YIELD),
+        )
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+        assertSame(
+            TimeshiftCommandResult.UNAVAILABLE,
+            fixture.coordinator.setLivePriority(LiveSubscriptionPriority.YIELD),
+        )
+
+        fixture.coordinator.setLiveTarget(ChannelId(1), LivePlaybackOptions(timeshiftPeriod = 300.seconds))
+        val first = FakeTimeshiftSubscription(null)
+        fixture.player.openLiveSubscription(first)
+        assertTrue(first.priorities.isEmpty())
+        assertSame(
+            TimeshiftCommandResult.ACCEPTED,
+            fixture.coordinator.setLivePriority(LiveSubscriptionPriority.YIELD),
+        )
+        assertSame(
+            TimeshiftCommandResult.ACCEPTED,
+            fixture.coordinator.setLivePriority(LiveSubscriptionPriority.YIELD),
+        )
+        assertEquals(listOf(LiveSubscriptionPriority.YIELD), first.priorities)
+
+        first.mutableState.value = SubscriptionState.Terminal(SubscriptionTerminalReason.ConsumerFailed)
+        val reopened = fixture.player.liveSubscriptionOptions()
+        assertSame(LiveSubscriptionPriority.YIELD, reopened.priority)
+        assertEquals(300.seconds, reopened.timeshiftPeriod)
+        val second = FakeTimeshiftSubscription(null)
+        fixture.player.openLiveSubscription(second, reopened)
+        assertTrue(second.priorities.isEmpty(), "The re-subscribe already carried the sticky priority")
+
+        val failures = listOf(
+            SubscriptionOperationResult.NotSupported to TimeshiftCommandResult.NOT_SUPPORTED,
+            SubscriptionOperationResult.TransportUnavailable to
+                TimeshiftCommandResult.TRANSPORT_UNAVAILABLE,
+            SubscriptionOperationResult.Timeout to TimeshiftCommandResult.TIMEOUT,
+        )
+        failures.forEach { (source, expected) ->
+            second.priorityAction = { source }
+            assertSame(expected, fixture.coordinator.setLivePriority(LiveSubscriptionPriority.NORMAL))
+        }
+        assertEquals(List(3) { LiveSubscriptionPriority.NORMAL }, second.priorities)
+        assertSame(LiveSubscriptionPriority.NORMAL, fixture.player.liveSubscriptionOptions().priority)
+
+        val staleOptions = fixture.player.liveSubscriptionOptions()
+        second.mutableState.value = SubscriptionState.Terminal(SubscriptionTerminalReason.ConsumerFailed)
+        assertSame(
+            TimeshiftCommandResult.ACCEPTED,
+            fixture.coordinator.setLivePriority(LiveSubscriptionPriority.YIELD),
+        )
+        assertEquals(3, second.priorities.size)
+        val third = FakeTimeshiftSubscription(null)
+        fixture.player.openLiveSubscription(third, staleOptions)
+        assertEquals(listOf(LiveSubscriptionPriority.YIELD), third.priorities)
+
+        assertSame(PlaybackTargetResult.STARTED, fixture.coordinator.setLiveTarget(ChannelId(2)))
+        assertSame(LiveSubscriptionPriority.NORMAL, fixture.player.liveSubscriptionOptions().priority)
+        assertSame(
+            TimeshiftCommandResult.ACCEPTED,
+            fixture.coordinator.setLivePriority(LiveSubscriptionPriority.YIELD),
+        )
+        assertEquals(listOf(LiveSubscriptionPriority.YIELD), third.priorities)
+        fixture.coordinator.stop()
+        assertSame(
+            TimeshiftCommandResult.UNAVAILABLE,
+            fixture.coordinator.setLivePriority(LiveSubscriptionPriority.NORMAL),
+        )
+
+        fixture.coordinator.setRecordingTarget(DvrEntryId(7))
+        assertSame(
+            TimeshiftCommandResult.UNAVAILABLE,
+            fixture.coordinator.setLivePriority(LiveSubscriptionPriority.YIELD),
+        )
+        assertEquals(listOf(LiveSubscriptionPriority.YIELD), third.priorities)
+
+        fixture.coordinator.shutdown(1.seconds)
+        owner.join()
+        assertSame(
+            TimeshiftCommandResult.SHUT_DOWN,
+            fixture.coordinator.setLivePriority(LiveSubscriptionPriority.NORMAL),
+        )
+    }
+
+    @Test
+    fun `live priority cancellation reaches the command caller`() = runTest {
+        val fixture = CoordinatorFixture()
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+        fixture.coordinator.setLiveTarget(ChannelId(1))
+        val subscription = FakeTimeshiftSubscription(null)
+        fixture.player.openLiveSubscription(subscription)
+        val cancellation = CancellationException("scripted priority cancellation")
+        subscription.priorityAction = { throw cancellation }
+
+        val caught = try {
+            fixture.coordinator.setLivePriority(LiveSubscriptionPriority.YIELD)
+            null
+        } catch (failure: CancellationException) {
+            failure
+        }
+        assertEquals(cancellation.message, caught?.message)
+        owner.join()
+        assertTrue(owner.isCancelled)
+    }
+
+    @Test
     fun `claimed seek survives caller cancellation but queued command performs no work`() = runTest {
         val fixture = CoordinatorFixture()
         val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
@@ -2813,6 +2922,9 @@ private class TestCoordinatorHarness(
 
     suspend fun resumeTimeshift(): TimeshiftCommandResult = delegate.resumeTimeshift()
 
+    suspend fun setLivePriority(priority: LiveSubscriptionPriority): TimeshiftCommandResult =
+        delegate.setLivePriority(priority)
+
     suspend fun stop(): PlaybackStopResult = delegate.stop()
 
     suspend fun shutdown(timeout: Duration): PlaybackShutdownResult = delegate.shutdown(timeout)
@@ -3051,6 +3163,17 @@ private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
         requireTimeshiftControls().bind(subscription)
     }
 
+    /** Mirrors a live source (re-)opening the installed target's subscription. */
+    fun liveSubscriptionOptions(): SubscriptionOptions =
+        checkNotNull(timeshiftControls).subscriptionOptions(checkNotNull(liveOptions))
+
+    suspend fun openLiveSubscription(
+        subscription: ActiveSubscription,
+        options: SubscriptionOptions = liveSubscriptionOptions(),
+    ) {
+        checkNotNull(timeshiftControls).subscriptionOpened(subscription, options.priority)
+    }
+
     fun replaceTimeshiftPeriod(subscription: ActiveSubscription) {
         timeshiftAttachment = checkNotNull(timeshiftControls).newAttachment()
         attachTimeshift(subscription)
@@ -3095,6 +3218,10 @@ internal class FakeTimeshiftSubscription(
     var speedAction: suspend (Int) -> SubscriptionOperationResult<Unit> = {
         SubscriptionOperationResult.Ok(Unit)
     }
+    val priorities = mutableListOf<LiveSubscriptionPriority>()
+    var priorityAction: suspend (LiveSubscriptionPriority) -> SubscriptionOperationResult<Unit> = {
+        SubscriptionOperationResult.Ok(Unit)
+    }
     val mutableState = kotlinx.coroutines.flow.MutableStateFlow<SubscriptionState>(
         SubscriptionState.Playable(at.bernhardberger.tvheadend.sdk.playback.SubscriptionTracks(listOf(
             at.bernhardberger.tvheadend.sdk.playback.SubscriptionStream(
@@ -3125,6 +3252,13 @@ internal class FakeTimeshiftSubscription(
     override suspend fun setSpeed(speed: Int): SubscriptionOperationResult<Unit> {
         speeds += speed
         return speedAction(speed)
+    }
+
+    override suspend fun setPriority(
+        priority: LiveSubscriptionPriority,
+    ): SubscriptionOperationResult<Unit> {
+        priorities += priority
+        return priorityAction(priority)
     }
 
     override suspend fun close(): at.bernhardberger.tvheadend.sdk.playback.SubscriptionCloseResult {

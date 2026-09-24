@@ -17,6 +17,7 @@ internal class RecordingSubscriptionConnection : SubscriptionConnection {
     private val mutableRegisteredIds = ArrayList<SubscriptionId>()
     private val mutableSeekTargets = ArrayList<SubscriptionSeekTarget>()
     private val mutableSpeeds = ArrayList<Int>()
+    private val mutablePriorities = ArrayList<LiveSubscriptionPriority>()
     internal var subscribeAction:
         suspend () -> SubscriptionOperationResult<SubscriptionConfirmation> = {
             successfulConfirmation()
@@ -28,6 +29,9 @@ internal class RecordingSubscriptionConnection : SubscriptionConnection {
         SubscriptionOperationResult.Ok(Unit)
     }
     internal var speedAction: suspend () -> SubscriptionOperationResult<Unit> = {
+        SubscriptionOperationResult.Ok(Unit)
+    }
+    internal var priorityAction: suspend () -> SubscriptionOperationResult<Unit> = {
         SubscriptionOperationResult.Ok(Unit)
     }
     internal var beforeLiveCommit: (() -> Unit)? = null
@@ -50,6 +54,9 @@ internal class RecordingSubscriptionConnection : SubscriptionConnection {
 
     internal val speeds: List<Int>
         get() = synchronized(lock) { mutableSpeeds.toList() }
+
+    internal val priorities: List<LiveSubscriptionPriority>
+        get() = synchronized(lock) { mutablePriorities.toList() }
 
     override fun events(id: SubscriptionId): Flow<SubscriptionEvent> = flow {
         val stream = synchronized(lock) {
@@ -102,6 +109,17 @@ internal class RecordingSubscriptionConnection : SubscriptionConnection {
         return speedAction()
     }
 
+    override suspend fun changePriority(
+        id: SubscriptionId,
+        priority: LiveSubscriptionPriority,
+    ): SubscriptionOperationResult<Unit> {
+        synchronized(lock) {
+            mutableCalls += Call.PRIORITY
+            mutablePriorities += priority
+        }
+        return priorityAction()
+    }
+
     override suspend fun unsubscribe(id: SubscriptionId): SubscriptionOperationResult<Unit> {
         synchronized(lock) {
             unsubscribeCount += 1
@@ -138,7 +156,15 @@ internal class RecordingSubscriptionConnection : SubscriptionConnection {
     }
 }
 
-internal enum class Call { COLLECTION_REGISTERED, SUBSCRIBE, SKIP, SPEED, UNSUBSCRIBE, LIVE_COMMIT }
+internal enum class Call {
+    COLLECTION_REGISTERED,
+    SUBSCRIBE,
+    SKIP,
+    SPEED,
+    PRIORITY,
+    UNSUBSCRIBE,
+    LIVE_COMMIT,
+}
 
 internal class CountingBinary(private val bytes: ByteArray) : SubscriptionBinary {
     internal var copyCount: Int = 0

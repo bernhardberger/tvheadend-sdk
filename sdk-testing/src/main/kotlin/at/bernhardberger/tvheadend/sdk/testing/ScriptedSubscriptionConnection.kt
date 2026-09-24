@@ -2,6 +2,7 @@
 
 package at.bernhardberger.tvheadend.sdk.testing
 
+import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionPriority
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionBinary
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionConfirmation
@@ -29,6 +30,7 @@ public enum class ScriptedSubscriptionCall {
     SPEED,
     UNSUBSCRIBE,
     LIVE_COMMIT,
+    PRIORITY,
 }
 
 /** Deterministic generation-bound subscription transport for JVM SDK tests. */
@@ -46,11 +48,14 @@ public class ScriptedSubscriptionConnection : SubscriptionConnection {
         SubscriptionOperationResult.Ok(Unit)
     private var speedResult: SubscriptionOperationResult<Unit> =
         SubscriptionOperationResult.Ok(Unit)
+    private var priorityResult: SubscriptionOperationResult<Unit> =
+        SubscriptionOperationResult.Ok(Unit)
     private var unsubscribeResult: SubscriptionOperationResult<Unit> =
         SubscriptionOperationResult.Ok(Unit)
     private var live = true
     private val mutableSeekTargets = ArrayList<SubscriptionSeekTarget>()
     private val mutableSpeeds = ArrayList<Int>()
+    private val mutablePriorities = ArrayList<LiveSubscriptionPriority>()
 
     /** Snapshot of value-free invocation order. */
     public val calls: List<ScriptedSubscriptionCall>
@@ -71,6 +76,15 @@ public class ScriptedSubscriptionConnection : SubscriptionConnection {
     /** Ordered server playback-speed requests issued through this connection. */
     public val speeds: List<Int>
         get() = synchronized(lock) { mutableSpeeds.toImmutableList() }
+
+    /** Ordered server priority changes issued through this connection. */
+    public val priorityChanges: List<LiveSubscriptionPriority>
+        get() = synchronized(lock) { mutablePriorities.toImmutableList() }
+
+    /** Priority requested by the latest subscribe, or [LiveSubscriptionPriority.NORMAL] before one. */
+    public var requestedPriority: LiveSubscriptionPriority = LiveSubscriptionPriority.NORMAL
+        get() = synchronized(lock) { field }
+        private set
 
     /** Requested timeshift period in whole seconds, or null before subscribe. */
     public var requestedTimeshiftSeconds: Long? = null
@@ -95,6 +109,11 @@ public class ScriptedSubscriptionConnection : SubscriptionConnection {
     /** Scripts the next and subsequent speed result. */
     public fun scriptSpeed(result: SubscriptionOperationResult<Unit>) {
         synchronized(lock) { speedResult = result }
+    }
+
+    /** Scripts the next and subsequent priority-change result. */
+    public fun scriptPriority(result: SubscriptionOperationResult<Unit>) {
+        synchronized(lock) { priorityResult = result }
     }
 
     /** Scripts the next and subsequent unsubscribe result. */
@@ -180,6 +199,7 @@ public class ScriptedSubscriptionConnection : SubscriptionConnection {
         id = id,
         streamProfileUuid = null,
         timeshiftPeriod = timeshiftPeriod,
+        priority = LiveSubscriptionPriority.NORMAL,
     )
 
     override suspend fun subscribe(
@@ -190,12 +210,14 @@ public class ScriptedSubscriptionConnection : SubscriptionConnection {
         id = id,
         streamProfileUuid = options.streamProfileUuid,
         timeshiftPeriod = options.timeshiftPeriod,
+        priority = options.priority,
     )
 
     private suspend fun recordSubscribe(
         id: SubscriptionId,
         streamProfileUuid: String?,
         timeshiftPeriod: Duration,
+        priority: LiveSubscriptionPriority,
     ): SubscriptionOperationResult<SubscriptionConfirmation> {
         currentCoroutineContext().ensureActive()
         return synchronized(lock) {
@@ -203,6 +225,7 @@ public class ScriptedSubscriptionConnection : SubscriptionConnection {
             mutableCalls += ScriptedSubscriptionCall.SUBSCRIBE
             requestedStreamProfileUuid = streamProfileUuid
             requestedTimeshiftSeconds = timeshiftPeriod.inWholeSeconds
+            requestedPriority = priority
             subscribeResult
         }
     }
@@ -230,6 +253,19 @@ public class ScriptedSubscriptionConnection : SubscriptionConnection {
             mutableCalls += ScriptedSubscriptionCall.SPEED
             mutableSpeeds += speed
             speedResult
+        }
+    }
+
+    override suspend fun changePriority(
+        id: SubscriptionId,
+        priority: LiveSubscriptionPriority,
+    ): SubscriptionOperationResult<Unit> {
+        currentCoroutineContext().ensureActive()
+        return synchronized(lock) {
+            check(streams.containsKey(id.value)) { "Subscription stream is not active" }
+            mutableCalls += ScriptedSubscriptionCall.PRIORITY
+            mutablePriorities += priority
+            priorityResult
         }
     }
 

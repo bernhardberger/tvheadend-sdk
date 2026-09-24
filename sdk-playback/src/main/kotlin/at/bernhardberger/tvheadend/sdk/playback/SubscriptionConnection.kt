@@ -490,11 +490,15 @@ public class SubscriptionConfirmation(
     override fun toString(): String = "SubscriptionConfirmation(<redacted>)"
 }
 
-/** Optional server profile and requested timeshift buffer for one live subscription. */
+/**
+ * Optional server profile, requested timeshift buffer, and initial priority for one live
+ * subscription.
+ */
 @SubscriptionInfrastructureApi
 public class SubscriptionOptions(
     public val streamProfileUuid: String? = null,
     public val timeshiftPeriod: Duration = Duration.ZERO,
+    public val priority: LiveSubscriptionPriority = LiveSubscriptionPriority.NORMAL,
 ) {
     init {
         require(
@@ -539,7 +543,12 @@ public interface SubscriptionConnection {
         timeshiftPeriod: Duration,
     ): SubscriptionOperationResult<SubscriptionConfirmation>
 
-    /** Issues subscribe with optional profile selection while preserving legacy adapters. */
+    /**
+     * Issues subscribe with optional profile selection while preserving legacy adapters.
+     *
+     * The default ignores [SubscriptionOptions.priority] so legacy adapters subscribe at normal
+     * priority instead of failing.
+     */
     public suspend fun subscribe(
         id: SubscriptionId,
         channelId: SubscriptionChannelId,
@@ -566,6 +575,12 @@ public interface SubscriptionConnection {
     public suspend fun speed(
         id: SubscriptionId,
         speed: Int,
+    ): SubscriptionOperationResult<Unit> = SubscriptionOperationResult.NotSupported
+
+    /** Issues a generation-bound server priority change for [id]. */
+    public suspend fun changePriority(
+        id: SubscriptionId,
+        priority: LiveSubscriptionPriority,
     ): SubscriptionOperationResult<Unit> = SubscriptionOperationResult.NotSupported
 
     /** Issues generation-bound unsubscribe whose success drains and then completes [events]. */

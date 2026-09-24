@@ -462,6 +462,68 @@ class SubscriptionSeekGateTest {
     }
 
     @Test
+    fun `priority changes need no timeshift grant and propagate typed outcomes`() = runTest {
+        val subscriptionDispatcher = StandardTestDispatcher(testScheduler, "subscription")
+        val fixture = openSeekable(
+            grantedTimeshiftSeconds = null,
+            dispatcher = subscriptionDispatcher,
+        )
+        var observedDispatcher: ContinuationInterceptor? = null
+        fixture.connection.priorityAction = {
+            observedDispatcher = currentCoroutineContext()[ContinuationInterceptor]
+            SubscriptionOperationResult.Ok(Unit)
+        }
+
+        assertTrue(
+            fixture.subscription.setPriority(LiveSubscriptionPriority.YIELD) is
+                SubscriptionOperationResult.Ok,
+        )
+        assertSame(subscriptionDispatcher, observedDispatcher)
+        fixture.connection.priorityAction = { SubscriptionOperationResult.NotSupported }
+        assertSame(
+            SubscriptionOperationResult.NotSupported,
+            fixture.subscription.setPriority(LiveSubscriptionPriority.NORMAL),
+        )
+        fixture.connection.priorityAction = { SubscriptionOperationResult.Timeout }
+        assertSame(
+            SubscriptionOperationResult.Timeout,
+            fixture.subscription.setPriority(LiveSubscriptionPriority.NORMAL),
+        )
+        fixture.connection.priorityAction = { error("transport failed") }
+        assertSame(
+            SubscriptionOperationResult.TransportUnavailable,
+            fixture.subscription.setPriority(LiveSubscriptionPriority.NORMAL),
+        )
+        val cancellation = CancellationException("scripted")
+        fixture.connection.priorityAction = { throw cancellation }
+        val caught = try {
+            fixture.subscription.setPriority(LiveSubscriptionPriority.YIELD)
+            null
+        } catch (failure: CancellationException) {
+            failure
+        }
+        assertSame(cancellation, caught)
+        assertEquals(
+            listOf(
+                LiveSubscriptionPriority.YIELD,
+                LiveSubscriptionPriority.NORMAL,
+                LiveSubscriptionPriority.NORMAL,
+                LiveSubscriptionPriority.NORMAL,
+                LiveSubscriptionPriority.YIELD,
+            ),
+            fixture.connection.priorities,
+        )
+
+        assertSame(SubscriptionCloseResult.CLOSED, fixture.subscription.close())
+        assertSame(
+            SubscriptionOperationResult.TransportUnavailable,
+            fixture.subscription.setPriority(LiveSubscriptionPriority.NORMAL),
+        )
+        assertEquals(5, fixture.connection.calls.count { it == Call.PRIORITY })
+        fixture.manager.closeAndJoin()
+    }
+
+    @Test
     fun `a stream terminal resolves a pending request without a seek terminal reason`() = runTest {
         val fixture = openSeekable()
         val seeking = async { fixture.subscription.seek(absoluteSeek()) }

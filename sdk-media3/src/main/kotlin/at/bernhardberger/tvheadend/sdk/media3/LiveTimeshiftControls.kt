@@ -4,14 +4,19 @@ package at.bernhardberger.tvheadend.sdk.media3
 
 import at.bernhardberger.tvheadend.sdk.playback.ActiveSubscription
 import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionDiagnostics
+import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionPriority
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionIssue
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionState
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTracks
 import java.util.Collections
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.microseconds
 
@@ -248,6 +253,10 @@ internal class LiveTimeshiftControlBridge(
     private var diagnosticsReplacedThroughSequence = -1L
     private var observationReplacement: ObservationReplacement? = null
     private var pendingRestoredObservations: PendingRestoredObservations? = null
+    private val priorityMutex = Mutex()
+    private var desiredPriority = LiveSubscriptionPriority.NORMAL
+    private var appliedPriority = LiveSubscriptionPriority.NORMAL
+    private var prioritySubscription: ActiveSubscription? = null
 
     internal fun newAttachment(): Attachment = synchronized(lock) {
         check(nextAttachmentSequence != Long.MAX_VALUE) { "Timeshift attachment ids exhausted" }
@@ -347,6 +356,7 @@ internal class LiveTimeshiftControlBridge(
             if (retired && currentState === LiveTimeshiftState.Unavailable) return
             retired = true
             activeAttachment = null
+            prioritySubscription = null
             newestTerminalAttachment = null
             currentState = LiveTimeshiftState.Unavailable
             currentIssue = null
@@ -382,6 +392,69 @@ internal class LiveTimeshiftControlBridge(
                 updateStateLocked()
                 publishCurrentLocked()
             }
+        }
+        return result
+    }
+
+    /**
+     * Records [priority] for this live target and applies it to the current subscription.
+     *
+     * The recorded priority is retained even when the immediate change fails, so every later
+     * subscription opened for this target requests it at subscribe time.
+     */
+    suspend fun setPriority(priority: LiveSubscriptionPriority): SubscriptionOperationResult<Unit>? =
+        priorityMutex.withLock {
+            synchronized(lock) {
+                if (retired || !token.isActive()) return null
+                desiredPriority = priority
+            }
+            reconcilePriorityLocked()
+        }
+
+    internal fun subscriptionOptions(base: SubscriptionOptions): SubscriptionOptions {
+        val priority = synchronized(lock) { desiredPriority }
+        return if (priority == base.priority) {
+            base
+        } else {
+            SubscriptionOptions(base.streamProfileUuid, base.timeshiftPeriod, priority)
+        }
+    }
+
+    /** Registers an opened subscription and corrects a priority changed while it was opening. */
+    internal suspend fun subscriptionOpened(
+        subscription: ActiveSubscription,
+        requestedPriority: LiveSubscriptionPriority,
+    ) {
+        priorityMutex.withLock {
+            synchronized(lock) {
+                if (retired || !token.isActive()) return
+                prioritySubscription = subscription
+                appliedPriority = requestedPriority
+            }
+            reconcilePriorityLocked()
+        }
+    }
+
+    private suspend fun reconcilePriorityLocked(): SubscriptionOperationResult<Unit> {
+        val subscription: ActiveSubscription
+        val desired: LiveSubscriptionPriority
+        synchronized(lock) {
+            val current = prioritySubscription?.takeIf { it.state.value !is SubscriptionState.Terminal }
+            if (current == null || appliedPriority == desiredPriority) {
+                return SubscriptionOperationResult.Ok(Unit)
+            }
+            subscription = current
+            desired = desiredPriority
+        }
+        val result = try {
+            subscription.setPriority(desired)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Exception) {
+            SubscriptionOperationResult.TransportUnavailable
+        }
+        if (result is SubscriptionOperationResult.Ok) synchronized(lock) {
+            if (prioritySubscription === subscription) appliedPriority = desired
         }
         return result
     }

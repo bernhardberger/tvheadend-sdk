@@ -344,6 +344,7 @@ internal class ModuleBoundaryTest {
             "public suspend fun returnToLive(): TimeshiftCommandResult",
             "public suspend fun pauseTimeshift(): TimeshiftCommandResult",
             "public suspend fun resumeTimeshift(): TimeshiftCommandResult",
+            "public suspend fun setLivePriority(priority: LiveSubscriptionPriority): TimeshiftCommandResult",
             "public suspend fun stop(): PlaybackStopResult",
             "public suspend fun shutdown(drainTimeout: Duration): PlaybackShutdownResult",
             "public suspend fun shutdown(drainTimeout: Duration): PlaybackShutdownResult",
@@ -404,6 +405,7 @@ internal class ModuleBoundaryTest {
             "LiveFrontendDiagnostics",
             "LiveQueueDiagnostics",
             "LiveSubscriptionDiagnostics",
+            "LiveSubscriptionPriority",
             "SubscriptionOpenResult",
             "SubscriptionCloseResult",
             "ActiveSubscription",
@@ -502,8 +504,8 @@ internal class ModuleBoundaryTest {
             ).containsMatchIn(credentialStoreSource),
             "The compatibility credential store must be warning-deprecated without ReplaceWith",
         )
-        // The codec classification is intentionally stable for sdk-media3 application callbacks.
-        assertPublicInfrastructure("sdk-playback", expectedPlayback, unannotatedCount = 9)
+        // The codec classification and live priority are intentionally stable for sdk-media3 callers.
+        assertPublicInfrastructure("sdk-playback", expectedPlayback, unannotatedCount = 10)
         assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 10)
         val fakeSessionSource = File(
             repositoryRoot,

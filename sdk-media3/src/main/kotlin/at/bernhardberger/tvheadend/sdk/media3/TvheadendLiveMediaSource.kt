@@ -111,7 +111,9 @@ internal class TvheadendLiveMediaSource(
         }
         opening = scope.launch {
             try {
-                when (val result = target.open(consumer, options)) {
+                // Re-preparation re-subscribes with the target's current priority.
+                val openOptions = timeshiftControls?.subscriptionOptions(options) ?: options
+                when (val result = target.open(consumer, openOptions)) {
                     is SubscriptionOpenResult.Opened -> {
                         val closeLate = synchronized(lock) {
                             if (released || preparation !== owner) true else {
@@ -123,6 +125,7 @@ internal class TvheadendLiveMediaSource(
                         if (closeLate) {
                             withContext(NonCancellable) { result.subscription.close() }
                         } else {
+                            timeshiftControls?.subscriptionOpened(result.subscription, openOptions.priority)
                             result.subscription.state.first { it is SubscriptionState.Terminal }
                             synchronized(lock) {
                                 if (!released && preparation === owner) {

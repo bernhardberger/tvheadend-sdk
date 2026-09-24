@@ -369,6 +369,15 @@ public interface ActiveSubscription {
     public suspend fun setSpeed(speed: Int): SubscriptionOperationResult<Unit> =
         SubscriptionOperationResult.NotSupported
 
+    /**
+     * Requests a server priority change for this accepted subscription.
+     *
+     * Returns [SubscriptionOperationResult.TransportUnavailable] before the server accepted the
+     * subscription or after it ended or began closing.
+     */
+    public suspend fun setPriority(priority: LiveSubscriptionPriority): SubscriptionOperationResult<Unit> =
+        SubscriptionOperationResult.NotSupported
+
     /** Closes, unsubscribes, and joins this subscription exactly once. */
     public suspend fun close(): SubscriptionCloseResult
 }
@@ -750,20 +759,33 @@ private class ActiveSubscriptionImpl(
                 (grantedTimeshiftSeconds ?: 0L) > 0L
         }
         if (!available) return SubscriptionOperationResult.TransportUnavailable
-        return try {
-            val outcome = withContext(dispatcher) {
-                try {
-                    Result.success(connection.speed(id, speed))
-                } catch (error: Exception) {
-                    Result.failure(error)
-                }
-            }
-            outcome.getOrThrow()
-        } catch (cancellation: CancellationException) {
-            throw cancellation
-        } catch (_: Exception) {
-            SubscriptionOperationResult.TransportUnavailable
+        return invokeCommand { connection.speed(id, speed) }
+    }
+
+    override suspend fun setPriority(priority: LiveSubscriptionPriority): SubscriptionOperationResult<Unit> {
+        currentCoroutineContext().ensureActive()
+        val available = synchronized(lock) {
+            terminal == null && !closeRequestedFlag && subscribeAccepted
         }
+        if (!available) return SubscriptionOperationResult.TransportUnavailable
+        return invokeCommand { connection.changePriority(id, priority) }
+    }
+
+    private suspend fun invokeCommand(
+        command: suspend () -> SubscriptionOperationResult<Unit>,
+    ): SubscriptionOperationResult<Unit> = try {
+        val outcome = withContext(dispatcher) {
+            try {
+                Result.success(command())
+            } catch (error: Exception) {
+                Result.failure(error)
+            }
+        }
+        outcome.getOrThrow()
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (_: Exception) {
+        SubscriptionOperationResult.TransportUnavailable
     }
 
     override suspend fun close(): SubscriptionCloseResult {

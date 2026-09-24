@@ -19,6 +19,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.ProtocolGateway
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
+import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionPriority
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFile
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
@@ -549,6 +550,7 @@ internal class GatewaySubscriptionConnection(
         channelId = ChannelId(channelId.value),
         streamProfileUuid = options.streamProfileUuid,
         timeshiftPeriod = options.timeshiftPeriod,
+        priority = options.priority,
     )
 
     override suspend fun skip(
@@ -574,6 +576,11 @@ internal class GatewaySubscriptionConnection(
         id: SubscriptionId,
         speed: Int,
     ): SubscriptionOperationResult<Unit> = gateway.speedSubscription(generation, id, speed)
+
+    override suspend fun changePriority(
+        id: SubscriptionId,
+        priority: LiveSubscriptionPriority,
+    ): SubscriptionOperationResult<Unit> = gateway.changeSubscriptionPriority(generation, id, priority)
 
     override suspend fun unsubscribe(id: SubscriptionId): SubscriptionOperationResult<Unit> =
         gateway.unsubscribe(generation, id)

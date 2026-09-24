@@ -16,6 +16,7 @@ import at.bernhardberger.tvheadend.sdk.core.StreamProfileId
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionDiagnostics
+import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionPriority
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionIssue
@@ -550,6 +551,29 @@ public class TvheadendPlaybackCoordinator internal constructor(
     /** Resumes normal server delivery without changing the application-owned player's play state. */
     public suspend fun resumeTimeshift(): TimeshiftCommandResult = setTimeshiftSpeed(NORMAL_SPEED)
 
+    /**
+     * Sets the server priority of the current live target's subscription when tuners are contended.
+     *
+     * The priority is sticky for the current live target: subscriptions the SDK opens again for the
+     * same target request it, including when this call's immediate change failed. Installing a new
+     * target or stopping resets it to [LiveSubscriptionPriority.NORMAL]. Deciding when to yield is
+     * application policy.
+     *
+     * Returns [TimeshiftCommandResult.ACCEPTED] once the server accepted the change, or once it was
+     * recorded while no subscription is currently open for the target.
+     * [TimeshiftCommandResult.UNAVAILABLE] means no live target is current, as for recordings.
+     * Servers or stream profiles that force their own priority accept the request but ignore it.
+     */
+    public suspend fun setLivePriority(priority: LiveSubscriptionPriority): TimeshiftCommandResult {
+        val reply = CompletableDeferred<TimeshiftCommandResult>()
+        val command = CoordinatorCommand.LivePriority(
+            priority = priority,
+            ticket = PlayerOperationTicket(),
+            reply = reply,
+        )
+        return submit(command, reply) { state -> state.timeshiftUnavailableResult() }
+    }
+
     /** Retires and clears only the target installed by this coordinator. */
     public suspend fun stop(): PlaybackStopResult {
         val reply = CompletableDeferred<PlaybackStopResult>()
@@ -887,6 +911,13 @@ private class CoordinatorActor(
         is CoordinatorCommand.TimeshiftSpeed -> {
             processTimeshiftCommand(command) { controls ->
                 controls.setSpeed(command.speed)?.toPublicTimeshiftResult()
+                    ?: TimeshiftCommandResult.UNAVAILABLE
+            }
+            false
+        }
+        is CoordinatorCommand.LivePriority -> {
+            processTimeshiftCommand(command) { controls ->
+                controls.setPriority(command.priority)?.toPublicTimeshiftResult()
                     ?: TimeshiftCommandResult.UNAVAILABLE
             }
             false
@@ -1333,6 +1364,12 @@ private sealed class CoordinatorCommand(
         override val reply: CompletableDeferred<TimeshiftCommandResult>,
     ) : Timeshift(ticket, reply)
 
+    data class LivePriority(
+        val priority: LiveSubscriptionPriority,
+        override val ticket: PlayerOperationTicket,
+        override val reply: CompletableDeferred<TimeshiftCommandResult>,
+    ) : Timeshift(ticket, reply)
+
     data class ContentSeek(
         val target: TimeshiftContentTarget,
         override val ticket: PlayerOperationTicket,
@@ -1362,6 +1399,7 @@ private sealed class CoordinatorCommand(
             is Recording -> reply.complete(PlaybackTargetResult.SHUT_DOWN)
             is TimeshiftSeek -> reply.complete(TimeshiftCommandResult.SHUT_DOWN)
             is TimeshiftSpeed -> reply.complete(TimeshiftCommandResult.SHUT_DOWN)
+            is LivePriority -> reply.complete(TimeshiftCommandResult.SHUT_DOWN)
             is ContentSeek -> reply.complete(TimeshiftContentSeekResult.Unavailable)
             is ContentPosition -> reply.complete(TimeshiftPlaybackPosition.Unavailable)
             is Stop -> reply.complete(PlaybackStopResult.ShutDown)

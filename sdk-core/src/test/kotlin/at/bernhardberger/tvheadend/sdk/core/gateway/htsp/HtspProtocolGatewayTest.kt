@@ -103,6 +103,7 @@ import at.bernhardberger.tvheadend.htsp.requests.StopDvrEntryRequest
 import at.bernhardberger.tvheadend.htsp.requests.StopDvrEntryResponse
 import at.bernhardberger.tvheadend.htsp.requests.SubscribeRequest
 import at.bernhardberger.tvheadend.htsp.requests.SubscribeResponse
+import at.bernhardberger.tvheadend.htsp.requests.SubscriptionChangeWeightRequest
 import at.bernhardberger.tvheadend.htsp.requests.SubscriptionSeekPosition
 import at.bernhardberger.tvheadend.htsp.requests.SubscriptionSkipRequest
 import at.bernhardberger.tvheadend.htsp.requests.SubscriptionSpeedRequest
@@ -152,6 +153,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayState
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.ServerAuthentication
 import at.bernhardberger.tvheadend.sdk.core.gateway.ServerConfiguration
+import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionPriority
 import at.bernhardberger.tvheadend.sdk.playback.MuxFrameType
 import at.bernhardberger.tvheadend.sdk.playback.SkipOutcome
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionCondition
@@ -2111,6 +2113,86 @@ internal class HtspProtocolGatewayTest {
             caught = failure
         }
         assertSame(cancellation, caught)
+
+        gateway.shutdown()
+    }
+
+    @Test
+    fun `live priority maps to generation bound HTSP subscription weights`() = runTest {
+        val sourceGeneration = HtspConnectionGeneration()
+        val fake = FakeHtspConnection().apply {
+            connectOutcome = HtspConnectOutcome.Connected(liveConnection(sourceGeneration))
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+
+        fake.executeResult = HtspResult.Ok(
+            SubscribeResponse(
+                ninetyKhz = null,
+                normalizedTimestamps = null,
+                weight = null,
+                timeshiftPeriodSeconds = null,
+            ),
+        )
+        gateway.subscribe(
+            generation,
+            SubscriptionId(5),
+            ChannelId(6),
+            null,
+            Duration.ZERO,
+            LiveSubscriptionPriority.YIELD,
+        )
+        assertEquals(10L, (fake.lastRequest as SubscribeRequest).weight)
+        assertSame(sourceGeneration, fake.lastExpectedGeneration)
+        gateway.subscribe(
+            generation,
+            SubscriptionId(5),
+            ChannelId(6),
+            null,
+            Duration.ZERO,
+            LiveSubscriptionPriority.NORMAL,
+        )
+        assertEquals(null, (fake.lastRequest as SubscribeRequest).weight, "Normal keeps the profile default")
+        gateway.subscribe(generation, SubscriptionId(5), ChannelId(6), Duration.ZERO)
+        assertEquals(null, (fake.lastRequest as SubscribeRequest).weight)
+
+        fake.executeResult = HtspResult.Ok(HtspEmptyResponse)
+        assertTrue(
+            gateway.changeSubscriptionPriority(
+                generation,
+                SubscriptionId(5),
+                LiveSubscriptionPriority.YIELD,
+            ) is SubscriptionOperationResult.Ok,
+        )
+        val yieldRequest = fake.lastRequest as SubscriptionChangeWeightRequest
+        assertEquals(5L, yieldRequest.subscriptionId)
+        assertEquals(10L, yieldRequest.weight)
+        assertSame(sourceGeneration, fake.lastExpectedGeneration)
+        gateway.changeSubscriptionPriority(generation, SubscriptionId(5), LiveSubscriptionPriority.NORMAL)
+        assertEquals(0L, (fake.lastRequest as SubscriptionChangeWeightRequest).weight)
+
+        listOf(
+            HtspResult.ServerError to SubscriptionOperationResult.ServerRejected,
+            HtspResult.Timeout to SubscriptionOperationResult.Timeout,
+            HtspResult.TransportUnavailable to SubscriptionOperationResult.TransportUnavailable,
+            HtspResult.NotSupported to SubscriptionOperationResult.NotSupported,
+        ).forEach { (source, expected) ->
+            fake.executeResult = source
+            assertSame(
+                expected,
+                gateway.changeSubscriptionPriority(generation, SubscriptionId(5), LiveSubscriptionPriority.YIELD),
+            )
+        }
+
+        var unknownGenerationFailure: IllegalArgumentException? = null
+        try {
+            HtspProtocolGateway(FakeHtspConnection())
+                .changeSubscriptionPriority(generation, SubscriptionId(5), LiveSubscriptionPriority.YIELD)
+        } catch (failure: IllegalArgumentException) {
+            unknownGenerationFailure = failure
+        }
+        assertEquals("Unknown gateway generation", unknownGenerationFailure?.message)
 
         gateway.shutdown()
     }

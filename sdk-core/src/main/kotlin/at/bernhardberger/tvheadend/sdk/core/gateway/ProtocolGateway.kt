@@ -13,6 +13,7 @@ import at.bernhardberger.tvheadend.sdk.core.EpgSearchRequest
 import at.bernhardberger.tvheadend.sdk.core.StreamProfile
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleUpdate
+import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionPriority
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionConfirmation
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionId
@@ -200,6 +201,16 @@ internal interface ProtocolGateway {
             SubscriptionOperationResult.NotSupported
         }
 
+    public suspend fun subscribe(
+        generation: GatewayGeneration,
+        id: SubscriptionId,
+        channelId: ChannelId,
+        streamProfileUuid: String?,
+        timeshiftPeriod: Duration,
+        priority: LiveSubscriptionPriority,
+    ): SubscriptionOperationResult<SubscriptionConfirmation> =
+        subscribe(generation, id, channelId, streamProfileUuid, timeshiftPeriod)
+
     public suspend fun skipSubscription(
         generation: GatewayGeneration,
         id: SubscriptionId,
@@ -217,6 +228,12 @@ internal interface ProtocolGateway {
         generation: GatewayGeneration,
         id: SubscriptionId,
         speed: Int,
+    ): SubscriptionOperationResult<Unit> = SubscriptionOperationResult.NotSupported
+
+    public suspend fun changeSubscriptionPriority(
+        generation: GatewayGeneration,
+        id: SubscriptionId,
+        priority: LiveSubscriptionPriority,
     ): SubscriptionOperationResult<Unit> = SubscriptionOperationResult.NotSupported
 
     public suspend fun unsubscribe(
