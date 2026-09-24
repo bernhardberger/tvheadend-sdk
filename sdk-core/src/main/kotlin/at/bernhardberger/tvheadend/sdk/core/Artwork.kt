@@ -11,7 +11,30 @@ public value class ArtworkId(public val value: Int) {
     }
 
     override fun toString(): String = "ArtworkId(<redacted>)"
+
+    public companion object {
+        /**
+         * Parses a TVHeadend image-cache selector such as `imagecache/12`; a leading `/` is tolerated.
+         *
+         * Returns null for absent, external (for example `http://` or `https://`), non-image-cache,
+         * non-decimal, zero, or out-of-range selectors.
+         */
+        @JvmStatic
+        public fun parse(selector: String?): ArtworkId? {
+            val normalized = selector?.removePrefix("/") ?: return null
+            if (!normalized.startsWith(IMAGE_CACHE_SELECTOR_PREFIX)) {
+                return null
+            }
+            val value = normalized.removePrefix(IMAGE_CACHE_SELECTOR_PREFIX)
+            if (value.isEmpty() || value.any { it !in '0'..'9' }) {
+                return null
+            }
+            return value.toIntOrNull()?.takeIf { it > 0 }?.let(::ArtworkId)
+        }
+    }
 }
+
+private const val IMAGE_CACHE_SELECTOR_PREFIX = "imagecache/"
 
 /** Safe classification of a failed authenticated artwork load. */
 public enum class ArtworkFailure {

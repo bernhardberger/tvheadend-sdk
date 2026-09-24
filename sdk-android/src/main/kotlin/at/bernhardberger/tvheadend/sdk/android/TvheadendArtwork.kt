@@ -49,22 +49,16 @@ public class TvheadendArtwork private constructor(
 
     public companion object {
         /**
-         * Creates an authenticated artwork model from an HTSP image-cache selector.
+         * Creates an authenticated artwork model for one image-cache entry.
          *
-         * Returns null for absent values, external URLs, and malformed or unsupported selectors.
+         * Channel and tag icons already carry an [ArtworkId]; parse other image-cache selectors
+         * with [ArtworkId.parse].
          */
         public fun create(
             session: TvheadendSession,
             currentSession: CurrentSessionObservation,
-            source: String?,
-        ): TvheadendArtwork? {
-            val normalized = source?.removePrefix("/") ?: return null
-            if (!normalized.startsWith(ARTWORK_SELECTOR_PREFIX)) return null
-            val value = normalized.removePrefix(ARTWORK_SELECTOR_PREFIX)
-            if (value.isEmpty() || value.any { character -> character !in '0'..'9' }) return null
-            val id = value.toIntOrNull()?.takeIf { parsed -> parsed > 0 } ?: return null
-            return TvheadendArtwork(session, currentSession, ArtworkId(id))
-        }
+            id: ArtworkId,
+        ): TvheadendArtwork = TvheadendArtwork(session, currentSession, id)
     }
 }
 
@@ -141,5 +135,3 @@ internal class TvheadendArtworkFetcher(
         )
     }
 }
-
-private const val ARTWORK_SELECTOR_PREFIX = "imagecache/"

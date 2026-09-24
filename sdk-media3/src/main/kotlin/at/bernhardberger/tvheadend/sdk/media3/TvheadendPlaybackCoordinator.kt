@@ -213,12 +213,30 @@ public sealed interface LivePlaybackObservation {
 }
 
 /** Typed outcome of retiring the coordinator's current target. */
-public enum class PlaybackStopResult {
-    STOPPED,
-    ALREADY_STOPPED,
-    NOT_RUNNING,
-    SHUT_DOWN,
-    PLAYER_UNAVAILABLE,
+public sealed interface PlaybackStopResult {
+    /**
+     * The installed target was retired.
+     *
+     * [finalSubscriptionIssue] is the last [SubscriptionIssue] published for the retired live target,
+     * so a consumer that stops a failing target can report why without reading
+     * [TvheadendPlaybackCoordinator.subscriptionIssue] first. It is null for a recording target or
+     * when no issue was current for the live target.
+     */
+    public data class Stopped(
+        public val finalSubscriptionIssue: SubscriptionIssue?,
+    ) : PlaybackStopResult
+
+    /** No target was installed. */
+    public data object AlreadyStopped : PlaybackStopResult
+
+    /** The coordinator has not been launched. */
+    public data object NotRunning : PlaybackStopResult
+
+    /** The coordinator was shut down. */
+    public data object ShutDown : PlaybackStopResult
+
+    /** The application-owned player was unavailable. */
+    public data object PlayerUnavailable : PlaybackStopResult
 }
 
 /** Typed outcome of terminal coordinator shutdown and its best-effort progress drain. */
@@ -585,7 +603,8 @@ public class TvheadendPlaybackCoordinator internal constructor(
         observation: LivePlaybackObservation.Active,
     ) {
         synchronized(liveObservationLock) {
-            if (activeTimeshiftToken !== token) return
+            // Source teardown after retirement must not overwrite the retired target's final state.
+            if (activeTimeshiftToken !== token || !token.isActive()) return
             mutableTimeshiftState.value = observation.timeshiftState
             mutableSubscriptionIssue.value = observation.subscriptionIssue
             mutableLiveDiagnostics.value = observation.diagnostics
@@ -611,14 +630,16 @@ public class TvheadendPlaybackCoordinator internal constructor(
         bridge.publishCurrent()
     }
 
-    private fun deactivateTimeshift(token: PlaybackTargetToken) {
+    private fun deactivateTimeshift(token: PlaybackTargetToken): SubscriptionIssue? {
         synchronized(liveObservationLock) {
-            if (activeTimeshiftToken !== token) return
+            if (activeTimeshiftToken !== token) return null
+            val finalSubscriptionIssue = mutableSubscriptionIssue.value
             activeTimeshiftToken = null
             mutableTimeshiftState.value = LiveTimeshiftState.Unavailable
             mutableSubscriptionIssue.value = null
             mutableLiveDiagnostics.value = null
             mutableLivePlaybackObservation.value = LivePlaybackObservation.NoTarget
+            return finalSubscriptionIssue
         }
     }
 
@@ -751,7 +772,7 @@ private class CoordinatorActor(
     private val onShutdownClaimed: () -> Unit,
     private val publishLiveObservation: (PlaybackTargetToken, LivePlaybackObservation.Active) -> Unit,
     private val activateTimeshift: (PlaybackTargetToken, LiveTimeshiftControlBridge) -> Unit,
-    private val deactivateTimeshift: (PlaybackTargetToken) -> Unit,
+    private val deactivateTimeshift: (PlaybackTargetToken) -> SubscriptionIssue?,
 ) {
     private val mailbox = PlaybackProgressMailbox()
     private val ticks = Channel<PlaybackTargetToken>(Channel.CONFLATED)
@@ -934,13 +955,13 @@ private class CoordinatorActor(
         }
         is CoordinatorCommand.Stop -> {
             val result = player.stop(command.ticket)
-            applyRetirement(result.retiredTarget, result.retiredRecording)
+            val finalSubscriptionIssue = applyRetirement(result.retiredTarget, result.retiredRecording)
             if (!result.cancelled) {
                 command.reply.complete(
                     when {
-                        !result.playerAvailable -> PlaybackStopResult.PLAYER_UNAVAILABLE
-                        result.retiredTarget -> PlaybackStopResult.STOPPED
-                        else -> PlaybackStopResult.ALREADY_STOPPED
+                        !result.playerAvailable -> PlaybackStopResult.PlayerUnavailable
+                        result.retiredTarget -> PlaybackStopResult.Stopped(finalSubscriptionIssue)
+                        else -> PlaybackStopResult.AlreadyStopped
                     },
                 )
             }
@@ -1049,12 +1070,13 @@ private class CoordinatorActor(
     private suspend fun applyRetirement(
         retiredTarget: Boolean,
         retiredRecording: RetiredRecordingTarget?,
-    ) {
-        if (!retiredTarget) return
+    ): SubscriptionIssue? {
+        if (!retiredTarget) return null
         val old = activeTarget
-        if (old is ActorTarget.Live) {
-            deactivateTimeshift(old.token)
-            old.timeshiftControls.retire()
+        val finalSubscriptionIssue = (old as? ActorTarget.Live)?.let { live ->
+            val issue = deactivateTimeshift(live.token)
+            live.timeshiftControls.retire()
+            issue
         }
         if (old is ActorTarget.Recording && retiredRecording?.token === old.token) {
             terminalize(
@@ -1067,6 +1089,7 @@ private class CoordinatorActor(
         ticker?.cancel()
         ticker = null
         activeTarget = null
+        return finalSubscriptionIssue
     }
 
     private suspend fun drainPlayerEvents() {
@@ -1332,7 +1355,7 @@ private sealed class CoordinatorCommand(
             is TimeshiftSpeed -> reply.complete(TimeshiftCommandResult.SHUT_DOWN)
             is ContentSeek -> reply.complete(TimeshiftContentSeekResult.Unavailable)
             is ContentPosition -> reply.complete(TimeshiftPlaybackPosition.Unavailable)
-            is Stop -> reply.complete(PlaybackStopResult.SHUT_DOWN)
+            is Stop -> reply.complete(PlaybackStopResult.ShutDown)
             is Shutdown -> reply.complete(PlaybackShutdownResult.ALREADY_SHUT_DOWN)
         }
     }
@@ -1354,11 +1377,11 @@ private fun CoordinatorLifecycle.targetUnavailableResult(): PlaybackTargetResult
 }
 
 private fun CoordinatorLifecycle.stopUnavailableResult(): PlaybackStopResult = when (this) {
-    CoordinatorLifecycle.NEW -> PlaybackStopResult.NOT_RUNNING
-    CoordinatorLifecycle.RUNNING -> PlaybackStopResult.SHUT_DOWN
+    CoordinatorLifecycle.NEW -> PlaybackStopResult.NotRunning
+    CoordinatorLifecycle.RUNNING -> PlaybackStopResult.ShutDown
     CoordinatorLifecycle.SHUTTING_DOWN,
     CoordinatorLifecycle.STOPPED,
-    -> PlaybackStopResult.SHUT_DOWN
+    -> PlaybackStopResult.ShutDown
 }
 
 private fun CoordinatorLifecycle.shutdownUnavailableResult(): PlaybackShutdownResult = when (this) {

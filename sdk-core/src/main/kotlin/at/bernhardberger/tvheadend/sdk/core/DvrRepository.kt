@@ -136,6 +136,10 @@ public data class DvrEntry private constructor(
     public val dataErrors: Long?,
     public val dataSizeBytes: Long?,
 ) {
+    /** ETSI category and subgenre decoded from [contentType]. */
+    public val contentGenre: ContentGenre?
+        get() = ContentGenre.fromContentType(contentType)
+
     override fun toString(): String = "DvrEntry(<redacted>)"
 
     public companion object {

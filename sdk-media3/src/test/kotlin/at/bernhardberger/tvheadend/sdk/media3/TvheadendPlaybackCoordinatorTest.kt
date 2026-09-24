@@ -576,8 +576,8 @@ internal class TvheadendPlaybackCoordinatorTest {
             PlaybackTargetResult.STARTED,
             fixture.coordinator.setLiveTarget(ChannelId(1)),
         )
-        assertEquals(PlaybackStopResult.STOPPED, fixture.coordinator.stop())
-        assertEquals(PlaybackStopResult.ALREADY_STOPPED, fixture.coordinator.stop())
+        assertEquals(PlaybackStopResult.Stopped(null), fixture.coordinator.stop())
+        assertSame(PlaybackStopResult.AlreadyStopped, fixture.coordinator.stop())
         assertEquals(
             PlaybackShutdownResult.DRAINED,
             fixture.coordinator.shutdown(1.seconds),
@@ -1097,7 +1097,7 @@ internal class TvheadendPlaybackCoordinatorTest {
             assertEquals(listOf(100, 0, 100), subscription.speeds)
             assertEquals(listOf("live:4"), fixture.player.operations)
 
-            assertSame(PlaybackStopResult.STOPPED, fixture.coordinator.stop())
+            assertEquals(PlaybackStopResult.Stopped(null), fixture.coordinator.stop())
             assertSame(LiveTimeshiftState.Unavailable, fixture.coordinator.timeshiftState.value)
             assertSame(TimeshiftCommandResult.UNAVAILABLE, fixture.coordinator.resumeTimeshift())
             fixture.coordinator.shutdown(1.seconds)
@@ -1439,12 +1439,69 @@ internal class TvheadendPlaybackCoordinatorTest {
         assertSame(PlaybackTargetResult.STARTED, fixture.coordinator.setRecordingTarget(DvrEntryId(7)))
         assertSame(LivePlaybackObservation.NoTarget, fixture.coordinator.livePlaybackObservation.value)
         assertSame(PlaybackTargetResult.STARTED, fixture.coordinator.setLiveTarget(ChannelId(4)))
-        assertSame(PlaybackStopResult.STOPPED, fixture.coordinator.stop())
+        assertEquals(PlaybackStopResult.Stopped(null), fixture.coordinator.stop())
         assertSame(LivePlaybackObservation.NoTarget, fixture.coordinator.livePlaybackObservation.value)
         assertSame(PlaybackTargetResult.STARTED, fixture.coordinator.setLiveTarget(ChannelId(5)))
         assertSame(PlaybackShutdownResult.DRAINED, fixture.coordinator.shutdown(1.seconds))
         owner.join()
         assertSame(LivePlaybackObservation.NoTarget, fixture.coordinator.livePlaybackObservation.value)
+    }
+
+    @Test
+    fun `stop reports the retired live target's final subscription issue`() = runTest {
+        val fixture = CoordinatorFixture()
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+        assertSame(PlaybackTargetResult.STARTED, fixture.coordinator.setLiveTarget(ChannelId(1)))
+        fixture.player.attachTimeshift(FakeTimeshiftSubscription(60.seconds))
+        fixture.player.emitTimeshift(
+            SubscriptionEvent.Status(
+                SubscriptionCondition.ERROR_REPORTED,
+                SubscriptionIssue.NO_FREE_ADAPTER,
+            ),
+        )
+        assertSame(SubscriptionIssue.NO_FREE_ADAPTER, fixture.coordinator.subscriptionIssue.value)
+
+        assertEquals(
+            PlaybackStopResult.Stopped(finalSubscriptionIssue = SubscriptionIssue.NO_FREE_ADAPTER),
+            fixture.coordinator.stop(),
+        )
+        assertSame(LivePlaybackObservation.NoTarget, fixture.coordinator.livePlaybackObservation.value)
+        assertNull(fixture.coordinator.subscriptionIssue.value)
+
+        assertSame(PlaybackTargetResult.STARTED, fixture.coordinator.setLiveTarget(ChannelId(2)))
+        assertEquals(PlaybackStopResult.Stopped(finalSubscriptionIssue = null), fixture.coordinator.stop())
+        assertSame(LivePlaybackObservation.NoTarget, fixture.coordinator.livePlaybackObservation.value)
+
+        assertSame(PlaybackTargetResult.STARTED, fixture.coordinator.setRecordingTarget(DvrEntryId(7)))
+        assertEquals(PlaybackStopResult.Stopped(finalSubscriptionIssue = null), fixture.coordinator.stop())
+        assertSame(PlaybackShutdownResult.DRAINED, fixture.coordinator.shutdown(1.seconds))
+        owner.join()
+        assertSame(PlaybackStopResult.ShutDown, fixture.coordinator.stop())
+    }
+
+    @Test
+    fun `stop keeps the final subscription issue when source teardown publishes cleanup`() = runTest {
+        val fixture = CoordinatorFixture()
+        fixture.player.detachTimeshiftOnStop = true
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+        assertSame(PlaybackTargetResult.STARTED, fixture.coordinator.setLiveTarget(ChannelId(1)))
+        fixture.player.attachTimeshift(FakeTimeshiftSubscription(60.seconds))
+        fixture.player.emitTimeshift(
+            SubscriptionEvent.Status(
+                SubscriptionCondition.ERROR_REPORTED,
+                SubscriptionIssue.NO_FREE_ADAPTER,
+            ),
+        )
+        assertSame(SubscriptionIssue.NO_FREE_ADAPTER, fixture.coordinator.subscriptionIssue.value)
+
+        assertEquals(
+            PlaybackStopResult.Stopped(finalSubscriptionIssue = SubscriptionIssue.NO_FREE_ADAPTER),
+            fixture.coordinator.stop(),
+        )
+        assertSame(LivePlaybackObservation.NoTarget, fixture.coordinator.livePlaybackObservation.value)
+        assertNull(fixture.coordinator.subscriptionIssue.value)
+        assertSame(PlaybackShutdownResult.DRAINED, fixture.coordinator.shutdown(1.seconds))
+        owner.join()
     }
 
     @Test
@@ -2829,6 +2886,7 @@ private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
     var liveOptions: SubscriptionOptions? = null
     var liveInstallStatus: PlaybackPlayerInstallStatus = PlaybackPlayerInstallStatus.STARTED
     var simulateFailedReplacementPeriodTurnover = false
+    var detachTimeshiftOnStop = false
     var liveInstallEntered: CompletableDeferred<Unit>? = null
     var liveInstallRelease: CompletableDeferred<Unit>? = null
     private var timeshiftControls: LiveTimeshiftControlBridge? = null
@@ -2903,7 +2961,10 @@ private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
 
     override suspend fun stop(ticket: PlayerOperationTicket): PlaybackPlayerStopResult {
         if (!ticket.claim()) return PlaybackPlayerStopResult(cancelled = true)
+        val releasedAttachment = timeshiftAttachment.takeIf { detachTimeshiftOnStop }
         val retirement = retire()
+        // Media3 releases the live period after the token retires; its detach publishes cleanup state.
+        releasedAttachment?.detach()
         operations += "stop"
         ticket.complete()
         return PlaybackPlayerStopResult(

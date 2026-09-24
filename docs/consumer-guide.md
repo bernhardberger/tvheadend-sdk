@@ -205,6 +205,12 @@ Use observation point selectors when selecting related entities:
 lists are immutable and preserve SDK catalog order. Presentation filtering,
 sorting, grouping, and UI policy are not SDK APIs.
 
+`EpgEvent.contentGenre` and `DvrEntry.contentGenre` decode the raw ETSI EN 300 468
+`contentType` byte. `category` is the level-one `ContentCategory`; `subgenre` is
+the level-two `ContentSubgenre`, or `null` for a category's general, user-defined
+or unassigned value. Show `category` alone or both, without decoding
+`contentType` yourself.
+
 ## Search and extend EPG coverage
 
 The retained `EpgRepositoryState` follows the same `Empty`, `Synchronizing`,
@@ -541,7 +547,10 @@ collecting those flows does not create an atomic aggregate snapshot.
 `SubscriptionIssue`. Unknown or localized server values map to `UNKNOWN`; raw
 server text is not exposed. The exact no-input status maps to `NO_INPUT` unless
 a conflicting known canonical error is present. The state clears when the
-target or lifecycle no longer owns that issue. `SubscriptionIssue` exact values
+target or lifecycle no longer owns that issue. `stop()` returns
+`PlaybackStopResult.Stopped` carrying the retired live target's last issue as
+`finalSubscriptionIssue`, so a consumer that gives up on a stuck target can
+report why without reading the flow first. `SubscriptionIssue` exact values
 are also non-exhaustive. Its stable `category` and
 `isConfigurationOrAccessRelated` predicate support broad handling; retry and
 terminal behavior depend on the surrounding subscription event.
@@ -713,16 +722,19 @@ val imageLoader = ImageLoader.Builder(context)
 
 val observed = session.observation.value
 val currentSession = observed.currentSession ?: return
-val channel = observed.channel(channelId) ?: return
+val icon = observed.channel(channelId)?.icon ?: return
 val artwork = TvheadendArtwork.create(
     session = session,
     currentSession = currentSession,
-    source = channel.icon,
+    id = icon,
 )
 ```
 
-`TvheadendArtwork.create` accepts only HTSP `imagecache/` selectors and returns
-`null` for absent, external, malformed, or unsupported values. The opaque model
+`Channel.icon` and `ChannelTag.icon` are typed `ArtworkId` values; the SDK
+already drops external URLs and malformed selectors. For other image-cache
+selector strings, such as `EpgEvent.image`, use `ArtworkId.parse`, which accepts
+only positive `imagecache/<id>` selectors (a leading `/` is tolerated) and
+returns `null` for absent, external, malformed, or unsupported values. The opaque model
 binds the authenticated load to the captured session generation. TVHeadend
 requires recorder access for this file API; denied loads fail safely.
 

@@ -225,6 +225,9 @@ internal class ModuleBoundaryTest {
             "EpgRating",
             "EpgEpisode",
             "EpgEvent",
+            "ContentCategory",
+            "ContentGenre",
+            "ContentSubgenre",
             "EpgCoverage",
             "EpgCoveragePolicy",
             "EpgCoverageAcquisitionResult",
@@ -310,8 +313,8 @@ internal class ModuleBoundaryTest {
             "public suspend fun acquireCoverageBatchFromIds( currentSession: CurrentSessionObservation, channelIds: LongArray, through: Instant, ): EpgCoverageBatchResult",
             "public suspend fun loadArtwork( currentSession: CurrentSessionObservation, artworkId: ArtworkId, ): ArtworkLoadResult",
             "public suspend fun loadProfile(): ServerProfileReadResult",
-            "public suspend fun storeAnonymous( host: String, port: Int = 9_982, ): ServerProfileReadResult",
-            "public suspend fun storePassword( host: String, port: Int = 9_982, username: String, password: String, ): ServerProfileReadResult",
+            "public suspend fun storeAnonymous( host: String, port: Int = DEFAULT_HTSP_PORT, ): ServerProfileReadResult",
+            "public suspend fun storePassword( host: String, port: Int = DEFAULT_HTSP_PORT, username: String, password: String, ): ServerProfileReadResult",
             "public suspend fun clearProfile(): ServerProfileReadResult",
             "public suspend fun scheduleEntry( currentSession: CurrentSessionObservation, request: DvrScheduleRequest, ): DvrMutationResult<DvrEntryId>",
             "public suspend fun updateEntry( currentSession: CurrentSessionObservation, id: DvrEntryId, update: DvrEntryUpdate, ): DvrMutationResult<Unit>",
@@ -466,6 +469,7 @@ internal class ModuleBoundaryTest {
             "createTvheadendPlaybackRecovery",
             "createTvheadendPlaybackCoordinator",
             "createTvheadendRenderersFactory",
+            "createTvheadendLoadControl",
         )
         val expectedAndroid = setOf(
             "CredentialOperationResult",
@@ -518,7 +522,7 @@ internal class ModuleBoundaryTest {
             ),
             fakePlaybackFunctions,
         )
-        assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 29)
+        assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 30)
 
         val coordinatorApi = File(
             "../sdk-media3/src/main/kotlin/at/bernhardberger/tvheadend/sdk/media3/" +
@@ -575,7 +579,7 @@ internal class ModuleBoundaryTest {
         assertTrue(
             artworkApi.contains(
                 "public fun create( session: TvheadendSession, " +
-                    "currentSession: CurrentSessionObservation, source: String?, ): TvheadendArtwork?",
+                    "currentSession: CurrentSessionObservation, id: ArtworkId, ): TvheadendArtwork",
             ) && artworkApi.contains(
                 "public fun ComponentRegistry.Builder.addTvheadendArtwork(): ComponentRegistry.Builder",
             ) && artworkApi.contains(

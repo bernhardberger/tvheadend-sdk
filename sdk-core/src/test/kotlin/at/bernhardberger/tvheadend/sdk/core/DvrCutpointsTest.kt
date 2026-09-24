@@ -1,6 +1,7 @@
 package at.bernhardberger.tvheadend.sdk.core
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -32,6 +33,18 @@ internal class DvrCutpointsTest {
         assertThrows(IllegalArgumentException::class.java) {
             DvrCutpoint(1.milliseconds, 1.milliseconds, DvrCutpointAction.CUT)
         }
+    }
+
+    @Test
+    fun `scene boundary is the end of a scene marker and absent for other actions`() {
+        val sceneMarker = DvrCutpoint(1_000.milliseconds, 4_000.milliseconds, DvrCutpointAction.SCENE_MARKER)
+
+        assertEquals(4_000.milliseconds, sceneMarker.sceneBoundary)
+        DvrCutpointAction.entries
+            .filterNot { it == DvrCutpointAction.SCENE_MARKER }
+            .forEach { action ->
+                assertNull(DvrCutpoint(1_000.milliseconds, 4_000.milliseconds, action).sceneBoundary)
+            }
     }
 
     @Test

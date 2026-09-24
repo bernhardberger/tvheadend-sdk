@@ -1,5 +1,6 @@
 package at.bernhardberger.tvheadend.sdk.core.session
 
+import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.Channel
 import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
@@ -496,7 +497,7 @@ internal class PhaseOneSessionMetadataTest {
                     uuid = "uuid",
                     number = 7,
                     numberMinor = 8,
-                    icon = "icon",
+                    icon = "imagecache/12",
                     currentEventId = 4,
                     nextEventId = 5,
                     services = listOf(service("service")),
@@ -512,7 +513,7 @@ internal class PhaseOneSessionMetadataTest {
                     name = "tag",
                     uuid = "tag-uuid",
                     index = 9,
-                    icon = "tag-icon",
+                    icon = "/imagecache/34",
                     titledIcon = true,
                     channelIds = listOf(1),
                 ),
@@ -539,7 +540,7 @@ internal class PhaseOneSessionMetadataTest {
         assertEquals("uuid", channel.uuid)
         assertEquals(0L, channel.number)
         assertEquals(8L, channel.numberMinor)
-        assertEquals("icon", channel.icon)
+        assertEquals(ArtworkId(12), channel.icon)
         assertEquals(4L, channel.currentEventId?.value)
         assertEquals(5L, channel.nextEventId?.value)
         assertEquals("service", channel.services?.single()?.name)
@@ -547,6 +548,7 @@ internal class PhaseOneSessionMetadataTest {
         assertEquals("", tag.name)
         assertEquals("tag-uuid", tag.uuid)
         assertEquals(0L, tag.index)
+        assertEquals(ArtworkId(34), tag.icon)
         assertEquals(true, tag.titledIcon)
         assertEquals(listOf(1L), tag.channelIds?.map { it.value })
 
@@ -643,7 +645,7 @@ internal class PhaseOneSessionMetadataTest {
         metadata.acceptMetadata(
             MetadataEvent.ChannelAdded(
                 first,
-                channel(id = 1, name = "old", icon = "old-icon", tagIds = listOf(10)),
+                channel(id = 1, name = "old", icon = "imagecache/5", tagIds = listOf(10)),
             ),
         )
         metadata.acceptMetadata(

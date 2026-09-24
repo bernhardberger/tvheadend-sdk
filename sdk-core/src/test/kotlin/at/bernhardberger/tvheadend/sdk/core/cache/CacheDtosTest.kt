@@ -1,5 +1,6 @@
 package at.bernhardberger.tvheadend.sdk.core.cache
 
+import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.Channel
 import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
@@ -16,6 +17,7 @@ import at.bernhardberger.tvheadend.sdk.core.EpgSeriesLinkId
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.EventId
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import kotlin.time.Instant
@@ -45,7 +47,7 @@ internal class CacheDtosTest {
             uuid = "uuid-1",
             number = 1L,
             numberMinor = 0L,
-            icon = "icon-1",
+            icon = ArtworkId(12),
             currentEventId = EventId(100L),
             nextEventId = EventId(101L),
             services = listOf(serviceWithConditionalAccess, serviceWithoutConditionalAccess),
@@ -57,7 +59,7 @@ internal class CacheDtosTest {
             name = "Tag One",
             uuid = "tag-uuid-1",
             index = 1L,
-            icon = "tag-icon",
+            icon = ArtworkId(34),
             titledIcon = true,
             channelIds = listOf(ChannelId(1L)),
         )
@@ -70,6 +72,15 @@ internal class CacheDtosTest {
         val restored = catalog.toDto().toModel()
 
         assertEquals(catalog, restored)
+    }
+
+    @Test
+    fun `cached icon selectors restore image cache artwork and drop external or malformed icons`() {
+        assertEquals("imagecache/12", Channel.create(ChannelId(1L), icon = ArtworkId(12)).toDto().icon)
+        assertEquals("imagecache/34", ChannelTag.create(ChannelTagId(1L), icon = ArtworkId(34)).toDto().icon)
+        assertEquals(ArtworkId(12), ChannelDto(id = 1L, icon = "/imagecache/12").toModel().icon)
+        assertNull(ChannelDto(id = 1L, icon = "http://example.invalid/logo.png").toModel().icon)
+        assertNull(ChannelTagDto(id = 1L, icon = "picon/x").toModel().icon)
     }
 
     @Test

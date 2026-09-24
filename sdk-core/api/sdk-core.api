@@ -23,6 +23,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/ArtworkFailure : java/la
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/ArtworkId {
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/ArtworkId$Companion;
 	public static final synthetic fun box-impl (I)Lat/bernhardberger/tvheadend/sdk/core/ArtworkId;
 	public static fun constructor-impl (I)I
 	public fun equals (Ljava/lang/Object;)Z
@@ -31,9 +32,14 @@ public final class at/bernhardberger/tvheadend/sdk/core/ArtworkId {
 	public final fun getValue ()I
 	public fun hashCode ()I
 	public static fun hashCode-impl (I)I
+	public static final fun parse-CouM-dU (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/ArtworkId;
 	public fun toString ()Ljava/lang/String;
 	public static fun toString-impl (I)Ljava/lang/String;
 	public final synthetic fun unbox-impl ()I
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ArtworkId$Companion {
+	public final fun parse-CouM-dU (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/ArtworkId;
 }
 
 public abstract interface class at/bernhardberger/tvheadend/sdk/core/ArtworkLoadResult {
@@ -286,13 +292,13 @@ public final class at/bernhardberger/tvheadend/sdk/core/Channel {
 	public final fun component3 ()Ljava/lang/String;
 	public final fun component4 ()Ljava/lang/Long;
 	public final fun component5 ()Ljava/lang/Long;
-	public final fun component6 ()Ljava/lang/String;
+	public final fun component6-qky1Ors ()Lat/bernhardberger/tvheadend/sdk/core/ArtworkId;
 	public final fun component7-IwUpMHo ()Lat/bernhardberger/tvheadend/sdk/core/EventId;
 	public final fun component8-IwUpMHo ()Lat/bernhardberger/tvheadend/sdk/core/EventId;
 	public final fun component9 ()Ljava/util/List;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getCurrentEventId-IwUpMHo ()Lat/bernhardberger/tvheadend/sdk/core/EventId;
-	public final fun getIcon ()Ljava/lang/String;
+	public final fun getIcon-qky1Ors ()Lat/bernhardberger/tvheadend/sdk/core/ArtworkId;
 	public final fun getId-X9YaTts ()J
 	public final fun getName ()Ljava/lang/String;
 	public final fun getNextEventId-IwUpMHo ()Lat/bernhardberger/tvheadend/sdk/core/EventId;
@@ -306,8 +312,8 @@ public final class at/bernhardberger/tvheadend/sdk/core/Channel {
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/Channel$Companion {
-	public final fun create-J0Iu09U (JLjava/lang/String;Ljava/lang/String;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/String;Lat/bernhardberger/tvheadend/sdk/core/EventId;Lat/bernhardberger/tvheadend/sdk/core/EventId;Ljava/util/List;Ljava/util/List;)Lat/bernhardberger/tvheadend/sdk/core/Channel;
-	public static synthetic fun create-J0Iu09U$default (Lat/bernhardberger/tvheadend/sdk/core/Channel$Companion;JLjava/lang/String;Ljava/lang/String;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/String;Lat/bernhardberger/tvheadend/sdk/core/EventId;Lat/bernhardberger/tvheadend/sdk/core/EventId;Ljava/util/List;Ljava/util/List;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/Channel;
+	public final fun create-O_F1qG8 (JLjava/lang/String;Ljava/lang/String;Ljava/lang/Long;Ljava/lang/Long;Lat/bernhardberger/tvheadend/sdk/core/ArtworkId;Lat/bernhardberger/tvheadend/sdk/core/EventId;Lat/bernhardberger/tvheadend/sdk/core/EventId;Ljava/util/List;Ljava/util/List;)Lat/bernhardberger/tvheadend/sdk/core/Channel;
+	public static synthetic fun create-O_F1qG8$default (Lat/bernhardberger/tvheadend/sdk/core/Channel$Companion;JLjava/lang/String;Ljava/lang/String;Ljava/lang/Long;Ljava/lang/Long;Lat/bernhardberger/tvheadend/sdk/core/ArtworkId;Lat/bernhardberger/tvheadend/sdk/core/EventId;Lat/bernhardberger/tvheadend/sdk/core/EventId;Ljava/util/List;Ljava/util/List;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/Channel;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/ChannelCatalog {
@@ -415,12 +421,12 @@ public final class at/bernhardberger/tvheadend/sdk/core/ChannelTag {
 	public final fun component2 ()Ljava/lang/String;
 	public final fun component3 ()Ljava/lang/String;
 	public final fun component4 ()Ljava/lang/Long;
-	public final fun component5 ()Ljava/lang/String;
+	public final fun component5-qky1Ors ()Lat/bernhardberger/tvheadend/sdk/core/ArtworkId;
 	public final fun component6 ()Ljava/lang/Boolean;
 	public final fun component7 ()Ljava/util/List;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getChannelIds ()Ljava/util/List;
-	public final fun getIcon ()Ljava/lang/String;
+	public final fun getIcon-qky1Ors ()Lat/bernhardberger/tvheadend/sdk/core/ArtworkId;
 	public final fun getId-JMqym6k ()J
 	public final fun getIndex ()Ljava/lang/Long;
 	public final fun getName ()Ljava/lang/String;
@@ -431,8 +437,8 @@ public final class at/bernhardberger/tvheadend/sdk/core/ChannelTag {
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/ChannelTag$Companion {
-	public final fun create-YrdoeHo (JLjava/lang/String;Ljava/lang/String;Ljava/lang/Long;Ljava/lang/String;Ljava/lang/Boolean;Ljava/util/List;)Lat/bernhardberger/tvheadend/sdk/core/ChannelTag;
-	public static synthetic fun create-YrdoeHo$default (Lat/bernhardberger/tvheadend/sdk/core/ChannelTag$Companion;JLjava/lang/String;Ljava/lang/String;Ljava/lang/Long;Ljava/lang/String;Ljava/lang/Boolean;Ljava/util/List;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/ChannelTag;
+	public final fun create-ii3Ohrc (JLjava/lang/String;Ljava/lang/String;Ljava/lang/Long;Lat/bernhardberger/tvheadend/sdk/core/ArtworkId;Ljava/lang/Boolean;Ljava/util/List;)Lat/bernhardberger/tvheadend/sdk/core/ChannelTag;
+	public static synthetic fun create-ii3Ohrc$default (Lat/bernhardberger/tvheadend/sdk/core/ChannelTag$Companion;JLjava/lang/String;Ljava/lang/String;Ljava/lang/Long;Lat/bernhardberger/tvheadend/sdk/core/ArtworkId;Ljava/lang/Boolean;Ljava/util/List;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/ChannelTag;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/ChannelTagId {
@@ -447,6 +453,120 @@ public final class at/bernhardberger/tvheadend/sdk/core/ChannelTagId {
 	public fun toString ()Ljava/lang/String;
 	public static fun toString-impl (J)Ljava/lang/String;
 	public final synthetic fun unbox-impl ()J
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ContentCategory : java/lang/Enum {
+	public static final field ARTS_CULTURE Lat/bernhardberger/tvheadend/sdk/core/ContentCategory;
+	public static final field CHILDREN_YOUTH Lat/bernhardberger/tvheadend/sdk/core/ContentCategory;
+	public static final field EDUCATION_SCIENCE_FACTUAL Lat/bernhardberger/tvheadend/sdk/core/ContentCategory;
+	public static final field LEISURE_HOBBIES Lat/bernhardberger/tvheadend/sdk/core/ContentCategory;
+	public static final field MOVIE_DRAMA Lat/bernhardberger/tvheadend/sdk/core/ContentCategory;
+	public static final field MUSIC_BALLET_DANCE Lat/bernhardberger/tvheadend/sdk/core/ContentCategory;
+	public static final field NEWS_CURRENT_AFFAIRS Lat/bernhardberger/tvheadend/sdk/core/ContentCategory;
+	public static final field SHOW_GAME_SHOW Lat/bernhardberger/tvheadend/sdk/core/ContentCategory;
+	public static final field SOCIAL_POLITICAL_ECONOMICS Lat/bernhardberger/tvheadend/sdk/core/ContentCategory;
+	public static final field SPECIAL_CHARACTERISTICS Lat/bernhardberger/tvheadend/sdk/core/ContentCategory;
+	public static final field SPORTS Lat/bernhardberger/tvheadend/sdk/core/ContentCategory;
+	public static final field USER_DEFINED Lat/bernhardberger/tvheadend/sdk/core/ContentCategory;
+	public final fun getCode ()I
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/ContentCategory;
+	public static fun values ()[Lat/bernhardberger/tvheadend/sdk/core/ContentCategory;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ContentGenre {
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/ContentGenre$Companion;
+	public final fun component1 ()Lat/bernhardberger/tvheadend/sdk/core/ContentCategory;
+	public final fun component2 ()Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public fun equals (Ljava/lang/Object;)Z
+	public static final fun fromContentType (Ljava/lang/Long;)Lat/bernhardberger/tvheadend/sdk/core/ContentGenre;
+	public final fun getCategory ()Lat/bernhardberger/tvheadend/sdk/core/ContentCategory;
+	public final fun getSubgenre ()Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ContentGenre$Companion {
+	public final fun fromContentType (Ljava/lang/Long;)Lat/bernhardberger/tvheadend/sdk/core/ContentGenre;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ContentSubgenre : java/lang/Enum {
+	public static final field ADULT_MOVIE_DRAMA Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field ADVENTURE_WESTERN_WAR Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field ADVERTISEMENT_SHOPPING Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field ARTS_CULTURE_MAGAZINES Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field ATHLETICS Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field BALLET Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field BLACK_AND_WHITE Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field BROADCASTING_PRESS Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field CARTOONS_PUPPETS Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field COMEDY Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field COOKING Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field DETECTIVE_THRILLER Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field DISCUSSION_INTERVIEW_DEBATE Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field DOCUMENTARY Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field ECONOMICS_SOCIAL_ADVISORY Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field ENTERTAINMENT_PROGRAMMES_FOR_10_TO_16 Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field ENTERTAINMENT_PROGRAMMES_FOR_6_TO_14 Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field EQUESTRIAN Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field EXPERIMENTAL_FILM_VIDEO Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field FASHION Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field FILM_CINEMA Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field FINE_ARTS Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field FITNESS_AND_HEALTH Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field FOLK_TRADITIONAL_MUSIC Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field FOOTBALL_SOCCER Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field FOREIGN_COUNTRIES_EXPEDITIONS Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field FURTHER_EDUCATION Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field GAME_SHOW_QUIZ_CONTEST Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field GARDENING Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field HANDICRAFT Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field INFORMATIONAL_EDUCATIONAL_SCHOOL_PROGRAMMES Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field JAZZ Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field LANGUAGES Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field LITERATURE Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field LIVE_BROADCAST Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field LOCAL_OR_REGIONAL Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field MAGAZINES_REPORTS_DOCUMENTARY Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field MARTIAL_SPORTS Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field MEDICINE_PHYSIOLOGY_PSYCHOLOGY Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field MOTORING Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field MOTOR_SPORT Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field MUSICAL_OPERA Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field NATURE_ANIMALS_ENVIRONMENT Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field NEWS_MAGAZINE Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field NEWS_WEATHER_REPORT Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field NEW_MEDIA Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field ORIGINAL_LANGUAGE Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field PERFORMING_ARTS Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field PLANO_STEREOSCOPIC Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field POPULAR_CULTURE_TRADITIONAL_ARTS Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field PRE_SCHOOL_CHILDRENS_PROGRAMMES Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field RELIGION Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field REMARKABLE_PEOPLE Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field ROCK_POP Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field ROMANCE Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field SCIENCE_FICTION_FANTASY_HORROR Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field SERIOUS_CLASSICAL_RELIGIOUS_HISTORICAL_MOVIE_DRAMA Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field SERIOUS_MUSIC_CLASSICAL_MUSIC Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field SOAP_MELODRAMA_FOLKLORIC Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field SOCIAL_SPIRITUAL_SCIENCES Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field SPECIAL_EVENTS Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field SPORTS_MAGAZINES Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field TALK_SHOW Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field TEAM_SPORTS_EXCLUDING_FOOTBALL Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field TECHNOLOGY_NATURAL_SCIENCES Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field TENNIS_SQUASH Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field TOURISM_TRAVEL Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field UNPUBLISHED Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field VARIETY_SHOW Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field WATER_SPORT Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static final field WINTER_SPORTS Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public final fun getCategory ()Lat/bernhardberger/tvheadend/sdk/core/ContentCategory;
+	public final fun getCode ()I
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
+	public static fun values ()[Lat/bernhardberger/tvheadend/sdk/core/ContentSubgenre;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation {
@@ -549,6 +669,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/DvrCutpoint {
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getAction ()Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointAction;
 	public final fun getEnd-UwyO8pc ()J
+	public final fun getSceneBoundary-FghU774 ()Lkotlin/time/Duration;
 	public final fun getStart-UwyO8pc ()J
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
@@ -742,6 +863,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/DvrEntry {
 	public final fun getChannelName ()Ljava/lang/String;
 	public final fun getComment ()Ljava/lang/String;
 	public final fun getConfigId-2_39p4U ()Ljava/lang/String;
+	public final fun getContentGenre ()Lat/bernhardberger/tvheadend/sdk/core/ContentGenre;
 	public final fun getContentType ()Ljava/lang/Long;
 	public final fun getCopyrightYear ()Ljava/lang/Long;
 	public final fun getCreator ()Ljava/lang/String;
@@ -1443,6 +1565,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/EpgEvent {
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getCategories ()Ljava/util/List;
 	public final fun getChannelId-tg-tQzc ()Lat/bernhardberger/tvheadend/sdk/core/ChannelId;
+	public final fun getContentGenre ()Lat/bernhardberger/tvheadend/sdk/core/ContentGenre;
 	public final fun getContentType ()Ljava/lang/Long;
 	public final fun getCopyrightYear ()Ljava/lang/Long;
 	public final fun getDescription ()Ljava/lang/String;
@@ -2423,6 +2546,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/TvheadendSession$Default
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/TvheadendSessionKt {
+	public static final field DEFAULT_HTSP_PORT I
 	public static final fun createTvheadendSession ()Lat/bernhardberger/tvheadend/sdk/core/TvheadendSession;
 	public static final fun createTvheadendSession (Lat/bernhardberger/tvheadend/sdk/core/EpgCoveragePolicy;)Lat/bernhardberger/tvheadend/sdk/core/TvheadendSession;
 	public static final fun createTvheadendSession (Lat/bernhardberger/tvheadend/sdk/core/EpgCoveragePolicy;Lat/bernhardberger/tvheadend/sdk/core/MetadataCachePolicy;)Lat/bernhardberger/tvheadend/sdk/core/TvheadendSession;

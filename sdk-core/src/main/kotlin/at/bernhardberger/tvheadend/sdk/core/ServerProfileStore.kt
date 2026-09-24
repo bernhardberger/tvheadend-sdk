@@ -14,13 +14,13 @@ public interface ServerProfileStore {
     /** Stores and returns a locally normalized anonymous profile. */
     public suspend fun storeAnonymous(
         host: String,
-        port: Int = 9_982,
+        port: Int = DEFAULT_HTSP_PORT,
     ): ServerProfileReadResult
 
     /** Stores and returns a locally normalized password profile. */
     public suspend fun storePassword(
         host: String,
-        port: Int = 9_982,
+        port: Int = DEFAULT_HTSP_PORT,
         username: String,
         password: String,
     ): ServerProfileReadResult
@@ -74,7 +74,7 @@ public sealed interface ServerProfileReadResult {
         @JvmStatic
         public fun anonymous(
             host: String,
-            port: Int = 9_982,
+            port: Int = DEFAULT_HTSP_PORT,
         ): Available = Available.create(
             profile = ServerProfile(host, port),
             authenticationMode = ServerProfileAuthenticationMode.ANONYMOUS,
@@ -89,7 +89,7 @@ public sealed interface ServerProfileReadResult {
         @JvmStatic
         public fun password(
             host: String,
-            port: Int = 9_982,
+            port: Int = DEFAULT_HTSP_PORT,
             username: String,
             password: String,
         ): Available = Available.create(

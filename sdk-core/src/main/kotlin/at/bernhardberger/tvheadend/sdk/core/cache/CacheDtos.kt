@@ -2,6 +2,7 @@
 
 package at.bernhardberger.tvheadend.sdk.core.cache
 
+import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.Channel
 import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
@@ -153,7 +154,7 @@ internal fun Channel.toDto(): ChannelDto = ChannelDto(
     uuid = uuid,
     number = number,
     numberMinor = numberMinor,
-    icon = icon,
+    icon = icon?.toImageCacheSelector(),
     currentEventId = currentEventId?.value,
     nextEventId = nextEventId?.value,
     services = services?.map { service -> service.toDto() },
@@ -166,7 +167,7 @@ internal fun ChannelDto.toModel(): Channel = Channel.create(
     uuid = uuid,
     number = number,
     numberMinor = numberMinor,
-    icon = icon,
+    icon = ArtworkId.parse(icon),
     currentEventId = currentEventId?.let(::EventId),
     nextEventId = nextEventId?.let(::EventId),
     services = services?.map { service -> service.toModel() },
@@ -178,7 +179,7 @@ internal fun ChannelTag.toDto(): ChannelTagDto = ChannelTagDto(
     name = name,
     uuid = uuid,
     index = index,
-    icon = icon,
+    icon = icon?.toImageCacheSelector(),
     titledIcon = titledIcon,
     channelIds = channelIds?.map { channelId -> channelId.value },
 )
@@ -188,10 +189,12 @@ internal fun ChannelTagDto.toModel(): ChannelTag = ChannelTag.create(
     name = name,
     uuid = uuid,
     index = index,
-    icon = icon,
+    icon = ArtworkId.parse(icon),
     titledIcon = titledIcon,
     channelIds = channelIds?.map { channelId -> ChannelId(channelId) },
 )
+
+private fun ArtworkId.toImageCacheSelector(): String = "imagecache/$value"
 
 internal fun ChannelCatalog.toDto(): ChannelCatalogDto = ChannelCatalogDto(
     channels = channels.map { channel -> channel.toDto() },

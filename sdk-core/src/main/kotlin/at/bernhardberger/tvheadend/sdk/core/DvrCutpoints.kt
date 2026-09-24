@@ -40,6 +40,16 @@ public data class DvrCutpoint(
         }
     }
 
+    /**
+     * Recording offset of the scene boundary for a [DvrCutpointAction.SCENE_MARKER], or `null`
+     * for every other action.
+     *
+     * TVHeadend encodes a scene marker as an interval whose boundary is its [end], not its
+     * [start]; use this value rather than interpreting the interval directly.
+     */
+    public val sceneBoundary: Duration?
+        get() = if (action == DvrCutpointAction.SCENE_MARKER) end else null
+
     override fun toString(): String = "DvrCutpoint(action=$action, interval=<redacted>)"
 }
 

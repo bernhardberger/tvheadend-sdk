@@ -243,10 +243,13 @@ internal object SessionRegistry {
     }
 }
 
+/** Default TVHeadend HTSP port used when a server profile does not specify one. */
+public const val DEFAULT_HTSP_PORT: Int = 9_982
+
 /** A normalized server profile selected for a session. */
 public class ServerProfile(
     host: String,
-    port: Int = 9_982,
+    port: Int = DEFAULT_HTSP_PORT,
     authentication: ServerAuthentication = ServerAuthentication.Anonymous,
 ) {
     internal val host: String = host.trim()

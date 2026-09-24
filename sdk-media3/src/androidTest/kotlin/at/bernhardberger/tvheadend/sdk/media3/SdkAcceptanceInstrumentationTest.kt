@@ -163,7 +163,7 @@ internal class SdkAcceptanceInstrumentationTest {
                 label = "live target replacement",
                 frameBaseline = replacementBaseline.renderedVideoFrames,
             )
-            assertEquals(PlaybackStopResult.STOPPED, activeCoordinator.stop())
+            assertTrue(activeCoordinator.stop() is PlaybackStopResult.Stopped)
 
             session.disconnect()
             assertEquals(SessionState.Disconnected, session.observation.value.sessionState)
@@ -196,7 +196,7 @@ internal class SdkAcceptanceInstrumentationTest {
             )
             val warmReadyMs = elapsedSince(reconnectStartedAt)
             val memoryAfterReconnect = memoryObservation()
-            assertEquals(PlaybackStopResult.STOPPED, activeCoordinator.stop())
+            assertTrue(activeCoordinator.stop() is PlaybackStopResult.Stopped)
 
             val marker = "sdk-p64-${UUID.randomUUID().toString().take(8)}"
             val recordingStart = wholeSecondNow() + RECORDING_START_DELAY
@@ -496,7 +496,7 @@ internal class SdkAcceptanceInstrumentationTest {
             instrumentation.runOnMainSync { activePlayer.play() }
             delay(GENERIC_EXIT_PLAYBACK_MS)
             requireOwnedEntry(session, priorState)
-            assertEquals(PlaybackStopResult.STOPPED, activeCoordinator.stop())
+            assertEquals(PlaybackStopResult.Stopped(finalSubscriptionIssue = null), activeCoordinator.stop())
             val genericExitEntry = withTimeout(PROGRESS_PUBLICATION_TIMEOUT_MS) {
                 session.observation.first { observation ->
                     val entry = observation.dvrEntry(recordingId)
@@ -562,7 +562,7 @@ internal class SdkAcceptanceInstrumentationTest {
                 naturalPlayCount,
                 requireOwnedEntry(session, priorState).playCount ?: 0L,
             )
-            assertEquals(PlaybackStopResult.STOPPED, activeCoordinator.stop())
+            assertEquals(PlaybackStopResult.Stopped(finalSubscriptionIssue = null), activeCoordinator.stop())
             val orderlyEntry = awaitExactPlayCount(
                 session,
                 recordingId,

@@ -110,6 +110,10 @@ public data class EpgEvent private constructor(
     public val dvrEntryId: DvrEntryId?,
     public val nextEventId: EventId?,
 ) {
+    /** ETSI category and subgenre decoded from [contentType]. */
+    public val contentGenre: ContentGenre?
+        get() = ContentGenre.fromContentType(contentType)
+
     override fun toString(): String = "EpgEvent(<redacted>)"
 
     public companion object {

@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.17.0]
+
+### Added
+
+- `ArtworkId.parse` resolves TVHeadend `imagecache/<id>` selectors, such as
+  programme or recording images, to typed artwork IDs. External URLs and
+  malformed selectors return `null`.
+- `ContentGenre` decodes the raw ETSI EN 300 468 `contentType` into a
+  `ContentCategory` and an optional `ContentSubgenre` covering every Table 28
+  level-two value. `EpgEvent.contentGenre` and `DvrEntry.contentGenre` expose it;
+  the raw `contentType` is unchanged.
+- `DvrCutpoint.sceneBoundary` returns the end of a scene marker, where TVHeadend
+  places the boundary.
+- `DEFAULT_HTSP_PORT` names the default HTSP port used by server profiles.
+- `createTvheadendLoadControl` provides the recommended Media3 buffer durations
+  for live subscriptions and recordings, tuned with `PlaybackRecoveryPolicy`
+  defaults.
+
+### Changed
+
+- `Channel.icon` and `ChannelTag.icon` are `ArtworkId?`. External icon URLs and
+  malformed selectors are no longer exposed. The catalog cache format is
+  unchanged.
+- `TvheadendArtwork.create` accepts an `ArtworkId` and no longer returns `null`;
+  the string overload is removed.
+- `PlaybackStopResult` is a sealed interface. `Stopped` carries the retired live
+  target's final `SubscriptionIssue`, so consumers no longer need to read
+  `subscriptionIssue` before stopping. Replace enum matches and recompile
+  consumers against 0.17.0.
+
 ## [0.16.0]
 
 ### Fixed

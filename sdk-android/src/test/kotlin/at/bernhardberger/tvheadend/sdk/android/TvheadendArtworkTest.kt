@@ -37,7 +37,6 @@ import okio.FileSystem
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
@@ -47,27 +46,25 @@ import org.junit.jupiter.api.Test
 
 internal class TvheadendArtworkTest {
     @Test
-    fun `model accepts only HTSP image cache selectors and redacts rendering`() {
+    fun `model identity follows session observation and artwork ID and redacts rendering`() {
         val loader = FakeArtworkLoader()
         val observation = currentObservation()
         val currentSession = requireNotNull(observation.currentSession)
         val session = sessionWith(loader, MutableStateFlow(observation))
 
-        val direct = TvheadendArtwork.create(session, currentSession, "imagecache/73")
-        val legacy = TvheadendArtwork.create(session, currentSession, "/imagecache/74")
-        val duplicate = TvheadendArtwork.create(session, currentSession, "imagecache/73")
+        val direct = TvheadendArtwork.create(session, currentSession, ArtworkId(73))
+        val other = TvheadendArtwork.create(session, currentSession, ArtworkId(74))
+        val duplicate = TvheadendArtwork.create(session, currentSession, ArtworkId(73))
 
-        assertNotNull(direct)
-        assertNotNull(legacy)
         assertEquals(direct, duplicate)
         assertEquals(direct.hashCode(), duplicate.hashCode())
-        assertNotEquals(direct, legacy)
+        assertNotEquals(direct, other)
         assertNotEquals(
             direct,
             TvheadendArtwork.create(
                 sessionWith(FakeArtworkLoader(), MutableStateFlow(observation)),
                 currentSession,
-                "imagecache/73",
+                ArtworkId(73),
             ),
         )
         assertNotEquals(
@@ -75,22 +72,10 @@ internal class TvheadendArtworkTest {
             TvheadendArtwork.create(
                 session,
                 requireNotNull(currentObservation().currentSession),
-                "imagecache/73",
+                ArtworkId(73),
             ),
         )
         assertEquals("TvheadendArtwork(<redacted>)", direct.toString())
-        listOf(
-            null,
-            "",
-            "imagecache/",
-            "imagecache/0",
-            "imagecache/-1",
-            "imagecache/1/2",
-            "//imagecache/1",
-            "https://private-host/imagecache/1",
-        ).forEach { source ->
-            assertNull(TvheadendArtwork.create(session, currentSession, source))
-        }
         assertFalse(direct.toString().contains("73"))
     }
 
@@ -101,15 +86,9 @@ internal class TvheadendArtworkTest {
         val observations = MutableStateFlow(initialObservation)
         val session = sessionWith(loader, observations)
         val initial = requireNotNull(initialObservation.currentSession)
-        val first = requireNotNull(
-            TvheadendArtwork.create(session, initial, "imagecache/2147483647"),
-        )
-        val duplicate = requireNotNull(
-            TvheadendArtwork.create(session, initial, "/imagecache/2147483647"),
-        )
-        val otherArtwork = requireNotNull(
-            TvheadendArtwork.create(session, initial, "imagecache/2147483646"),
-        )
+        val first = TvheadendArtwork.create(session, initial, ArtworkId(2147483647))
+        val duplicate = TvheadendArtwork.create(session, initial, ArtworkId(2147483647))
+        val otherArtwork = TvheadendArtwork.create(session, initial, ArtworkId(2147483646))
 
         val firstKey = requireNotNull(first.memoryCacheKey())
         assertEquals(firstKey, duplicate.memoryCacheKey())
@@ -119,12 +98,10 @@ internal class TvheadendArtworkTest {
 
         val replacementObservation = currentObservation()
         observations.value = replacementObservation
-        val replacement = requireNotNull(
-            TvheadendArtwork.create(
-                session,
-                requireNotNull(replacementObservation.currentSession),
-                "imagecache/2147483647",
-            ),
+        val replacement = TvheadendArtwork.create(
+            session,
+            requireNotNull(replacementObservation.currentSession),
+            ArtworkId(2147483647),
         )
         assertEquals(firstKey, first.memoryCacheKey())
         assertNotEquals(firstKey, replacement.memoryCacheKey())
@@ -139,14 +116,14 @@ internal class TvheadendArtworkTest {
         val firstObservation = currentObservation()
         val observations = MutableStateFlow(firstObservation)
         val loader = FakeArtworkLoader().apply { persistentKey = "opaque-cache-key" }
-        val first = requireNotNull(TvheadendArtwork.create(
-            sessionWith(loader, observations), requireNotNull(firstObservation.currentSession), "imagecache/1",
-        ))
+        val first = TvheadendArtwork.create(
+            sessionWith(loader, observations), requireNotNull(firstObservation.currentSession), ArtworkId(1),
+        )
         val nextObservation = currentObservation()
-        val restarted = requireNotNull(TvheadendArtwork.create(
+        val restarted = TvheadendArtwork.create(
             sessionWith(FakeArtworkLoader().apply { persistentKey = "opaque-cache-key" }, MutableStateFlow(nextObservation)),
-            requireNotNull(nextObservation.currentSession), "imagecache/1",
-        ))
+            requireNotNull(nextObservation.currentSession), ArtworkId(1),
+        )
         assertEquals(first.memoryCacheKey(), restarted.memoryCacheKey())
         observations.value = nextObservation
         loader.persistentKey = "replacement-profile-key"
@@ -168,9 +145,7 @@ internal class TvheadendArtworkTest {
         val observation = currentObservation()
         val currentSession = requireNotNull(observation.currentSession)
         val session = sessionWith(loader, MutableStateFlow(observation))
-        val artwork = requireNotNull(
-            TvheadendArtwork.create(session, currentSession, "imagecache/91"),
-        )
+        val artwork = TvheadendArtwork.create(session, currentSession, ArtworkId(91))
 
         val result = TvheadendArtworkFetcher(artwork).fetch() as SourceFetchResult
 
@@ -198,9 +173,7 @@ internal class TvheadendArtworkTest {
         val observations = MutableStateFlow(initialObservation)
         val session = sessionWith(loader, observations)
         val original = requireNotNull(initialObservation.currentSession)
-        val artwork = requireNotNull(
-            TvheadendArtwork.create(session, original, "imagecache/92"),
-        )
+        val artwork = TvheadendArtwork.create(session, original, ArtworkId(92))
         val replacementObservation = currentObservation()
         observations.value = replacementObservation
         val replacement = requireNotNull(replacementObservation.currentSession)
@@ -222,12 +195,10 @@ internal class TvheadendArtworkTest {
         )
         val observation = currentObservation()
         val session = sessionWith(loader, MutableStateFlow(observation))
-        val artwork = requireNotNull(
-            TvheadendArtwork.create(
-                session,
-                requireNotNull(observation.currentSession),
-                "imagecache/27",
-            ),
+        val artwork = TvheadendArtwork.create(
+            session,
+            requireNotNull(observation.currentSession),
+            ArtworkId(27),
         )
 
         val failure = assertThrows(TvheadendArtworkLoadException::class.java) {
