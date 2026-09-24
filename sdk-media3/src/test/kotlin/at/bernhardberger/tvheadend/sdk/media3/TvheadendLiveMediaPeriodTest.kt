@@ -395,6 +395,32 @@ internal class TvheadendLiveMediaPeriodTest {
     }
 
     @Test
+    fun `live audio track groups and sample formats carry audio_type role flags`() = runTest {
+        val harness = PeriodHarness(this)
+        try {
+            harness.start(
+                SubscriptionStreamType.MPEG2_AUDIO,
+                SubscriptionStreamType.MPEG2_AUDIO,
+                audioTypes = listOf(null, 3L),
+            )
+            harness.audio()
+            harness.packet(1, PeriodCountingBinary(fixture("mpeg-audio.bin")))
+            harness.looper.runAll()
+            assertEquals(1, harness.preparations)
+            assertEquals(0, harness.period.trackGroups[0].getFormat(0).roleFlags)
+            assertEquals(C.ROLE_FLAG_DESCRIBES_VIDEO, harness.period.trackGroups[1].getFormat(0).roleFlags)
+            val holder = FormatHolder()
+            assertEquals(
+                C.RESULT_FORMAT_READ,
+                harness.select(1).readData(holder, DecoderInputBuffer(DecoderInputBuffer.BUFFER_REPLACEMENT_MODE_NORMAL), 0),
+            )
+            assertEquals(C.ROLE_FLAG_DESCRIBES_VIDEO, holder.format?.roleFlags)
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
     fun `healthy alternative audio arriving after primary audio video is retained`() = runTest {
         val harness = PeriodHarness(this)
         try {
@@ -624,7 +650,7 @@ private class PeriodHarness(private val scope: TestScope, attachment: LiveTimesh
         callbackSchedulerFactory = { looper },
     )
 
-    suspend fun start(vararg types: SubscriptionStreamType) {
+    suspend fun start(vararg types: SubscriptionStreamType, audioTypes: List<Long?> = emptyList()) {
         connection.scriptSubscribe(SubscriptionOperationResult.Ok(SubscriptionConfirmation(null, null, null, 120)))
         manager.startAdmission()
         period.prepare(object : MediaPeriod.Callback {
@@ -642,7 +668,7 @@ private class PeriodHarness(private val scope: TestScope, attachment: LiveTimesh
                 if (type == SubscriptionStreamType.DVB_SUBTITLE) 1L else null,
                 if (type == SubscriptionStreamType.DVB_SUBTITLE) 2L else null,
                 null, null,
-                null, null, null, null, null, null, null, null, null,
+                null, null, null, audioTypes.getOrNull(index), null, null, null, null, null,
             )
         }, null, SubscriptionCondition.NO_DETAIL))
         scope.runCurrent()

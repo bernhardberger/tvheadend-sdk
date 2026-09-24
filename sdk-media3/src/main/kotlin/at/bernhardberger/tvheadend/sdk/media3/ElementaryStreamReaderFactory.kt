@@ -38,13 +38,13 @@ internal fun createElementaryStreamReader(stream: SubscriptionStream): ReaderRes
         SubscriptionStreamType.AC3,
         SubscriptionStreamType.EAC3,
         -> ReaderResult.Supported(
-            Ac3Reader(stream.language, 0, MimeTypes.VIDEO_MP2T),
+            Ac3Reader(stream.language, stream.audioRoleFlags(), MimeTypes.VIDEO_MP2T),
         )
         SubscriptionStreamType.MPEG2_AUDIO -> ReaderResult.Supported(
-            MpegAudioReader(stream.language, 0, MimeTypes.VIDEO_MP2T),
+            MpegAudioReader(stream.language, stream.audioRoleFlags(), MimeTypes.VIDEO_MP2T),
         )
         SubscriptionStreamType.AAC -> ReaderResult.Supported(
-            AdtsReader(false, stream.language, 0, MimeTypes.VIDEO_MP2T),
+            AdtsReader(false, stream.language, stream.audioRoleFlags(), MimeTypes.VIDEO_MP2T),
         )
         SubscriptionStreamType.DVB_SUBTITLE -> createDvbReader(stream)
         SubscriptionStreamType.TEXT_SUBTITLE,
@@ -52,6 +52,12 @@ internal fun createElementaryStreamReader(stream: SubscriptionStream): ReaderRes
         SubscriptionStreamType.UNKNOWN,
         -> ReaderResult.Unsupported
     }
+
+// Media3 owns the ISO/IEC 13818-1 audio_type mapping used by its TS extractor for recordings.
+private fun SubscriptionStream.audioRoleFlags(): Int {
+    val type = audioType?.takeIf { it in 0L..0xffL } ?: return 0
+    return TsPayloadReader.EsInfo(0, language, type.toInt(), emptyList(), ByteArray(0)).roleFlags
+}
 
 private fun emptySeiReader(): SeiReader = SeiReader(emptyList(), MimeTypes.VIDEO_MP2T)
 

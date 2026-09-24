@@ -75,6 +75,56 @@ class ActualElementaryStreamReaderFixtureTest {
     }
 
     @Test
+    fun `audio_type descriptor values reach every audio reader format as Media3 role flags`() {
+        val expectedRoleFlags = mapOf(
+            null to 0,
+            0L to 0,
+            1L to 0,
+            2L to C.ROLE_FLAG_ENHANCED_DIALOG_INTELLIGIBILITY,
+            3L to C.ROLE_FLAG_DESCRIBES_VIDEO,
+            0x102L to 0,
+            -1L to 0,
+        )
+        expectedRoleFlags.forEach { (audioType, roleFlags) ->
+            assertRecordedAudio(
+                type = SubscriptionStreamType.MPEG2_AUDIO,
+                resource = "/recorded-mux/mpeg-audio.bin",
+                presentationTimeUs = 311_211L,
+                expectedMimeType = MimeTypes.AUDIO_MPEG_L2,
+                expectedSize = 576,
+                expectedSha256 = "b99e3427331676dc0aac71bcd212494768fb6d608be1ee0d128726bcf9ae6d97",
+                audioType = audioType,
+                expectedRoleFlags = roleFlags,
+            )
+            listOf(SubscriptionStreamType.AC3, SubscriptionStreamType.EAC3).forEach { type ->
+                assertRecordedAudio(
+                    type = type,
+                    resource = "/recorded-mux/ac3.bin",
+                    presentationTimeUs = 279_211L,
+                    expectedMimeType = MimeTypes.AUDIO_AC3,
+                    expectedSize = 1_536,
+                    expectedSha256 = "3ec44cd72eac63889ed50b4859ed5788c2f1613121eb72130a54e68f3b992bfc",
+                    audioType = audioType,
+                    expectedRoleFlags = roleFlags,
+                )
+            }
+            assertRecordedAudio(
+                type = SubscriptionStreamType.AAC,
+                resource = "/recorded-mux/aac-adts.bin",
+                presentationTimeUs = 421_000L,
+                expectedMimeType = MimeTypes.AUDIO_AAC,
+                expectedSize = 288,
+                expectedSha256 = "aa381944d998c57e5f56ce4a44ceeeb587d3ff6726647869cec75f38d8c4dbfa",
+                expectedChannelCount = 1,
+                expectedInitializationData = listOf("1188"),
+                expectedPayloadOffset = 7,
+                audioType = audioType,
+                expectedRoleFlags = roleFlags,
+            )
+        }
+    }
+
+    @Test
     fun `malformed AAC emits no format or sample`() {
         val result = createElementaryStreamReader(stream(SubscriptionStreamType.AAC))
         assertTrue(result is ReaderResult.Supported)
@@ -370,10 +420,12 @@ class ActualElementaryStreamReaderFixtureTest {
         expectedChannelCount: Int? = null,
         expectedInitializationData: List<String> = emptyList(),
         expectedPayloadOffset: Int = 0,
+        audioType: Long? = null,
+        expectedRoleFlags: Int = 0,
     ) {
         val bytes = checkNotNull(javaClass.getResourceAsStream(resource)).use { it.readBytes() }
         assertEquals(expectedSha256, bytes.sha256())
-        val result = createElementaryStreamReader(stream(type))
+        val result = createElementaryStreamReader(stream(type, audioType = audioType))
         assertTrue(result is ReaderResult.Supported)
         val output = CapturingExtractorOutput()
         val adapter = SubscriptionElementaryStreamAdapter(
@@ -401,6 +453,7 @@ class ActualElementaryStreamReaderFixtureTest {
         assertEquals(MimeTypes.VIDEO_MP2T, format!!.containerMimeType)
         assertEquals(expectedMimeType, format.sampleMimeType)
         assertEquals("de", format.language)
+        assertEquals(expectedRoleFlags, format.roleFlags, "audioType=$audioType type=$type")
         assertEquals(48_000, format.sampleRate)
         if (expectedChannelCount == null) {
             assertTrue(format.channelCount > 0)
@@ -422,6 +475,7 @@ class ActualElementaryStreamReaderFixtureTest {
         type: SubscriptionStreamType,
         compositionId: Long? = null,
         ancillaryId: Long? = null,
+        audioType: Long? = null,
     ): SubscriptionStream = SubscriptionStream(
         index = StreamIndex(0L),
         type = type,
@@ -433,7 +487,7 @@ class ActualElementaryStreamReaderFixtureTest {
         frameDuration = null,
         aspectNumerator = null,
         aspectDenominator = null,
-        audioType = null,
+        audioType = audioType,
         audioVersion = null,
         channelCount = null,
         rate = 3L,

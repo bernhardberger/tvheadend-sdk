@@ -1,5 +1,24 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- `channelComparator()` and `channelComparator(collator)` return the standard
+  TVHeadend channel order: numbered channels by major number, minor number
+  (absent first) and name; then unnumbered channels, including TVHeadend's
+  number `0`, by collator-ordered name; missing or blank names last; `ChannelId`
+  as the final tie-break. `Channel.hasChannelNumber` reports whether a channel
+  has a user-visible number greater than zero.
+
+### Fixed
+
+- Live AC-3/E-AC-3, MPEG audio and AAC tracks carry the Media3 role flags for
+  TVHeadend's ISO 639 `audio_type`, matching the recording path: `2` maps to
+  `C.ROLE_FLAG_ENHANCED_DIALOG_INTELLIGIBILITY` and `3` to
+  `C.ROLE_FLAG_DESCRIBES_VIDEO`. Other, missing or out-of-range values keep no
+  role flags.
+
 ## [0.18.0]
 
 ### Changed

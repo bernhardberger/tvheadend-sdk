@@ -346,6 +346,12 @@ public final class at/bernhardberger/tvheadend/sdk/core/ChannelId {
 	public final synthetic fun unbox-impl ()J
 }
 
+public final class at/bernhardberger/tvheadend/sdk/core/ChannelOrderingKt {
+	public static final fun channelComparator ()Ljava/util/Comparator;
+	public static final fun channelComparator (Ljava/text/Collator;)Ljava/util/Comparator;
+	public static final fun getHasChannelNumber (Lat/bernhardberger/tvheadend/sdk/core/Channel;)Z
+}
+
 public final class at/bernhardberger/tvheadend/sdk/core/ChannelRepositoryKt {
 	public static final fun getChannelCatalogAuthority (Lat/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState;)Lat/bernhardberger/tvheadend/sdk/core/RetainedMetadataAuthority;
 	public static final fun getChannelCatalogForDisplay (Lat/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState;)Lat/bernhardberger/tvheadend/sdk/core/ChannelCatalog;

@@ -203,7 +203,14 @@ Use observation point selectors when selecting related entities:
 
 `Channel.tagIds` and `ChannelTag.channelIds` expose catalog membership. Entity
 lists are immutable and preserve SDK catalog order. Presentation filtering,
-sorting, grouping, and UI policy are not SDK APIs.
+grouping, and UI policy are not SDK APIs.
+
+`channelComparator()` returns the standard TVHeadend channel order: numbered
+channels by major number, minor number (absent first) and name, then unnumbered
+channels by name, with missing or blank names last and `ChannelId` as the final
+tie-break. Pass a `java.text.Collator` to choose the name locale; the default
+uses the JVM default locale. TVHeadend reports `0` for an unnumbered channel, so
+use `Channel.hasChannelNumber` before displaying or dialling `number`.
 
 `EpgEvent.contentGenre` and `DvrEntry.contentGenre` decode the raw ETSI EN 300 468
 `contentType` byte. `category` is the level-one `ContentCategory`; `subgenre` is
