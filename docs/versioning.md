@@ -1,16 +1,16 @@
 # Versioning and compatibility
 
-The source is configured for the provisional `0.18.0` release under these
+The source is configured for the provisional `0.19.0` release under these
 coordinates:
 
-- `at.bernhardberger.tvheadend:sdk-android:0.18.0`
-- `at.bernhardberger.tvheadend:sdk-core:0.18.0`
-- `at.bernhardberger.tvheadend:sdk-media3:0.18.0`
-- `at.bernhardberger.tvheadend:sdk-playback:0.18.0`
-- `at.bernhardberger.tvheadend:sdk-testing:0.18.0`
+- `at.bernhardberger.tvheadend:sdk-android:0.19.0`
+- `at.bernhardberger.tvheadend:sdk-core:0.19.0`
+- `at.bernhardberger.tvheadend:sdk-media3:0.19.0`
+- `at.bernhardberger.tvheadend:sdk-playback:0.19.0`
+- `at.bernhardberger.tvheadend:sdk-testing:0.19.0`
 
 Source, local staging, and CI
-do not establish that the configured `0.18.0` coordinates are publicly available;
+do not establish that the configured `0.19.0` coordinates are publicly available;
 check Maven Central before selecting them.
 
 The signed `v0.3.3` tag is retained as development-release evidence after its
@@ -30,7 +30,15 @@ must never be replaced.
 While the major version is zero, the public API and behavior are provisional.
 No source, binary, or behavioral compatibility is promised for the provisional
 0.x line. A known breaking change requires the next minor version, not a patch
-version. Patch versions are reserved for backward-compatible fixes. The `0.18.0`
+version. Patch versions are reserved for backward-compatible fixes. The `0.19.0`
+minor adds a defaulted `priority` parameter to `SubscriptionOptions`, which is
+source compatible but a binary break for subscription infrastructure adapters,
+and appends `ScriptedSubscriptionCall.PRIORITY`. It adds `channelComparator`,
+`Channel.hasChannelNumber`, `LiveSubscriptionPriority` and
+`TvheadendPlaybackCoordinator.setLivePriority`; live audio tracks carry Media3
+role flags for TVHeadend's `audio_type`, and a server stop reason stays
+observable as the live subscription issue until the stream starts again.
+Recompile consumers and adapters. The `0.18.0`
 minor turns `PlaybackStopResult.PlayerUnavailable` into a data class whose
 `finalSubscriptionIssue` keeps the retired live target's final subscription issue
 when player cleanup fails after retirement. Recompile consumers and replace
