@@ -28,11 +28,14 @@ the layout is unchanged. The application-owned Player and its play intent are re
 - Between stop and the next Started, Media3 drops nonterminal observations as well as
   packets. Interruption-era timeshift history, speed, and status cannot authorize the
   successor's timeline or mapping. Terminal delivery retains its existing route.
-- Stop retires the period attachment immediately. Its stop-specific issue is intentionally
-  not retained in the coordinator's live observation; that observation becomes unavailable
-  until replacement evidence arrives. Direct infrastructure consumers still receive the
-  ordered stop and its issue outside the uncertain-seek exception below. This boundary
-  does not add a separate durable interruption-issue state.
+- Stop retires the period attachment immediately. The coordinator's live observation holds
+  the stop's issue, and the issue of any status received while stopped, until the next
+  Started, subscription end, or target retirement. `LivePlaybackObservation.Active.serverStopped`
+  is true for the same interval, including a stop without an issue, which is otherwise
+  indistinguishable from a healthy subscription. A replacement period bound to the same
+  stopped subscription does not clear it. Timeshift state becomes unavailable until
+  replacement evidence arrives. Direct infrastructure consumers still receive the ordered
+  stop and its issue outside the uncertain-seek exception below.
 
 ## Media3 and timestamp handling
 

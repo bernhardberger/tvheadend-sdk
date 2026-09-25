@@ -6,6 +6,8 @@
 
 package at.bernhardberger.tvheadend.sdk.media3
 
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Timeline
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.upstream.DefaultAllocator
 import androidx.media3.exoplayer.upstream.BandwidthMeter
@@ -40,6 +42,7 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -107,6 +110,23 @@ internal class TvheadendLiveMediaSourceTest {
         runCurrent()
         assertTrue(target.consumer != null)
         assertSame(options, target.options)
+        source.releaseSource(caller)
+        runCurrent()
+    }
+
+    @Test
+    fun `live source timeline items are marked live and other items are not`() = runTest {
+        val source = TvheadendLiveMediaSource(CapturingLiveTarget(), SubscriptionOptions(), null, {}, StandardTestDispatcher(testScheduler), { QueuedCoordinatorLooper() })
+        val timelines = mutableListOf<Timeline>()
+        val caller = MediaSource.MediaSourceCaller { _, timeline -> timelines += timeline }
+        source.prepareSource(caller, PlayerId.UNSET, BandwidthMeter.NO_OP)
+        runCurrent()
+
+        assertTrue(timelines.last().getWindow(0, Timeline.Window()).mediaItem.isTvheadendLive())
+        assertTrue(source.getMediaItem().isTvheadendLive())
+        assertFalse(tvheadendRecordingMediaItem(RecordingMediaIdentity()).isTvheadendLive())
+        assertFalse(MediaItem.fromUri("https://example.invalid/live.ts").isTvheadendLive())
+        assertFalse(MediaItem.Builder().build().isTvheadendLive())
         source.releaseSource(caller)
         runCurrent()
     }

@@ -260,6 +260,8 @@ internal class LiveTimeshiftControlBridge(
     private var prioritySubscription: ActiveSubscription? = null
     private var stoppedIssue: SubscriptionIssue? = null
     private var stoppedIssueHeld = false
+    // A server stop without an issue is otherwise indistinguishable from a healthy subscription.
+    private var serverStopped = false
 
     internal fun newAttachment(): Attachment = synchronized(lock) {
         check(nextAttachmentSequence != Long.MAX_VALUE) { "Timeshift attachment ids exhausted" }
@@ -362,6 +364,7 @@ internal class LiveTimeshiftControlBridge(
             prioritySubscription = null
             stoppedIssue = null
             stoppedIssueHeld = false
+            serverStopped = false
             newestTerminalAttachment = null
             currentState = LiveTimeshiftState.Unavailable
             currentIssue = null
@@ -452,26 +455,33 @@ internal class LiveTimeshiftControlBridge(
     }
 
     /**
-     * Publishes the issue of a server-stopped subscription, or of a status received while it is
-     * stopped, until a period observes a later start or the subscription ends.
+     * Publishes the server stop and the issue of a server-stopped subscription, or of a status
+     * received while it is stopped, until a period observes a later start or the subscription ends.
      */
     internal fun subscriptionStopped(issue: SubscriptionIssue?) {
         synchronized(lock) {
             if (retired || !token.isActive()) return
             stoppedIssueHeld = true
             stoppedIssue = issue
+            val wasStopped = serverStopped
+            serverStopped = true
             val previous = currentIssue
-            if (updateIssueLocked() != previous) publishCurrentLocked()
+            if (updateIssueLocked() != previous || !wasStopped) publishCurrentLocked()
         }
     }
 
-    /** Replaces a held stop reason with the restart's issue until a period observes the restart. */
+    /**
+     * Ends the server stop and replaces a held stop reason with the restart's issue until a period
+     * observes the restart.
+     */
     internal fun subscriptionRestarted(issue: SubscriptionIssue?) {
         synchronized(lock) {
             if (!stoppedIssueHeld || retired || !token.isActive()) return
             stoppedIssue = issue
+            val wasStopped = serverStopped
+            serverStopped = false
             val previous = currentIssue
-            if (updateIssueLocked() != previous) publishCurrentLocked()
+            if (updateIssueLocked() != previous || wasStopped) publishCurrentLocked()
         }
     }
 
@@ -482,16 +492,18 @@ internal class LiveTimeshiftControlBridge(
     internal fun subscriptionEnded() {
         synchronized(lock) {
             if (!stoppedIssueHeld) return
+            val wasStopped = serverStopped
             releaseStoppedIssueLocked()
             if (retired) return
             val previous = currentIssue
-            if (updateIssueLocked() != previous) publishCurrentLocked()
+            if (updateIssueLocked() != previous || wasStopped) publishCurrentLocked()
         }
     }
 
     private fun releaseStoppedIssueLocked() {
         stoppedIssueHeld = false
         stoppedIssue = null
+        serverStopped = false
     }
 
     /** Forgets [subscription] once its owner closes it, so recorded priorities no longer target it. */
@@ -1015,7 +1027,7 @@ internal class LiveTimeshiftControlBridge(
         if (issue) publishIssueLocked(currentIssue)
         if (diagnostics) publishDiagnosticsLocked(currentDiagnostics)
         publishObservation(
-            LivePlaybackObservation.Active(currentState, currentIssue, currentDiagnostics),
+            LivePlaybackObservation.Active(currentState, currentIssue, currentDiagnostics, serverStopped),
         )
     }
 

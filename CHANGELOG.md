@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `MediaItem.isTvheadendLive()` reports whether a Media3 item belongs to the
+  SDK's live source, including timeshift on it. It is false for recordings,
+  including growing recordings, and for foreign items, so consumers need not
+  match media ids or URIs.
+
+### Changed
+
+- `LivePlaybackObservation.Active.serverStopped` is true from a server stop of
+  the live stream, with or without a `subscriptionIssue`, until the stream
+  starts again, the subscription ends or the target is retired. A stop without
+  an issue was previously indistinguishable from a healthy subscription. The new
+  trailing property changes `Active`'s `equals`, `hashCode`, `toString` and adds
+  `component4()`; this is an accepted 0.x source and binary change for code that
+  destructures or compares `Active` values.
+
 ## [0.20.0]
 
 ### Added

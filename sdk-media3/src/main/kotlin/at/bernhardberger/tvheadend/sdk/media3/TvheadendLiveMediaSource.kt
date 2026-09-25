@@ -76,7 +76,7 @@ internal class TvheadendLiveMediaSource(
     private val pending = ArrayDeque<SubscriptionEvent>()
     private var pendingBytes = 0L
     private val mediaItem = MediaItem.Builder()
-        .setMediaId("tvheadend-live")
+        .setMediaId(LIVE_MEDIA_ID)
         .build()
 
     override fun getMediaItem(): MediaItem = mediaItem

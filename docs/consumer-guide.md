@@ -550,6 +550,19 @@ publish again. `timeshiftState`, `subscriptionIssue`, and `liveDiagnostics`
 remain available for consumers interested in only one component; independently
 collecting those flows does not create an atomic aggregate snapshot.
 
+`Active.serverStopped` is true while the server has stopped the live stream and
+no later `Started` has arrived. No media is delivered during that interval. The
+server may stop without any issue, so a `null` `subscriptionIssue` alone does not
+mean the stream is healthy; show an interruption state from `serverStopped` and
+add the issue text when one is present. The flag clears when the stream starts
+again, the subscription ends, or the target is retired.
+
+To tell a live item from a recording, use `MediaItem.isTvheadendLive()` on the
+player's current media item. It is true only for items installed by the SDK's
+live source, including timeshift on it, and false for recordings, including
+growing recordings, and for foreign items. Do not match media ids or URIs
+yourself.
+
 `subscriptionIssue` exposes only the current live target's canonical
 `SubscriptionIssue`. Unknown or localized server values map to `UNKNOWN`; raw
 server text is not exposed. The exact no-input status maps to `NO_INPUT` unless

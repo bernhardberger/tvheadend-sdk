@@ -204,12 +204,20 @@ public sealed interface LivePlaybackObservation {
     /** No live target is active; a recording target may still be active. */
     public data object NoTarget : LivePlaybackObservation
 
-    /** Latest coherent state for the active live target. */
+    /**
+     * Latest coherent state for the active live target.
+     *
+     * [serverStopped] is true from a server subscription stop, with or without a
+     * [subscriptionIssue], until the same target restarts, ends or is retired. While it is true no
+     * media is delivered for this target. A server stop without an issue is therefore observable
+     * here even though [subscriptionIssue] stays null.
+     */
     @ConsistentCopyVisibility
     public data class Active internal constructor(
         public val timeshiftState: LiveTimeshiftState,
         public val subscriptionIssue: SubscriptionIssue?,
         public val diagnostics: LiveSubscriptionDiagnostics?,
+        public val serverStopped: Boolean = false,
     ) : LivePlaybackObservation
 }
 

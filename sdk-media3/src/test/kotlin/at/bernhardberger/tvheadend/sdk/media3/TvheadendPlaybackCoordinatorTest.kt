@@ -2119,6 +2119,144 @@ internal class TvheadendPlaybackCoordinatorTest {
     }
 
     @Test
+    fun `server stop without an issue is observable until the stream restarts`() = runTest {
+        val fixture = CoordinatorFixture()
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+        fixture.coordinator.setLiveTarget(ChannelId(4))
+        fixture.player.attachTimeshift(FakeTimeshiftSubscription(60.seconds))
+        fixture.player.emitTimeshift(
+            SubscriptionEvent.Started(streams = null, codecMetadata = null, condition = SubscriptionCondition.NO_DETAIL),
+        )
+        assertFalse(fixture.liveObservation().serverStopped)
+
+        fixture.player.stopLiveStream(null)
+        var observation = fixture.liveObservation()
+        assertTrue(observation.serverStopped)
+        assertNull(observation.subscriptionIssue)
+
+        fixture.player.statusWhileStopped(SubscriptionIssue.NO_FREE_ADAPTER)
+        observation = fixture.liveObservation()
+        assertTrue(observation.serverStopped)
+        assertSame(SubscriptionIssue.NO_FREE_ADAPTER, observation.subscriptionIssue)
+        fixture.player.statusWhileStopped(null)
+        observation = fixture.liveObservation()
+        assertTrue(observation.serverStopped)
+        assertNull(observation.subscriptionIssue)
+
+        fixture.player.restartLiveStream(FakeTimeshiftSubscription(60.seconds))
+        observation = fixture.liveObservation()
+        assertFalse(observation.serverStopped)
+        assertNull(observation.subscriptionIssue)
+        fixture.coordinator.shutdown(1.seconds)
+        owner.join()
+    }
+
+    @Test
+    fun `server stop with an issue publishes the stop and the issue`() = runTest {
+        val fixture = CoordinatorFixture()
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+        fixture.coordinator.setLiveTarget(ChannelId(4))
+        fixture.player.attachTimeshift(FakeTimeshiftSubscription(60.seconds))
+        fixture.player.emitTimeshift(
+            SubscriptionEvent.Started(streams = null, codecMetadata = null, condition = SubscriptionCondition.NO_DETAIL),
+        )
+
+        fixture.player.stopLiveStream(SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN)
+
+        val observation = fixture.liveObservation()
+        assertTrue(observation.serverStopped)
+        assertSame(SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN, observation.subscriptionIssue)
+        assertSame(SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN, fixture.coordinator.subscriptionIssue.value)
+        fixture.coordinator.shutdown(1.seconds)
+        owner.join()
+    }
+
+    @Test
+    fun `server stop without an issue clears an earlier issue but stays stopped`() = runTest {
+        listOf(
+            SubscriptionEvent.Status(SubscriptionCondition.ERROR_REPORTED, SubscriptionIssue.BAD_SIGNAL),
+            null,
+        ).forEach { playingStatus ->
+            val fixture = CoordinatorFixture()
+            val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+            fixture.coordinator.setLiveTarget(ChannelId(4))
+            fixture.player.attachTimeshift(FakeTimeshiftSubscription(60.seconds))
+            fixture.player.emitTimeshift(
+                SubscriptionEvent.Started(streams = null, codecMetadata = null, condition = SubscriptionCondition.NO_DETAIL),
+            )
+            if (playingStatus != null) {
+                fixture.player.emitTimeshift(playingStatus)
+            } else {
+                fixture.player.stopLiveStream(SubscriptionIssue.BAD_SIGNAL)
+            }
+            assertSame(SubscriptionIssue.BAD_SIGNAL, fixture.liveObservation().subscriptionIssue)
+
+            // A repeated server stop reaches the bridge exactly like a status while stopped.
+            if (playingStatus != null) fixture.player.stopLiveStream(null) else fixture.player.statusWhileStopped(null)
+
+            val observation = fixture.liveObservation()
+            assertTrue(observation.serverStopped)
+            assertNull(observation.subscriptionIssue)
+            assertNull(fixture.coordinator.subscriptionIssue.value)
+            fixture.coordinator.shutdown(1.seconds)
+            owner.join()
+        }
+    }
+
+    @Test
+    fun `server stop is cleared when the stopped subscription ends or the target is retired`() = runTest {
+        val fixture = CoordinatorFixture()
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+        fixture.coordinator.setLiveTarget(ChannelId(4))
+        fixture.player.attachTimeshift(FakeTimeshiftSubscription(60.seconds))
+        fixture.player.stopLiveStream(null)
+        assertTrue(fixture.liveObservation().serverStopped)
+
+        fixture.player.endLiveStream()
+        assertFalse(fixture.liveObservation().serverStopped)
+
+        fixture.player.replaceTimeshiftPeriod(FakeTimeshiftSubscription(60.seconds))
+        fixture.player.stopLiveStream(SubscriptionIssue.BAD_SIGNAL)
+        assertTrue(fixture.liveObservation().serverStopped)
+        // Media3 binds a replacement period to the same stopped subscription; that is not a restart.
+        fixture.player.replaceTimeshiftPeriod(FakeTimeshiftSubscription(60.seconds))
+        assertTrue(fixture.liveObservation().serverStopped)
+        fixture.player.emitTimeshift(SubscriptionEvent.Terminated(SubscriptionTermination.GENERATION_LOST))
+        assertFalse(fixture.liveObservation().serverStopped)
+
+        fixture.player.replaceTimeshiftPeriod(FakeTimeshiftSubscription(60.seconds))
+        fixture.player.stopLiveStream(null)
+        assertTrue(fixture.liveObservation().serverStopped)
+        assertEquals(PlaybackStopResult.Stopped(null), fixture.coordinator.stop())
+        assertSame(LivePlaybackObservation.NoTarget, fixture.coordinator.livePlaybackObservation.value)
+        fixture.coordinator.setLiveTarget(ChannelId(5))
+        assertFalse(fixture.liveObservation().serverStopped)
+        fixture.coordinator.shutdown(1.seconds)
+        owner.join()
+    }
+
+    @Test
+    fun `server stop survives a failed period replacement`() {
+        val observations = mutableListOf<LivePlaybackObservation.Active>()
+        val bridge = LiveTimeshiftControlBridge(
+            token = PlaybackTargetToken(),
+            publish = {},
+            publishIssue = {},
+            publishObservation = observations::add,
+        )
+        bridge.newAttachment().bind(FakeTimeshiftSubscription(60.seconds))
+        bridge.subscriptionStopped(null)
+        assertTrue(observations.last().serverStopped)
+        val replacement = bridge.beginObservationReplacement()
+        bridge.newAttachment().bind(FakeTimeshiftSubscription(60.seconds))
+
+        bridge.rollbackObservationReplacement(replacement)
+
+        assertTrue(observations.last().serverStopped)
+        assertNull(observations.last().subscriptionIssue)
+    }
+
+    @Test
     fun `live priority is sticky for the live target and resets for new targets`() = runTest {
         val fixture = CoordinatorFixture()
         assertSame(
@@ -2892,6 +3030,9 @@ private class CoordinatorFixture {
         growingLease.current = true
         player.recordingAdmission = RecordingAdmission.Growing(growingLease)
     }
+
+    fun liveObservation(): LivePlaybackObservation.Active =
+        coordinator.livePlaybackObservation.value as LivePlaybackObservation.Active
 }
 
 private class TestCoordinatorHarness(
@@ -3223,6 +3364,20 @@ private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
     /** Mirrors the live source receiving a status while the stream is stopped. */
     fun statusWhileStopped(issue: SubscriptionIssue?) {
         checkNotNull(timeshiftControls).subscriptionStopped(issue)
+    }
+
+    /** Mirrors the live source on a server restart: replace the held reason, then start a new period. */
+    fun restartLiveStream(subscription: ActiveSubscription) {
+        checkNotNull(timeshiftControls).subscriptionRestarted(null)
+        replaceTimeshiftPeriod(subscription)
+        emitTimeshift(
+            SubscriptionEvent.Started(streams = null, codecMetadata = null, condition = SubscriptionCondition.NO_DETAIL),
+        )
+    }
+
+    /** Mirrors the live source when its stopped subscription terminates. */
+    fun endLiveStream() {
+        checkNotNull(timeshiftControls).subscriptionEnded()
     }
 
     private fun retire(): Pair<Boolean, RetiredRecordingTarget?> {

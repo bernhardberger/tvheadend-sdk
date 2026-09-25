@@ -472,6 +472,7 @@ internal class ModuleBoundaryTest {
             "createTvheadendPlaybackCoordinator",
             "createTvheadendRenderersFactory",
             "createTvheadendLoadControl",
+            "isTvheadendLive",
         )
         val expectedAndroid = setOf(
             "CredentialOperationResult",
@@ -487,7 +488,7 @@ internal class ModuleBoundaryTest {
             "TvheadendServerProfileStore",
             "TvheadendArtwork",
             "TvheadendArtworkLoadException",
-            "ComponentRegistry",
+            "addTvheadendArtwork",
         )
 
         assertPublicInfrastructure("sdk-android", expectedAndroid, unannotatedCount = expectedAndroid.size)
@@ -524,7 +525,7 @@ internal class ModuleBoundaryTest {
             ),
             fakePlaybackFunctions,
         )
-        assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 30)
+        assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 31)
 
         val coordinatorApi = File(
             "../sdk-media3/src/main/kotlin/at/bernhardberger/tvheadend/sdk/media3/" +
@@ -688,7 +689,7 @@ internal class ModuleBoundaryTest {
     ) {
         val source = productionScope(module).files.joinToString("\n") { file -> file.text }
         val declaration = Regex(
-            pattern = "^public\\s+(?:(?:data|sealed|value|fun)\\s+)*(?:annotation\\s+class|enum\\s+class|class|interface|object|fun|const\\s+val|val)\\s+(\\w+)",
+            pattern = "^public\\s+(?:(?:data|sealed|value|fun)\\s+)*(?:annotation\\s+class|enum\\s+class|class|interface|object|fun|const\\s+val|val)\\s+(?:[\\w.]+\\.)?(\\w+)",
             option = RegexOption.MULTILINE,
         )
         val actual = declaration.findAll(source).map { match -> match.groupValues[1] }.toSet()

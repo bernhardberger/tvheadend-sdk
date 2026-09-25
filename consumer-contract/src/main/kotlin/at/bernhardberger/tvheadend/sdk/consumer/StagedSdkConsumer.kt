@@ -4,6 +4,7 @@
 package at.bernhardberger.tvheadend.sdk.consumer
 
 import android.content.Context
+import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import at.bernhardberger.tvheadend.sdk.android.TvheadendArtworkLoadException
 import at.bernhardberger.tvheadend.sdk.android.ServerProfileEditReadResult
@@ -60,6 +61,7 @@ import at.bernhardberger.tvheadend.sdk.media3.TimeshiftContentTarget
 import at.bernhardberger.tvheadend.sdk.media3.TimeshiftContentSeekResult
 import at.bernhardberger.tvheadend.sdk.media3.TimeshiftPlaybackPosition
 import at.bernhardberger.tvheadend.sdk.media3.createTvheadendPlaybackCoordinator
+import at.bernhardberger.tvheadend.sdk.media3.isTvheadendLive
 import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionDiagnostics
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionIssue
 import at.bernhardberger.tvheadend.sdk.testing.FakeTvheadendSession
@@ -312,6 +314,11 @@ public class StagedSdkConsumer(
 
     public val livePlaybackObservation: StateFlow<LivePlaybackObservation>
         get() = coordinator.livePlaybackObservation
+
+    public fun currentLiveServerStopped(): Boolean =
+        (livePlaybackObservation.value as? LivePlaybackObservation.Active)?.serverStopped == true
+
+    public fun isLiveMediaItem(item: MediaItem): Boolean = item.isTvheadendLive()
 
     public fun currentLiveServiceName(): String? = liveDiagnostics.value?.source?.serviceName
 
