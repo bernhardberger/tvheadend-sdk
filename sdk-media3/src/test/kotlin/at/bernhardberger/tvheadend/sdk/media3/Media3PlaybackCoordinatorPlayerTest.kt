@@ -243,29 +243,149 @@ internal class Media3PlaybackCoordinatorPlayerTest {
     }
 
     @Test
-    fun `growing resume refusal preserves the installed target`() = runTest {
-        val access = FakeCoordinatorPlaybackAccess()
-        var admission: RecordingAdmission = RecordingAdmission.Completed(null)
-        val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator()) { _, _ ->
-            admission
-        }
-        val liveToken = PlaybackTargetToken()
-        val live = async {
-            player.installLive(
-                PlayerOperationTicket(),
-                liveToken,
-                TestCoordinatorLiveTarget(),
-                timeshiftControls = controls(liveToken),
-            )
-        }
-        runCurrent()
-        access.looperQueue.runAll()
-        runCurrent()
-        live.await()
-        access.operations.clear()
-        admission = RecordingAdmission.GrowingResumeUnsupported
+    fun `growing resume installs a pending resume that snapshots carry until it applies`() =
+        runTest(timeout = 30.seconds) {
+            val access = FakeCoordinatorPlaybackAccess()
+            val events = PlaybackPlayerEventAccumulator()
+            val player = Media3PlaybackCoordinatorPlayer(access, events) { _, _ ->
+                RecordingAdmission.Growing(CurrentGrowingLease, resumePosition = 8.seconds)
+            }
+            val token = PlaybackTargetToken()
 
-        val recording = async {
+            val result = async {
+                player.installRecording(
+                    PlayerOperationTicket(),
+                    token,
+                    TestCoordinatorRecordingTarget(),
+                    RecordingPlaybackStart.RESUME,
+                )
+            }
+            runCurrent()
+            access.looperQueue.runAll()
+            runCurrent()
+
+            assertEquals(PlaybackPlayerInstallStatus.STARTED, result.await().status)
+            assertEquals(
+                listOf(
+                    "create-growing",
+                    "add-listener",
+                    "set-growing",
+                    "create-growing-resume",
+                    "begin-resume:8",
+                    "prepare",
+                ),
+                access.operations,
+            )
+            assertEquals(
+                listOf(GROWING_RESUME_SETTLE_TIMEOUT_MILLIS),
+                access.resumeTimeouts.scheduledDelays,
+            )
+            val pending = async { player.snapshot(token) }
+            runCurrent()
+            access.looperQueue.runAll()
+            assertEquals(8.seconds, pending.await()?.pendingResumePosition)
+            assertTrue(requireNotNull(pending.await()).precedesPendingResume)
+
+            access.looperQueue.runOnLooper {
+                access.applicationListener?.onPlayWhenReadyChanged(
+                    false,
+                    Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST,
+                )
+            }
+            assertEquals(8.seconds, events.take()?.snapshot?.pendingResumePosition)
+
+            access.deliverResumeMediaState(durationMillis = 12_000, isSeekable = true)
+            assertEquals(listOf(8.seconds), access.resumeSeeks)
+            val applied = async { player.snapshot(token) }
+            runCurrent()
+            access.looperQueue.runAll()
+            assertNull(applied.await()?.pendingResumePosition)
+
+            val stop = async { player.stop(PlayerOperationTicket()) }
+            runCurrent()
+            access.looperQueue.runAll()
+            stop.await()
+            assertTrue(access.operations.contains("close-resume"))
+        }
+
+    @Test
+    fun `completed resume stays pending after the progress floor backstop and seeks once seekable`() =
+        runTest(timeout = 30.seconds) {
+            val access = FakeCoordinatorPlaybackAccess()
+            val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator()) { _, _ ->
+                RecordingAdmission.Completed(180.seconds)
+            }
+            val token = PlaybackTargetToken()
+            val install = async {
+                player.installRecording(
+                    PlayerOperationTicket(),
+                    token,
+                    TestCoordinatorRecordingTarget(),
+                    RecordingPlaybackStart.RESUME,
+                )
+            }
+            runCurrent()
+            access.looperQueue.runAll()
+            install.await()
+            assertEquals(
+                listOf(COMPLETED_RESUME_PROGRESS_FLOOR_TIMEOUT_MILLIS),
+                access.resumeTimeouts.scheduledDelays,
+            )
+            access.deliverResumeMediaState(durationMillis = 3_600_000, isSeekable = false)
+            val floored = async { player.snapshot(token) }
+            runCurrent()
+            access.looperQueue.runAll()
+            assertEquals(180.seconds, floored.await()?.pendingResumePosition)
+
+            access.looperQueue.runOnLooper { access.resumeTimeouts.fireAll() }
+            val afterBackstop = async { player.snapshot(token) }
+            runCurrent()
+            access.looperQueue.runAll()
+            assertNull(afterBackstop.await()?.pendingResumePosition)
+            assertNull(access.resumeState?.outcome)
+
+            access.deliverResumeMediaState(durationMillis = 3_600_000, isSeekable = true)
+            assertEquals(listOf(180.seconds), access.resumeSeeks)
+            assertEquals(RecordingResumeOutcome.APPLIED, access.resumeState?.outcome)
+        }
+
+    @Test
+    fun `stopping before a growing resume applies retires with the pending position`() =
+        runTest(timeout = 30.seconds) {
+            val access = FakeCoordinatorPlaybackAccess()
+            val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator()) { _, _ ->
+                RecordingAdmission.Growing(CurrentGrowingLease, resumePosition = 8.seconds)
+            }
+            val install = async {
+                player.installRecording(
+                    PlayerOperationTicket(),
+                    PlaybackTargetToken(),
+                    TestCoordinatorRecordingTarget(),
+                    RecordingPlaybackStart.RESUME,
+                )
+            }
+            runCurrent()
+            access.looperQueue.runAll()
+            install.await()
+
+            val stop = async { player.stop(PlayerOperationTicket()) }
+            runCurrent()
+            access.looperQueue.runAll()
+
+            val retired = requireNotNull(stop.await().retiredRecording)
+            assertEquals(8.seconds, retired.snapshot.pendingResumePosition)
+            assertEquals(RecordingResumeOutcome.CANCELLED, access.resumeState?.outcome)
+            assertEquals(0, access.resumeTimeouts.active)
+            assertEquals(emptyList<Duration>(), access.resumeSeeks)
+        }
+
+    @Test
+    fun `growing start over installs no resume helper`() = runTest(timeout = 30.seconds) {
+        val access = FakeCoordinatorPlaybackAccess()
+        val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator()) { _, _ ->
+            RecordingAdmission.Growing(CurrentGrowingLease, resumePosition = null)
+        }
+        val install = async {
             player.installRecording(
                 PlayerOperationTicket(),
                 PlaybackTargetToken(),
@@ -275,14 +395,9 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         }
         runCurrent()
         access.looperQueue.runAll()
-        runCurrent()
 
-        assertEquals(
-            PlaybackPlayerInstallStatus.GROWING_RECORDING_RESUME_UNSUPPORTED,
-            recording.await().status,
-        )
-        assertTrue(access.operations.isEmpty())
-        assertTrue(liveToken.isActive())
+        assertEquals(PlaybackPlayerInstallStatus.STARTED, install.await().status)
+        assertEquals(listOf("create-growing", "add-listener", "set-growing", "prepare"), access.operations)
     }
 
     @Test
@@ -1028,18 +1143,36 @@ private class FakeCoordinatorPlaybackAccess(
         }
     }
 
-    override fun createResume(identity: RecordingMediaIdentity): CoordinatorRecordingResume {
+    val resumeTimeouts = FakeResumeTimeouts()
+    var resumeState: RecordingResumeStateMachine? = null
+
+    /** Delivers a media state to the installed resume helper as the player listener would. */
+    fun deliverResumeMediaState(durationMillis: Long?, isSeekable: Boolean) {
+        looperQueue.runOnLooper { resumeState?.onMediaState(true, durationMillis, isSeekable) }
+    }
+
+    override fun createResume(
+        identity: RecordingMediaIdentity,
+        mode: RecordingResumeMode,
+    ): CoordinatorRecordingResume {
         requireApplicationLooper()
-        operations += "create-resume"
-        val resume = RecordingResumeStateMachine { positionMillis ->
-            resumeSeeks += positionMillis.milliseconds
-            snapshot = snapshot.copy(position = positionMillis.milliseconds)
-        }
+        operations += if (mode == RecordingResumeMode.GROWING) "create-growing-resume" else "create-resume"
+        val resume = RecordingResumeStateMachine(
+            seekTo = { positionMillis ->
+                resumeSeeks += positionMillis.milliseconds
+                snapshot = snapshot.copy(position = positionMillis.milliseconds)
+            },
+            scheduleTimeout = resumeTimeouts::schedule,
+        )
+        resumeState = resume
         return object : CoordinatorRecordingResume {
+            override val progressFloor: Duration?
+                get() = resume.progressFloorMillis?.milliseconds
+
             override fun beginPlaybackTarget(position: Duration?) {
                 requireApplicationLooper()
                 operations += "begin-resume:${position?.inWholeSeconds ?: 0}"
-                resume.beginPlaybackTarget(position?.inWholeMilliseconds)
+                resume.beginPlaybackTarget(position?.inWholeMilliseconds, mode)
                 resume.onMediaState(true, snapshot.duration?.inWholeMilliseconds, isSeekable = true)
             }
 

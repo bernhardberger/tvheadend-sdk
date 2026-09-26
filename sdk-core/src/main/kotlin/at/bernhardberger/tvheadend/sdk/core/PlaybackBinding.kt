@@ -110,8 +110,17 @@ public sealed interface RecordingPlaybackAdmission {
         override fun toString(): String = "RecordingPlaybackAdmission.Completed(<redacted>)"
     }
 
-    /** An active single-file MPEG-TS target supports only explicit start-over playback. */
+    /**
+     * An active single-file MPEG-TS target may play while TVHeadend is still appending to it.
+     *
+     * The historical name predates growing resume and is kept for compatibility. [resumePosition]
+     * is the positive saved server position and is present only when [progressCapability] is
+     * supported, exactly as for [Completed]. The Media3 coordinator plays this target only with
+     * supported progress; it starts over without [resumePosition] or for an explicit start-over
+     * request, and otherwise seeks near [resumePosition] once the growing timeline is seekable.
+     */
     public class GrowingStartOverOnly internal constructor(
+        public val resumePosition: Duration?,
         public val progressCapability: RecordingProgressCapability,
     ) : RecordingPlaybackAdmission {
         override fun toString(): String =
@@ -280,13 +289,14 @@ private fun recordingAdmission(
     observation: SessionObservation,
     entry: DvrEntry,
 ): RecordingPlaybackAdmission {
+    val resumePosition = entry.playPosition
+        ?.takeIf { position ->
+            observation.recordingProgressCapability == RecordingProgressCapability.SUPPORTED &&
+                position.isPositive()
+        }
     return when (entry.state) {
         DvrEntryState.COMPLETED -> RecordingPlaybackAdmission.Completed(
-            resumePosition = entry.playPosition
-                ?.takeIf { position ->
-                    observation.recordingProgressCapability == RecordingProgressCapability.SUPPORTED &&
-                        position.isPositive()
-                },
+            resumePosition = resumePosition,
             progressCapability = observation.recordingProgressCapability,
         )
         DvrEntryState.RECORDING -> {
@@ -298,7 +308,8 @@ private fun recordingAdmission(
                 RecordingPlaybackAdmission.TargetUnavailable
             } else if (path.endsWith(".ts", ignoreCase = true)) {
                 RecordingPlaybackAdmission.GrowingStartOverOnly(
-                    observation.recordingProgressCapability,
+                    resumePosition = resumePosition,
+                    progressCapability = observation.recordingProgressCapability,
                 )
             } else {
                 RecordingPlaybackAdmission.GrowingDeferred

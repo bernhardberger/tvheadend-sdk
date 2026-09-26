@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `RecordingPlaybackAdmission.GrowingStartOverOnly.resumePosition` carries the
+  positive saved server position of an active recording when progress is
+  supported. The historical class name is kept.
+
+### Changed
+
+- `RecordingPlaybackStart.RESUME` on an active single-file `.ts` recording with
+  supported progress and a positive saved server position no longer returns
+  `GROWING_RECORDING_RESUME_UNSUPPORTED`. Playback starts at 0:00 and seeks once
+  to the saved position when the growing timeline becomes seekable, or 3 s
+  before the recorded extent when the saved position is within 3 s of or past
+  it. Without a seekable timeline within 20 s the resume is abandoned and
+  playback simply continues. A viewer seek, target replacement, stop or close
+  before the resume seek cancels it. A missing or zero saved position plays from
+  the beginning, like `START_OVER`. The other active-recording gates are
+  unchanged: unknown progress `NOT_READY`, unsupported progress
+  `RECORDING_PROGRESS_UNSUPPORTED`, not exactly one usable file
+  `TARGET_UNAVAILABLE`, non-TS `GROWING_RECORDING_DEFERRED`. The constant stays
+  public but is no longer produced.
+- While a completed or growing resume is pending, checkpoints, pause and stop
+  no longer report a position earlier than the saved one. A pause or stop before
+  a completed-recording resume seek previously overwrote the saved position with
+  about 0. For completed media that stays unseekable, the hold ends after 60 s
+  while the seek itself stays pending until the timeline becomes seekable.
+
 ## [0.21.0]
 
 Released 2026-09-26.

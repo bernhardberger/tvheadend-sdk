@@ -388,6 +388,53 @@ internal class DvrReducerTest {
         assertEquals(emptyList<Any>(), entry.files)
     }
 
+    @Test
+    fun `active recording keeps saved play position across partial updates and completion`() {
+        val reducer = DvrReducer()
+        reducer.accept(
+            MetadataEvent.DvrEntryAdded(
+                generation,
+                GatewayDvrEntry(
+                    id = DvrEntryId(1),
+                    playPosition = 90.seconds,
+                    state = DvrEntryState.RECORDING,
+                ),
+            ),
+        )
+        assertEquals(90.seconds, reducer.snapshot().entries.single().playPosition)
+
+        reducer.accept(
+            MetadataEvent.DvrEntryUpdated(
+                generation,
+                GatewayDvrEntry(id = DvrEntryId(1), state = DvrEntryState.RECORDING, dataSizeBytes = 4_096),
+                GatewayDvrUpdateProvenance.STATS_ONLY,
+            ),
+        )
+        assertEquals(90.seconds, reducer.snapshot().entries.single().playPosition)
+
+        reducer.accept(
+            MetadataEvent.DvrEntryUpdated(
+                generation,
+                GatewayDvrEntry(id = DvrEntryId(1), playPosition = 120.seconds, state = DvrEntryState.RECORDING),
+                GatewayDvrUpdateProvenance.FULL,
+            ),
+        )
+        val active = reducer.snapshot().entries.single()
+        assertEquals(DvrEntryState.RECORDING, active.state)
+        assertEquals(120.seconds, active.playPosition)
+
+        reducer.accept(
+            MetadataEvent.DvrEntryUpdated(
+                generation,
+                GatewayDvrEntry(id = DvrEntryId(1), state = DvrEntryState.COMPLETED),
+                GatewayDvrUpdateProvenance.FULL,
+            ),
+        )
+        val completed = reducer.snapshot().entries.single()
+        assertEquals(DvrEntryState.COMPLETED, completed.state)
+        assertEquals(120.seconds, completed.playPosition)
+    }
+
     private fun entry(
         id: Long,
         enabled: Boolean? = null,

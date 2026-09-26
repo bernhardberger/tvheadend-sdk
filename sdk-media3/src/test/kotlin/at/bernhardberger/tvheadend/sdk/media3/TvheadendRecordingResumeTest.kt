@@ -100,7 +100,81 @@ internal class TvheadendRecordingResumeTest {
             resume.beginPlaybackTarget(180_000.milliseconds)
         }
     }
+
+    @Test
+    fun `growing resume exposes its pending position until its own seek applies`() {
+        val identity = RecordingMediaIdentity()
+        val player = FakeRecordingResumePlayer(
+            currentMediaItem = tvheadendRecordingMediaItem(identity),
+            duration = 12_000,
+        )
+        val resume = TvheadendRecordingResume(player, identity, RecordingResumeMode.GROWING)
+
+        resume.beginPlaybackTarget(8_000.milliseconds)
+        assertEquals(8_000.milliseconds, resume.pendingPosition)
+        assertNull(resume.outcome)
+
+        player.isCurrentMediaItemSeekable = true
+        player.listener?.onTimelineChanged(Timeline.EMPTY, Player.TIMELINE_CHANGE_REASON_SOURCE_UPDATE)
+
+        assertEquals(listOf(8_000L), player.seeks)
+        assertNull(resume.pendingPosition)
+        assertEquals(RecordingResumeOutcome.APPLIED, resume.outcome)
+        assertEquals(listOf(GROWING_RESUME_SETTLE_TIMEOUT_MILLIS), player.timeouts.scheduledDelays)
+        assertEquals(0, player.timeouts.active)
+    }
+
+    @Test
+    fun `a viewer seek before the growing timeline is seekable cancels resume`() {
+        val identity = RecordingMediaIdentity()
+        val player = FakeRecordingResumePlayer(currentMediaItem = tvheadendRecordingMediaItem(identity))
+        val resume = TvheadendRecordingResume(player, identity, RecordingResumeMode.GROWING)
+        resume.beginPlaybackTarget(8_000.milliseconds)
+
+        player.listener?.onPositionDiscontinuity(POSITION, POSITION, Player.DISCONTINUITY_REASON_AUTO_TRANSITION)
+        assertEquals(8_000.milliseconds, resume.pendingPosition)
+        player.listener?.onPositionDiscontinuity(POSITION, POSITION, Player.DISCONTINUITY_REASON_SEEK)
+        player.duration = 12_000
+        player.isCurrentMediaItemSeekable = true
+        player.listener?.onTimelineChanged(Timeline.EMPTY, Player.TIMELINE_CHANGE_REASON_SOURCE_UPDATE)
+
+        assertEquals(emptyList<Long>(), player.seeks)
+        assertNull(resume.pendingPosition)
+        assertEquals(RecordingResumeOutcome.CANCELLED, resume.outcome)
+    }
+
+    @Test
+    fun `an unseekable growing timeline abandons resume at the settle bound`() {
+        val identity = RecordingMediaIdentity()
+        val player = FakeRecordingResumePlayer(
+            currentMediaItem = tvheadendRecordingMediaItem(identity),
+            duration = 12_000,
+        )
+        val resume = TvheadendRecordingResume(player, identity, RecordingResumeMode.GROWING)
+        resume.beginPlaybackTarget(8_000.milliseconds)
+
+        player.timeouts.fireAll()
+
+        assertEquals(emptyList<Long>(), player.seeks)
+        assertNull(resume.pendingPosition)
+        assertEquals(RecordingResumeOutcome.ABANDONED, resume.outcome)
+    }
+
+    @Test
+    fun `close cancels a pending growing resume and its timeout`() {
+        val identity = RecordingMediaIdentity()
+        val player = FakeRecordingResumePlayer(currentMediaItem = tvheadendRecordingMediaItem(identity))
+        val resume = TvheadendRecordingResume(player, identity, RecordingResumeMode.GROWING)
+        resume.beginPlaybackTarget(8_000.milliseconds)
+
+        resume.close()
+
+        assertEquals(0, player.timeouts.active)
+        assertEquals(RecordingResumeOutcome.CANCELLED, resume.outcome)
+    }
 }
+
+private val POSITION = Player.PositionInfo(null, 0, null, null, 0, 0L, 0L, C.INDEX_UNSET, C.INDEX_UNSET)
 
 private class FakeRecordingResumePlayer(
     override var currentMediaItem: MediaItem? = null,
@@ -123,9 +197,16 @@ private class FakeRecordingResumePlayer(
         removeListenerCalls += 1
     }
 
+    val timeouts = FakeResumeTimeouts()
+
     override fun seekTo(positionMillis: Long) {
         seeks += positionMillis
+        // ExoPlayer reports its own seek synchronously as a seek discontinuity.
+        listener?.onPositionDiscontinuity(POSITION, POSITION, Player.DISCONTINUITY_REASON_SEEK)
     }
+
+    override fun postDelayed(delayMillis: Long, action: () -> Unit): AutoCloseable =
+        timeouts.schedule(delayMillis, action)
 
     override fun requireApplicationLooper() {
         check(onApplicationLooper) {

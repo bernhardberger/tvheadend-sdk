@@ -331,6 +331,40 @@ internal class PlaybackBindingTest {
         }
 
     @Test
+    fun `growing admission carries saved progress only when progress is supported and positive`() =
+        kotlinx.coroutines.test.runTest {
+            listOf(
+                RecordingProgressCapability.SUPPORTED to 37.seconds,
+                RecordingProgressCapability.UNKNOWN to null,
+                RecordingProgressCapability.UNSUPPORTED to null,
+            ).forEach { (capability, expected) ->
+                val generation = GatewayGeneration()
+                val fixture = BindingFixture().apply {
+                    publishReady(generation, capability, recordingState = DvrEntryState.RECORDING)
+                }
+                val binding = fixture.factory
+                    .bindRecording(fixture.currentSession, DvrEntryId(7))
+                    .requireBound()
+                val admission = binding.admission as RecordingPlaybackAdmission.GrowingStartOverOnly
+
+                assertEquals(expected, admission.resumePosition, "$capability")
+                assertSame(capability, admission.progressCapability)
+
+                fixture.metadata.acceptMetadata(
+                    MetadataEvent.DvrEntryUpdated(
+                        generation,
+                        recordingEntry(state = DvrEntryState.RECORDING, playPosition = kotlin.time.Duration.ZERO),
+                        GatewayDvrUpdateProvenance.FULL,
+                    ),
+                )
+                assertNull(
+                    (binding.admission as RecordingPlaybackAdmission.GrowingStartOverOnly).resumePosition,
+                    "$capability",
+                )
+            }
+        }
+
+    @Test
     fun `growing progress rejects a lease from another target or generation`() =
         kotlinx.coroutines.test.runTest {
             val fixture = BindingFixture()
@@ -368,6 +402,17 @@ internal class PlaybackBindingTest {
         assertEquals(
             "RecordingPlaybackAdmission.Completed(<redacted>)",
             recording.admission.toString(),
+        )
+        val growing = BindingFixture().apply {
+            publishReady(GatewayGeneration(), recordingState = DvrEntryState.RECORDING)
+        }
+        assertEquals(
+            "RecordingPlaybackAdmission.GrowingStartOverOnly(<redacted>)",
+            growing.factory
+                .bindRecording(growing.currentSession, DvrEntryId(7))
+                .requireBound()
+                .admission
+                .toString(),
         )
     }
 }

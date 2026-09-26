@@ -238,7 +238,10 @@ private class RealLiveSourceAccess(private val dispatcher: CoroutineDispatcher) 
         override fun close() = Unit
     }
 
-    override fun createResume(identity: RecordingMediaIdentity): CoordinatorRecordingResume =
+    override fun createResume(
+        identity: RecordingMediaIdentity,
+        mode: RecordingResumeMode,
+    ): CoordinatorRecordingResume =
         error("recordings are not played here")
 
     override fun setMediaSource(source: CoordinatorMediaSource, startPosition: Duration?) {

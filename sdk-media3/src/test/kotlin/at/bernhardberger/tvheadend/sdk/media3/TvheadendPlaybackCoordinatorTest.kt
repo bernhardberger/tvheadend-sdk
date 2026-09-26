@@ -280,12 +280,13 @@ internal class TvheadendPlaybackCoordinatorTest {
     }
 
     @Test
-    fun `active TS requires explicit start over and unsupported containers remain deferred`() {
+    fun `active TS resumes from saved progress and unsupported containers remain deferred`() {
         val lease = MutableGrowingLease()
         val target = TestCoordinatorRecordingTarget(
             startedGrowing = true,
             admissionState = CoordinatorRecordingAdmission.GrowingStartOverOnly(
                 RecordingProgressCapability.SUPPORTED,
+                resumePosition = 90.seconds,
             ),
             growingResult = RecordingFileResult.Ok(lease),
         )
@@ -296,12 +297,21 @@ internal class TvheadendPlaybackCoordinatorTest {
         )
         assertTrue(startOver is RecordingAdmission.Growing)
         assertSame(lease, (startOver as RecordingAdmission.Growing).lease)
-        assertSame(
-            RecordingAdmission.GrowingResumeUnsupported,
-            admitRecordingTarget(
-                target = target,
-                start = RecordingPlaybackStart.RESUME,
-            ),
+        assertNull(startOver.resumePosition)
+        val resume = admitRecordingTarget(
+            target = target,
+            start = RecordingPlaybackStart.RESUME,
+        ) as RecordingAdmission.Growing
+        assertSame(lease, resume.lease)
+        assertEquals(90.seconds, resume.resumePosition)
+        assertTrue(resume.progressReportingSupported)
+
+        target.admissionState = CoordinatorRecordingAdmission.GrowingStartOverOnly(
+            RecordingProgressCapability.SUPPORTED,
+        )
+        assertNull(
+            (admitRecordingTarget(target, RecordingPlaybackStart.RESUME) as RecordingAdmission.Growing)
+                .resumePosition,
         )
 
         target.admissionState = CoordinatorRecordingAdmission.GrowingDeferred
@@ -387,6 +397,65 @@ internal class TvheadendPlaybackCoordinatorTest {
                 start = RecordingPlaybackStart.START_OVER,
             ),
         )
+    }
+
+    @Test
+    fun `growing resume keeps progress capability gates and never resumes without saved progress`() {
+        val lease = MutableGrowingLease()
+        val target = TestCoordinatorRecordingTarget(
+            startedGrowing = true,
+            growingResult = RecordingFileResult.Ok(lease),
+        )
+        listOf(
+            RecordingProgressCapability.UNKNOWN to RecordingAdmission.NotReady,
+            RecordingProgressCapability.UNSUPPORTED to RecordingAdmission.ProgressUnsupported,
+        ).forEach { (capability, expected) ->
+            // Core only carries a saved position with supported progress; the gate holds regardless.
+            target.admissionState = CoordinatorRecordingAdmission.GrowingStartOverOnly(capability)
+            RecordingPlaybackStart.entries.forEach { start ->
+                assertSame(expected, admitRecordingTarget(target, start))
+            }
+        }
+    }
+
+    @Test
+    fun `growing resume handed off to completion uses the re-read saved position`() {
+        val lease = MutableGrowingLease()
+        val target = TestCoordinatorRecordingTarget(
+            startedGrowing = true,
+            admissionState = CoordinatorRecordingAdmission.GrowingStartOverOnly(
+                RecordingProgressCapability.SUPPORTED,
+                resumePosition = 90.seconds,
+            ),
+            growingResult = RecordingFileResult.Ok(lease),
+        )
+        target.bindGrowingAction = {
+            target.admissionState = completedCoordinatorAdmission(resumePosition = 95.seconds)
+            RecordingFileResult.Ok(lease)
+        }
+
+        val resumed = admitRecordingTarget(target, RecordingPlaybackStart.RESUME) as RecordingAdmission.Growing
+        assertSame(lease, resumed.lease)
+        assertEquals(95.seconds, resumed.resumePosition)
+        target.admissionState = CoordinatorRecordingAdmission.GrowingStartOverOnly(
+            RecordingProgressCapability.SUPPORTED,
+            resumePosition = 90.seconds,
+        )
+        val startOver = admitRecordingTarget(target, RecordingPlaybackStart.START_OVER) as RecordingAdmission.Growing
+        assertNull(startOver.resumePosition)
+
+        target.admissionState = CoordinatorRecordingAdmission.GrowingStartOverOnly(
+            RecordingProgressCapability.SUPPORTED,
+            resumePosition = 90.seconds,
+        )
+        target.bindGrowingAction = {
+            target.admissionState = completedCoordinatorAdmission(
+                resumePosition = 95.seconds,
+                progressCapability = RecordingProgressCapability.UNSUPPORTED,
+            )
+            RecordingFileResult.Ok(lease)
+        }
+        assertSame(RecordingAdmission.NotReady, admitRecordingTarget(target, RecordingPlaybackStart.RESUME))
     }
 
     @Test
@@ -2572,6 +2641,67 @@ internal class TvheadendPlaybackCoordinatorTest {
         runCurrent()
         assertEquals(3, fixture.environment.calls.size)
 
+        fixture.coordinator.shutdown(1.seconds)
+        owner.join()
+    }
+
+    @Test
+    fun `pending resume keeps cadence pause and stop from overwriting saved progress`() =
+        runTest(timeout = 30.seconds) {
+            listOf(false, true).forEach { growing ->
+                val fixture = CoordinatorFixture()
+                if (growing) fixture.admitGrowing()
+                val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+                fixture.player.snapshot = snapshot(position = 0, duration = null)
+                    .copy(pendingResumePosition = 40.seconds)
+                assertEquals(PlaybackTargetResult.STARTED, fixture.coordinator.setRecordingTarget(DvrEntryId(7)))
+
+                fixture.player.snapshot = fixture.player.snapshot.copy(position = 20.seconds)
+                fixture.time.tick(30.seconds)
+                runCurrent()
+                fixture.events.publish(
+                    PlaybackPlayerEvent(
+                        token = fixture.player.requireActiveToken(),
+                        snapshot = fixture.player.snapshot,
+                        paused = true,
+                    ),
+                )
+                runCurrent()
+                fixture.coordinator.stop()
+                runCurrent()
+
+                assertEquals(emptyList<CapturedProgress>(), fixture.environment.calls, "growing=$growing")
+                fixture.coordinator.shutdown(1.seconds)
+                owner.join()
+            }
+        }
+
+    @Test
+    fun `settled resume reports the real position again`() = runTest(timeout = 30.seconds) {
+        val fixture = CoordinatorFixture()
+        fixture.admitGrowing()
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+        fixture.player.snapshot = snapshot(position = 0, duration = null).copy(pendingResumePosition = 40.seconds)
+        fixture.coordinator.setRecordingTarget(DvrEntryId(7))
+
+        // Playback past the pending position is no longer earlier than the saved one.
+        fixture.player.snapshot = snapshot(position = 45, duration = null).copy(pendingResumePosition = 40.seconds)
+        fixture.events.publish(
+            PlaybackPlayerEvent(fixture.player.requireActiveToken(), fixture.player.snapshot, paused = true),
+        )
+        runCurrent()
+        assertProgress(fixture.environment.calls.single(), 7, 45, watched = false)
+
+        // A cancelled or abandoned resume clears the pending position; earlier positions report again.
+        fixture.player.snapshot = snapshot(position = 10, duration = null)
+        fixture.events.publish(
+            PlaybackPlayerEvent(fixture.player.requireActiveToken(), fixture.player.snapshot, paused = true),
+        )
+        runCurrent()
+        fixture.coordinator.stop()
+        runCurrent()
+
+        assertEquals(listOf(45L, 10L, 10L), fixture.environment.calls.map { it.progress.position.inWholeSeconds })
         fixture.coordinator.shutdown(1.seconds)
         owner.join()
     }

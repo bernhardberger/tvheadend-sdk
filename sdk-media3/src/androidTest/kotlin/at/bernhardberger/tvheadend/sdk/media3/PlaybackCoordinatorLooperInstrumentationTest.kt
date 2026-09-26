@@ -140,7 +140,10 @@ private class MainLooperCoordinatorPlaybackAccess : CoordinatorPlaybackAccess {
         }
     }
 
-    override fun createResume(identity: RecordingMediaIdentity): CoordinatorRecordingResume =
+    override fun createResume(
+        identity: RecordingMediaIdentity,
+        mode: RecordingResumeMode,
+    ): CoordinatorRecordingResume =
         error("Recording resume is not expected")
 
     override fun setMediaSource(source: CoordinatorMediaSource, startPosition: Duration?) {

@@ -31,11 +31,16 @@ No other container or inferred codec support was authorized by that decision.
 ## P7-F4 Coordination Contract
 
 - Active playback is admitted only from fresh current DVR state for one stable
-  `.ts` file and only with explicit `RecordingPlaybackStart.START_OVER`.
-  Growing `RESUME` returns `GROWING_RECORDING_RESUME_UNSUPPORTED`; non-TS active
-  targets retain `GROWING_RECORDING_DEFERRED`.
-- The coordinator selects the growth-specific source without installing the
-  completed-recording resume helper. The application still owns the Player,
+  `.ts` file with supported progress, for either start mode: unknown progress
+  returns `NOT_READY`, unsupported progress `RECORDING_PROGRESS_UNSUPPORTED`,
+  anything but exactly one usable file `TARGET_UNAVAILABLE`, and non-TS files
+  `GROWING_RECORDING_DEFERRED`. `START_OVER`, or `RESUME` without a positive
+  saved position, plays from the beginning; `RESUME` with one follows the
+  growing resume rule below. `GROWING_RECORDING_RESUME_UNSUPPORTED` is no
+  longer produced.
+- The coordinator selects the growth-specific source. It installs the resume
+  helper in growing mode only for `RESUME` with a positive saved server
+  position; start-over installs no helper. The application still owns the Player,
   autoplay, presentation, and interactive seek requests.
 - Approximate seeking remains limited by the estimated map to validated,
   already parsed MPEG-2, H.264, or HEVC points. Unvalidated TS codecs remain
@@ -278,6 +283,61 @@ profile. P7-F1 explicitly selected `TsExtractor` for one pass-through MPEG-TS
 fixture and proved the wrapper path only for that profile. No other container or
 codec configuration is supported by inference.
 
+## Growing Resume
+
+Growing `RESUME` uses the saved server position that the DVR observation keeps
+for `RECORDING` entries (`HtspProtocolGatewayTest` maps `playPosition` for an
+active entry; `DvrReducerTest` keeps it across partial updates and completion).
+The admission gates are unchanged from 0.21 and identical for `START_OVER`:
+unknown progress `NOT_READY`, unsupported progress
+`RECORDING_PROGRESS_UNSUPPORTED`, not exactly one usable file
+`TARGET_UNAVAILABLE`, non-TS `GROWING_RECORDING_DEFERRED`. A missing or zero
+saved position plays from the beginning.
+
+- Playback starts at 0:00 and seeks once when the growing timeline is seekable,
+  that is, after the wrapper validated the video codec and the extent probe
+  published a PCR extent. A seek cannot be issued earlier: until then the map
+  is unseekable and Media3 would clamp it to 0.
+- A saved position within 3 s of, or past, the probed extent resumes 3 s before
+  it. The extent is first-to-last PCR; presentation timestamps trail the PCR by
+  up to about 1 s, and saved positions are truncated to whole seconds, so the
+  last seconds of the extent may not be decodable yet. An extent shorter than
+  the margin waits for the next refresh.
+- Resume is abandoned if the timeline is not seekable 20 s after installation.
+  The probe bounds each sample to 5 s and retries after 5 s, so two attempts
+  fit in 15 s; the rest covers opening and the first keyframe. Unsupported
+  codecs, missing PCR evidence and lost lease continuity reach this bound.
+- A viewer seek, target replacement, stop, or close cancels the pending resume.
+  The recording-completed handoff during admission uses the re-read saved
+  position.
+- Until the resume settles, checkpoints, pause and stop reports that would write
+  a position earlier than the saved one are suppressed, so leaving early keeps
+  the saved server position. The same rule now covers completed recordings,
+  where a pause or stop before the resume seek previously reported about 0. A
+  completed recording keeps its 0.21 seek rule: the seek stays pending until
+  the timeline is seekable or the resume is cancelled. Only its progress hold
+  ends after 60 s, so media that stays unseekable reports real progress again
+  as in 0.21.
+- Consumers cannot yet observe whether a resume applied, was cancelled, or was
+  abandoned; the outcome is internal pending a public observation decision.
+
+Evidence: `GrowingRecordingResumeExtractorTest` drives the production extractor
+and extent probe over the half-written MPEG-2 and H.264 fixtures (about 12 s):
+an 8 s position resumed at 8 s and a 30 s position at the extent minus 3 s,
+settling 10-61 ms after extractor init with in-memory reads; an unprobeable
+input stayed pending until the bound and was abandoned at 20 s after at least
+two probe attempts. `GrowingRecordingResumeInstrumentationTest` plays both
+fixtures on a real ExoPlayer through the production coordinator while the file
+keeps growing at its media rate. It measures prepare-to-seek time, frames and
+audio buffers rendered before the seek, and the landing position (within one
+2 s GOP plus 250 ms polling); asserts that checkpoints and the stop report after
+the resume never fall below the saved position, that a stop before the resume
+applies reports nothing, that a saved position within the 3 s margin lands at
+the extent minus 3 s, that a viewer seek cancels, and that a never-seekable
+timeline abandons while playing. It is compiled but has not been run on a
+device. Real-server timing with network file reads, HEVC, and physical-TV
+behaviour remain open gates.
+
 ## Forward-Only Contract If Scope Is Revised
 
 A narrowed implementation can support start-over and uninterrupted forward
@@ -285,7 +345,8 @@ tailing. It does not satisfy the current P7-2 seek requirement.
 
 1. Admit only an explicit growing `START_OVER`. Continue returning a typed
    defer/refusal for growing `RESUME`; never reinterpret the existing default
-   resume request as start-over.
+   resume request as start-over. (The seekable TS path now resumes instead; see
+   Growing Resume.)
 2. Return `C.LENGTH_UNSET` from the growth-specific data source. Keep the
    existing completed-file data source unchanged.
 3. After an empty read, issue `fileStat`. If a known size has advanced beyond
@@ -405,8 +466,7 @@ Deterministic JVM and Android coverage must include:
   behavior;
 - unknown/dynamic growing duration, fail-closed orderly exit, and completed
   natural end;
-- explicit refusal of growing `RESUME` unless separate evidence later proves a
-  safe rule;
+- growing `RESUME` only under the rule and evidence in Growing Resume;
 - explicit wrapper selection plus real Media3 extractor append/seek fixtures
   where redistributable fixtures exist, and source/coordinator device/server
   evidence for supported codecs whose broadcast bytes cannot be committed; and

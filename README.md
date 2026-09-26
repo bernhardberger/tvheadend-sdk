@@ -394,10 +394,17 @@ claim.
 Completed recordings remain playable when recording progress is unknown or
 unsupported; the coordinator starts them from the beginning and disables resume
 and reporting. Supported progress enables normal completed-recording resume and
-reporting. An active target still requires supported progress, one stable `.ts`
-file, and explicit `START_OVER`. `RESUME` returns
-`GROWING_RECORDING_RESUME_UNSUPPORTED`; other active containers remain
-`GROWING_RECORDING_DEFERRED`. Growing seek is approximate and becomes available
+reporting. An active target, for either start mode, still requires supported
+progress (`NOT_READY` while unknown, `RECORDING_PROGRESS_UNSUPPORTED` otherwise)
+and one stable file (`TARGET_UNAVAILABLE`); non-`.ts` files remain
+`GROWING_RECORDING_DEFERRED`. On an admitted `.ts` target, `START_OVER` or a
+missing or zero saved position plays from the beginning; `RESUME` with a
+positive saved position starts at 0:00 and seeks once when the growing timeline
+becomes seekable (3 s before the recorded extent if the saved position is
+within 3 s of or past it). Without a seekable timeline within 20 s the resume is
+abandoned and playback simply continues; a viewer seek, replacement or stop
+cancels it, and no earlier position is reported before the resume seek.
+`GROWING_RECORDING_RESUME_UNSUPPORTED` is no longer returned. Growing seek is approximate and becomes available
 only after the maintained `TsExtractor` wrapper has validated MPEG-2, H.264, or
 HEVC and indexed already parsed keyframes. Other TS codecs remain forward-only.
 

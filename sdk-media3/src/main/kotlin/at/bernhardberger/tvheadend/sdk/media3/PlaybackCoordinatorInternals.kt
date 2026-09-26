@@ -93,6 +93,7 @@ internal sealed interface CoordinatorRecordingAdmission {
 
     data class GrowingStartOverOnly(
         val progressCapability: at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability,
+        val resumePosition: Duration? = null,
     ) : CoordinatorRecordingAdmission
 
     data object GrowingDeferred : CoordinatorRecordingAdmission
@@ -109,7 +110,7 @@ private fun RecordingPlaybackAdmission.toCoordinatorAdmission(): CoordinatorReco
             progressCapability,
         )
         is RecordingPlaybackAdmission.GrowingStartOverOnly ->
-            CoordinatorRecordingAdmission.GrowingStartOverOnly(progressCapability)
+            CoordinatorRecordingAdmission.GrowingStartOverOnly(progressCapability, resumePosition)
         RecordingPlaybackAdmission.GrowingDeferred -> CoordinatorRecordingAdmission.GrowingDeferred
         RecordingPlaybackAdmission.TargetUnavailable ->
             CoordinatorRecordingAdmission.TargetUnavailable
@@ -262,7 +263,13 @@ internal data class PlaybackPlayerSnapshot(
     val periodUid: Any? = null,
     val positionResolutionUs: Long = 1L,
     val videoSelected: Boolean = false,
-)
+    /** The saved position of a pending resume while it still withholds earlier progress. */
+    val pendingResumePosition: Duration? = null,
+) {
+    /** True while a pending resume would make this position overwrite the saved server progress. */
+    val precedesPendingResume: Boolean
+        get() = pendingResumePosition?.let { pending -> position < pending } == true
+}
 
 internal data class PlaybackPlayerEvent(
     val token: PlaybackTargetToken,

@@ -59,7 +59,14 @@ import kotlinx.coroutines.withTimeoutOrNull
 /** Whether recording playback starts at zero or requests the current server resume position. */
 public enum class RecordingPlaybackStart {
     START_OVER,
-    /** Completed recordings may resume; active recordings return a typed unsupported outcome. */
+    /**
+     * Resumes near a positive saved server position; without one, playback starts over.
+     *
+     * Completed recordings seek once their seek map is known and start over when progress is
+     * unknown or unsupported. Active single-file `.ts` recordings with supported progress seek once
+     * the growing timeline becomes seekable; the admission gates for active recordings are the same
+     * as for [START_OVER]. See [TvheadendPlaybackCoordinator.setRecordingTarget].
+     */
     RESUME,
 }
 
@@ -145,7 +152,12 @@ public class PlaybackTargetResult private constructor(
         @JvmField
         public val TARGET_UNAVAILABLE: PlaybackTargetResult = result("TARGET_UNAVAILABLE")
 
-        /** An active recording was requested with server-progress resume instead of start-over. */
+        /**
+         * Formerly returned when an active recording was requested with server-progress resume.
+         *
+         * Active single-file `.ts` recordings now resume, so the coordinator no longer produces
+         * this result. It remains for source and binary compatibility of exhaustive consumers.
+         */
         @JvmField
         public val GROWING_RECORDING_RESUME_UNSUPPORTED: PlaybackTargetResult = categorized(
             "GROWING_RECORDING_RESUME_UNSUPPORTED",
@@ -486,9 +498,25 @@ public class TvheadendPlaybackCoordinator internal constructor(
     /**
      * Replaces the current target with one exact observation-bound recording.
      *
-     * Completed playback starts over when recording progress is unknown or unsupported. Growing
-     * playback requires an explicit [RecordingPlaybackStart.START_OVER], one stable `.ts` file,
-     * and supported progress; saved server progress is never reinterpreted as a growing seek.
+     * Completed playback starts over when recording progress is unknown or unsupported; with
+     * [RecordingPlaybackStart.RESUME] and a positive saved position it seeks there once the seek
+     * map is known.
+     *
+     * Growing playback, for either start mode, returns [PlaybackTargetResult.NOT_READY] while
+     * progress support is unknown, [PlaybackTargetResult.RECORDING_PROGRESS_UNSUPPORTED] when it is
+     * unsupported, [PlaybackTargetResult.TARGET_UNAVAILABLE] without exactly one usable recording file, and
+     * [PlaybackTargetResult.GROWING_RECORDING_DEFERRED] for a file that is not `.ts`. For an
+     * admitted active `.ts` recording, [RecordingPlaybackStart.START_OVER] or a missing or zero
+     * saved position plays from the beginning. [RecordingPlaybackStart.RESUME] with a positive
+     * saved position starts at 0:00 and seeks once as soon as the growing timeline is seekable,
+     * which takes a few seconds while the file extent is probed; a saved position within three
+     * seconds of, or past, the probed end resumes three seconds before it. If the timeline does not
+     * become seekable within 20 seconds, the resume is abandoned and playback simply continues.
+     *
+     * A viewer seek, target replacement or stop cancels a pending resume. Until the resume seek is
+     * issued, progress reporting does not write an earlier position over the saved one; for a
+     * completed recording that stays unseekable, this holds for at most 60 seconds while the seek
+     * itself stays pending.
      */
     public suspend fun setRecordingTarget(
         binding: PlaybackBinding.Recording,
@@ -772,9 +800,6 @@ private fun admitGrowingRecording(
         RecordingProgressCapability.UNSUPPORTED -> return RecordingAdmission.ProgressUnsupported
         RecordingProgressCapability.SUPPORTED -> Unit
     }
-    if (start == RecordingPlaybackStart.RESUME) {
-        return RecordingAdmission.GrowingResumeUnsupported
-    }
     val lease = when (val binding = target.bindGrowingRecording()) {
         is RecordingFileResult.Ok -> binding.value
         is RecordingFileResult.Failed -> return when (binding.failure) {
@@ -788,19 +813,28 @@ private fun admitGrowingRecording(
         }
     }
     if (!lease.isCurrent) return RecordingAdmission.TargetUnavailable
+    // The saved position is taken from the admission re-read after binding, so a recording that
+    // completed meanwhile still resumes from its latest observed server progress.
     return when (val current = target.admission) {
         is CoordinatorRecordingAdmission.Completed -> if (
             current.progressCapability == RecordingProgressCapability.SUPPORTED
         ) {
-            RecordingAdmission.Growing(lease, progressReportingSupported = true)
+            RecordingAdmission.Growing(
+                lease = lease,
+                progressReportingSupported = true,
+                resumePosition = current.resumePosition.takeIf { start == RecordingPlaybackStart.RESUME },
+            )
         } else {
             RecordingAdmission.NotReady
         }
         is CoordinatorRecordingAdmission.GrowingStartOverOnly -> when (current.progressCapability) {
             RecordingProgressCapability.UNKNOWN -> RecordingAdmission.NotReady
             RecordingProgressCapability.UNSUPPORTED -> RecordingAdmission.ProgressUnsupported
-            RecordingProgressCapability.SUPPORTED ->
-                RecordingAdmission.Growing(lease, progressReportingSupported = true)
+            RecordingProgressCapability.SUPPORTED -> RecordingAdmission.Growing(
+                lease = lease,
+                progressReportingSupported = true,
+                resumePosition = current.resumePosition.takeIf { start == RecordingPlaybackStart.RESUME },
+            )
         }
         CoordinatorRecordingAdmission.GrowingDeferred -> RecordingAdmission.GrowingRecordingDeferred
         CoordinatorRecordingAdmission.TargetUnavailable -> RecordingAdmission.TargetUnavailable
@@ -1165,7 +1199,10 @@ private class CoordinatorActor(
                         event.terminalExit,
                         event.growingFinalEndProven,
                     )
-                    event.paused && !target.terminalized && refreshRecordingTarget(target) ->
+                    event.paused &&
+                        !target.terminalized &&
+                        !event.snapshot.precedesPendingResume &&
+                        refreshRecordingTarget(target) ->
                         target.tracker?.let { tracker ->
                             target.reportEpoch?.takeIf { epoch -> epoch.isValid() }?.let { epoch ->
                                 mailbox.offer(
@@ -1190,7 +1227,7 @@ private class CoordinatorActor(
         if (!refreshRecordingTarget(target)) return
         val tracker = target.tracker ?: return
         val epoch = target.reportEpoch?.takeIf { it.isValid() } ?: return
-        val snapshot = player.snapshot(token) ?: return
+        val snapshot = player.snapshot(token)?.takeUnless { it.precedesPendingResume } ?: return
         tracker.onElapsed(timeSource.now(), snapshot.position)?.let { progress ->
             mailbox.offer(
                 PendingPlaybackProgress(
@@ -1214,6 +1251,8 @@ private class CoordinatorActor(
         target.terminalized = true
         ticker?.cancel()
         ticker = null
+        // Leaving before a pending resume applied keeps the saved server position untouched.
+        if (snapshot.precedesPendingResume) return
         if (!refreshRecordingTarget(target)) return
         val tracker = target.tracker ?: return
         val epoch = target.reportEpoch?.takeIf { it.isValid() } ?: return
@@ -1247,7 +1286,7 @@ private class CoordinatorActor(
         val tracker = progressPolicy.tracker()
         target.tracker = tracker
         target.reportEpoch = PlaybackReportEpoch { reportableEntryState(target) != null }
-        player.snapshot(target.token)?.let { snapshot ->
+        player.snapshot(target.token)?.takeUnless { it.precedesPendingResume }?.let { snapshot ->
             tracker.onElapsed(timeSource.now(), snapshot.position)
         }
         ticker?.cancel()
@@ -1511,8 +1550,6 @@ private fun PlaybackPlayerInstallStatus.toPublicTargetResult(): PlaybackTargetRe
     PlaybackPlayerInstallStatus.RECORDING_PROGRESS_UNSUPPORTED ->
         PlaybackTargetResult.RECORDING_PROGRESS_UNSUPPORTED
     PlaybackPlayerInstallStatus.TARGET_UNAVAILABLE -> PlaybackTargetResult.TARGET_UNAVAILABLE
-    PlaybackPlayerInstallStatus.GROWING_RECORDING_RESUME_UNSUPPORTED ->
-        PlaybackTargetResult.GROWING_RECORDING_RESUME_UNSUPPORTED
     PlaybackPlayerInstallStatus.GROWING_RECORDING_DEFERRED ->
         PlaybackTargetResult.GROWING_RECORDING_DEFERRED
     PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE -> PlaybackTargetResult.PLAYER_UNAVAILABLE

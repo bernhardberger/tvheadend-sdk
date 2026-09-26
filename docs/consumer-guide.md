@@ -451,8 +451,8 @@ exact binding to `setRecordingTarget()`.
 
 `setLiveTarget()` and `setRecordingTarget()` return `PlaybackTargetResult`:
 `STARTED`, coordinator lifecycle failures, `NOT_READY`,
-`RECORDING_PROGRESS_UNSUPPORTED`, `TARGET_UNAVAILABLE`, the two typed growing
-recording limitations, or `PLAYER_UNAVAILABLE`. Handle the result before
+`RECORDING_PROGRESS_UNSUPPORTED`, `TARGET_UNAVAILABLE`, the typed growing
+recording limitation `GROWING_RECORDING_DEFERRED`, or `PLAYER_UNAVAILABLE`. Handle the result before
 assuming Media3 accepted the target. Exact values are SDK-owned singletons, not
 an exhaustive enum. Use `isStarted`, `disposition`, or the non-exclusive
 `categories` and retain a fallback when matching an exact value. `isTransient`
@@ -635,10 +635,29 @@ is unknown or unsupported. `RecordingPlaybackStart.RESUME` uses a positive
 server position only when `recordingProgressCapability` is `SUPPORTED`; normal
 completed-recording playback otherwise starts over and disables reporting.
 
-Growing playback is deliberately bounded. It requires supported progress, one
-stable `.ts` file, and explicit `RecordingPlaybackStart.START_OVER`. `RESUME`
-returns `GROWING_RECORDING_RESUME_UNSUPPORTED`; active recordings outside that
-path return `GROWING_RECORDING_DEFERRED`. Growing seek is approximate and starts
+Growing playback is deliberately bounded, and its admission gates are the same
+for `START_OVER` and `RESUME`: unknown progress support returns `NOT_READY`,
+unsupported progress returns `RECORDING_PROGRESS_UNSUPPORTED`, an active
+recording without exactly one usable file returns `TARGET_UNAVAILABLE`, and a
+file that is not `.ts` returns `GROWING_RECORDING_DEFERRED`. For an admitted
+active single-file `.ts` recording, `START_OVER` or a missing or zero saved
+position plays from the beginning. `RESUME` with a positive saved server
+position (exposed as `RecordingPlaybackAdmission.GrowingStartOverOnly.resumePosition`;
+the historical name is kept) starts at 0:00 and seeks once, as soon as the
+growing timeline below becomes seekable. On the maintained fixtures that happens
+in the first probe cycle; slow file reads can delay it, so a brief start from
+0:00 is expected. A saved position within 3 s of, or past, the probed recorded
+extent resumes 3 s before that extent. If the timeline is not seekable within
+20 s (unsupported codec, no usable PCR, lost file continuity), the resume is
+abandoned and playback simply continues where it is. A viewer seek, target
+replacement, stop, or coordinator close before the resume seek cancels it.
+Until the resume seek is issued, checkpoints, pause and stop reports do not
+write a position earlier than the saved one; after the resume settles, progress
+reports follow the real position. For a completed recording whose timeline stays
+unseekable, that hold ends after 60 s while its seek stays pending until the
+timeline becomes seekable. The coordinator does not yet expose whether a resume
+was applied or abandoned. `GROWING_RECORDING_RESUME_UNSUPPORTED` remains public
+for compatibility but is no longer returned. Growing seek is approximate and starts
 only after the maintained MPEG-TS extractor has validated MPEG-2, H.264, or HEVC
 and bounded head/tail PCR reads establish the existing recorded extent. The timeline
 includes content not yet consumed by playback and refreshes while playing or paused.
