@@ -102,13 +102,19 @@ internal class LiveServerStopTargetSwitchTest {
             assertFalse(observation().serverStopped)
             assertEquals(null, observation().subscriptionIssue)
 
-            // The retired channel's status and stop must not reach the new target.
+            // Releasing A unregisters its stream, so late events go straight to A's retained consumer.
+            val beforeLate = observation()
             settle(
                 "late A events",
-                channelA.emit(SubscriptionEvent.Status(SubscriptionCondition.ERROR_REPORTED, SubscriptionIssue.NO_FREE_ADAPTER)),
-                channelA.emit(SubscriptionEvent.Stopped(SubscriptionCondition.NO_DETAIL)),
+                channelA.deliverToOpenedConsumer(
+                    SubscriptionEvent.Status(SubscriptionCondition.ERROR_REPORTED, SubscriptionIssue.NO_FREE_ADAPTER),
+                    SubscriptionEvent.Stopped(SubscriptionCondition.ERROR_REPORTED, SubscriptionIssue.BAD_SIGNAL),
+                ),
             )
+            assertEquals(2, channelA.lateDeliveries)
+            assertEquals(beforeLate, observation())
             assertFalse(observation().serverStopped)
+            assertEquals(null, observation().subscriptionIssue)
 
             access.createPeriod()
             settle("B plays", channelB.started())
@@ -146,8 +152,25 @@ private class ScriptedLiveChannel(private val scope: TestScope) : CoordinatorLiv
 
     override val isCurrent: Boolean = true
 
-    override suspend fun open(consumer: SubscriptionEventConsumer, options: SubscriptionOptions): SubscriptionOpenResult =
-        manager.open(SubscriptionChannelId(1), consumer, options)
+    private var openedConsumer: SubscriptionEventConsumer? = null
+    var lateDeliveries = 0
+        private set
+
+    override suspend fun open(consumer: SubscriptionEventConsumer, options: SubscriptionOptions): SubscriptionOpenResult {
+        openedConsumer = consumer
+        return manager.open(SubscriptionChannelId(1), consumer, options)
+    }
+
+    /** Delivers events to the consumer the live source opened with, bypassing stream registration. */
+    fun deliverToOpenedConsumer(vararg events: SubscriptionEvent): Job {
+        val consumer = checkNotNull(openedConsumer) { "live source never opened this channel" }
+        return scope.launch {
+            events.forEach { event ->
+                consumer.accept(event)
+                lateDeliveries++
+            }
+        }
+    }
 
     fun started(): Job = emit(
         SubscriptionEvent.Started(
