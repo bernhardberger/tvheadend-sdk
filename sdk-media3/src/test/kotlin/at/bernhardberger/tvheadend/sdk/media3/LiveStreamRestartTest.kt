@@ -18,6 +18,7 @@ import androidx.media3.exoplayer.upstream.BandwidthMeter
 import androidx.media3.exoplayer.upstream.DefaultAllocator
 import at.bernhardberger.tvheadend.sdk.playback.ActiveSubscription
 import at.bernhardberger.tvheadend.sdk.playback.MuxFrameType
+import at.bernhardberger.tvheadend.sdk.playback.SkipOutcome
 import at.bernhardberger.tvheadend.sdk.playback.StreamIndex
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionBinary
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
@@ -29,6 +30,8 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionIssue
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekResult
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionState
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStream
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
@@ -38,6 +41,7 @@ import at.bernhardberger.tvheadend.sdk.testing.SubscriptionBinaryFixture
 import java.io.IOException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -51,6 +55,7 @@ import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.CsvSource
 import org.junit.jupiter.params.provider.ValueSource
 import org.junit.jupiter.api.Test
 import kotlin.time.Duration.Companion.seconds
@@ -551,6 +556,135 @@ internal class LiveStreamRestartTest {
     }
 
     @ParameterizedTest
+    @CsvSource("false, false", "false, true", "true, false", "true, true")
+    fun `first server stop publishes one consistent stopped observation`(priorIssue: Boolean, stopIssue: Boolean) = runTest {
+        val harness = RestartSourceHarness(this)
+        try {
+            harness.start()
+            harness.createPeriod()
+            harness.started(SubscriptionStreamType.MPEG2_AUDIO)
+            harness.audio(0)
+            harness.flush()
+            if (priorIssue) {
+                harness.emit(SubscriptionEvent.Status(SubscriptionCondition.ERROR_REPORTED, SubscriptionIssue.BAD_SIGNAL))
+                harness.flush()
+                assertSame(SubscriptionIssue.BAD_SIGNAL, harness.observations.last().subscriptionIssue)
+            }
+            assertTrue(harness.observations.last().timeshiftState is LiveTimeshiftState.Available)
+            harness.observations.clear()
+
+            val issue = SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN.takeIf { stopIssue }
+            val condition = if (stopIssue) SubscriptionCondition.ERROR_REPORTED else SubscriptionCondition.NO_DETAIL
+            harness.emit(SubscriptionEvent.Stopped(condition, issue))
+            harness.flush()
+
+            assertEquals(
+                listOf(LivePlaybackObservation.Active(LiveTimeshiftState.Unavailable, issue, null, serverStopped = true)),
+                harness.observations,
+            )
+        } finally { harness.close() }
+    }
+
+    @Test
+    fun `server stop is set cleared by restart and set again by a second stop`() = runTest {
+        val harness = RestartSourceHarness(this)
+        try {
+            harness.start()
+            harness.createPeriod()
+            harness.started(SubscriptionStreamType.MPEG2_AUDIO)
+            harness.audio(0)
+            harness.flush()
+            assertFalse(harness.observations.last().serverStopped)
+
+            harness.stop()
+            harness.flush()
+            assertTrue(harness.observations.last().serverStopped)
+
+            val restarted = harness.createPeriod()
+            harness.flush()
+            assertTrue(harness.observations.last().serverStopped)
+            harness.started(SubscriptionStreamType.MPEG2_AUDIO)
+            harness.audio(0, 10_000_000)
+            harness.releaseOldPeriods()
+            harness.flush()
+            assertEquals(1, harness.preparations(restarted))
+            assertFalse(harness.observations.last().serverStopped)
+            assertTrue(harness.observations.last().timeshiftState is LiveTimeshiftState.Available)
+
+            harness.observations.clear()
+            harness.stop()
+            harness.flush()
+            assertEquals(
+                listOf(LivePlaybackObservation.Active(LiveTimeshiftState.Unavailable, null, null, serverStopped = true)),
+                harness.observations,
+            )
+        } finally { harness.close() }
+    }
+
+    @Test
+    fun `server stop is cleared when the source reconnects without a terminated event`() = runTest {
+        val harness = RestartSourceHarness(this)
+        try {
+            harness.start()
+            harness.createPeriod()
+            harness.started(SubscriptionStreamType.MPEG2_AUDIO)
+            harness.audio(0)
+            harness.flush()
+            harness.stop()
+            harness.flush()
+            assertTrue(harness.observations.last().serverStopped)
+
+            harness.reprepare()
+            assertFalse(harness.observations.last().serverStopped)
+            assertEquals(2, harness.connection.subscribeCount)
+
+            val reconnected = harness.createPeriod()
+            harness.started(SubscriptionStreamType.MPEG2_AUDIO)
+            harness.audio(0)
+            harness.flush()
+            assertEquals(1, harness.preparations(reconnected))
+            assertFalse(harness.observations.last().serverStopped)
+            assertTrue(harness.observations.last().timeshiftState is LiveTimeshiftState.Available)
+        } finally { harness.close() }
+    }
+
+    @Test
+    fun `server pause and timeshift seek never report a server stop`() = runTest {
+        val harness = RestartSourceHarness(this)
+        try {
+            harness.start()
+            harness.createPeriod()
+            harness.started(SubscriptionStreamType.MPEG2_AUDIO)
+            harness.audio(0)
+            harness.history(0, 20_000_000)
+            harness.flush()
+
+            val pausing = async { harness.bridge.setSpeed(0) }
+            harness.flush()
+            harness.emit(SubscriptionEvent.Speed(0))
+            harness.flush()
+            pausing.await()
+            assertEquals(true, (harness.observations.last().timeshiftState as LiveTimeshiftState.Available).serverPaused)
+
+            val seeking = async { harness.bridge.seek(SubscriptionSeekTarget.Absolute(5.seconds)) }
+            harness.flush()
+            harness.emit(SubscriptionEvent.Skipped(true, SkipOutcome.ACCEPTED, 5_000_000, null))
+            harness.flush()
+            assertTrue(seeking.await() is SubscriptionSeekResult.AcceptedAt)
+
+            val resuming = async { harness.bridge.setSpeed(100) }
+            harness.flush()
+            harness.emit(SubscriptionEvent.Speed(100))
+            harness.audio(0, 5_000_000)
+            harness.flush()
+            resuming.await()
+
+            assertEquals(false, (harness.observations.last().timeshiftState as LiveTimeshiftState.Available).serverPaused)
+            assertTrue(harness.observations.none { it.serverStopped })
+        } finally { harness.close() }
+    }
+
+    @ParameterizedTest
     @ValueSource(booleans = [false, true])
     fun `missing restart and generation loss terminate waiting period without resurrection`(generationLost: Boolean) = runTest {
         val harness = RestartSourceHarness(this)
@@ -583,11 +717,13 @@ private class RestartSourceHarness(private val scope: TestScope) {
     private val preparations = mutableMapOf<MediaPeriod, Int>()
     var state: LiveTimeshiftState = LiveTimeshiftState.Unavailable
     val observedIssues = mutableListOf<SubscriptionIssue?>()
+    val observations = mutableListOf<LivePlaybackObservation.Active>()
     val bridge = LiveTimeshiftControlBridge(
         token = PlaybackTargetToken(),
         publish = { state = it },
         publishIssue = {},
         publishObservation = { observation ->
+            observations += observation
             if (observedIssues.lastOrNull() != observation.subscriptionIssue || observedIssues.isEmpty()) {
                 observedIssues += observation.subscriptionIssue
             }
@@ -639,6 +775,15 @@ private class RestartSourceHarness(private val scope: TestScope) {
     suspend fun emit(event: SubscriptionEvent) { connection.emit(event); scope.runCurrent() }
     fun flush() { scope.runCurrent(); looper.runAll(); scope.runCurrent(); looper.runAll() }
     fun preparations(period: MediaPeriod): Int = preparations[period] ?: 0
+    fun reprepare() {
+        periods.forEach(source::releasePeriod)
+        periods.clear()
+        looper.post {
+            source.releaseSource(caller)
+            source.prepareSource(caller, PlayerId.UNSET, BandwidthMeter.NO_OP)
+        }
+        flush()
+    }
     fun releaseOldPeriods() { periods.dropLast(1).forEach(source::releasePeriod) }
     fun select(period: TvheadendLiveMediaPeriod, index: Int): SampleStream {
         val streams = arrayOfNulls<SampleStream>(1)

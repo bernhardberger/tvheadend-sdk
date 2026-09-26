@@ -33,9 +33,12 @@ the layout is unchanged. The application-owned Player and its play intent are re
   Started, subscription end, or target retirement. `LivePlaybackObservation.Active.serverStopped`
   is true for the same interval, including a stop without an issue, which is otherwise
   indistinguishable from a healthy subscription. A replacement period bound to the same
-  stopped subscription does not clear it. Timeshift state becomes unavailable until
-  replacement evidence arrives. Direct infrastructure consumers still receive the ordered
-  stop and its issue outside the uncertain-seek exception below.
+  stopped subscription does not clear it. Timeshift state is unavailable while no period is
+  bound. When the subscription has a timeshift grant, a replacement period bound to the stopped
+  subscription reports it available again, but without a timeline, because status received while
+  stopped is dropped; a timeline needs new status evidence after the next Started. Direct
+  infrastructure consumers still receive the ordered stop and its issue outside the
+  uncertain-seek exception below.
 
 ## Media3 and timestamp handling
 

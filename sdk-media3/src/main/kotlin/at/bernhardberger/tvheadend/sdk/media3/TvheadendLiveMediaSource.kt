@@ -214,7 +214,7 @@ internal class TvheadendLiveMediaSource(
             when (event) {
                 is SubscriptionEvent.Stopped -> {
                     // The stop reason stays observable while no period receives events.
-                    timeshiftControls?.subscriptionStopped(event.issue)
+                    timeshiftControls?.subscriptionStopped(event.issue, periodInterrupted = !stopped)
                     if (!stopped) replaceEpochLocked()
                     stopped = true
                     started = false

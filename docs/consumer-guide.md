@@ -558,10 +558,11 @@ add the issue text when one is present. The flag clears when the stream starts
 again, the subscription ends, or the target is retired.
 
 To tell a live item from a recording, use `MediaItem.isTvheadendLive()` on the
-player's current media item. It is true only for items installed by the SDK's
-live source, including timeshift on it, and false for recordings, including
-growing recordings, and for foreign items. Do not match media ids or URIs
-yourself.
+player's current media item. It is true for items that carry the media id the
+SDK reserves for its live source, which the live source sets on its items,
+including during timeshift. SDK recording items, including growing recordings,
+never carry it. The check compares only the media id, so do not use that id for
+your own items, and do not match media ids or URIs yourself.
 
 `subscriptionIssue` exposes only the current live target's canonical
 `SubscriptionIssue`. Unknown or localized server values map to `UNKNOWN`; raw

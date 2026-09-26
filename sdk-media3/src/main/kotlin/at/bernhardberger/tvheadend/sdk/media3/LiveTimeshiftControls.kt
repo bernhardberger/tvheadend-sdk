@@ -457,8 +457,11 @@ internal class LiveTimeshiftControlBridge(
     /**
      * Publishes the server stop and the issue of a server-stopped subscription, or of a status
      * received while it is stopped, until a period observes a later start or the subscription ends.
+     *
+     * When [periodInterrupted] is true the caller interrupts the current period next, so a bound
+     * period publishes the stopped state once from its detach instead of a stale timeshift state.
      */
-    internal fun subscriptionStopped(issue: SubscriptionIssue?) {
+    internal fun subscriptionStopped(issue: SubscriptionIssue?, periodInterrupted: Boolean = false) {
         synchronized(lock) {
             if (retired || !token.isActive()) return
             stoppedIssueHeld = true
@@ -466,7 +469,9 @@ internal class LiveTimeshiftControlBridge(
             val wasStopped = serverStopped
             serverStopped = true
             val previous = currentIssue
-            if (updateIssueLocked() != previous || !wasStopped) publishCurrentLocked()
+            val issueChanged = updateIssueLocked() != previous
+            if (periodInterrupted && activeAttachment != null) return
+            if (issueChanged || !wasStopped) publishCurrentLocked()
         }
     }
 
