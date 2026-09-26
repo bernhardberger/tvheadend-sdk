@@ -23,11 +23,16 @@
   `RECORDING_PROGRESS_UNSUPPORTED`, not exactly one usable file
   `TARGET_UNAVAILABLE`, non-TS `GROWING_RECORDING_DEFERRED`. The constant stays
   public but is no longer produced.
-- While a completed or growing resume is pending, checkpoints, pause and stop
-  no longer report a position earlier than the saved one. A pause or stop before
-  a completed-recording resume seek previously overwrote the saved position with
-  about 0. For completed media that stays unseekable, the hold ends after 60 s
-  while the seek itself stays pending until the timeline becomes seekable.
+- While the progress hold of a pending completed or growing resume with a
+  positive saved position remains active, checkpoints, pause and stop no longer
+  report a position earlier than the saved one. The hold ends when the resume is
+  applied (its seek is issued), cancelled, or abandoned: a growing resume is
+  abandoned when no seekable timeline appears within 20 s, and a completed
+  resume, as in 0.21, when the saved position is at or past the known duration.
+  For a completed recording the hold also ends after a 60 s reporting-only
+  backstop; its seek itself stays pending until the timeline becomes seekable. A
+  pause or stop before a completed-recording resume seek previously overwrote
+  the saved position with about 0.
 
 ## [0.21.0]
 

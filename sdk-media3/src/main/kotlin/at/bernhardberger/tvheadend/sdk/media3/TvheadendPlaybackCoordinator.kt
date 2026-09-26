@@ -513,9 +513,10 @@ public class TvheadendPlaybackCoordinator internal constructor(
      * seconds of, or past, the probed end resumes three seconds before it. If the timeline does not
      * become seekable within 20 seconds, the resume is abandoned and playback simply continues.
      *
-     * A viewer seek, target replacement or stop cancels a pending resume. Until the resume seek is
-     * issued, progress reporting does not write an earlier position over the saved one; for a
-     * completed recording that stays unseekable, this holds for at most 60 seconds while the seek
+     * A viewer seek, target replacement or stop cancels a pending resume. While its progress hold
+     * remains active, progress reporting does not write an earlier position over the saved one. The
+     * hold ends when the resume seek is issued or the resume is cancelled or abandoned; for a
+     * completed recording that stays unseekable it ends after at most 60 seconds while the seek
      * itself stays pending.
      */
     public suspend fun setRecordingTarget(

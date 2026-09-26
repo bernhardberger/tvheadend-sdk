@@ -42,7 +42,11 @@ extensions.configure<LibraryExtension> {
         resources.directories.add(rootProject.file("legal").path)
     }
     sourceSets.named("test") {
+        kotlin.directories.add(file("src/sharedTest/kotlin").path)
         resources.directories.add(file("src/androidTest/assets").path)
+    }
+    sourceSets.named("androidTest") {
+        kotlin.directories.add(file("src/sharedTest/kotlin").path)
     }
     packaging {
         resources.excludes.remove("/META-INF/LICENSE")

@@ -24,3 +24,16 @@ Two independent invocations produced identical bytes. `ffprobe` identifies one
 | File | Size | SHA-256 |
 |---|---:|---|
 | `pass-through.ts` | 3,722,776 | `ac5450c47d40b34277e3c304392f2476273717c9fcf8c91b78252702052a2447` |
+
+`keyframes.csv` lists every video keyframe as `byte_position,source_ms`: the
+byte offset of the transport packet that starts its PES and its presentation
+time in milliseconds relative to the first PCR (base 0 at 90 kHz). Tests use it
+to check resume landings against source content. It was derived with:
+
+```text
+ffprobe -v error -select_streams v:0 -show_entries packet=pts,pos,flags \
+  -of csv=p=0 pass-through.ts
+```
+
+keeping rows whose flags contain `K` and computing
+`source_ms = (pts - 0) / 90`.

@@ -1,6 +1,6 @@
 package android.util
 
-// Implements only the operations exercised by Media3's H264Reader and TsExtractor.
+// Implements only the operations exercised by Media3's TS payload readers and TsExtractor.
 class SparseArray<E> {
     private val values = sortedMapOf<Int, E>()
 
@@ -13,6 +13,10 @@ class SparseArray<E> {
     }
 
     operator fun get(key: Int): E? = values[key]
+
+    fun remove(key: Int) {
+        values.remove(key)
+    }
 
     fun indexOfKey(key: Int): Int = values.keys.indexOf(key)
 

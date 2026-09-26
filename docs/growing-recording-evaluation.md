@@ -299,9 +299,10 @@ saved position plays from the beginning.
   published a PCR extent. A seek cannot be issued earlier: until then the map
   is unseekable and Media3 would clamp it to 0.
 - A saved position within 3 s of, or past, the probed extent resumes 3 s before
-  it. The extent is first-to-last PCR; presentation timestamps trail the PCR by
-  up to about 1 s, and saved positions are truncated to whole seconds, so the
-  last seconds of the extent may not be decodable yet. An extent shorter than
+  it. The extent is first-to-last PCR and does not state how far presentation
+  timestamps sit from the PCR; in the H.264 fixture video PTS leads the PCR by
+  about 0.78 s. Saved positions are truncated to whole seconds, so the last
+  seconds of the extent may not be decodable yet. An extent shorter than
   the margin waits for the next refresh.
 - Resume is abandoned if the timeline is not seekable 20 s after installation.
   The probe bounds each sample to 5 s and retries after 5 s, so two attempts
@@ -310,8 +311,9 @@ saved position plays from the beginning.
 - A viewer seek, target replacement, stop, or close cancels the pending resume.
   The recording-completed handoff during admission uses the re-read saved
   position.
-- Until the resume settles, checkpoints, pause and stop reports that would write
-  a position earlier than the saved one are suppressed, so leaving early keeps
+- While the progress hold remains active (until the resume settles, and at most
+  60 s for a completed recording), checkpoints, pause and stop reports that would
+  write a position earlier than the saved one are suppressed, so leaving early keeps
   the saved server position. The same rule now covers completed recordings,
   where a pause or stop before the resume seek previously reported about 0. A
   completed recording keeps its 0.21 seek rule: the seek stays pending until
@@ -326,17 +328,87 @@ and extent probe over the half-written MPEG-2 and H.264 fixtures (about 12 s):
 an 8 s position resumed at 8 s and a 30 s position at the extent minus 3 s,
 settling 10-61 ms after extractor init with in-memory reads; an unprobeable
 input stayed pending until the bound and was abandoned at 20 s after at least
-two probe attempts. `GrowingRecordingResumeInstrumentationTest` plays both
-fixtures on a real ExoPlayer through the production coordinator while the file
-keeps growing at its media rate. It measures prepare-to-seek time, frames and
-audio buffers rendered before the seek, and the landing position (within one
-2 s GOP plus 250 ms polling); asserts that checkpoints and the stop report after
-the resume never fall below the saved position, that a stop before the resume
-applies reports nothing, that a saved position within the 3 s margin lands at
-the extent minus 3 s, that a viewer seek cancels, and that a never-seekable
-timeline abandons while playing. It is compiled but has not been run on a
-device. Real-server timing with network file reads, HEVC, and physical-TV
-behaviour remain open gates.
+two probe attempts.
+
+Player sample times have a different origin than the fixture's source times,
+so rendered presentation times alone cannot show which source content played.
+Landing is therefore checked against FFmpeg keyframe tables committed next to each fixture (`keyframes.csv`,
+source byte position to source time relative to the first PCR). A landing is
+accepted only if the source keyframes reachable from where playback read lie
+within 1 s before to 3 s after the expected target: the PCR binary search
+stops at or before the target, the next keyframe follows within one 2 s GOP,
+and in these fixtures video PTS leads PCR by under 1 s. The expected target is derived from the
+saved position and probed extent, never from the seek the resume issued. On the
+JVM the test follows the production extractor seek from the resume target
+through the reader reopen to the byte where parsing resumes; landings were
+9.76 s and 8.78 s source keyframes for an 8 s target and 9.76 s and 10.78 s for
+the clamped edge targets. Its negative controls shift the same production seek
+6 s early and read from offset 0; both are rejected. Mutating the resume
+seek to land 6 s early also fails the landing test.
+
+`GrowingRecordingResumeInstrumentationTest` plays both fixtures on a real
+ExoPlayer through the production coordinator while the file keeps growing at
+its media rate, with the coordinator on its own dispatcher so its cadence runs
+during playback. A test-only wrapper around the production video renderer
+records, in playback-thread order, the renderer reset to the resume target,
+every sample the renderer reads, and every frame it renders. The reset flushes
+the decoder, so the first frame rendered after it is the first post-seek frame;
+the first sample read after it must be a keyframe, and the next ten frames must
+continue with steps of 1-200 ms. The wrapper also records the size and CRC-32
+of the data each sample read delivered, reading the input buffer without
+changing its position or limit. Before playback the test parses the whole
+fixture on the device with the production TS extractor and aligns its video
+keyframe samples with the FFmpeg table by order: the counts must match, every
+keyframe's time from the first keyframe must agree within 1 ms, and every
+keyframe's data identity must be unique. The landing keyframe is then identified
+by its data alone, independent of which reader delivered it or how far readers
+had read ahead; a read without sample data, or data matching no source
+keyframe, fails the run. Sample and rendered times share one clock whose offset
+is constant within a post-seek extractor run, so the first frame's source time
+is the matched keyframe's source time plus the rendered frame's distance from
+that keyframe's sample time, rounded outward to whole milliseconds, and it must
+lie in the window. JVM tests run the same extractor and alignment over both
+fixtures (13 MPEG-2 and 12 H.264 keyframes, all unique), confirm that after a
+seek to either of the two tested positions in each GOP interval (just past a
+keyframe's first packet and the last packet before the next keyframe) the first
+extracted keyframe carries the same data identity as in the full parse, and check the classifier: same-size data of
+another keyframe cannot stand in, a matched keyframe inside the window whose
+first frame falls outside it is rejected, and the rounding edges hold.
+
+The earlier device rule treated every source keyframe the landing reader had
+delivered as a candidate. The first G10 run rejected its landings because those
+candidate ranges spanned up to 6 s past the landing keyframe, which is
+consistent with reader read-ahead; that run did not prove the landings correct.
+A following revision delayed post-seek reads to narrow the candidates, which
+changed delivery timing and could hold the landing keyframe itself; content
+identification replaces both, and the fixture recording now delivers bytes up
+to its growing end without holds.
+
+The device test also measures prepare-to-seek time and prepare to the first
+post-seek frame, plus frames and decoder buffers output
+before the seek. It holds a checkpoint delivery at the reporting boundary,
+stops meanwhile, and only after the coordinator lifetime has drained asserts
+exactly one report after the stop request, delivered last, never below the
+saved position or the earlier checkpoints. It also asserts that a stop before
+the resume applies reports nothing even after several cadence intervals, that a
+saved position within the 3 s margin lands at the extent minus 3 s, that a
+viewer seek cancels, and that a never-seekable timeline abandons while playing.
+The keyframe tables and the landing observations (reset, landing keyframe
+identity and match, first rendered frames) are published as status keys before
+they are validated, so a failed run still carries them.
+On a TCL G10 Android TV all five tests passed, first with content
+identification alone and again after the observations were published before
+validation, with identical landings. Each landing found the reset, read a
+keyframe first and matched it to a source keyframe (12 of 12 H.264, 13 of 13
+MPEG-2 aligned). For the 8 s target the first rendered source frame was 8.78 s
+(H.264) and 9.76 s (MPEG-2); for the clamped edge targets 10.78 s (H.264,
+target 8.76 s, extent 11.76 s) and 9.76 s (MPEG-2, target 9 s, extent 12 s).
+Prepare to the first post-seek frame took 311-409 ms, except 957-1016 ms for
+the ordinary MPEG-2 landing. Through the TVHeadend Player on the same TV
+against a real server, resumed in-progress recordings reached their saved
+positions about 2 s (HD) and 3 s (SD) after start. Sustained real-server
+timing with network file reads, HEVC, and physical-TV behaviour remain open
+gates.
 
 ## Forward-Only Contract If Scope Is Revised
 

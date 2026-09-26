@@ -21,3 +21,16 @@ ffmpeg -f lavfi -i testsrc2=size=640x360:rate=25 \
 | File | Size | SHA-256 |
 |---|---:|---|
 | `h264-synthetic.ts` | 3,060,264 | `46381f4fd260a7fefccddca432223e41bd04ab4d32c1406bbedc67d97227d950` |
+
+`keyframes.csv` lists every video keyframe as `byte_position,source_ms`: the
+byte offset of the transport packet that starts its PES and its presentation
+time in milliseconds relative to the first PCR (base 63000 at 90 kHz). Tests use it
+to check resume landings against source content. It was derived with:
+
+```text
+ffprobe -v error -select_streams v:0 -show_entries packet=pts,pos,flags \
+  -of csv=p=0 h264-synthetic.ts
+```
+
+keeping rows whose flags contain `K` and computing
+`source_ms = (pts - 63000) / 90`.

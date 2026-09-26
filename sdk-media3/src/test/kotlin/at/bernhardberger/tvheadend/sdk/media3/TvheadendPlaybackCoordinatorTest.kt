@@ -2677,6 +2677,35 @@ internal class TvheadendPlaybackCoordinatorTest {
         }
 
     @Test
+    fun `settled resume writes cadence checkpoints before stop`() = runTest(timeout = 30.seconds) {
+        val fixture = CoordinatorFixture()
+        fixture.admitGrowing()
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+        fixture.player.snapshot = snapshot(position = 0, duration = null).copy(pendingResumePosition = 40.seconds)
+        fixture.coordinator.setRecordingTarget(DvrEntryId(7))
+        fixture.player.snapshot = fixture.player.snapshot.copy(position = 20.seconds)
+        fixture.time.tick(30.seconds)
+        runCurrent()
+        assertEquals(emptyList<CapturedProgress>(), fixture.environment.calls)
+
+        // The resume applied: the first cadence observation after it starts a fresh interval.
+        fixture.player.snapshot = snapshot(position = 41, duration = null)
+        fixture.time.tick(30.seconds)
+        runCurrent()
+        fixture.player.snapshot = snapshot(position = 71, duration = null)
+        fixture.time.tick(30.seconds)
+        runCurrent()
+        assertProgress(fixture.environment.calls.single(), 7, 71, watched = false)
+
+        fixture.player.snapshot = snapshot(position = 75, duration = null)
+        fixture.coordinator.stop()
+        runCurrent()
+        assertEquals(listOf(71L, 75L), fixture.environment.calls.map { it.progress.position.inWholeSeconds })
+        fixture.coordinator.shutdown(1.seconds)
+        owner.join()
+    }
+
+    @Test
     fun `settled resume reports the real position again`() = runTest(timeout = 30.seconds) {
         val fixture = CoordinatorFixture()
         fixture.admitGrowing()

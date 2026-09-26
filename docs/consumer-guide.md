@@ -651,11 +651,12 @@ extent resumes 3 s before that extent. If the timeline is not seekable within
 20 s (unsupported codec, no usable PCR, lost file continuity), the resume is
 abandoned and playback simply continues where it is. A viewer seek, target
 replacement, stop, or coordinator close before the resume seek cancels it.
-Until the resume seek is issued, checkpoints, pause and stop reports do not
-write a position earlier than the saved one; after the resume settles, progress
-reports follow the real position. For a completed recording whose timeline stays
-unseekable, that hold ends after 60 s while its seek stays pending until the
-timeline becomes seekable. The coordinator does not yet expose whether a resume
+While the progress hold remains active, checkpoints, pause and stop reports do
+not write a position earlier than the saved one. The hold ends when the resume
+seek is issued or the resume is cancelled or abandoned, and after at most 60 s
+for a completed recording whose timeline stays unseekable; that seek stays
+pending until the timeline becomes seekable. After the hold ends, progress
+reports follow the real position. The coordinator does not yet expose whether a resume
 was applied or abandoned. `GROWING_RECORDING_RESUME_UNSUPPORTED` remains public
 for compatibility but is no longer returned. Growing seek is approximate and starts
 only after the maintained MPEG-TS extractor has validated MPEG-2, H.264, or HEVC
