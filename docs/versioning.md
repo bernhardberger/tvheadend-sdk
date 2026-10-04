@@ -1,16 +1,16 @@
 # Versioning and compatibility
 
-The source is configured for the provisional `0.22.0` release under these
+The source is configured for the provisional `0.23.0` release under these
 coordinates:
 
-- `at.bernhardberger.tvheadend:sdk-android:0.22.0`
-- `at.bernhardberger.tvheadend:sdk-core:0.22.0`
-- `at.bernhardberger.tvheadend:sdk-media3:0.22.0`
-- `at.bernhardberger.tvheadend:sdk-playback:0.22.0`
-- `at.bernhardberger.tvheadend:sdk-testing:0.22.0`
+- `at.bernhardberger.tvheadend:sdk-android:0.23.0`
+- `at.bernhardberger.tvheadend:sdk-core:0.23.0`
+- `at.bernhardberger.tvheadend:sdk-media3:0.23.0`
+- `at.bernhardberger.tvheadend:sdk-playback:0.23.0`
+- `at.bernhardberger.tvheadend:sdk-testing:0.23.0`
 
 Source, local staging, and CI
-do not establish that the configured `0.22.0` coordinates are publicly available;
+do not establish that the configured `0.23.0` coordinates are publicly available;
 check Maven Central before selecting them.
 
 The signed `v0.3.3` tag is retained as development-release evidence after its
@@ -27,19 +27,15 @@ must never be replaced.
 
 ## Provisional 0.x policy
 
-Unreleased `0.23.0` adds the abstract `DvrRepository.changes: Flow<DvrChange>`
-member and public `DvrChange`, `DvrChangeKind`, `DvrChangeOrigin` and
-`DvrMutationKind` types. This is a pre-1.0 minor source/binary break for custom
-repository implementations: implement the new stream and recompile consumers.
-`FakeDvrRepository` includes `changes` and `emitChange`. Existing snapshot
-`DvrEntryState` and mutation-confirmation semantics are unchanged. The configured
-release remains `0.22.0` until release preparation; a staged named `0.23.0` candidate
-does not establish public availability.
-
 While the major version is zero, the public API and behavior are provisional.
 No source, binary, or behavioral compatibility is promised for the provisional
 0.x line. A known breaking change requires the next minor version, not a patch
-version. Patch versions are reserved for backward-compatible fixes. The `0.22.0`
+version. Patch versions are reserved for backward-compatible fixes. The `0.23.0`
+minor adds the abstract `DvrRepository.changes: Flow<DvrChange>` member and public
+`DvrChange`, `DvrChangeKind`, `DvrChangeOrigin` and `DvrMutationKind` types: custom
+repository implementations must implement the new stream and consumers recompile.
+`FakeDvrRepository` includes `changes` and `emitChange`. Snapshot `DvrEntryState` and
+mutation-confirmation semantics are unchanged. The `0.22.0`
 minor resumes active single-file TS recordings at their saved server position
 instead of refusing `RecordingPlaybackStart.RESUME` with
 `GROWING_RECORDING_RESUME_UNSUPPORTED`, reports no position earlier than the
