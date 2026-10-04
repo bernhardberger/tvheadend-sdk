@@ -11,6 +11,8 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeDvrRepository : a
 	public fun deleteAutorecRule-xYrR27c (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun deleteEntry-jvmoZCg (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun deleteTimerecRule-m_EujJA (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun emitChange (Lat/bernhardberger/tvheadend/sdk/core/DvrChange;)V
+	public fun getChanges ()Lkotlinx/coroutines/flow/Flow;
 	public fun scheduleEntry (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Lat/bernhardberger/tvheadend/sdk/core/DvrScheduleRequest;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun scriptCancelEntry (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
 	public final fun scriptCreateAutorecRule (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V

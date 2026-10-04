@@ -1628,6 +1628,7 @@ private fun String?.toDvrFailure(): GatewayDvrFailure? = when (this) {
     null -> null
     "none" -> GatewayDvrFailure.NONE
     "File missing" -> GatewayDvrFailure.FILE_MISSING
+    "Aborted by user" -> GatewayDvrFailure.ABORTED
     else -> GatewayDvrFailure.PRESENT
 }
 

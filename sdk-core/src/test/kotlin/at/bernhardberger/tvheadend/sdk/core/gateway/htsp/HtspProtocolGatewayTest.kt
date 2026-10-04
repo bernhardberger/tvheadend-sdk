@@ -768,6 +768,28 @@ internal class HtspProtocolGatewayTest {
     }
 
     @Test
+    fun `DVR user abort is distinct from a recording failure`() = runTest {
+        val generation = HtspConnectionGeneration()
+        val fake = FakeHtspConnection().apply {
+            eventsFlow = flowOf(
+                HtspTransportEvent.ServerMessage(
+                    HtspDvrEntryUpdateMessage(entryId = 1, state = "completed", error = "Aborted by user"),
+                    generation,
+                    1,
+                ),
+                HtspTransportEvent.ServerMessage(
+                    HtspDvrEntryUpdateMessage(entryId = 1, state = "completed", error = "other failure"),
+                    generation,
+                    2,
+                ),
+            )
+        }
+        val events = HtspProtocolGateway(fake).metadata.toList()
+        assertEquals(GatewayDvrFailure.ABORTED, (events[0] as MetadataEvent.DvrEntryUpdated).entry.failure)
+        assertEquals(GatewayDvrFailure.PRESENT, (events[1] as MetadataEvent.DvrEntryUpdated).entry.failure)
+    }
+
+    @Test
     fun `DVR failure none is not an error and subscription tokens include source fallbacks`() = runTest {
         val generation = HtspConnectionGeneration()
         val fake = FakeHtspConnection().apply {

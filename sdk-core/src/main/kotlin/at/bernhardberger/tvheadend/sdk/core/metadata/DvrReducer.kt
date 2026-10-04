@@ -213,7 +213,7 @@ internal data class ReducedDvrEntry private constructor(
 
     private fun resolvedState(): DvrEntryState? = when (failure) {
         GatewayDvrFailure.FILE_MISSING -> DvrEntryState.FILE_MISSING
-        GatewayDvrFailure.PRESENT -> when (state) {
+        GatewayDvrFailure.ABORTED, GatewayDvrFailure.PRESENT -> when (state) {
             DvrEntryState.RECORDING -> DvrEntryState.RECORDING_ERROR
             DvrEntryState.COMPLETED -> DvrEntryState.COMPLETED_ERROR
             null -> DvrEntryState.UNKNOWN
@@ -493,6 +493,8 @@ internal class DvrReducer {
     private val autorecRules = linkedMapOf<AutorecRuleId, ReducedAutorecRule>()
     private val timerecRules = linkedMapOf<TimerecRuleId, ReducedTimerecRule>()
     private var cachedSnapshot: DvrSnapshot? = null
+
+    internal fun entry(id: DvrEntryId): ReducedDvrEntry? = entries[id]
 
     internal fun clear() {
         cachedSnapshot = null

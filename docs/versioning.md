@@ -27,6 +27,15 @@ must never be replaced.
 
 ## Provisional 0.x policy
 
+Unreleased `0.23.0` adds the abstract `DvrRepository.changes: Flow<DvrChange>`
+member and public `DvrChange`, `DvrChangeKind`, `DvrChangeOrigin` and
+`DvrMutationKind` types. This is a pre-1.0 minor source/binary break for custom
+repository implementations: implement the new stream and recompile consumers.
+`FakeDvrRepository` includes `changes` and `emitChange`. Existing snapshot
+`DvrEntryState` and mutation-confirmation semantics are unchanged. The configured
+release remains `0.22.0` until release preparation; a staged named `0.23.0` candidate
+does not establish public availability.
+
 While the major version is zero, the public API and behavior are provisional.
 No source, binary, or behavioral compatibility is promised for the provisional
 0.x line. A known breaking change requires the next minor version, not a patch

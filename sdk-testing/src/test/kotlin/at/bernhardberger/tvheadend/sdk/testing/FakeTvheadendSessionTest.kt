@@ -16,6 +16,9 @@ import at.bernhardberger.tvheadend.sdk.core.CacheStatistics
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
+import at.bernhardberger.tvheadend.sdk.core.DvrChange
+import at.bernhardberger.tvheadend.sdk.core.DvrChangeKind
+import at.bernhardberger.tvheadend.sdk.core.DvrChangeOrigin
 import at.bernhardberger.tvheadend.sdk.core.DvrEntry
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
@@ -78,6 +81,28 @@ import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
 internal class FakeTvheadendSessionTest {
+    @Test
+    fun `fake DVR changes are hot non replaying and independent from snapshots`() = runTest {
+        val fake = FakeTvheadendSession(currentObservation())
+        val observation = fake.observation.value
+        val change = DvrChange.create(
+            DvrChangeKind.REMOVED, null, null, DvrChangeOrigin.External,
+            observation.currentSession!!.generationIdentity,
+        )
+        fake.dvrRepository.emitChange(change)
+        val collected = mutableListOf<DvrChange>()
+        val collector = launch(start = CoroutineStart.UNDISPATCHED) {
+            fake.dvrRepository.changes.collect { collected += it }
+        }
+        assertTrue(collected.isEmpty())
+        fake.dvrRepository.emitChange(change)
+        kotlinx.coroutines.yield()
+        assertEquals(listOf(change), collected)
+        assertSame(observation, fake.observation.value)
+        assertEquals("DvrChange(<redacted>)", change.toString())
+        collector.cancel()
+    }
+
     @Test
     fun `media opener transfers ownership or closes on replacement and cancellation`() = runTest {
         for (boundary in listOf("transfer", "replace", "cancel")) {

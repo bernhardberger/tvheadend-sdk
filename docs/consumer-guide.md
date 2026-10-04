@@ -348,6 +348,65 @@ that a programme remains in the server's seekable buffer.
 
 ## Read and mutate DVR state
 
+### Observe DVR changes
+
+`DvrRepository.changes: Flow<DvrChange>` carries server-observed lifecycle changes,
+not command results. Collect it in an application-owned scope:
+
+```kotlin
+session.dvrRepository.changes.collect { change ->
+    if (change.generationIdentity === session.observation.value.currentSession?.generationIdentity) {
+        consume(change)
+    }
+}
+```
+
+`previous` is absent for a newly added entry; `current` is absent for removal.
+Initial synchronization and reconnect snapshots never replay as changes. Statistics-only,
+unknown-entry updates/deletes and same-state full updates produce no change. A first
+transition from `SCHEDULED` or `RECORDING` into an error state emits
+`RECORDING_FAILED` at most once per entry per generation, even if it recovers and
+fails again. Removal clears that marker. A missing file after successful completion
+is not a recording failure. Invalid transitions produce no change.
+
+This is a hot, best-effort stream with no replay and a 64-change buffer that drops
+the oldest item for slow collectors. Events are lost when nobody is collecting.
+Use `SessionObservation` DVR snapshots as the authority, not this stream as an audit
+log. A buffered event may belong to a retired generation; compare the opaque identity
+with the current session before acting on it. Presentation, grouping and notice timing
+remain application-owned.
+
+`origin` is `External` unless the SDK can correlate a matching command from this
+client (`ThisClient(mutation)`). Intents are registered before sending, including
+programme schedules matched by event ID, so an event may precede command acceptance.
+Rejected/failed or cancelled unaccepted commands drop their intents; accepted intents expire after 60 seconds,
+and generation rebind or admission stop clears them. Correlation is best-effort, not
+proof of causality or command success, and does not change mutation confirmation.
+Manual schedules without an event ID are not attributed by this ledger.
+An event attributed before a command later fails is not retracted. Edits do not
+create lifecycle intents. A programme schedule remains correlated through its
+`SCHEDULED` add and subsequent `RECORDING_STARTED` (or expiry), bound to that entry
+ID after the add. A delete may attribute both the terminal recording update and
+`REMOVED`; its intent is consumed only by removal (or expires).
+
+A server user-abort marker emits `RECORDING_ABORTED`, never `RECORDING_FAILED`.
+Its snapshot state remains `COMPLETED_ERROR` for compatibility. A local `STOP`
+intent wins over terminal error/abort kinds and yields `RECORDING_STOPPED`. For an
+external successful completion, the latest recording-file stop time (when present),
+otherwise the generation's estimated server time at acceptance, must be more than
+60 seconds before the entry's scheduled `stop` to classify `RECORDING_STOPPED`.
+This tolerance allows for server-time estimate skew. Padding is not subtracted or
+added. Within that tolerance, at/after the stop, or without enough timing evidence, the
+change is `RECORDING_COMPLETED`. TVHeadend sends no distinct external-stop marker;
+early completion therefore remains a timing inference, and late external stops are
+indistinguishable from natural completion.
+
+Application tests can use `DvrChange.create(...)` and
+`FakeDvrRepository.emitChange(change)`. Emission does not update the fake snapshot;
+publish observation state separately when a test needs both.
+
+### Snapshots and commands
+
 `SessionObservation.dvrState` carries immutable entries, automatic-recording
 rules, and time-based rules through the `Empty`, `Synchronizing`, `Current`, and
 `Stale` freshness states. DVR configuration and disk-space enrichment are

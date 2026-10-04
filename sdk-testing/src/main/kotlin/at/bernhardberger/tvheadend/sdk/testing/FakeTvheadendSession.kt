@@ -10,12 +10,13 @@ import at.bernhardberger.tvheadend.sdk.core.ArtworkFailure
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoader
-import at.bernhardberger.tvheadend.sdk.core.CacheStatistics
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleId
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
+import at.bernhardberger.tvheadend.sdk.core.CacheStatistics
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
+import at.bernhardberger.tvheadend.sdk.core.DvrChange
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult
@@ -43,10 +44,14 @@ import at.bernhardberger.tvheadend.sdk.core.TimerecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
 import at.bernhardberger.tvheadend.sdk.core.TvheadendTestResultFactory
 import java.util.Collections
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlin.time.Instant
 /** Marks fake playback bindings intended only for playback integration tests. */
@@ -361,6 +366,18 @@ private fun EpgCoverageAcquisitionResult.toBatchSettlement(
 public class FakeDvrRepository internal constructor(
     private val session: FakeTvheadendSession,
 ) : DvrRepository {
+    private val mutableChanges = MutableSharedFlow<DvrChange>(
+        replay = 0,
+        extraBufferCapacity = 64,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    override val changes: Flow<DvrChange> = mutableChanges.asSharedFlow()
+
+    /** Emits a best-effort change to current collectors without updating observation snapshots. */
+    public fun emitChange(change: DvrChange): Unit {
+        mutableChanges.tryEmit(change)
+    }
+
     private val lock = Any()
     private val results = HashMap<FakeSessionCall, DvrMutationResult<*>>()
     /** Scripts the schedule-entry result. */

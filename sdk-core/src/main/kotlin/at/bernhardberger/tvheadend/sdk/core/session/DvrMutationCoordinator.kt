@@ -6,8 +6,11 @@ import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrMutationCommands
+import at.bernhardberger.tvheadend.sdk.core.DvrMutationKind
 import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult
+import at.bernhardberger.tvheadend.sdk.core.DvrSchedule
 import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
+import at.bernhardberger.tvheadend.sdk.core.EventId
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleUpdate
@@ -61,6 +64,7 @@ internal class DvrMutationCoordinator(
     private val settings: DvrMutationSettings = DvrMutationSettings(),
     private val isSessionReady: (GatewayGeneration) -> Boolean = { true },
     private val onDvrAccessProof: suspend (GatewayGeneration, Boolean) -> Unit = { _, _ -> },
+    internal val intents: DvrIntentLedger = DvrIntentLedger(),
 ) : DvrMutationCommands, DvrMutationLifecycle {
     private val lock = Any()
     private val operationMutex = Mutex()
@@ -74,6 +78,7 @@ internal class DvrMutationCoordinator(
             pending = null
             admitted = false
             this.generation = generation
+            intents.bind(generation)
             previous
         }
         retired?.retire()
@@ -92,6 +97,7 @@ internal class DvrMutationCoordinator(
         val retired = synchronized(lock) {
             admitted = false
             generation = null
+            intents.bind(null)
             pending.also { pending = null }
         }
         retired?.retire()
@@ -112,7 +118,11 @@ internal class DvrMutationCoordinator(
     ): DvrMutationResult<DvrEntryId> = create(
         expectedGeneration = generation,
         confirmationKind = ConfirmationKind.ENTRY_ADDED,
-        command = { generation -> gateway.scheduleDvrEntry(generation, request) },
+        command = { generation ->
+            withIntent(generation, DvrMutationKind.SCHEDULE, eventId = (request.schedule as? DvrSchedule.Programme)?.eventId) {
+                gateway.scheduleDvrEntry(generation, request)
+            }
+        },
         confirmation = { id -> ConfirmationKey(ConfirmationKind.ENTRY_ADDED, id) },
     )
 
@@ -132,7 +142,9 @@ internal class DvrMutationCoordinator(
     ): DvrMutationResult<Unit> = mutate(
         expectedGeneration = generation,
         confirmations = setOf(ConfirmationKey(ConfirmationKind.ENTRY_UPDATED, id)),
-        command = { generation -> gateway.stopDvrEntry(generation, id) },
+        command = { generation ->
+            withIntent(generation, DvrMutationKind.STOP, entryId = id) { gateway.stopDvrEntry(generation, id) }
+        },
     )
 
     override suspend fun cancelEntry(
@@ -144,7 +156,9 @@ internal class DvrMutationCoordinator(
             ConfirmationKey(ConfirmationKind.ENTRY_UPDATED, id),
             ConfirmationKey(ConfirmationKind.ENTRY_DELETED, id),
         ),
-        command = { generation -> gateway.cancelDvrEntry(generation, id) },
+        command = { generation ->
+            withIntent(generation, DvrMutationKind.CANCEL, entryId = id) { gateway.cancelDvrEntry(generation, id) }
+        },
     )
 
     override suspend fun deleteEntry(
@@ -153,7 +167,9 @@ internal class DvrMutationCoordinator(
     ): DvrMutationResult<Unit> = mutate(
         expectedGeneration = generation,
         confirmations = setOf(ConfirmationKey(ConfirmationKind.ENTRY_DELETED, id)),
-        command = { generation -> gateway.deleteDvrEntry(generation, id) },
+        command = { generation ->
+            withIntent(generation, DvrMutationKind.DELETE, entryId = id) { gateway.deleteDvrEntry(generation, id) }
+        },
     )
 
     override suspend fun createAutorecRule(
@@ -213,6 +229,25 @@ internal class DvrMutationCoordinator(
         confirmations = setOf(ConfirmationKey(ConfirmationKind.TIMEREC_DELETED, id)),
         command = { generation -> gateway.deleteTimerecRule(generation, id) },
     )
+
+    private suspend fun <T> withIntent(
+        generation: GatewayGeneration,
+        kind: DvrMutationKind,
+        entryId: DvrEntryId? = null,
+        eventId: EventId? = null,
+        command: suspend () -> GatewayResult<T>,
+    ): GatewayResult<T> {
+        val intent = intents.record(generation, kind, entryId, eventId)
+        var accepted = false
+        try {
+            val result = command()
+            accepted = result is GatewayResult.Ok
+            if (accepted) intents.accepted(intent)
+            return result
+        } finally {
+            if (!accepted) intents.failed(intent)
+        }
+    }
 
     private suspend fun <T : Any> create(
         expectedGeneration: GatewayGeneration,

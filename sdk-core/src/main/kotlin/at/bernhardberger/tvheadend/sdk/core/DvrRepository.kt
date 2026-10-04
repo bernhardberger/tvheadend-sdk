@@ -2,6 +2,7 @@ package at.bernhardberger.tvheadend.sdk.core
 
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import java.util.Collections
+import kotlinx.coroutines.flow.Flow
 import kotlin.time.Duration
 import kotlin.time.Instant
 
@@ -574,6 +575,13 @@ public sealed interface DvrDiskSpaceState {
 
 /** DVR commands for the selected server profile. */
 public interface DvrRepository {
+    /**
+     * Hot, best-effort lifecycle changes after initial synchronization, without replay.
+     * Slow collectors may lose older changes (buffer 64); observation snapshots remain authoritative.
+     * Initial snapshots and reconnect resynchronization never produce changes.
+     */
+    public val changes: Flow<DvrChange>
+
     /** Schedules one DVR entry and waits for authoritative stream confirmation. */
     public suspend fun scheduleEntry(
         currentSession: CurrentSessionObservation,

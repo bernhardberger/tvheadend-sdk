@@ -2,16 +2,18 @@
 
 package at.bernhardberger.tvheadend.sdk.core.session
 
-import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.ArtworkFailure
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoader
+import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.CommandBackedDvrRepository
 import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
+import at.bernhardberger.tvheadend.sdk.core.DvrChange
+import at.bernhardberger.tvheadend.sdk.core.DvrChangeKind
 import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
 import at.bernhardberger.tvheadend.sdk.core.DvrConfigurationsState
 import at.bernhardberger.tvheadend.sdk.core.DvrCutpointCommands
@@ -21,8 +23,8 @@ import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpaceState
 import at.bernhardberger.tvheadend.sdk.core.DvrEntry
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
-import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
 import at.bernhardberger.tvheadend.sdk.core.DvrMutationCommands
+import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
 import at.bernhardberger.tvheadend.sdk.core.DvrProgressCommands
 import at.bernhardberger.tvheadend.sdk.core.DvrProgressResult
 import at.bernhardberger.tvheadend.sdk.core.DvrRepository
@@ -45,8 +47,8 @@ import at.bernhardberger.tvheadend.sdk.core.SessionObservationStore
 import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.StreamProfilesResult
 import at.bernhardberger.tvheadend.sdk.core.channelCatalogForDisplay
-import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayServerFacts
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
@@ -67,10 +69,13 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlin.time.Instant
 
@@ -358,11 +363,18 @@ internal class PhaseOneSessionMetadata(
     private val observationStore: SessionObservationStore = SessionObservationStore(),
     epgCoveragePolicy: EpgCoveragePolicy = EpgCoveragePolicy.create(),
     private val estimatedServerTime: (GatewayGeneration) -> Instant? = { null },
+    private val dvrIntents: DvrIntentLedger? = null,
 ) : SessionMetadata {
     private val lock = Any()
     private val reducer = ChannelTagReducer()
     private val epgReducer = EpgReducer(epgCoveragePolicy.maximumRetainedEvents)
     private val dvrReducer = DvrReducer()
+    private val dvrFailuresReported = mutableSetOf<DvrEntryId>()
+    private val mutableDvrChanges = MutableSharedFlow<DvrChange>(
+        replay = 0,
+        extraBufferCapacity = 64,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
     private val mutableChannelsAndTags = MutableStateFlow<ChannelRepositoryState>(
         ChannelRepositoryState.Empty,
     )
@@ -413,7 +425,9 @@ internal class PhaseOneSessionMetadata(
     private val stateBackedDvrRepository = object : CommandBackedDvrRepository(
         mutations = mutationCommands,
         resolveGeneration = ::resolveGeneration,
-    ) {}
+    ) {
+        override val changes = mutableDvrChanges.asSharedFlow()
+    }
     // Observation readers use volatile generation plus the store's atomic snapshot/proof.
     // Retirement writes generation before requester; acquisition reads requester before generation.
     @Volatile private var generation: GatewayGeneration? = null
@@ -574,6 +588,7 @@ internal class PhaseOneSessionMetadata(
             reducer.clear()
             epgReducer.clear()
             dvrReducer.clear()
+            dvrFailuresReported.clear()
             dvrEntryIncarnations.clear()
             if (!retainPublishedCatalog) {
                 publishedCatalog = null
@@ -614,6 +629,7 @@ internal class PhaseOneSessionMetadata(
             reducer.clear()
             epgReducer.clear()
             dvrReducer.clear()
+            dvrFailuresReported.clear()
             dvrEntryIncarnations.clear()
             mutableChannelsAndTags.value = ChannelRepositoryState.Synchronizing(publishedCatalog)
             mutableEpg.value = EpgRepositoryState.Synchronizing(publishedEpgSnapshot)
@@ -745,6 +761,7 @@ internal class PhaseOneSessionMetadata(
 
     private fun acceptMetadata(event: MetadataEvent, deferEpgPublication: Boolean) {
         var acceptedDvrEvent: MetadataEvent? = null
+        var dvrChange: DvrChange? = null
         val completedFence = synchronized(lock) {
             if (event.generation !== generation) {
                 return@synchronized null
@@ -783,6 +800,13 @@ internal class PhaseOneSessionMetadata(
                 is MetadataEvent.TimerecRuleUpdated,
                 is MetadataEvent.TimerecRuleDeleted,
                 -> {
+                    val changedEntryId = when (event) {
+                        is MetadataEvent.DvrEntryAdded -> event.entry.id
+                        is MetadataEvent.DvrEntryUpdated -> event.entry.id
+                        is MetadataEvent.DvrEntryDeleted -> event.entryId
+                        else -> null
+                    }
+                    val previousReducedEntry = changedEntryId?.let(dvrReducer::entry)
                     val updatedDvrEntry = (event as? MetadataEvent.DvrEntryUpdated)?.entry?.id
                     val previousDvrEntry = updatedDvrEntry?.let { id ->
                         (mutableDvr.value as? DvrRepositoryState.Current)
@@ -793,8 +817,22 @@ internal class PhaseOneSessionMetadata(
                     reducer.accept(event)
                     epgReducer.accept(event, estimatedServerTime(event.generation))
                     val dvrEventAccepted = dvrReducer.accept(event)
+                    if (dvrEventAccepted && event is MetadataEvent.DvrEntryDeleted) {
+                        dvrFailuresReported.remove(event.entryId)
+                    }
                     val dvrSnapshot = if (synchronizedCurrent) dvrReducer.snapshot() else null
                     if (dvrEventAccepted && synchronizedCurrent) {
+                        val proof = observation.value.currentSession
+                        if (proof != null && resolveGeneration(proof) === event.generation) {
+                            dvrChange = classifyDvrChange(
+                                event, previousReducedEntry, changedEntryId?.let(dvrReducer::entry),
+                                proof.generationIdentity, estimatedServerTime(event.generation), dvrIntents,
+                                changedEntryId in dvrFailuresReported,
+                            )
+                            if (dvrChange?.kind == DvrChangeKind.RECORDING_FAILED) {
+                                dvrFailuresReported += checkNotNull(changedEntryId)
+                            }
+                        }
                         when (event) {
                             is MetadataEvent.DvrEntryAdded -> {
                                 val id = event.entry.id
@@ -838,6 +876,7 @@ internal class PhaseOneSessionMetadata(
             }
         }
         completedFence?.complete(Unit)
+        dvrChange?.let(mutableDvrChanges::tryEmit)
         acceptedDvrEvent?.let(onDvrMetadataAccepted)
     }
 

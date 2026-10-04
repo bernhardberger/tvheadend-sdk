@@ -13,6 +13,7 @@ internal typealias DvrSubscriptionError = at.bernhardberger.tvheadend.sdk.core.D
 internal enum class GatewayDvrFailure {
     NONE,
     FILE_MISSING,
+    ABORTED,
     PRESENT,
 }
 

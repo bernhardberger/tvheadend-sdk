@@ -1,5 +1,26 @@
 # Changelog
 
+## [Unreleased — 0.23.0]
+
+### Added
+
+- `DvrRepository.changes: Flow<DvrChange>` provides best-effort, generation-stamped
+  DVR lifecycle changes after initial sync, with independent local-command origin
+  correlation. `DvrChange`, `DvrChangeKind`, `DvrChangeOrigin`, `DvrMutationKind`
+  and `FakeDvrRepository.emitChange` support consumers and their fakes.
+- Distinct aborted/stopped/completed change classification: the server's user-abort
+  marker is not a failure notice; local stop intent or clearly early successful
+  completion (more than 60 seconds early) identifies stops. Snapshot entry states
+  remain unchanged. Failure changes are emitted at most once per entry per generation;
+  file loss after completion is not a recording failure. Edits cannot claim lifecycle
+  changes, STOP takes precedence, and schedule/delete attribution spans their related
+  lifecycle events.
+
+### Changed
+
+- The new abstract repository member requires custom implementations to add
+  `changes` and consumers to recompile: a minor pre-1.0 compatibility break.
+
 ## [0.22.0]
 
 Released 2026-09-27.

@@ -213,6 +213,7 @@ internal object SessionRegistry {
             epgCoveragePolicy = epgCoveragePolicy,
             estimatedServerTime = gateway::estimatedServerTime,
             mutationCommands = dvrMutations,
+            dvrIntents = dvrMutations.intents,
             searchCommands = EpgSearchCommands { generation, request ->
                 gateway.searchEpg(generation, request)
             },

@@ -580,6 +580,55 @@ public final class at/bernhardberger/tvheadend/sdk/core/CurrentSessionObservatio
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class at/bernhardberger/tvheadend/sdk/core/DvrChange {
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/DvrChange$Companion;
+	public final fun getCurrent ()Lat/bernhardberger/tvheadend/sdk/core/DvrEntry;
+	public final fun getGenerationIdentity ()Lat/bernhardberger/tvheadend/sdk/core/SessionGenerationIdentity;
+	public final fun getKind ()Lat/bernhardberger/tvheadend/sdk/core/DvrChangeKind;
+	public final fun getOrigin ()Lat/bernhardberger/tvheadend/sdk/core/DvrChangeOrigin;
+	public final fun getPrevious ()Lat/bernhardberger/tvheadend/sdk/core/DvrEntry;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrChange$Companion {
+	public final fun create (Lat/bernhardberger/tvheadend/sdk/core/DvrChangeKind;Lat/bernhardberger/tvheadend/sdk/core/DvrEntry;Lat/bernhardberger/tvheadend/sdk/core/DvrEntry;Lat/bernhardberger/tvheadend/sdk/core/DvrChangeOrigin;Lat/bernhardberger/tvheadend/sdk/core/SessionGenerationIdentity;)Lat/bernhardberger/tvheadend/sdk/core/DvrChange;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrChangeKind : java/lang/Enum {
+	public static final field MISSED Lat/bernhardberger/tvheadend/sdk/core/DvrChangeKind;
+	public static final field RECORDING_ABORTED Lat/bernhardberger/tvheadend/sdk/core/DvrChangeKind;
+	public static final field RECORDING_COMPLETED Lat/bernhardberger/tvheadend/sdk/core/DvrChangeKind;
+	public static final field RECORDING_FAILED Lat/bernhardberger/tvheadend/sdk/core/DvrChangeKind;
+	public static final field RECORDING_STARTED Lat/bernhardberger/tvheadend/sdk/core/DvrChangeKind;
+	public static final field RECORDING_STOPPED Lat/bernhardberger/tvheadend/sdk/core/DvrChangeKind;
+	public static final field REMOVED Lat/bernhardberger/tvheadend/sdk/core/DvrChangeKind;
+	public static final field SCHEDULED Lat/bernhardberger/tvheadend/sdk/core/DvrChangeKind;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/DvrChangeKind;
+	public static fun values ()[Lat/bernhardberger/tvheadend/sdk/core/DvrChangeKind;
+}
+
+public abstract interface class at/bernhardberger/tvheadend/sdk/core/DvrChangeOrigin {
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrChangeOrigin$External : at/bernhardberger/tvheadend/sdk/core/DvrChangeOrigin {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrChangeOrigin$External;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrChangeOrigin$ThisClient : at/bernhardberger/tvheadend/sdk/core/DvrChangeOrigin {
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationKind;)V
+	public final fun component1 ()Lat/bernhardberger/tvheadend/sdk/core/DvrMutationKind;
+	public final fun copy (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationKind;)Lat/bernhardberger/tvheadend/sdk/core/DvrChangeOrigin$ThisClient;
+	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/DvrChangeOrigin$ThisClient;Lat/bernhardberger/tvheadend/sdk/core/DvrMutationKind;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/DvrChangeOrigin$ThisClient;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getMutation ()Lat/bernhardberger/tvheadend/sdk/core/DvrMutationKind;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class at/bernhardberger/tvheadend/sdk/core/DvrConfigId {
 	public static final synthetic fun box-impl (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/DvrConfigId;
 	public static fun constructor-impl (Ljava/lang/String;)Ljava/lang/String;
@@ -986,6 +1035,17 @@ public final class at/bernhardberger/tvheadend/sdk/core/DvrEntryUpdate {
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class at/bernhardberger/tvheadend/sdk/core/DvrMutationKind : java/lang/Enum {
+	public static final field CANCEL Lat/bernhardberger/tvheadend/sdk/core/DvrMutationKind;
+	public static final field DELETE Lat/bernhardberger/tvheadend/sdk/core/DvrMutationKind;
+	public static final field SCHEDULE Lat/bernhardberger/tvheadend/sdk/core/DvrMutationKind;
+	public static final field STOP Lat/bernhardberger/tvheadend/sdk/core/DvrMutationKind;
+	public static final field UPDATE Lat/bernhardberger/tvheadend/sdk/core/DvrMutationKind;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/DvrMutationKind;
+	public static fun values ()[Lat/bernhardberger/tvheadend/sdk/core/DvrMutationKind;
+}
+
 public abstract interface class at/bernhardberger/tvheadend/sdk/core/DvrMutationResult {
 }
 
@@ -1205,6 +1265,7 @@ public abstract interface class at/bernhardberger/tvheadend/sdk/core/DvrReposito
 	public abstract fun deleteAutorecRule-xYrR27c (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun deleteEntry-jvmoZCg (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun deleteTimerecRule-m_EujJA (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun getChanges ()Lkotlinx/coroutines/flow/Flow;
 	public abstract fun scheduleEntry (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Lat/bernhardberger/tvheadend/sdk/core/DvrScheduleRequest;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun stopEntry-jvmoZCg (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun updateAutorecRule-VXX7Pvs (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Ljava/lang/String;Lat/bernhardberger/tvheadend/sdk/core/AutorecRuleUpdate;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
