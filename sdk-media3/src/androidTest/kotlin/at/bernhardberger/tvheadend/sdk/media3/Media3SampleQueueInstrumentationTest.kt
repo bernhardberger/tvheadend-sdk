@@ -146,7 +146,8 @@ internal class Media3SampleQueueInstrumentationTest {
             instrumentation.runOnMainSync {
                 // An application item with the reserved live id is nevertheless not our source.
                 player.stop()
-                player.setMediaItem(MediaItem.Builder().setMediaId(LIVE_MEDIA_ID).build())
+                player.setMediaItem(MediaItem.Builder().setMediaId(LIVE_MEDIA_ID)
+                    .setUri("data:application/octet-stream;base64,AA==").build())
                 assertFalse(access.isCurrent(live))
 
                 val recording = access.createRecordingSource(IdentityRecordingTarget(), RecordingMediaIdentity())
@@ -499,6 +500,7 @@ internal class Media3SampleQueueInstrumentationTest {
             }
             if (finitePaused) {
                 val retired = attachment
+                val unsubscribesBeforeReplacement = connection.unsubscribeCount
                 instrumentation.runOnMainSync {
                     player.setMediaSource(createTvheadendLiveMediaSource(
                         FixedSubscriptionLiveTarget(manager, SubscriptionChannelId(1)),
@@ -509,28 +511,23 @@ internal class Media3SampleQueueInstrumentationTest {
                 val replacement = withTimeout(10_000) { connection.awaitCollectionRegistered() }
                 assertEquals(TimeshiftPlaybackPosition.Unavailable, controls.playbackPosition(retired, position().milliseconds, 1_000))
                 val beforeLateFrames = frames.get()
-                var oldCollectorRetired = false
-                try {
-                    connection.emit(registration, rawPackets.first().toEvent(assets))
-                } catch (_: IllegalStateException) {
-                    oldCollectorRetired = true
-                }
-                assertTrue("Replacement retires old collector", oldCollectorRetired)
+                awaitCondition("Replacement retires old collector", {
+                    connection.unsubscribeCount > unsubscribesBeforeReplacement
+                })
+                // The retired stream ignores late scripting; it must not reach the replacement.
+                connection.emit(registration, rawPackets.first().toEvent(assets))
                 delay(300)
                 assertEquals("Retired subscription cannot render into replacement", beforeLateFrames, frames.get())
                 connection.emit(replacement, SubscriptionEvent.Started(channel.streams, null, SubscriptionCondition.NO_DETAIL))
                 initialPackets.forEach { connection.emit(replacement, it) }
                 awaitCondition("Replacement owns new rendered frame", { frames.get() > beforeLateFrames })
+                val unsubscribesBeforeRelease = connection.unsubscribeCount
                 instrumentation.runOnMainSync { player.release(); initialized = false }
-                delay(100)
+                awaitCondition("Release retires collector", {
+                    connection.unsubscribeCount > unsubscribesBeforeRelease
+                })
                 val releasedFrames = frames.get()
-                var releasedCollector = false
-                try {
-                    connection.emit(replacement, rawPackets.first().toEvent(assets))
-                } catch (_: IllegalStateException) {
-                    releasedCollector = true
-                }
-                assertTrue("Release retires collector", releasedCollector)
+                connection.emit(replacement, rawPackets.first().toEvent(assets))
                 delay(300)
                 assertEquals("Release fences late media", releasedFrames, frames.get())
                 assertEquals("Only explicit test speed commands", expectedSpeeds, connection.speeds)
