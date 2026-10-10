@@ -45,6 +45,11 @@
   every profile store operation returned `Unavailable` permanently. The consumer
   guide explains how to exclude the store from Android backups and device
   transfer.
+- The metadata cache flushes the outgoing profile's pending EPG snapshot on
+  profile switch, disconnect and shutdown; up to the last EPG write interval
+  (60 s) of guide data was lost before. Catalog changes are written immediately
+  instead of waiting behind a pending EPG write. Clearing the cache no longer
+  follows symbolic links.
 
 ## [0.23.0]
 

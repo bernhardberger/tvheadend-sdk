@@ -142,7 +142,12 @@ internal class FileMetadataCacheStore(root: File) : MetadataCacheStore {
     }
 
     override suspend fun clear() {
-        namespacesRoot.deleteRecursively()
+        try {
+            // Path deletion unlinks symbolic links instead of deleting their targets.
+            namespacesRoot.toPath().deleteRecursively()
+        } catch (_: IOException) {
+            // Best effort, like java.io deletion; what remains is retried by the next clear.
+        }
     }
 
     override suspend fun statistics(): CacheStatistics {

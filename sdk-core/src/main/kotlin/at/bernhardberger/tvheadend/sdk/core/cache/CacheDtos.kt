@@ -50,7 +50,9 @@ internal data class ChannelDto(
     @ProtoNumber(8) val nextEventId: Long? = null,
     @ProtoNumber(9) val services: List<ChannelServiceDto>? = null,
     @ProtoNumber(10) val tagIds: List<Long>? = null,
-)
+) {
+    override fun toString(): String = "ChannelDto(<redacted>)"
+}
 
 @Serializable
 internal data class ChannelServiceDto(
@@ -71,7 +73,9 @@ internal data class ChannelTagDto(
     @ProtoNumber(5) val icon: String? = null,
     @ProtoNumber(6) val titledIcon: Boolean? = null,
     @ProtoNumber(7) val channelIds: List<Long>? = null,
-)
+) {
+    override fun toString(): String = "ChannelTagDto(<redacted>)"
+}
 
 @Serializable
 internal data class EpgEventDto(
@@ -97,7 +101,9 @@ internal data class EpgEventDto(
     @ProtoNumber(20) val image: String? = null,
     @ProtoNumber(21) val dvrEntryId: Long? = null,
     @ProtoNumber(22) val nextEventId: Long? = null,
-)
+) {
+    override fun toString(): String = "EpgEventDto(<redacted>)"
+}
 
 @Serializable
 internal data class EpgRatingDto(
@@ -107,7 +113,9 @@ internal data class EpgRatingDto(
     @ProtoNumber(4) val authority: String? = null,
     @ProtoNumber(5) val country: String? = null,
     @ProtoNumber(6) val stars: Long? = null,
-)
+) {
+    override fun toString(): String = "EpgRatingDto(<redacted>)"
+}
 
 @Serializable
 internal data class EpgEpisodeDto(

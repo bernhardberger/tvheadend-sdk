@@ -1,3 +1,5 @@
+@file:OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+
 package at.bernhardberger.tvheadend.sdk.core.cache
 
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
@@ -16,7 +18,9 @@ import at.bernhardberger.tvheadend.sdk.core.EpgRating
 import at.bernhardberger.tvheadend.sdk.core.EpgSeriesLinkId
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.EventId
+import kotlinx.serialization.protobuf.ProtoBuf
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -157,5 +161,33 @@ internal class CacheDtosTest {
 
         assertEquals(snapshot, restored)
         assertTrue(restored.coverages[1].isEmpty)
+    }
+
+    @Test
+    fun `cache DTO string forms redact server-supplied URIs and icons`() {
+        val rating = EpgRatingDto(icon = "rating-icon-secret")
+        val event = EpgEventDto(
+            id = 1L,
+            start = 0L,
+            stop = 1L,
+            seriesLinkUri = "series-uri-secret",
+            episodeUri = "episode-uri-secret",
+            rating = rating,
+            image = "image-uri-secret",
+        )
+        val channel = ChannelDto(id = 1L, icon = "channel-icon-secret")
+        val tag = ChannelTagDto(id = 1L, icon = "tag-icon-secret")
+
+        for (dto in listOf<Any>(rating, event, channel, tag)) {
+            assertFalse(dto.toString().contains("secret"), dto::class.simpleName)
+        }
+        assertEquals(event, event.copy())
+        assertEquals(
+            event,
+            ProtoBuf.decodeFromByteArray(
+                EpgEventDto.serializer(),
+                ProtoBuf.encodeToByteArray(EpgEventDto.serializer(), event),
+            ),
+        )
     }
 }

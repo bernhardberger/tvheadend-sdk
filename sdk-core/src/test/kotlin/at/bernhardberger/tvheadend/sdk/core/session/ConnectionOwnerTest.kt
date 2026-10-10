@@ -407,6 +407,113 @@ internal class ConnectionOwnerTest {
     }
 
     @Test
+    fun `profile switch and shutdown flush the outgoing profile's pending guide to its own namespace`() = runTest {
+        val gateway = FakeProtocolGateway(mutableListOf())
+        val firstGeneration = GatewayGeneration()
+        val secondGeneration = GatewayGeneration()
+        gateway.connectResults += connected(firstGeneration, streaming = true, dvrAccess = false)
+        gateway.connectResults += connected(secondGeneration, streaming = true, dvrAccess = false)
+        val store = InMemoryMetadataCacheStore(catalog = null, epg = null)
+        val schedulerClock = object : Clock {
+            override fun now(): Instant = Instant.fromEpochMilliseconds(testScheduler.currentTime)
+        }
+        val cacheRuntime = MetadataCacheRuntime(
+            store = store,
+            policy = MetadataCachePolicy.create(File("unused")),
+            ioDispatcher = StandardTestDispatcher(testScheduler),
+            clock = schedulerClock,
+        )
+        val owner = owner(gateway = gateway, cacheRuntime = cacheRuntime)
+
+        owner.connect(ServerProfile("first"))
+        runCurrent()
+        gateway.emitMetadata(MetadataEvent.ChannelAdded(firstGeneration, channelMetadata(id = 1)))
+        gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(firstGeneration))
+        runCurrent()
+        val firstNamespace = store.writtenNamespaces.single()
+        gateway.emitMetadata(MetadataEvent.EventAdded(firstGeneration, epgMetadata(1, 1)))
+        runCurrent()
+        val firstPendingEpg = owner.currentEpgSnapshot()
+        assertTrue(firstPendingEpg !== store.epg, "The guide update waits for the write interval")
+
+        owner.connect(ServerProfile("second"))
+        runCurrent()
+        val (switchNamespace, switchEpg) = store.epgWrites.last()
+        assertSame(firstPendingEpg, switchEpg, "A profile switch flushes the outgoing guide")
+        assertEquals(firstNamespace, switchNamespace)
+        assertEquals(setOf(firstNamespace), store.writtenNamespaces)
+
+        gateway.emitMetadata(MetadataEvent.ChannelAdded(secondGeneration, channelMetadata(id = 2)))
+        gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(secondGeneration))
+        runCurrent()
+        val secondNamespace = (store.writtenNamespaces - firstNamespace).single()
+        gateway.emitMetadata(MetadataEvent.EventAdded(secondGeneration, epgMetadata(2, 2)))
+        runCurrent()
+        val secondPendingEpg = owner.currentEpgSnapshot()
+        assertTrue(secondPendingEpg !== store.epg, "The guide update waits for the write interval")
+
+        owner.shutdown()
+
+        val (shutdownNamespace, shutdownEpg) = store.epgWrites.last()
+        assertSame(secondPendingEpg, shutdownEpg, "Shutdown flushes the outgoing guide")
+        assertEquals(secondNamespace, shutdownNamespace)
+        assertEquals(setOf(firstNamespace, secondNamespace), store.writtenNamespaces)
+    }
+
+    @Test
+    fun `cancelling disconnect during a blocked final flush still completes the flush first`() = runTest {
+        val gateway = FakeProtocolGateway(mutableListOf())
+        val generation = GatewayGeneration()
+        gateway.connectResults += connected(generation, streaming = true, dvrAccess = false)
+        val store = InMemoryMetadataCacheStore(catalog = null, epg = null)
+        var blockEpgWrites = false
+        val flushing = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val blockingStore = object : MetadataCacheStore by store {
+            override suspend fun storeEpg(namespace: CacheNamespace, snapshot: EpgSnapshot, storedAt: Instant) {
+                if (blockEpgWrites) {
+                    flushing.complete(Unit)
+                    release.await()
+                }
+                store.storeEpg(namespace, snapshot, storedAt)
+            }
+        }
+        val schedulerClock = object : Clock {
+            override fun now(): Instant = Instant.fromEpochMilliseconds(testScheduler.currentTime)
+        }
+        val cacheRuntime = MetadataCacheRuntime(
+            store = blockingStore,
+            policy = MetadataCachePolicy.create(File("unused")),
+            ioDispatcher = StandardTestDispatcher(testScheduler),
+            clock = schedulerClock,
+        )
+        val owner = owner(gateway = gateway, cacheRuntime = cacheRuntime)
+        owner.connect(ServerProfile("first"))
+        runCurrent()
+        gateway.emitMetadata(MetadataEvent.ChannelAdded(generation, channelMetadata(id = 1)))
+        gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        runCurrent()
+        gateway.emitMetadata(MetadataEvent.EventAdded(generation, epgMetadata(1, 1)))
+        runCurrent()
+        val pendingEpg = owner.currentEpgSnapshot()
+        assertTrue(pendingEpg !== store.epg, "The guide update waits for the write interval")
+        blockEpgWrites = true
+
+        val disconnecting = launch { owner.disconnect() }
+        flushing.await()
+        disconnecting.cancel()
+        runCurrent()
+        assertFalse(disconnecting.isCompleted, "Teardown must wait for the final flush")
+
+        release.complete(Unit)
+        disconnecting.join()
+
+        assertTrue(disconnecting.isCancelled)
+        assertSame(pendingEpg, store.epgWrites.last().second)
+        owner.shutdown()
+    }
+
+    @Test
     fun `EPG requester is bound before ready and network work starts afterward`() = runTest {
         val order = mutableListOf<String>()
         val gateway = FakeProtocolGateway(order)
@@ -1718,6 +1825,7 @@ private class InMemoryMetadataCacheStore(
 ) : MetadataCacheStore {
     val writes = mutableListOf<Any>()
     val writtenNamespaces = mutableSetOf<CacheNamespace>()
+    val epgWrites = mutableListOf<Pair<CacheNamespace, EpgSnapshot>>()
     var cleared = false
     var epgLoads = 0
 
@@ -1736,6 +1844,7 @@ private class InMemoryMetadataCacheStore(
 
     override suspend fun storeEpg(namespace: CacheNamespace, snapshot: EpgSnapshot, storedAt: Instant) {
         writes += snapshot
+        epgWrites += namespace to snapshot
         writtenNamespaces += namespace
         epg = snapshot
     }

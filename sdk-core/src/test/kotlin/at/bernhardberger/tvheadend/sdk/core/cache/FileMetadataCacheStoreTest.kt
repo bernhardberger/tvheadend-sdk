@@ -13,6 +13,7 @@ import at.bernhardberger.tvheadend.sdk.core.EventId
 import java.io.File
 import java.io.RandomAccessFile
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.protobuf.ProtoBuf
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -296,6 +297,33 @@ internal class FileMetadataCacheStoreTest {
 
         assertEquals(CacheStatistics.EMPTY, cache.statistics())
         assertFalse(File(root, "tvheadend-sdk").exists())
+    }
+
+    @Test
+    fun `clear unlinks a symlinked cache root without traversing its target`() = runTest {
+        val outside = File(root, "application-data").apply { mkdirs() }
+        val sentinel = File(outside, "keep").apply { writeText("keep") }
+        val cacheRoot = File(root, "tvheadend-sdk").toPath()
+        Files.createSymbolicLink(cacheRoot, outside.toPath())
+
+        store().clear()
+
+        assertFalse(Files.exists(cacheRoot, LinkOption.NOFOLLOW_LINKS))
+        assertEquals("keep", sentinel.readText())
+    }
+
+    @Test
+    fun `clear unlinks symlinks inside the cache without traversing their targets`() = runTest {
+        val cache = store()
+        cache.storeCatalog(namespace, sampleCatalog(), storedAt)
+        val unrelated = File(root, "application-data").apply { mkdirs() }
+        val sentinel = File(unrelated, "keep").apply { writeText("keep") }
+        Files.createSymbolicLink(File(catalogFile().parentFile, "artwork").toPath(), unrelated.toPath())
+
+        cache.clear()
+
+        assertFalse(File(root, "tvheadend-sdk").exists())
+        assertEquals("keep", sentinel.readText())
     }
 
     @Test

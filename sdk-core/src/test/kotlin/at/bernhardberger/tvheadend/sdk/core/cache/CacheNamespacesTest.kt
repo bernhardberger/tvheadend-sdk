@@ -23,6 +23,23 @@ internal class CacheNamespacesTest {
     }
 
     @Test
+    fun `namespace derivation output is pinned for fixed inputs`() {
+        // Existing caches are addressed by these values; any change orphans them.
+        assertEquals(
+            listOf(
+                "v2-5fa4599b170752f690f29e9a4fe8a25a",
+                "v2-21d022c6224bb557d540bc8507a24827",
+                "v2-07dc07df5a189fbdbe6db6fb787b0898",
+            ),
+            listOf(
+                cacheNamespace("tvh.example.org", 9982, "alice").value,
+                cacheNamespace("tvh.example.org", 9982, "").value,
+                cacheNamespace("::1", 2, "3:4:u").value,
+            ),
+        )
+    }
+
+    @Test
     fun `namespace derivation distinguishes host, port, and username`() {
         val baseline = cacheNamespace("tvh.example.org", 9982, "alice")
         assertNotEquals(baseline, cacheNamespace("other.example.org", 9982, "alice"))

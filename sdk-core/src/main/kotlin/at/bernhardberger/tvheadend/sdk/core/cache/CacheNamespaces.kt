@@ -8,7 +8,6 @@ import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.protobuf.ProtoBuf
 
 private const val NAMESPACE_HEX_LENGTH = 32
-private val HEX_DIGITS = "0123456789abcdef".toCharArray()
 
 /**
  * Derives the restart-stable [CacheNamespace] for one server profile.
@@ -21,12 +20,5 @@ private val HEX_DIGITS = "0123456789abcdef".toCharArray()
 internal fun cacheNamespace(host: String, port: Int, username: String): CacheNamespace {
     val digest = MessageDigest.getInstance("SHA-256")
         .digest(ProtoBuf.encodeToByteArray(ListSerializer(String.serializer()), listOf(host, port.toString(), username)))
-    val hex = buildString(digest.size * 2) {
-        digest.forEach { byte ->
-            val value = byte.toInt() and 0xff
-            append(HEX_DIGITS[value ushr 4])
-            append(HEX_DIGITS[value and 0x0f])
-        }
-    }
-    return CacheNamespace("v2-${hex.substring(0, NAMESPACE_HEX_LENGTH)}")
+    return CacheNamespace("v2-${digest.toHexString().take(NAMESPACE_HEX_LENGTH)}")
 }

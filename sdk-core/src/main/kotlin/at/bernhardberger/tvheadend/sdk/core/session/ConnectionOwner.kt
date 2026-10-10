@@ -231,7 +231,12 @@ internal class ConnectionOwner(
             )
             selectedProfile = null
             retainedProfile = null
-            ShutdownPlan.Run(completion, invalidated.worker, invalidated.admissionFailure)
+            ShutdownPlan.Run(
+                completion,
+                invalidated.worker,
+                invalidated.admissionFailure,
+                invalidated.retiredPublication,
+            )
         }
 
         when (plan) {
@@ -252,10 +257,13 @@ internal class ConnectionOwner(
                                     gateway::disconnect,
                                     gateway::shutdown,
                                     {
-                                        cacheRuntime?.shutdown()
+                                        cacheRuntime?.shutdown(plan.retiredPublication)
                                         Unit
                                     },
-                                    { metadata.clearAllState() },
+                                    {
+                                        metadata.clearAllState()
+                                        Unit
+                                    },
                                 ),
                             )
                         } finally {
@@ -289,7 +297,7 @@ internal class ConnectionOwner(
                 children::closeAndJoinSubscriptions,
                 gateway::disconnect,
                 {
-                    cacheRuntime?.stop()
+                    cacheRuntime?.stop(invalidated.retiredPublication)
                     Unit
                 },
                 {
@@ -298,6 +306,7 @@ internal class ConnectionOwner(
                     } else {
                         metadata.clearAllState()
                     }
+                    Unit
                 },
             ),
         )
@@ -309,6 +318,7 @@ internal class ConnectionOwner(
     ): InvalidatedSession {
         val activeWorker = worker
         worker = null
+        var retiredPublication: PublishedSnapshots? = null
         val admissionFailure = synchronized(stateLock) {
             if (terminal) closed = true
             activeToken = null
@@ -319,7 +329,9 @@ internal class ConnectionOwner(
             var failure = captureFailure { dvrMutations.stopAdmission() }
             failure = captureFailure(failure) { dvrProgress.stopAdmission() }
             failure = captureFailure(failure) { children.stopAdmission() }
-            if (retainPublishedCatalog) {
+            // The cache writer flushes the outgoing publication to the outgoing namespace after
+            // this clear, so capture it atomically with the reset.
+            retiredPublication = if (retainPublishedCatalog) {
                 metadata.resetWorkingStateRetainingPublishedSnapshot()
             } else {
                 metadata.clearAllState()
@@ -331,7 +343,7 @@ internal class ConnectionOwner(
             )
             failure
         }
-        return InvalidatedSession(activeWorker, admissionFailure)
+        return InvalidatedSession(activeWorker, admissionFailure, retiredPublication)
     }
 
     private fun startWorker(profile: ServerProfile) {
@@ -413,7 +425,10 @@ internal class ConnectionOwner(
                             children::cancelAndJoinBackgroundEnrichment,
                             children::closeAndJoinSubscriptions,
                             gateway::disconnect,
-                            { metadata.resetWorkingStateRetainingPublishedSnapshot() },
+                            {
+                                metadata.resetWorkingStateRetainingPublishedSnapshot()
+                                Unit
+                            },
                         ),
                     )
                 }
@@ -776,6 +791,7 @@ private class AttemptOutcome(
 private class InvalidatedSession(
     internal val worker: Job?,
     internal val admissionFailure: Throwable?,
+    internal val retiredPublication: PublishedSnapshots?,
 )
 
 private class UnavailableCommit(
@@ -800,6 +816,7 @@ private sealed interface ShutdownPlan {
         internal val completion: CompletableDeferred<Unit>,
         internal val worker: Job?,
         internal val admissionFailure: Throwable?,
+        internal val retiredPublication: PublishedSnapshots?,
     ) : ShutdownPlan
 
     public class Wait(

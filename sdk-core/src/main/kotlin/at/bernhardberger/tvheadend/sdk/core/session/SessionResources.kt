@@ -142,9 +142,21 @@ internal interface SessionMetadata {
         generation: GatewayGeneration?,
     )
 
-    public fun resetWorkingStateRetainingPublishedSnapshot()
+    /**
+     * Resets working state but keeps [publishedSnapshots].
+     *
+     * Returns the retained publication, captured atomically with the reset, so the outgoing
+     * cache writer can flush it to its own namespace.
+     */
+    public fun resetWorkingStateRetainingPublishedSnapshot(): PublishedSnapshots?
 
-    public fun clearAllState()
+    /**
+     * Clears all state, including [publishedSnapshots].
+     *
+     * Returns the publication this clear retired, captured atomically with the clear, so the
+     * outgoing profile's cache writer can flush it to its own namespace.
+     */
+    public fun clearAllState(): PublishedSnapshots?
 
     /**
      * Latest catalog and EPG snapshot published with current authority, for persistence.
@@ -545,9 +557,8 @@ internal class PhaseOneSessionMetadata(
         observationStore.publishSessionState(state, progressCapability, generation)
     }
 
-    override fun resetWorkingStateRetainingPublishedSnapshot() {
+    override fun resetWorkingStateRetainingPublishedSnapshot(): PublishedSnapshots? =
         resetState(retainPublishedCatalog = true)
-    }
 
     override fun canSeedRetainedSnapshots(): Boolean = synchronized(lock) {
         generation == null && publishedCatalog == null && publishedEpgSnapshot == null
@@ -570,12 +581,12 @@ internal class PhaseOneSessionMetadata(
         return true
     }
 
-    override fun clearAllState() {
-        resetState(retainPublishedCatalog = false)
-    }
+    override fun clearAllState(): PublishedSnapshots? = resetState(retainPublishedCatalog = false)
 
-    private fun resetState(retainPublishedCatalog: Boolean) {
+    private fun resetState(retainPublishedCatalog: Boolean): PublishedSnapshots? {
+        var retiredPublication: PublishedSnapshots? = null
         val retiredFence = synchronized(lock) {
+            retiredPublication = mutablePublishedSnapshots.value
             generation = null
             val previousFence = initialSync
             initialSync = CompletableDeferred()
@@ -612,6 +623,7 @@ internal class PhaseOneSessionMetadata(
             previousFence
         }
         retiredFence.cancel(CancellationException("Session generation is no longer current"))
+        return retiredPublication
     }
 
     override fun bindGeneration(generation: GatewayGeneration) {

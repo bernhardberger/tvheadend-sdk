@@ -83,6 +83,61 @@ class MetadataCacheRuntimeTest {
     }
 
     @Test
+    fun `catalog changes are written while a pending EPG write waits for its interval`() = runTest {
+        val store = RecordingStore()
+        val runtime = runtime(store, clock = TestClock(this))
+        val publications = MutableStateFlow<PublishedSnapshots?>(null)
+        runtime.start(namespace, publications)
+        val firstCatalog = catalog(1)
+        publications.value = PublishedSnapshots(firstCatalog, EpgSnapshot.create())
+        runCurrent()
+        val pendingEpg = EpgSnapshot.create()
+        publications.value = PublishedSnapshots(firstCatalog, pendingEpg)
+        runCurrent()
+        advanceTimeBy(10.seconds)
+
+        val changedCatalog = catalog(2)
+        publications.value = PublishedSnapshots(changedCatalog, pendingEpg)
+        runCurrent()
+
+        assertEquals(Call.StoreCatalog(changedCatalog), store.writes().last())
+        val changedAgain = catalog(3)
+        publications.value = PublishedSnapshots(changedAgain, pendingEpg)
+        runCurrent()
+        assertEquals(Call.StoreCatalog(changedAgain), store.writes().last())
+
+        advanceTimeBy(51.seconds)
+        runCurrent()
+        assertEquals(5, store.writes().size)
+        assertSame(pendingEpg, store.epg)
+        runtime.shutdown()
+    }
+
+    @Test
+    fun `stopping flushes the retired publication after the session cleared it`() = runTest {
+        val store = RecordingStore()
+        val runtime = runtime(store, clock = TestClock(this))
+        val publications = MutableStateFlow<PublishedSnapshots?>(null)
+        runtime.start(namespace, publications)
+        val catalog = catalog(1)
+        publications.value = PublishedSnapshots(catalog, EpgSnapshot.create())
+        runCurrent()
+        val retired = PublishedSnapshots(catalog, EpgSnapshot.create())
+        publications.value = retired
+        runCurrent()
+        publications.value = null
+        runCurrent()
+
+        assertEquals(2, store.writes().size)
+
+        runtime.stop(retired)
+
+        assertEquals(3, store.writes().size)
+        assertSame(retired.epgSnapshot, store.epg)
+        runtime.shutdown()
+    }
+
+    @Test
     fun `stopping flushes the newest EPG snapshot before the writer goes away`() = runTest {
         val store = RecordingStore()
         val runtime = runtime(store, clock = TestClock(this))

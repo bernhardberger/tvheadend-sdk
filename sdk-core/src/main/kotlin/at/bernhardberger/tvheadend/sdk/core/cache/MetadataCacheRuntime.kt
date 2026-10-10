@@ -17,7 +17,6 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -29,6 +28,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -44,8 +44,9 @@ internal class RestoredSnapshots(
  * Owns the persistence side of one session: cold-start restore, a coalescing writer, clear.
  *
  * All store access runs on [ioDispatcher]. The writer observes [PublishedSnapshots] and writes
- * the catalog whenever a new instance is published and the EPG at most once per
- * [epgWriteInterval]; [stop] flushes the latest EPG under [NonCancellable]. The store never
+ * the catalog whenever a new instance is published, also while an EPG write waits, and the EPG
+ * at most once per [epgWriteInterval]; [stop] flushes the latest EPG under [NonCancellable],
+ * including a publication the session retired before stopping the writer. The store never
  * throws for IO problems, so a failing cache cannot fail the session.
  */
 internal class MetadataCacheRuntime(
@@ -118,7 +119,7 @@ internal class MetadataCacheRuntime(
     /** Starts writing [publications] for [namespace]; a previous writer is stopped first. */
     suspend fun start(namespace: CacheNamespace, publications: StateFlow<PublishedSnapshots?>) {
         lifecycle.withLock {
-            writer?.stop()
+            writer?.stop(retiredPublication = null)
             writer = launchWriter(namespace, publications)
         }
     }
@@ -126,10 +127,17 @@ internal class MetadataCacheRuntime(
     private fun launchWriter(namespace: CacheNamespace, publications: StateFlow<PublishedSnapshots?>): Writer =
         Writer(namespace, publications).also { it.job = scope.launch { it.run() } }
 
-    /** Stops the writer and flushes the latest EPG snapshot. Safe to call repeatedly. */
-    suspend fun stop() {
+    /**
+     * Stops the writer and flushes the latest catalog and EPG snapshot to the writer's namespace.
+     * Safe to call repeatedly.
+     *
+     * [retiredPublication] is the publication the session retired when it cleared or reset its
+     * state; it is flushed instead of the observed publication, which a clear has already reset
+     * to `null`. Callers must capture it before the next profile can publish.
+     */
+    suspend fun stop(retiredPublication: PublishedSnapshots? = null) {
         lifecycle.withLock {
-            writer?.stop()
+            writer?.stop(retiredPublication)
             writer = null
         }
     }
@@ -156,9 +164,9 @@ internal class MetadataCacheRuntime(
         }
     }
 
-    /** Flushes and releases every coroutine; the runtime is unusable afterwards. */
-    suspend fun shutdown() {
-        stop()
+    /** Flushes as [stop] does and releases every coroutine; the runtime is unusable afterwards. */
+    suspend fun shutdown(retiredPublication: PublishedSnapshots? = null) {
+        stop(retiredPublication)
         rootJob.cancelAndJoin()
     }
 
@@ -182,8 +190,7 @@ internal class MetadataCacheRuntime(
                     writeCatalog(snapshots.catalog)
                 }
                 if (snapshots.epgSnapshot !== writtenEpg) {
-                    val wait = epgWriteInterval - (clock.now() - lastEpgWrite)
-                    if (wait.isPositive()) delay(wait)
+                    writeCatalogsUntil(lastEpgWrite + epgWriteInterval)
                     val latest = publications.value ?: snapshots
                     if (latest.catalog !== writtenCatalog) writeCatalog(latest.catalog)
                     writeEpg(latest.epgSnapshot)
@@ -191,10 +198,23 @@ internal class MetadataCacheRuntime(
             }
         }
 
-        suspend fun stop() {
+        /** Keeps catalog writes immediate while a pending EPG write waits for [deadline]. */
+        private suspend fun writeCatalogsUntil(deadline: Instant) {
+            while (true) {
+                val remaining = deadline - clock.now()
+                if (!remaining.isPositive()) return
+                // Only the wait is bounded; a started catalog write is never cut short.
+                val changed = withTimeoutOrNull(remaining) {
+                    publications.filterNotNull().first { it.catalog !== writtenCatalog }
+                } ?: return
+                writeCatalog(changed.catalog)
+            }
+        }
+
+        suspend fun stop(retiredPublication: PublishedSnapshots?) {
             job.cancelAndJoin()
             withContext(NonCancellable + ioDispatcher) {
-                val latest = publications.value ?: return@withContext
+                val latest = retiredPublication ?: publications.value ?: return@withContext
                 if (latest.catalog !== writtenCatalog) writeCatalog(latest.catalog)
                 if (latest.epgSnapshot !== writtenEpg) writeEpg(latest.epgSnapshot)
             }
