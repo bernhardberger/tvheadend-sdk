@@ -91,6 +91,11 @@ public enum class FakeSessionCall {
 /**
  * JVM-only, generation-aware implementation of the complete application session boundary.
  * Supplied observations are republished under fake authority; capture this fake's current proof.
+ *
+ * Round trips check the proof before and after their scripted result; bindings check it on
+ * admission. [replaceGeneration], [retire], and proofs from another session expire them. Lifecycle commands
+ * only record calls and return scripted results: [connect], [retry], [disconnect], and [shutdown]
+ * publish no state and retire no proof, so tests drive those transitions explicitly.
  */
 public class FakeTvheadendSession(
     initialObservation: SessionObservation = SessionObservation.create(),
@@ -258,6 +263,14 @@ public class FakeTvheadendSession(
         currentCoroutineContext().ensureActive()
         return value
     }
+    // Test seam for generation races between proof admission and scripted evaluation.
+    @Volatile
+    internal var afterAdmission: () -> Unit = {}
+
+    // Production looks coverage up in the observation its proof admitted, never a replacement.
+    internal fun admittedObservation(currentSession: CurrentSessionObservation): SessionObservation? =
+        observation.value.takeIf { current -> current.currentSession === currentSession }
+
     internal suspend fun <T> roundTrip(
         currentSession: CurrentSessionObservation,
         call: FakeSessionCall,
@@ -267,6 +280,7 @@ public class FakeTvheadendSession(
         currentCoroutineContext().ensureActive()
         record(call)
         if (!isCurrent(currentSession)) return expired
+        afterAdmission()
         val value = result()
         currentCoroutineContext().ensureActive()
         return if (isCurrent(currentSession)) value else expired
@@ -292,14 +306,29 @@ public class FakeEpgRepository internal constructor(
     public fun scriptSearch(events: List<EpgEvent>) {
         synchronized(lock) { searchScript = EpgSearchScript.Available(events.toImmutableList()) }
     }
-    /** Scripts the next and subsequent coverage result. */
+    /**
+     * Scripts the next and subsequent coverage result.
+     *
+     * A covered result must carry the observation of the proof each invocation admits, as
+     * production does; an invocation under any other proof fails instead of returning it. A channel
+     * without coverage in the admitting observation returns [EpgCoverageAcquisitionResult.Ineligible]
+     * without consulting the script.
+     */
     public fun scriptCoverage(result: EpgCoverageAcquisitionResult) {
         require(result !== EpgCoverageAcquisitionResult.ObservationExpired) {
             "Scripted coverage results require a current observation"
         }
         synchronized(lock) { coverageResult = result }
     }
-    /** Scripts the next and subsequent batch coverage result. */
+    /**
+     * Scripts the next and subsequent batch coverage result.
+     *
+     * Its settlements must name each first-occurrence requested channel exactly once in request
+     * order, settle exactly the channels without coverage in the admitting observation as
+     * [EpgCoverageBatchSettlement.TargetAbsent], and covered settlements must carry the admitting
+     * proof's observation; an invocation that does not match fails instead of returning it. Without
+     * a batch script, coverage-absent channels settle as absent and others use [scriptCoverage].
+     */
     public fun scriptCoverageBatch(result: EpgCoverageBatchResult) {
         synchronized(lock) { coverageBatchResult = result }
     }
@@ -327,26 +356,85 @@ public class FakeEpgRepository internal constructor(
         currentSession,
         FakeSessionCall.EPG_ACQUIRE_COVERAGE,
         EpgCoverageAcquisitionResult.ObservationExpired,
-    ) { synchronized(lock) { coverageResult } }
+    ) {
+        val admitting = session.admittedObservation(currentSession)
+        if (admitting == null) {
+            EpgCoverageAcquisitionResult.ObservationExpired
+        } else if (admitting.coverage(channelId) == null) {
+            EpgCoverageAcquisitionResult.Ineligible
+        } else {
+            synchronized(lock) { coverageResult }.boundTo(currentSession)
+        }
+    }
     override suspend fun acquireCoverageBatch(
         currentSession: CurrentSessionObservation,
         channelIds: List<ChannelId>,
         through: Instant,
     ): EpgCoverageBatchResult {
         val orderedChannelIds = channelIds.distinct()
-        return session.roundTrip(
-            currentSession,
-            FakeSessionCall.EPG_ACQUIRE_COVERAGE_BATCH,
-            EpgCoverageBatchResult.create(
-                orderedChannelIds.map(EpgCoverageBatchSettlement::ObservationExpired),
-            ),
-        ) {
-            synchronized(lock) {
-                coverageBatchResult ?: EpgCoverageBatchResult.create(
-                    orderedChannelIds.map { channelId -> coverageResult.toBatchSettlement(channelId) },
-                )
-            }
+        val expired = EpgCoverageBatchResult.create(
+            orderedChannelIds.map(EpgCoverageBatchSettlement::ObservationExpired),
+        )
+        return session.roundTrip(currentSession, FakeSessionCall.EPG_ACQUIRE_COVERAGE_BATCH, expired) {
+            val admitting = session.admittedObservation(currentSession) ?: return@roundTrip expired
+            val (batch, single) = synchronized(lock) { coverageBatchResult to coverageResult }
+            batch?.boundTo(currentSession, orderedChannelIds, admitting) ?: EpgCoverageBatchResult.create(
+                orderedChannelIds.map { channelId ->
+                    if (admitting.coverage(channelId) == null) {
+                        EpgCoverageBatchSettlement.TargetAbsent(channelId)
+                    } else {
+                        single.boundTo(currentSession).toBatchSettlement(channelId)
+                    }
+                },
+            )
         }
+    }
+}
+
+private fun EpgCoverageAcquisitionResult.boundTo(
+    currentSession: CurrentSessionObservation,
+): EpgCoverageAcquisitionResult = apply {
+    val observation = when (this) {
+        is EpgCoverageAcquisitionResult.CoveredWithData -> observation
+        is EpgCoverageAcquisitionResult.CoveredEmpty -> observation
+        EpgCoverageAcquisitionResult.Ineligible,
+        EpgCoverageAcquisitionResult.ObservationExpired,
+        -> null
+    }
+    requireAdmittingObservation(observation, currentSession)
+}
+
+private fun EpgCoverageBatchResult.boundTo(
+    currentSession: CurrentSessionObservation,
+    orderedChannelIds: List<ChannelId>,
+    admitting: SessionObservation,
+): EpgCoverageBatchResult = apply {
+    require(settlements.map(EpgCoverageBatchSettlement::channelId) == orderedChannelIds) {
+        "Scripted coverage batch must settle the requested channels in request order"
+    }
+    settlements.forEach { settlement ->
+        require(
+            (settlement is EpgCoverageBatchSettlement.TargetAbsent) ==
+                (admitting.coverage(settlement.channelId) == null),
+        ) { "Scripted coverage batch must settle exactly the coverage-absent channels as absent" }
+        val observation = when (settlement) {
+            is EpgCoverageBatchSettlement.CoveredWithData -> settlement.observation
+            is EpgCoverageBatchSettlement.CoveredEmpty -> settlement.observation
+            is EpgCoverageBatchSettlement.TargetAbsent,
+            is EpgCoverageBatchSettlement.Rejected,
+            is EpgCoverageBatchSettlement.ObservationExpired,
+            -> null
+        }
+        requireAdmittingObservation(observation, currentSession)
+    }
+}
+
+private fun requireAdmittingObservation(
+    observation: SessionObservation?,
+    currentSession: CurrentSessionObservation,
+) {
+    require(observation == null || observation.currentSession === currentSession) {
+        "Scripted coverage observation must belong to the admitting session proof"
     }
 }
 

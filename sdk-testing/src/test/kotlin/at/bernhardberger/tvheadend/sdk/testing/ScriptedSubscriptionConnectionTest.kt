@@ -11,11 +11,14 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTermination
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -209,6 +212,95 @@ class ScriptedSubscriptionConnectionTest {
         secondConnection.loseGeneration()
         assertTrue(first.await().single() is SubscriptionEvent.Terminated)
         assertTrue(second.await().single() is SubscriptionEvent.Terminated)
+    }
+
+    @Test
+    fun `scripting completed streams is a no-op`() = runTest {
+        val connection = ScriptedSubscriptionConnection()
+        val id = SubscriptionId(0L)
+        val collected = async { connection.events(id).toList() }
+        val registration = connection.awaitCollectionRegistered()
+        val status = SubscriptionEvent.Status(SubscriptionCondition.STATUS_REPORTED)
+
+        assertTrue(connection.unsubscribe(id) is SubscriptionOperationResult.Ok)
+        connection.emit(registration, status)
+        connection.emit(status)
+        connection.loseGeneration()
+        assertEquals(emptyList<SubscriptionEvent>(), collected.await())
+
+        connection.emit(registration, status)
+        connection.emit(status)
+    }
+
+    @Test
+    fun `lost generation fences commands and terminates late collectors`() = runTest {
+        val connection = ScriptedSubscriptionConnection()
+        val id = SubscriptionId(0L)
+        val collected = async { connection.events(id).toList() }
+        connection.awaitCollectionRegistered()
+
+        connection.loseGeneration()
+        connection.setLive(true)
+        val unavailable = SubscriptionOperationResult.TransportUnavailable
+        assertEquals(unavailable, connection.subscribe(id, SubscriptionChannelId(4L), 60.seconds))
+        assertEquals(unavailable, connection.skip(id, SubscriptionSeekTarget.Absolute(30.seconds)))
+        assertEquals(unavailable, connection.speed(id, 0))
+        assertEquals(unavailable, connection.changePriority(id, LiveSubscriptionPriority.YIELD))
+        assertEquals(unavailable, connection.unsubscribe(id))
+        assertNull(connection.commitIfLive { Unit })
+        val terminal = collected.await().single() as SubscriptionEvent.Terminated
+        assertEquals(SubscriptionTermination.GENERATION_LOST, terminal.reason)
+
+        listOf(id, SubscriptionId(1L)).forEach { lateId ->
+            val late = connection.events(lateId).toList().single() as SubscriptionEvent.Terminated
+            assertEquals(SubscriptionTermination.GENERATION_LOST, late.reason)
+        }
+        assertNull(connection.requestedTimeshiftSeconds)
+        assertTrue(connection.seekTargets.isEmpty())
+        assertTrue(connection.speeds.isEmpty())
+        assertTrue(connection.priorityChanges.isEmpty())
+        assertEquals(
+            listOf(
+                ScriptedSubscriptionCall.COLLECTION_REGISTERED,
+                ScriptedSubscriptionCall.SUBSCRIBE,
+                ScriptedSubscriptionCall.SKIP,
+                ScriptedSubscriptionCall.SPEED,
+                ScriptedSubscriptionCall.PRIORITY,
+                ScriptedSubscriptionCall.UNSUBSCRIBE,
+                ScriptedSubscriptionCall.LIVE_COMMIT,
+            ),
+            connection.calls,
+        )
+    }
+
+    @Test
+    fun `generation loss terminates every inline-resumed collector`() = runTest {
+        val connection = ScriptedSubscriptionConnection()
+        val unconfined = UnconfinedTestDispatcher(testScheduler)
+        val collected = listOf(SubscriptionId(1L), SubscriptionId(2L)).map { id ->
+            async(unconfined) { connection.events(id).toList() }.also { connection.awaitCollectionRegistered() }
+        }
+
+        connection.loseGeneration()
+
+        collected.forEach { stream ->
+            val terminal = stream.await().single() as SubscriptionEvent.Terminated
+            assertEquals(SubscriptionTermination.GENERATION_LOST, terminal.reason)
+        }
+    }
+
+    @Test
+    fun `broadcast reaches every collector when one completes inline`() = runTest {
+        val connection = ScriptedSubscriptionConnection()
+        val unconfined = UnconfinedTestDispatcher(testScheduler)
+        val collected = listOf(SubscriptionId(1L), SubscriptionId(2L)).map { id ->
+            async(unconfined) { connection.events(id).take(1).toList() }.also { connection.awaitCollectionRegistered() }
+        }
+        val status = SubscriptionEvent.Status(SubscriptionCondition.STATUS_REPORTED)
+
+        connection.emit(status)
+
+        collected.forEach { stream -> assertEquals(listOf(status), stream.await()) }
     }
 
     @Test

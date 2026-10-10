@@ -937,8 +937,12 @@ component is not a URI factory or a generic image cache.
 
 Add `sdk-testing` with `testImplementation`. `FakeTvheadendSession` implements
 the JVM session boundary with scriptable observations, commands, repositories,
-typed failures, and recorded calls. It enforces production generation authority,
-including proof retention, replacement, and cross-session rejection. Opt into
+typed failures, and recorded calls. Its round trips and bindings enforce
+generation authority: a proof stays valid while republication retains it and
+expires on `replaceGeneration`, `retire`, or use with another session. Its
+lifecycle commands only record calls and return scripted results; `connect`,
+`retry`, `disconnect`, and `shutdown` publish no state and retire no proof, so
+drive those transitions with `publish`, `replaceGeneration`, and `retire`. Opt into
 `FakePlaybackApi` only when scripting successful playback bindings.
 Observations supplied to its constructor or publication methods are republished
 under the fake's authority, so capture a fresh proof with

@@ -33,7 +33,14 @@ public enum class ScriptedSubscriptionCall {
     PRIORITY,
 }
 
-/** Deterministic generation-bound subscription transport for JVM SDK tests. */
+/**
+ * Deterministic generation-bound subscription transport for JVM SDK tests.
+ *
+ * Scripting a stream that unsubscribe or generation loss already completed is a no-op. After
+ * [loseGeneration], late collectors receive only the generation-loss terminal without consuming
+ * their id, and commands return [SubscriptionOperationResult.TransportUnavailable] without
+ * recording their values. This models the HTSP 1.0 transport contract the SDK is migrating to.
+ */
 @SubscriptionInfrastructureApi
 public class ScriptedSubscriptionConnection : SubscriptionConnection {
     private val lock = Any()
@@ -53,6 +60,7 @@ public class ScriptedSubscriptionConnection : SubscriptionConnection {
     private var unsubscribeResult: SubscriptionOperationResult<Unit> =
         SubscriptionOperationResult.Ok(Unit)
     private var live = true
+    private var generationLost = false
     private val mutableSeekTargets = ArrayList<SubscriptionSeekTarget>()
     private val mutableSpeeds = ArrayList<Int>()
     private val mutablePriorities = ArrayList<LiveSubscriptionPriority>()
@@ -126,20 +134,17 @@ public class ScriptedSubscriptionConnection : SubscriptionConnection {
         synchronized(lock) { live = value }
     }
 
-    /** Marks this generation lost, delivers its ordered terminal, and completes every stream. */
+    /** Permanently marks this generation lost, delivers its ordered terminal, and completes every stream. */
     public suspend fun loseGeneration() {
         currentCoroutineContext().ensureActive()
-        val targets = synchronized(lock) {
+        synchronized(lock) {
             live = false
-            streams.values.map(ActiveScriptedStream::events)
-        }
-        targets.forEach { stream ->
-            stream.send(
-                SubscriptionEvent.Terminated(
-                    at.bernhardberger.tvheadend.sdk.playback.SubscriptionTermination.GENERATION_LOST,
-                ),
-            )
-            stream.close()
+            generationLost = true
+            // Snapshot: closing can resume an unconfined collector whose finally removes its entry.
+            streams.values.toList().forEach { active ->
+                active.events.trySend(generationLostTerminal())
+                active.events.close()
+            }
         }
     }
 
@@ -147,22 +152,22 @@ public class ScriptedSubscriptionConnection : SubscriptionConnection {
     public suspend fun awaitCollectionRegistered(): ScriptedSubscriptionRegistration =
         registrations.receive()
 
-    /** Emits [event] to one opaque registered stream. */
+    /** Emits [event] to one opaque registered stream; a stream that already completed ignores it. */
     public suspend fun emit(
         registration: ScriptedSubscriptionRegistration,
         event: SubscriptionEvent,
     ) {
-        val target = synchronized(lock) {
+        synchronized(lock) {
             check(registration.belongsTo(ownerToken)) { "Subscription registration belongs to another connection" }
-            streams.values.singleOrNull { active -> active.registration === registration }?.events
+            streams.values.singleOrNull { active -> active.registration === registration }
+                ?.events
+                ?.trySend(event)
         }
-        checkNotNull(target) { "Subscription stream is not active" }.send(event)
     }
 
     /** Emits [event] to every currently registered stream in registration order. */
     public suspend fun emit(event: SubscriptionEvent) {
-        val targets = synchronized(lock) { streams.values.map(ActiveScriptedStream::events) }
-        targets.forEach { stream -> stream.send(event) }
+        synchronized(lock) { streams.values.toList().forEach { active -> active.events.trySend(event) } }
     }
 
     /** Completes every currently registered stream. */
@@ -174,6 +179,7 @@ public class ScriptedSubscriptionConnection : SubscriptionConnection {
     override fun events(id: SubscriptionId): Flow<SubscriptionEvent> = flow {
         currentCoroutineContext().ensureActive()
         val active = synchronized(lock) {
+            if (generationLost) return@synchronized null
             check(consumedIds.add(id.value)) { "Subscription stream was already consumed" }
             ActiveScriptedStream(
                 registration = ScriptedSubscriptionRegistration(ownerToken),
@@ -182,6 +188,10 @@ public class ScriptedSubscriptionConnection : SubscriptionConnection {
                 streams[id.value] = created
                 mutableCalls += ScriptedSubscriptionCall.COLLECTION_REGISTERED
             }
+        }
+        if (active == null) {
+            emit(generationLostTerminal())
+            return@flow
         }
         try {
             registrations.send(active.registration)
@@ -221,6 +231,7 @@ public class ScriptedSubscriptionConnection : SubscriptionConnection {
     ): SubscriptionOperationResult<SubscriptionConfirmation> {
         currentCoroutineContext().ensureActive()
         return synchronized(lock) {
+            lostCommandLocked(ScriptedSubscriptionCall.SUBSCRIBE)?.let { lost -> return@synchronized lost }
             check(streams.containsKey(id.value)) { "Collector must register before subscribe" }
             mutableCalls += ScriptedSubscriptionCall.SUBSCRIBE
             requestedStreamProfileUuid = streamProfileUuid
@@ -236,6 +247,7 @@ public class ScriptedSubscriptionConnection : SubscriptionConnection {
     ): SubscriptionOperationResult<Unit> {
         currentCoroutineContext().ensureActive()
         return synchronized(lock) {
+            lostCommandLocked(ScriptedSubscriptionCall.SKIP)?.let { lost -> return@synchronized lost }
             check(streams.containsKey(id.value)) { "Subscription stream is not active" }
             mutableCalls += ScriptedSubscriptionCall.SKIP
             mutableSeekTargets += target
@@ -249,6 +261,7 @@ public class ScriptedSubscriptionConnection : SubscriptionConnection {
     ): SubscriptionOperationResult<Unit> {
         currentCoroutineContext().ensureActive()
         return synchronized(lock) {
+            lostCommandLocked(ScriptedSubscriptionCall.SPEED)?.let { lost -> return@synchronized lost }
             check(streams.containsKey(id.value)) { "Subscription stream is not active" }
             mutableCalls += ScriptedSubscriptionCall.SPEED
             mutableSpeeds += speed
@@ -262,6 +275,7 @@ public class ScriptedSubscriptionConnection : SubscriptionConnection {
     ): SubscriptionOperationResult<Unit> {
         currentCoroutineContext().ensureActive()
         return synchronized(lock) {
+            lostCommandLocked(ScriptedSubscriptionCall.PRIORITY)?.let { lost -> return@synchronized lost }
             check(streams.containsKey(id.value)) { "Subscription stream is not active" }
             mutableCalls += ScriptedSubscriptionCall.PRIORITY
             mutablePriorities += priority
@@ -271,19 +285,25 @@ public class ScriptedSubscriptionConnection : SubscriptionConnection {
 
     override suspend fun unsubscribe(id: SubscriptionId): SubscriptionOperationResult<Unit> {
         currentCoroutineContext().ensureActive()
-        val result = synchronized(lock) {
+        return synchronized(lock) {
+            lostCommandLocked(ScriptedSubscriptionCall.UNSUBSCRIBE)?.let { lost -> return@synchronized lost }
             mutableCalls += ScriptedSubscriptionCall.UNSUBSCRIBE
-            unsubscribeResult
+            unsubscribeResult.also { result ->
+                if (result is SubscriptionOperationResult.Ok) streams[id.value]?.events?.close()
+            }
         }
-        if (result is SubscriptionOperationResult.Ok) {
-            synchronized(lock) { streams[id.value]?.events }?.close()
-        }
-        return result
     }
 
     override fun <T> commitIfLive(block: () -> T): T? = synchronized(lock) {
         mutableCalls += ScriptedSubscriptionCall.LIVE_COMMIT
-        if (live) block() else null
+        if (live && !generationLost) block() else null
+    }
+
+    // A lost generation records the attempt but rejects it before dispatch, as the HTSP 1.0 transport does.
+    private fun lostCommandLocked(call: ScriptedSubscriptionCall): SubscriptionOperationResult<Nothing>? {
+        if (!generationLost) return null
+        mutableCalls += call
+        return SubscriptionOperationResult.TransportUnavailable
     }
 
     override fun toString(): String = "ScriptedSubscriptionConnection(<redacted>)"
@@ -296,6 +316,11 @@ public class ScriptedSubscriptionRegistration internal constructor(private val o
 
     override fun toString(): String = "ScriptedSubscriptionRegistration(<redacted>)"
 }
+
+private fun generationLostTerminal(): SubscriptionEvent.Terminated =
+    SubscriptionEvent.Terminated(
+        at.bernhardberger.tvheadend.sdk.playback.SubscriptionTermination.GENERATION_LOST,
+    )
 
 private class ActiveScriptedStream(
     internal val registration: ScriptedSubscriptionRegistration,

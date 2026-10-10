@@ -29,7 +29,9 @@ import at.bernhardberger.tvheadend.sdk.core.DvrSchedule
 import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
 import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.EpgCoverage
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverageAcquisitionResult
+import at.bernhardberger.tvheadend.sdk.core.EpgCoverageBatchResult
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverageBatchSettlement
 import at.bernhardberger.tvheadend.sdk.core.EpgSearchRequest
 import at.bernhardberger.tvheadend.sdk.core.EpgSearchResult
@@ -468,6 +470,126 @@ internal class FakeTvheadendSessionTest {
     }
 
     @Test
+    fun `coverage scripts must carry the admitting proof`() = runTest {
+        val fake = FakeTvheadendSession(currentObservation())
+        val current = fake.captureCurrentSession()
+        val through = Instant.fromEpochSeconds(1)
+        val admitted = fake.observation.value
+        fake.epgRepository.scriptCoverage(EpgCoverageAcquisitionResult.CoveredEmpty(admitted))
+
+        val covered = fake.epgRepository.acquireCoverage(current, ChannelId(1), through)
+        assertSame(admitted, (covered as EpgCoverageAcquisitionResult.CoveredEmpty).observation)
+        val batch = fake.epgRepository.acquireCoverageBatch(current, listOf(ChannelId(1)), through)
+        assertSame(
+            admitted,
+            (batch.settlements.single() as EpgCoverageBatchSettlement.CoveredEmpty).observation,
+        )
+
+        fake.epgRepository.scriptCoverage(EpgCoverageAcquisitionResult.CoveredWithData(currentObservation()))
+        assertRejected { fake.epgRepository.acquireCoverage(current, ChannelId(1), through) }
+        assertRejected { fake.epgRepository.acquireCoverageBatch(current, listOf(ChannelId(1)), through) }
+
+        fake.epgRepository.scriptCoverage(EpgCoverageAcquisitionResult.CoveredEmpty(admitted))
+        fake.replaceGeneration(currentObservation())
+        val replacement = fake.captureCurrentSession()
+        assertRejected { fake.epgRepository.acquireCoverage(replacement, ChannelId(1), through) }
+    }
+
+    @Test
+    fun `scripted coverage batches must match requested channels and proof`() = runTest {
+        val fake = FakeTvheadendSession(currentObservation())
+        val current = fake.captureCurrentSession()
+        val through = Instant.fromEpochSeconds(1)
+        val scripted = EpgCoverageBatchResult.create(
+            listOf(
+                EpgCoverageBatchSettlement.CoveredEmpty(ChannelId(2), fake.observation.value),
+                EpgCoverageBatchSettlement.Rejected(ChannelId(1)),
+            ),
+        )
+        fake.epgRepository.scriptCoverageBatch(scripted)
+
+        assertSame(
+            scripted,
+            fake.epgRepository.acquireCoverageBatch(
+                current,
+                listOf(ChannelId(2), ChannelId(1), ChannelId(2)),
+                through,
+            ),
+        )
+        assertRejected {
+            fake.epgRepository.acquireCoverageBatch(current, listOf(ChannelId(1), ChannelId(2)), through)
+        }
+        assertRejected { fake.epgRepository.acquireCoverageBatch(current, listOf(ChannelId(2)), through) }
+        fake.replaceGeneration(currentObservation())
+        assertRejected {
+            fake.epgRepository.acquireCoverageBatch(
+                fake.captureCurrentSession(),
+                listOf(ChannelId(2), ChannelId(1)),
+                through,
+            )
+        }
+    }
+
+    @Test
+    fun `coverage-absent channels settle like production regardless of scripts`() = runTest {
+        val fake = FakeTvheadendSession(currentObservation())
+        val current = fake.captureCurrentSession()
+        val through = Instant.fromEpochSeconds(1)
+        fake.epgRepository.scriptCoverage(EpgCoverageAcquisitionResult.CoveredEmpty(fake.observation.value))
+
+        assertSame(
+            EpgCoverageAcquisitionResult.Ineligible,
+            fake.epgRepository.acquireCoverage(current, ChannelId(3), through),
+        )
+        val batch = fake.epgRepository.acquireCoverageBatch(current, listOf(ChannelId(3), ChannelId(1)), through)
+        assertTrue(batch.settlements[0] is EpgCoverageBatchSettlement.TargetAbsent)
+        assertTrue(batch.settlements[1] is EpgCoverageBatchSettlement.CoveredEmpty)
+
+        fake.epgRepository.scriptCoverageBatch(
+            EpgCoverageBatchResult.create(listOf(EpgCoverageBatchSettlement.Rejected(ChannelId(3)))),
+        )
+        assertRejected { fake.epgRepository.acquireCoverageBatch(current, listOf(ChannelId(3)), through) }
+        fake.epgRepository.scriptCoverageBatch(
+            EpgCoverageBatchResult.create(listOf(EpgCoverageBatchSettlement.TargetAbsent(ChannelId(1)))),
+        )
+        assertRejected { fake.epgRepository.acquireCoverageBatch(current, listOf(ChannelId(1)), through) }
+        val absent = EpgCoverageBatchResult.create(listOf(EpgCoverageBatchSettlement.TargetAbsent(ChannelId(3))))
+        fake.epgRepository.scriptCoverageBatch(absent)
+        assertSame(absent, fake.epgRepository.acquireCoverageBatch(current, listOf(ChannelId(3)), through))
+    }
+
+    @Test
+    fun `coverage settles as expired when its generation is retired or replaced after admission`() = runTest {
+        val through = Instant.fromEpochSeconds(1)
+        val races = listOf<(FakeTvheadendSession) -> Unit>(
+            { fake -> fake.retire() },
+            { fake -> fake.replaceGeneration(currentObservation(includeTargets = false)) },
+        )
+        fun racingFake(race: (FakeTvheadendSession) -> Unit) = FakeTvheadendSession(currentObservation()).apply {
+            epgRepository.scriptCoverage(EpgCoverageAcquisitionResult.CoveredEmpty(observation.value))
+            epgRepository.scriptCoverageBatch(
+                EpgCoverageBatchResult.create(
+                    listOf(EpgCoverageBatchSettlement.CoveredEmpty(ChannelId(1), observation.value)),
+                ),
+            )
+            afterAdmission = { race(this) }
+        }
+        races.forEach { race ->
+            val single = racingFake(race)
+            assertSame(
+                EpgCoverageAcquisitionResult.ObservationExpired,
+                single.epgRepository.acquireCoverage(single.captureCurrentSession(), ChannelId(1), through),
+            )
+            val batch = racingFake(race)
+            val settlement = batch.epgRepository
+                .acquireCoverageBatch(batch.captureCurrentSession(), listOf(ChannelId(1)), through)
+                .settlements.single()
+            assertTrue(settlement is EpgCoverageBatchSettlement.ObservationExpired)
+            assertEquals(ChannelId(1), settlement.channelId)
+        }
+    }
+
+    @Test
     fun `retirement and failure scripts cannot counterfeit expiration`() = runTest {
         val fake = FakeTvheadendSession(currentObservation())
         val current = fake.captureCurrentSession()
@@ -502,7 +624,11 @@ private fun currentObservation(includeTargets: Boolean = true, recordingTitle: S
     channelState = ChannelRepositoryState.Current(
         ChannelCatalog.create(if (includeTargets) listOf(Channel.create(ChannelId(1))) else emptyList()),
     ),
-    epgState = EpgRepositoryState.Current(EpgSnapshot.create()),
+    epgState = EpgRepositoryState.Current(
+        EpgSnapshot.create(
+            coverages = if (includeTargets) listOf(EpgCoverage.empty(ChannelId(1)), EpgCoverage.empty(ChannelId(2))) else emptyList(),
+        ),
+    ),
     dvrState = DvrRepositoryState.Current(
         DvrSnapshot.create(
             if (includeTargets) {
@@ -513,6 +639,16 @@ private fun currentObservation(includeTargets: Boolean = true, recordingTitle: S
         ),
     ),
 )
+
+private suspend fun assertRejected(block: suspend () -> Unit) {
+    var rejected = false
+    try {
+        block()
+    } catch (_: IllegalArgumentException) {
+        rejected = true
+    }
+    assertTrue(rejected)
+}
 
 private suspend fun assertCancellationPropagates(block: suspend () -> Unit): Unit = coroutineScope {
     val cancellation = CancellationException("fixed fake cancellation")

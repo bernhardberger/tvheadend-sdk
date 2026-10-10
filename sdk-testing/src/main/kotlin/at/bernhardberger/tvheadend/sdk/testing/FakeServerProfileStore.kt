@@ -2,6 +2,8 @@ package at.bernhardberger.tvheadend.sdk.testing
 
 import at.bernhardberger.tvheadend.sdk.core.ServerProfileReadResult
 import at.bernhardberger.tvheadend.sdk.core.ServerProfileStore
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 
 /** Value-free profile-store invocation labels safe for assertions and diagnostics. */
 public enum class FakeServerProfileStoreCall {
@@ -11,7 +13,7 @@ public enum class FakeServerProfileStoreCall {
     CLEAR_PROFILE,
 }
 
-/** JVM-only profile store with controllable local persistence availability. */
+/** JVM-only profile store with controllable local persistence availability; cancelled calls change nothing. */
 public class FakeServerProfileStore(
     initialResult: ServerProfileReadResult = ServerProfileReadResult.Missing,
 ) : ServerProfileStore {
@@ -39,12 +41,16 @@ public class FakeServerProfileStore(
         synchronized(lock) { mutationAvailable = true }
     }
 
-    override suspend fun loadProfile(): ServerProfileReadResult = synchronized(lock) {
-        mutableCalls += FakeServerProfileStoreCall.LOAD_PROFILE
-        storedResult
+    override suspend fun loadProfile(): ServerProfileReadResult {
+        currentCoroutineContext().ensureActive()
+        return synchronized(lock) {
+            mutableCalls += FakeServerProfileStoreCall.LOAD_PROFILE
+            storedResult
+        }
     }
 
     override suspend fun storeAnonymous(host: String, port: Int): ServerProfileReadResult {
+        currentCoroutineContext().ensureActive()
         val result = ServerProfileReadResult.anonymous(host, port)
         return persist(FakeServerProfileStoreCall.STORE_ANONYMOUS, result)
     }
@@ -55,12 +61,15 @@ public class FakeServerProfileStore(
         username: String,
         password: String,
     ): ServerProfileReadResult {
+        currentCoroutineContext().ensureActive()
         val result = ServerProfileReadResult.password(host, port, username, password)
         return persist(FakeServerProfileStoreCall.STORE_PASSWORD, result)
     }
 
-    override suspend fun clearProfile(): ServerProfileReadResult =
-        persist(FakeServerProfileStoreCall.CLEAR_PROFILE, ServerProfileReadResult.Missing)
+    override suspend fun clearProfile(): ServerProfileReadResult {
+        currentCoroutineContext().ensureActive()
+        return persist(FakeServerProfileStoreCall.CLEAR_PROFILE, ServerProfileReadResult.Missing)
+    }
 
     private fun persist(
         call: FakeServerProfileStoreCall,

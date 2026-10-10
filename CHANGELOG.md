@@ -54,6 +54,18 @@
   delimiter and parameter sets arrive in a packet without a timestamp; the
   picture takes the timestamp of its first slice instead of being dropped.
   Multi-slice MVC/SVC pictures are no longer split at type-14 prefix NAL units.
+- `sdk-testing` fakes no longer accept what production rejects:
+  `ScriptedSubscriptionConnection` ignores scripting after unsubscribe or
+  generation loss; after `loseGeneration()` commands return
+  `TransportUnavailable` without recording values, late collectors receive only
+  `Terminated(GENERATION_LOST)` without consuming their id, and `commitIfLive`
+  returns null, matching the HTSP 1.0 transport contract; generation loss and
+  broadcasts reach every collector even when one completes inline.
+  `FakeTvheadendSession` binds scripted EPG coverage to the admitting proof and
+  the requested channel order, and channels without coverage settle as
+  `Ineligible` (single) or `TargetAbsent` (batch). Cancelled
+  `FakeServerProfileStore` calls change nothing. The consumer guide and KDoc
+  state exactly what `FakeTvheadendSession` enforces.
 
 ## [0.23.0]
 
