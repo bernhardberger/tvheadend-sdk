@@ -289,6 +289,7 @@ internal class DvrMutationCoordinator(
                     GatewayResult.Timeout,
                     GatewayResult.TransportUnavailable,
                     GatewayResult.NotSupported,
+                    GatewayResult.MalformedReply,
                     -> failure(operation, result)
                 }
             }
@@ -328,6 +329,7 @@ internal class DvrMutationCoordinator(
                     GatewayResult.Timeout,
                     GatewayResult.TransportUnavailable,
                     GatewayResult.NotSupported,
+                    GatewayResult.MalformedReply,
                     -> failure(operation, result)
                 }
             }
@@ -436,6 +438,7 @@ internal class DvrMutationCoordinator(
             GatewayResult.Timeout -> DvrMutationResult.Timeout
             GatewayResult.TransportUnavailable -> DvrMutationResult.TransportUnavailable
             GatewayResult.NotSupported -> DvrMutationResult.NotSupported
+            GatewayResult.MalformedReply -> DvrMutationResult.MalformedResponse
         }
     }
 

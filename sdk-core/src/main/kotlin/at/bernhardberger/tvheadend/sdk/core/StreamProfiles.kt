@@ -56,8 +56,11 @@ public sealed interface StreamProfilesResult {
     /** The originating observation is no longer current for its owning session. */
     public data object ObservationExpired : StreamProfilesResult
 
-    /** The server rejected the request or returned an invalid profile UUID. */
+    /** The server rejected the request. */
     public data object ServerRejected : StreamProfilesResult
+
+    /** The response was malformed; transport loss and automatic retry are not implied. */
+    public data object MalformedResponse : StreamProfilesResult
 
     /** The authenticated session cannot discover stream profiles. */
     public data object AccessDenied : StreamProfilesResult

@@ -119,6 +119,7 @@ internal class EpgSearchRepositoryTest {
         val request = EpgSearchRequest.create("query")
         val mappings = listOf(
             GatewayResult.ServerRejected to EpgSearchResult.InvalidQuery,
+            GatewayResult.MalformedReply to EpgSearchResult.MalformedResponse,
             GatewayResult.AccessDenied to EpgSearchResult.AccessDenied,
             GatewayResult.ConnectionLimit to EpgSearchResult.ConnectionLimit,
             GatewayResult.Timeout to EpgSearchResult.Timeout,

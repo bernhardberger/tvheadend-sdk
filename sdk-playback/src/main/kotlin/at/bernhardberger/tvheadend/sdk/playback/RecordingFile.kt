@@ -26,6 +26,8 @@ public enum class RecordingFileFailure {
 
     /** The server does not support recording file access. */
     NOT_SUPPORTED,
+    /** Malformed response; callers must not infer connection loss or automatically retry. */
+    MALFORMED_RESPONSE,
 }
 
 /** Typed result of a recording file operation. */

@@ -64,6 +64,9 @@ public sealed interface DvrProgressResult {
     /** The server rejected the command without a safe detailed reason. */
     public data object ServerRejected : DvrProgressResult
 
+    /** The response was malformed; progress may have been applied. Never blindly retry it. */
+    public data object MalformedResponse : DvrProgressResult
+
     /** The authenticated session lacks recorder permission. */
     public data object AccessDenied : DvrProgressResult
 

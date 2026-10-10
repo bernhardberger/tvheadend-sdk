@@ -78,6 +78,9 @@ public sealed interface DvrCutpointsResult {
     /** The server rejected the request or returned an invalid cutpoint interval. */
     public data object ServerRejected : DvrCutpointsResult
 
+    /** The response was malformed; transport loss and automatic retry are not implied. */
+    public data object MalformedResponse : DvrCutpointsResult
+
     /** The authenticated session cannot access the selected recording. */
     public data object AccessDenied : DvrCutpointsResult
 

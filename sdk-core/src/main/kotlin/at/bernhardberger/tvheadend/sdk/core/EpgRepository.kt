@@ -585,11 +585,14 @@ public sealed interface EpgSearchResult {
     public data object ObservationExpired : EpgSearchResult
 
     /**
-     * The server rejected the query or returned an unusable search payload.
+     * The server rejected the query.
      *
      * TVHeadend also uses its generic rejection path for inaccessible channel or tag filters.
      */
     public data object InvalidQuery : EpgSearchResult
+
+    /** The response was malformed; transport loss and automatic retry are not implied. */
+    public data object MalformedResponse : EpgSearchResult
 
     /** The protocol explicitly reported that the session lacks EPG search permission. */
     public data object AccessDenied : EpgSearchResult

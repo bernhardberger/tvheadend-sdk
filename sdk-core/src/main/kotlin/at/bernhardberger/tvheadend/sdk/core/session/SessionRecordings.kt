@@ -71,6 +71,7 @@ internal inline fun <T, R> GatewayResult<T>.toRecordingFileResult(
     GatewayResult.TransportUnavailable ->
         RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
     GatewayResult.NotSupported -> RecordingFileResult.Failed(RecordingFileFailure.NOT_SUPPORTED)
+    GatewayResult.MalformedReply -> RecordingFileResult.Failed(RecordingFileFailure.MALFORMED_RESPONSE)
 }
 
 private val CLOSED_RECORDING_HANDLE =

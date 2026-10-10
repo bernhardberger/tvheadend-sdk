@@ -342,6 +342,7 @@ class SubscriptionStateMachineTest {
             SubscriptionOperationResult.AccessDenied to SubscriptionOperationFailure.ACCESS_DENIED,
             SubscriptionOperationResult.ConnectionLimit to SubscriptionOperationFailure.CONNECTION_LIMIT,
             SubscriptionOperationResult.Timeout to SubscriptionOperationFailure.TIMEOUT,
+            SubscriptionOperationResult.MalformedResponse to SubscriptionOperationFailure.MALFORMED_RESPONSE,
             SubscriptionOperationResult.TransportUnavailable to
                 SubscriptionOperationFailure.TRANSPORT_UNAVAILABLE,
             SubscriptionOperationResult.NotSupported to SubscriptionOperationFailure.NOT_SUPPORTED,
@@ -365,6 +366,159 @@ class SubscriptionStateMachineTest {
             manager.closeAndJoin()
             assertEquals(1, connection.unsubscribeCount)
         }
+    }
+
+    @Test
+    fun `subscribe rejection preserves the outcome in either terminal ordering`() = runTest {
+        for (eventFirst in listOf(true, false)) {
+            val reply = CompletableDeferred<SubscriptionOperationResult<SubscriptionConfirmation>>()
+            val cleanup = CompletableDeferred<Unit>()
+            val connection = RecordingSubscriptionConnection().apply {
+                subscribeAction = { reply.await() }
+                unsubscribeAction = { cleanup.await(); SubscriptionOperationResult.Ok(Unit) }
+            }
+            val manager = manager(connection)
+            manager.startAdmission()
+            val opened = async { manager.open(SubscriptionChannelId(10), SubscriptionEventConsumer {}) }
+            runCurrent()
+            if (eventFirst) {
+                connection.emit(SubscriptionEvent.Terminated(SubscriptionTermination.SUBSCRIBE_REJECTED))
+                connection.complete(connection.registeredIds.single())
+                runCurrent()
+                assertFalse(opened.isCompleted)
+            }
+            reply.complete(SubscriptionOperationResult.ConnectionLimit)
+            runCurrent()
+            if (!eventFirst) {
+                connection.emit(SubscriptionEvent.Terminated(SubscriptionTermination.SUBSCRIBE_REJECTED))
+                runCurrent()
+            }
+            cleanup.complete(Unit)
+            runCurrent()
+            val failure = opened.await() as SubscriptionOpenResult.Failed
+            assertEquals(SubscriptionOperationFailure.CONNECTION_LIMIT,
+                (failure.reason as SubscriptionTerminalReason.OperationFailed).failure)
+            manager.closeAndJoin()
+            assertEquals(1, connection.unsubscribeCount)
+        }
+    }
+
+    @Test
+    fun `parked subscribe rejection wins over late success and releases the subscription`() = runTest {
+        val reply = CompletableDeferred<SubscriptionOperationResult<SubscriptionConfirmation>>()
+        val connection = RecordingSubscriptionConnection().apply { subscribeAction = { reply.await() } }
+        val manager = manager(connection)
+        manager.startAdmission()
+        val opened = async { manager.open(SubscriptionChannelId(10), SubscriptionEventConsumer {}) }
+        runCurrent()
+
+        connection.emit(started(stream()))
+        connection.emit(SubscriptionEvent.Terminated(SubscriptionTermination.SUBSCRIBE_REJECTED))
+        runCurrent()
+        assertFalse(opened.isCompleted)
+
+        reply.complete(successfulConfirmation())
+        runCurrent()
+        // Do not advance to the rejection deadline: the late reply itself must settle the open.
+        assertTrue(opened.isCompleted)
+        val failure = opened.await() as SubscriptionOpenResult.Failed
+        assertEquals(SubscriptionOperationFailure.SERVER_REJECTED,
+            (failure.reason as SubscriptionTerminalReason.OperationFailed).failure)
+        assertEquals(1, connection.unsubscribeCount)
+        manager.closeAndJoin()
+        assertEquals(1, connection.unsubscribeCount)
+    }
+
+    @Test
+    fun `rejected subscribe without an outcome expires and joins request before unsubscribe`() = runTest {
+        val cancellationStarted = CompletableDeferred<Unit>()
+        val releaseRequest = CompletableDeferred<Unit>()
+        val connection = RecordingSubscriptionConnection().apply {
+            subscribeAction = {
+                try {
+                    awaitCancellation()
+                } finally {
+                    cancellationStarted.complete(Unit)
+                    withContext(NonCancellable) { releaseRequest.await() }
+                }
+            }
+        }
+        val manager = manager(connection)
+        manager.startAdmission()
+        val opened = async { manager.open(SubscriptionChannelId(10), SubscriptionEventConsumer {}) }
+        runCurrent()
+        connection.emit(SubscriptionEvent.Terminated(SubscriptionTermination.SUBSCRIBE_REJECTED))
+        runCurrent()
+        advanceTimeBy(4_999)
+        runCurrent()
+        val completedBeforeDeadline = opened.isCompleted
+        val cancelledBeforeDeadline = cancellationStarted.isCompleted
+        advanceTimeBy(1)
+        runCurrent()
+        val cancelledAtDeadline = cancellationStarted.isCompleted
+        val completedBeforeRequestJoined = opened.isCompleted
+        val unsubscribedBeforeRequestJoined = connection.unsubscribeCount
+        releaseRequest.complete(Unit)
+        runCurrent()
+        assertFalse(completedBeforeDeadline)
+        assertFalse(cancelledBeforeDeadline)
+        assertTrue(cancelledAtDeadline)
+        assertFalse(completedBeforeRequestJoined)
+        assertEquals(0, unsubscribedBeforeRequestJoined)
+        val failure = opened.await() as SubscriptionOpenResult.Failed
+        assertEquals(SubscriptionOperationFailure.SERVER_REJECTED,
+            (failure.reason as SubscriptionTerminalReason.OperationFailed).failure)
+        assertEquals(1, connection.unsubscribeCount)
+        manager.closeAndJoin()
+        assertEquals(1, connection.unsubscribeCount)
+    }
+
+    @Test
+    fun `caller cancellation takes precedence during rejected subscribe deferral`() = runTest {
+        var requestCancelled = false
+        val connection = RecordingSubscriptionConnection().apply {
+            subscribeAction = { try { awaitCancellation() } finally { requestCancelled = true } }
+        }
+        val manager = manager(connection)
+        manager.startAdmission()
+        val cancellation = CancellationException("fixed deferred open cancellation")
+        var observed: CancellationException? = null
+        val opening = launch {
+            try {
+                manager.open(SubscriptionChannelId(10), SubscriptionEventConsumer {})
+            } catch (caught: CancellationException) {
+                observed = caught
+            }
+        }
+        runCurrent()
+        connection.emit(SubscriptionEvent.Terminated(SubscriptionTermination.SUBSCRIBE_REJECTED))
+        runCurrent()
+        opening.cancel(cancellation)
+        runCurrent()
+        opening.join()
+        assertSame(cancellation, observed)
+        assertTrue(requestCancelled)
+        assertEquals(1, connection.unsubscribeCount)
+        manager.closeAndJoin()
+    }
+
+    @Test
+    fun `owner close takes precedence during rejected subscribe deferral`() = runTest {
+        var requestCancelled = false
+        val connection = RecordingSubscriptionConnection().apply {
+            subscribeAction = { try { awaitCancellation() } finally { requestCancelled = true } }
+        }
+        val manager = manager(connection)
+        manager.startAdmission()
+        val opened = async { manager.open(SubscriptionChannelId(10), SubscriptionEventConsumer {}) }
+        runCurrent()
+        connection.emit(SubscriptionEvent.Terminated(SubscriptionTermination.SUBSCRIBE_REJECTED))
+        runCurrent()
+        manager.closeAndJoin()
+        val failure = opened.await() as SubscriptionOpenResult.Failed
+        assertSame(SubscriptionTerminalReason.Closed, failure.reason)
+        assertTrue(requestCancelled)
+        assertEquals(1, connection.unsubscribeCount)
     }
 
     @Test

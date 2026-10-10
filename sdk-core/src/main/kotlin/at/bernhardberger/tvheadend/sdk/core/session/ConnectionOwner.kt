@@ -410,7 +410,7 @@ internal class ConnectionOwner(
                 )
             }
 
-            if (outcome.reachedReady) {
+            if (outcome.reachedReady && outcome.failure != SessionFailure.MetadataOverflow) {
                 failureIndex = 0
             }
             val unavailable = commitUnavailable(token, outcome.failure, outcome.disposition)
@@ -489,7 +489,7 @@ internal class ConnectionOwner(
                 requireCurrent(token)
                 return@coroutineScope GatewayConnectionFailure.TRANSPORT_UNAVAILABLE.toAttemptOutcome(
                     connected = true,
-                )
+                ).withRetirementFailure(connection.generation)
             }
 
             val synchronization = async {
@@ -502,11 +502,12 @@ internal class ConnectionOwner(
                 }
             ) {
                 is SynchronizationOutcome.Failed -> return@coroutineScope synchronizationOutcome.outcome
+                    .withRetirementFailure(connection.generation)
                 is SynchronizationOutcome.ConnectionFailed -> {
                     synchronization.cancelAndJoin()
                     return@coroutineScope synchronizationOutcome.failure.toAttemptOutcome(
                         connected = true,
-                    )
+                    ).withRetirementFailure(connection.generation)
                 }
                 SynchronizationOutcome.Ready -> Unit
             }
@@ -520,7 +521,7 @@ internal class ConnectionOwner(
             ) {
                 return@coroutineScope GatewayConnectionFailure.TRANSPORT_UNAVAILABLE.toAttemptOutcome(
                     connected = true,
-                )
+                ).withRetirementFailure(connection.generation)
             }
             val capabilities = metadata.capabilitySnapshot(connection.generation)
             val protocolVersion = connection.protocolVersion
@@ -537,23 +538,27 @@ internal class ConnectionOwner(
                 requireCurrent(token)
                 return@coroutineScope GatewayConnectionFailure.TRANSPORT_UNAVAILABLE.toAttemptOutcome(
                     connected = true,
-                )
+                ).withRetirementFailure(connection.generation)
             }
             if (!children.startBackgroundEnrichment(connection.generation)) {
                 return@coroutineScope GatewayConnectionFailure.TRANSPORT_UNAVAILABLE.toAttemptOutcome(
                     connected = true,
                     reachedReady = true,
-                )
+                ).withRetirementFailure(connection.generation)
             }
             runtimeFailure.await().toAttemptOutcome(
                 connected = true,
                 reachedReady = true,
-            )
+            ).withRetirementFailure(connection.generation)
         } finally {
             metadataWorker?.cancelAndJoin()
             runtimeFailure.cancelAndJoin()
         }
     }
+
+    private fun AttemptOutcome.withRetirementFailure(generation: GatewayGeneration): AttemptOutcome =
+        // A flow notification can lag retirement while sync finishes or ready admission is denied.
+        gateway.retirementFailure(generation)?.toAttemptOutcome(connected, reachedReady) ?: this
 
     private suspend fun synchronize(generation: GatewayGeneration): SynchronizationOutcome {
         if (gateway.commitIfLive(generation) { true } != true) {
@@ -578,6 +583,7 @@ internal class ConnectionOwner(
             GatewayResult.TransportUnavailable ->
                 GatewayResult.TransportUnavailable.toSynchronizationFailure()
             GatewayResult.NotSupported -> GatewayResult.NotSupported.toSynchronizationFailure()
+            GatewayResult.MalformedReply -> GatewayResult.MalformedReply.toSynchronizationFailure()
         }
     }
 
@@ -834,6 +840,8 @@ private fun GatewayConnectionFailure.toAttemptOutcome(
         GatewayConnectionFailure.SERVER_UNREACHABLE -> SessionFailure.ServerUnreachable
         GatewayConnectionFailure.NETWORK_UNAVAILABLE -> SessionFailure.NetworkUnavailable
         GatewayConnectionFailure.INCOMPATIBLE_SERVER -> SessionFailure.IncompatibleServer
+        GatewayConnectionFailure.UNSUPPORTED_SERVER_VERSION -> SessionFailure.ServerUpgradeRequired
+        GatewayConnectionFailure.METADATA_OVERFLOW -> SessionFailure.MetadataOverflow
         GatewayConnectionFailure.NO_CHANNELS -> SessionFailure.NoChannels
         GatewayConnectionFailure.TRANSPORT_UNAVAILABLE -> SessionFailure.TransportUnavailable
     }
@@ -854,6 +862,7 @@ private fun GatewayResult<*>.toSynchronizationFailure(): SynchronizationOutcome.
     GatewayResult.TransportUnavailable ->
         synchronizationFailure(SessionOperationFailure.TRANSPORT_UNAVAILABLE)
     GatewayResult.NotSupported -> synchronizationFailure(SessionOperationFailure.NOT_SUPPORTED)
+    GatewayResult.MalformedReply -> synchronizationFailure(SessionOperationFailure.MALFORMED_RESPONSE)
 }
 
 private fun synchronizationFailure(

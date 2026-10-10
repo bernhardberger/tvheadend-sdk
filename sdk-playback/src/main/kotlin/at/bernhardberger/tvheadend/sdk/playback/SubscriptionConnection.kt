@@ -439,6 +439,8 @@ public enum class SubscriptionTermination {
     MALFORMED_MESSAGE,
     TIMEOUT,
     LOCAL_RETIREMENT,
+    /** The subscribe request was refused; its operation outcome supplies the precise reason. */
+    SUBSCRIBE_REJECTED,
     PUBLICATION_FAILURE,
     INTERNAL_FAILURE,
     /** Legacy unattributed closure retained for SDK compatibility. */
@@ -455,6 +457,9 @@ public sealed interface SubscriptionOperationResult<out T> {
 
     /** The server rejected the operation without a safe detailed reason. */
     public data object ServerRejected : SubscriptionOperationResult<Nothing>
+
+    /** Malformed response; the server may have applied the operation. Never blindly retry it. */
+    public data object MalformedResponse : SubscriptionOperationResult<Nothing>
 
     /** The authenticated session lacks permission. */
     public data object AccessDenied : SubscriptionOperationResult<Nothing>

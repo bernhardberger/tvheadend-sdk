@@ -102,7 +102,7 @@ internal class AndroidLifecycleVerificationInstrumentationTest {
         val context = instrumentation.targetContext
         val store = TvheadendCredentialStore(context)
         var connectivityResult: TvheadendConnectivityStatus? = null
-        var apiVersion: Int? = null
+        var apiVersion: Long? = null
         var primaryFailure: Throwable? = null
 
         try {
@@ -174,7 +174,7 @@ internal class AndroidLifecycleVerificationInstrumentationTest {
                 putBoolean("p5_4_process_restarted", true)
                 putString("p5_4_connectivity", checkNotNull(connectivityResult).name)
                 putInt("p5_4_discovery_passes", 2)
-                putInt("p5_4_server_api_version", apiVersion ?: -1)
+                putLong("p5_4_server_api_version", apiVersion ?: -1L)
                 putBoolean("p5_4_credentials_cleared", true)
             },
         )
@@ -230,7 +230,7 @@ private suspend fun connectToServer(
     host: String,
     port: Int,
     authentication: ServerAuthentication.Password,
-): Int? {
+): Long? {
     val session = createTvheadendSession()
     return try {
         assertEquals(

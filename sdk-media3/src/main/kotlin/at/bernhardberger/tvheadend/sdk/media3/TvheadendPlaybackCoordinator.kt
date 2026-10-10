@@ -846,6 +846,7 @@ private fun admitGrowingRecording(
             RecordingFileFailure.CONNECTION_LIMIT,
             RecordingFileFailure.TIMEOUT,
             RecordingFileFailure.NOT_SUPPORTED,
+            RecordingFileFailure.MALFORMED_RESPONSE,
             -> RecordingAdmission.TargetUnavailable
         }
     }
@@ -1890,6 +1891,7 @@ private fun SubscriptionOperationResult<Unit>.toPublicTimeshiftResult(): Timeshi
         SubscriptionOperationResult.TransportUnavailable ->
             TimeshiftCommandResult.TRANSPORT_UNAVAILABLE
         SubscriptionOperationResult.NotSupported -> TimeshiftCommandResult.NOT_SUPPORTED
+        SubscriptionOperationResult.MalformedResponse -> TimeshiftCommandResult.MALFORMED_RESPONSE
     }
 
 private fun LiveTimeshiftControlBridge.PauseRestoration.toPublicTimeshiftResult(): TimeshiftCommandResult = when (this) {
@@ -1905,6 +1907,7 @@ private fun SubscriptionOperationFailure.toPublicTimeshiftResult(): TimeshiftCom
     SubscriptionOperationFailure.TIMEOUT -> TimeshiftCommandResult.TIMEOUT
     SubscriptionOperationFailure.TRANSPORT_UNAVAILABLE -> TimeshiftCommandResult.TRANSPORT_UNAVAILABLE
     SubscriptionOperationFailure.NOT_SUPPORTED -> TimeshiftCommandResult.NOT_SUPPORTED
+    SubscriptionOperationFailure.MALFORMED_RESPONSE -> TimeshiftCommandResult.MALFORMED_RESPONSE
 }
 
 private fun PlaybackPlayerInstallStatus.toPublicTargetResult(): PlaybackTargetResult = when (this) {

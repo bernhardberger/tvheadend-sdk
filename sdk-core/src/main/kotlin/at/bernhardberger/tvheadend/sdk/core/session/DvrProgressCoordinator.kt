@@ -160,6 +160,8 @@ internal class DvrProgressCoordinator(
                     }
                     GatewayResult.ServerRejected ->
                         ClassifiedProgress(DvrProgressResult.ServerRejected, proof = null)
+                    GatewayResult.MalformedReply ->
+                        ClassifiedProgress(DvrProgressResult.MalformedResponse, proof = null)
                     GatewayResult.ConnectionLimit ->
                         ClassifiedProgress(DvrProgressResult.ConnectionLimit, proof = null)
                     GatewayResult.Timeout -> ClassifiedProgress(DvrProgressResult.Timeout, proof = null)
@@ -229,6 +231,7 @@ internal class DvrProgressCoordinator(
                         DvrCutpointsResult.NotSupported
                     }
                     GatewayResult.ServerRejected -> DvrCutpointsResult.ServerRejected
+                    GatewayResult.MalformedReply -> DvrCutpointsResult.MalformedResponse
                     GatewayResult.ConnectionLimit -> DvrCutpointsResult.ConnectionLimit
                     GatewayResult.Timeout -> DvrCutpointsResult.Timeout
                     GatewayResult.TransportUnavailable -> DvrCutpointsResult.TransportUnavailable

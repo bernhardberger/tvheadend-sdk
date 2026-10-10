@@ -12,6 +12,8 @@ internal class SessionRecoveryDispositionTest {
             SessionFailure.ServerUnreachable to SessionRecoveryDisposition.AUTOMATIC_BACKOFF,
             SessionFailure.NetworkUnavailable to SessionRecoveryDisposition.AUTOMATIC_BACKOFF,
             SessionFailure.IncompatibleServer to SessionRecoveryDisposition.PROFILE_CHANGE_REQUIRED,
+            SessionFailure.ServerUpgradeRequired to SessionRecoveryDisposition.EXPLICIT_RETRY,
+            SessionFailure.MetadataOverflow to SessionRecoveryDisposition.AUTOMATIC_BACKOFF,
             SessionFailure.NoChannels to SessionRecoveryDisposition.EXPLICIT_RETRY,
             SessionFailure.TransportUnavailable to SessionRecoveryDisposition.AUTOMATIC_BACKOFF,
             SessionFailure.UnexpectedFailure to SessionRecoveryDisposition.EXPLICIT_RETRY,
@@ -31,6 +33,7 @@ internal class SessionRecoveryDispositionTest {
             SessionOperationFailure.TIMEOUT to SessionRecoveryDisposition.AUTOMATIC_BACKOFF,
             SessionOperationFailure.TRANSPORT_UNAVAILABLE to SessionRecoveryDisposition.AUTOMATIC_BACKOFF,
             SessionOperationFailure.NOT_SUPPORTED to SessionRecoveryDisposition.PROFILE_CHANGE_REQUIRED,
+            SessionOperationFailure.MALFORMED_RESPONSE to SessionRecoveryDisposition.EXPLICIT_RETRY,
         )
 
         assertEquals(SessionOperationFailure.entries.toSet(), expected.keys)

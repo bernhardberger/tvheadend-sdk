@@ -321,12 +321,18 @@ class SubscriptionSeekGateTest {
     }
 
     @Test
-    fun `a timed out command is uncertain and never replays withheld packets`() = runTest {
+    fun `a timed out or malformed command reply is uncertain and never replays withheld packets`() = runTest {
+        listOf(SubscriptionOperationResult.Timeout, SubscriptionOperationResult.MalformedResponse).forEach {
+            verifyUncertainSeek(it)
+        }
+    }
+
+    private suspend fun TestScope.verifyUncertainSeek(failure: SubscriptionOperationResult<Nothing>) {
         val fixture = openSeekable()
         val packetWithheld = CompletableDeferred<Unit>()
         fixture.connection.skipAction = {
             packetWithheld.await()
-            SubscriptionOperationResult.Timeout
+            failure
         }
         val seeking = async { fixture.subscription.seek(absoluteSeek()) }
         runCurrent()

@@ -158,6 +158,7 @@ internal class DvrMutationCoordinatorTest {
         val cases = listOf(
             GatewayResult.AccessDenied to DvrMutationResult.AccessDenied,
             GatewayResult.ServerRejected to DvrMutationResult.ServerRejected,
+            GatewayResult.MalformedReply to DvrMutationResult.MalformedResponse,
             GatewayResult.ConnectionLimit to DvrMutationResult.ConnectionLimit,
             GatewayResult.Timeout to DvrMutationResult.Timeout,
             GatewayResult.TransportUnavailable to DvrMutationResult.TransportUnavailable,
@@ -178,6 +179,26 @@ internal class DvrMutationCoordinatorTest {
             caught = failure
         }
         assertSame(cancellation, caught)
+    }
+
+    @Test
+    fun `malformed add reply is reported without retrying an uncertain command`() = runTest {
+        val generation = GatewayGeneration()
+        val gateway = MutationGateway()
+        val coordinator = DvrMutationCoordinator(gateway)
+        coordinator.bindGeneration(generation)
+        coordinator.startAdmission(generation)
+        var calls = 0
+        gateway.scheduleBehavior = { _, _ ->
+            calls += 1
+            GatewayResult.MalformedReply
+        }
+
+        assertSame(DvrMutationResult.MalformedResponse, coordinator.scheduleEntry(generation, scheduleRequest()))
+        coordinator.acceptMetadata(dvrAdded(generation, 7))
+        advanceTimeBy(60.seconds)
+        runCurrent()
+        assertEquals(1, calls)
     }
 
     @Test

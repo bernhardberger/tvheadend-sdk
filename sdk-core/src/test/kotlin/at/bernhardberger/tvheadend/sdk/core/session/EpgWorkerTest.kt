@@ -988,8 +988,9 @@ internal class EpgWorkerTest {
         job.cancelAndJoin()
     }
 
-    @Test
-    fun `unsupported queries become ineligible and are not retried`() = runTest {
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `unsupported and malformed queries become ineligible and are not retried`(malformed: Boolean) = runTest {
         val generation = GatewayGeneration()
         val metadata = synchronizedMetadata(generation, 1L..1L)
         var attempts = 0
@@ -999,7 +1000,7 @@ internal class EpgWorkerTest {
             clock = SchedulerClock { testScheduler.currentTime },
             queryEpg = { _, _, _ ->
                 attempts += 1
-                GatewayResult.NotSupported
+                if (malformed) GatewayResult.MalformedReply else GatewayResult.NotSupported
             },
         )
         val job = backgroundScope.launch { worker.run() }

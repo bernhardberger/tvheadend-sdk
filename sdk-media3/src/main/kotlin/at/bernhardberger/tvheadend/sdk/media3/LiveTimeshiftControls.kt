@@ -139,6 +139,14 @@ public class TimeshiftCommandResult private constructor(
         @JvmField
         public val SERVER_REJECTED: TimeshiftCommandResult = result("SERVER_REJECTED")
 
+        /** Malformed response; application is unconfirmed and must not be blindly retried. */
+        @JvmField
+        public val MALFORMED_RESPONSE: TimeshiftCommandResult = categorized(
+            "MALFORMED_RESPONSE",
+            TimeshiftCommandDisposition.UNCONFIRMED,
+            PlaybackOutcomeCategory.UNCERTAIN,
+        )
+
         @JvmField
         public val ACCESS_DENIED: TimeshiftCommandResult = categorized(
             "ACCESS_DENIED",

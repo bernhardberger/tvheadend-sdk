@@ -45,6 +45,8 @@ public enum class ArtworkFailure {
     CONNECTION_LIMIT,
     TIMEOUT,
     NOT_SUPPORTED,
+    /** Malformed response; callers must not infer connection loss or automatically retry. */
+    MALFORMED_RESPONSE,
 }
 
 /** Immutable encoded artwork bytes returned by the authenticated session. */

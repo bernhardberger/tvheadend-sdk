@@ -147,6 +147,13 @@ internal class DvrProgressCoordinatorTest {
                 DvrProgressResult.AccessDenied,
                 coordinator.reportProgress(generation, DvrEntryId(7), checkpoint()),
             )
+            gateway.progressBehavior = { _, _, _ -> GatewayResult.MalformedReply }
+            assertSame(
+                DvrProgressResult.MalformedResponse,
+                coordinator.reportProgress(generation, DvrEntryId(7), checkpoint()),
+            )
+            assertEquals(listOf(false), proofs)
+            assertTrue(unsupportedGenerations.isEmpty())
             gateway.progressBehavior = { _, _, _ -> GatewayResult.Ok(Unit) }
             assertSame(
                 DvrProgressResult.Accepted,
@@ -456,6 +463,7 @@ internal class DvrProgressCoordinatorTest {
 
         val failures = listOf(
             GatewayResult.ServerRejected to DvrCutpointsResult.ServerRejected,
+            GatewayResult.MalformedReply to DvrCutpointsResult.MalformedResponse,
             GatewayResult.AccessDenied to DvrCutpointsResult.AccessDenied,
             GatewayResult.ConnectionLimit to DvrCutpointsResult.ConnectionLimit,
             GatewayResult.Timeout to DvrCutpointsResult.Timeout,

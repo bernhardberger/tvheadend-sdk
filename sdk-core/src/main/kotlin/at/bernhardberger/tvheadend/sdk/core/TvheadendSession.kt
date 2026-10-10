@@ -403,6 +403,18 @@ public sealed interface SessionFailure {
             SessionRecoveryDisposition.PROFILE_CHANGE_REQUIRED
     }
 
+    /** The server is below the supported protocol floor; upgrade it before explicitly retrying. */
+    public data object ServerUpgradeRequired : SessionFailure {
+        override val recoveryDisposition: SessionRecoveryDisposition =
+            SessionRecoveryDisposition.EXPLICIT_RETRY
+    }
+
+    /** Metadata delivery overflowed; a full resync is retried with increasing backoff. */
+    public data object MetadataOverflow : SessionFailure {
+        override val recoveryDisposition: SessionRecoveryDisposition =
+            SessionRecoveryDisposition.AUTOMATIC_BACKOFF
+    }
+
     /** The synchronized server contains no channels and permits only explicit retry. */
     public data object NoChannels : SessionFailure {
         override val recoveryDisposition: SessionRecoveryDisposition =
@@ -466,9 +478,14 @@ public enum class SessionOperationFailure(
     TIMEOUT(SessionRecoveryDisposition.AUTOMATIC_BACKOFF),
     TRANSPORT_UNAVAILABLE(SessionRecoveryDisposition.AUTOMATIC_BACKOFF),
     NOT_SUPPORTED(SessionRecoveryDisposition.PROFILE_CHANGE_REQUIRED),
+    /** The response was malformed; the SDK does not automatically retry or declare transport loss. */
+    MALFORMED_RESPONSE(SessionRecoveryDisposition.EXPLICIT_RETRY),
 }
 
-/** Capabilities and server observations proven for the current synchronized generation. */
+/**
+ * Capabilities and server observations proven for the current synchronized generation.
+ * Numeric server facts retain the full unsigned 32-bit range in [Long], or null when absent.
+ */
 @ConsistentCopyVisibility
 public data class ServerCapabilities private constructor(
     public val streaming: CapabilityAccess,
@@ -477,11 +494,11 @@ public data class ServerCapabilities private constructor(
     public val failedDvr: CapabilityAccess,
     public val admin: CapabilityAccess,
     public val anonymous: CapabilityAccess,
-    public val apiVersion: Int?,
-    public val allLimit: Int?,
-    public val dvrLimit: Int?,
-    public val streamingLimit: Int?,
-    public val uiLevel: Int?,
+    public val apiVersion: Long?,
+    public val allLimit: Long?,
+    public val dvrLimit: Long?,
+    public val streamingLimit: Long?,
+    public val uiLevel: Long?,
     public val features: List<String>?,
     public val serverName: String?,
     public val serverVersion: String?,
@@ -500,11 +517,11 @@ public data class ServerCapabilities private constructor(
             failedDvr: CapabilityAccess = CapabilityAccess.UNKNOWN,
             admin: CapabilityAccess = CapabilityAccess.UNKNOWN,
             anonymous: CapabilityAccess = CapabilityAccess.UNKNOWN,
-            apiVersion: Int? = null,
-            allLimit: Int? = null,
-            dvrLimit: Int? = null,
-            streamingLimit: Int? = null,
-            uiLevel: Int? = null,
+            apiVersion: Long? = null,
+            allLimit: Long? = null,
+            dvrLimit: Long? = null,
+            streamingLimit: Long? = null,
+            uiLevel: Long? = null,
             features: List<String>? = null,
             serverName: String? = null,
             serverVersion: String? = null,

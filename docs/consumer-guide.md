@@ -68,6 +68,15 @@ fence. EPG coverage expansion, DVR configuration loading, and DVR disk-space
 enrichment are supervised generation-owned background work; their independent
 states may still be `Unknown` or `Synchronizing` after the session is ready.
 
+`ServerCapabilities.apiVersion`, `allLimit`, `dvrLimit`, `streamingLimit`, and
+`uiLevel` (including their `create()` parameters) are `Long?`, preserving the
+server's unsigned 32-bit values without narrowing. `null` still means absent.
+`SessionFailure.ServerUpgradeRequired` means the server is below the supported
+protocol floor (HTSP 36). Its recovery disposition is `EXPLICIT_RETRY`: upgrade
+the server before retrying; changing the profile is not itself the remedy.
+`SessionFailure.MetadataOverflow` triggers a full reconnect and resync with
+increasing backoff, including when overflow follows a previously ready session.
+
 Capture related values from one observation:
 
 ```kotlin
@@ -238,6 +247,7 @@ when (val result = session.epgRepository.search(currentSession, request)) {
     is EpgSearchResult.Available -> consume(result.events, result.originatingSession)
     EpgSearchResult.ObservationExpired -> Unit
     EpgSearchResult.InvalidQuery -> Unit
+    EpgSearchResult.MalformedResponse -> Unit
     EpgSearchResult.AccessDenied -> Unit
     EpgSearchResult.ConnectionLimit -> Unit
     EpgSearchResult.Timeout -> Unit
@@ -251,9 +261,9 @@ when (val result = session.epgRepository.search(currentSession, request)) {
 records provenance only; the proof may already be retired when the result is
 observed. Check current state or wait for a replacement before a new operation.
 
-Search does not read or mutate retained coverage. `InvalidQuery` also covers an
-unusable server payload and the server's generic rejection of inaccessible
-channel or tag filters. Search durations, when supplied, must be finite,
+Search does not read or mutate retained coverage. `InvalidQuery` also covers the
+server's generic rejection of inaccessible channel or tag filters; an unusable
+payload is `MalformedResponse`. Search durations, when supplied, must be finite,
 non-negative whole seconds; content type is an unsigned eight-bit genre code.
 
 Acquire a bounded future horizon separately:
@@ -433,6 +443,7 @@ when (val result = session.dvrRepository.scheduleEntry(currentSession, request))
     DvrMutationResult.NotReady -> Unit
     DvrMutationResult.ObservationExpired -> Unit
     DvrMutationResult.ServerRejected -> Unit
+    DvrMutationResult.MalformedResponse -> Unit
     DvrMutationResult.AccessDenied -> Unit
     DvrMutationResult.ConnectionLimit -> Unit
     DvrMutationResult.Timeout -> Unit
@@ -446,6 +457,11 @@ when (val result = session.dvrRepository.scheduleEntry(currentSession, request))
 did not arrive before the deadline; later observation data remains
 authoritative. Mutations and progress are admitted only for a ready generation.
 Cancellation remains caller-owned and is not converted into a failure result.
+
+Explicit-time schedules require a non-empty title (whitespace is permitted);
+programme schedules can omit it. Supplied start/stop minutes for time-based
+rule creation and updates must be in `0..1439`. Automatic-recording rule windows
+retain their separate `1440` sentinel semantics.
 
 Cutpoints and progress belong to an observation-bound
 `PlaybackBinding.Recording`, not to the mutation repository. `cutpoints()`
@@ -919,6 +935,13 @@ and server-operation outcomes. `sdk-media3` is the supported high-level Android
 boundary; the SDK does not provide URI factories or application-level track
 wrappers.
 
+`SubscriptionTermination.SUBSCRIBE_REJECTED` marks a rejected startup. If it
+arrives before the subscribe result, the state machine waits up to five seconds
+for the typed refusal, preserving reasons such as `CONNECTION_LIMIT` and
+`ACCESS_DENIED`. Without a result it ends with
+`OperationFailed(SERVER_REJECTED)`, cancels and joins the request, and unsubscribes
+once. Caller cancellation and owner close take precedence over that wait.
+
 ## Add Android integration
 
 ### Profiles
@@ -1079,6 +1102,29 @@ remains a narrow observation-shape fake; it does not model session authority.
 These are focused SDK-boundary building blocks, not a UI or application
 architecture framework. Applications remain responsible for faking their own
 SDK-facing abstraction where that is the appropriate test boundary.
+
+## Malformed responses
+
+A malformed response means the SDK could not interpret or validate the reply;
+it does **not** establish server rejection or transport loss. The server may
+already have applied the command. Never blindly retry non-idempotent requests
+(such as DVR creation or relative seek); reconcile authoritative state first.
+
+| API | Malformed-response result |
+|---|---|
+| DVR mutations | `DvrMutationResult.MalformedResponse` |
+| DVR progress and cutpoints | `DvrProgressResult.MalformedResponse`, `DvrCutpointsResult.MalformedResponse` |
+| EPG search and stream-profile discovery | `EpgSearchResult.MalformedResponse`, `StreamProfilesResult.MalformedResponse` |
+| Artwork | `ArtworkLoadResult.Unavailable(ArtworkFailure.MALFORMED_RESPONSE)` |
+| Recording-file operations | `RecordingFileResult.Failed(RecordingFileFailure.MALFORMED_RESPONSE)` |
+| Initial synchronization | `SessionFailure.SynchronizationFailed(SessionOperationFailure.MALFORMED_RESPONSE)`, with `EXPLICIT_RETRY` rather than automatic backoff |
+| Low-level subscription commands | `SubscriptionOperationResult.MalformedResponse`; a failed startup reports `OperationFailed(MALFORMED_RESPONSE)` |
+| Media3 timeshift commands | `TimeshiftCommandResult.MALFORMED_RESPONSE`, with `UNCONFIRMED` disposition and an uncertain outcome |
+
+A malformed seek acknowledgement also invalidates uncertain packet evidence;
+the SDK does not replay packets withheld for that command. Ordinary server
+refusals remain distinct typed rejection outcomes. Exhaustive sealed-result and
+enum handling must include the malformed-response variants.
 
 ## Typed limits and privacy
 

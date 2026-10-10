@@ -273,6 +273,8 @@ public sealed interface SubscriptionSeekResult {
 /** Payload-free subscription operation failure. */
 @SubscriptionInfrastructureApi
 public enum class SubscriptionOperationFailure {
+    /** Malformed response; the server may have applied the operation. Never blindly retry it. */
+    MALFORMED_RESPONSE,
     SERVER_REJECTED,
     ACCESS_DENIED,
     CONNECTION_LIMIT,
@@ -776,6 +778,8 @@ private class ActiveSubscriptionImpl(
 
     /** Set once an ordered [SubscriptionEvent.Terminated] is admitted; it owns the terminal reason. */
     private var streamTerminalAdmitted = false
+    /** A refusal ends delivery, but the in-flight subscribe outcome owns its failure category. */
+    private var subscribeRejectionPending = false
 
     /** Identifies the call and delivery job that an expiring teardown grace period may interrupt. */
     private var consumerCallInFlight: ConsumerCall? = null
@@ -947,22 +951,44 @@ private class ActiveSubscriptionImpl(
                     collectEvents()
                 }
                 val subscribe = async { invokeSubscribe() }
+                var rejectionDeadline: Deferred<Unit>? = null
                 try {
                     var lifecycleComplete = false
                     var subscribeHandled = false
+                    var collectionHandled = false
                     while (!lifecycleComplete && currentCoroutineContext().isActive) {
                         when (val outcome = select<OwnerOutcome> {
                             closeRequested.onAwait { OwnerOutcome.Close }
                             terminalSignal.onAwait { OwnerOutcome.Terminal(it) }
-                            collection.onAwait { OwnerOutcome.Collection(it) }
+                            if (!collectionHandled) {
+                                collection.onAwait { OwnerOutcome.Collection(it) }
+                            }
                             if (!subscribeHandled) {
                                 subscribe.onAwait { OwnerOutcome.Subscribe(it) }
                             }
+                            rejectionDeadline?.onAwait { OwnerOutcome.RejectionExpired }
                         }) {
                             OwnerOutcome.Close -> lifecycleComplete = true
                             is OwnerOutcome.Terminal -> lifecycleComplete = true
+                            OwnerOutcome.RejectionExpired -> {
+                                setStartupFailure(
+                                    SubscriptionTerminalReason.OperationFailed(
+                                        SubscriptionOperationFailure.SERVER_REJECTED,
+                                    ),
+                                )
+                                lifecycleComplete = true
+                            }
                             is OwnerOutcome.Collection -> {
+                                collectionHandled = true
                                 val collectionOutcome = outcome.outcome
+                                if (collectionOutcome !is CollectionOutcome.Cancelled &&
+                                    !subscribeHandled && synchronized(lock) { subscribeRejectionPending }
+                                ) {
+                                    // Give the typed refusal the existing five-second recovery grace,
+                                    // even when a custom connection never completes subscribe().
+                                    rejectionDeadline = async { delay(DEFAULT_RESTART_TIMEOUT) }
+                                    continue
+                                }
                                 if (collectionOutcome is CollectionOutcome.Cancelled) {
                                     primaryCancellation = collectionOutcome.cancellation
                                 } else if (currentTerminal() == null) {
@@ -975,6 +1001,15 @@ private class ActiveSubscriptionImpl(
                                 when (val result = outcome.outcome) {
                                     is CommandOutcome.Result -> when (val value = result.value) {
                                         is SubscriptionOperationResult.Ok -> {
+                                            if (synchronized(lock) { subscribeRejectionPending }) {
+                                                setStartupFailure(
+                                                    SubscriptionTerminalReason.OperationFailed(
+                                                        SubscriptionOperationFailure.SERVER_REJECTED,
+                                                    ),
+                                                )
+                                                lifecycleComplete = true
+                                                continue
+                                            }
                                             synchronized(lock) {
                                                 subscribeAccepted = true
                                                 grantedTimeshiftSeconds =
@@ -988,6 +1023,7 @@ private class ActiveSubscriptionImpl(
                                         SubscriptionOperationResult.Timeout,
                                         SubscriptionOperationResult.TransportUnavailable,
                                         SubscriptionOperationResult.NotSupported,
+                                        SubscriptionOperationResult.MalformedResponse,
                                         -> {
                                             setStartupFailure(
                                                 SubscriptionTerminalReason.OperationFailed(
@@ -1011,6 +1047,7 @@ private class ActiveSubscriptionImpl(
                     }
                 } finally {
                     withContext(NonCancellable) {
+                        rejectionDeadline?.cancelAndJoin()
                         subscribe.cancelAndJoin()
                         val (drivers, replaying) = synchronized(lock) {
                             seekAdmissionClosed = true
@@ -1249,8 +1286,9 @@ private class ActiveSubscriptionImpl(
                         pending.outcome.await()
                         SeekResolution.Acknowledged
                     }
-                    // A timed out command may still have executed, so replaying could mix packets.
-                    SubscriptionOperationResult.Timeout -> SeekResolution.Invalidate(
+                    // A timed out or malformed reply may follow an applied command; do not replay.
+                    SubscriptionOperationResult.Timeout,
+                    SubscriptionOperationResult.MalformedResponse -> SeekResolution.Invalidate(
                         SubscriptionSeekInvalidation.UNCERTAIN_REQUEST_OUTCOME,
                     )
                     else -> SeekResolution.Replay(
@@ -1418,6 +1456,16 @@ private class ActiveSubscriptionImpl(
     }
 
     private fun applyEventState(event: SubscriptionEvent) {
+        if (event is SubscriptionEvent.Terminated &&
+            event.reason == SubscriptionTermination.SUBSCRIBE_REJECTED &&
+            !synchronized(lock) { subscribeAccepted }
+        ) {
+            transition {
+                subscribeRejectionPending = true
+                stopEventCollection = true
+            }
+            return
+        }
         when (event) {
             is SubscriptionEvent.Started -> acceptStarted(event)
             is SubscriptionEvent.Status -> updateDiagnostics(condition = event.condition)
@@ -1442,6 +1490,8 @@ private class ActiveSubscriptionImpl(
                         SubscriptionTerminalReason.Timeout
                     SubscriptionTermination.LOCAL_RETIREMENT ->
                         SubscriptionTerminalReason.LocalRetirement
+                    SubscriptionTermination.SUBSCRIBE_REJECTED ->
+                        SubscriptionTerminalReason.OperationFailed(SubscriptionOperationFailure.SERVER_REJECTED)
                     SubscriptionTermination.PUBLICATION_FAILURE ->
                         SubscriptionTerminalReason.PublicationFailure
                     SubscriptionTermination.INTERNAL_FAILURE ->
@@ -1885,6 +1935,7 @@ private sealed interface GateDecision {
 
 private sealed interface OwnerOutcome {
     public data object Close : OwnerOutcome
+    public data object RejectionExpired : OwnerOutcome
     public class Terminal(internal val reason: SubscriptionTerminalReason) : OwnerOutcome
     public class Collection(internal val outcome: CollectionOutcome) : OwnerOutcome
     public class Subscribe(internal val outcome: CommandOutcome) : OwnerOutcome
@@ -1939,4 +1990,5 @@ private fun SubscriptionOperationResult<*>.toFailure(): SubscriptionOperationFai
     SubscriptionOperationResult.TransportUnavailable ->
         SubscriptionOperationFailure.TRANSPORT_UNAVAILABLE
     SubscriptionOperationResult.NotSupported -> SubscriptionOperationFailure.NOT_SUPPORTED
+    SubscriptionOperationResult.MalformedResponse -> SubscriptionOperationFailure.MALFORMED_RESPONSE
 }

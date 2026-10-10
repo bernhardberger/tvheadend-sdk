@@ -30,7 +30,10 @@ public sealed interface DvrSchedule {
     }
 }
 
-/** Complete request for scheduling one DVR entry. */
+/**
+ * Complete request for scheduling one DVR entry.
+ * An [DvrSchedule.ExplicitTime] schedule requires a non-empty [title]; whitespace is permitted.
+ */
 public data class DvrScheduleRequest(
     public val schedule: DvrSchedule,
     public val configId: DvrConfigId? = null,
@@ -42,6 +45,9 @@ public data class DvrScheduleRequest(
     public val ageRating: Long? = null,
 ) {
     init {
+        require(schedule !is DvrSchedule.ExplicitTime || !title.isNullOrEmpty()) {
+            "Explicit-time DVR scheduling requires a non-empty title"
+        }
         ageRating?.requireDvrMutationU32("DvrScheduleRequest ageRating")
     }
 
@@ -187,7 +193,7 @@ public data class AutorecRuleUpdate(
     override fun toString(): String = "AutorecRuleUpdate(<redacted>)"
 }
 
-/** Complete request for creating a time-based recording rule. */
+/** Complete request for creating a time-based rule; supplied minutes must be in 0..1439. */
 public data class TimerecRuleCreate(
     public val title: String,
     public val channel: RecordingRuleChannel? = null,
@@ -217,7 +223,7 @@ public data class TimerecRuleCreate(
     override fun toString(): String = "TimerecRuleCreate(<redacted>)"
 }
 
-/** Partial time-based recording-rule change; null fields are omitted from the command. */
+/** Partial time-based rule change; null fields are omitted, supplied minutes must be in 0..1439. */
 public data class TimerecRuleUpdate(
     public val channel: RecordingRuleChannel? = null,
     public val startMinutesSinceMidnight: Int? = null,
@@ -267,6 +273,9 @@ public sealed interface DvrMutationResult<out T> {
 
     /** The server rejected the command without a safe detailed reason. */
     public data object ServerRejected : DvrMutationResult<Nothing>
+
+    /** The response was malformed; the command may have been applied. Never blindly retry it. */
+    public data object MalformedResponse : DvrMutationResult<Nothing>
 
     /** The authenticated session lacks recorder permission. */
     public data object AccessDenied : DvrMutationResult<Nothing>
@@ -439,8 +448,8 @@ private fun validateTimerecMutation(
     priority: Long?,
     daysOfWeekMask: Long?,
 ) {
-    startMinutesSinceMidnight?.requireDvrMutationMinute("Timerec start")
-    stopMinutesSinceMidnight?.requireDvrMutationMinute("Timerec stop")
+    startMinutesSinceMidnight?.let { require(it in 0..1439) { "Timerec start must be between 0 and 1439" } }
+    stopMinutesSinceMidnight?.let { require(it in 0..1439) { "Timerec stop must be between 0 and 1439" } }
     retentionDays?.requireDvrMutationU32("Timerec retentionDays")
     removalDays?.requireDvrMutationU32("Timerec removalDays")
     priority?.requireDvrMutationU32("Timerec priority")

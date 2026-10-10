@@ -522,6 +522,8 @@ class SessionSubscriptionsTest {
         assertEquals(listOf(StreamProfile(profileId, "Pass", "Original streams")), available.profiles)
         assertSame(currentSession, available.originatingSession)
         assertEquals(listOf(generation), gateway.profileDiscoveryGenerations)
+        gateway.streamProfilesAction = { GatewayResult.MalformedReply }
+        assertSame(StreamProfilesResult.MalformedResponse, children.getStreamProfiles(generation, currentSession))
         children.closeAndJoinSubscriptions()
 
         val replacementGeneration = GatewayGeneration()
@@ -1055,6 +1057,7 @@ class SessionSubscriptionsTest {
         listOf(
             GatewayResult.TransportUnavailable to RecordingFileFailure.CONNECTION_CHANGED,
             GatewayResult.ServerRejected to RecordingFileFailure.FILE_UNAVAILABLE,
+            GatewayResult.MalformedReply to RecordingFileFailure.MALFORMED_RESPONSE,
             GatewayResult.AccessDenied to RecordingFileFailure.ACCESS_DENIED,
             GatewayResult.ConnectionLimit to RecordingFileFailure.CONNECTION_LIMIT,
             GatewayResult.Timeout to RecordingFileFailure.TIMEOUT,
@@ -1345,6 +1348,7 @@ class SessionSubscriptionsTest {
 
         listOf(
             GatewayResult.ServerRejected to ArtworkFailure.FILE_UNAVAILABLE,
+            GatewayResult.MalformedReply to ArtworkFailure.MALFORMED_RESPONSE,
             GatewayResult.AccessDenied to ArtworkFailure.ACCESS_DENIED,
             GatewayResult.ConnectionLimit to ArtworkFailure.CONNECTION_LIMIT,
             GatewayResult.Timeout to ArtworkFailure.TIMEOUT,

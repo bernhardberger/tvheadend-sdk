@@ -39,6 +39,7 @@ import at.bernhardberger.tvheadend.sdk.core.ServerCapabilities
 import at.bernhardberger.tvheadend.sdk.core.ServerProfile
 import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
 import at.bernhardberger.tvheadend.sdk.core.SessionFailure
+import at.bernhardberger.tvheadend.sdk.core.SessionRecoveryDisposition
 import at.bernhardberger.tvheadend.sdk.core.SessionOperationFailure
 import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleCreate
@@ -83,6 +84,7 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Instant
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
@@ -1334,6 +1336,78 @@ internal class ConnectionOwnerTest {
     }
 
     @Test
+    fun `metadata overflow attribution survives either sync failure or ready commit winning delivery`() = runTest {
+        for (syncFails in listOf(false, true)) for (eventFirst in listOf(false, true)) {
+            val generation = GatewayGeneration()
+            val releaseSync = CompletableDeferred<Unit>()
+            val overflow = GatewayConnectionFailureEvent(GatewayConnectionFailure.METADATA_OVERFLOW, generation)
+            val gateway = FakeProtocolGateway().apply {
+                defaultConnectResult = connected(generation)
+                enableBehavior = {
+                    releaseSync.await()
+                    if (syncFails) GatewayResult.TransportUnavailable else GatewayResult.Ok(Unit)
+                }
+            }
+            val owner = owner(gateway)
+            owner.connect(ServerProfile("server"))
+            runCurrent()
+            gateway.emitMetadata(MetadataEvent.ChannelAdded(generation, channelMetadata(id = 1)))
+            gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+            if (eventFirst) {
+                gateway.emitFailure(overflow)
+                runCurrent()
+            } else if (syncFails) {
+                gateway.retire(overflow)
+            } else {
+                gateway.beforeReadyCommit = { gateway.retire(overflow) }
+            }
+            releaseSync.complete(Unit)
+            runCurrent()
+            assertEquals(SessionState.Unavailable(SessionFailure.MetadataOverflow),
+                owner.observation.value.sessionState)
+            if (!eventFirst) gateway.emitFailure(overflow)
+            owner.shutdown()
+        }
+    }
+
+    @Test
+    fun `repeated metadata overflow grows backoff during sync and after Ready`() = runTest {
+        for (reachReady in listOf(false, true)) {
+            var generation = GatewayGeneration()
+            val gateway = FakeProtocolGateway().apply {
+                connectBehavior = {
+                    generation = GatewayGeneration()
+                    connected(generation)
+                }
+            }
+            val owner = owner(gateway)
+            owner.connect(ServerProfile("server"))
+            runCurrent()
+            listOf(1L, 2L, 4L, 8L).forEachIndexed { index, seconds ->
+                if (reachReady) {
+                    gateway.emitMetadata(MetadataEvent.ChannelAdded(generation, channelMetadata(id = 1)))
+                    gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+                    runCurrent()
+                    assertTrue(owner.observation.value.sessionState is SessionState.Ready)
+                }
+                gateway.emitFailure(GatewayConnectionFailureEvent(
+                    GatewayConnectionFailure.METADATA_OVERFLOW, generation,
+                ))
+                runCurrent()
+                assertEquals(SessionState.Unavailable(SessionFailure.MetadataOverflow),
+                    owner.observation.value.sessionState)
+                advanceTimeBy(seconds.seconds - 1.milliseconds)
+                runCurrent()
+                assertEquals(index + 1, gateway.connectCalls)
+                advanceTimeBy(1.milliseconds)
+                runCurrent()
+                assertEquals(index + 2, gateway.connectCalls)
+            }
+            owner.shutdown()
+        }
+    }
+
+    @Test
     fun `connection failure policies are complete and terminal failures require profile change`() = runTest {
         val cases = listOf(
             ConnectionFailureCase(
@@ -1360,6 +1434,16 @@ internal class ConnectionOwnerTest {
                 GatewayConnectionFailure.INCOMPATIBLE_SERVER,
                 SessionFailure.IncompatibleServer,
                 SessionCommandResult.RETRY_NOT_ALLOWED,
+            ),
+            ConnectionFailureCase(
+                GatewayConnectionFailure.UNSUPPORTED_SERVER_VERSION,
+                SessionFailure.ServerUpgradeRequired,
+                SessionCommandResult.STARTED,
+            ),
+            ConnectionFailureCase(
+                GatewayConnectionFailure.METADATA_OVERFLOW,
+                SessionFailure.MetadataOverflow,
+                SessionCommandResult.STARTED,
             ),
             ConnectionFailureCase(
                 GatewayConnectionFailure.NO_CHANNELS,
@@ -1433,6 +1517,11 @@ internal class ConnectionOwnerTest {
                 SessionCommandResult.STARTED,
             ),
             SynchronizationFailureCase(
+                GatewayResult.MalformedReply,
+                SessionOperationFailure.MALFORMED_RESPONSE,
+                SessionCommandResult.STARTED,
+            ),
+            SynchronizationFailureCase(
                 GatewayResult.NotSupported,
                 SessionOperationFailure.NOT_SUPPORTED,
                 SessionCommandResult.RETRY_NOT_ALLOWED,
@@ -1456,6 +1545,31 @@ internal class ConnectionOwnerTest {
             )
             assertEquals(case.retryResult, owner.retry())
             owner.shutdown()
+        }
+    }
+
+    @Test
+    fun `malformed sync response and unsupported server never automatically reconnect`() = runTest {
+        for (unsupported in listOf(false, true)) {
+            val gateway = FakeProtocolGateway().apply {
+                defaultConnectResult = if (unsupported) failed(GatewayConnectionFailure.UNSUPPORTED_SERVER_VERSION)
+                    else connected(GatewayGeneration())
+                enableResult = GatewayResult.MalformedReply
+            }
+            val owner = owner(gateway)
+            try {
+                owner.connect(ServerProfile("server"))
+                runCurrent()
+                val disposition = SessionRecoveryDisposition.EXPLICIT_RETRY
+                assertTrue(owner.observation.value.sessionState is SessionState.Unavailable)
+                val failure = (owner.observation.value.sessionState as SessionState.Unavailable).reason
+                assertEquals(disposition, failure.recoveryDisposition)
+                advanceTimeBy(60.seconds)
+                runCurrent()
+                assertEquals(1, gateway.connectCalls)
+            } finally {
+                owner.shutdown()
+            }
         }
     }
 
@@ -1975,11 +2089,13 @@ private class FakeProtocolGateway(
     )
     private var concurrentConnects = 0
     private var liveCommitCalls = 0
+    private val retirementFailures = IdentityHashMap<GatewayGeneration, GatewayConnectionFailure>()
 
     internal val connectResults = ArrayDeque<GatewayConnectResult>()
     internal var defaultConnectResult: GatewayConnectResult =
         failed(GatewayConnectionFailure.TRANSPORT_UNAVAILABLE)
     internal var enableResult: GatewayResult<Unit> = GatewayResult.Ok(Unit)
+    internal var enableBehavior: (suspend () -> GatewayResult<Unit>)? = null
     internal var connectBehavior: (suspend FakeProtocolGateway.() -> GatewayConnectResult)? = null
     internal var queryBehavior: suspend (
         GatewayGeneration,
@@ -2079,7 +2195,7 @@ private class FakeProtocolGateway(
         generation: GatewayGeneration,
     ): GatewayResult<Unit> {
         order += "enable"
-        return enableResult
+        return enableBehavior?.invoke() ?: enableResult
     }
 
     override suspend fun queryEpg(
@@ -2234,9 +2350,19 @@ private class FakeProtocolGateway(
     }
 
     internal suspend fun emitFailure(event: GatewayConnectionFailureEvent) {
-        event.generation?.let(liveGenerations::remove)
+        retire(event)
         failureEvents.emit(event)
     }
+
+    internal fun retire(event: GatewayConnectionFailureEvent) {
+        event.generation?.let {
+            liveGenerations.remove(it)
+            retirementFailures[it] = event.failure
+        }
+    }
+
+    override fun retirementFailure(generation: GatewayGeneration): GatewayConnectionFailure? =
+        retirementFailures[generation]
 }
 
 private class RecordingSessionChildren(

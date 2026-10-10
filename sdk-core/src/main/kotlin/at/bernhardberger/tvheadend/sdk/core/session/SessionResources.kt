@@ -708,6 +708,7 @@ internal class PhaseOneSessionMetadata(
                 GatewayResult.Timeout,
                 GatewayResult.TransportUnavailable,
                 GatewayResult.NotSupported,
+                GatewayResult.MalformedReply,
                 -> mutableConfigurations.value = publishedConfigurationsState()
             }
             publishMetadataObservation()
@@ -737,6 +738,7 @@ internal class PhaseOneSessionMetadata(
                 GatewayResult.Timeout,
                 GatewayResult.TransportUnavailable,
                 GatewayResult.NotSupported,
+                GatewayResult.MalformedReply,
                 -> mutableDiskSpace.value = publishedDiskSpace?.let(DvrDiskSpaceState::Stale)
                     ?: DvrDiskSpaceState.Unknown
             }
@@ -1218,6 +1220,7 @@ private fun GatewayResult<List<GatewayEpgQueryEvent>>.toEpgSearchResult(
         GatewayResult.Timeout -> EpgSearchResult.Timeout
         GatewayResult.TransportUnavailable -> EpgSearchResult.TransportUnavailable
         GatewayResult.NotSupported -> EpgSearchResult.NotSupported
+        GatewayResult.MalformedReply -> EpgSearchResult.MalformedResponse
     }
 }
 

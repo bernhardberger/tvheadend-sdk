@@ -590,10 +590,12 @@ private fun SessionState.isTerminalForVerification(): Boolean = when (this) {
         SessionFailure.ServerUnreachable,
         SessionFailure.NetworkUnavailable,
         SessionFailure.TransportUnavailable,
+        SessionFailure.MetadataOverflow,
         -> false
         SessionFailure.AuthenticationRejected,
         SessionFailure.PermissionDenied,
         SessionFailure.IncompatibleServer,
+        SessionFailure.ServerUpgradeRequired,
         SessionFailure.NoChannels,
         SessionFailure.UnexpectedFailure,
         -> true
@@ -605,6 +607,7 @@ private fun SessionState.isTerminalForVerification(): Boolean = when (this) {
             SessionOperationFailure.SERVER_REJECTED,
             SessionOperationFailure.ACCESS_DENIED,
             SessionOperationFailure.NOT_SUPPORTED,
+            SessionOperationFailure.MALFORMED_RESPONSE,
             -> true
         }
     }

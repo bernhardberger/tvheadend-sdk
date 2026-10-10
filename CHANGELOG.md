@@ -60,6 +60,44 @@
   already left the item, the period fails and the subscription closes without a
   recovery reason. See
   [pausing live TV without timeshift](docs/consumer-guide.md#pausing-live-tv-without-timeshift).
+- The HTSP gateway targets the tvheadend-htsp 1.0 API. Until
+  `at.bernhardberger.tvheadend:htsp:1.0.0-rc.1` is published, the SDK builds only
+  with the opt-in composite build (`-Ptvheadend.htsp.composite=true`). Servers
+  older than HTSP 36 fail with the new `SessionFailure.ServerUpgradeRequired`
+  (explicit retry) instead of an incompatible-server failure.
+- **BREAKING:** `ServerCapabilities.apiVersion`, `allLimit`, `dvrLimit`,
+  `streamingLimit` and `uiLevel`, and the matching `ServerCapabilities.create()`
+  parameters, change from `Int?` to `Long?`, so unsigned 32-bit server values keep
+  their full range.
+- **BREAKING:** replies the SDK or the HTSP library cannot interpret are reported
+  separately from server refusals. New members: `SessionOperationFailure`,
+  `ArtworkFailure`, `RecordingFileFailure` and `SubscriptionOperationFailure`
+  gain `MALFORMED_RESPONSE`; `DvrMutationResult`, `DvrProgressResult`,
+  `DvrCutpointsResult`, `EpgSearchResult`, `StreamProfilesResult` and
+  `SubscriptionOperationResult` gain `MalformedResponse`; `TimeshiftCommandResult`
+  gains `MALFORMED_RESPONSE`. The server may have applied the command, so these
+  are never retried automatically; see
+  [malformed responses](docs/consumer-guide.md#malformed-responses). Exhaustive
+  `when` expressions need new branches.
+- **BREAKING:** `SessionFailure` gains `MetadataOverflow` and
+  `ServerUpgradeRequired`. A metadata overflow retires the connection and
+  reconnects for a full resynchronization with growing backoff, also after the
+  session was ready.
+- **BREAKING:** `SubscriptionTermination` gains `SUBSCRIBE_REJECTED`. When the
+  server refuses a subscribe, the terminal state carries the typed refusal
+  (for example `CONNECTION_LIMIT` or `ACCESS_DENIED`) whichever of the refusal
+  and the stream end arrives first; a refusal without a typed outcome ends as
+  `SERVER_REJECTED` after the restart grace period.
+- **BREAKING:** DVR requests validate what the server requires: scheduling by
+  explicit time needs a non-empty title (whitespace is permitted), and
+  time-based rule start and stop minutes must be in `0..1439`. The
+  automatic-rule `1440` sentinel is unchanged.
+- A live subscription whose consumer falls behind its bounded event buffer now
+  ends with `SubscriptionTermination.PUBLICATION_FAILURE`. Before, the HTSP 0.10
+  transport suspended the connection reader until the consumer caught up,
+  stalling every other subscription and metadata update on that connection.
+  Session disconnect and shutdown always close the connection, including after
+  a failed reconnect.
 
 ### Fixed
 
@@ -125,6 +163,8 @@
 - A throwing Player operation or looper dispatch in `TvheadendPlaybackCoordinator`
   now completes that command as player-unavailable instead of escaping the
   coordinator, and a command that already ran keeps its real result.
+- A malformed stream index in a live subscription now ends it as a malformed
+  message instead of an infrastructure failure.
 
 ## [0.23.0]
 

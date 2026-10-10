@@ -192,6 +192,7 @@ internal class TvheadendPlaybackCoordinatorTest {
                 PlaybackOutcomeCategory.UNCERTAIN,
             ),
             TimeshiftCommandResult.SERVER_REJECTED to emptySet(),
+            TimeshiftCommandResult.MALFORMED_RESPONSE to setOf(PlaybackOutcomeCategory.UNCERTAIN),
             TimeshiftCommandResult.ACCESS_DENIED to
                 setOf(PlaybackOutcomeCategory.CONFIGURATION_OR_ACCESS),
             TimeshiftCommandResult.CONNECTION_LIMIT to setOf(PlaybackOutcomeCategory.TRANSIENT),
@@ -223,6 +224,7 @@ internal class TvheadendPlaybackCoordinatorTest {
                 TimeshiftCommandDisposition.ACCEPTED,
             TimeshiftCommandResult.SUBSCRIPTION_ENDED to TimeshiftCommandDisposition.UNCONFIRMED,
             TimeshiftCommandResult.SERVER_REJECTED to TimeshiftCommandDisposition.NOT_ACCEPTED,
+            TimeshiftCommandResult.MALFORMED_RESPONSE to TimeshiftCommandDisposition.UNCONFIRMED,
             TimeshiftCommandResult.ACCESS_DENIED to TimeshiftCommandDisposition.NOT_ACCEPTED,
             TimeshiftCommandResult.CONNECTION_LIMIT to TimeshiftCommandDisposition.NOT_ACCEPTED,
             TimeshiftCommandResult.TIMEOUT to TimeshiftCommandDisposition.UNCONFIRMED,
@@ -2702,6 +2704,7 @@ internal class TvheadendPlaybackCoordinatorTest {
 
         val operationFailures = listOf(
             SubscriptionOperationResult.ServerRejected to TimeshiftCommandResult.SERVER_REJECTED,
+            SubscriptionOperationResult.MalformedResponse to TimeshiftCommandResult.MALFORMED_RESPONSE,
             SubscriptionOperationResult.AccessDenied to TimeshiftCommandResult.ACCESS_DENIED,
             SubscriptionOperationResult.ConnectionLimit to TimeshiftCommandResult.CONNECTION_LIMIT,
             SubscriptionOperationResult.Timeout to TimeshiftCommandResult.TIMEOUT,
@@ -2940,6 +2943,21 @@ internal class TvheadendPlaybackCoordinatorTest {
             fixture.coordinator.setLivePriority(LiveSubscriptionPriority.YIELD),
         )
         assertEquals(listOf(LiveSubscriptionPriority.YIELD), first.priorities)
+
+        first.priorityAction = { SubscriptionOperationResult.MalformedResponse }
+        assertSame(
+            TimeshiftCommandResult.MALFORMED_RESPONSE,
+            fixture.coordinator.setLivePriority(LiveSubscriptionPriority.NORMAL),
+        )
+        first.priorityAction = { SubscriptionOperationResult.Ok(Unit) }
+        assertSame(
+            TimeshiftCommandResult.ACCEPTED,
+            fixture.coordinator.setLivePriority(LiveSubscriptionPriority.YIELD),
+        )
+        assertEquals(
+            listOf(LiveSubscriptionPriority.YIELD, LiveSubscriptionPriority.NORMAL, LiveSubscriptionPriority.YIELD),
+            first.priorities,
+        )
 
         first.mutableState.value = SubscriptionState.Terminal(SubscriptionTerminalReason.ConsumerFailed)
         val reopened = fixture.player.liveSubscriptionOptions()

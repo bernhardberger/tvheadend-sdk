@@ -45,6 +45,9 @@ internal interface ProtocolGateway {
         block: () -> T,
     ): T?
 
+    /** The retirement cause observed atomically with closed admission, even before flow delivery. */
+    public fun retirementFailure(generation: GatewayGeneration): GatewayConnectionFailure? = null
+
     public suspend fun enableInitialMetadata(
         generation: GatewayGeneration,
     ): GatewayResult<Unit>
@@ -324,16 +327,16 @@ internal class GatewayServerFacts(
     internal val webRoot: String?,
     internal val language: String?,
     serverCapabilities: List<String>?,
-    internal val apiVersion: Int?,
+    internal val apiVersion: Long?,
     internal val admin: Boolean?,
     internal val streaming: Boolean?,
     internal val dvr: Boolean?,
     internal val failedDvr: Boolean?,
     internal val anonymous: Boolean?,
-    internal val limitAll: Int?,
-    internal val limitDvr: Int?,
-    internal val limitStreaming: Int?,
-    internal val uiLevel: Int?,
+    internal val limitAll: Long?,
+    internal val limitDvr: Long?,
+    internal val limitStreaming: Long?,
+    internal val uiLevel: Long?,
     internal val uiLanguage: String?,
 ) {
     internal val serverCapabilities: List<String>? = serverCapabilities?.toList()
@@ -361,6 +364,8 @@ internal enum class GatewayConnectionFailure {
     SERVER_UNREACHABLE,
     NETWORK_UNAVAILABLE,
     INCOMPATIBLE_SERVER,
+    UNSUPPORTED_SERVER_VERSION,
+    METADATA_OVERFLOW,
     NO_CHANNELS,
     TRANSPORT_UNAVAILABLE,
 }
@@ -380,6 +385,7 @@ internal sealed interface GatewayResult<out T> {
     }
 
     public data object ServerRejected : GatewayResult<Nothing>
+    public data object MalformedReply : GatewayResult<Nothing>
     public data object AccessDenied : GatewayResult<Nothing>
     public data object ConnectionLimit : GatewayResult<Nothing>
     public data object Timeout : GatewayResult<Nothing>

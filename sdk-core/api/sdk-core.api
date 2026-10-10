@@ -14,6 +14,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/ArtworkFailure : java/la
 	public static final field CONNECTION_CHANGED Lat/bernhardberger/tvheadend/sdk/core/ArtworkFailure;
 	public static final field CONNECTION_LIMIT Lat/bernhardberger/tvheadend/sdk/core/ArtworkFailure;
 	public static final field FILE_UNAVAILABLE Lat/bernhardberger/tvheadend/sdk/core/ArtworkFailure;
+	public static final field MALFORMED_RESPONSE Lat/bernhardberger/tvheadend/sdk/core/ArtworkFailure;
 	public static final field NOT_SUPPORTED Lat/bernhardberger/tvheadend/sdk/core/ArtworkFailure;
 	public static final field OBSERVATION_EXPIRED Lat/bernhardberger/tvheadend/sdk/core/ArtworkFailure;
 	public static final field TIMEOUT Lat/bernhardberger/tvheadend/sdk/core/ArtworkFailure;
@@ -771,6 +772,13 @@ public final class at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$Conne
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$MalformedResponse : at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$MalformedResponse;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$NotReady : at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult {
 	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$NotReady;
 	public fun equals (Ljava/lang/Object;)Z
@@ -1075,6 +1083,13 @@ public final class at/bernhardberger/tvheadend/sdk/core/DvrMutationResult$Connec
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class at/bernhardberger/tvheadend/sdk/core/DvrMutationResult$MalformedResponse : at/bernhardberger/tvheadend/sdk/core/DvrMutationResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult$MalformedResponse;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class at/bernhardberger/tvheadend/sdk/core/DvrMutationResult$NotReady : at/bernhardberger/tvheadend/sdk/core/DvrMutationResult {
 	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult$NotReady;
 	public fun equals (Ljava/lang/Object;)Z
@@ -1181,6 +1196,13 @@ public final class at/bernhardberger/tvheadend/sdk/core/DvrProgressResult$Access
 
 public final class at/bernhardberger/tvheadend/sdk/core/DvrProgressResult$ConnectionLimit : at/bernhardberger/tvheadend/sdk/core/DvrProgressResult {
 	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrProgressResult$ConnectionLimit;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/DvrProgressResult$MalformedResponse : at/bernhardberger/tvheadend/sdk/core/DvrProgressResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrProgressResult$MalformedResponse;
 	public fun equals (Ljava/lang/Object;)Z
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
@@ -1815,6 +1837,13 @@ public final class at/bernhardberger/tvheadend/sdk/core/EpgSearchResult$InvalidQ
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class at/bernhardberger/tvheadend/sdk/core/EpgSearchResult$MalformedResponse : at/bernhardberger/tvheadend/sdk/core/EpgSearchResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/EpgSearchResult$MalformedResponse;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class at/bernhardberger/tvheadend/sdk/core/EpgSearchResult$NotSupported : at/bernhardberger/tvheadend/sdk/core/EpgSearchResult {
 	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/EpgSearchResult$NotSupported;
 	public fun equals (Ljava/lang/Object;)Z
@@ -2038,8 +2067,8 @@ public final class at/bernhardberger/tvheadend/sdk/core/ServerAuthentication$Pas
 public final class at/bernhardberger/tvheadend/sdk/core/ServerCapabilities {
 	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/ServerCapabilities$Companion;
 	public final fun component1 ()Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
-	public final fun component10 ()Ljava/lang/Integer;
-	public final fun component11 ()Ljava/lang/Integer;
+	public final fun component10 ()Ljava/lang/Long;
+	public final fun component11 ()Ljava/lang/Long;
 	public final fun component12 ()Ljava/util/List;
 	public final fun component13 ()Ljava/lang/String;
 	public final fun component14 ()Ljava/lang/String;
@@ -2051,15 +2080,15 @@ public final class at/bernhardberger/tvheadend/sdk/core/ServerCapabilities {
 	public final fun component4 ()Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
 	public final fun component5 ()Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
 	public final fun component6 ()Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
-	public final fun component7 ()Ljava/lang/Integer;
-	public final fun component8 ()Ljava/lang/Integer;
-	public final fun component9 ()Ljava/lang/Integer;
+	public final fun component7 ()Ljava/lang/Long;
+	public final fun component8 ()Ljava/lang/Long;
+	public final fun component9 ()Ljava/lang/Long;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getAdmin ()Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
-	public final fun getAllLimit ()Ljava/lang/Integer;
+	public final fun getAllLimit ()Ljava/lang/Long;
 	public final fun getAnonymous ()Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
-	public final fun getApiVersion ()Ljava/lang/Integer;
-	public final fun getDvrLimit ()Ljava/lang/Integer;
+	public final fun getApiVersion ()Ljava/lang/Long;
+	public final fun getDvrLimit ()Ljava/lang/Long;
 	public final fun getDvrWrite ()Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
 	public final fun getFailedDvr ()Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
 	public final fun getFeatures ()Ljava/util/List;
@@ -2068,17 +2097,17 @@ public final class at/bernhardberger/tvheadend/sdk/core/ServerCapabilities {
 	public final fun getServerName ()Ljava/lang/String;
 	public final fun getServerVersion ()Ljava/lang/String;
 	public final fun getStreaming ()Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;
-	public final fun getStreamingLimit ()Ljava/lang/Integer;
+	public final fun getStreamingLimit ()Ljava/lang/Long;
 	public final fun getUiLanguage ()Ljava/lang/String;
-	public final fun getUiLevel ()Ljava/lang/Integer;
+	public final fun getUiLevel ()Ljava/lang/Long;
 	public final fun getWebRoot ()Ljava/lang/String;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/ServerCapabilities$Companion {
-	public final fun create (Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/ServerCapabilities;
-	public static synthetic fun create$default (Lat/bernhardberger/tvheadend/sdk/core/ServerCapabilities$Companion;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/ServerCapabilities;
+	public final fun create (Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/ServerCapabilities;
+	public static synthetic fun create$default (Lat/bernhardberger/tvheadend/sdk/core/ServerCapabilities$Companion;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Lat/bernhardberger/tvheadend/sdk/core/CapabilityAccess;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/lang/Long;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/ServerCapabilities;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/ServerProfile {
@@ -2180,6 +2209,14 @@ public final class at/bernhardberger/tvheadend/sdk/core/SessionFailure$Incompati
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class at/bernhardberger/tvheadend/sdk/core/SessionFailure$MetadataOverflow : at/bernhardberger/tvheadend/sdk/core/SessionFailure {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/SessionFailure$MetadataOverflow;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun getRecoveryDisposition ()Lat/bernhardberger/tvheadend/sdk/core/SessionRecoveryDisposition;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class at/bernhardberger/tvheadend/sdk/core/SessionFailure$NetworkUnavailable : at/bernhardberger/tvheadend/sdk/core/SessionFailure {
 	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/SessionFailure$NetworkUnavailable;
 	public fun equals (Ljava/lang/Object;)Z
@@ -2206,6 +2243,14 @@ public final class at/bernhardberger/tvheadend/sdk/core/SessionFailure$Permissio
 
 public final class at/bernhardberger/tvheadend/sdk/core/SessionFailure$ServerUnreachable : at/bernhardberger/tvheadend/sdk/core/SessionFailure {
 	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/SessionFailure$ServerUnreachable;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun getRecoveryDisposition ()Lat/bernhardberger/tvheadend/sdk/core/SessionRecoveryDisposition;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/SessionFailure$ServerUpgradeRequired : at/bernhardberger/tvheadend/sdk/core/SessionFailure {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/SessionFailure$ServerUpgradeRequired;
 	public fun equals (Ljava/lang/Object;)Z
 	public fun getRecoveryDisposition ()Lat/bernhardberger/tvheadend/sdk/core/SessionRecoveryDisposition;
 	public fun hashCode ()I
@@ -2291,6 +2336,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/SessionObservation$Compa
 public final class at/bernhardberger/tvheadend/sdk/core/SessionOperationFailure : java/lang/Enum {
 	public static final field ACCESS_DENIED Lat/bernhardberger/tvheadend/sdk/core/SessionOperationFailure;
 	public static final field CONNECTION_LIMIT Lat/bernhardberger/tvheadend/sdk/core/SessionOperationFailure;
+	public static final field MALFORMED_RESPONSE Lat/bernhardberger/tvheadend/sdk/core/SessionOperationFailure;
 	public static final field NOT_SUPPORTED Lat/bernhardberger/tvheadend/sdk/core/SessionOperationFailure;
 	public static final field SERVER_REJECTED Lat/bernhardberger/tvheadend/sdk/core/SessionOperationFailure;
 	public static final field TIMEOUT Lat/bernhardberger/tvheadend/sdk/core/SessionOperationFailure;
@@ -2413,6 +2459,13 @@ public final class at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$Ava
 
 public final class at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$ConnectionLimit : at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult {
 	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$ConnectionLimit;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$MalformedResponse : at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$MalformedResponse;
 	public fun equals (Ljava/lang/Object;)Z
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;

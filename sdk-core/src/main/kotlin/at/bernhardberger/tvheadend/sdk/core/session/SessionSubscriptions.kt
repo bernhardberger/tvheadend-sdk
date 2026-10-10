@@ -599,6 +599,7 @@ private fun GatewayResult<ByteArray>.toArtworkLoadResult(): ArtworkLoadResult = 
     GatewayResult.TransportUnavailable ->
         ArtworkLoadResult.Unavailable(ArtworkFailure.CONNECTION_CHANGED)
     GatewayResult.NotSupported -> ArtworkLoadResult.Unavailable(ArtworkFailure.NOT_SUPPORTED)
+    GatewayResult.MalformedReply -> ArtworkLoadResult.Unavailable(ArtworkFailure.MALFORMED_RESPONSE)
 }
 
 private fun GatewayResult<List<at.bernhardberger.tvheadend.sdk.core.StreamProfile>>.toStreamProfilesResult(
@@ -611,4 +612,5 @@ private fun GatewayResult<List<at.bernhardberger.tvheadend.sdk.core.StreamProfil
     GatewayResult.Timeout -> StreamProfilesResult.Timeout
     GatewayResult.TransportUnavailable -> StreamProfilesResult.TransportUnavailable
     GatewayResult.NotSupported -> StreamProfilesResult.NotSupported
+    GatewayResult.MalformedReply -> StreamProfilesResult.MalformedResponse
 }

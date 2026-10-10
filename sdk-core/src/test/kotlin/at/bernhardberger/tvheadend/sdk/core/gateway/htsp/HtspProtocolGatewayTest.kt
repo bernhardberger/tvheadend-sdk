@@ -147,6 +147,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrUpdateProvenance
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailure
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailureEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayRecordingFile
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayState
@@ -176,16 +177,21 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNotSame
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.Executors
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.milliseconds
@@ -193,6 +199,306 @@ import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
 internal class HtspProtocolGatewayTest {
+    @Test
+    fun `live admission and retirement share one atomic boundary`() = runTest {
+        val fake = connectedFake()
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val retiring = CountDownLatch(1)
+        val retired = CountDownLatch(1)
+        val workers = Executors.newFixedThreadPool(2)
+        try {
+            val commit = workers.submit<Boolean?> {
+                gateway.commitIfLive(generation) {
+                    entered.countDown()
+                    check(release.await(5, TimeUnit.SECONDS)) { "Admission test timed out" }
+                    true
+                }
+            }
+            assertTrue(entered.await(5, TimeUnit.SECONDS))
+            val retirement = workers.submit {
+                fake.connectionStateValue.value = HtspConnectionState.Error(
+                    HtspTransportFailure(HtspTransportFailureKind.TRANSPORT_UNAVAILABLE),
+                )
+                retiring.countDown()
+                runBlocking { gateway.disconnect() }
+                retired.countDown()
+            }
+            assertTrue(retiring.await(5, TimeUnit.SECONDS))
+            assertSame(GatewayState.Failed, gateway.connectionState.value)
+            assertEquals(null, gateway.estimatedServerTime(generation))
+            assertFalse(retired.await(200, TimeUnit.MILLISECONDS), "Retirement bypassed admission lock")
+            release.countDown()
+            assertEquals(true, commit.get(5, TimeUnit.SECONDS))
+            retirement.get(5, TimeUnit.SECONDS)
+            assertEquals(null, gateway.commitIfLive(generation) { true })
+        } finally {
+            release.countDown()
+            workers.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `sticky Error blocks admission and failed connect is not a runtime failure`() = runTest {
+        val transportEvents = MutableSharedFlow<HtspTransportEvent>()
+        val fake = connectedFake().apply { eventsFlow = transportEvents }
+        val gateway = HtspProtocolGateway(fake)
+        val failures = mutableListOf<GatewayConnectionFailureEvent>()
+        backgroundScope.launch { gateway.connectionFailures.toList(failures) }
+        testScheduler.runCurrent()
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+        val sourceGeneration = requireNotNull(fake.liveConnectionValue.value).generation
+        fake.connectionStateValue.value = HtspConnectionState.Error(
+            HtspTransportFailure(HtspTransportFailureKind.TRANSPORT_UNAVAILABLE),
+        )
+        repeat(2) {
+            assertSame(GatewayState.Failed, gateway.connectionState.value)
+            assertEquals(null, gateway.commitIfLive(generation) { true })
+        }
+        transportEvents.emit(HtspTransportEvent.ConnectionFailure(
+            HtspTransportFailure(HtspTransportFailureKind.TRANSPORT_UNAVAILABLE), sourceGeneration,
+        ))
+        testScheduler.runCurrent()
+        assertEquals(1, failures.size)
+        assertSame(generation, failures.single().generation)
+        fake.connectOutcome = HtspConnectOutcome.Failed(
+            HtspTransportFailure(HtspTransportFailureKind.UNSUPPORTED_SERVER_VERSION),
+        )
+        val failed = gateway.connect(ServerConfiguration("host", 9_982)) as GatewayConnectResult.Failed
+        assertEquals(GatewayConnectionFailure.UNSUPPORTED_SERVER_VERSION, failed.failure)
+        testScheduler.runCurrent()
+        assertEquals(1, failures.size, "A failed connect must only report via its outcome")
+        assertSame(GatewayState.Failed, gateway.connectionState.value)
+    }
+
+    @Test
+    fun `retirement snapshots do not invent or erase a typed failure cause`() = runTest {
+        val transportEvents = MutableSharedFlow<HtspTransportEvent>()
+        val fake = connectedFake().apply { eventsFlow = transportEvents }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+        val source = requireNotNull(fake.liveConnectionValue.value).generation
+        val failure = HtspTransportFailure(HtspTransportFailureKind.AUTHENTICATION_REJECTED)
+        val failures = mutableListOf<GatewayConnectionFailureEvent>()
+        backgroundScope.launch { gateway.connectionFailures.toList(failures) }
+        testScheduler.runCurrent()
+        fake.connectionStateValue.value = HtspConnectionState.Error(failure)
+        assertEquals(null, gateway.commitIfLive(generation) { true })
+        assertEquals(null, gateway.retirementFailure(generation))
+        transportEvents.emit(HtspTransportEvent.ConnectionFailure(failure, source))
+        testScheduler.runCurrent()
+        assertEquals(GatewayConnectionFailure.AUTHENTICATION_REJECTED, failures.single().failure)
+        assertEquals(GatewayConnectionFailure.AUTHENTICATION_REJECTED, gateway.retirementFailure(generation))
+        gateway.disconnect()
+        assertEquals(GatewayConnectionFailure.AUTHENTICATION_REJECTED, gateway.retirementFailure(generation))
+    }
+
+    @Test
+    fun `failed reconnect is cleared by disconnect and shutdown closes the disconnected service`() = runTest {
+        val fake = connectedFake()
+        val gateway = HtspProtocolGateway(fake)
+        gateway.connect(ServerConfiguration("host", 9_982))
+        val old = requireNotNull(fake.liveConnectionValue.value).generation
+        fake.connectOutcome = HtspConnectOutcome.Failed(
+            HtspTransportFailure(HtspTransportFailureKind.CONNECTION_REFUSED),
+        )
+        gateway.connect(ServerConfiguration("host", 9_982))
+        assertFalse(fake.isCurrent(old))
+        assertSame(GatewayState.Failed, gateway.connectionState.value)
+        gateway.disconnect()
+        assertSame(GatewayState.Disconnected, gateway.connectionState.value)
+        assertEquals(true, gateway.lastDisconnectChanged)
+        gateway.shutdown()
+        assertTrue(fake.closed)
+        assertEquals(true, gateway.lastCloseChanged)
+        gateway.shutdown()
+        assertEquals(false, gateway.lastCloseChanged)
+    }
+
+    @Test
+    fun `library attempt fence protects a replacement after disconnect admission`() = runTest {
+        val fake = connectedFake()
+        val gateway = HtspProtocolGateway(fake)
+        gateway.connect(ServerConfiguration("host", 9_982))
+        val replacement = liveConnection(HtspConnectionGeneration())
+        fake.beforeTeardown = {
+            fake.connectOutcome = HtspConnectOutcome.Connected(replacement)
+            fake.connect(HtspEndpoint("host", 9_982))
+        }
+        gateway.disconnect()
+        assertEquals(null, fake.lastExpectedGeneration)
+        assertSame(replacement, fake.liveConnectionValue.value)
+        assertEquals(false, gateway.lastDisconnectChanged)
+    }
+
+    @Test
+    fun `fake retains current but ended tokens and fences stale attempts like the library`() = runTest {
+        val fake = connectedFake()
+        fake.connect(HtspEndpoint("host", 9_982))
+        val live = requireNotNull(fake.liveConnectionValue.value)
+        val token = live.generation
+        fake.connectOutcome = HtspConnectOutcome.Failed(HtspTransportFailure(HtspTransportFailureKind.SUPERSEDED))
+        fake.connect(HtspEndpoint("host", 9_982))
+        assertSame(live, fake.liveConnectionValue.value)
+        fake.connectOutcome = HtspConnectOutcome.Connected(live)
+        fake.beforeTeardown = { fake.connect(HtspEndpoint("host", 9_982)) }
+        assertTrue(fake.disconnect(token))
+        fake.beforeTeardown = {}
+        assertTrue(fake.isCurrent(token))
+        assertEquals(null, fake.liveConnectionValue.value)
+        assertFalse(fake.disconnect(token))
+        assertFalse(fake.close(HtspConnectionGeneration()))
+        assertTrue(fake.close(token))
+        assertFalse(fake.close(null))
+    }
+
+    @Test
+    fun `retirement during system time request prevents estimate and protocol admission`() = runTest {
+        val fake = connectedFake()
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+        fake.beforeExecute = { request ->
+            if (request is GetSysTimeRequest) {
+                fake.liveConnectionValue.value = null
+                fake.executeResult = HtspResult.Ok(GetSysTimeResponse(1_000, 0, 0))
+            } else fake.executeResult = HtspResult.TransportUnavailable
+        }
+        gateway.enableInitialMetadata(generation)
+        assertEquals(null, gateway.estimatedServerTime(generation))
+        fake.lastRequest = null
+        assertSame(GatewayResult.TransportUnavailable, gateway.enableInitialMetadata(generation))
+        assertEquals(null, fake.lastRequest)
+        fake.subscriptionFlow = flowOf(
+            HtspSubscriptionEvent.Timeshift(HtspTimeshiftStatusMessage(77, false, 0, 0, 100, 100)),
+        )
+        val status = gateway.subscription(generation, SubscriptionId(77)).toList().single()
+            as SubscriptionEvent.Timeshift
+        assertEquals(null, status.estimatedServerTime)
+    }
+
+    @Test
+    fun `metadata overflow retires its generation and requests reconnect for full resync`() = runTest {
+        val fake = connectedFake()
+        fake.eventsFlow = flowOf(HtspTransportEvent.MetadataOverflow(
+            requireNotNull(fake.liveConnectionValue.value).generation, 1,
+        ))
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+        val failures = mutableListOf<GatewayConnectionFailureEvent>()
+        backgroundScope.launch { gateway.connectionFailures.toList(failures) }
+        testScheduler.runCurrent()
+        assertTrue(gateway.metadata.toList().isEmpty())
+        testScheduler.runCurrent()
+        assertSame(generation, failures.single().generation)
+        assertEquals(GatewayConnectionFailure.METADATA_OVERFLOW, failures.single().failure)
+        assertEquals(null, gateway.commitIfLive(generation) { true })
+        assertEquals(GatewayConnectionFailure.METADATA_OVERFLOW, gateway.retirementFailure(generation))
+    }
+
+    @Test
+    fun `generation identity survives distinct live snapshots and metadata projections`() = runTest {
+        val fake = connectedFake()
+        val source = requireNotNull(fake.liveConnectionValue.value)
+        fake.eventsFlow = flowOf(HtspTransportEvent.ServerMessage(
+            HtspInitialSyncCompletedMessage, source.generation, 1,
+        ))
+        val gateway = HtspProtocolGateway(fake)
+        val first = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection
+        fake.liveConnectionValue.value = source.copy(protocolVersion = 44)
+        fake.connectOutcome = HtspConnectOutcome.Connected(requireNotNull(fake.liveConnectionValue.value))
+        val second = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection
+        assertSame(first.generation, second.generation)
+        assertSame(first.generation, gateway.metadata.toList().single().generation)
+        assertEquals(true, gateway.commitIfLive(second.generation) { true })
+    }
+
+    @Test
+    fun `unsigned server facts retain their full range and request current protocol`() = runTest {
+        val fake = connectedFake()
+        val source = requireNotNull(fake.liveConnectionValue.value)
+        fake.liveConnectionValue.value = source.copy(serverFacts = HtspServerFacts(
+            apiVersion = 0xffff_ffffL, limitAll = 0xffff_ffffL, limitDvr = 0xffff_ffffL,
+            limitStreaming = 0xffff_ffffL, uiLevel = 0xffff_ffffL,
+        ))
+        fake.connectOutcome = HtspConnectOutcome.Connected(requireNotNull(fake.liveConnectionValue.value))
+        val facts = (HtspProtocolGateway(fake).connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.serverFacts
+        assertEquals(List(5) { 0xffff_ffffL }, listOf(
+            facts.apiVersion, facts.limitAll, facts.limitDvr, facts.limitStreaming, facts.uiLevel,
+        ))
+        assertEquals(44, fake.lastConnectOptions?.requestedProtocolVersion)
+        assertEquals(10_000L, fake.lastConnectOptions?.connectTimeoutMs)
+    }
+
+    @Test
+    fun `malformed stream indices retain malformed termination not infrastructure failure`() = runTest {
+        assertThrows(IllegalArgumentException::class.java) {
+            HtspMuxPacketMessage(77, 73, -1, null, null, 0, HtspBinary(byteArrayOf()))
+        }
+        // Library constructors enforce the same u32 range as SDK StreamIndex: no public fixture
+        // can reach this defensive catch. Corrupt only this fake DTO and fail loudly if its shape
+        // changes, rather than merely forwarding a library MALFORMED_MESSAGE terminal.
+        val packet = HtspMuxPacketMessage(77, 73, 0, null, null, 0, HtspBinary(byteArrayOf()))
+        val field = packet.javaClass.declaredFields.singleOrNull { it.name == "streamIndex" }
+        assertNotNull(field, "Malformed stream fixture requires the stream index field")
+        requireNotNull(field).apply { isAccessible = true }.setLong(packet, -1)
+        val fake = connectedFake().apply {
+            subscriptionFlow = flowOf(
+                HtspSubscriptionEvent.Packet(packet),
+                HtspSubscriptionEvent.Speed(HtspSubscriptionSpeedMessage(77, 100)),
+            )
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+        val terminal = gateway.subscription(generation, SubscriptionId(77)).toList().single()
+            as SubscriptionEvent.Terminated
+        assertEquals(SubscriptionTermination.MALFORMED_MESSAGE, terminal.reason)
+    }
+
+    @Test
+    fun `locally invalid DVR reply is malformed not transport loss or server rejection`() = runTest {
+        val fake = connectedFake().apply {
+            executeResult = HtspResult.Ok(GetDvrCutpointsResponse(listOf(HtspDvrCutpoint(10, 10, 0))))
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+        assertSame(GatewayResult.MalformedReply, gateway.getDvrCutpoints(generation, DvrEntryId(7)))
+    }
+
+    private fun connectedFake(): FakeHtspConnection = FakeHtspConnection().apply {
+        liveConnectionValue.value = liveConnection(HtspConnectionGeneration())
+        connectOutcome = HtspConnectOutcome.Connected(requireNotNull(liveConnectionValue.value))
+    }
+
+    @Test
+    fun `library malformed replies preserve uncertainty without implying transport loss`() = runTest {
+        val fake = connectedFake().apply { executeResult = HtspResult.MalformedReply }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+        assertSame(GatewayResult.MalformedReply, gateway.getDiskSpace(generation))
+        assertSame(GatewayResult.MalformedReply, gateway.getDvrCutpoints(generation, DvrEntryId(7)))
+        assertSame(
+            SubscriptionOperationResult.MalformedResponse,
+            gateway.subscribe(generation, SubscriptionId(77), ChannelId(7), 60.seconds),
+        )
+        assertEquals(true, gateway.commitIfLive(generation) { true })
+        fake.executeResult = HtspResult.ServerError(null)
+        assertSame(GatewayResult.ServerRejected, gateway.getDiskSpace(generation))
+        assertSame(GatewayResult.ServerRejected, gateway.getDvrCutpoints(generation, DvrEntryId(7)))
+    }
+
     @Test
     fun `queue projection preserves absent zero and unsigned data errors`() = runTest {
         val counts = listOf(null, 0L, 0x8000_0000L, 0xffff_ffffL)
@@ -333,13 +639,13 @@ internal class HtspProtocolGatewayTest {
         fake.connectionStateValue.value = HtspConnectionState.Connected(
             host = "private host",
             port = 9_982,
-            htspVersion = 43,
+            protocolVersion = 43,
             dvrAccess = true,
         )
         yield()
         assertSame(GatewayState.Connected, gateway.connectionState.value)
         fake.connectionStateValue.value = HtspConnectionState.Error(
-            IllegalStateException("private throwable"),
+            HtspTransportFailure(HtspTransportFailureKind.TRANSPORT_UNAVAILABLE),
         )
         stateCollection.join()
         assertSame(GatewayState.Failed, gateway.connectionState.value)
@@ -364,8 +670,10 @@ internal class HtspProtocolGatewayTest {
             GatewayConnectionFailure.NO_CHANNELS,
             GatewayConnectionFailure.TRANSPORT_UNAVAILABLE,
             GatewayConnectionFailure.TRANSPORT_UNAVAILABLE,
+            GatewayConnectionFailure.UNSUPPORTED_SERVER_VERSION,
+            GatewayConnectionFailure.TRANSPORT_UNAVAILABLE,
         )
-        val failures = gateway.connectionFailures.toList()
+        val failures = gateway.connectionFailures.take(expectedFailures.size).toList()
 
         assertEquals(expectedFailures, failures.map { it.failure })
         assertTrue(failures.dropLast(1).all { it.generation === result.connection.generation })
@@ -512,8 +820,8 @@ internal class HtspProtocolGatewayTest {
             event = HtspEvent(
                 eventId = 1,
                 channelId = 2,
-                start = -3,
-                stop = 2_147_483_648,
+                startEpochSeconds = -3,
+                stopEpochSeconds = 2_147_483_648,
                 title = "Private title",
                 subtitle = "Private subtitle",
                 summary = "Private summary",
@@ -530,8 +838,8 @@ internal class HtspProtocolGatewayTest {
                 ratingCountry = "GB",
                 starRating = 6,
                 copyrightYear = 2026,
-                firstAired = 0,
-                isNew = 0,
+                firstAiredEpochSeconds = 0,
+                isNew = false,
                 seasonNumber = 7,
                 seasonCount = 8,
                 episodeNumber = 9,
@@ -550,7 +858,7 @@ internal class HtspProtocolGatewayTest {
         val update = HtspEventUpdateMessage(
             eventId = 1,
             channelId = 3,
-            stop = 2_147_483_649,
+            stopEpochSeconds = 2_147_483_649,
             title = "",
             categories = emptyList(),
             keywords = emptyList(),
@@ -558,8 +866,8 @@ internal class HtspProtocolGatewayTest {
             ageRating = 18,
             starRating = 19,
             copyrightYear = 0,
-            firstAired = -20,
-            isNew = 2,
+            firstAiredEpochSeconds = -20,
+            isNew = true,
             seasonNumber = 21,
             seasonCount = 22,
             episodeNumber = 23,
@@ -627,18 +935,18 @@ internal class HtspProtocolGatewayTest {
             HtspDvrRecordingFile(
                 fileId = 9,
                 path = "/private/recording.ts",
-                start = 10,
-                stop = 20,
+                startEpochSeconds = 10,
+                stopEpochSeconds = 20,
                 sizeBytes = 30,
             ),
         )
         val add = HtspDvrEntryAddMessage(
             entryId = 1,
-            enabled = 1,
+            enabled = true,
             channelId = 2,
             eventId = 3,
-            start = -4,
-            stop = 2_147_483_648,
+            startEpochSeconds = -4,
+            stopEpochSeconds = 2_147_483_648,
             startExtraMinutes = 5,
             stopExtraMinutes = 6,
             contentType = 7,
@@ -654,7 +962,7 @@ internal class HtspProtocolGatewayTest {
         )
         val update = HtspDvrEntryUpdateMessage(
             entryId = 1,
-            enabled = 0,
+            enabled = false,
             title = "",
             files = emptyList(),
             state = "completed",
@@ -903,8 +1211,8 @@ internal class HtspProtocolGatewayTest {
                         HtspEvent(
                             eventId = 1,
                             channelId = 2,
-                            start = -3,
-                            stop = 2_147_483_648,
+                            startEpochSeconds = -3,
+                            stopEpochSeconds = 2_147_483_648,
                             title = "Private title",
                             subtitle = "Private subtitle",
                             summary = "Private summary",
@@ -921,8 +1229,8 @@ internal class HtspProtocolGatewayTest {
                             ratingCountry = "GB",
                             starRating = 6,
                             copyrightYear = 2026,
-                            firstAired = 0,
-                            isNew = 0,
+                            firstAiredEpochSeconds = 0,
+                            isNew = false,
                             seasonNumber = 7,
                             seasonCount = 8,
                             episodeNumber = 9,
@@ -949,7 +1257,7 @@ internal class HtspProtocolGatewayTest {
 
         assertSame(sourceGeneration, fake.lastExpectedGeneration)
         assertEquals(2L, request.channelId)
-        assertEquals(2_147_483_649L, request.maxTime)
+        assertEquals(2_147_483_649L, request.maxTimeEpochSeconds)
         assertEquals(null, request.eventId)
         assertEquals(null, request.language)
         assertEquals(null, request.numFollowing)
@@ -965,7 +1273,7 @@ internal class HtspProtocolGatewayTest {
         }
 
         val failures = listOf(
-            HtspResult.ServerError to GatewayResult.ServerRejected,
+            HtspResult.ServerError("private error") to GatewayResult.ServerRejected,
             HtspResult.AccessDenied to GatewayResult.AccessDenied,
             HtspResult.ConnectionLimit to GatewayResult.ConnectionLimit,
             HtspResult.Timeout to GatewayResult.Timeout,
@@ -1000,8 +1308,8 @@ internal class HtspProtocolGatewayTest {
                         HtspEvent(
                             eventId = 7,
                             channelId = 8,
-                            start = 9,
-                            stop = 10,
+                            startEpochSeconds = 9,
+                            stopEpochSeconds = 10,
                             title = "Private search result",
                             subtitle = null,
                             summary = null,
@@ -1018,7 +1326,7 @@ internal class HtspProtocolGatewayTest {
                             ratingCountry = null,
                             starRating = null,
                             copyrightYear = null,
-                            firstAired = null,
+                            firstAiredEpochSeconds = null,
                             isNew = null,
                             seasonNumber = null,
                             seasonCount = null,
@@ -1060,7 +1368,7 @@ internal class HtspProtocolGatewayTest {
         assertEquals("de", request.language)
         assertEquals(true, request.fullText)
         assertEquals(null, request.mergeText)
-        assertEquals(1L, request.full)
+        assertEquals(true, request.full)
         assertEquals(14L, request.minDurationSeconds)
         assertEquals(15L, request.maxDurationSeconds)
         assertEquals(7L, result.value.single().id.value)
@@ -1070,10 +1378,10 @@ internal class HtspProtocolGatewayTest {
         }
 
         fake.executeResult = HtspResult.Ok(EpgQueryResponse.EventIds(listOf(7)))
-        assertSame(GatewayResult.ServerRejected, gateway.searchEpg(generation, search))
+        assertSame(GatewayResult.MalformedReply, gateway.searchEpg(generation, search))
 
         val failures = listOf(
-            HtspResult.ServerError to GatewayResult.ServerRejected,
+            HtspResult.ServerError("private error") to GatewayResult.ServerRejected,
             HtspResult.AccessDenied to GatewayResult.AccessDenied,
             HtspResult.ConnectionLimit to GatewayResult.ConnectionLimit,
             HtspResult.Timeout to GatewayResult.Timeout,
@@ -1097,10 +1405,10 @@ internal class HtspProtocolGatewayTest {
     }
 
     @Test
-    fun `initial metadata uses server time for bounded async EPG with legacy fallback`() = runTest {
+    fun `initial metadata uses server time for bounded async EPG`() = runTest {
         val serverNow = 1_000_000L
         val serverTime = GetSysTimeResponse(
-            unixTimeSeconds = serverNow,
+            timeEpochSeconds = serverNow,
             legacyTimezoneHoursWestOfGmt = 0,
             gmtOffsetMinutes = 0,
         )
@@ -1118,7 +1426,7 @@ internal class HtspProtocolGatewayTest {
                 connectOutcome = HtspConnectOutcome.Connected(requireNotNull(liveConnectionValue.value))
                 eventsFlow = metadataEvents
                 subscriptionFlow = flowOf(
-                    HtspSubscriptionEvent.Timeshift(HtspTimeshiftStatusMessage(77, 0, 0, 0, 100, 100)),
+                    HtspSubscriptionEvent.Timeshift(HtspTimeshiftStatusMessage(77, false, 0, 0, 100, 100)),
                 )
                 beforeExecute = { request ->
                     requests += request
@@ -1145,35 +1453,28 @@ internal class HtspProtocolGatewayTest {
             val result = gateway.enableInitialMetadata(generation)
             assertSame(sourceGeneration, fake.lastExpectedGeneration)
             val status = gateway.subscription(generation, SubscriptionId(77)).toList().single() as SubscriptionEvent.Timeshift
-            assertEquals(protocolVersion >= 6 && serverTimeResult is HtspResult.Ok, status.estimatedServerTime != null)
+            assertEquals(serverTimeResult is HtspResult.Ok, status.estimatedServerTime != null)
             return result to requests
         }
 
-        val (supportedResult, supportedRequests) = requestFor(protocolVersion = 6)
+        val (supportedResult, supportedRequests) = requestFor(protocolVersion = 36)
         assertTrue(supportedResult is GatewayResult.Ok)
         assertTrue(supportedRequests.singleOrNull { it is GetSysTimeRequest } is GetSysTimeRequest)
         val supported = supportedRequests.last() as EnableAsyncMetadataRequest
-        assertEquals(1L, supported.epg)
-        assertEquals(serverNow + 86_400L, supported.epgMaxTime)
+        assertEquals(true, supported.epg)
+        assertEquals(serverNow + 86_400L, supported.epgMaxTimeEpochSeconds)
         assertEquals(6, supported.minimumProtocolVersion)
 
         val (configuredResult, configuredRequests) = requestFor(
-            protocolVersion = 6,
+            protocolVersion = 44,
             coveragePolicy = EpgCoveragePolicy.create(7.days),
         )
         assertTrue(configuredResult is GatewayResult.Ok)
         val configured = configuredRequests.last() as EnableAsyncMetadataRequest
-        assertEquals(serverNow + 604_800L, configured.epgMaxTime)
-
-        val (legacyResult, legacyRequests) = requestFor(protocolVersion = 5)
-        assertTrue(legacyResult is GatewayResult.Ok)
-        val legacy = legacyRequests.single() as EnableAsyncMetadataRequest
-        assertEquals(null, legacy.epg)
-        assertEquals(null, legacy.epgMaxTime)
-        assertEquals(null, legacy.minimumProtocolVersion)
+        assertEquals(serverNow + 604_800L, configured.epgMaxTimeEpochSeconds)
 
         val (failure, failedRequests) = requestFor(
-            protocolVersion = 6,
+            protocolVersion = 36,
             serverTimeResult = HtspResult.Timeout,
         )
         assertSame(GatewayResult.Timeout, failure)
@@ -1190,7 +1491,7 @@ internal class HtspProtocolGatewayTest {
         val fake = FakeHtspConnection().apply {
             eventsFlow = metadataEvents
             subscriptionFlow = flowOf(
-                HtspSubscriptionEvent.Timeshift(HtspTimeshiftStatusMessage(77, 0, 0, 0, 100, 100)),
+                HtspSubscriptionEvent.Timeshift(HtspTimeshiftStatusMessage(77, false, 0, 0, 100, 100)),
             )
             beforeExecute = { request ->
                 requests += request
@@ -1199,7 +1500,7 @@ internal class HtspProtocolGatewayTest {
                         timeRequestGenerations += lastExpectedGeneration
                         executeResult = HtspResult.Ok(
                             GetSysTimeResponse(
-                                unixTimeSeconds = serverTimes.removeFirst(),
+                                timeEpochSeconds = serverTimes.removeFirst(),
                                 legacyTimezoneHoursWestOfGmt = 0,
                                 gmtOffsetMinutes = 0,
                             ),
@@ -1224,7 +1525,7 @@ internal class HtspProtocolGatewayTest {
         repeat(2) { index ->
             val sourceGeneration = HtspConnectionGeneration()
             sourceGenerations += sourceGeneration
-            val liveConnection = liveConnection(sourceGeneration, protocolVersion = 6)
+            val liveConnection = liveConnection(sourceGeneration, protocolVersion = 36)
             fake.liveConnectionValue.value = liveConnection
             fake.connectOutcome = HtspConnectOutcome.Connected(liveConnection)
             val generation = (gateway.connect(ServerConfiguration("host-$index", 9_982))
@@ -1243,7 +1544,7 @@ internal class HtspProtocolGatewayTest {
 
         val asyncRequests = requests.filterIsInstance<EnableAsyncMetadataRequest>()
         assertEquals(2, asyncRequests.size)
-        assertEquals(listOf(1_604_800L, 2_604_800L), asyncRequests.map { it.epgMaxTime })
+        assertEquals(listOf(1_604_800L, 2_604_800L), asyncRequests.map { it.epgMaxTimeEpochSeconds })
         assertEquals(2, timeRequestGenerations.size)
         sourceGenerations.zip(timeRequestGenerations).forEach { (expected, actual) ->
             assertSame(expected, actual)
@@ -1296,7 +1597,7 @@ internal class HtspProtocolGatewayTest {
         assertEquals("DvrDiskSpace(freeBytes=8, usedBytes=null, totalBytes=16)", disk.value.toString())
 
         val failures = listOf(
-            HtspResult.ServerError to GatewayResult.ServerRejected,
+            HtspResult.ServerError("private error") to GatewayResult.ServerRejected,
             HtspResult.AccessDenied to GatewayResult.AccessDenied,
             HtspResult.ConnectionLimit to GatewayResult.ConnectionLimit,
             HtspResult.Timeout to GatewayResult.Timeout,
@@ -1366,20 +1667,20 @@ internal class HtspProtocolGatewayTest {
         }
 
         fake.executeResult = HtspResult.Ok(GetProfilesResponse(null))
-        assertSame(GatewayResult.ServerRejected, gateway.getStreamProfiles(generation))
+        assertSame(GatewayResult.MalformedReply, gateway.getStreamProfiles(generation))
         fake.executeResult = HtspResult.Ok(
             GetProfilesResponse(listOf(HtspProfile("INVALID", "", ""))),
         )
-        assertSame(GatewayResult.ServerRejected, gateway.getStreamProfiles(generation))
+        assertSame(GatewayResult.MalformedReply, gateway.getStreamProfiles(generation))
         fake.executeResult = HtspResult.Ok(
             GetProfilesResponse(
                 List(2) { HtspProfile("0123456789abcdef0123456789abcdef", "", "") },
             ),
         )
-        assertSame(GatewayResult.ServerRejected, gateway.getStreamProfiles(generation))
+        assertSame(GatewayResult.MalformedReply, gateway.getStreamProfiles(generation))
 
         val failures = listOf(
-            HtspResult.ServerError to GatewayResult.ServerRejected,
+            HtspResult.ServerError("private error") to GatewayResult.ServerRejected,
             HtspResult.AccessDenied to GatewayResult.AccessDenied,
             HtspResult.ConnectionLimit to GatewayResult.ConnectionLimit,
             HtspResult.Timeout to GatewayResult.Timeout,
@@ -1408,7 +1709,7 @@ internal class HtspProtocolGatewayTest {
         val fake = FakeHtspConnection().apply {
             liveConnectionValue.value = liveConnection(sourceGeneration)
             connectOutcome = HtspConnectOutcome.Connected(requireNotNull(liveConnectionValue.value))
-            executeResult = HtspResult.Ok(AddDvrEntryResponse(1, 7, "private raw error"))
+            executeResult = HtspResult.Ok(AddDvrEntryResponse(7))
         }
         val gateway = HtspProtocolGateway(fake)
         val generation = (gateway.connect(ServerConfiguration("host", 9_982))
@@ -1434,8 +1735,8 @@ internal class HtspProtocolGatewayTest {
         assertEquals(DvrEntryId(7), scheduled.value)
         assertSame(sourceGeneration, fake.lastExpectedGeneration)
         assertEquals(2L, selector.channelId)
-        assertEquals(-3L, selector.start)
-        assertEquals(4L, selector.stop)
+        assertEquals(-3L, selector.startEpochSeconds)
+        assertEquals(4L, selector.stopEpochSeconds)
         assertEquals("private-config", addRequest.configName)
         assertEquals("eng", addRequest.language)
         assertEquals("private-title", addRequest.title)
@@ -1445,16 +1746,7 @@ internal class HtspProtocolGatewayTest {
         assertEquals(12L, addRequest.ageRating)
         assertFalse(scheduled.toString().contains("private"))
 
-        listOf(
-            AddDvrEntryResponse(null, null, "private rejected"),
-            AddDvrEntryResponse(0, 7, "private rejected"),
-            AddDvrEntryResponse(1, null, null),
-        ).forEach { response ->
-            fake.executeResult = HtspResult.Ok(response)
-            assertSame(GatewayResult.ServerRejected, gateway.scheduleDvrEntry(generation, schedule))
-        }
-
-        fake.executeResult = HtspResult.Ok(UpdateDvrEntryResponse(1, "private ignored"))
+        fake.executeResult = HtspResult.Ok(UpdateDvrEntryResponse)
         val update = DvrEntryUpdate(
             channelId = at.bernhardberger.tvheadend.sdk.core.ChannelId(3),
             configId = DvrConfigId("private-next-config"),
@@ -1485,35 +1777,35 @@ internal class HtspProtocolGatewayTest {
         assertEquals("private-next-description", updateRequest.description)
         assertEquals("deu", updateRequest.language)
         assertEquals("private-comment", updateRequest.comment)
-        assertEquals(1L, updateRequest.enabled)
-        assertEquals(-5L, updateRequest.start)
-        assertEquals(6L, updateRequest.stop)
-        assertEquals(-7L, updateRequest.startExtra)
-        assertEquals(8L, updateRequest.stopExtra)
-        assertEquals(9L, updateRequest.retention)
-        assertEquals(10L, updateRequest.removal)
+        assertEquals(true, updateRequest.enabled)
+        assertEquals(-5L, updateRequest.startEpochSeconds)
+        assertEquals(6L, updateRequest.stopEpochSeconds)
+        assertEquals(-7L, updateRequest.startExtraMinutes)
+        assertEquals(8L, updateRequest.stopExtraMinutes)
+        assertEquals(9L, updateRequest.retentionDays)
+        assertEquals(10L, updateRequest.removalDays)
         assertEquals(11L, updateRequest.priority)
         assertEquals(13L, updateRequest.ageRating)
         assertEquals(null, updateRequest.playCount)
-        assertEquals(null, updateRequest.playPosition)
+        assertEquals(null, updateRequest.playPositionSeconds)
 
-        fake.executeResult = HtspResult.Ok(StopDvrEntryResponse(1, null))
+        fake.executeResult = HtspResult.Ok(StopDvrEntryResponse)
         assertTrue(gateway.stopDvrEntry(generation, DvrEntryId(7)) is GatewayResult.Ok)
         assertTrue(fake.lastRequest is StopDvrEntryRequest)
-        fake.executeResult = HtspResult.Ok(CancelDvrEntryResponse(1, null))
+        fake.executeResult = HtspResult.Ok(CancelDvrEntryResponse)
         assertTrue(gateway.cancelDvrEntry(generation, DvrEntryId(7)) is GatewayResult.Ok)
         assertTrue(fake.lastRequest is CancelDvrEntryRequest)
-        fake.executeResult = HtspResult.Ok(DeleteDvrEntryResponse(1, null))
+        fake.executeResult = HtspResult.Ok(DeleteDvrEntryResponse)
         assertTrue(gateway.deleteDvrEntry(generation, DvrEntryId(7)) is GatewayResult.Ok)
         assertTrue(fake.lastRequest is DeleteDvrEntryRequest)
-        fake.executeResult = HtspResult.Ok(UpdateDvrEntryResponse(null, "private rejected"))
+        fake.executeResult = HtspResult.ServerError("private rejected")
         assertSame(
             GatewayResult.ServerRejected,
             gateway.updateDvrEntry(generation, DvrEntryId(7), DvrEntryUpdate()),
         )
 
         val failures = listOf(
-            HtspResult.ServerError to GatewayResult.ServerRejected,
+            HtspResult.ServerError("private error") to GatewayResult.ServerRejected,
             HtspResult.AccessDenied to GatewayResult.AccessDenied,
             HtspResult.ConnectionLimit to GatewayResult.ConnectionLimit,
             HtspResult.Timeout to GatewayResult.Timeout,
@@ -1542,7 +1834,7 @@ internal class HtspProtocolGatewayTest {
         val fake = FakeHtspConnection().apply {
             liveConnectionValue.value = liveConnection(sourceGeneration)
             connectOutcome = HtspConnectOutcome.Connected(requireNotNull(liveConnectionValue.value))
-            executeResult = HtspResult.Ok(UpdateDvrEntryResponse(1, "private ignored"))
+            executeResult = HtspResult.Ok(UpdateDvrEntryResponse)
         }
         val gateway = HtspProtocolGateway(fake)
         val generation = (gateway.connect(ServerConfiguration("host", 9_982))
@@ -1557,7 +1849,7 @@ internal class HtspProtocolGatewayTest {
         )
         val keep = fake.lastRequest as UpdateDvrEntryRequest
         assertEquals(7L, keep.entryId)
-        assertEquals(90L, keep.playPosition)
+        assertEquals(90L, keep.playPositionSeconds)
         assertEquals(DVR_PROGRESS_KEEP_PLAY_COUNT, keep.playCount)
         assertEquals(null, keep.title)
         assertEquals(null, keep.channelId)
@@ -1570,10 +1862,10 @@ internal class HtspProtocolGatewayTest {
             ) is GatewayResult.Ok,
         )
         val increment = fake.lastRequest as UpdateDvrEntryRequest
-        assertEquals(120L, increment.playPosition)
+        assertEquals(120L, increment.playPositionSeconds)
         assertEquals(DVR_PROGRESS_INCR_PLAY_COUNT, increment.playCount)
 
-        fake.executeResult = HtspResult.Ok(UpdateDvrEntryResponse(null, "private rejected"))
+        fake.executeResult = HtspResult.ServerError("private rejected")
         assertSame(
             GatewayResult.ServerRejected,
             gateway.reportDvrProgress(
@@ -1583,7 +1875,7 @@ internal class HtspProtocolGatewayTest {
             ),
         )
         val failures = listOf(
-            HtspResult.ServerError to GatewayResult.ServerRejected,
+            HtspResult.ServerError("private error") to GatewayResult.ServerRejected,
             HtspResult.AccessDenied to GatewayResult.AccessDenied,
             HtspResult.ConnectionLimit to GatewayResult.ConnectionLimit,
             HtspResult.Timeout to GatewayResult.Timeout,
@@ -1625,11 +1917,11 @@ internal class HtspProtocolGatewayTest {
             executeResult = HtspResult.Ok(
                 GetDvrCutpointsResponse(
                     listOf(
-                        HtspDvrCutpoint(start = 5_000, end = 10_000, type = 0),
-                        HtspDvrCutpoint(start = 1_000, end = 8_000, type = 1),
-                        HtspDvrCutpoint(start = 10_000, end = 10_001, type = 2),
-                        HtspDvrCutpoint(start = 12_000, end = 15_000, type = 3),
-                        HtspDvrCutpoint(start = 20_000, end = 21_000, type = 99),
+                        HtspDvrCutpoint(startMs = 5_000, endMs = 10_000, type = 0),
+                        HtspDvrCutpoint(startMs = 1_000, endMs = 8_000, type = 1),
+                        HtspDvrCutpoint(startMs = 10_000, endMs = 10_001, type = 2),
+                        HtspDvrCutpoint(startMs = 12_000, endMs = 15_000, type = 3),
+                        HtspDvrCutpoint(startMs = 20_000, endMs = 21_000, type = 99),
                     ),
                 ),
             )
@@ -1664,16 +1956,16 @@ internal class HtspProtocolGatewayTest {
         )
 
         fake.executeResult = HtspResult.Ok(
-            GetDvrCutpointsResponse(listOf(HtspDvrCutpoint(start = 10, end = 10, type = 0))),
+            GetDvrCutpointsResponse(listOf(HtspDvrCutpoint(startMs = 10, endMs = 10, type = 0))),
         )
         assertSame(
-            GatewayResult.ServerRejected,
+            GatewayResult.MalformedReply,
             gateway.getDvrCutpoints(generation, DvrEntryId(7)),
             "One invalid interval must reject the complete response",
         )
 
         listOf(
-            HtspResult.ServerError to GatewayResult.ServerRejected,
+            HtspResult.ServerError("private error") to GatewayResult.ServerRejected,
             HtspResult.AccessDenied to GatewayResult.AccessDenied,
             HtspResult.ConnectionLimit to GatewayResult.ConnectionLimit,
             HtspResult.Timeout to GatewayResult.Timeout,
@@ -1741,8 +2033,8 @@ internal class HtspProtocolGatewayTest {
         assertEquals(2L, (addAutorec.channel as HtspRecordingRuleChannel.Id).channelId)
         assertEquals(60L, addAutorec.minDurationSeconds)
         assertEquals(120L, addAutorec.maxDurationSeconds)
-        assertEquals(1L, addAutorec.fullText)
-        assertEquals(0L, addAutorec.mergeText)
+        assertEquals(true, addAutorec.fullText)
+        assertEquals(false, addAutorec.mergeText)
         assertEquals(3L, addAutorec.duplicateDetection)
         assertEquals(4L, addAutorec.maximumRecordingCount)
         assertEquals(5L, addAutorec.broadcastType)
@@ -1875,7 +2167,7 @@ internal class HtspProtocolGatewayTest {
                 when (request) {
                     is GetSysTimeRequest -> executeResult = HtspResult.Ok(
                         GetSysTimeResponse(
-                            unixTimeSeconds = 1_000_000L,
+                            timeEpochSeconds = 1_000_000L,
                             legacyTimezoneHoursWestOfGmt = 0,
                             gmtOffsetMinutes = 0,
                         ),
@@ -1899,7 +2191,7 @@ internal class HtspProtocolGatewayTest {
             as GatewayConnectResult.Connected).connection.generation
 
         val operationFailures = listOf(
-            HtspResult.ServerError to SubscriptionOperationResult.ServerRejected,
+            HtspResult.ServerError("private error") to SubscriptionOperationResult.ServerRejected,
             HtspResult.AccessDenied to SubscriptionOperationResult.AccessDenied,
             HtspResult.ConnectionLimit to SubscriptionOperationResult.ConnectionLimit,
             HtspResult.Timeout to SubscriptionOperationResult.Timeout,
@@ -2025,7 +2317,7 @@ internal class HtspProtocolGatewayTest {
         val absolute = fake.lastRequest as SubscriptionSkipRequest
         assertEquals(5L, absolute.subscriptionId)
         assertEquals(SubscriptionSeekPosition.Time(90_000_000L), absolute.position)
-        assertEquals(1L, absolute.absolute)
+        assertEquals(true, absolute.absolute)
         assertSame(sourceGeneration, fake.lastExpectedGeneration)
 
         gateway.skipSubscription(
@@ -2035,7 +2327,7 @@ internal class HtspProtocolGatewayTest {
         )
         val relative = fake.lastRequest as SubscriptionSkipRequest
         assertEquals(SubscriptionSeekPosition.Time(-30_000_000L), relative.position)
-        assertEquals(0L, relative.absolute)
+        assertEquals(false, relative.absolute)
 
         val requestBeforeLive = fake.lastRequest
         assertSame(
@@ -2062,7 +2354,7 @@ internal class HtspProtocolGatewayTest {
         val nearLive = fake.lastRequest as SubscriptionSkipRequest
         assertEquals(5L, nearLive.subscriptionId)
         assertEquals(SubscriptionSeekPosition.Time(87_000_000L), nearLive.position)
-        assertEquals(1L, nearLive.absolute)
+        assertEquals(true, nearLive.absolute)
         assertSame(sourceGeneration, fake.lastExpectedGeneration)
 
         assertTrue(
@@ -2080,7 +2372,7 @@ internal class HtspProtocolGatewayTest {
         assertEquals(100, (fake.lastRequest as SubscriptionSpeedRequest).speed)
 
         listOf(
-            HtspResult.ServerError to SubscriptionOperationResult.ServerRejected,
+            HtspResult.ServerError("private error") to SubscriptionOperationResult.ServerRejected,
             HtspResult.AccessDenied to SubscriptionOperationResult.AccessDenied,
             HtspResult.ConnectionLimit to SubscriptionOperationResult.ConnectionLimit,
             HtspResult.Timeout to SubscriptionOperationResult.Timeout,
@@ -2195,7 +2487,7 @@ internal class HtspProtocolGatewayTest {
         assertEquals(0L, (fake.lastRequest as SubscriptionChangeWeightRequest).weight)
 
         listOf(
-            HtspResult.ServerError to SubscriptionOperationResult.ServerRejected,
+            HtspResult.ServerError("private error") to SubscriptionOperationResult.ServerRejected,
             HtspResult.Timeout to SubscriptionOperationResult.Timeout,
             HtspResult.TransportUnavailable to SubscriptionOperationResult.TransportUnavailable,
             HtspResult.NotSupported to SubscriptionOperationResult.NotSupported,
@@ -2226,7 +2518,7 @@ internal class HtspProtocolGatewayTest {
             liveConnectionValue.value = liveConnection(sourceGeneration)
             connectOutcome = HtspConnectOutcome.Connected(requireNotNull(liveConnectionValue.value))
             executeResult = HtspResult.Ok(
-                FileOpenResponse(id = 12, sizeBytes = 4_096, modifiedAtUnixSeconds = 1_700_000_000),
+                FileOpenResponse(id = 12, sizeBytes = 4_096, modifiedAtEpochSeconds = 1_700_000_000),
             )
         }
         val gateway = HtspProtocolGateway(fake)
@@ -2243,7 +2535,7 @@ internal class HtspProtocolGatewayTest {
         assertEquals("GatewayRecordingFile(<redacted>)", file.toString())
 
         fake.executeResult = HtspResult.Ok(
-            FileOpenResponse(id = 13, sizeBytes = -1, modifiedAtUnixSeconds = null),
+            FileOpenResponse(id = 13, sizeBytes = -1, modifiedAtEpochSeconds = null),
         )
         assertEquals(
             null,
@@ -2251,11 +2543,11 @@ internal class HtspProtocolGatewayTest {
             "A negative reported size must not be published as a readable length",
         )
 
-        fake.executeResult = HtspResult.Ok(FileSeekResponse(offset = 900))
+        fake.executeResult = HtspResult.Ok(FileSeekResponse(offsetBytes = 900))
         assertEquals(900L, (gateway.seekRecordingFile(generation, file, 900) as GatewayResult.Ok).value)
         val seek = fake.lastRequest as FileSeekRequest
         assertEquals(12L, seek.id)
-        assertEquals(900L, seek.offset)
+        assertEquals(900L, seek.offsetBytes)
         assertSame(FileSeekWhence.SET, seek.whence, "A recording seek must be absolute")
         assertSame(sourceGeneration, fake.lastExpectedGeneration)
 
@@ -2267,8 +2559,8 @@ internal class HtspProtocolGatewayTest {
         )
         val read = fake.lastRequest as FileReadRequest
         assertEquals(12L, read.id)
-        assertEquals(4L, read.size)
-        assertEquals(900L, read.offset, "Every read must carry its absolute position")
+        assertEquals(4L, read.sizeBytes)
+        assertEquals(900L, read.offsetBytes, "Every read must carry its absolute position")
         assertArrayEquals(byteArrayOf(9, 9, 1, 2, 3, 9, 9, 9), destination)
 
         fake.lastRequest = null
@@ -2281,14 +2573,14 @@ internal class HtspProtocolGatewayTest {
         val guarded = ByteArray(4) { 7 }
         fake.executeResult = HtspResult.Ok(FileReadResponse(HtspBinary(byteArrayOf(1, 2, 3, 4))))
         assertSame(
-            GatewayResult.ServerRejected,
+            GatewayResult.MalformedReply,
             gateway.readRecordingFile(generation, file, 0, guarded, 0, 2),
             "A payload larger than the request must be rejected instead of copied",
         )
         assertArrayEquals(byteArrayOf(7, 7, 7, 7), guarded)
 
         fake.executeResult = HtspResult.Ok(
-            FileStatResponse(sizeBytes = 4_100, modifiedAtUnixSeconds = -7),
+            FileStatResponse(sizeBytes = 4_100, modifiedAtEpochSeconds = -7),
         )
         val stat = gateway.statRecordingFile(generation, file) as GatewayResult.Ok
         assertEquals(4_100L, stat.value.sizeBytes)
@@ -2298,17 +2590,17 @@ internal class HtspProtocolGatewayTest {
         assertSame(sourceGeneration, fake.lastExpectedGeneration)
 
         fake.executeResult = HtspResult.Ok(
-            FileStatResponse(sizeBytes = null, modifiedAtUnixSeconds = null),
+            FileStatResponse(sizeBytes = null, modifiedAtEpochSeconds = null),
         )
         val omittedStat = gateway.statRecordingFile(generation, file) as GatewayResult.Ok
         assertEquals(null, omittedStat.value.sizeBytes)
         assertEquals(null, omittedStat.value.modifiedAtUnixSeconds)
 
         fake.executeResult = HtspResult.Ok(
-            FileStatResponse(sizeBytes = 4_100, modifiedAtUnixSeconds = null),
+            FileStatResponse(sizeBytes = 4_100, modifiedAtEpochSeconds = null),
         )
         assertSame(
-            GatewayResult.ServerRejected,
+            GatewayResult.MalformedReply,
             gateway.statRecordingFile(generation, file),
             "A partial stat pair must fail closed even if a test transport bypasses decoding",
         )
@@ -2326,7 +2618,7 @@ internal class HtspProtocolGatewayTest {
         assertSame(sourceGeneration, fake.lastExpectedGeneration)
 
         listOf(
-            HtspResult.ServerError to GatewayResult.ServerRejected,
+            HtspResult.ServerError("private error") to GatewayResult.ServerRejected,
             HtspResult.AccessDenied to GatewayResult.AccessDenied,
             HtspResult.ConnectionLimit to GatewayResult.ConnectionLimit,
             HtspResult.Timeout to GatewayResult.Timeout,
@@ -2390,7 +2682,7 @@ internal class HtspProtocolGatewayTest {
                         openHandles++
                         peakOpenHandles = maxOf(peakOpenHandles, openHandles)
                         HtspResult.Ok(
-                            FileOpenResponse(id = nextHandle++, sizeBytes = 1, modifiedAtUnixSeconds = null),
+                            FileOpenResponse(id = nextHandle++, sizeBytes = 1, modifiedAtEpochSeconds = null),
                         )
                     }
                     is FileReadRequest -> {
@@ -2425,6 +2717,38 @@ internal class HtspProtocolGatewayTest {
     }
 
     @Test
+    fun `malformed artwork chunks are distinct from size policy rejection`() = runTest {
+        for ((size, chunkSize) in listOf(5L to 0, 5L to 6, null to 65_537)) {
+            var closed = 0
+            val fake = connectedFake().apply {
+                beforeExecute = { request ->
+                    executeResult = when (request) {
+                        is FileOpenRequest -> HtspResult.Ok(FileOpenResponse(31, size, null))
+                        is FileReadRequest -> HtspResult.Ok(FileReadResponse(HtspBinary(ByteArray(chunkSize))))
+                        is FileCloseRequest -> {
+                            closed++
+                            HtspResult.Ok(FileCloseResponse)
+                        }
+                        else -> error("Unexpected request type")
+                    }
+                }
+            }
+            val gateway = HtspProtocolGateway(fake)
+            val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+                as GatewayConnectResult.Connected).connection.generation
+            assertSame(GatewayResult.MalformedReply, gateway.loadArtwork(generation, ArtworkId(7)))
+            assertEquals(1, closed)
+            gateway.shutdown()
+        }
+    }
+
+    @Test
+    fun `metadata buffer limits bound wire retention independently from event count`() {
+        assertEquals(32L * 1024 * 1024, METADATA_BUFFER_OPTIONS.metadataQueueBytes)
+        assertEquals(65_536, METADATA_BUFFER_OPTIONS.metadataQueueEvents)
+    }
+
+    @Test
     fun `artwork access preserves bytes when handle close reports a failure`() = runTest {
         val sourceGeneration = HtspConnectionGeneration()
         val requests = ArrayList<HtspRequest<*>>()
@@ -2435,12 +2759,12 @@ internal class HtspProtocolGatewayTest {
                 requests += request
                 executeResult = when (request) {
                     is FileOpenRequest -> HtspResult.Ok(
-                        FileOpenResponse(id = 31, sizeBytes = 5, modifiedAtUnixSeconds = null),
+                        FileOpenResponse(id = 31, sizeBytes = 5, modifiedAtEpochSeconds = null),
                     )
                     is FileReadRequest -> HtspResult.Ok(
                         FileReadResponse(
                             HtspBinary(
-                                if (request.offset == 0L) byteArrayOf(1, 2, 3)
+                                if (request.offsetBytes == 0L) byteArrayOf(1, 2, 3)
                                 else byteArrayOf(4, 5),
                             ),
                         ),
@@ -2458,7 +2782,7 @@ internal class HtspProtocolGatewayTest {
 
         assertArrayEquals(byteArrayOf(1, 2, 3, 4, 5), result.value)
         assertEquals("imagecache/73", (requests[0] as FileOpenRequest).file)
-        assertEquals(listOf(0L, 3L), requests.filterIsInstance<FileReadRequest>().map { it.offset })
+        assertEquals(listOf(0L, 3L), requests.filterIsInstance<FileReadRequest>().map { it.offsetBytes })
         val close = requests.last() as FileCloseRequest
         assertEquals(31L, close.id)
         assertEquals(null, close.playCount)
@@ -2480,12 +2804,12 @@ internal class HtspProtocolGatewayTest {
                 requests += request
                 executeResult = when (request) {
                     is FileOpenRequest -> HtspResult.Ok(
-                        FileOpenResponse(id = 37, sizeBytes = null, modifiedAtUnixSeconds = null),
+                        FileOpenResponse(id = 37, sizeBytes = null, modifiedAtEpochSeconds = null),
                     )
                     is FileReadRequest -> HtspResult.Ok(
                         FileReadResponse(
                             HtspBinary(
-                                when (request.offset) {
+                                when (request.offsetBytes) {
                                     0L -> byteArrayOf(1, 2)
                                     2L -> byteArrayOf(3)
                                     else -> byteArrayOf()
@@ -2505,7 +2829,7 @@ internal class HtspProtocolGatewayTest {
         val result = gateway.loadArtwork(generation, ArtworkId(81)) as GatewayResult.Ok
 
         assertArrayEquals(byteArrayOf(1, 2, 3), result.value)
-        assertEquals(listOf(0L, 2L, 3L), requests.filterIsInstance<FileReadRequest>().map { it.offset })
+        assertEquals(listOf(0L, 2L, 3L), requests.filterIsInstance<FileReadRequest>().map { it.offsetBytes })
         assertTrue(requests.last() is FileCloseRequest)
         assertSame(sourceGeneration, fake.lastExpectedGeneration)
         assertTrue(fake.expectedGenerations.all { it === sourceGeneration })
@@ -2524,10 +2848,10 @@ internal class HtspProtocolGatewayTest {
                 requests += request
                 executeResult = when (request) {
                     is FileOpenRequest -> HtspResult.Ok(
-                        FileOpenResponse(id = 43, sizeBytes = null, modifiedAtUnixSeconds = null),
+                        FileOpenResponse(id = 43, sizeBytes = null, modifiedAtEpochSeconds = null),
                     )
                     is FileReadRequest -> HtspResult.Ok(
-                        FileReadResponse(HtspBinary(ByteArray(request.size.toInt()) { 1 })),
+                        FileReadResponse(HtspBinary(ByteArray(request.sizeBytes.toInt()) { 1 })),
                     )
                     is FileCloseRequest -> HtspResult.Ok(FileCloseResponse)
                     else -> error("Unexpected request type")
@@ -2541,8 +2865,8 @@ internal class HtspProtocolGatewayTest {
         assertSame(GatewayResult.ServerRejected, gateway.loadArtwork(generation, ArtworkId(83)))
 
         val reads = requests.filterIsInstance<FileReadRequest>()
-        assertEquals(16L * 1024 * 1024, reads.last().offset)
-        assertEquals(1L, reads.last().size)
+        assertEquals(16L * 1024 * 1024, reads.last().offsetBytes)
+        assertEquals(1L, reads.last().sizeBytes)
         assertTrue(requests.last() is FileCloseRequest)
         assertTrue(fake.expectedGenerations.all { it === sourceGeneration })
 
@@ -2565,7 +2889,7 @@ internal class HtspProtocolGatewayTest {
                         FileOpenResponse(
                             id = 41,
                             sizeBytes = if (cancelRead) null else 16L * 1024 * 1024 + 1,
-                            modifiedAtUnixSeconds = null,
+                            modifiedAtEpochSeconds = null,
                         ),
                     )
                     is FileReadRequest -> throw cancellation
@@ -2610,7 +2934,7 @@ internal class HtspProtocolGatewayTest {
             liveConnectionValue.value = legacy
             connectOutcome = HtspConnectOutcome.Connected(legacy)
             executeResult = HtspResult.Ok(
-                FileOpenResponse(id = 3, sizeBytes = 10, modifiedAtUnixSeconds = null),
+                FileOpenResponse(id = 3, sizeBytes = 10, modifiedAtEpochSeconds = null),
             )
         }
         val gateway = HtspProtocolGateway(fake)
@@ -2760,14 +3084,14 @@ internal class HtspProtocolGatewayTest {
                             ancillaryId = 3,
                             width = 1_920,
                             height = 1_080,
-                            frameDuration = 4,
+                            frameDurationUs = 4,
                             aspectNumerator = 16,
                             aspectDenominator = 9,
                             audioType = null,
                             audioVersion = null,
                             channelCount = null,
                             sampleRate = null,
-                            rdsUecp = null,
+                            rdsUecp = true,
                             codecMetadata = HtspBinary(codecBytes),
                         ),
                         HtspSubscriptionStream(
@@ -2778,7 +3102,7 @@ internal class HtspProtocolGatewayTest {
                             ancillaryId = null,
                             width = null,
                             height = null,
-                            frameDuration = null,
+                            frameDurationUs = null,
                             aspectNumerator = null,
                             aspectDenominator = null,
                             audioType = null,
@@ -2795,7 +3119,7 @@ internal class HtspProtocolGatewayTest {
                             ancillaryId = 0xabcd,
                             width = null,
                             height = null,
-                            frameDuration = null,
+                            frameDurationUs = null,
                             aspectNumerator = null,
                             aspectDenominator = null,
                             audioType = null,
@@ -2834,7 +3158,7 @@ internal class HtspProtocolGatewayTest {
                 ),
             ),
             HtspSubscriptionEvent.Skipped(
-                HtspSubscriptionSkipMessage(77, 1, 1, 120, 130),
+                HtspSubscriptionSkipMessage(77, true, true, 120, 130),
             ),
             HtspSubscriptionEvent.Stopped(
                 HtspSubscriptionStopMessage(77, "private stop", "private error"),
@@ -2844,7 +3168,7 @@ internal class HtspProtocolGatewayTest {
             ),
             HtspSubscriptionEvent.Grace(HtspSubscriptionGraceMessage(77, 5)),
             HtspSubscriptionEvent.Speed(HtspSubscriptionSpeedMessage(77, -2)),
-            HtspSubscriptionEvent.Timeshift(HtspTimeshiftStatusMessage(77, 1, -10, 20, 30, 4)),
+            HtspSubscriptionEvent.Timeshift(HtspTimeshiftStatusMessage(77, true, -10, 20, 30, 4)),
             HtspSubscriptionEvent.Queue(HtspQueueStatusMessage(77, 8, 9, -1, 1, 2, 3)),
             HtspSubscriptionEvent.Signal(
                 HtspSignalStatusMessage(77, "GOOD", 1, -2, 3, -4, 5, 6),
@@ -2900,6 +3224,8 @@ internal class HtspProtocolGatewayTest {
         val started = events[0] as SubscriptionEvent.Started
         assertEquals(SubscriptionCondition.STATUS_REPORTED, started.condition)
         assertEquals(SubscriptionStreamType.H264, started.streams?.get(0)?.type)
+        assertEquals(4L, started.streams?.get(0)?.frameDuration)
+        assertEquals(1L, started.streams?.get(0)?.rdsUecp)
         assertEquals(SubscriptionStreamType.UNKNOWN, started.streams?.get(1)?.type)
         val dvbSubtitle = started.streams?.get(2)
         assertEquals(SubscriptionStreamType.DVB_SUBTITLE, dvbSubtitle?.type)
@@ -2941,6 +3267,7 @@ internal class HtspProtocolGatewayTest {
             (events[4] as SubscriptionEvent.Status).condition,
         )
         assertSame(SubscriptionIssue.UNKNOWN, (events[4] as SubscriptionEvent.Status).issue)
+        assertEquals(1L, (events[7] as SubscriptionEvent.Timeshift).full)
         val queue = events[8] as SubscriptionEvent.Queue
         assertEquals(8L, queue.packetCount)
         assertEquals(9L, queue.byteCount)
@@ -3017,16 +3344,23 @@ internal class HtspProtocolGatewayTest {
         val generation = (gateway.connect(ServerConfiguration("host", 9_982))
             as GatewayConnectResult.Connected).connection.generation
 
-        val terminations = gateway.subscription(generation, SubscriptionId(77)).toList()
-            .map { event -> (event as SubscriptionEvent.Terminated).reason }
+        val terminations = sourceTerminations.map { termination ->
+            fake.subscriptionFlow = flowOf(HtspSubscriptionEvent.Terminated(termination))
+            (gateway.subscription(generation, SubscriptionId(77)).toList().single()
+                as SubscriptionEvent.Terminated).reason
+        }
 
         assertEquals(
             sourceTerminations.map { termination ->
-                SubscriptionTermination.valueOf(termination.name)
+                when (termination) {
+                    HtspSubscriptionTermination.CONSUMER_OVERFLOW -> SubscriptionTermination.PUBLICATION_FAILURE
+                    HtspSubscriptionTermination.SUBSCRIBE_REJECTED -> SubscriptionTermination.SUBSCRIBE_REJECTED
+                    else -> SubscriptionTermination.valueOf(termination.name)
+                }
             },
             terminations,
         )
-        assertEquals(sourceTerminations.size, terminations.distinct().size)
+        assertEquals(sourceTerminations.size, terminations.size)
     }
 
     private fun liveConnection(
@@ -3055,6 +3389,8 @@ private class FakeHtspConnection : HtspConnection {
     internal var executeException: CancellationException? = null
     internal var beforeExecute: suspend (HtspRequest<*>) -> Unit = {}
     internal var lastEndpoint: HtspEndpoint? = null
+    internal var lastConnectOptions: HtspConnectOptions? = null
+    internal var beforeTeardown: suspend () -> Unit = {}
     internal var lastExpectedGeneration: HtspConnectionGeneration? = null
     internal val expectedGenerations = ArrayList<HtspConnectionGeneration?>()
     internal var lastRequest: HtspRequest<*>? = null
@@ -3101,29 +3437,68 @@ private class FakeHtspConnection : HtspConnection {
         options: HtspConnectOptions,
     ): HtspConnectOutcome {
         lastEndpoint = endpoint
+        lastConnectOptions = options
+        check(!closed) { "Fake service is closed" }
+        val connected = (connectOutcome as? HtspConnectOutcome.Connected)?.connection
+        if ((connectOutcome as? HtspConnectOutcome.Failed)?.failure?.kind == HtspTransportFailureKind.SUPERSEDED) {
+            return connectOutcome
+        }
+        if (connected != null && connected.generation === currentGeneration &&
+            liveConnectionValue.value?.generation === currentGeneration &&
+            connectionStateValue.value is HtspConnectionState.Connected
+        ) return connectOutcome
+        attempt += 1
+        currentGeneration = (connectOutcome as? HtspConnectOutcome.Connected)?.connection?.generation
+            ?: HtspConnectionGeneration()
+        liveConnectionValue.value = (connectOutcome as? HtspConnectOutcome.Connected)?.connection
+        (connectOutcome as? HtspConnectOutcome.Failed)?.let {
+            connectionStateValue.value = HtspConnectionState.Error(it.failure)
+        }
+        (connectOutcome as? HtspConnectOutcome.Connected)?.connection?.let { live ->
+            connectionStateValue.value = HtspConnectionState.Connected(
+                host = endpoint.host,
+                port = endpoint.port,
+                protocolVersion = live.protocolVersion,
+                dvrAccess = live.dvrAccess,
+            )
+        }
         return connectOutcome
     }
 
     override fun isCurrent(generation: HtspConnectionGeneration): Boolean =
-        liveConnectionValue.value?.generation === generation
+        currentGeneration === generation
 
-    override fun <T> commitIfCurrent(
-        generation: HtspConnectionGeneration,
-        block: () -> T,
-    ): T? = if (isCurrent(generation)) block() else null
+    private var currentGeneration: HtspConnectionGeneration? = null
+    private var attempt = 0
+    var closed = false
+        private set
 
-    override fun <T> commitIfLive(
-        generation: HtspConnectionGeneration,
-        block: (HtspLiveConnection) -> T,
-    ): T? = liveConnectionValue.value
-        ?.takeIf { it.generation === generation }
-        ?.let(block)
-
-    override suspend fun disconnect(expectedGeneration: HtspConnectionGeneration?) {
+    override suspend fun disconnect(expectedGeneration: HtspConnectionGeneration?): Boolean {
         disconnectCalls += 1
+        lastExpectedGeneration = expectedGeneration
+        if (closed || (expectedGeneration != null && !isCurrent(expectedGeneration))) return false
+        val admittedAttempt = attempt
+        beforeTeardown()
+        val accepted = admittedAttempt == attempt && connectionStateValue.value != HtspConnectionState.Disconnected
+        if (accepted) {
+            attempt += 1
+            liveConnectionValue.value = null
+            connectionStateValue.value = HtspConnectionState.Disconnected
+        }
+        return accepted
     }
 
-    override suspend fun close(expectedGeneration: HtspConnectionGeneration?) {
+    override suspend fun close(expectedGeneration: HtspConnectionGeneration?): Boolean {
         closeCalls += 1
+        lastExpectedGeneration = expectedGeneration
+        val accepted = !closed && (expectedGeneration == null || isCurrent(expectedGeneration))
+        if (accepted) {
+            closed = true
+            attempt += 1
+            currentGeneration = HtspConnectionGeneration()
+            liveConnectionValue.value = null
+            connectionStateValue.value = HtspConnectionState.Disconnected
+        }
+        return accepted
     }
 }

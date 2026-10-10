@@ -58,7 +58,6 @@ import at.bernhardberger.tvheadend.htsp.requests.HtspChannelService
 import at.bernhardberger.tvheadend.htsp.requests.AddDvrEntrySelector
 import at.bernhardberger.tvheadend.htsp.requests.HtspDvrCutpoint
 import at.bernhardberger.tvheadend.htsp.requests.HtspEvent
-import at.bernhardberger.tvheadend.htsp.requests.HtspDvrMutationResponse
 import at.bernhardberger.tvheadend.htsp.requests.HtspRecordingRuleChannel
 import at.bernhardberger.tvheadend.htsp.requests.SubscribeResponse
 import at.bernhardberger.tvheadend.htsp.requests.SubscriptionSeekPosition
@@ -174,6 +173,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTermination
 import java.io.ByteArrayOutputStream
 import java.lang.ref.WeakReference
+import at.bernhardberger.tvheadend.htsp.connection.HtspEventBufferOptions
 import java.util.Collections
 import java.util.WeakHashMap
 import kotlinx.coroutines.CoroutineDispatcher
@@ -185,8 +185,10 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.transform
+import kotlinx.coroutines.flow.transformWhile
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
@@ -203,13 +205,35 @@ internal class HtspProtocolGateway internal constructor(
     internal constructor(
         ioDispatcher: CoroutineDispatcher,
         epgCoveragePolicy: EpgCoveragePolicy = EpgCoveragePolicy.create(),
-    ) : this(createHtspConnection(ioDispatcher), epgCoveragePolicy)
+    ) : this(createHtspConnection(ioDispatcher, eventBufferOptions = METADATA_BUFFER_OPTIONS), epgCoveragePolicy)
 
+    // Lock order: generationLock -> SDK owner/state-machine locks inside commitIfLive.
+    // Read-only state/time access must not acquire generationLock from those consumer locks.
+    // Never suspend or invoke library lifecycle operations while holding this monitor.
     private val generationLock = Any()
+    private var currentLive: HtspLiveConnection? = null
+    @Volatile private var observedLive: LiveObservation? = null
+    @Volatile internal var lastDisconnectChanged: Boolean? = null
+        private set
+    @Volatile internal var lastCloseChanged: Boolean? = null
+        private set
+    private val retiredGenerations = WeakHashMap<HtspConnectionGeneration, GatewayConnectionFailure?>()
+    private val metadataFailures = MutableSharedFlow<GatewayConnectionFailureEvent>()
     private val serverTimeEstimate = at.bernhardberger.tvheadend.sdk.core.gateway.ServerTimeEstimate()
 
-    override fun estimatedServerTime(generation: GatewayGeneration): Instant? =
-        serverTimeEstimate.atStatus(generation)
+    override fun estimatedServerTime(generation: GatewayGeneration): Instant? {
+        val observed = observedLive ?: return null
+        if (observed.gatewayGeneration !== generation ||
+            connection.liveConnection.value?.generation !== observed.htspGeneration ||
+            connection.connectionState.value !is HtspConnectionState.Connected
+        ) return null
+        return serverTimeEstimate.atStatus(generation)
+    }
+
+    private class LiveObservation(
+        val htspGeneration: HtspConnectionGeneration,
+        val gatewayGeneration: GatewayGeneration,
+    )
 
     /**
      * Bounds concurrent artwork file handles on this connection. Each artwork load holds an HTSP
@@ -228,14 +252,28 @@ internal class HtspProtocolGateway internal constructor(
     )
 
     override val metadata: Flow<MetadataEvent> = connection.events.transform { event ->
-        if (event is HtspTransportEvent.ServerMessage) {
-            event.message.toGatewayMetadata(generationFor(event.generation))?.let { emit(it) }
+        when (event) {
+            is HtspTransportEvent.ServerMessage ->
+                event.message.toGatewayMetadata(generationFor(event.generation))?.let { emit(it) }
+            is HtspTransportEvent.MetadataOverflow -> {
+                // A repeated async-enable only resends EPG, not a complete snapshot. The
+                // connection owner's existing backoff/reconnect path performs a full resync.
+                retire(event.generation, GatewayConnectionFailure.METADATA_OVERFLOW)
+                metadataFailures.emit(
+                    GatewayConnectionFailureEvent(
+                        GatewayConnectionFailure.METADATA_OVERFLOW,
+                        generationFor(event.generation),
+                    ),
+                )
+            }
+            else -> Unit
         }
     }
 
     override val connectionFailures: Flow<GatewayConnectionFailureEvent> =
-        connection.events.transform { event ->
+        merge(metadataFailures, connection.events.transform { event ->
             if (event is HtspTransportEvent.ConnectionFailure) {
+                event.generation?.let { retire(it, event.failure.kind.toGatewayFailure()) }
                 emit(
                     GatewayConnectionFailureEvent(
                         failure = event.failure.kind.toGatewayFailure(),
@@ -243,7 +281,7 @@ internal class HtspProtocolGateway internal constructor(
                     ),
                 )
             }
-        }
+        })
 
     override suspend fun connect(server: ServerConfiguration): GatewayConnectResult {
         val endpoint = when (val authentication = server.authentication) {
@@ -259,53 +297,100 @@ internal class HtspProtocolGateway internal constructor(
             )
         }
         return when (val result = connection.connect(endpoint)) {
-            is HtspConnectOutcome.Connected -> GatewayConnectResult.Connected(
-                connection = result.connection.toGatewayConnection(),
-            )
-            is HtspConnectOutcome.Failed -> GatewayConnectResult.Failed(
-                failure = result.failure.kind.toGatewayFailure(),
-            )
+            is HtspConnectOutcome.Connected -> {
+                synchronized(generationLock) {
+                    refreshLive()
+                }
+                GatewayConnectResult.Connected(connection = result.connection.toGatewayConnection())
+            }
+            is HtspConnectOutcome.Failed -> {
+                synchronized(generationLock) { refreshLive() }
+                GatewayConnectResult.Failed(failure = result.failure.kind.toGatewayFailure())
+            }
         }
     }
 
     override suspend fun disconnect() {
-        connection.disconnect()
+        retireObservedGeneration()
+        // ConnectionOwner joins its attempt worker before teardown; no new SDK attempt can race.
+        // Null also clears a failed attempt's sticky Error (its token is not returned by connect).
+        lastDisconnectChanged = connection.disconnect(expectedGeneration = null)
     }
 
     override suspend fun shutdown() {
-        connection.close()
+        retireObservedGeneration()
+        // Terminal owner-global close must also close an already-disconnected service.
+        // Retain bounded no-op diagnostics rather than throwing on an idempotent false result.
+        lastCloseChanged = connection.close(expectedGeneration = null)
     }
 
+    /** Commits while the generation is live as last observed by the SDK, not under a library lock. */
     override fun <T> commitIfLive(
         generation: GatewayGeneration,
         block: () -> T,
-    ): T? = connection.commitIfLive(htspGenerationFor(generation)) { block() }
+    ): T? = synchronized(generationLock) {
+        val live = refreshLive()
+        if (live?.generation === htspGenerationFor(generation)) block() else null
+    }
+
+    override fun retirementFailure(generation: GatewayGeneration): GatewayConnectionFailure? =
+        synchronized(generationLock) { retiredGenerations[htspGenerations[generation]] }
+
+    /** Called only under generationLock; reads snapshots without making a suspending library call. */
+    private fun refreshLive(): HtspLiveConnection? {
+        val snapshot = connection.liveConnection.value.takeIf {
+            connection.connectionState.value is HtspConnectionState.Connected
+        }
+        val previous = currentLive
+        if (previous != null && previous.generation !== snapshot?.generation) {
+            if (!retiredGenerations.containsKey(previous.generation)) {
+                retiredGenerations[previous.generation] = null
+            }
+        }
+        currentLive = snapshot?.takeUnless { retiredGenerations.containsKey(it.generation) }
+        observedLive = currentLive?.let { LiveObservation(it.generation, generationFor(it.generation)) }
+        return currentLive
+    }
+
+    private fun retire(
+        generation: HtspConnectionGeneration,
+        failure: GatewayConnectionFailure? = null,
+    ) = synchronized(generationLock) {
+        if (retiredGenerations[generation] != GatewayConnectionFailure.METADATA_OVERFLOW) {
+            // Snapshot-only retirement has no known cause. A later typed event supplies it;
+            // cleanup and subsequent transport loss must not erase an observed overflow.
+            if (failure != null || !retiredGenerations.containsKey(generation)) {
+                retiredGenerations[generation] = failure
+            }
+        }
+        if (currentLive?.generation === generation) {
+            currentLive = null
+            observedLive = null
+        }
+    }
+
+    private fun retireObservedGeneration() = synchronized(generationLock) {
+        currentLive?.generation?.let { retire(it) }
+    }
 
     override suspend fun enableInitialMetadata(
         generation: GatewayGeneration,
     ): GatewayResult<Unit> {
         val htspGeneration = htspGenerationFor(generation)
-        val protocolVersion = connection.commitIfLive(htspGeneration) { live ->
-            live.protocolVersion
-        }
-        val supportsAsyncEpg = protocolVersion != null &&
-            protocolVersion >= ASYNC_EPG_MINIMUM_PROTOCOL_VERSION
-        val epgMaxTime = if (supportsAsyncEpg) {
+        if (commitIfLive(generation) { true } != true) return GatewayResult.TransportUnavailable
+        val epgMaxTime =
             when (val serverTime = connection.getSysTime(expectedGeneration = htspGeneration)) {
                 is HtspResult.Ok -> {
-                    connection.commitIfLive(htspGeneration) {
-                        serverTimeEstimate.observe(generation, Instant.fromEpochSeconds(serverTime.value.unixTimeSeconds))
+                    commitIfLive(generation) {
+                        serverTimeEstimate.observe(generation, Instant.fromEpochSeconds(serverTime.value.timeEpochSeconds))
                     }
-                    serverTime.value.unixTimeSeconds + epgCoveragePolicy.futureHorizon.inWholeSeconds
+                    serverTime.value.timeEpochSeconds + epgCoveragePolicy.futureHorizon.inWholeSeconds
                 }
                 else -> return serverTime.toGatewayResult {}
             }
-        } else {
-            null
-        }
         return connection.enableAsyncMetadataAwaitingInitialSync(
-            epg = ASYNC_EPG_ENABLED.takeIf { supportsAsyncEpg },
-            epgMaxTime = epgMaxTime,
+            epg = true,
+            epgMaxTimeEpochSeconds = epgMaxTime,
             expectedGeneration = htspGeneration,
         ).toGatewayResult {}
     }
@@ -316,7 +401,7 @@ internal class HtspProtocolGateway internal constructor(
         maxTime: Instant,
     ): GatewayResult<List<GatewayEpgQueryEvent>> = connection.getEvents(
         channelId = channelId.value,
-        maxTime = maxTime.epochSeconds,
+        maxTimeEpochSeconds = maxTime.epochSeconds,
         expectedGeneration = htspGenerationFor(generation),
     ).toGatewayResult { response ->
         Collections.unmodifiableList(
@@ -334,7 +419,7 @@ internal class HtspProtocolGateway internal constructor(
         contentType = request.contentType,
         language = request.language,
         fullText = request.fullText,
-        full = 1L,
+        full = true,
         minDurationSeconds = request.minimumDuration?.inWholeSeconds,
         maxDurationSeconds = request.maximumDuration?.inWholeSeconds,
         expectedGeneration = htspGenerationFor(generation),
@@ -421,8 +506,8 @@ internal class HtspProtocolGateway internal constructor(
         description = request.description,
         ageRating = request.ageRating,
         expectedGeneration = htspGenerationFor(generation),
-    ).toCheckedGatewayResult { response ->
-        response.entryId?.takeIf { response.success == 1L }?.let(::DvrEntryId)
+    ).toGatewayResult { response ->
+        DvrEntryId(response.entryId)
     }
 
     override suspend fun updateDvrEntry(
@@ -439,17 +524,17 @@ internal class HtspProtocolGateway internal constructor(
         description = update.description,
         language = update.language,
         comment = update.comment,
-        enabled = update.enabled?.toWireFlag(),
-        start = update.start?.epochSeconds,
-        stop = update.stop?.epochSeconds,
-        startExtra = update.startExtraMinutes,
-        stopExtra = update.stopExtraMinutes,
-        retention = update.retentionDays,
-        removal = update.removalDays,
+        enabled = update.enabled,
+        startEpochSeconds = update.start?.epochSeconds,
+        stopEpochSeconds = update.stop?.epochSeconds,
+        startExtraMinutes = update.startExtraMinutes,
+        stopExtraMinutes = update.stopExtraMinutes,
+        retentionDays = update.retentionDays,
+        removalDays = update.removalDays,
         priority = update.priority,
         ageRating = update.ageRating,
         expectedGeneration = htspGenerationFor(generation),
-    ).toCheckedGatewayResult(::acceptedDvrAcknowledgement)
+    ).toGatewayResult {}
 
     override suspend fun stopDvrEntry(
         generation: GatewayGeneration,
@@ -457,7 +542,7 @@ internal class HtspProtocolGateway internal constructor(
     ): GatewayResult<Unit> = connection.stopDvrEntry(
         entryId = id.value,
         expectedGeneration = htspGenerationFor(generation),
-    ).toCheckedGatewayResult(::acceptedDvrAcknowledgement)
+    ).toGatewayResult {}
 
     override suspend fun cancelDvrEntry(
         generation: GatewayGeneration,
@@ -465,7 +550,7 @@ internal class HtspProtocolGateway internal constructor(
     ): GatewayResult<Unit> = connection.cancelDvrEntry(
         entryId = id.value,
         expectedGeneration = htspGenerationFor(generation),
-    ).toCheckedGatewayResult(::acceptedDvrAcknowledgement)
+    ).toGatewayResult {}
 
     override suspend fun deleteDvrEntry(
         generation: GatewayGeneration,
@@ -473,7 +558,7 @@ internal class HtspProtocolGateway internal constructor(
     ): GatewayResult<Unit> = connection.deleteDvrEntry(
         entryId = id.value,
         expectedGeneration = htspGenerationFor(generation),
-    ).toCheckedGatewayResult(::acceptedDvrAcknowledgement)
+    ).toGatewayResult {}
 
     override suspend fun createAutorecRule(
         generation: GatewayGeneration,
@@ -483,8 +568,8 @@ internal class HtspProtocolGateway internal constructor(
         channel = request.channel.toHtspChannel(),
         minDurationSeconds = request.minDuration?.toDvrMutationSeconds(),
         maxDurationSeconds = request.maxDuration?.toDvrMutationSeconds(),
-        fullText = request.fullText?.toWireFlag(),
-        mergeText = request.mergeText?.toWireFlag(),
+        fullText = request.fullText,
+        mergeText = request.mergeText,
         duplicateDetection = request.duplicateDetection,
         maximumRecordingCount = request.maximumRecordingCount,
         broadcastType = request.broadcastType,
@@ -515,8 +600,8 @@ internal class HtspProtocolGateway internal constructor(
         channel = update.channel.toHtspChannel(),
         minDurationSeconds = update.minDuration?.toDvrMutationSeconds(),
         maxDurationSeconds = update.maxDuration?.toDvrMutationSeconds(),
-        fullText = update.fullText?.toWireFlag(),
-        mergeText = update.mergeText?.toWireFlag(),
+        fullText = update.fullText,
+        mergeText = update.mergeText,
         duplicateDetection = update.duplicateDetection,
         maximumRecordingCount = update.maximumRecordingCount,
         broadcastType = update.broadcastType,
@@ -599,9 +684,9 @@ internal class HtspProtocolGateway internal constructor(
         } else {
             DVR_PROGRESS_KEEP_PLAY_COUNT
         },
-        playPosition = progress.position.inWholeSeconds,
+        playPositionSeconds = progress.position.inWholeSeconds,
         expectedGeneration = htspGenerationFor(generation),
-    ).toCheckedGatewayResult(::acceptedDvrAcknowledgement)
+    ).toGatewayResult {}
 
     override suspend fun loadArtwork(
         generation: GatewayGeneration,
@@ -628,6 +713,7 @@ internal class HtspProtocolGateway internal constructor(
             GatewayResult.Timeout -> return GatewayResult.Timeout
             GatewayResult.TransportUnavailable -> return GatewayResult.TransportUnavailable
             GatewayResult.NotSupported -> return GatewayResult.NotSupported
+            GatewayResult.MalformedReply -> return GatewayResult.MalformedReply
         }
 
         val outcome = try {
@@ -661,14 +747,14 @@ internal class HtspProtocolGateway internal constructor(
                 when (
                     val reading = connection.fileRead(
                         id = handleId,
-                        size = requested.toLong(),
-                        offset = offset.toLong(),
+                        sizeBytes = requested.toLong(),
+                        offsetBytes = offset.toLong(),
                         expectedGeneration = generation,
                     ).toGatewayResult { response -> response.data }
                 ) {
                     is GatewayResult.Ok -> {
                         val data = reading.value
-                        if (data.size !in 1..requested) return GatewayResult.ServerRejected
+                        if (data.size !in 1..requested) return GatewayResult.MalformedReply
                         data.copyInto(destination, offset)
                         offset += data.size
                     }
@@ -678,6 +764,7 @@ internal class HtspProtocolGateway internal constructor(
                     GatewayResult.Timeout -> return GatewayResult.Timeout
                     GatewayResult.TransportUnavailable -> return GatewayResult.TransportUnavailable
                     GatewayResult.NotSupported -> return GatewayResult.NotSupported
+                    GatewayResult.MalformedReply -> return GatewayResult.MalformedReply
                 }
             }
             return GatewayResult.Ok(destination)
@@ -694,8 +781,8 @@ internal class HtspProtocolGateway internal constructor(
             val data = when (
                 val reading = connection.fileRead(
                     id = handleId,
-                    size = requested.toLong(),
-                    offset = offset,
+                    sizeBytes = requested.toLong(),
+                    offsetBytes = offset,
                     expectedGeneration = generation,
                 ).toGatewayResult { response -> response.data }
             ) {
@@ -706,8 +793,9 @@ internal class HtspProtocolGateway internal constructor(
                 GatewayResult.Timeout -> return GatewayResult.Timeout
                 GatewayResult.TransportUnavailable -> return GatewayResult.TransportUnavailable
                 GatewayResult.NotSupported -> return GatewayResult.NotSupported
+                GatewayResult.MalformedReply -> return GatewayResult.MalformedReply
             }
-            if (data.size > requested) return GatewayResult.ServerRejected
+            if (data.size > requested) return GatewayResult.MalformedReply
             if (data.size == 0) return GatewayResult.Ok(output.toByteArray())
             if (output.size() + data.size > MAX_ARTWORK_BYTES) return GatewayResult.ServerRejected
             data.copyInto(chunk)
@@ -728,8 +816,8 @@ internal class HtspProtocolGateway internal constructor(
         id: DvrEntryId,
     ): GatewayResult<GatewayRecordingFile> {
         val htspGeneration = htspGenerationFor(generation)
-        val protocolVersion = connection.commitIfLive(htspGeneration) { live ->
-            live.protocolVersion
+        val protocolVersion = commitIfLive(generation) {
+            currentLive?.protocolVersion
         }
         return connection.fileOpen(
             file = "$RECORDING_FILE_SELECTOR_PREFIX${id.value}",
@@ -751,10 +839,10 @@ internal class HtspProtocolGateway internal constructor(
         require(position >= 0L) { "Recording seek position must not be negative" }
         return connection.fileSeek(
             id = file.handleId,
-            offset = position,
+            offsetBytes = position,
             whence = FileSeekWhence.SET,
             expectedGeneration = htspGenerationFor(generation),
-        ).toGatewayResult(FileSeekResponse::offset)
+        ).toGatewayResult(FileSeekResponse::offsetBytes)
     }
 
     /**
@@ -785,8 +873,8 @@ internal class HtspProtocolGateway internal constructor(
         if (length == 0) return GatewayResult.Ok(0)
         return connection.fileRead(
             id = file.handleId,
-            size = length.toLong(),
-            offset = position,
+            sizeBytes = length.toLong(),
+            offsetBytes = position,
             expectedGeneration = htspGenerationFor(generation),
         ).toCheckedGatewayResult { response ->
             response.data
@@ -803,7 +891,7 @@ internal class HtspProtocolGateway internal constructor(
         expectedGeneration = htspGenerationFor(generation),
     ).toCheckedGatewayResult { response ->
         val size = response.sizeBytes
-        val modified = response.modifiedAtUnixSeconds
+        val modified = response.modifiedAtEpochSeconds
         GatewayRecordingFileStat(size, modified).takeIf {
             (size == null) == (modified == null) && (size == null || size >= 0L)
         }
@@ -846,19 +934,23 @@ internal class HtspProtocolGateway internal constructor(
         return connection.subscriptionEvents(
             subscriptionId = id.value,
             expectedGeneration = htspGeneration,
-        ).map { event ->
-            if (event is HtspSubscriptionEvent.Timeshift) {
-                SubscriptionEvent.Timeshift(
-                    full = event.message.full,
-                    shift = event.message.shift,
-                    start = event.message.start,
-                    end = event.message.end,
-                    speed = event.message.speed,
-                    estimatedServerTime = connection.commitIfLive(htspGeneration) {
-                        serverTimeEstimate.atStatus(generation)
-                    },
-                )
-            } else event.toGatewayEvent()
+        ).transformWhile { event ->
+            val mapped = try {
+                if (event is HtspSubscriptionEvent.Timeshift) {
+                    SubscriptionEvent.Timeshift(
+                        full = event.message.full.toWireFlag(),
+                        shift = event.message.shift,
+                        start = event.message.start,
+                        end = event.message.end,
+                        speed = event.message.speed,
+                        estimatedServerTime = estimatedServerTime(generation),
+                    )
+                } else event.toGatewayEvent()
+            } catch (_: IllegalArgumentException) {
+                SubscriptionEvent.Terminated(SubscriptionTermination.MALFORMED_MESSAGE)
+            }
+            mapped?.let { emit(it) }
+            mapped !is SubscriptionEvent.Terminated
         }
     }
 
@@ -944,7 +1036,7 @@ internal class HtspProtocolGateway internal constructor(
         val sourceStatus = try {
             HtspTimeshiftStatusMessage(
                 subscriptionId = id.value,
-                full = status.full,
+                full = status.full != 0L,
                 shift = status.shift,
                 start = status.start,
                 end = status.end,
@@ -1077,16 +1169,21 @@ private fun HtspTransportFailureKind.toGatewayFailure(): GatewayConnectionFailur
     -> GatewayConnectionFailure.SERVER_UNREACHABLE
     HtspTransportFailureKind.NETWORK_UNREACHABLE -> GatewayConnectionFailure.NETWORK_UNAVAILABLE
     HtspTransportFailureKind.INCOMPATIBLE_SERVER -> GatewayConnectionFailure.INCOMPATIBLE_SERVER
+    HtspTransportFailureKind.UNSUPPORTED_SERVER_VERSION -> GatewayConnectionFailure.UNSUPPORTED_SERVER_VERSION
     HtspTransportFailureKind.ZERO_CHANNELS -> GatewayConnectionFailure.NO_CHANNELS
-    HtspTransportFailureKind.TRANSPORT_UNAVAILABLE ->
+    HtspTransportFailureKind.TRANSPORT_UNAVAILABLE,
+    HtspTransportFailureKind.SUPERSEDED,
+    ->
         GatewayConnectionFailure.TRANSPORT_UNAVAILABLE
+    else -> GatewayConnectionFailure.TRANSPORT_UNAVAILABLE
 }
 
 private inline fun <T, R> HtspResult<T>.toGatewayResult(
     transform: (T) -> R,
 ): GatewayResult<R> = when (this) {
     is HtspResult.Ok -> GatewayResult.Ok(transform(value))
-    HtspResult.ServerError -> GatewayResult.ServerRejected
+    is HtspResult.ServerError -> GatewayResult.ServerRejected
+    HtspResult.MalformedReply -> GatewayResult.MalformedReply
     HtspResult.AccessDenied -> GatewayResult.AccessDenied
     HtspResult.ConnectionLimit -> GatewayResult.ConnectionLimit
     HtspResult.Timeout -> GatewayResult.Timeout
@@ -1099,8 +1196,9 @@ private inline fun <T, R : Any> HtspResult<T>.toCheckedGatewayResult(
     transform: (T) -> R?,
 ): GatewayResult<R> = when (this) {
     is HtspResult.Ok -> transform(value)?.let { transformed -> GatewayResult.Ok(transformed) }
-        ?: GatewayResult.ServerRejected
-    HtspResult.ServerError -> GatewayResult.ServerRejected
+        ?: GatewayResult.MalformedReply
+    is HtspResult.ServerError -> GatewayResult.ServerRejected
+    HtspResult.MalformedReply -> GatewayResult.MalformedReply
     HtspResult.AccessDenied -> GatewayResult.AccessDenied
     HtspResult.ConnectionLimit -> GatewayResult.ConnectionLimit
     HtspResult.Timeout -> GatewayResult.Timeout
@@ -1108,14 +1206,11 @@ private inline fun <T, R : Any> HtspResult<T>.toCheckedGatewayResult(
     HtspResult.NotSupported -> GatewayResult.NotSupported
 }
 
-private fun acceptedDvrAcknowledgement(response: HtspDvrMutationResponse): Unit? =
-    Unit.takeIf { response.success == 1L }
-
 private fun HtspDvrCutpoint.toDvrCutpointOrNull(): DvrCutpoint? {
-    if (end <= start) return null
+    if (endMs <= startMs) return null
     return DvrCutpoint(
-        start = start.milliseconds,
-        end = end.milliseconds,
+        start = startMs.milliseconds,
+        end = endMs.milliseconds,
         action = when (type) {
             0L -> DvrCutpointAction.CUT
             1L -> DvrCutpointAction.MUTE
@@ -1130,8 +1225,8 @@ private fun DvrSchedule.toHtspSelector(): AddDvrEntrySelector = when (this) {
     is DvrSchedule.Programme -> AddDvrEntrySelector.Event(eventId.value)
     is DvrSchedule.ExplicitTime -> AddDvrEntrySelector.ExplicitChannelTime(
         channelId = channelId.value,
-        start = start.epochSeconds,
-        stop = stop.epochSeconds,
+        startEpochSeconds = start.epochSeconds,
+        stopEpochSeconds = stop.epochSeconds,
     )
 }
 
@@ -1148,7 +1243,8 @@ private inline fun <T, R> HtspResult<T>.toSubscriptionResult(
     transform: (T) -> R,
 ): SubscriptionOperationResult<R> = when (this) {
     is HtspResult.Ok -> SubscriptionOperationResult.Ok(transform(value))
-    HtspResult.ServerError -> SubscriptionOperationResult.ServerRejected
+    is HtspResult.ServerError -> SubscriptionOperationResult.ServerRejected
+    HtspResult.MalformedReply -> SubscriptionOperationResult.MalformedResponse
     HtspResult.AccessDenied -> SubscriptionOperationResult.AccessDenied
     HtspResult.ConnectionLimit -> SubscriptionOperationResult.ConnectionLimit
     HtspResult.Timeout -> SubscriptionOperationResult.Timeout
@@ -1216,6 +1312,7 @@ private fun HtspServerMessage.toGatewayMetadata(
     is HtspTimeshiftStatusMessage,
     is HtspSubscriptionSkipMessage,
     -> null
+    else -> null
 }
 
 private fun HtspEventAddMessage.toGatewayEpgEvent(): GatewayEpgEvent = event.toGatewayEpgEvent(
@@ -1231,8 +1328,8 @@ private fun HtspEvent.toGatewayEpgEvent(
 ): GatewayEpgEvent = GatewayEpgEvent(
     id = EventId(eventId),
     channelId = channelId?.let(::ChannelId),
-    start = Instant.fromEpochSeconds(start),
-    stop = Instant.fromEpochSeconds(stop),
+    start = Instant.fromEpochSeconds(startEpochSeconds),
+    stop = Instant.fromEpochSeconds(stopEpochSeconds),
     title = title,
     subtitle = subtitle,
     summary = summary,
@@ -1250,8 +1347,8 @@ private fun HtspEvent.toGatewayEpgEvent(
     ratingCountry = ratingCountry,
     starRating = starRating,
     copyrightYear = copyrightYear,
-    firstAired = firstAired?.let { Instant.fromEpochSeconds(it) },
-    isNew = isNew.toFlag(),
+    firstAired = firstAiredEpochSeconds?.let { Instant.fromEpochSeconds(it) },
+    isNew = isNew,
     seasonNumber = seasonNumber,
     seasonCount = seasonCount,
     episodeNumber = episodeNumber,
@@ -1269,8 +1366,8 @@ private fun HtspEvent.toGatewayEpgEvent(
 private fun HtspEvent.toGatewayEpgQueryEvent(): GatewayEpgQueryEvent = GatewayEpgQueryEvent(
     id = EventId(eventId),
     channelId = channelId?.let(::ChannelId),
-    start = Instant.fromEpochSeconds(start),
-    stop = Instant.fromEpochSeconds(stop),
+    start = Instant.fromEpochSeconds(startEpochSeconds),
+    stop = Instant.fromEpochSeconds(stopEpochSeconds),
     title = title,
     subtitle = subtitle,
     summary = summary,
@@ -1287,8 +1384,8 @@ private fun HtspEvent.toGatewayEpgQueryEvent(): GatewayEpgQueryEvent = GatewayEp
     ratingCountry = ratingCountry,
     starRating = starRating,
     copyrightYear = copyrightYear,
-    firstAired = firstAired?.let { Instant.fromEpochSeconds(it) },
-    isNew = isNew.toFlag(),
+    firstAired = firstAiredEpochSeconds?.let { Instant.fromEpochSeconds(it) },
+    isNew = isNew,
     seasonNumber = seasonNumber,
     seasonCount = seasonCount,
     episodeNumber = episodeNumber,
@@ -1304,8 +1401,8 @@ private fun HtspEvent.toGatewayEpgQueryEvent(): GatewayEpgQueryEvent = GatewayEp
 private fun HtspEventUpdateMessage.toGatewayEpgUpdate(): GatewayEpgUpdate = GatewayEpgUpdate(
     id = EventId(eventId),
     channelId = channelId?.let(::ChannelId),
-    start = start?.let { Instant.fromEpochSeconds(it) },
-    stop = stop?.let { Instant.fromEpochSeconds(it) },
+    start = startEpochSeconds?.let { Instant.fromEpochSeconds(it) },
+    stop = stopEpochSeconds?.let { Instant.fromEpochSeconds(it) },
     title = title,
     subtitle = subtitle,
     summary = summary,
@@ -1323,8 +1420,8 @@ private fun HtspEventUpdateMessage.toGatewayEpgUpdate(): GatewayEpgUpdate = Gate
     ratingCountry = ratingCountry,
     starRating = starRating,
     copyrightYear = copyrightYear,
-    firstAired = firstAired?.let { Instant.fromEpochSeconds(it) },
-    isNew = isNew.toFlag(),
+    firstAired = firstAiredEpochSeconds?.let { Instant.fromEpochSeconds(it) },
+    isNew = isNew,
     seasonNumber = seasonNumber,
     seasonCount = seasonCount,
     episodeNumber = episodeNumber,
@@ -1401,14 +1498,14 @@ private fun Long?.toFlag(): Boolean? = this?.let { it != 0L }
 private fun HtspDvrEntryAddMessage.toGatewayDvrEntry(): GatewayDvrEntry = GatewayDvrEntry(
     id = DvrEntryId(entryId),
     uuid = entryUuid,
-    enabled = enabled.toFlag(),
+    enabled = enabled,
     channelId = channelId?.let(::ChannelId),
     channelName = channelName,
     eventId = eventId?.let(::EventId),
     autorecRuleId = autorecEntryUuid?.let(::AutorecRuleId),
     timerecRuleId = timerecEntryUuid?.let(::TimerecRuleId),
-    start = start?.let(Instant::fromEpochSeconds),
-    stop = stop?.let(Instant::fromEpochSeconds),
+    start = startEpochSeconds?.let(Instant::fromEpochSeconds),
+    stop = stopEpochSeconds?.let(Instant::fromEpochSeconds),
     startExtraMinutes = startExtraMinutes,
     stopExtraMinutes = stopExtraMinutes,
     retentionDays = retentionDays,
@@ -1440,7 +1537,7 @@ private fun HtspDvrEntryAddMessage.toGatewayDvrEntry(): GatewayDvrEntry = Gatewa
     files = files?.map(HtspDvrRecordingFile::toGatewayFile),
     path = path,
     configId = dvrConfigUuid?.let(::DvrConfigId),
-    duplicate = duplicate,
+    duplicate = duplicate?.toWireFlag(),
     state = state.toDvrEntryState(),
     failure = error.toDvrFailure(),
     subscriptionError = subscriptionError.toDvrSubscriptionError(),
@@ -1452,14 +1549,14 @@ private fun HtspDvrEntryAddMessage.toGatewayDvrEntry(): GatewayDvrEntry = Gatewa
 private fun HtspDvrEntryUpdateMessage.toGatewayDvrEntry(): GatewayDvrEntry = GatewayDvrEntry(
     id = DvrEntryId(entryId),
     uuid = entryUuid,
-    enabled = enabled.toFlag(),
+    enabled = enabled,
     channelId = channelId?.let(::ChannelId),
     channelName = channelName,
     eventId = eventId?.let(::EventId),
     autorecRuleId = autorecEntryUuid?.let(::AutorecRuleId),
     timerecRuleId = timerecEntryUuid?.let(::TimerecRuleId),
-    start = start?.let(Instant::fromEpochSeconds),
-    stop = stop?.let(Instant::fromEpochSeconds),
+    start = startEpochSeconds?.let(Instant::fromEpochSeconds),
+    stop = stopEpochSeconds?.let(Instant::fromEpochSeconds),
     startExtraMinutes = startExtraMinutes,
     stopExtraMinutes = stopExtraMinutes,
     retentionDays = retentionDays,
@@ -1491,7 +1588,7 @@ private fun HtspDvrEntryUpdateMessage.toGatewayDvrEntry(): GatewayDvrEntry = Gat
     files = files?.map(HtspDvrRecordingFile::toGatewayFile),
     path = path,
     configId = dvrConfigUuid?.let(::DvrConfigId),
-    duplicate = duplicate,
+    duplicate = duplicate?.toWireFlag(),
     state = state.toDvrEntryState(),
     failure = error.toDvrFailure(),
     subscriptionError = subscriptionError.toDvrSubscriptionError(),
@@ -1511,8 +1608,8 @@ private fun HtspDvrEntryUpdateMessage.toGatewayUpdateProvenance(): GatewayDvrUpd
 private fun HtspDvrRecordingFile.toGatewayFile(): GatewayDvrRecordingFile = GatewayDvrRecordingFile(
     fileId = fileId,
     path = path,
-    start = start?.let(Instant::fromEpochSeconds),
-    stop = stop?.let(Instant::fromEpochSeconds),
+    start = startEpochSeconds?.let(Instant::fromEpochSeconds),
+    stop = stopEpochSeconds?.let(Instant::fromEpochSeconds),
     sizeBytes = sizeBytes,
 )
 
@@ -1656,7 +1753,7 @@ internal fun SubscriptionIssue?.toDvrSubscriptionError(): DvrSubscriptionError =
     else -> DvrSubscriptionError.UNKNOWN
 }
 
-private fun HtspSubscriptionEvent.toGatewayEvent(): SubscriptionEvent = when (this) {
+private fun HtspSubscriptionEvent.toGatewayEvent(): SubscriptionEvent? = when (this) {
     is HtspSubscriptionEvent.Started -> message.toGatewayEvent()
     is HtspSubscriptionEvent.Packet -> packet.toGatewayEvent()
     is HtspSubscriptionEvent.Skipped -> message.toGatewayEvent()
@@ -1671,7 +1768,7 @@ private fun HtspSubscriptionEvent.toGatewayEvent(): SubscriptionEvent = when (th
     is HtspSubscriptionEvent.Grace -> SubscriptionEvent.Grace(message.graceTimeoutSeconds)
     is HtspSubscriptionEvent.Speed -> SubscriptionEvent.Speed(message.speed)
     is HtspSubscriptionEvent.Timeshift -> SubscriptionEvent.Timeshift(
-        full = message.full,
+        full = message.full.toWireFlag(),
         shift = message.shift,
         start = message.start,
         end = message.end,
@@ -1680,7 +1777,7 @@ private fun HtspSubscriptionEvent.toGatewayEvent(): SubscriptionEvent = when (th
     is HtspSubscriptionEvent.Queue -> SubscriptionEvent.Queue(
         packetCount = message.packetCount,
         byteCount = message.byteCount,
-        delay = message.delay,
+        delay = message.delayUs,
         bFrameDropCount = message.bFrameDropCount,
         pFrameDropCount = message.pFrameDropCount,
         iFrameDropCount = message.iFrameDropCount,
@@ -1701,6 +1798,7 @@ private fun HtspSubscriptionEvent.toGatewayEvent(): SubscriptionEvent = when (th
     is HtspSubscriptionEvent.Terminated -> SubscriptionEvent.Terminated(
         reason = reason.toGatewayTermination(),
     )
+    else -> null
 }
 
 private fun HtspSubscriptionStartMessage.toGatewayEvent(): SubscriptionEvent.Started =
@@ -1753,14 +1851,14 @@ private fun HtspSubscriptionStream.toGatewayStream(): SubscriptionStream = Subsc
     ancillaryId = ancillaryId,
     width = width,
     height = height,
-    frameDuration = frameDuration,
+    frameDuration = frameDurationUs,
     aspectNumerator = aspectNumerator,
     aspectDenominator = aspectDenominator,
     audioType = audioType,
     audioVersion = audioVersion,
     channelCount = channelCount,
     rate = sampleRate,
-    rdsUecp = rdsUecp,
+    rdsUecp = rdsUecp?.toWireFlag(),
     codecMetadata = codecMetadata?.let(::HtspGatewayBinary),
 )
 
@@ -1795,11 +1893,10 @@ private fun HtspMuxPacketMessage.toGatewayEvent(): SubscriptionEvent.Packet =
 
 private fun HtspSubscriptionSkipMessage.toGatewayEvent(): SubscriptionEvent.Skipped =
     SubscriptionEvent.Skipped(
-        absolute = absolute?.let { it != 0L },
+        absolute = absolute,
         outcome = when (error) {
-            null, 0L -> SkipOutcome.ACCEPTED
-            1L -> SkipOutcome.REJECTED
-            else -> SkipOutcome.UNKNOWN
+            null, false -> SkipOutcome.ACCEPTED
+            true -> SkipOutcome.REJECTED
         },
         time = time,
         sizeBytes = sizeBytes,
@@ -1824,7 +1921,10 @@ private fun HtspSubscriptionTermination.toGatewayTermination(): SubscriptionTerm
         HtspSubscriptionTermination.TIMEOUT -> SubscriptionTermination.TIMEOUT
         HtspSubscriptionTermination.LOCAL_RETIREMENT -> SubscriptionTermination.LOCAL_RETIREMENT
         HtspSubscriptionTermination.PUBLICATION_FAILURE -> SubscriptionTermination.PUBLICATION_FAILURE
+        HtspSubscriptionTermination.CONSUMER_OVERFLOW -> SubscriptionTermination.PUBLICATION_FAILURE
+        HtspSubscriptionTermination.SUBSCRIBE_REJECTED -> SubscriptionTermination.SUBSCRIBE_REJECTED
         HtspSubscriptionTermination.INTERNAL_FAILURE -> SubscriptionTermination.INTERNAL_FAILURE
+        else -> SubscriptionTermination.INTERNAL_FAILURE
     }
 
 private fun subscriptionCondition(
@@ -1871,8 +1971,8 @@ private const val ARTWORK_FILE_SELECTOR_PREFIX = "imagecache/"
 private const val ARTWORK_READ_CHUNK_BYTES = 64 * 1024
 private const val MAX_ARTWORK_BYTES = 16 * 1024 * 1024
 private const val MAX_CONCURRENT_ARTWORK_FILES = 3
-private const val ABSOLUTE_SKIP_FLAG = 1L
-private const val RELATIVE_SKIP_FLAG = 0L
+private const val ABSOLUTE_SKIP_FLAG = true
+private const val RELATIVE_SKIP_FLAG = false
 private const val PROFILE_DEFAULT_SUBSCRIPTION_WEIGHT = 0L
 
 // Server SUBSCRIPTION_PRIO_MIN: the lowest weight still treated as a normal subscription.
@@ -1882,8 +1982,16 @@ private fun LiveSubscriptionPriority.subscribeWeight(): Long? = when (this) {
     LiveSubscriptionPriority.NORMAL -> null
     LiveSubscriptionPriority.YIELD -> YIELD_SUBSCRIPTION_WEIGHT
 }
-private const val ASYNC_EPG_MINIMUM_PROTOCOL_VERSION = 6
-private const val ASYNC_EPG_ENABLED = 1L
+// Keep room for 65,536 small metadata/EPG events, but cap wire bodies at 32 MiB per collector.
+// Decoded objects are additional heap: a 64 MiB wire allowance risks dominating a 192–256 MiB
+// Android TV heap. This is a conservative burst allowance, not a full-sync size guarantee;
+// oversized syncs still report overflow and back off. Subscription budgets remain unchanged.
+internal val METADATA_BUFFER_OPTIONS: HtspEventBufferOptions = HtspEventBufferOptions(
+    metadataQueueBytes = 32L * 1024 * 1024,
+    metadataQueueEvents = 65_536,
+    subscriptionQueueBytes = 8L * 1024 * 1024,
+    subscriptionQueueEvents = 8192,
+)
 
 private fun SubscribeResponse.toGatewayConfirmation(): SubscriptionConfirmation =
     SubscriptionConfirmation(
