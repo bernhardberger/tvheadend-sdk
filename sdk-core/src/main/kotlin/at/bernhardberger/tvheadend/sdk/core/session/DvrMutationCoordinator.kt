@@ -4,6 +4,7 @@ import at.bernhardberger.tvheadend.sdk.core.AutorecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleId
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
+import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrMutationCommands
 import at.bernhardberger.tvheadend.sdk.core.DvrMutationKind
@@ -14,6 +15,7 @@ import at.bernhardberger.tvheadend.sdk.core.EventId
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleUpdate
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrUpdateProvenance
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
@@ -104,10 +106,14 @@ internal class DvrMutationCoordinator(
     }
 
     internal fun acceptMetadata(event: MetadataEvent) {
-        val key = event.confirmationKey() ?: return
+        val keys = event.confirmationKeys()
+        if (keys.isEmpty()) return
         synchronized(lock) {
             if (event.generation === generation) {
-                pending?.accept(key)
+                // A confirmed caller may resume inline and register its next operation; this event
+                // must not confirm that operation too.
+                val operation = pending ?: return
+                keys.forEach(operation::accept)
             }
         }
     }
@@ -141,7 +147,7 @@ internal class DvrMutationCoordinator(
         id: DvrEntryId,
     ): DvrMutationResult<Unit> = mutate(
         expectedGeneration = generation,
-        confirmations = setOf(ConfirmationKey(ConfirmationKind.ENTRY_UPDATED, id)),
+        confirmations = setOf(ConfirmationKey(ConfirmationKind.ENTRY_ENDED, id)),
         command = { generation ->
             withIntent(generation, DvrMutationKind.STOP, entryId = id) { gateway.stopDvrEntry(generation, id) }
         },
@@ -153,7 +159,7 @@ internal class DvrMutationCoordinator(
     ): DvrMutationResult<Unit> = mutate(
         expectedGeneration = generation,
         confirmations = setOf(
-            ConfirmationKey(ConfirmationKind.ENTRY_UPDATED, id),
+            ConfirmationKey(ConfirmationKind.ENTRY_ENDED, id),
             ConfirmationKey(ConfirmationKind.ENTRY_DELETED, id),
         ),
         command = { generation ->
@@ -507,6 +513,9 @@ private class PendingMutation(
 private enum class ConfirmationKind {
     ENTRY_ADDED,
     ENTRY_UPDATED,
+
+    /** A full entry update whose state shows the entry is no longer scheduled or recording. */
+    ENTRY_ENDED,
     ENTRY_DELETED,
     AUTOREC_ADDED,
     AUTOREC_UPDATED,
@@ -536,16 +545,24 @@ private enum class ConfirmationOutcome {
     TimedOut,
 }
 
-private fun MetadataEvent.confirmationKey(): ConfirmationKey? = when (this) {
-    is MetadataEvent.DvrEntryAdded -> ConfirmationKey(ConfirmationKind.ENTRY_ADDED, entry.id)
-    is MetadataEvent.DvrEntryUpdated -> ConfirmationKey(ConfirmationKind.ENTRY_UPDATED, entry.id)
-    is MetadataEvent.DvrEntryDeleted -> ConfirmationKey(ConfirmationKind.ENTRY_DELETED, entryId)
-    is MetadataEvent.AutorecRuleAdded -> ConfirmationKey(ConfirmationKind.AUTOREC_ADDED, rule.id)
-    is MetadataEvent.AutorecRuleUpdated -> ConfirmationKey(ConfirmationKind.AUTOREC_UPDATED, rule.id)
-    is MetadataEvent.AutorecRuleDeleted -> ConfirmationKey(ConfirmationKind.AUTOREC_DELETED, ruleId)
-    is MetadataEvent.TimerecRuleAdded -> ConfirmationKey(ConfirmationKind.TIMEREC_ADDED, rule.id)
-    is MetadataEvent.TimerecRuleUpdated -> ConfirmationKey(ConfirmationKind.TIMEREC_UPDATED, rule.id)
-    is MetadataEvent.TimerecRuleDeleted -> ConfirmationKey(ConfirmationKind.TIMEREC_DELETED, ruleId)
+private fun MetadataEvent.confirmationKeys(): List<ConfirmationKey> = when (this) {
+    is MetadataEvent.DvrEntryAdded -> listOf(ConfirmationKey(ConfirmationKind.ENTRY_ADDED, entry.id))
+    is MetadataEvent.DvrEntryUpdated -> when {
+        // Stats-only updates report recording progress, not the server's reflection of a mutation.
+        provenance == GatewayDvrUpdateProvenance.STATS_ONLY -> emptyList()
+        entry.state in endedEntryStates -> listOf(
+            ConfirmationKey(ConfirmationKind.ENTRY_UPDATED, entry.id),
+            ConfirmationKey(ConfirmationKind.ENTRY_ENDED, entry.id),
+        )
+        else -> listOf(ConfirmationKey(ConfirmationKind.ENTRY_UPDATED, entry.id))
+    }
+    is MetadataEvent.DvrEntryDeleted -> listOf(ConfirmationKey(ConfirmationKind.ENTRY_DELETED, entryId))
+    is MetadataEvent.AutorecRuleAdded -> listOf(ConfirmationKey(ConfirmationKind.AUTOREC_ADDED, rule.id))
+    is MetadataEvent.AutorecRuleUpdated -> listOf(ConfirmationKey(ConfirmationKind.AUTOREC_UPDATED, rule.id))
+    is MetadataEvent.AutorecRuleDeleted -> listOf(ConfirmationKey(ConfirmationKind.AUTOREC_DELETED, ruleId))
+    is MetadataEvent.TimerecRuleAdded -> listOf(ConfirmationKey(ConfirmationKind.TIMEREC_ADDED, rule.id))
+    is MetadataEvent.TimerecRuleUpdated -> listOf(ConfirmationKey(ConfirmationKind.TIMEREC_UPDATED, rule.id))
+    is MetadataEvent.TimerecRuleDeleted -> listOf(ConfirmationKey(ConfirmationKind.TIMEREC_DELETED, ruleId))
     is MetadataEvent.ChannelAdded,
     is MetadataEvent.ChannelUpdated,
     is MetadataEvent.ChannelDeleted,
@@ -556,5 +573,8 @@ private fun MetadataEvent.confirmationKey(): ConfirmationKey? = when (this) {
     is MetadataEvent.EventUpdated,
     is MetadataEvent.EventDeleted,
     is MetadataEvent.InitialSyncCompleted,
-    -> null
+    -> emptyList()
 }
+
+// Raw server states; error variants are derived later by DvrReducer.
+private val endedEntryStates = setOf(DvrEntryState.COMPLETED, DvrEntryState.MISSED)

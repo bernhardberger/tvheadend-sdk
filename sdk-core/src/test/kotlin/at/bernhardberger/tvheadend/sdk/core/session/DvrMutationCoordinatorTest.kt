@@ -10,6 +10,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
 import at.bernhardberger.tvheadend.sdk.core.DvrCutpoint
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
+import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
@@ -46,6 +47,8 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -276,6 +279,121 @@ internal class DvrMutationCoordinatorTest {
     }
 
     @Test
+    fun `stats-only and still-recording updates never confirm a pending stop or cancel`() = runTest {
+        for (cancel in listOf(false, true)) {
+            val generation = GatewayGeneration()
+            val gateway = MutationGateway()
+            val coordinator = DvrMutationCoordinator(gateway)
+            gateway.stopBehavior = { _, _ -> GatewayResult.Ok(Unit) }
+            gateway.cancelBehavior = { _, _ -> GatewayResult.Ok(Unit) }
+            coordinator.bindGeneration(generation)
+            coordinator.startAdmission(generation)
+            suspend fun mutate() = if (cancel) {
+                coordinator.cancelEntry(generation, DvrEntryId(1))
+            } else {
+                coordinator.stopEntry(generation, DvrEntryId(1))
+            }
+
+            val unconfirmed = async { mutate() }
+            runCurrent()
+            coordinator.acceptMetadata(
+                dvrUpdated(generation, 1, DvrEntryState.RECORDING, GatewayDvrUpdateProvenance.STATS_ONLY),
+            )
+            coordinator.acceptMetadata(
+                dvrUpdated(generation, 1, DvrEntryState.COMPLETED, GatewayDvrUpdateProvenance.STATS_ONLY),
+            )
+            coordinator.acceptMetadata(dvrUpdated(generation, 1, DvrEntryState.RECORDING))
+            coordinator.acceptMetadata(dvrUpdated(generation, 1, DvrEntryState.RECORDING_ERROR))
+            coordinator.acceptMetadata(dvrUpdated(generation, 2, DvrEntryState.COMPLETED))
+            runCurrent()
+            assertFalse(unconfirmed.isCompleted)
+            advanceTimeBy(5.seconds + 1.seconds)
+            assertTrue(unconfirmed.await() is DvrMutationResult.AcceptedButUnconfirmed)
+
+            for (ended in listOf(DvrEntryState.COMPLETED, DvrEntryState.MISSED)) {
+                val confirmed = async { mutate() }
+                runCurrent()
+                coordinator.acceptMetadata(dvrUpdated(generation, 1, ended))
+                runCurrent()
+                assertTrue(confirmed.await() is DvrMutationResult.Confirmed, ended.toString())
+            }
+        }
+    }
+
+    @Test
+    fun `one ended update confirms only the operation pending when it arrived`() = runTest {
+        data class Case(
+            val cancel: Boolean,
+            val followUp: ((GatewayGeneration) -> MetadataEvent)?,
+        )
+        val cases = listOf(
+            Case(cancel = false, followUp = null),
+            Case(cancel = false, followUp = { dvrUpdated(it, 1, DvrEntryState.COMPLETED) }),
+            Case(cancel = true, followUp = null),
+            Case(cancel = true, followUp = { MetadataEvent.DvrEntryDeleted(it, DvrEntryId(1)) }),
+        )
+        for (case in cases) {
+            val generation = GatewayGeneration()
+            val gateway = MutationGateway()
+            val coordinator = DvrMutationCoordinator(gateway)
+            gateway.updateBehavior = { _, _, _ -> GatewayResult.Ok(Unit) }
+            gateway.stopBehavior = { _, _ -> GatewayResult.Ok(Unit) }
+            gateway.cancelBehavior = { _, _ -> GatewayResult.Ok(Unit) }
+            coordinator.bindGeneration(generation)
+            coordinator.startAdmission(generation)
+            val results = mutableListOf<DvrMutationResult<Unit>>()
+
+            // The unconfined chain resumes inline inside acceptMetadata and starts its next mutation.
+            val chain = launch(UnconfinedTestDispatcher(testScheduler)) {
+                results += coordinator.updateEntry(generation, DvrEntryId(1), DvrEntryUpdate(title = "title"))
+                results += if (case.cancel) {
+                    coordinator.cancelEntry(generation, DvrEntryId(1))
+                } else {
+                    coordinator.stopEntry(generation, DvrEntryId(1))
+                }
+            }
+            runCurrent()
+            coordinator.acceptMetadata(dvrUpdated(generation, 1, DvrEntryState.COMPLETED))
+
+            assertEquals(1, results.size, case.toString())
+            assertTrue(results.single() is DvrMutationResult.Confirmed)
+            assertTrue(chain.isActive)
+            case.followUp?.let { coordinator.acceptMetadata(it(generation)) }
+            advanceTimeBy(5.seconds + 1.seconds)
+            chain.join()
+            assertTrue(
+                if (case.followUp == null) {
+                    results.last() is DvrMutationResult.AcceptedButUnconfirmed
+                } else {
+                    results.last() is DvrMutationResult.Confirmed
+                },
+                case.toString(),
+            )
+        }
+    }
+
+    @Test
+    fun `stats-only updates never confirm a pending entry update`() = runTest {
+        val generation = GatewayGeneration()
+        val gateway = MutationGateway()
+        val coordinator = DvrMutationCoordinator(gateway)
+        gateway.updateBehavior = { _, _, _ -> GatewayResult.Ok(Unit) }
+        coordinator.bindGeneration(generation)
+        coordinator.startAdmission(generation)
+
+        val result = async { coordinator.updateEntry(generation, DvrEntryId(1), DvrEntryUpdate(title = "title")) }
+        runCurrent()
+        coordinator.acceptMetadata(
+            dvrUpdated(generation, 1, DvrEntryState.RECORDING, GatewayDvrUpdateProvenance.STATS_ONLY),
+        )
+        runCurrent()
+        assertFalse(result.isCompleted)
+        coordinator.acceptMetadata(dvrUpdated(generation, 1, DvrEntryState.RECORDING))
+        runCurrent()
+        assertTrue(result.await() is DvrMutationResult.Confirmed)
+    }
+
+    @Test
     fun `rule creation ignores ordinary DVR side effects and matches its own rule stream`() = runTest {
         val generation = GatewayGeneration()
         val gateway = MutationGateway()
@@ -355,11 +473,16 @@ private fun scheduleRequest(): DvrScheduleRequest =
 private fun dvrAdded(generation: GatewayGeneration, id: Long): MetadataEvent.DvrEntryAdded =
     MetadataEvent.DvrEntryAdded(generation, GatewayDvrEntry(DvrEntryId(id)))
 
-private fun dvrUpdated(generation: GatewayGeneration, id: Long): MetadataEvent.DvrEntryUpdated =
+private fun dvrUpdated(
+    generation: GatewayGeneration,
+    id: Long,
+    state: DvrEntryState? = null,
+    provenance: GatewayDvrUpdateProvenance = GatewayDvrUpdateProvenance.FULL,
+): MetadataEvent.DvrEntryUpdated =
     MetadataEvent.DvrEntryUpdated(
         generation,
-        GatewayDvrEntry(DvrEntryId(id)),
-        GatewayDvrUpdateProvenance.FULL,
+        GatewayDvrEntry(DvrEntryId(id), state = state),
+        provenance,
     )
 
 internal class MutationGateway : ProtocolGateway {

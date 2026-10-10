@@ -28,6 +28,15 @@
   audio extension, which the SDK renderers factory picks up automatically; see
   [software audio decoding](docs/consumer-guide.md#software-audio-decoding).
 
+### Fixed
+
+- DVR mutations are no longer confirmed by stats-only progress updates.
+  `stopEntry` and `cancelEntry` now confirm only on a full update showing the
+  entry completed or missed (or, for cancel, deleted). Updates that still show
+  it scheduled or recording do not confirm, so the call returns
+  `AcceptedButUnconfirmed` if no such update arrives before the confirmation
+  deadline.
+
 ## [0.23.0]
 
 Released 2026-10-04.

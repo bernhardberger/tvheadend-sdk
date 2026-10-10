@@ -200,7 +200,7 @@ internal class DvrChangesTest {
     }
 
     @Test
-    fun `stop intent survives stats confirmation update and active recording error`() = runTest {
+    fun `stop intent survives unconfirmed stop and active recording error`() = runTest {
         val fixture = Fixture()
         fixture.accept(MetadataEvent.DvrEntryAdded(fixture.generation, entry(state = DvrEntryState.RECORDING)))
         fixture.ready()
@@ -210,7 +210,7 @@ internal class DvrChangesTest {
                 entry(state = DvrEntryState.RECORDING), GatewayDvrUpdateProvenance.STATS_ONLY))
             GatewayResult.Ok(Unit)
         }
-        fixture.coordinator.stopEntry(fixture.generation, DvrEntryId(7))
+        assertTrue(fixture.coordinator.stopEntry(fixture.generation, DvrEntryId(7)) is DvrMutationResult.AcceptedButUnconfirmed)
         fixture.gateway.updateBehavior = { generation, _, _ ->
             fixture.accept(MetadataEvent.DvrEntryUpdated(generation,
                 entry(state = DvrEntryState.RECORDING), GatewayDvrUpdateProvenance.FULL))
