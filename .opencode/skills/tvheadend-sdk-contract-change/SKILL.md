@@ -17,7 +17,6 @@ Read only the references needed for the affected workflow:
 | Application-facing API or consumer usage | `docs/consumer-guide.md` and the affected contract document |
 | Offline core checks or live-test selection | `docs/offline-verification.md`; live work still needs separate authority |
 | Media3 selection or stream replacement | `docs/media3-selection-contract.md` or `docs/stream-restart-contract.md`, respectively |
-| Review dispatch | `docs/review-routing.md` |
 | Published-coordinate verification or publication | `docs/releasing.md` and existing consumer-contract tasks |
 
 Follow a reference's relevant section rather than loading the whole document
