@@ -125,15 +125,44 @@ public sealed interface TimeshiftContentSeekResult {
      * This is not displayed content; sample [TvheadendPlaybackCoordinator.timeshiftPlaybackPosition].
      */
     public class Completed internal constructor(
+        /**
+         * Overall outcome: [seekCommand] when the seek failed or playback was not paused. For a
+         * seek accepted while paused it is a failed [pauseRestoration], else [buffering], or
+         * [TimeshiftCommandResult.UNAVAILABLE] with null [buffering] when the period the seek
+         * reached was replaced before buffering started. When a later command ends buffering
+         * early, this stays [seekCommand] unless the transport refused to pause again, so a
+         * transient value never invites replaying a seek that newer intent replaced.
+         */
         public val command: TimeshiftCommandResult,
         public val readerReached: TimeshiftContentTarget?,
         /** Non-null only for acceptance. Match against [TimeshiftPlaybackPosition.Estimate.seek]. */
         public val seek: TimeshiftSeekToken? = null,
         /** Seek acknowledgement, retained even if subsequent buffering or transport pause fails. */
         public val seekCommand: TimeshiftCommandResult = command,
-        /** Correlated readiness outcome; null when paused buffering was not needed. */
+        /**
+         * Correlated readiness outcome; null when paused buffering was not needed. Buffering waits
+         * at most five seconds ([TimeshiftCommandResult.TIMEOUT]). It ends early as
+         * [TimeshiftCommandResult.UNAVAILABLE] when the coordinator processes any of these first:
+         * another seek or [TvheadendPlaybackCoordinator.returnToLive], a pause or resume, a live or
+         * recording target install (including one that fails, such as a live target that is not
+         * ready), a stop, or a shutdown. Position samples and priority changes leave it running.
+         * [command], which is also the [TvheadendPlaybackCoordinator.returnToLive] result, then
+         * keeps [seekCommand].
+         */
         public val buffering: TimeshiftCommandResult? = null,
-        /** Final transport-pause outcome, independently retained from readiness. */
+        /**
+         * Final transport-pause outcome, independently retained from readiness.
+         * [TimeshiftCommandResult.TRANSPORT_UNAVAILABLE] has two meanings. Either a server stop
+         * interrupted the subscription, and the target stays installed and is paused once the same
+         * subscription restarts; or the playable subscription failed the request. That failure, like
+         * every other refused pause, closes the subscription and retires the target, because
+         * unpaused input would fill the paused player.
+         * [TvheadendPlaybackCoordinator.livePlaybackObservation] tells them apart: it is
+         * [LivePlaybackObservation.NoTarget] once the target is retired, otherwise
+         * [LivePlaybackObservation.Active.serverStopped] until the restart.
+         * [TimeshiftCommandResult.UNAVAILABLE] means nothing was left to pause: the subscription
+         * ended, or was closed with its retired target.
+         */
         public val pauseRestoration: TimeshiftCommandResult? = null,
         /** Selection resolved against commit-time history, distinct from the server acknowledgement. */
         public val selection: TimeshiftSeekSelection? = null,

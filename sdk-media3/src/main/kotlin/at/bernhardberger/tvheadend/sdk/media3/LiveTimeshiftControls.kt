@@ -15,6 +15,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionState
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTracks
 import java.util.Collections
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.time.Duration
@@ -262,6 +263,10 @@ internal class LiveTimeshiftControlBridge(
     private var stoppedIssueHeld = false
     // A server stop without an issue is otherwise indistinguishable from a healthy subscription.
     private var serverStopped = false
+    // Periods of a restarted subscription start from its last acknowledged pause request.
+    private var acknowledgedPause: AcknowledgedPause? = null
+    // A buffering transport left at normal speed because a server stop interrupted its pause.
+    private var owedPause: ActiveSubscription? = null
 
     internal fun newAttachment(): Attachment = synchronized(lock) {
         check(nextAttachmentSequence != Long.MAX_VALUE) { "Timeshift attachment ids exhausted" }
@@ -362,6 +367,8 @@ internal class LiveTimeshiftControlBridge(
             retired = true
             activeAttachment = null
             prioritySubscription = null
+            acknowledgedPause = null
+            owedPause = null
             stoppedIssue = null
             stoppedIssueHeld = false
             serverStopped = false
@@ -395,10 +402,11 @@ internal class LiveTimeshiftControlBridge(
         val handle = currentHandle() ?: return null
         val result = handle.subscription.setSpeed(speed)
         if (result is SubscriptionOperationResult.Ok) synchronized(lock) {
-            if (currentHandle()?.attachment === handle.attachment) {
-                handle.attachment.requestedPaused = speed == PAUSED_SPEED
-                updateStateLocked()
-                publishCurrentLocked()
+            // An explicit speed supersedes a pause a restart left owed.
+            if (owedPause === handle.subscription) owedPause = null
+            // A restart may have bound another period of this subscription while the answer was pending.
+            if (ownsSubscriptionLocked(handle.subscription)) {
+                acknowledgePauseLocked(handle.subscription, paused = speed == PAUSED_SPEED)
             }
         }
         return result
@@ -515,6 +523,8 @@ internal class LiveTimeshiftControlBridge(
     internal fun subscriptionClosing(subscription: ActiveSubscription) {
         synchronized(lock) {
             if (prioritySubscription === subscription) prioritySubscription = null
+            if (acknowledgedPause?.subscription === subscription) acknowledgedPause = null
+            if (owedPause === subscription) owedPause = null
         }
     }
 
@@ -553,14 +563,116 @@ internal class LiveTimeshiftControlBridge(
         return result
     }
 
-    internal suspend fun setBufferingSpeed(attachment: Attachment, speed: Int): SubscriptionOperationResult<Unit>? {
-        val handle = synchronized(lock) {
-            currentHandle()?.takeIf { it.attachment === attachment }?.also {
-                if (speed == NORMAL_SPEED) attachment.requestedPaused = true
-            }
-        } ?: return null
-        return handle.subscription.setSpeed(speed)
+    /** Captures the subscription [attachment] currently controls, or null when it controls none. */
+    internal fun bufferingTransport(attachment: Attachment): BufferingTransport? = synchronized(lock) {
+        currentHandle()?.takeIf { it.attachment === attachment }?.let { handle ->
+            BufferingTransport(attachment, handle.subscription)
+        }
     }
+
+    /** Runs the transport at normal speed while the paused attachment's presentation stays paused. */
+    internal suspend fun startBuffering(transport: BufferingTransport): SubscriptionOperationResult<Unit>? {
+        synchronized(lock) {
+            val handle = currentHandle()
+            if (handle == null || handle.attachment !== transport.attachment ||
+                handle.subscription !== transport.subscription
+            ) {
+                return null
+            }
+            transport.attachment.requestedPaused = true
+        }
+        val result = transport.subscription.setSpeed(NORMAL_SPEED)
+        if (result is SubscriptionOperationResult.Ok) synchronized(lock) {
+            // This buffering's own restoration now owes the pause.
+            if (owedPause === transport.subscription) owedPause = null
+        }
+        return result
+    }
+
+    /**
+     * Pauses the buffering transport again while this target still owns its subscription.
+     *
+     * A server stop and restart of the same subscription detaches the buffering period but keeps
+     * the transport at normal speed, so ownership follows the subscription rather than the
+     * period. While a stop interrupts the subscription it cannot accept the pause; the pause is then
+     * owed until [awaitTransportSettled] returns, and [owedOnly] retries only a pause still owed.
+     */
+    internal suspend fun restorePausedSpeed(transport: BufferingTransport, owedOnly: Boolean = false): PauseRestoration {
+        val subscription = transport.subscription
+        val attempted = synchronized(lock) {
+            if (!ownsSubscriptionLocked(subscription) || (owedOnly && owedPause !== subscription)) {
+                return PauseRestoration.NotOwned
+            }
+            subscription.state.value
+        }
+        val result = subscription.setSpeed(PAUSED_SPEED)
+        synchronized(lock) {
+            if (result is SubscriptionOperationResult.Ok) {
+                if (owedPause === subscription) owedPause = null
+                if (ownsSubscriptionLocked(subscription)) acknowledgePauseLocked(subscription, paused = true)
+            } else if (result === SubscriptionOperationResult.TransportUnavailable &&
+                ownsSubscriptionLocked(subscription) &&
+                (attempted !is SubscriptionState.Playable || subscription.state.value !== attempted)
+            ) {
+                owedPause = subscription
+                return PauseRestoration.Interrupted
+            }
+        }
+        return PauseRestoration.Answered(result)
+    }
+
+    /** Suspends until [transport]'s subscription is playable again or has ended. */
+    internal suspend fun awaitTransportSettled(transport: BufferingTransport) {
+        transport.subscription.state.first { it is SubscriptionState.Playable || it is SubscriptionState.Terminal }
+    }
+
+    /** Records an acknowledged pause request, which every later period of [subscription] starts from. */
+    private fun acknowledgePauseLocked(subscription: ActiveSubscription, paused: Boolean) {
+        acknowledgedPause = AcknowledgedPause(subscription, paused)
+        activeAttachment?.takeIf { it.subscription === subscription && it.requestedPaused != paused }?.let { current ->
+            current.requestedPaused = paused
+            updateStateLocked()
+            publishCurrentLocked()
+        }
+    }
+
+    /** Closes the buffering transport while this target still owns its subscription. */
+    internal suspend fun closeIfOwned(transport: BufferingTransport): Boolean {
+        synchronized(lock) { if (!ownsSubscriptionLocked(transport.subscription)) return false }
+        subscriptionClosing(transport.subscription)
+        transport.subscription.close()
+        return true
+    }
+
+    /**
+     * True while [subscription] is the current period's subscription, or, between a server stop
+     * and the restarted period, the subscription the live source still holds open.
+     */
+    private fun ownsSubscriptionLocked(subscription: ActiveSubscription): Boolean {
+        if (retired || !token.isActive() || subscription.state.value is SubscriptionState.Terminal) return false
+        val current = activeAttachment
+        return if (current != null) current.subscription === subscription else prioritySubscription === subscription
+    }
+
+    /** The subscription a paused seek runs at normal speed, captured from the attachment that started it. */
+    internal class BufferingTransport internal constructor(
+        internal val attachment: Attachment,
+        internal val subscription: ActiveSubscription,
+    )
+
+    /** Outcome of pausing a buffering transport again. */
+    internal sealed interface PauseRestoration {
+        /** This target no longer owns the transport, or no pause is owed any more; nothing was sent. */
+        data object NotOwned : PauseRestoration
+
+        /** A server stop interrupted the owned subscription; the pause stays owed until it restarts. */
+        data object Interrupted : PauseRestoration
+
+        /** The subscription answered the pause request. */
+        class Answered(val result: SubscriptionOperationResult<Unit>) : PauseRestoration
+    }
+
+    private class AcknowledgedPause(val subscription: ActiveSubscription, val paused: Boolean)
 
     suspend fun seekContent(target: TimeshiftContentTarget, selection: TimeshiftSeekSelection? = null): TimeshiftContentSeekResult {
         var resolvedSelection: TimeshiftSeekSelection? = null
@@ -619,15 +731,6 @@ internal class LiveTimeshiftControlBridge(
 
     internal fun mappingAttachment(): Attachment? = synchronized(lock) {
         currentHandle()?.attachment?.takeIf { attachedPeriodCount == 1 }
-    }
-
-    internal suspend fun closeIfCurrent(attachment: Attachment): Boolean {
-        val subscription = synchronized(lock) {
-            attachment.subscription.takeIf { activeAttachment === attachment }
-        } ?: return false
-        subscriptionClosing(subscription)
-        subscription.close()
-        return true
     }
 
     internal fun playbackPosition(attachment: Attachment, position: Duration, positionResolutionUs: Long = 1L): TimeshiftPlaybackPosition =
@@ -734,6 +837,9 @@ internal class LiveTimeshiftControlBridge(
                     "Timeshift attachment already has a subscription"
                 }
                 subscription = activeSubscription
+                if (requestedPaused == null) {
+                    requestedPaused = acknowledgedPause?.takeIf { it.subscription === activeSubscription }?.paused
+                }
                 if (tracks == null) tracks = (activeSubscription.state.value as? SubscriptionState.Playable)?.tracks
                 grant = activeSubscription.grantedTimeshiftPeriod
                 pendingRestoredObservations?.takeIf { sequence > it.afterSequence }?.let { pending ->

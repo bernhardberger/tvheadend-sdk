@@ -53,30 +53,46 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionState
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTerminalReason
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTermination
+import at.bernhardberger.tvheadend.sdk.playback.SkipOutcome
+import at.bernhardberger.tvheadend.sdk.playback.StreamIndex
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionConfirmation
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStream
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTracks
+import at.bernhardberger.tvheadend.sdk.playback.createSubscriptionManager
 import at.bernhardberger.tvheadend.sdk.testing.FakeSessionCall
+import at.bernhardberger.tvheadend.sdk.testing.ScriptedSubscriptionConnection
 import at.bernhardberger.tvheadend.sdk.testing.FakeTvheadendSession
 import java.io.IOException
 import java.util.concurrent.CancellationException
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.microseconds
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
@@ -1042,6 +1058,579 @@ internal class TvheadendPlaybackCoordinatorTest {
                 owner.join()
             }
         }
+    }
+
+    @Test
+    fun `paused seek buffering yields to later commands and superseding commands end it promptly`() = runTest {
+        for (next in listOf("position", "priority", "stop", "live", "live-not-ready", "shutdown", "resume")) {
+            val fixture = CoordinatorFixture()
+            val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+            try {
+                val subscription = FakeTimeshiftSubscription(120.seconds)
+                val selected = preparePausedSeek(fixture, subscription)
+                val seeking = async { fixture.coordinator.seekTimeshift(selected) }
+                runCurrent()
+                assertFalse(seeking.isCompleted, next)
+                assertEquals(listOf(0, 100), subscription.speeds, next)
+                val startedAt = currentTime
+                if (next == "live-not-ready") fixture.player.liveInstallStatus = PlaybackPlayerInstallStatus.NOT_READY
+                val command = async {
+                    when (next) {
+                        "position" -> fixture.coordinator.timeshiftPlaybackPosition()
+                        "priority" -> fixture.coordinator.setLivePriority(LiveSubscriptionPriority.YIELD)
+                        "stop" -> fixture.coordinator.stop()
+                        "live", "live-not-ready" -> fixture.coordinator.setLiveTarget(ChannelId(5))
+                        "shutdown" -> fixture.coordinator.shutdown(1.seconds)
+                        else -> fixture.coordinator.resumeTimeshift()
+                    }
+                }
+                runCurrent()
+                assertTrue(command.isCompleted, "$next must not wait for paused-seek buffering")
+                assertEquals(startedAt, currentTime, next)
+                if (next == "position" || next == "priority") {
+                    assertFalse(seeking.isCompleted, "$next leaves buffering running")
+                    if (next == "priority") {
+                        assertSame(TimeshiftCommandResult.ACCEPTED, command.getCompleted())
+                        assertEquals(listOf(LiveSubscriptionPriority.YIELD), subscription.priorities)
+                    }
+                    val attachment = fixture.player.requireTimeshiftControls()
+                    attachment.packetMapping.accept(10_000_000, 5_000_000)
+                    attachment.playbackDiscontinuity()
+                    fixture.player.snapshot = snapshot(10, null).copy(periodUid = attachment.periodUid)
+                    advanceTimeBy(21)
+                    runCurrent()
+                    val ready = seeking.getCompleted() as TimeshiftContentSeekResult.Completed
+                    assertSame(TimeshiftCommandResult.ACCEPTED, ready.command)
+                    assertEquals(listOf(0, 100, 0), subscription.speeds)
+                    continue
+                }
+                val result = seeking.getCompleted() as TimeshiftContentSeekResult.Completed
+                assertSame(TimeshiftCommandResult.ACCEPTED, result.seekCommand, next)
+                assertSame(TimeshiftCommandResult.UNAVAILABLE, result.buffering, next)
+                // Supersession shows only in buffering; the overall result keeps the server's acceptance.
+                assertSame(TimeshiftCommandResult.ACCEPTED, result.command, next)
+                assertSame(
+                    if (next == "live-not-ready" || next == "resume") {
+                        TimeshiftCommandResult.ACCEPTED
+                    } else {
+                        TimeshiftCommandResult.UNAVAILABLE
+                    },
+                    result.pauseRestoration,
+                    next,
+                )
+                assertEquals(
+                    when (next) {
+                        // A surviving target is paused again; a retired one closes its subscription.
+                        "live-not-ready" -> listOf(0, 100, 0)
+                        "resume" -> listOf(0, 100, 0, 100)
+                        else -> listOf(0, 100)
+                    },
+                    subscription.speeds,
+                    next,
+                )
+                assertEquals(
+                    when (next) {
+                        "stop" -> PlaybackStopResult.Stopped(null)
+                        "live" -> PlaybackTargetResult.STARTED
+                        "live-not-ready" -> PlaybackTargetResult.NOT_READY
+                        "shutdown" -> PlaybackShutdownResult.DRAINED
+                        else -> TimeshiftCommandResult.ACCEPTED
+                    },
+                    command.getCompleted(),
+                    next,
+                )
+                assertEquals(0, subscription.closeCount, next)
+            } finally {
+                fixture.coordinator.shutdown(1.seconds)
+                owner.join()
+            }
+        }
+    }
+
+    @Test
+    fun `pending paused seek is cancelled with its coordinator owner after pausing the transport again`() = runTest {
+        for (content in listOf(true, false)) {
+            val fixture = CoordinatorFixture()
+            val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+            val subscription = FakeTimeshiftSubscription(120.seconds)
+            val selected = preparePausedSeek(fixture, subscription)
+            val seeking = async {
+                try {
+                    if (content) fixture.coordinator.seekTimeshift(selected) else fixture.coordinator.returnToLive()
+                } catch (cancellation: CancellationException) {
+                    cancellation
+                }
+            }
+            runCurrent()
+            assertFalse(seeking.isCompleted)
+            owner.cancelAndJoin()
+            runCurrent()
+            assertTrue(seeking.getCompleted() is CancellationException, "Cancellation is not a seek result")
+            assertEquals(listOf(0, 100, 0), subscription.speeds, "The buffering transport is paused again first")
+            assertFalse(fixture.player.hasActiveTarget)
+        }
+    }
+
+    @Test
+    fun `cancellation while pausing a buffering transport again reaches the seek caller`() = runTest {
+        for (content in listOf(true, false)) for (trigger in listOf("ready", "pause", "live-not-ready")) {
+            val label = "${if (content) "content" else "live"}-$trigger"
+            val fixture = CoordinatorFixture()
+            val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+            val subscription = FakeTimeshiftSubscription(120.seconds)
+            val selected = preparePausedSeek(fixture, subscription)
+            val seeking = async {
+                try {
+                    if (content) fixture.coordinator.seekTimeshift(selected) else fixture.coordinator.returnToLive()
+                } catch (cancellation: CancellationException) {
+                    cancellation
+                }
+            }
+            runCurrent()
+            assertFalse(seeking.isCompleted, label)
+            val restoring = CancellationException("pause restoration cancelled")
+            subscription.speedAction = { speed ->
+                if (speed == 0) throw restoring
+                SubscriptionOperationResult.Ok(Unit)
+            }
+            if (trigger == "live-not-ready") fixture.player.liveInstallStatus = PlaybackPlayerInstallStatus.NOT_READY
+            val superseding = when (trigger) {
+                "pause" -> async { fixture.coordinator.pauseTimeshift() }
+                "live-not-ready" -> async { fixture.coordinator.setLiveTarget(ChannelId(5)) }
+                else -> {
+                    val attachment = fixture.player.requireTimeshiftControls()
+                    attachment.packetMapping.accept(10_000_000, 5_000_000)
+                    attachment.playbackDiscontinuity()
+                    fixture.player.snapshot = snapshot(10, null).copy(periodUid = attachment.periodUid)
+                    advanceTimeBy(21)
+                    null
+                }
+            }
+            runCurrent()
+            val caught = seeking.getCompleted()
+            assertTrue(caught is CancellationException, label)
+            assertEquals("pause restoration cancelled", (caught as CancellationException).message, label)
+            assertEquals(listOf(0, 100, 0), subscription.speeds, label)
+            owner.join()
+            assertTrue(owner.isCancelled, "$label: the cancellation ends the actor")
+            when (trigger) {
+                // Superseded transport commands had not run; the ended actor rejects them like queued ones.
+                "pause" -> assertSame(TimeshiftCommandResult.SHUT_DOWN, superseding?.getCompleted(), label)
+                "live-not-ready" -> assertSame(PlaybackTargetResult.NOT_READY, superseding?.getCompleted(), label)
+            }
+        }
+    }
+
+    @Test
+    fun `paused seek pauses a restarted subscription again without retiring the stopped one`() = runTest {
+        val variants = listOf(
+            "restarted-before-poll", "bound-on-restart", "restored-before-bind", "pause-rejected",
+            "rejected-before-bind", "restart-timeout", "sdk-paused", "retired-by-stop", "retired-by-live",
+            "retired-by-recording", "retired-by-shutdown", "ended-with-player-unavailable",
+            "resumed-before-repay", "refilled-before-repay",
+        )
+        // Before Media3 binds the restarted period, only the open subscription carries ownership.
+        val beforeBind = setOf("restored-before-bind", "rejected-before-bind")
+        val rejected = setOf("pause-rejected", "rejected-before-bind")
+        val retirements = setOf(
+            "retired-by-stop", "retired-by-live", "retired-by-recording", "retired-by-shutdown",
+            "ended-with-player-unavailable",
+        )
+        val endings = setOf("retired-by-shutdown", "ended-with-player-unavailable")
+        // A command the actor takes before the restart's settled signal replaces the owed pause.
+        val superseding = setOf("resumed-before-repay", "refilled-before-repay")
+        for (variant in variants) {
+            val fixture = CoordinatorFixture()
+            val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+            val transport = ScriptedLiveTransport(this, fixture)
+            try {
+                val sdkPaused = variant == "sdk-paused" || variant == "refilled-before-repay"
+                fixture.coordinator.setLiveTarget(ChannelId(4), LivePlaybackOptions(timeshiftPeriod = 120.seconds))
+                transport.open()
+                fixture.player.attachTimeshift(transport.subscription)
+                fixture.player.openLiveSubscription(transport.subscription)
+                // Without an SDK pause, the paused state is only the server's reported speed.
+                transport.emit(SubscriptionEvent.Timeshift(0, 0, 0, 100_000_000, if (sdkPaused) 100 else 0))
+                val attachment = fixture.player.requireTimeshiftControls()
+                attachment.periodUid = Any()
+                fixture.player.snapshot = snapshot(0, null).copy(periodUid = attachment.periodUid)
+                if (sdkPaused) assertSame(TimeshiftCommandResult.ACCEPTED, fixture.coordinator.pauseTimeshift())
+                assertEquals(true, (fixture.coordinator.timeshiftState.value as LiveTimeshiftState.Available).playbackPaused)
+                val paused = if (sdkPaused) listOf(0) else emptyList()
+
+                val seeking = async { fixture.coordinator.seekTimeshift(attachment.timeline()!!.select(5.seconds)!!) }
+                runCurrent()
+                transport.emit(SubscriptionEvent.Skipped(true, SkipOutcome.ACCEPTED, 5_000_000, null))
+                assertFalse(seeking.isCompleted, variant)
+                assertEquals(paused + 100, transport.connection.speeds, variant)
+
+                transport.bindOnRestart = variant !in beforeBind && variant != "sdk-paused"
+                transport.emit(SubscriptionEvent.Stopped(SubscriptionCondition.NO_DETAIL))
+                if (variant == "restarted-before-poll") transport.started()
+                advanceTimeBy(21)
+                runCurrent()
+                val result = seeking.getCompleted() as TimeshiftContentSeekResult.Completed
+                assertSame(TimeshiftCommandResult.ACCEPTED, result.seekCommand, variant)
+                assertSame(TimeshiftCommandResult.UNAVAILABLE, result.buffering, variant)
+                if (variant == "restarted-before-poll") {
+                    assertSame(TimeshiftCommandResult.ACCEPTED, result.pauseRestoration, variant)
+                    assertEquals(listOf(100, 0), transport.connection.speeds, variant)
+                    assertEquals(true, (fixture.coordinator.timeshiftState.value as LiveTimeshiftState.Available).playbackPaused)
+                    continue
+                }
+                // A stopped subscription admits no speed until it restarts; that is no failed pause.
+                assertSame(TimeshiftCommandResult.TRANSPORT_UNAVAILABLE, result.pauseRestoration, variant)
+                assertSame(TimeshiftCommandResult.TRANSPORT_UNAVAILABLE, result.command, variant)
+                assertEquals(paused + 100, transport.connection.speeds, variant)
+                assertEquals(0, transport.connection.unsubscribeCount, "$variant: the stopped subscription stays open")
+                assertFalse("stop" in fixture.player.operations, "$variant: playback is not retired")
+
+                if (variant == "restart-timeout") {
+                    advanceTimeBy(5.seconds)
+                    runCurrent()
+                    assertEquals(listOf(100), transport.connection.speeds, "An ended subscription owes no pause")
+                    assertFalse("stop" in fixture.player.operations, variant)
+                    continue
+                }
+                if (variant in retirements) {
+                    if (variant == "ended-with-player-unavailable") fixture.player.stopUnavailable = true
+                    when (variant) {
+                        "retired-by-stop" -> fixture.coordinator.stop()
+                        "retired-by-live" -> fixture.coordinator.setLiveTarget(ChannelId(5))
+                        "retired-by-recording" -> fixture.coordinator.setRecordingTarget(DvrEntryId(7))
+                        else -> fixture.coordinator.shutdown(1.seconds)
+                    }
+                    if (variant in endings) {
+                        // The actor returns only once nothing it launched still waits for the restart.
+                        val ended = withTimeoutOrNull(1.seconds) { owner.join() } != null
+                        assertTrue(ended, "$variant: the ended actor leaves nothing waiting for the stopped subscription")
+                    } else {
+                        runCurrent()
+                        val running = owner.activeCoroutines()
+                        transport.subscription.close()
+                        runCurrent()
+                        assertEquals(running, owner.activeCoroutines(), "$variant: nothing waits for the retired subscription")
+                    }
+                    assertEquals(listOf(100), transport.connection.speeds, "$variant: a retired target owes no pause")
+                    continue
+                }
+                if (variant in superseding) {
+                    val refill = variant == "refilled-before-repay"
+                    transport.queue(transport.startedEvent())
+                    if (refill) {
+                        transport.queue(SubscriptionEvent.Timeshift(0, 0, 0, 100_000_000, 100))
+                        // Without a player period identity readiness stays pending.
+                        fixture.player.snapshot = snapshot(0, null)
+                    }
+                    // Queued ahead of the restart, the command runs before the settled signal is handled.
+                    val command = async(start = CoroutineStart.UNDISPATCHED) {
+                        if (refill) fixture.coordinator.returnToLive() else fixture.coordinator.resumeTimeshift()
+                    }
+                    runCurrent()
+                    if (refill) {
+                        transport.emit(SubscriptionEvent.Skipped(true, SkipOutcome.ACCEPTED, 5_000_000, null))
+                        assertFalse(command.isCompleted, "$variant: the restarted period is refilling")
+                    } else {
+                        assertSame(TimeshiftCommandResult.ACCEPTED, command.getCompleted(), variant)
+                    }
+                    assertEquals(paused + listOf(100, 100), transport.connection.speeds, "$variant: the owed pause is dropped")
+                    continue
+                }
+                if (variant in rejected) transport.connection.scriptSpeed(SubscriptionOperationResult.ServerRejected)
+                transport.started()
+                runCurrent()
+                assertEquals(paused + listOf(100, 0), transport.connection.speeds, "$variant: the restart is paused again")
+                if (variant in rejected) {
+                    assertEquals(1, transport.connection.unsubscribeCount, "$variant: uncontrolled restarted input is retired")
+                    assertEquals("stop", fixture.player.operations.last(), variant)
+                    assertSame(LivePlaybackObservation.NoTarget, fixture.coordinator.livePlaybackObservation.value)
+                    continue
+                }
+                if (!transport.bindOnRestart) fixture.player.replaceTimeshiftPeriod(transport.subscription)
+                val restarted = fixture.coordinator.timeshiftState.value as LiveTimeshiftState.Available
+                assertEquals(true, restarted.playbackPaused, "$variant: the restarted period starts paused")
+                assertEquals(0, transport.connection.unsubscribeCount, variant)
+                assertFalse("stop" in fixture.player.operations, variant)
+            } finally {
+                fixture.coordinator.shutdown(1.seconds)
+                owner.join()
+                transport.close()
+            }
+        }
+    }
+
+    @Test
+    fun `a superseding seek keeps the first acknowledgement and refills the same attachment again`() = runTest {
+        for (firstContent in listOf(true, false)) for (secondContent in listOf(true, false)) {
+            val label = "${if (firstContent) "content" else "live"}-then-${if (secondContent) "content" else "live"}"
+            val fixture = CoordinatorFixture()
+            val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+            try {
+                val subscription = FakeTimeshiftSubscription(120.seconds)
+                val selected = preparePausedSeek(fixture, subscription)
+                val attachment = fixture.player.requireTimeshiftControls()
+                val first = async<Any> {
+                    if (firstContent) fixture.coordinator.seekTimeshift(selected) else fixture.coordinator.returnToLive()
+                }
+                runCurrent()
+                assertFalse(first.isCompleted, label)
+                val second = async<Any> {
+                    if (secondContent) {
+                        fixture.coordinator.seekTimeshift(attachment.timeline()!!.select(5.seconds)!!)
+                    } else {
+                        fixture.coordinator.returnToLive()
+                    }
+                }
+                runCurrent()
+                val superseded = first.getCompleted()
+                if (superseded is TimeshiftContentSeekResult.Completed) {
+                    assertSame(TimeshiftCommandResult.UNAVAILABLE, superseded.buffering, label)
+                    assertSame(TimeshiftCommandResult.ACCEPTED, superseded.pauseRestoration, label)
+                }
+                assertSame(
+                    TimeshiftCommandResult.ACCEPTED,
+                    (superseded as? TimeshiftContentSeekResult.Completed)?.command ?: superseded,
+                    "$label: the superseded seek keeps its acceptance",
+                )
+                assertFalse(second.isCompleted, label)
+                assertEquals(listOf(0, 100, 0, 100), subscription.speeds, label)
+                assertTrue(attachment.bufferingSeek, "$label: the second refill keeps recording rendered frames")
+
+                attachment.packetMapping.accept(10_000_000, 5_000_000)
+                attachment.playbackDiscontinuity()
+                fixture.player.snapshot = snapshot(10, null).copy(periodUid = attachment.periodUid)
+                advanceTimeBy(21)
+                runCurrent()
+                val ready = second.getCompleted()
+                assertSame(TimeshiftCommandResult.ACCEPTED, (ready as? TimeshiftContentSeekResult.Completed)?.command ?: ready, label)
+                assertEquals(listOf(0, 100, 0, 100, 0), subscription.speeds, label)
+                assertFalse(attachment.bufferingSeek, label)
+            } finally {
+                fixture.coordinator.shutdown(1.seconds)
+                owner.join()
+            }
+        }
+    }
+
+    @Test
+    fun `a steady stream of non-superseding commands does not starve paused-seek readiness or its timeout`() = runTest {
+        for (ready in listOf(true, false)) {
+            val label = if (ready) "ready" else "timeout"
+            val fixture = CoordinatorFixture()
+            val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+            val subscription = FakeTimeshiftSubscription(120.seconds)
+            val selected = preparePausedSeek(fixture, subscription)
+            val seeking = async { fixture.coordinator.seekTimeshift(selected) }
+            runCurrent()
+            assertFalse(seeking.isCompleted, label)
+            // Each sample takes looper time, so another command is always queued when the actor selects again.
+            fixture.player.snapshotLatency = 1.milliseconds
+            val stream = List(4) {
+                launch {
+                    while (true) fixture.coordinator.timeshiftPlaybackPosition()
+                }
+            }
+            try {
+                if (ready) {
+                    val attachment = fixture.player.requireTimeshiftControls()
+                    attachment.packetMapping.accept(10_000_000, 5_000_000)
+                    attachment.playbackDiscontinuity()
+                    fixture.player.snapshot = snapshot(10, null).copy(periodUid = attachment.periodUid)
+                }
+                advanceTimeBy(if (ready) 100.milliseconds else 5.seconds + 100.milliseconds)
+                assertTrue(seeking.isCompleted, "$label must not wait for the command stream to end")
+                val result = seeking.getCompleted() as TimeshiftContentSeekResult.Completed
+                assertSame(if (ready) TimeshiftCommandResult.ACCEPTED else TimeshiftCommandResult.TIMEOUT, result.buffering, label)
+                assertEquals(listOf(0, 100, 0), subscription.speeds, label)
+            } finally {
+                stream.forEach { it.cancelAndJoin() }
+                fixture.coordinator.shutdown(1.seconds)
+                owner.join()
+            }
+        }
+    }
+
+    @Test
+    fun `slow player samples during paused-seek buffering do not delay stop or shutdown`() = runTest {
+        for (next in listOf("stop", "shutdown")) {
+            val fixture = CoordinatorFixture()
+            val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+            try {
+                val subscription = FakeTimeshiftSubscription(120.seconds)
+                val selected = preparePausedSeek(fixture, subscription)
+                // Each readiness sample outlasts the poll interval, as on a busy application looper.
+                fixture.player.snapshotLatency = 30.milliseconds
+                val seeking = async { fixture.coordinator.seekTimeshift(selected) }
+                advanceTimeBy(100.milliseconds)
+                assertFalse(seeking.isCompleted, next)
+                val command = async<Any> {
+                    if (next == "stop") fixture.coordinator.stop() else fixture.coordinator.shutdown(1.seconds)
+                }
+                // At most one sample in flight before the actor selects its next command.
+                advanceTimeBy(100.milliseconds)
+                assertTrue(command.isCompleted, "$next must not wait for readiness or the buffering timeout")
+                assertEquals(
+                    if (next == "stop") PlaybackStopResult.Stopped(null) else PlaybackShutdownResult.DRAINED,
+                    command.getCompleted(),
+                    next,
+                )
+                val result = seeking.getCompleted() as TimeshiftContentSeekResult.Completed
+                assertSame(TimeshiftCommandResult.UNAVAILABLE, result.buffering, next)
+                assertSame(TimeshiftCommandResult.ACCEPTED, result.command, next)
+                assertEquals(listOf(0, 100), subscription.speeds, next)
+            } finally {
+                fixture.coordinator.shutdown(1.seconds)
+                owner.join()
+            }
+        }
+    }
+
+    @Test
+    fun `a failing pause restoration while the actor ends keeps the original cause`() = runTest {
+        for (failure in listOf(false, true)) {
+            val label = if (failure) "failure" else "cancellation"
+            val fixture = CoordinatorFixture()
+            var ended: Throwable? = null
+            val owner = launch(start = CoroutineStart.UNDISPATCHED) {
+                ended = runCatching { fixture.coordinator.run() }.exceptionOrNull()
+            }
+            val subscription = FakeTimeshiftSubscription(120.seconds)
+            val selected = preparePausedSeek(fixture, subscription)
+            val seeking = async<Any> {
+                try {
+                    fixture.coordinator.seekTimeshift(selected)
+                } catch (cancellation: CancellationException) {
+                    cancellation
+                }
+            }
+            runCurrent()
+            assertFalse(seeking.isCompleted, label)
+            val restoring = IllegalStateException("scripted pause failure")
+            subscription.speedAction = { speed ->
+                if (speed == 0) throw restoring
+                SubscriptionOperationResult.Ok(Unit)
+            }
+            if (failure) {
+                fixture.player.installFailure = IOException("scripted install failure")
+                assertSame(PlaybackTargetResult.SHUT_DOWN, fixture.coordinator.setLiveTarget(ChannelId(5)), label)
+            } else {
+                owner.cancel()
+            }
+            owner.join()
+            // The owner observes why the actor ended, never the failed pause cleanup. Debug-mode stack-trace
+            // recovery copies exceptions across the actor's select, so the suppressed copy is not visible here.
+            val cause = checkNotNull(ended) { label }
+            if (failure) {
+                assertTrue(cause is IOException && cause.message == "scripted install failure", "$label: $cause")
+            } else {
+                assertTrue(cause is CancellationException, "$label: $cause")
+            }
+            assertEquals(listOf(0, 100, 0), subscription.speeds, label)
+            val sought = seeking.getCompleted()
+            if (failure) {
+                assertSame(TimeshiftContentSeekResult.Unavailable, sought, label)
+            } else {
+                assertTrue(sought is CancellationException, label)
+            }
+        }
+    }
+
+    @Test
+    fun `return to live accepted across a restart does not refill the restarted period`() = runTest {
+        val fixture = CoordinatorFixture()
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+        try {
+            val subscription = FakeTimeshiftSubscription(120.seconds)
+            preparePausedSeek(fixture, subscription)
+            val sought = fixture.player.requireTimeshiftControls()
+            subscription.seekAction = {
+                // The server restarts the same subscription before its acknowledgement is processed.
+                fixture.player.stopLiveStream(null)
+                fixture.player.restartLiveStream(subscription)
+                SubscriptionSeekResult.Accepted
+            }
+            val returning = async { fixture.coordinator.returnToLive() }
+            runCurrent()
+            val restarted = fixture.player.requireTimeshiftControls()
+            assertTrue(restarted !== sought)
+            assertEquals(true, (restarted.availableState() as LiveTimeshiftState.Available).playbackPaused)
+            assertTrue(returning.isCompleted, "A period the seek never reached is not refilled for it")
+            assertSame(TimeshiftCommandResult.UNAVAILABLE, returning.getCompleted())
+            assertEquals(listOf(0), subscription.speeds)
+            assertFalse(restarted.bufferingSeek)
+            assertFalse(sought.bufferingSeek)
+        } finally {
+            fixture.coordinator.shutdown(1.seconds)
+            owner.join()
+        }
+    }
+
+    @Test
+    fun `resume answered after a restart bound its period leaves that period playing`() = runTest {
+        val fixture = CoordinatorFixture()
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+        try {
+            val subscription = FakeTimeshiftSubscription(120.seconds)
+            preparePausedSeek(fixture, subscription)
+            val paused = fixture.player.requireTimeshiftControls()
+            val answer = CompletableDeferred<Unit>()
+            subscription.speedAction = {
+                answer.await()
+                SubscriptionOperationResult.Ok(Unit)
+            }
+            val resuming = async { fixture.coordinator.resumeTimeshift() }
+            runCurrent()
+            // The same subscription restarts and its next period binds before the resume is answered.
+            fixture.player.stopLiveStream(null)
+            fixture.player.restartLiveStream(subscription)
+            val restarted = fixture.player.requireTimeshiftControls()
+            assertTrue(restarted !== paused)
+            assertEquals(true, (restarted.availableState() as LiveTimeshiftState.Available).playbackPaused)
+
+            answer.complete(Unit)
+            runCurrent()
+            assertSame(TimeshiftCommandResult.ACCEPTED, resuming.getCompleted())
+            assertEquals(false, (restarted.availableState() as LiveTimeshiftState.Available).playbackPaused)
+            assertEquals(false, (fixture.coordinator.timeshiftState.value as LiveTimeshiftState.Available).playbackPaused)
+
+            fixture.player.emitTimeshift(SubscriptionEvent.Timeshift(0, 0, 0, 100_000_000, 100))
+            restarted.periodUid = Any()
+            restarted.packetMapping.accept(0, 0)
+            fixture.player.snapshot = snapshot(0, null).copy(periodUid = restarted.periodUid)
+            val seeking = async { fixture.coordinator.seekTimeshift(restarted.timeline()!!.select(5.seconds)!!) }
+            runCurrent()
+            assertTrue(seeking.isCompleted, "A resumed period is not refilled as a paused one")
+            val sought = seeking.getCompleted() as TimeshiftContentSeekResult.Completed
+            assertSame(TimeshiftCommandResult.ACCEPTED, sought.command)
+            assertNull(sought.buffering)
+            assertEquals(listOf(0, 100), subscription.speeds, "Nothing pauses the resumed transport again")
+        } finally {
+            fixture.coordinator.shutdown(1.seconds)
+            owner.join()
+        }
+    }
+
+    /** Installs a paused live target whose next accepted seek must refill the paused player. */
+    private suspend fun preparePausedSeek(
+        fixture: CoordinatorFixture,
+        subscription: FakeTimeshiftSubscription,
+    ): TimeshiftContentTarget {
+        fixture.coordinator.setLiveTarget(ChannelId(4), LivePlaybackOptions(timeshiftPeriod = 120.seconds))
+        fixture.player.attachTimeshift(subscription)
+        fixture.player.openLiveSubscription(subscription)
+        fixture.player.emitTimeshift(SubscriptionEvent.Timeshift(0, 0, 0, 100_000_000, 100))
+        val attachment = fixture.player.requireTimeshiftControls()
+        attachment.periodUid = Any()
+        attachment.packetMapping.accept(0, 0)
+        fixture.player.snapshot = snapshot(0, null).copy(periodUid = attachment.periodUid)
+        assertSame(TimeshiftCommandResult.ACCEPTED, fixture.coordinator.pauseTimeshift())
+        subscription.seekAction = {
+            fixture.player.emitTimeshift(SubscriptionEvent.Skipped(
+                true, at.bernhardberger.tvheadend.sdk.playback.SkipOutcome.ACCEPTED, 5_000_000, null,
+            ))
+            SubscriptionSeekResult.AcceptedAt(5.seconds)
+        }
+        return attachment.timeline()!!.select(5.seconds)!!
     }
 
     @Test
@@ -3473,8 +4062,13 @@ private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
         )
     }
 
-    override suspend fun snapshot(token: PlaybackTargetToken): PlaybackPlayerSnapshot? =
-        snapshot.takeIf { active?.token === token && token.isActive() }
+    /** Virtual time one snapshot round trip to the player's looper takes. */
+    var snapshotLatency: Duration = Duration.ZERO
+
+    override suspend fun snapshot(token: PlaybackTargetToken): PlaybackPlayerSnapshot? {
+        delay(snapshotLatency)
+        return snapshot.takeIf { active?.token === token && token.isActive() }
+    }
 
     override suspend fun abandon() {
         abandonCalls += 1
@@ -3534,6 +4128,11 @@ private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
         )
     }
 
+    /** Mirrors the live source receiving a restart before Media3 creates the restarted period. */
+    fun liveStreamRestarted() {
+        checkNotNull(timeshiftControls).subscriptionRestarted(null)
+    }
+
     /** Mirrors the live source when its stopped subscription terminates. */
     fun endLiveStream() {
         checkNotNull(timeshiftControls).subscriptionEnded()
@@ -3561,6 +4160,76 @@ private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
         data class Live(override val token: PlaybackTargetToken) : FakeTarget(token)
         data class Recording(override val token: PlaybackTargetToken) : FakeTarget(token)
     }
+}
+
+/** A real subscription state machine whose consumer mirrors the live source's bridge calls. */
+private class ScriptedLiveTransport(private val scope: TestScope, private val fixture: CoordinatorFixture) {
+    val connection = ScriptedSubscriptionConnection()
+    private val manager = createSubscriptionManager(connection, StandardTestDispatcher(scope.testScheduler))
+    lateinit var subscription: ActiveSubscription
+
+    /** Whether Media3 creates the restarted period on the restart rather than after its pause. */
+    var bindOnRestart = true
+    private var stopped = false
+
+    private val consumer = object : SubscriptionEventConsumer {
+        override suspend fun accept(event: SubscriptionEvent) {
+            if (!fixture.player.hasActiveTarget) return
+            when {
+                event is SubscriptionEvent.Stopped -> {
+                    stopped = true
+                    fixture.player.stopLiveStream(event.issue)
+                }
+                event is SubscriptionEvent.Started && stopped -> {
+                    stopped = false
+                    fixture.player.liveStreamRestarted()
+                    if (bindOnRestart) {
+                        fixture.player.replaceTimeshiftPeriod(subscription)
+                        fixture.player.emitTimeshift(event)
+                    }
+                }
+                !stopped -> fixture.player.emitTimeshift(event)
+            }
+        }
+
+        override fun tracksReady(tracks: SubscriptionTracks) {
+            if (fixture.player.hasActiveTarget) fixture.player.requireTimeshiftControls().tracksReady(tracks)
+        }
+    }
+
+    suspend fun open() {
+        connection.scriptSubscribe(SubscriptionOperationResult.Ok(SubscriptionConfirmation(null, null, null, 120)))
+        manager.startAdmission()
+        val opening = scope.async {
+            manager.open(SubscriptionChannelId(4), consumer, SubscriptionOptions(timeshiftPeriod = 120.seconds))
+        }
+        scope.runCurrent()
+        started()
+        subscription = (opening.await() as SubscriptionOpenResult.Opened).subscription
+    }
+
+    suspend fun started() = emit(startedEvent())
+
+    fun startedEvent(): SubscriptionEvent.Started = SubscriptionEvent.Started(
+        listOf(
+            SubscriptionStream(
+                StreamIndex(0), SubscriptionStreamType.MPEG2_AUDIO, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null,
+            ),
+        ),
+        null,
+        SubscriptionCondition.NO_DETAIL,
+    )
+
+    suspend fun emit(event: SubscriptionEvent) {
+        queue(event)
+        scope.runCurrent()
+    }
+
+    /** Hands [event] to the subscription without running it, so work queued earlier runs first. */
+    suspend fun queue(event: SubscriptionEvent) = connection.emit(event)
+
+    suspend fun close() = manager.closeAndJoin()
 }
 
 internal class FakeTimeshiftSubscription(
@@ -3641,6 +4310,10 @@ private class ManualPlaybackCoordinatorTimeSource : PlaybackCoordinatorTimeSourc
         releases.send(Unit)
     }
 }
+
+/** Coroutines still running below this job, such as work a coordinator owner launched. */
+private fun Job.activeCoroutines(): Int =
+    children.sumOf { child -> (if (child.isActive) 1 else 0) + child.activeCoroutines() }
 
 private fun snapshot(
     position: Long,

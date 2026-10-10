@@ -66,6 +66,13 @@
   `Ineligible` (single) or `TargetAbsent` (batch). Cancelled
   `FakeServerProfileStore` calls change nothing. The consumer guide and KDoc
   state exactly what `FakeTvheadendSession` enforces.
+- A paused timeshift seek no longer blocks stop, target changes, shutdown or
+  other coordinator commands while it refills the player. If a server stop
+  interrupts the subscription during buffering, server delivery is paused again
+  once that subscription restarts instead of playback being retired, and
+  restarted periods keep the acknowledged pause. A seek or return-to-live that a
+  later command interrupts while refilling a paused player still reports the
+  server's acceptance.
 
 ## [0.23.0]
 
