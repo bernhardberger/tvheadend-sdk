@@ -128,16 +128,13 @@ def configured_identity(build_text: str | None = None, tag: str | None = None) -
 
 def artifact_names(module: str, identity: Identity) -> tuple[str, ...]:
     stem = f"{module}-{identity.version}"
-    names = [
+    return (
         f"{stem}.{MODULE_EXTENSIONS[module]}",
         f"{stem}-sources.jar",
         f"{stem}-javadoc.jar",
         f"{stem}.pom",
         f"{stem}.module",
-    ]
-    if module == "sdk-media3":
-        names.append(f"{stem}-ffmpeg-sources.tar.xz")
-    return tuple(names)
+    )
 
 
 def expected_paths(identity: Identity) -> tuple[str, ...]:
@@ -147,7 +144,7 @@ def expected_paths(identity: Identity) -> tuple[str, ...]:
         for module in sorted(MODULE_EXTENSIONS)
         for name in artifact_names(module, identity)
     )
-    require(len(paths) == 26 and len(set(paths)) == 26, "release inventory must contain exactly 26 originals")
+    require(len(paths) == 25 and len(set(paths)) == 25, "release inventory must contain exactly 25 originals")
     return paths
 
 
@@ -159,7 +156,7 @@ def staged_originals(identity: Identity) -> tuple[Original, ...]:
         raise ReleaseError("staged publication manifest is malformed") from error
     require(isinstance(manifest, dict), "staged publication manifest must be an object")
     paths = expected_paths(identity)
-    require(set(manifest) == set(paths), "staged publication manifest does not list the exact 26 originals")
+    require(set(manifest) == set(paths), "staged publication manifest does not list the exact 25 originals")
     repository = ROOT / "build/local-maven"
     originals: list[Original] = []
     for relative in paths:
@@ -423,7 +420,7 @@ def release_assets(originals: tuple[Original, ...], signatures: dict[str, bytes]
     for original in originals:
         assets[original.relative_path + ".md5"] = (digest("md5", original.data) + "\n").encode("ascii")
         assets[original.relative_path + ".sha1"] = (digest("sha1", original.data) + "\n").encode("ascii")
-    require(len(assets) == 104, "Central bundle must contain exactly 104 Maven members")
+    require(len(assets) == 100, "Central bundle must contain exactly 100 Maven members")
     return assets
 
 
@@ -454,7 +451,7 @@ def zip_members(data: bytes) -> dict[str, bytes]:
 def verify_bundle(bundle: bytes, originals: tuple[Original, ...], verifier: SignatureVerifier) -> dict[str, bytes]:
     members = zip_members(bundle)
     expected = {item.relative_path + suffix for item in originals for suffix in ("", ".asc", ".md5", ".sha1")}
-    require(set(members) == expected and len(members) == 104, "Central ZIP does not contain the exact 104 Maven members")
+    require(set(members) == expected and len(members) == 100, "Central ZIP does not contain the exact 100 Maven members")
     for original in originals:
         path = original.relative_path
         require(members[path] == original.data, f"Central ZIP original differs: {original.name}")
@@ -529,7 +526,7 @@ def require_central_absent(originals: tuple[Original, ...], client: HttpClient) 
 
 
 def verify_published_members(expected: dict[str, bytes], client: HttpClient) -> None:
-    require(len(expected) == 104, "published verification requires exactly 104 expected members")
+    require(len(expected) == 100, "published verification requires exactly 100 expected members")
     ordered = tuple(sorted(expected))
     for (path, response), expected_path in zip(central_gets(ordered, client), ordered, strict=True):
         require(path == expected_path, "published Central verification order differs")
@@ -943,8 +940,8 @@ def self_test() -> list[str]:
     errors = check_setup()
     build = f'group = "{GROUP}"\nversion = "0.1.2"\n'
     identity = configured_identity(build, "v0.1.2")
-    if len(expected_paths(identity)) != 26:
-        errors.append("self-test release inventory is not 26 originals")
+    if len(expected_paths(identity)) != 25:
+        errors.append("self-test release inventory is not 25 originals")
     expect_error(errors, "snapshot version", lambda: configured_identity(build.replace("0.1.2", "0.1.2-SNAPSHOT")))
     expect_error(errors, "major-one version", lambda: configured_identity(build.replace("0.1.2", "1.0.0")))
     expect_error(errors, "wrong group", lambda: configured_identity(build.replace(GROUP, "invalid.example")))
@@ -1059,14 +1056,14 @@ def self_test() -> list[str]:
         errors.append("self-test rejected exact successful push CI staging")
     expect_error(errors, "rerun push CI", lambda: select_ci_run(tagged_commit, "token", ci_client({**run, "run_attempt": 2}, artifact)))
     expect_error(errors, "expired CI staging", lambda: select_ci_run(tagged_commit, "token", ci_client(run, {**artifact, "expired": True})))
-    originals = tuple(Original(f"group/module/0.1.2/file-{index}", f"file-{index}", f"original-{index}".encode(), digest("sha256", f"original-{index}".encode())) for index in range(26))
+    originals = tuple(Original(f"group/module/0.1.2/file-{index}", f"file-{index}", f"original-{index}".encode(), digest("sha256", f"original-{index}".encode())) for index in range(25))
     signatures = {item.relative_path + ".asc": b"signature" for item in originals}
     bundle = zip_bytes(release_assets(originals, signatures))
     verifier = lambda _name, signature, _data: signature == b"signature"
     try:
         verify_bundle(bundle, originals, verifier)
     except ReleaseError as error:
-        errors.append(f"self-test rejected exact 104-member bundle: {error}")
+        errors.append(f"self-test rejected exact 100-member bundle: {error}")
     altered = zip_members(bundle)
     altered[originals[0].relative_path + ".md5"] = b"changed\n"
     expect_error(errors, "altered bundle checksum", lambda: verify_bundle(zip_bytes(altered), originals, verifier))
@@ -1080,15 +1077,19 @@ def self_test() -> list[str]:
     barrier = threading.Barrier(CENTRAL_GET_WORKERS)
     active = 0
     maximum_active = 0
+    started = 0
     concurrency_lock = threading.Lock()
 
     def all_absent(_method: str, _url: str, _headers: dict[str, str], _body: bytes | None) -> HttpResponse:
-        nonlocal active, maximum_active
+        nonlocal active, maximum_active, started
         with concurrency_lock:
             active += 1
             maximum_active = max(maximum_active, active)
+            started += 1
+            first_batch = started <= CENTRAL_GET_WORKERS
         try:
-            barrier.wait(timeout=5)
+            if first_batch:
+                barrier.wait(timeout=5)
         except threading.BrokenBarrierError:
             return HttpResponse(500, b"")
         finally:
@@ -1263,7 +1264,7 @@ def verify_published() -> None:
     finally:
         terminate_gpg_agents(temporary)
         shutil.rmtree(temporary)
-    print("Published Central bytes match all 104 signed Maven members")
+    print("Published Central bytes match all 100 signed Maven members")
 
 
 def main() -> int:

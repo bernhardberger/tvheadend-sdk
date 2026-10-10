@@ -12,7 +12,7 @@ The dedicated Maven key is separate from every Android signing key.
 
 The protected prepare step imports the private primary into an ephemeral
 `GNUPGHOME`, selects the full fingerprint, passes the passphrase through standard
-input, signs each of the 26 originals, and verifies every detached signature
+input, signs each of the 25 originals, and verifies every detached signature
 against a separate keyring loaded from the tracked public key. The retained
 workflow artifact contains only public release material.
 

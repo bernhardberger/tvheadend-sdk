@@ -730,6 +730,40 @@ duration does not grant seek access. Missing file-size or usable PCR evidence ke
 the recording forward-only, as do other MPEG-TS codecs.
 Temporary EOF does not end playback or mark the recording watched.
 
+### Software audio decoding
+
+`sdk-media3` bundles no software audio decoder. `createTvheadendRenderersFactory`
+prefers platform renderers and enables Media3's extension renderer mode, so an
+application-supplied Media3 extension audio decoder is used only when no
+platform renderer supports a format. Video extension renderers (libvpx,
+libdav1d, FFmpeg video) are not installed.
+
+An application may need one when neither platform decoding nor passthrough
+covers a broadcast audio format, for example AC-3 or E-AC-3 on an Android TV
+device without a platform Dolby decoder whose HDMI sink does not accept AC-3
+passthrough. The same applies when passthrough is disabled through
+`TvheadendAudioOutputProvider` on such a device.
+
+To decode those formats in software, bundle the Media3 FFmpeg audio extension
+(`androidx.media3.decoder.ffmpeg`) in the application. The SDK's renderers
+factory then picks up its `FfmpegAudioRenderer` automatically; no SDK call is
+needed. Media3 does not publish that module to Google Maven, so the application
+owns:
+
+- building the module and its native libraries as described in the Media3
+  `decoder_ffmpeg` README, with the decoders it needs (for example `ac3`,
+  `eac3`, and `mp3`) enabled;
+- building it from the same Media3 release that `sdk-media3` resolves (see the
+  [build matrix](build-matrix.md));
+- FFmpeg's LGPL obligations and any codec patent licensing for its distribution.
+
+Without a capable decoder or passthrough path, the audio track is still exposed
+in the application player's `currentTracks`, but `Tracks.Group.isTrackSupported`
+reports it as unsupported and the default track selector does not select it.
+Playback continues with the remaining supported tracks, which may leave video
+without audio. The SDK adds no track wrapper; the application can offer another
+audio track or tell the user that the format cannot be played on this device.
+
 ### Ownership and shutdown
 
 The coordinator may install and retire TVHeadend sources and listeners on the

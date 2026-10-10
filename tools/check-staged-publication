@@ -23,21 +23,6 @@ VERSION_PATTERN = re.compile(r"0\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)")
 CHECKSUM_SUFFIXES = (".md5", ".sha1", ".sha256", ".sha512")
 LEGAL_ENTRIES = ("META-INF/LICENSE", "META-INF/NOTICE")
 PROJECT_URL = "https://github.com/bernhardberger/tvheadend-sdk"
-FFMPEG_JAR = ROOT / "sdk-media3/libs/media3-decoder-ffmpeg-1.11.0.jar"
-FFMPEG_SOURCE = ROOT / "third_party/ffmpeg/ffmpeg-6.0-3f92512f-sources.tar.xz"
-FFMPEG_CLASSES = {
-    "androidx/media3/decoder/ffmpeg/ExperimentalFfmpegVideoRenderer.class",
-    "androidx/media3/decoder/ffmpeg/FfmpegAudioDecoder.class",
-    "androidx/media3/decoder/ffmpeg/FfmpegAudioRenderer.class",
-    "androidx/media3/decoder/ffmpeg/FfmpegDecoderException.class",
-    "androidx/media3/decoder/ffmpeg/FfmpegLibrary$1.class",
-    "androidx/media3/decoder/ffmpeg/FfmpegLibrary.class",
-    "androidx/media3/decoder/ffmpeg/package-info.class",
-}
-FFMPEG_NATIVES = {
-    f"jni/{abi}/libffmpegJNI.so"
-    for abi in ("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
-}
 
 
 class VerificationError(RuntimeError):
@@ -48,13 +33,12 @@ class VerificationError(RuntimeError):
 class Module:
     main_extension: str
     android: bool = False
-    ffmpeg: bool = False
 
 
 MODULES = {
     "sdk-android": Module("aar", android=True),
     "sdk-core": Module("jar"),
-    "sdk-media3": Module("aar", android=True, ffmpeg=True),
+    "sdk-media3": Module("aar", android=True),
     "sdk-playback": Module("jar"),
     "sdk-testing": Module("jar"),
 }
@@ -99,16 +83,13 @@ def configured_version(build_text: str | None = None) -> str:
 
 def artifact_names(module: str, version: str) -> dict[str, str]:
     spec = MODULES[module]
-    names = {
+    return {
         "main": f"{module}-{version}.{spec.main_extension}",
         "sources": f"{module}-{version}-sources.jar",
         "javadoc": f"{module}-{version}-javadoc.jar",
         "pom": f"{module}-{version}.pom",
         "module": f"{module}-{version}.module",
     }
-    if spec.ffmpeg:
-        names["ffmpeg-sources"] = f"{module}-{version}-ffmpeg-sources.tar.xz"
-    return names
 
 
 def expected_originals(version: str) -> dict[str, tuple[str, str]]:
@@ -118,7 +99,7 @@ def expected_originals(version: str) -> dict[str, tuple[str, str]]:
         for module in sorted(MODULES)
         for label, name in artifact_names(module, version).items()
     }
-    require(len(result) == 26, "publication inventory must contain exactly 26 originals")
+    require(len(result) == 25, "publication inventory must contain exactly 25 originals")
     return result
 
 
@@ -350,23 +331,6 @@ def verify_jar(data: bytes, kind: str, label: str) -> None:
         raise VerificationError(f"{label} is not a valid ZIP archive") from error
 
 
-def verify_ffmpeg_jar(data: bytes, label: str) -> None:
-    try:
-        with zipfile.ZipFile(io.BytesIO(data)) as archive, zipfile.ZipFile(FFMPEG_JAR) as approved:
-            names = safe_zip(archive, f"{label} embedded FFmpeg JAR")
-            require({name for name in names if not name.endswith("/")} == FFMPEG_CLASSES, f"{label} embeds an unexpected FFmpeg payload")
-            classes = {name: archive.read(name) for name in names if name.endswith(".class")}
-            expected = {name: approved.read(name) for name in FFMPEG_CLASSES}
-            require(set(classes) == FFMPEG_CLASSES and classes == expected, f"{label} embeds different FFmpeg classes")
-            require(all(len(value) >= 8 and value[:4] == b"\xca\xfe\xba\xbe" and int.from_bytes(value[6:8], "big") == 52 for value in classes.values()), f"{label} embeds a non-Java-8 FFmpeg class")
-    except (KeyError, zipfile.BadZipFile) as error:
-        raise VerificationError(f"{label} has a malformed FFmpeg JAR") from error
-
-
-def verify_ffmpeg_source(data: bytes) -> None:
-    require(data == read_regular(FFMPEG_SOURCE, "approved FFmpeg source archive"), "sdk-media3 staged FFmpeg source bytes differ")
-
-
 def verify_aar(data: bytes, module: str) -> None:
     label = f"{module} AAR"
     try:
@@ -374,16 +338,7 @@ def verify_aar(data: bytes, module: str) -> None:
             names = safe_zip(archive, label)
             require(names.count("classes.jar") == 1, f"{label} must contain exactly one classes.jar")
             verify_jar(archive.read("classes.jar"), "main", f"{label} classes.jar")
-            if module != "sdk-media3":
-                return
-            embedded = "libs/media3-decoder-ffmpeg-1.11.0.jar"
-            require(names.count(embedded) == 1, f"{label} lacks the exact embedded FFmpeg JAR")
-            verify_ffmpeg_jar(archive.read(embedded), label)
-            natives = {name for name in names if name.endswith(".so")}
-            require(natives == FFMPEG_NATIVES, f"{label} has the wrong FFmpeg native inventory")
-            for name in sorted(FFMPEG_NATIVES):
-                local = ROOT / "sdk-media3/src/main/jniLibs" / Path(name).relative_to("jni")
-                require(archive.read(name) == read_regular(local, f"approved {Path(name).name}"), f"{label} embeds different FFmpeg native bytes")
+            require(not any(name.endswith(".so") or name.startswith("libs/") for name in names), f"{label} bundles native libraries or local JARs")
     except zipfile.BadZipFile as error:
         raise VerificationError(f"{label} is not a valid ZIP archive") from error
 
@@ -419,13 +374,11 @@ def verify(repository: Path = REPOSITORY) -> dict[str, str]:
             verify_jar(artifacts["main"], "main", f"{module} main JAR")
         verify_jar(artifacts["sources"], "sources", f"{module} sources JAR")
         verify_jar(artifacts["javadoc"], "javadoc", f"{module} Javadoc JAR")
-        if MODULES[module].ffmpeg:
-            verify_ffmpeg_source(artifacts["ffmpeg-sources"])
         for label, name in names.items():
             relative = f"{GROUP.replace('.', '/')}/{module}/{version}/{name}"
             require(expected.get(relative) == (module, label), "internal staged inventory differs")
             manifest[relative] = sha256(artifacts[label])
-    require(set(manifest) == set(expected), "staged publication does not contain the exact 26 originals")
+    require(set(manifest) == set(expected), "staged publication does not contain the exact 25 originals")
     return dict(sorted(manifest.items()))
 
 
@@ -449,7 +402,7 @@ def expect_error(errors: list[str], label: str, action: Callable[[], object]) ->
 def self_test() -> list[str]:
     errors: list[str] = []
     build = f'group = "{GROUP}"\nversion = "0.4.0"\n'
-    if configured_version(build) != "0.4.0" or len(expected_originals("0.4.0")) != 26:
+    if configured_version(build) != "0.4.0" or len(expected_originals("0.4.0")) != 25:
         errors.append("self-test rejected the exact five-module release identity")
     expected_publication_names = {
         "sdk-android": "TVHeadend Kotlin SDK: Android",
@@ -559,20 +512,13 @@ def self_test() -> list[str]:
         errors.append(f"self-test rejected a valid synthetic JAR: {error}")
     expect_error(errors, "missing standard notice", lambda: verify_jar(archive({key: value for key, value in legal.items() if key != "META-INF/NOTICE"}), "main", "synthetic JAR"))
     expect_error(errors, "nonstandard notice", lambda: verify_jar(archive({**legal, "META-INF/NOTICE.md": b"duplicate"}), "main", "synthetic JAR"))
-    approved_source = read_regular(FFMPEG_SOURCE, "approved FFmpeg source archive")
+    aar = {"classes.jar": archive(legal)}
     try:
-        verify_ffmpeg_source(approved_source)
-        approved_jar = read_regular(FFMPEG_JAR, "approved FFmpeg JAR")
-        verify_ffmpeg_jar(approved_jar, "approved FFmpeg JAR")
-        with zipfile.ZipFile(io.BytesIO(approved_jar)) as ffmpeg:
-            classes = {name: ffmpeg.read(name) for name in FFMPEG_CLASSES}
-        classes[next(iter(sorted(classes)))] = b"changed"
-        expect_error(errors, "altered FFmpeg class", lambda: verify_ffmpeg_jar(archive(classes), "synthetic FFmpeg JAR"))
-        classes.pop(next(iter(sorted(classes))))
-        expect_error(errors, "missing FFmpeg class", lambda: verify_ffmpeg_jar(archive(classes), "synthetic FFmpeg JAR"))
-        expect_error(errors, "altered FFmpeg source", lambda: verify_ffmpeg_source(approved_source + b"changed"))
-    except (VerificationError, zipfile.BadZipFile) as error:
-        errors.append(f"self-test rejected approved FFmpeg inputs: {error}")
+        verify_aar(archive(aar), "sdk-media3")
+    except VerificationError as error:
+        errors.append(f"self-test rejected a valid synthetic AAR: {error}")
+    expect_error(errors, "bundled native library", lambda: verify_aar(archive({**aar, "jni/x86_64/libexample.so": b"native"}), "sdk-media3"))
+    expect_error(errors, "bundled local JAR", lambda: verify_aar(archive({**aar, "libs/example.jar": archive(legal)}), "sdk-media3"))
     try:
         manifest_path("build/publication-manifest.json")
     except VerificationError as error:
@@ -607,7 +553,7 @@ def main() -> int:
                 except (UnicodeError, json.JSONDecodeError) as error:
                     raise VerificationError("comparison manifest is malformed") from error
                 require(expected == manifest, "recreated publication bytes differ from the recorded manifest")
-        print("Staged SDK publication passed: five modules, 26 originals, metadata, legal notices, and FFmpeg payload/source")
+        print("Staged SDK publication passed: five modules, 25 originals, metadata, legal notices, and no bundled native payloads")
         return 0
     except (VerificationError, UnicodeError) as error:
         print(f"error: {error}", file=sys.stderr)

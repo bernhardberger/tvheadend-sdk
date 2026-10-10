@@ -41,7 +41,7 @@ checks.
 ## Push CI Staging
 
 A successful first-attempt `main` push CI run retains the verified
-`build/local-maven` repository, its exact 26-original manifest, and a provenance
+`build/local-maven` repository, its exact 25-original manifest, and a provenance
 record bound to the commit and CI run. Pull requests and reruns do not create
 this seven-day `staged-publication-${{ github.run_id }}` artifact. The retained
 bytes are produced only after the clean build, checks, staging verification,
@@ -59,9 +59,9 @@ attempt-only job. The job:
    artifact.
 3. Downloads that staging without setting up Java, Gradle, or Android, verifies
    the artifact's commit/run provenance, and locally rechecks its exact manifest,
-   sources, Javadocs, POM and Gradle metadata, legal entries, and Media3 FFmpeg
-   binary and corresponding-source payloads.
-4. Requires all 104 signed Central member paths to be absent, using at most
+   sources, Javadocs, POM and Gradle metadata, legal entries, and the absence of
+   bundled native libraries or local JARs in the Android archives.
+4. Requires all 100 signed Central member paths to be absent, using at most
    eight concurrent GETs, before reading the
    OpenPGP secrets, signs and verifies every original, and creates a deterministic
    Maven-layout ZIP plus release manifest and notes.

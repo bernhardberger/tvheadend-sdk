@@ -7,6 +7,13 @@
 - The `api` dependency `kotlinx-coroutines-core` moves from 1.10.2 to 1.11.0, so
   consumers resolve 1.11.0 transitively. The build now uses Gradle 9.8.1 and
   Android Gradle Plugin 9.4.1. Media3 remains at 1.11.0.
+- **BREAKING:** `sdk-media3` no longer bundles the Media3 FFmpeg audio decoder or
+  its native libraries and no longer publishes the `ffmpeg-sources` classifier.
+  Software audio decoding is application policy: an audio track with neither a
+  platform decoder nor a passthrough path is reported as unsupported. Apps that
+  need software AC-3, E-AC-3 or MP3 decoding bundle their own Media3 FFmpeg
+  audio extension, which the SDK renderers factory picks up automatically; see
+  [software audio decoding](docs/consumer-guide.md#software-audio-decoding).
 
 ## [0.23.0]
 
@@ -771,7 +778,8 @@ unvalidated codecs fail closed.
 
 The Media3 module includes the corresponding FFmpeg 6.0 source archive for its
 optional GPL decoder fallback. The source, binary, and redistribution evidence
-is recorded in `docs/ffmpeg-contingency.md`.
+is recorded in
+[`docs/ffmpeg-contingency.md`](https://github.com/bernhardberger/tvheadend-sdk/blob/v0.1.0/docs/ffmpeg-contingency.md).
 
 This recovery aligns the tracked Maven OpenPGP public key and approved
 fingerprint with the protected release environment. It does not change SDK

@@ -18,7 +18,6 @@ import androidx.media3.common.text.CueGroup
 import androidx.media3.decoder.DecoderInputBuffer
 import androidx.media3.datasource.ByteArrayDataSource
 import androidx.media3.datasource.DataSpec
-import androidx.media3.decoder.ffmpeg.FfmpegLibrary
 import androidx.media3.exoplayer.DecoderCounters
 import androidx.media3.exoplayer.DecoderReuseEvaluation
 import androidx.media3.exoplayer.DefaultLoadControl
@@ -515,14 +514,6 @@ internal class Media3SampleQueueInstrumentationTest {
         } finally {
             queue.release()
         }
-    }
-
-    @Test
-    fun bundledFfmpegContingencySupportsRequiredAudioFormats() {
-        assertTrue("FFmpeg native library must load", FfmpegLibrary.isAvailable())
-        assertTrue("FFmpeg must support MPEG audio", FfmpegLibrary.supportsFormat(MimeTypes.AUDIO_MPEG))
-        assertTrue("FFmpeg must support AC-3", FfmpegLibrary.supportsFormat(MimeTypes.AUDIO_AC3))
-        assertTrue("FFmpeg must support E-AC-3", FfmpegLibrary.supportsFormat(MimeTypes.AUDIO_E_AC3))
     }
 
     @Test

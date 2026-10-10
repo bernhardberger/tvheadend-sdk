@@ -57,6 +57,10 @@ that remember explicit choices should restore them only after `onTracksChanged`
 reports support in the new mode. A track playable through passthrough may have
 no local decoder. Other track-selection parameters are retained.
 
+The SDK bundles no software audio decoder. Applications that need software
+AC-3, E-AC-3, or MP3 decoding add the Media3 FFmpeg audio extension themselves; see
+[software audio decoding](docs/consumer-guide.md#software-audio-decoding).
+
 ## Server profile storage
 
 `sdk-android` persists one selected server profile through the application-scoped
@@ -193,9 +197,7 @@ ineligible, or observation-expired. Covered results retain the exact immutable
 observation that established the coverage.
 
 See [the build matrix](docs/build-matrix.md) for the pinned toolchain and test
-runtime split. The optional decoder fallback's exact source, build, checksums,
-and redistribution requirements are recorded in the
-[FFmpeg contingency notes](docs/ffmpeg-contingency.md). Phase 4 real-device
+runtime split. Phase 4 real-device
 acceptance is recorded in the
 [playback verification notes](docs/playback-device-verification.md). Phase 5
 process, credential, connectivity, and NSD acceptance is recorded in the

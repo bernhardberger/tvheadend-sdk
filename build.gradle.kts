@@ -290,7 +290,6 @@ val productionGraphs = sdkModules.associateWith {
             "project::sdk-playback",
             "androidx.media3:media3-exoplayer:1.11.0",
             "androidx.media3:media3-extractor:1.11.0",
-            "file:media3-decoder-ffmpeg-1.11.0.jar",
             "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0",
         ),
         resolved = (if (useHtspComposite) {
@@ -353,7 +352,6 @@ val scopedDirectDependencies = sdkModules.associateWith { emptySet<String>() }.t
         "api=project::sdk-playback",
         "api=androidx.media3:media3-exoplayer:1.11.0",
         "implementation=androidx.media3:media3-extractor:1.11.0",
-        "implementation=file:media3-decoder-ffmpeg-1.11.0.jar",
         "implementation=org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0",
     )
     this["sdk-testing"] = setOf(

@@ -17,8 +17,10 @@ import androidx.media3.exoplayer.video.MediaCodecVideoRenderer
 import androidx.media3.exoplayer.video.VideoRendererEventListener
 
 /**
- * Creates renderers that prefer platform codecs and use the bundled FFmpeg audio decoder only
- * when no platform renderer supports the format.
+ * Creates renderers that prefer platform codecs. An application-supplied Media3 extension audio
+ * decoder, such as the FFmpeg audio extension, is used only when no platform renderer supports the
+ * format. Video extension renderers (libvpx, libdav1d, FFmpeg video) are not installed. The SDK
+ * bundles no extension decoder.
  * Includes finite paused H.264 sample draining for the SDK live sample streams.
  */
 @androidx.media3.common.util.UnstableApi
