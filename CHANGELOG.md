@@ -36,6 +36,15 @@
   it scheduled or recording do not confirm, so the call returns
   `AcceptedButUnconfirmed` if no such update arrives before the confirmation
   deadline.
+- `TvheadendConnectivity` tracks only the current default network. After the
+  default network switched, losing the new default kept the status `AVAILABLE`,
+  so `UNAVAILABLE` was never reported and session retries on network return
+  never fired.
+- A credential DataStore file that cannot be parsed is now replaced on first
+  access and reads as `Missing`, so it can be cleared and set up again. Before,
+  every profile store operation returned `Unavailable` permanently. The consumer
+  guide explains how to exclude the store from Android backups and device
+  transfer.
 
 ## [0.23.0]
 

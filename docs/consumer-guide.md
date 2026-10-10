@@ -830,6 +830,51 @@ active secure edit surface needs it, then drop every reference. Never serialize
 it, save it in instance state, log it, or use it as diagnostic data. The store
 does not coordinate Android multi-process access.
 
+#### Exclude the profile from backups
+
+`TvheadendServerProfileStore` and the deprecated `TvheadendCredentialStore`
+share one DataStore file,
+`files/datastore/tvheadend_sdk_credentials.preferences_pb`. Android Auto Backup
+and device-to-device transfer include it by default, together with its
+plaintext endpoint fields. The Keystore key that encrypts password profiles is
+never restored, so a restored password profile loads as `Unavailable` and the
+user must enter it again. Exclude the file in the application's backup rules so
+a restore starts from `Missing` instead. Add the `<exclude>` elements to the
+application's existing rules files rather than replacing them.
+
+Apps that target API 31 or higher use `dataExtractionRules` on Android 12 and
+later, for example in `res/xml/data_extraction_rules.xml`:
+
+```xml
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="datastore/tvheadend_sdk_credentials.preferences_pb" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="datastore/tvheadend_sdk_credentials.preferences_pb" />
+    </device-transfer>
+</data-extraction-rules>
+```
+
+On earlier Android versions, and for apps that target a lower API level,
+`fullBackupContent` applies, for example in `res/xml/backup_rules.xml`:
+
+```xml
+<full-backup-content>
+    <exclude domain="file" path="datastore/tvheadend_sdk_credentials.preferences_pb" />
+</full-backup-content>
+```
+
+Reference both from the `<application>` element with
+`android:dataExtractionRules="@xml/data_extraction_rules"` and
+`android:fullBackupContent="@xml/backup_rules"`. On Android 12 and later,
+`android:allowBackup="false"` does not stop device-to-device transfer, so keep
+the `<device-transfer>` rule even then.
+
+A store file that cannot be parsed is replaced on first access and reads as
+`Missing`; a record that parses but cannot be used, such as one whose Keystore
+key is gone, reads as `Unavailable`.
+
 ### Discovery and connectivity
 
 Collect `TvheadendDiscovery(context).state` while LAN discovery is needed. It is

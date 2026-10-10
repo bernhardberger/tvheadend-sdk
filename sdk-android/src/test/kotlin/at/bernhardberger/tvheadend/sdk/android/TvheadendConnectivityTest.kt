@@ -57,7 +57,7 @@ internal class TvheadendConnectivityTest {
     }
 
     @Test
-    fun `platform registration aggregates networks and unregisters once`() {
+    fun `platform registration tracks the current default network and unregisters once`() {
         val platform = FakeConnectivityPlatform()
         val states = mutableListOf<Boolean>()
         val registration = ConnectivityRegistration(platform, states::add)
@@ -71,8 +71,24 @@ internal class TvheadendConnectivityTest {
         registration.close()
         registration.close()
 
-        assertEquals(listOf(true, true, true, false, false), states)
+        assertEquals(listOf(true, true, false, false), states)
         assertEquals(1, platform.unregisterCalls)
+    }
+
+    @Test
+    fun `losing the switched default network reports unavailable without a previous default loss`() {
+        val platform = FakeConnectivityPlatform()
+        val states = mutableListOf<Boolean>()
+        val registration = ConnectivityRegistration(platform, states::add)
+
+        registration.start()
+        platform.available("wifi")
+        platform.available("cellular")
+        platform.lost("cellular")
+        platform.available("wifi")
+        platform.lost("wifi")
+
+        assertEquals(listOf(true, true, false, true, false), states)
     }
 
     @Test

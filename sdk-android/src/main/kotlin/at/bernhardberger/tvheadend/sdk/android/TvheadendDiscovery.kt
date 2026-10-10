@@ -462,13 +462,17 @@ internal data class NsdServiceRecord(
     val key: String,
     val serviceType: String,
     val platformValue: Any,
-)
+) {
+    override fun toString(): String = "NsdServiceRecord(<redacted>)"
+}
 
 internal data class ResolvedNsdService(
     val name: String,
     val host: String?,
     val port: Int,
-)
+) {
+    override fun toString(): String = "ResolvedNsdService(<redacted>)"
+}
 
 internal class NsdResolutionCoordinator {
     private val lock = Any()
@@ -614,11 +618,13 @@ private class AndroidNsdPlatform(
     }
 }
 
-private data class PendingResolution(
+internal data class PendingResolution(
     val key: String,
     val service: NsdServiceRecord,
     var attempts: Int = 1,
-)
+) {
+    override fun toString(): String = "PendingResolution(<redacted>)"
+}
 
 private data class FailurePlan(
     val notify: Boolean,

@@ -1,12 +1,20 @@
 package at.bernhardberger.tvheadend.sdk.android
 
 import android.content.Context
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.mutablePreferencesOf
 import at.bernhardberger.tvheadend.sdk.core.ServerProfileAuthenticationMode
 import at.bernhardberger.tvheadend.sdk.core.ServerProfileReadResult
+import java.io.File
 import java.nio.ByteBuffer
 import java.util.concurrent.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -16,6 +24,7 @@ import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 
 internal class TvheadendServerProfileStoreTest {
     @Test
@@ -350,6 +359,28 @@ internal class TvheadendServerProfileStoreTest {
     }
 
     @Test
+    fun `corrupt credential file reads as missing and remains clearable`(@TempDir directory: File) = runTest {
+        val dataStoreScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        try {
+            val unhandled = corruptCredentialStore(File(directory, "unhandled"), dataStoreScope, null)
+            val handled = corruptCredentialStore(
+                File(directory, "handled"),
+                dataStoreScope,
+                credentialCorruptionHandler,
+            )
+
+            assertSame(ServerProfileReadResult.Unavailable, unhandled.loadProfile())
+            assertSame(ServerProfileReadResult.Unavailable, unhandled.clearProfile())
+            assertSame(ServerProfileReadResult.Missing, handled.loadProfile())
+            assertSame(ServerProfileReadResult.Missing, handled.clearProfile())
+            assertTrue(handled.storeAnonymous("test.invalid") is ServerProfileReadResult.Available)
+            assertTrue(handled.loadProfile() is ServerProfileReadResult.Available)
+        } finally {
+            dataStoreScope.cancel()
+        }
+    }
+
+    @Test
     fun `profile cancellation propagates from crypto write read and clear`() {
         val cancellation = CancellationException("cancelled")
         val encryptCipher = FakeCredentialCipher().apply { encryptFailure = cancellation }
@@ -450,4 +481,21 @@ internal class TvheadendServerProfileStoreTest {
             ),
         )
     }
+}
+
+private fun corruptCredentialStore(
+    directory: File,
+    scope: CoroutineScope,
+    corruptionHandler: ReplaceFileCorruptionHandler<Preferences>?,
+): TvheadendServerProfileStore {
+    val file = File(directory, "credentials.preferences_pb")
+    directory.mkdirs()
+    // A length-delimited field that claims five bytes but supplies one.
+    file.writeBytes(byteArrayOf(0x0A, 0x05, 0x01))
+    val dataStore = PreferenceDataStoreFactory.create(
+        corruptionHandler = corruptionHandler,
+        scope = scope,
+        produceFile = { file },
+    )
+    return TvheadendServerProfileStore.create(DataStoreCredentialStorage(dataStore), FakeCredentialCipher())
 }

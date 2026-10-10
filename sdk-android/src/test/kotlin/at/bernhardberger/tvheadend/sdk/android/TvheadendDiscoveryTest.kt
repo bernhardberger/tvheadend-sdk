@@ -244,6 +244,32 @@ internal class TvheadendDiscoveryTest {
         registration.close()
         assertEquals(1, platform.stopCalls)
     }
+
+    @Test
+    fun `internal NSD records redact service names endpoints and platform values`() {
+        val platformValue = object : Any() {
+            override fun toString(): String = "secret.invalid:9982"
+        }
+        val record = NsdServiceRecord(
+            key = "TVHeadend on secret.invalid",
+            serviceType = "_htsp._tcp",
+            platformValue = platformValue,
+        )
+        val rendered = listOf(
+            record.toString(),
+            ResolvedNsdService("TVHeadend on secret.invalid", "192.0.2.20", 9_982).toString(),
+            PendingResolution(record.key, record).toString(),
+        )
+
+        assertEquals(
+            listOf(
+                "NsdServiceRecord(<redacted>)",
+                "ResolvedNsdService(<redacted>)",
+                "PendingResolution(<redacted>)",
+            ),
+            rendered,
+        )
+    }
 }
 
 private class FakeNsdDiscoveryBackend : NsdDiscoveryBackend {

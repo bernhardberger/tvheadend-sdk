@@ -103,17 +103,17 @@ internal class ConnectivityRegistration(
     private val onAvailabilityChanged: (Boolean) -> Unit,
 ) : CallbackRegistration {
     private val lock = Any()
-    private val availableNetworks = mutableSetOf<Any>()
+    private var defaultNetwork: Any? = null
     private var registered = false
     private var closed = false
 
     private val listener = object : ConnectivityPlatformListener {
         override fun onAvailable(network: Any) {
-            update(network, available = true)
+            replaceDefault(network)
         }
 
         override fun onLost(network: Any) {
-            update(network, available = false)
+            clearDefault(network)
         }
 
         override fun onUnavailable() {
@@ -152,19 +152,26 @@ internal class ConnectivityRegistration(
         }
     }
 
-    private fun update(network: Any, available: Boolean) {
-        val current = synchronized(lock) {
+    // The default-network callback reports each new default through onAvailable without losing the
+    // previous one, so only the latest default is tracked and only its loss means no default.
+    private fun replaceDefault(network: Any) {
+        synchronized(lock) {
             if (closed) {
                 return
             }
-            if (available) {
-                availableNetworks += network
-            } else {
-                availableNetworks -= network
-            }
-            availableNetworks.isNotEmpty()
+            defaultNetwork = network
         }
-        onAvailabilityChanged(current)
+        onAvailabilityChanged(true)
+    }
+
+    private fun clearDefault(network: Any) {
+        synchronized(lock) {
+            if (closed || defaultNetwork != network) {
+                return
+            }
+            defaultNetwork = null
+        }
+        onAvailabilityChanged(false)
     }
 
     private fun publishUnavailable() {
@@ -172,7 +179,7 @@ internal class ConnectivityRegistration(
             if (closed) {
                 false
             } else {
-                availableNetworks.clear()
+                defaultNetwork = null
                 true
             }
         }

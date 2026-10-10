@@ -4,9 +4,11 @@ package at.bernhardberger.tvheadend.sdk.android
 
 import android.content.Context
 import androidx.datastore.core.DataStore
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.byteArrayPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -312,7 +314,7 @@ internal class EncryptedCredentials(
     override fun toString(): String = "EncryptedCredentials(<redacted>)"
 }
 
-private class DataStoreCredentialStorage(
+internal class DataStoreCredentialStorage(
     private val dataStore: DataStore<Preferences>,
 ) : CredentialStorage {
     override suspend fun read(): StoredCredentialRead = decodeCredentialRecord(dataStore.data.first())
@@ -540,6 +542,12 @@ private val LEGACY_USERNAME_ASSOCIATED_DATA =
     "at.bernhardberger.tvheadend.sdk.credentials.username.v1".encodeToByteArray()
 private val LEGACY_PASSWORD_ASSOCIATED_DATA =
     "at.bernhardberger.tvheadend.sdk.credentials.password.v1".encodeToByteArray()
+
+// An unreadable file is replaced with an empty record so it reads as no profile and stays clearable.
+internal val credentialCorruptionHandler: ReplaceFileCorruptionHandler<Preferences> =
+    ReplaceFileCorruptionHandler { emptyPreferences() }
+
 private val Context.tvheadendCredentialDataStore: DataStore<Preferences> by preferencesDataStore(
     name = "tvheadend_sdk_credentials",
+    corruptionHandler = credentialCorruptionHandler,
 )
