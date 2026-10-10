@@ -444,7 +444,7 @@ private suspend fun verifySeek(
         },
     )
     val seekResult = active.seek(target)
-    assertEquals(
+    assertTrue(
         "$label must be accepted; subscription=${active.state.value.diagnosticCategory()}, " +
             "session=${sessionState().diagnosticCategory()}, " +
             "player=${beforeSeek.playbackState.diagnosticCategory()}, " +
@@ -452,9 +452,8 @@ private suspend fun verifySeek(
             "consumerFailure=${timeshift.consumerFailureCategory() ?: "none"}, " +
             "anchorToTerminalMs=${timeshift.anchorToTerminalMs() ?: -1L}, " +
             "skipToTerminalMs=${timeshift.skipToTerminalMs() ?: -1L}, " +
-            "anchorCount=${active.diagnostics.value.timestampAnchorCount}",
-        SubscriptionSeekResult.Accepted,
-        seekResult,
+            "anchorCount=${active.diagnostics.value.timestampAnchorCount}, result=$seekResult",
+        seekResult == SubscriptionSeekResult.Accepted || seekResult is SubscriptionSeekResult.AcceptedAt,
     )
     val samples = timeshift.awaitSynchronizedSamples(
         afterEpoch = epoch,

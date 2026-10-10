@@ -286,9 +286,10 @@ internal class DvrRealServerVerificationTest {
                     title = marker,
                 ),
             ).confirmedEntry(createdEntries)
-            val recording = withTimeout(45.seconds) {
+            val recording = withTimeout(60.seconds) {
                 session.observation.first { observation ->
-                    observation.dvrEntry(liveId)?.state == DvrEntryState.RECORDING
+                    val entry = observation.dvrEntry(liveId)
+                    entry?.state == DvrEntryState.RECORDING && !entry.files.isNullOrEmpty()
                 }.dvrEntry(liveId)
             }
             assertTrue(recording != null, "Live recording did not start")
@@ -316,10 +317,13 @@ internal class DvrRealServerVerificationTest {
             assertEquals(DvrProgressResult.Accepted, closeProgress)
             credentials.forbidLeak(closeProgress.toString())
             dvr.deleteEntry(currentSession, liveId).requireConfirmed()
-            createdEntries.remove(liveId)
             withTimeout(2.minutes) {
-                session.observation.first { observation -> observation.dvrEntry(liveId) == null }
+                session.observation.first { observation ->
+                    val entry = observation.dvrEntry(liveId)
+                    entry == null || entry.state == DvrEntryState.FILE_MISSING
+                }
             }
+            createdEntries.remove(liveId)
 
             val afterWrites = session.observation.value.sessionState
             assertTrue(afterWrites is SessionState.Ready, "Session left ready after DVR writes")

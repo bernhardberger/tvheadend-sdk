@@ -6,6 +6,8 @@ import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.ServerAuthentication
 import at.bernhardberger.tvheadend.sdk.core.ServerProfile
 import at.bernhardberger.tvheadend.sdk.core.SessionState
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
+import at.bernhardberger.tvheadend.sdk.core.gateway.ProtocolGateway
 import at.bernhardberger.tvheadend.sdk.core.gateway.htsp.HtspProtocolGateway
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import java.io.File
@@ -40,7 +42,11 @@ internal class EpgSoakVerificationTest {
     fun `live HTSP ready then background warmup keeps known coverage through drain`() = runBlocking {
         val profile = soakProfile()
         val clock = AdjustableClock(Instant.fromEpochSeconds(Clock.System.now().epochSeconds))
-        val gateway = HtspProtocolGateway(Dispatchers.IO)
+        val transport = HtspProtocolGateway(Dispatchers.IO)
+        val gateway = object : ProtocolGateway by transport {
+            override fun estimatedServerTime(generation: GatewayGeneration): Instant? =
+                transport.estimatedServerTime(generation)?.plus(clock.accumulatedAdvance)
+        }
         val metadata = PhaseOneSessionMetadata()
         val owner = ConnectionOwner(
             gateway = gateway,
@@ -196,12 +202,14 @@ private fun jsonInt(text: String, name: String): Int {
 }
 
 private class AdjustableClock(
-    initial: Instant,
+    private val initial: Instant,
 ) : Clock {
     private val lock = Any()
     private var current = initial
 
     override fun now(): Instant = synchronized(lock) { current }
+
+    val accumulatedAdvance: Duration get() = synchronized(lock) { current - initial }
 
     fun advance(delta: Duration) {
         synchronized(lock) { current += delta }
