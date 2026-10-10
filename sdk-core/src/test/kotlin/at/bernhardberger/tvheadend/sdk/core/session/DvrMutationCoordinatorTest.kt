@@ -24,6 +24,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayAutorecRule
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailureEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrUpdateProvenance
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
@@ -300,6 +301,56 @@ internal class DvrMutationCoordinatorTest {
     }
 
     @Test
+    fun `delete confirms a full file-missing update before or after acknowledgement`() = runTest {
+        for (beforeReply in listOf(false, true)) {
+            val generation = GatewayGeneration()
+            val gateway = MutationGateway()
+            val coordinator = DvrMutationCoordinator(gateway)
+            val update = dvrUpdated(generation, 1, DvrEntryState.COMPLETED,
+                failure = GatewayDvrFailure.FILE_MISSING)
+            gateway.deleteBehavior = { _, _ ->
+                if (beforeReply) coordinator.acceptMetadata(update)
+                GatewayResult.Ok(Unit)
+            }
+            coordinator.bindGeneration(generation)
+            coordinator.startAdmission(generation)
+            val deleted = async { coordinator.deleteEntry(generation, DvrEntryId(1)) }
+            runCurrent()
+            if (!beforeReply) {
+                assertFalse(deleted.isCompleted)
+                coordinator.acceptMetadata(update)
+                runCurrent()
+            }
+            assertTrue(deleted.isCompleted)
+            assertTrue(deleted.await() is DvrMutationResult.Confirmed)
+        }
+    }
+
+    @Test
+    fun `delete ignores stats-only file-missing and unrelated full updates`() = runTest {
+        val generation = GatewayGeneration()
+        val gateway = MutationGateway().apply { deleteBehavior = { _, _ -> GatewayResult.Ok(Unit) } }
+        val coordinator = DvrMutationCoordinator(gateway)
+        coordinator.bindGeneration(generation)
+        coordinator.startAdmission(generation)
+        // An event observed before command registration cannot confirm a later command.
+        coordinator.acceptMetadata(dvrUpdated(generation, 1, failure = GatewayDvrFailure.FILE_MISSING))
+        val deleted = async { coordinator.deleteEntry(generation, DvrEntryId(1)) }
+        runCurrent()
+        coordinator.acceptMetadata(dvrUpdated(generation, 1, DvrEntryState.COMPLETED,
+            GatewayDvrUpdateProvenance.STATS_ONLY, GatewayDvrFailure.FILE_MISSING))
+        coordinator.acceptMetadata(dvrUpdated(generation, 2, failure = GatewayDvrFailure.FILE_MISSING))
+        coordinator.acceptMetadata(dvrUpdated(GatewayGeneration(), 1, failure = GatewayDvrFailure.FILE_MISSING))
+        for (failure in listOf(null, GatewayDvrFailure.NONE, GatewayDvrFailure.ABORTED, GatewayDvrFailure.PRESENT)) {
+            coordinator.acceptMetadata(dvrUpdated(generation, 1, DvrEntryState.COMPLETED, failure = failure))
+        }
+        runCurrent()
+        assertFalse(deleted.isCompleted)
+        advanceTimeBy(6.seconds)
+        assertTrue(deleted.await() is DvrMutationResult.AcceptedButUnconfirmed)
+    }
+
+    @Test
     fun `stats-only and still-recording updates never confirm a pending stop or cancel`() = runTest {
         for (cancel in listOf(false, true)) {
             val generation = GatewayGeneration()
@@ -499,10 +550,11 @@ private fun dvrUpdated(
     id: Long,
     state: DvrEntryState? = null,
     provenance: GatewayDvrUpdateProvenance = GatewayDvrUpdateProvenance.FULL,
+    failure: GatewayDvrFailure? = null,
 ): MetadataEvent.DvrEntryUpdated =
     MetadataEvent.DvrEntryUpdated(
         generation,
-        GatewayDvrEntry(DvrEntryId(id), state = state),
+        GatewayDvrEntry(DvrEntryId(id), state = state, failure = failure),
         provenance,
     )
 

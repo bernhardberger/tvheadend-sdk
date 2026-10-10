@@ -607,7 +607,14 @@ public interface DvrRepository {
         id: DvrEntryId,
     ): DvrMutationResult<Unit>
 
-    /** Deletes one DVR entry and waits for authoritative stream confirmation. */
+    /**
+     * Deletes one DVR entry and waits for entry removal or a full file-missing update.
+     *
+     * Server log retention may keep a deleted recording's entry after its file is removed, so a
+     * [DvrMutationResult.Confirmed] result can leave the entry observable as
+     * [DvrEntryState.FILE_MISSING]. Deleting an entry that is already file-missing may confirm on
+     * the next full update for that entry.
+     */
     public suspend fun deleteEntry(
         currentSession: CurrentSessionObservation,
         id: DvrEntryId,

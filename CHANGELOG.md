@@ -107,6 +107,12 @@
   it scheduled or recording do not confirm, so the call returns
   `AcceptedButUnconfirmed` if no such update arrives before the confirmation
   deadline.
+- `deleteEntry` on a completed recording now returns `Confirmed` when the server
+  keeps the entry in its log after deleting the file and a full update reports
+  the file missing; before, it returned `AcceptedButUnconfirmed` after the
+  confirmation deadline. A confirmed delete therefore does not guarantee removal:
+  the entry may stay in `dvrState` as `FILE_MISSING` until the server's log
+  retention removes it.
 - `TvheadendConnectivity` tracks only the current default network. After the
   default network switched, losing the new default kept the status `AVAILABLE`,
   so `UNAVAILABLE` was never reported and session retries on network return

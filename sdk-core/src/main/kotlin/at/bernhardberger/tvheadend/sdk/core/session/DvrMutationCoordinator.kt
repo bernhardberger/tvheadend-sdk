@@ -15,6 +15,7 @@ import at.bernhardberger.tvheadend.sdk.core.EventId
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleUpdate
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrUpdateProvenance
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
@@ -172,7 +173,10 @@ internal class DvrMutationCoordinator(
         id: DvrEntryId,
     ): DvrMutationResult<Unit> = mutate(
         expectedGeneration = generation,
-        confirmations = setOf(ConfirmationKey(ConfirmationKind.ENTRY_DELETED, id)),
+        confirmations = setOf(
+            ConfirmationKey(ConfirmationKind.ENTRY_DELETED, id),
+            ConfirmationKey(ConfirmationKind.ENTRY_FILE_MISSING, id),
+        ),
         command = { generation ->
             withIntent(generation, DvrMutationKind.DELETE, entryId = id) { gateway.deleteDvrEntry(generation, id) }
         },
@@ -520,6 +524,8 @@ private enum class ConfirmationKind {
     /** A full entry update whose state shows the entry is no longer scheduled or recording. */
     ENTRY_ENDED,
     ENTRY_DELETED,
+    /** File deletion may retain the DVR log entry and report a missing file instead of removal. */
+    ENTRY_FILE_MISSING,
     AUTOREC_ADDED,
     AUTOREC_UPDATED,
     AUTOREC_DELETED,
@@ -553,11 +559,13 @@ private fun MetadataEvent.confirmationKeys(): List<ConfirmationKey> = when (this
     is MetadataEvent.DvrEntryUpdated -> when {
         // Stats-only updates report recording progress, not the server's reflection of a mutation.
         provenance == GatewayDvrUpdateProvenance.STATS_ONLY -> emptyList()
-        entry.state in endedEntryStates -> listOf(
-            ConfirmationKey(ConfirmationKind.ENTRY_UPDATED, entry.id),
-            ConfirmationKey(ConfirmationKind.ENTRY_ENDED, entry.id),
-        )
-        else -> listOf(ConfirmationKey(ConfirmationKind.ENTRY_UPDATED, entry.id))
+        else -> buildList {
+            add(ConfirmationKey(ConfirmationKind.ENTRY_UPDATED, entry.id))
+            if (entry.state in endedEntryStates) add(ConfirmationKey(ConfirmationKind.ENTRY_ENDED, entry.id))
+            if (entry.failure == GatewayDvrFailure.FILE_MISSING) {
+                add(ConfirmationKey(ConfirmationKind.ENTRY_FILE_MISSING, entry.id))
+            }
+        }
     }
     is MetadataEvent.DvrEntryDeleted -> listOf(ConfirmationKey(ConfirmationKind.ENTRY_DELETED, entryId))
     is MetadataEvent.AutorecRuleAdded -> listOf(ConfirmationKey(ConfirmationKind.AUTOREC_ADDED, rule.id))
