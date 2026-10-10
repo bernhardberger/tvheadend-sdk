@@ -6,7 +6,9 @@ Android Open Source Project, under the Apache License, Version 2.0. The license
 is included as `LICENSE-MEDIA3-APACHE-2.0`.
 
 The adaptation retains the upstream slice parser and changes access-unit prefix
-assignment, fragmented start-code bookkeeping, and end-of-input/reset handling.
+assignment, fragmented start-code bookkeeping, end-of-input/reset handling,
+timestamp inheritance from the first slice for access units opened in an
+untimed packet, and picture detection for Annex G/H prefix NAL units (type 14).
 It reuses Media3's package-private NAL buffering helpers. The SDK as a combined
 work remains GPLv3.
 

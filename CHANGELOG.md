@@ -50,6 +50,10 @@
   (60 s) of guide data was lost before. Catalog changes are written immediately
   instead of waiting behind a pending EPG write. Clearing the cache no longer
   follows symbolic links.
+- The adapted Media3 H.264 reader keeps an IDR picture whose access unit
+  delimiter and parameter sets arrive in a packet without a timestamp; the
+  picture takes the timestamp of its first slice instead of being dropped.
+  Multi-slice MVC/SVC pictures are no longer split at type-14 prefix NAL units.
 
 ## [0.23.0]
 

@@ -7,7 +7,10 @@ import androidx.media3.common.C
 import androidx.media3.common.DataReader
 import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.util.ParsableBitArray
 import androidx.media3.common.util.ParsableByteArray
+import androidx.media3.container.ParsableNalUnitBitArray
+import androidx.media3.container.NalUnitUtil
 import androidx.media3.extractor.ExtractorOutput
 import androidx.media3.extractor.SeekMap
 import androidx.media3.extractor.TrackOutput
@@ -320,6 +323,133 @@ class ActualElementaryStreamReaderFixtureTest {
     }
 
     @Test
+    fun `H264 IDR after an untimed parameter set and AUD packet keeps its PES timestamp`() {
+        val idrNals = h264NalUnits("/synthetic-idr.h264")
+        val sps = idrNals.single { it.h264NalType() == 7 }
+        val pps = idrNals.single { it.h264NalType() == 8 }
+        val idr = idrNals.single { it.h264NalType() == 5 }
+        val nonIdr = h264NalUnits("/synthetic-nonidr.h264").single { it.h264NalType() == 1 }
+        for (untimed in listOf(H264_AUD + sps + pps, sps + pps + H264_AUD)) {
+            for (chunkSize in listOf(1, 3, Int.MAX_VALUE)) {
+                val output = readH264Packets(
+                    listOf(C.TIME_UNSET to untimed, 1_000L to idr, 2_000L to H264_AUD + nonIdr),
+                    chunkSize,
+                )
+                assertEquals(
+                    listOf(1_000L to C.BUFFER_FLAG_KEY_FRAME, 2_000L to 0),
+                    output.metadata.map { it.timeUs to it.flags },
+                    "chunk=$chunkSize",
+                )
+                assertArrayEquals(untimed + idr, output.samples[0], "chunk=$chunkSize")
+                assertArrayEquals(H264_AUD + nonIdr, output.samples[1], "chunk=$chunkSize")
+            }
+        }
+    }
+
+    @Test
+    fun `H264 sample time is never replaced when set and an untimed first slice is still dropped`() {
+        val idrNals = h264NalUnits("/synthetic-idr.h264")
+        val parameterSets = H264_AUD + idrNals.single { it.h264NalType() == 7 } + idrNals.single { it.h264NalType() == 8 }
+        val idr = idrNals.single { it.h264NalType() == 5 }
+        val nonIdr = H264_AUD + h264NalUnits("/synthetic-nonidr.h264").single { it.h264NalType() == 1 }
+        for (chunkSize in listOf(1, 3, Int.MAX_VALUE)) {
+            val timed = readH264Packets(listOf(1_000L to parameterSets, 1_500L to idr, 2_000L to nonIdr), chunkSize)
+            assertEquals(
+                listOf(1_000L to C.BUFFER_FLAG_KEY_FRAME, 2_000L to 0),
+                timed.metadata.map { it.timeUs to it.flags },
+                "chunk=$chunkSize",
+            )
+            assertArrayEquals(parameterSets + idr, timed.samples[0], "chunk=$chunkSize")
+
+            val untimed = readH264Packets(listOf(C.TIME_UNSET to parameterSets + idr, 2_000L to nonIdr), chunkSize)
+            assertEquals(listOf(2_000L to 0), untimed.metadata.map { it.timeUs to it.flags }, "chunk=$chunkSize")
+            assertArrayEquals(nonIdr, untimed.samples.single(), "chunk=$chunkSize")
+        }
+    }
+
+    @Test
+    fun `finite IDR after an untimed parameter set packet emits one keyframe at the IDR time`() {
+        val idrNals = h264NalUnits("/synthetic-idr.h264")
+        val parameterSets = H264_AUD + idrNals.single { it.h264NalType() == 7 } + idrNals.single { it.h264NalType() == 8 }
+        val idr = idrNals.single { it.h264NalType() == 5 }
+        val output = CapturingExtractorOutput()
+        val adapter = SubscriptionElementaryStreamAdapter(
+            (createElementaryStreamReader(stream(SubscriptionStreamType.H264)) as ReaderResult.Supported).reader,
+            output,
+            7,
+        )
+        fun packet(presentationTimeUs: Long?, payload: ByteArray) = SubscriptionEvent.Packet(
+            frameType = MuxFrameType.I,
+            streamIndex = StreamIndex(0L),
+            decodingTimeUs = presentationTimeUs,
+            presentationTimeUs = presentationTimeUs,
+            durationUs = 40_000L,
+            payload = ByteArrayBinary(payload),
+        )
+
+        adapter.accept(packet(null, parameterSets))
+        assertTrue(adapter.acceptFiniteIdr(packet(1_000L, idr)))
+
+        assertEquals(
+            listOf(1_000L to C.BUFFER_FLAG_KEY_FRAME),
+            output.trackOutput.metadata.map { it.timeUs to it.flags },
+        )
+        assertArrayEquals(parameterSets + idr, output.trackOutput.samples.single())
+    }
+
+    @Test
+    fun `H264 prefix NAL units before later slices stay inside one multi-slice picture`() {
+        val idrNals = h264NalUnits("/synthetic-idr.h264")
+        val sps = idrNals.single { it.h264NalType() == 7 }
+        val pps = idrNals.single { it.h264NalType() == 8 }
+        val idr = idrNals.single { it.h264NalType() == 5 }
+        val nonIdr = h264NalUnits("/synthetic-nonidr.h264").single { it.h264NalType() == 1 }
+        // The second slice differs only in first_mb_in_slice, so it belongs to the same picture.
+        val secondSlice = idr.withFirstMbInSlice(1)
+        assertEquals(idr.sliceHeaderPrefix().copy(firstMbInSlice = 1), secondSlice.sliceHeaderPrefix())
+        for (delimiter in listOf(byteArrayOf(), H264_AUD)) {
+            val first = delimiter + sps + pps + H264_IDR_PREFIX + idr + H264_IDR_PREFIX + secondSlice
+            val second = delimiter + H264_NON_IDR_PREFIX + nonIdr
+            for (chunkSize in listOf(1, 3, Int.MAX_VALUE)) {
+                val output = readH264Packets(listOf(1_000L to first, 2_000L to second), chunkSize)
+                val label = "chunk=$chunkSize AUD=${delimiter.isNotEmpty()}"
+                assertEquals(
+                    listOf(1_000L to C.BUFFER_FLAG_KEY_FRAME, 2_000L to 0),
+                    output.metadata.map { it.timeUs to it.flags },
+                    label,
+                )
+                assertArrayEquals(first, output.samples[0], label)
+                assertArrayEquals(second, output.samples[1], label)
+            }
+        }
+    }
+
+    private fun readH264Packets(packets: List<Pair<Long, ByteArray>>, chunkSize: Int): CapturingTrackOutput {
+        val output = CapturingExtractorOutput()
+        val reader = (createElementaryStreamReader(stream(SubscriptionStreamType.H264)) as ReaderResult.Supported).reader
+        reader.createTracks(output, androidx.media3.extractor.ts.TsPayloadReader.TrackIdGenerator(7, 1))
+        packets.forEach { (timeUs, payload) ->
+            reader.packetStarted(timeUs, 0)
+            payload.asList().chunked(chunkSize).forEach { reader.consume(ParsableByteArray(it.toByteArray())) }
+        }
+        reader.endOfInputReached()
+        return output.trackOutput
+    }
+
+    /** Splits an Annex-B fixture with Media3's start-code scanner and re-emits four-byte start codes. */
+    private fun h264NalUnits(resource: String): List<ByteArray> {
+        val bytes = checkNotNull(javaClass.getResourceAsStream(resource)).use { it.readBytes() }
+        val starts = generateSequence(NalUnitUtil.findNalUnit(bytes, 0, bytes.size, BooleanArray(3))) { start ->
+            NalUnitUtil.findNalUnit(bytes, start + 3, bytes.size, BooleanArray(3))
+        }.takeWhile { it < bytes.size }.toList()
+        return starts.mapIndexed { index, start ->
+            var end = starts.getOrElse(index + 1) { bytes.size }
+            while (end > start + 3 && bytes[end - 1] == 0.toByte()) end--
+            H264_START_CODE + bytes.copyOfRange(start + 3, end)
+        }
+    }
+
+    @Test
     fun `recorded H262 emits exact format initialization data and sample metadata`() {
         assertEquals(
             VideoOracle(
@@ -495,6 +625,72 @@ class ActualElementaryStreamReaderFixtureTest {
         rdsUecp = null,
         codecMetadata = null,
     )
+}
+
+private val H264_START_CODE = byteArrayOf(0, 0, 0, 1)
+private val H264_AUD = H264_START_CODE + byteArrayOf(9, 0xf0.toByte())
+
+// MVC base-view prefix NALs (type 14) with nal_ref_idc matching the following fixture slice:
+// IDR: non_idr_flag=0, anchor/inter-view/reserved bits; non-IDR: non_idr_flag=1, inter-view/reserved.
+private val H264_IDR_PREFIX = H264_START_CODE + byteArrayOf(0x6e, 0, 0, 7)
+private val H264_NON_IDR_PREFIX = H264_START_CODE + byteArrayOf(0x4e, 0x40, 0, 3)
+
+private fun ByteArray.h264NalType(): Int = this[4].toInt() and 0x1f
+
+private data class SliceHeaderPrefix(
+    val firstMbInSlice: Int,
+    val sliceType: Int,
+    val picParameterSetId: Int,
+    val remainingBits: List<Boolean>,
+)
+
+private fun ByteArray.sliceRbsp(): ByteArray {
+    val rbsp = copyOfRange(5, size)
+    return rbsp.copyOf(NalUnitUtil.unescapeStream(rbsp, rbsp.size))
+}
+
+/** Reads the leading slice header fields and the next 64 header/data bits that must be unchanged. */
+private fun ByteArray.sliceHeaderPrefix(): SliceHeaderPrefix {
+    // Media3's NAL bit reader skips emulation prevention bytes itself.
+    val bits = ParsableNalUnitBitArray(this, 5, size)
+    return SliceHeaderPrefix(
+        firstMbInSlice = bits.readUnsignedExpGolombCodedInt(),
+        sliceType = bits.readUnsignedExpGolombCodedInt(),
+        picParameterSetId = bits.readUnsignedExpGolombCodedInt(),
+        remainingBits = List(64) { bits.readBit() },
+    )
+}
+
+/**
+ * Re-encodes a first_mb_in_slice=0 slice with another first macroblock. Media3 has no Exp-Golomb
+ * or emulation-prevention writer, so this test-only helper prepends the new ue(v) code to the
+ * remaining RBSP bits and re-inserts emulation prevention bytes.
+ */
+private fun ByteArray.withFirstMbInSlice(firstMb: Int): ByteArray {
+    val source = sliceRbsp()
+    val reader = ParsableBitArray(source)
+    check(reader.readBit()) { "Fixture slice must start at macroblock zero" }
+    val codeNum = firstMb + 1
+    val codeLength = 32 - Integer.numberOfLeadingZeros(codeNum)
+    val bits = MutableList(codeLength - 1) { false }
+    for (bit in codeLength - 1 downTo 0) bits += (codeNum shr bit) and 1 == 1
+    while (reader.bitsLeft() > 0) bits += reader.readBit()
+    while (bits.size % 8 != 0) bits += false
+    var rbsp = ByteArray(bits.size / 8) { index ->
+        (0 until 8).fold(0) { byte, bit -> (byte shl 1) or if (bits[index * 8 + bit]) 1 else 0 }.toByte()
+    }
+    while (rbsp.last() == 0.toByte()) rbsp = rbsp.copyOf(rbsp.size - 1)
+    val escaped = mutableListOf<Byte>()
+    var zeros = 0
+    for (byte in rbsp) {
+        if (zeros >= 2 && (byte.toInt() and 0xff) <= 3) {
+            escaped += 3
+            zeros = 0
+        }
+        escaped += byte
+        zeros = if (byte == 0.toByte()) zeros + 1 else 0
+    }
+    return copyOfRange(0, 5) + escaped.toByteArray()
 }
 
 private fun dvbSubtitleSegments(): ByteArray = byteArrayOf(

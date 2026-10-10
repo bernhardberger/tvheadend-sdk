@@ -45,6 +45,8 @@ import java.util.List;
  * The upstream reader and NalUnitTargetBuffer are unchanged from Media3 1.11.0.
  * The maintained slice parser is unchanged. SampleReader retains prefix NALs with the following
  * picture instead of excluding the first prefix and assigning later recovery SEI to the prior sample.
+ * A sample opened by an untimed AUD or parameter set takes the PES time of its first slice, and
+ * Annex G/H prefix NALs (type 14) only start a sample when their following slice starts a picture.
  * This package deliberately permits reuse of Media3's package-private NalUnitTargetBuffer.
  */
 @UnstableApi
@@ -255,6 +257,7 @@ public final class PrefixPreservingH264Reader implements ElementaryStreamReader 
     private boolean sampleIsKeyframe;
     private boolean randomAccessIndicator;
     private long prefixPosition;
+    private boolean prefixStartsPicture;
     private boolean sampleHasVcl;
 
     public SampleReader(TrackOutput output, boolean allowNonIdrKeyframes, boolean detectAccessUnits) {
@@ -275,6 +278,7 @@ public final class PrefixPreservingH264Reader implements ElementaryStreamReader 
       readingSample = false;
       sampleHasVcl = false;
       prefixPosition = -1;
+      prefixStartsPicture = false;
       sliceHeader.clear();
     }
 
@@ -284,9 +288,12 @@ public final class PrefixPreservingH264Reader implements ElementaryStreamReader 
       nalUnitStartPosition = position;
       this.randomAccessIndicator = randomAccessIndicator;
       // AVC 7.4.1.2.3: these NALs precede the next picture, not the preceding VCL sample.
-      if ((!readingSample || sampleHasVcl) && prefixPosition == -1
+      if ((!readingSample || sampleHasVcl)
           && ((type >= 6 && type <= 9) || (type >= 14 && type <= 18))) {
-        prefixPosition = position;
+        if (prefixPosition == -1) prefixPosition = position;
+        // Annex G/H prefix NALs also precede later slices of the same picture, so only the
+        // following slice header can decide whether they begin a new picture.
+        prefixStartsPicture |= type != NalUnitUtil.H264_NAL_UNIT_TYPE_PREFIX;
       }
       if ((allowNonIdrKeyframes && type == NalUnitUtil.H264_NAL_UNIT_TYPE_NON_IDR)
           || (detectAccessUnits && (type == NalUnitUtil.H264_NAL_UNIT_TYPE_IDR
@@ -385,7 +392,7 @@ public final class PrefixPreservingH264Reader implements ElementaryStreamReader 
       boolean newPicture = detectAccessUnits
           && sliceHeader.isFirstVclNalUnitOfPicture(previousSliceHeader);
       if (nalUnitType == NalUnitUtil.H264_NAL_UNIT_TYPE_AUD
-          || (vcl && (newPicture || prefixPosition != -1) && (!readingSample || sampleHasVcl))) {
+          || (vcl && (newPicture || prefixStartsPicture) && (!readingSample || sampleHasVcl))) {
         long boundary = prefixPosition == -1 ? nalUnitStartPosition : prefixPosition;
         if (hasOutputFormat && readingSample && sampleHasVcl) {
           outputSample(boundary, offset + (int) (position - boundary));
@@ -396,6 +403,15 @@ public final class PrefixPreservingH264Reader implements ElementaryStreamReader 
         sampleHasVcl = false;
         readingSample = true;
         prefixPosition = -1;
+        prefixStartsPicture = false;
+      } else if (vcl) {
+        // Prefix NALs before a later slice of the current picture stay with that picture.
+        prefixPosition = -1;
+        prefixStartsPicture = false;
+      }
+      if (vcl && readingSample && !sampleHasVcl && sampleTimeUs == C.TIME_UNSET) {
+        // TVHeadend can send AUD/SPS/PPS untimed ahead of the timed PES carrying the first slice.
+        sampleTimeUs = nalUnitTimeUs;
       }
       if (vcl && readingSample) sampleHasVcl = true;
       boolean treatIFrameAsKeyframe = allowNonIdrKeyframes ? sliceHeader.isISlice() : randomAccessIndicator;
