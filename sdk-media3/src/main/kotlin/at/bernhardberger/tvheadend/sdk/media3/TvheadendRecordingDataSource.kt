@@ -43,6 +43,12 @@ public class TvheadendRecordingException(
 internal class RecordingMediaIdentity {
     internal val uri: String = "$RECORDING_URI_SCHEME://bound/${nextValue.getAndIncrement()}"
 
+    /**
+     * Whether [item] plays this binding: its URI, which Media3 keeps when it updates the item's
+     * metadata in place, is this identity's. A matching media id alone proves nothing.
+     */
+    internal fun matches(item: MediaItem?): Boolean = item?.localConfiguration?.uri?.toString() == uri
+
     override fun toString(): String = "RecordingMediaIdentity(<redacted>)"
 
     private companion object {

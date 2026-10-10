@@ -771,6 +771,56 @@ player's application looper. It does not construct or release the player and
 does not own a `MediaSession`, service, audio focus, notifications, surfaces,
 autoplay, navigation, UI, or presentation policy.
 
+Player state belongs to a coordinator target only while the player's current
+item is the one the coordinator installed for it. If the application replaces or
+clears that item, for example to play its own media, the coordinator stops
+reading position, end, errors, and recovery state for the target. Pending
+nonterminal progress and recovery are discarded at the item transition; an
+already-started upload is not cancelled. A terminal event reached before the
+replacement still reports that recording's last owned position (its known
+duration for a natural end). Automatic playlist advance from a recording to an
+application item also counts as natural completion, even without `STATE_ENDED`;
+it can mark the recording watched. Seeking away or changing the playlist does
+not count as natural completion. Repeating the coordinator's own item retains
+ownership without reporting completion; live targets never gain a natural end
+from an item transition.
+
+Ownership loss is permanent for that target. After its item is replaced,
+cleared, or left behind (including automatic advance), seeking or re-queuing
+back to the item does not resume coordination. Set a new target to coordinate
+playback again. Until the next target, `stop()`, or `shutdown()`,
+`livePlaybackObservation` keeps reporting a departed live target as `Active`;
+that does not mean its item is still playing.
+
+An application listener can replace or clear an item during its installation
+transition. The target installation still returns `PlaybackTargetResult.STARTED`,
+but the target has already departed: the coordinator does not prepare the
+application's item or restore the previous target over it. The normal closing
+report rules apply, including protection of a pending saved resume position
+even if departure prevented the resume helper from starting.
+
+The next target, `stop()`, or `shutdown()` retires the target and removes only
+its item if it lingers in a mixed playlist, without stopping or removing the
+application's items. If no terminal has already been reported or captured, a
+replaced or cleared recording reports one closing `ORDERLY` progress update
+using the last position the coordinator observed while it owned the item. This
+historical position never marks it watched, even near the end; no closing
+update is made if no owned snapshot exists. The application's position is
+never used, and a previously reported terminal is not reported again.
+`stop()` still returns `PlaybackStopResult.Stopped`. Metadata-only recording
+item updates retain ownership through the per-install recording URI; reusing
+only the media id with another URI does not.
+
+When a live target stays stuck in buffering, recovery may disable the audio
+track type in the player's track selection parameters once. It restores only a
+disable it applied itself: when playback becomes ready or idle, when the next
+live target begins, at a timeline or item transition away from the target, or when the
+target is retired. Audio that the application disabled stays disabled, and if
+the application re-enables audio while the recovery disable is in effect, that
+disable is no longer recovery's to restore. Setting the flag to the value it
+already has does not change the player, so disabling audio while the recovery
+disable is in effect does not take that disable over.
+
 When the owner cannot fit its work in one suspending block, use the lower-level
 lifetime handle and shut down in ownership order:
 

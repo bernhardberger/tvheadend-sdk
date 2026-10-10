@@ -9,6 +9,8 @@ import android.content.res.AssetManager
 import android.graphics.SurfaceTexture
 import android.view.Surface
 import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -51,8 +53,18 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStream
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import at.bernhardberger.tvheadend.sdk.playback.createSubscriptionManager
 import at.bernhardberger.tvheadend.sdk.testing.ScriptedSubscriptionConnection
+import at.bernhardberger.tvheadend.sdk.testing.SubscriptionBinaryFixture
+import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
+import at.bernhardberger.tvheadend.sdk.core.DvrProgressResult
+import at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability
+import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
+import at.bernhardberger.tvheadend.sdk.playback.RecordingFile
+import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
+import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -76,6 +88,106 @@ import kotlin.time.Duration.Companion.milliseconds
 
 @RunWith(AndroidJUnit4::class)
 internal class Media3SampleQueueInstrumentationTest {
+    /** Offline real-ExoPlayer premise check; no server, network data source, or device execution in CI. */
+    @Test
+    fun coordinator_item_identity_survives_live_epochs_and_recording_metadata_updates() = runBlocking {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val packet = instrumentation.context.assets.open("recorded-mux/channel-004-stream-02-packet-001.bin")
+            .use { it.readBytes() }
+        val connection = ScriptedSubscriptionConnection()
+        val manager = createSubscriptionManager(connection, Dispatchers.Default).apply { startAdmission() }
+        lateinit var player: ExoPlayer
+        lateinit var access: ExoPlayerCoordinatorPlaybackAccess
+        lateinit var live: CoordinatorMediaSource
+        var playerInitialized = false
+        try {
+            instrumentation.runOnMainSync {
+                player = ExoPlayer.Builder(instrumentation.targetContext).build()
+                playerInitialized = true
+                access = ExoPlayerCoordinatorPlaybackAccess(player, PlaybackRecoveryPolicy()) {}
+                live = access.createLiveSource(
+                    FixedSubscriptionLiveTarget(manager, SubscriptionChannelId(1)),
+                    SubscriptionOptions(), LiveTimeshiftControlBridge(PlaybackTargetToken()) {},
+                )
+                access.setMediaSource(live)
+                assertTrue(access.isCurrent(live))
+                access.prepare()
+                assertTrue(access.isCurrent(live))
+            }
+            withTimeout(10_000) { connection.awaitCollectionRegistered() }
+            var previousUid: Any? = null
+            repeat(2) { epoch ->
+                if (epoch > 0) connection.emit(SubscriptionEvent.Stopped(SubscriptionCondition.NO_DETAIL))
+                connection.emit(SubscriptionEvent.Started(listOf(
+                    SubscriptionStream(StreamIndex(0), SubscriptionStreamType.MPEG2_AUDIO,
+                        null, null, null, null, null, null, null, null, null, null, null, null, null, null),
+                ), null, SubscriptionCondition.NO_DETAIL))
+                repeat(128) { sample ->
+                    val time = 9_000_000_000L + epoch * 10_000_000L + sample * 24_000L
+                    connection.emit(SubscriptionEvent.Packet(MuxFrameType.UNKNOWN, StreamIndex(0),
+                        time, time, 24_000L, SubscriptionBinaryFixture(packet)))
+                }
+                withTimeout(15_000) {
+                    while (true) {
+                        var ready = false
+                        instrumentation.runOnMainSync {
+                            assertTrue(access.isCurrent(live))
+                            assertNull(player.playerError)
+                            val timeline = player.currentTimeline
+                            val uid = if (timeline.isEmpty) null else timeline.getUidOfPeriod(player.currentPeriodIndex)
+                            ready = player.playbackState == Player.STATE_READY && uid != previousUid
+                            if (ready) previousUid = uid
+                        }
+                        if (ready) break
+                        delay(20)
+                    }
+                }
+            }
+            instrumentation.runOnMainSync {
+                // An application item with the reserved live id is nevertheless not our source.
+                player.stop()
+                player.setMediaItem(MediaItem.Builder().setMediaId(LIVE_MEDIA_ID).build())
+                assertFalse(access.isCurrent(live))
+
+                val recording = access.createRecordingSource(IdentityRecordingTarget(), RecordingMediaIdentity())
+                access.setMediaSource(recording)
+                assertTrue(access.isCurrent(recording))
+                val original = checkNotNull(player.currentMediaItem)
+                val uid = player.currentTimeline.getUidOfPeriod(player.currentPeriodIndex)
+                player.replaceMediaItem(0, original.buildUpon()
+                    .setMediaMetadata(MediaMetadata.Builder().setTitle("Updated title").build()).build())
+                assertNotSame(original, player.currentMediaItem)
+                assertEquals(uid, player.currentTimeline.getUidOfPeriod(player.currentPeriodIndex))
+                assertTrue(access.isCurrent(recording))
+
+                player.setMediaItem(original.buildUpon().setUri("data:application/octet-stream;base64,AA==").build())
+                assertFalse(access.isCurrent(recording))
+            }
+        } finally {
+            instrumentation.runOnMainSync { if (playerInitialized) player.release() }
+            withTimeout(10_000) { manager.closeAndJoin() }
+        }
+    }
+
+    /** Never opened: the recording identity assertions exercise the real progressive source's playlist update. */
+    private class IdentityRecordingTarget : CoordinatorRecordingTarget {
+        override val startedGrowing: Boolean = false
+        override val admission: CoordinatorRecordingAdmission = CoordinatorRecordingAdmission.Completed(
+            null, RecordingProgressCapability.SUPPORTED,
+        )
+
+        override suspend fun openRecording(): RecordingFileResult<RecordingFile> =
+            RecordingFileResult.Failed(RecordingFileFailure.NOT_SUPPORTED)
+
+        override fun bindGrowingRecording(): RecordingFileResult<GrowingRecordingFileLease> =
+            RecordingFileResult.Failed(RecordingFileFailure.NOT_SUPPORTED)
+
+        override suspend fun reportProgress(
+            growingLease: GrowingRecordingFileLease?,
+            progress: DvrPlaybackProgress,
+        ): DvrProgressResult = DvrProgressResult.Accepted
+    }
+
     @Test
     fun playing_content_seek_settles_at_both_edges_after_delayed_media() = assertContentSeeks(paused = false)
 

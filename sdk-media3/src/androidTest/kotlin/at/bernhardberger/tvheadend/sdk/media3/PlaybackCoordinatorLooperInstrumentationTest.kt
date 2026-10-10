@@ -61,7 +61,7 @@ internal class PlaybackCoordinatorLooperInstrumentationTest {
                 "close-recovery",
                 "remove-listener",
                 "stop",
-                "clear",
+                "remove-source",
             ),
             access.operations,
         )
@@ -76,6 +76,7 @@ private class MainLooperCoordinatorPlaybackAccess : CoordinatorPlaybackAccess {
     val operations = mutableListOf<String>()
     val observedLoopers = mutableListOf<Looper?>()
     private var listener: Player.Listener? = null
+    private var current: CoordinatorMediaSource? = null
 
     override fun requireApplicationLooper() {
         observedLoopers += Looper.myLooper()
@@ -123,6 +124,7 @@ private class MainLooperCoordinatorPlaybackAccess : CoordinatorPlaybackAccess {
     ): CoordinatorMediaSource = error("Growing recording source is not expected")
 
     override fun createRecovery(
+        isTargetCurrent: () -> Boolean,
         onRecoveryRequired: (PlaybackRecoveryReason) -> Unit,
     ): CoordinatorPlaybackRecovery {
         requireApplicationLooper()
@@ -143,12 +145,23 @@ private class MainLooperCoordinatorPlaybackAccess : CoordinatorPlaybackAccess {
     override fun createResume(
         identity: RecordingMediaIdentity,
         mode: RecordingResumeMode,
+        onProgressFloorChanged: (Duration?) -> Unit,
+        isTargetCurrent: () -> Boolean,
     ): CoordinatorRecordingResume =
         error("Recording resume is not expected")
+
+    override fun isCurrent(source: CoordinatorMediaSource): Boolean {
+        requireApplicationLooper()
+        return current === source
+    }
+
+    override fun ownsItem(source: CoordinatorMediaSource, item: androidx.media3.common.MediaItem?): Boolean =
+        item != null && item === MainLooperMediaSource.item
 
     override fun setMediaSource(source: CoordinatorMediaSource, startPosition: Duration?) {
         requireApplicationLooper()
         operations += "set-source"
+        current = source
     }
 
     override fun prepare() {
@@ -161,10 +174,14 @@ private class MainLooperCoordinatorPlaybackAccess : CoordinatorPlaybackAccess {
         operations += "stop"
     }
 
-    override fun clearMediaItems() {
+    override fun removeMediaItems(source: CoordinatorMediaSource) {
         requireApplicationLooper()
-        operations += "clear"
+        if (current !== source) return
+        operations += "remove-source"
+        current = null
     }
 
-    private data object MainLooperMediaSource : CoordinatorMediaSource
+    private data object MainLooperMediaSource : CoordinatorMediaSource {
+        val item = androidx.media3.common.MediaItem.Builder().build()
+    }
 }

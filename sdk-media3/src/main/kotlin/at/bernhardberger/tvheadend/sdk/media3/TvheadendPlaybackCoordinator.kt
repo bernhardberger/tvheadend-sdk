@@ -124,6 +124,10 @@ public class PlaybackTargetResult private constructor(
     override fun toString(): String = label
 
     public companion object {
+        /**
+         * Installation succeeded. An application listener may already have departed from the item
+         * during installation; in that case it is not prepared and ownership is not reacquired.
+         */
         @JvmField
         public val STARTED: PlaybackTargetResult = PlaybackTargetResult(
             "STARTED",
@@ -236,7 +240,8 @@ public sealed interface LivePlaybackObservation {
 /** Typed outcome of retiring the coordinator's current target. */
 public sealed interface PlaybackStopResult {
     /**
-     * The installed target was retired and the player was cleaned up.
+     * The installed target was retired and its item removed from the playlist. The player was
+     * stopped only if it still played that item; application-added playlist items are retained.
      *
      * [finalSubscriptionIssue] is the last [SubscriptionIssue] published for the retired live target,
      * so a consumer that stops a failing target can report why without reading
@@ -327,6 +332,22 @@ private class DefaultPlaybackCoordinatorLifetime(
  * Target, stop, and shutdown intents may be called from any coroutine. All player work is moved to
  * the player's application looper, and cancellation before that work is claimed prevents player
  * mutation.
+ *
+ * Player state belongs to a target only while the player's current item is the one this
+ * coordinator installed for it. Once the application replaces or clears that item, the coordinator
+ * reads no further position, end, error or recovery state from the player for the target. Pending
+ * nonterminal recording progress and recovery are discarded; an already-started upload and a
+ * terminal event reached before replacement may still finish. Automatic playlist advance away from
+ * a recording also counts as a natural end, but seeking away, playlist changes and repeat do not.
+ * The next target, [stop] or [shutdown] retires it and removes any lingering target item without
+ * stopping or removing application items. Without an earlier terminal, retirement reports the last
+ * observed owned recording position once as orderly progress, never watched; without an owned
+ * snapshot there is no closing report.
+ *
+ * If an application listener replaces or clears the item during its installation transition,
+ * installation returns [PlaybackTargetResult.STARTED] with the target already departed. The
+ * coordinator neither prepares the application's item nor restores the previous target over it.
+ * Recording closing reports retain the admitted resume floor even when no resume helper was started.
  */
 public class TvheadendPlaybackCoordinator internal constructor(
     private val player: PlaybackCoordinatorPlayer,
@@ -622,7 +643,16 @@ public class TvheadendPlaybackCoordinator internal constructor(
         return submit(command, reply) { state -> state.timeshiftUnavailableResult() }
     }
 
-    /** Retires and clears only the target installed by this coordinator. */
+    /**
+     * Retires the current target and removes only its item, stopping the player only while it plays that target.
+     *
+     * If the application moved to another item, any lingering target item is removed without
+     * stopping playback or removing application items. The result is still [PlaybackStopResult.Stopped].
+     * If the application replaced or cleared the recording's item, its last observed owned position
+     * supplies closing progress without marking it watched, unless a terminal was already captured
+     * or reported. No owned snapshot means no report. While its item is still current, an orderly
+     * stop can mark the recording watched according to the configured progress policy.
+     */
     public suspend fun stop(): PlaybackStopResult {
         val reply = CompletableDeferred<PlaybackStopResult>()
         val command = CoordinatorCommand.Stop(PlayerOperationTicket(), reply)
@@ -1386,6 +1416,7 @@ private class CoordinatorActor(
                 snapshot = retiredRecording.snapshot,
                 exit = retiredRecording.exit,
                 growingFinalEndProven = retiredRecording.growingFinalEndProven,
+                allowWatched = retiredRecording.allowWatched,
             )
         }
         ticker?.cancel()
@@ -1399,8 +1430,11 @@ private class CoordinatorActor(
             val event = playerEvents.take() ?: return
             val target = activeTarget ?: continue
             if (target.token !== event.token || !event.token.isActive()) continue
+            // The application's item replaced the target after the event was published: only a
+            // terminal exit the target reached before that still belongs to it.
+            val ownsItem = event.token.ownsPlayerItem()
             when (target) {
-                is ActorTarget.Live -> event.recoveryReason?.let { reason ->
+                is ActorTarget.Live -> event.recoveryReason?.takeIf { ownsItem }?.let { reason ->
                     try {
                         onRecoveryRequired(reason)
                     } catch (_: Exception) {
@@ -1415,6 +1449,7 @@ private class CoordinatorActor(
                         event.growingFinalEndProven,
                     )
                     event.paused &&
+                        ownsItem &&
                         !target.terminalized &&
                         !event.snapshot.precedesPendingResume &&
                         refreshRecordingTarget(target) ->
@@ -1461,6 +1496,7 @@ private class CoordinatorActor(
         snapshot: PlaybackPlayerSnapshot,
         exit: DvrPlaybackExit,
         growingFinalEndProven: Boolean = false,
+        allowWatched: Boolean = true,
     ) {
         if (target.terminalized) return
         target.terminalized = true
@@ -1472,7 +1508,7 @@ private class CoordinatorActor(
         val tracker = target.tracker ?: return
         val epoch = target.reportEpoch?.takeIf { it.isValid() } ?: return
         val terminalState = if (
-            target.growingLease != null &&
+            !allowWatched || target.growingLease != null &&
             exit == DvrPlaybackExit.NATURAL_END &&
             !growingFinalEndProven
         ) {
@@ -1500,7 +1536,7 @@ private class CoordinatorActor(
         if (!refreshRecordingTarget(target)) return
         val tracker = progressPolicy.tracker()
         target.tracker = tracker
-        target.reportEpoch = PlaybackReportEpoch { reportableEntryState(target) != null }
+        target.reportEpoch = PlaybackReportEpoch(target.token) { reportableEntryState(target) != null }
         player.snapshot(target.token)?.takeUnless { it.precedesPendingResume }?.let { snapshot ->
             tracker.onElapsed(timeSource.now(), snapshot.position)
         }
@@ -1551,7 +1587,7 @@ private class CoordinatorActor(
     private suspend fun runReportWorker() {
         while (true) {
             val report = mailbox.next() ?: return
-            if (!report.epoch.isValid()) continue
+            if (!report.epoch.admits(report.terminal)) continue
             try {
                 report.target.reportProgress(
                     report.growingLease,

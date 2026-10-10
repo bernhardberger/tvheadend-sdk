@@ -32,6 +32,23 @@
   need software AC-3, E-AC-3 or MP3 decoding bundle their own Media3 FFmpeg
   audio extension, which the SDK renderers factory picks up automatically; see
   [software audio decoding](docs/consumer-guide.md#software-audio-decoding).
+- **BREAKING:** `TvheadendPlaybackCoordinator` attributes Player state to a
+  target only while the Player's current item is the one it installed. When the
+  application replaces, clears or advances past that item, the coordinator stops
+  reporting DVR progress, errors and recovery for it and never reclaims it;
+  `stop()`, `shutdown()` and the next target retire it without stopping the
+  Player or clearing the application's items, and remove only coordinator-owned
+  items from a mixed playlist (`stop()` still returns `Stopped`). Automatic
+  advance from a recording to an application item counts as its natural end. A
+  recording replaced before `stop()` gets one closing `ORDERLY` report from the
+  last position observed while the coordinator owned it, never marking it
+  watched and never below a pending saved resume position. An application
+  replacing the item during installation gets `STARTED` without the coordinator
+  preparing its item or restoring the previous target over it.
+  `TvheadendPlaybackRecovery` no longer re-enables audio on every live target; it
+  only restores audio it disabled itself and yields when the application changes
+  track selection. See
+  [ownership and shutdown](docs/consumer-guide.md#ownership-and-shutdown).
 
 ### Fixed
 

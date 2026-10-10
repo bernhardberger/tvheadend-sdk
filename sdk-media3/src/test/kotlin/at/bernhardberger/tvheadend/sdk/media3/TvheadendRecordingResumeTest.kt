@@ -7,6 +7,7 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.Timeline
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.microseconds
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -16,6 +17,23 @@ import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 
 internal class TvheadendRecordingResumeTest {
+    @Test
+    fun `resume helper notifies progress floor settlement without another player callback`() {
+        for (mode in RecordingResumeMode.entries) {
+            val identity = RecordingMediaIdentity()
+            val player = FakeRecordingResumePlayer(currentMediaItem = tvheadendRecordingMediaItem(identity))
+            val floors = mutableListOf<Duration?>()
+            val resume = TvheadendRecordingResume(player, identity, mode, onProgressFloorChanged = floors::add)
+
+            resume.beginPlaybackTarget(80_000.milliseconds)
+            assertEquals(listOf(80_000.milliseconds), floors)
+            player.timeouts.fireAll()
+            assertEquals(listOf(80_000.milliseconds, null), floors)
+            assertNull(resume.progressFloor)
+            resume.close()
+        }
+    }
+
     @Test
     fun `listener waits for a known seekable timeline and applies resume once`() {
         val identity = RecordingMediaIdentity()
@@ -40,11 +58,32 @@ internal class TvheadendRecordingResumeTest {
     }
 
     @Test
-    fun `known media applies immediately using identity preserved in media id`() {
+    fun `an application item reusing the media id under another uri never receives the pending seek`() {
         val identity = RecordingMediaIdentity()
+        val player = FakeRecordingResumePlayer(currentMediaItem = tvheadendRecordingMediaItem(identity))
+        val resume = TvheadendRecordingResume(player, identity)
+        resume.beginPlaybackTarget(180_000.milliseconds)
+
+        player.currentMediaItem = MediaItem.Builder()
+            .setMediaId(identity.uri)
+            .setUri("https://media.invalid/application")
+            .build()
+        player.duration = 3_600_000
+        player.isCurrentMediaItemSeekable = true
+        player.listener?.onTimelineChanged(Timeline.EMPTY, Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED)
+        player.listener?.onPlaybackStateChanged(Player.STATE_READY)
+
+        assertEquals(emptyList<Long>(), player.seeks)
+        assertEquals(180_000.milliseconds, resume.pendingPosition)
+    }
+
+    @Test
+    fun `known media applies immediately and survives a metadata-only item update`() {
+        val identity = RecordingMediaIdentity()
+        // Media3 updates a progressive source in place: a new item instance keeps the target's URI.
         val player = FakeRecordingResumePlayer(
-            currentMediaItem = MediaItem.Builder()
-                .setMediaId(identity.uri)
+            currentMediaItem = tvheadendRecordingMediaItem(identity).buildUpon()
+                .setMediaId("application-id")
                 .build(),
             duration = 3_600_000,
             isCurrentMediaItemSeekable = true,
@@ -74,6 +113,23 @@ internal class TvheadendRecordingResumeTest {
         assertThrows(IllegalStateException::class.java) {
             resume.beginPlaybackTarget(180_000.milliseconds)
         }
+    }
+
+    @Test
+    fun `coordinator ownership loss fences resume even when the original item returns`() {
+        val identity = RecordingMediaIdentity()
+        val player = FakeRecordingResumePlayer(currentMediaItem = tvheadendRecordingMediaItem(identity))
+        var owned = true
+        val resume = TvheadendRecordingResume(player, identity, isTargetCurrent = { owned })
+        resume.beginPlaybackTarget(180_000.milliseconds)
+
+        owned = false
+        player.duration = 3_600_000
+        player.isCurrentMediaItemSeekable = true
+        player.listener?.onTimelineChanged(Timeline.EMPTY, Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED)
+
+        assertEquals(emptyList<Long>(), player.seeks)
+        resume.close()
     }
 
     @Test

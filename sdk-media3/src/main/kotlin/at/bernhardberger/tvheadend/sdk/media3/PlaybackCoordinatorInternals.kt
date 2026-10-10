@@ -230,9 +230,17 @@ internal class PlayerLooperExecutor(
 
 internal class PlaybackTargetToken {
     private val active = AtomicBoolean(true)
+    private val ownsItem = AtomicBoolean(true)
     private val ownershipLock = Any()
 
     fun isActive(): Boolean = active.get()
+
+    /** False once the application replaced this target's player item; set on the player looper. */
+    fun ownsPlayerItem(): Boolean = ownsItem.get()
+
+    fun releasePlayerItem() {
+        ownsItem.set(false)
+    }
 
     fun retire() {
         synchronized(ownershipLock) { active.set(false) }
@@ -309,9 +317,19 @@ internal class PlaybackPlayerEventAccumulator {
         pending.also { pending = null }
     }
 
-    fun retire(token: PlaybackTargetToken) {
+    /** Atomically removes and transfers any unconsumed event to the target's retirement. */
+    fun retire(token: PlaybackTargetToken): PlaybackPlayerEvent? = synchronized(lock) {
+        pending?.takeIf { it.token === token }?.also { pending = null }
+    }
+
+    /**
+     * Drops [token]'s pending pause and recovery once the application replaced its item. A terminal
+     * exit the target reached before that replacement still belongs to it and survives.
+     */
+    fun fenceItemReplacement(token: PlaybackTargetToken) {
         synchronized(lock) {
-            if (pending?.token === token) pending = null
+            val event = pending?.takeIf { it.token === token } ?: return
+            pending = event.takeIf { it.terminalExit != null }?.copy(paused = false, recoveryReason = null)
         }
     }
 
@@ -321,9 +339,16 @@ internal class PlaybackPlayerEventAccumulator {
 }
 
 internal class PlaybackReportEpoch(
+    private val itemOwner: PlaybackTargetToken? = null,
     private val targetIsValid: () -> Boolean = { true },
 ) {
     private val active = AtomicBoolean(true)
+
+    /**
+     * Whether a report may still be uploaded. After the application replaced [itemOwner]'s item only
+     * a terminal report, which the target reached while its item was current, remains eligible.
+     */
+    fun admits(terminal: Boolean): Boolean = isValid() && (terminal || itemOwner?.ownsPlayerItem() != false)
 
     fun isValid(): Boolean {
         if (!active.get()) return false
@@ -353,7 +378,7 @@ internal class PlaybackProgressMailbox {
 
     fun offer(report: PendingPlaybackProgress) {
         synchronized(lock) {
-            if (sealed || !report.epoch.isValid()) return
+            if (sealed || !report.epoch.admits(report.terminal)) return
             val previous = pending
             pending = when {
                 previous == null -> report

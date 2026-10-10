@@ -5,14 +5,18 @@ package at.bernhardberger.tvheadend.sdk.media3
 import android.os.Handler
 import android.os.Looper
 import androidx.media3.common.C
+import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
+import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.common.Tracks
 
 /**
  * Timings used to recover a live target that remains stuck in buffering.
  *
- * Audio is disabled at most once per target and restored when playback becomes ready or idle.
- * Later stalls use [postAudioDisableDurationMillis] without disabling audio again.
+ * Recovery disables audio at most once per target and restores it when playback becomes ready or
+ * idle. Later stalls use [postAudioDisableDurationMillis] without disabling audio again. Recovery
+ * only ever restores a disable it applied itself: audio the application disabled stays disabled.
  */
 public data class PlaybackRecoveryPolicy public constructor(
     public val initialBufferingDurationMillis: Long = 6_000L,
@@ -54,17 +58,24 @@ public enum class PlaybackRecoveryReason {
  * Call [beginPlaybackTarget] on the player's application looper immediately before installing
  * each new TVHeadend live source. The recovery callback must promptly retire or replace that
  * source. Closing this coordinator never releases the player.
+ *
+ * The audio track type in the player's track selection parameters stays application-owned.
+ * Recovery re-enables audio only after disabling it itself, and gives that disable up when the
+ * application re-enables audio meanwhile. A disable that was already in place when recovery would
+ * have applied its own is never undone.
  */
 public class TvheadendPlaybackRecovery internal constructor(
     private val player: Player,
     policy: PlaybackRecoveryPolicy,
     onRecoveryRequired: (PlaybackRecoveryReason) -> Unit,
+    isTargetCurrent: () -> Boolean = { true },
 ) : AutoCloseable {
     private val handler = Handler(player.applicationLooper)
     private val stateMachine = PlaybackRecoveryStateMachine(
         policy = policy,
         scheduler = HandlerRecoveryScheduler(handler),
         hasSelectedAudio = { player.currentTracks.isTypeSelected(C.TRACK_TYPE_AUDIO) },
+        isAudioDisabled = { C.TRACK_TYPE_AUDIO in player.trackSelectionParameters.disabledTrackTypes },
         setAudioDisabled = { disabled ->
             player.trackSelectionParameters = player.trackSelectionParameters
                 .buildUpon()
@@ -73,8 +84,17 @@ public class TvheadendPlaybackRecovery internal constructor(
         },
         onRecoveryRequired = onRecoveryRequired,
         playWhenReady = player.playWhenReady,
+        isTargetCurrent = isTargetCurrent,
     )
     private val listener = object : Player.Listener {
+        override fun onTimelineChanged(timeline: Timeline, reason: Int) {
+            stateMachine.onCurrentItemChanged()
+        }
+
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            stateMachine.onCurrentItemChanged()
+        }
+
         override fun onPlaybackStateChanged(playbackState: Int) {
             stateMachine.onPlaybackStateChanged(playbackState)
         }
@@ -86,6 +106,10 @@ public class TvheadendPlaybackRecovery internal constructor(
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
             stateMachine.onPlayWhenReadyChanged(playWhenReady)
         }
+
+        override fun onTrackSelectionParametersChanged(parameters: TrackSelectionParameters) {
+            stateMachine.onAudioDisabledChanged(C.TRACK_TYPE_AUDIO in parameters.disabledTrackTypes)
+        }
     }
     private var closed = false
 
@@ -94,7 +118,7 @@ public class TvheadendPlaybackRecovery internal constructor(
         player.addListener(listener)
     }
 
-    /** Starts a new live target generation and re-enables audio for it. */
+    /** Starts a new live target generation, restoring audio only if recovery disabled it. */
     public fun beginPlaybackTarget() {
         requirePlayerLooper()
         check(!closed) { "Playback recovery is closed" }
@@ -145,9 +169,11 @@ internal class PlaybackRecoveryStateMachine(
     private val policy: PlaybackRecoveryPolicy,
     private val scheduler: RecoveryScheduler,
     private val hasSelectedAudio: () -> Boolean,
+    private val isAudioDisabled: () -> Boolean,
     private val setAudioDisabled: (Boolean) -> Unit,
     private val onRecoveryRequired: (PlaybackRecoveryReason) -> Unit,
     private var playWhenReady: Boolean = true,
+    private val isTargetCurrent: () -> Boolean = { true },
 ) {
     private var targetGeneration = 0L
     private var timerGeneration = 0L
@@ -156,6 +182,8 @@ internal class PlaybackRecoveryStateMachine(
     private var timer: ScheduledRecoveryTask? = null
     private var active = false
     private var terminal = false
+
+    /** True only while audio is disabled by this recovery; no other disable is ever undone. */
     private var audioDisabled = false
     private var audioRecoveryAttempted = false
     private var sawSelectedAudio = false
@@ -163,17 +191,16 @@ internal class PlaybackRecoveryStateMachine(
     fun beginPlaybackTarget() {
         targetGeneration += 1L
         cancelTimer()
+        restoreAudio()
         playbackState = Player.STATE_IDLE
         active = true
         terminal = false
-        audioDisabled = false
         audioRecoveryAttempted = false
         sawSelectedAudio = false
-        setAudioDisabled(false)
     }
 
     fun onPlaybackStateChanged(state: Int) {
-        if (!active || terminal) return
+        if (!active || !targetCurrent() || terminal) return
         playbackState = state
         observeSelectedAudio()
         when (state) {
@@ -187,7 +214,7 @@ internal class PlaybackRecoveryStateMachine(
     }
 
     fun onTracksChanged() {
-        if (!active || terminal) return
+        if (!active || !targetCurrent() || terminal) return
         // Audio can be selected while the target is ready and lost again before the next stall.
         // Latch it whenever it is seen, even though timers are only armed while buffering.
         observeSelectedAudio()
@@ -197,9 +224,19 @@ internal class PlaybackRecoveryStateMachine(
 
     fun onPlayWhenReadyChanged(value: Boolean) {
         playWhenReady = value
-        if (!active || terminal) return
+        if (!active || !targetCurrent() || terminal) return
         if (!value) cancelTimer()
         else if (playbackState == Player.STATE_BUFFERING) evaluateBuffering()
+    }
+
+    /** Stands down as soon as the player's current item stops being the target's own. */
+    fun onCurrentItemChanged() {
+        if (active) targetCurrent()
+    }
+
+    /** Observes the player's audio-disabled flag; an application re-enabling audio takes the disable back. */
+    fun onAudioDisabledChanged(disabled: Boolean) {
+        if (!disabled) audioDisabled = false
     }
 
     fun close() {
@@ -207,6 +244,17 @@ internal class PlaybackRecoveryStateMachine(
         terminal = true
         cancelTimer()
         restoreAudio()
+    }
+
+    /**
+     * Whether the target's own item is still current. Otherwise recovery stands down for an item it
+     * does not own: it arms nothing, escalates nothing, and undoes its own audio disable.
+     */
+    private fun targetCurrent(): Boolean {
+        if (isTargetCurrent()) return true
+        cancelTimer()
+        restoreAudio()
+        return false
     }
 
     private fun restoreAudio() {
@@ -256,7 +304,8 @@ internal class PlaybackRecoveryStateMachine(
                 playWhenReady &&
                 targetGeneration == expectedTarget &&
                 timerGeneration == expectedTimer &&
-                playbackState == Player.STATE_BUFFERING
+                playbackState == Player.STATE_BUFFERING &&
+                targetCurrent()
             ) {
                 timer = null
                 timerStage = null
@@ -277,11 +326,12 @@ internal class PlaybackRecoveryStateMachine(
             return
         }
         audioRecoveryAttempted = true
-        audioDisabled = true
+        // Audio the application already disabled is not recovery's to re-enable later.
+        audioDisabled = !isAudioDisabled()
         // Install the timer first: changing selection can synchronously report READY or retire
         // the target, and those callbacks must be able to cancel this attempt completely.
         schedule(TimerStage.POST_AUDIO_DISABLE)
-        setAudioDisabled(true)
+        if (audioDisabled) setAudioDisabled(true)
     }
 
     private fun escalate(reason: PlaybackRecoveryReason) {

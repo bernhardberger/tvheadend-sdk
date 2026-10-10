@@ -25,13 +25,21 @@ internal class TvheadendRecordingResume(
     private val player: RecordingResumePlayer,
     private val identity: RecordingMediaIdentity,
     private val mode: RecordingResumeMode = RecordingResumeMode.COMPLETED,
+    private val isTargetCurrent: () -> Boolean = { true },
+    onProgressFloorChanged: (Duration?) -> Unit = {},
 ) : AutoCloseable {
-    internal constructor(player: Player, identity: RecordingMediaIdentity, mode: RecordingResumeMode) :
-        this(Media3RecordingResumePlayer(player), identity, mode)
+    internal constructor(
+        player: Player,
+        identity: RecordingMediaIdentity,
+        mode: RecordingResumeMode,
+        isTargetCurrent: () -> Boolean,
+        onProgressFloorChanged: (Duration?) -> Unit,
+    ) : this(Media3RecordingResumePlayer(player), identity, mode, isTargetCurrent, onProgressFloorChanged)
 
     private val stateMachine = RecordingResumeStateMachine(
         seekTo = player::seekTo,
         scheduleTimeout = player::postDelayed,
+        onProgressFloorChanged = { onProgressFloorChanged(it?.milliseconds) },
     )
     private val listener = object : Player.Listener {
         override fun onTimelineChanged(timeline: Timeline, reason: Int) {
@@ -129,10 +137,8 @@ internal class TvheadendRecordingResume(
         )
     }
 
-    private fun currentTargetMatches(): Boolean = player.currentMediaItem?.let { mediaItem ->
-        mediaItem.mediaId == identity.uri ||
-            mediaItem.localConfiguration?.uri?.toString() == identity.uri
-    } == true
+    /** The coordinator's ownership rule for recordings: an item reusing the media id is not the target. */
+    private fun currentTargetMatches(): Boolean = isTargetCurrent() && identity.matches(player.currentMediaItem)
 
     private fun requirePlayerLooper() {
         player.requireApplicationLooper()
@@ -143,7 +149,9 @@ internal fun createTvheadendRecordingResume(
     player: Player,
     identity: RecordingMediaIdentity,
     mode: RecordingResumeMode = RecordingResumeMode.COMPLETED,
-): TvheadendRecordingResume = TvheadendRecordingResume(player, identity, mode)
+    isTargetCurrent: () -> Boolean = { true },
+    onProgressFloorChanged: (Duration?) -> Unit = {},
+): TvheadendRecordingResume = TvheadendRecordingResume(player, identity, mode, isTargetCurrent, onProgressFloorChanged)
 
 /** Which timeline rule decides when and where a pending resume seeks. */
 internal enum class RecordingResumeMode(
@@ -209,6 +217,7 @@ internal const val COMPLETED_RESUME_PROGRESS_FLOOR_TIMEOUT_MILLIS: Long = 60_000
 internal class RecordingResumeStateMachine(
     private val seekTo: (Long) -> Unit,
     private val scheduleTimeout: (Long, () -> Unit) -> AutoCloseable,
+    private val onProgressFloorChanged: (Long?) -> Unit = {},
 ) {
     private var pending: PendingResume? = null
     private var closed = false
@@ -233,6 +242,7 @@ internal class RecordingResumeStateMachine(
         target.timeout = scheduleTimeout(mode.timeoutMillis) {
             if (pending === target) onTimeout(target)
         }
+        onProgressFloorChanged(progressFloorMillis)
     }
 
     fun onMediaState(
@@ -262,6 +272,7 @@ internal class RecordingResumeStateMachine(
             RecordingResumeMode.COMPLETED -> {
                 target.holdsProgress = false
                 target.timeout = null
+                onProgressFloorChanged(progressFloorMillis)
             }
             RecordingResumeMode.GROWING -> settle(RecordingResumeOutcome.ABANDONED)
         }
@@ -287,6 +298,7 @@ internal class RecordingResumeStateMachine(
         pending = null
         target.timeout?.close()
         outcome = settled
+        onProgressFloorChanged(progressFloorMillis)
     }
 
     private class PendingResume(

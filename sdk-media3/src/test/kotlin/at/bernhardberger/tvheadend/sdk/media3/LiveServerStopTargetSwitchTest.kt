@@ -231,6 +231,7 @@ private class RealLiveSourceAccess(private val dispatcher: CoroutineDispatcher) 
     ): CoordinatorMediaSource = error("recordings are not played here")
 
     override fun createRecovery(
+        isTargetCurrent: () -> Boolean,
         onRecoveryRequired: (PlaybackRecoveryReason) -> Unit,
     ): CoordinatorPlaybackRecovery = object : CoordinatorPlaybackRecovery {
         override fun beginPlaybackTarget() = Unit
@@ -241,8 +242,15 @@ private class RealLiveSourceAccess(private val dispatcher: CoroutineDispatcher) 
     override fun createResume(
         identity: RecordingMediaIdentity,
         mode: RecordingResumeMode,
+        onProgressFloorChanged: (kotlin.time.Duration?) -> Unit,
+        isTargetCurrent: () -> Boolean,
     ): CoordinatorRecordingResume =
         error("recordings are not played here")
+
+    override fun isCurrent(source: CoordinatorMediaSource): Boolean = installed === source
+
+    override fun ownsItem(source: CoordinatorMediaSource, item: androidx.media3.common.MediaItem?): Boolean =
+        (source as LiveSource).media.mediaItem === item
 
     override fun setMediaSource(source: CoordinatorMediaSource, startPosition: Duration?) {
         release()
@@ -257,7 +265,8 @@ private class RealLiveSourceAccess(private val dispatcher: CoroutineDispatcher) 
 
     override fun stop() = release()
 
-    override fun clearMediaItems() {
+    override fun removeMediaItems(source: CoordinatorMediaSource) {
+        if (installed !== source) return
         release()
         installed = null
     }

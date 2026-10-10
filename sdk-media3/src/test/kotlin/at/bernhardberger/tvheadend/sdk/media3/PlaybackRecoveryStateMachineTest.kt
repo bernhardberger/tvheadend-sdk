@@ -224,7 +224,7 @@ class PlaybackRecoveryStateMachineTest {
         harness.scheduler.runAllIncludingCancelled()
 
         assertFalse(harness.audioDisabled)
-        assertEquals(listOf(false, true, false), harness.audioDisabledChanges)
+        assertEquals(listOf(true, false), harness.audioDisabledChanges)
         assertTrue(harness.reasons.isEmpty())
     }
 
@@ -243,7 +243,7 @@ class PlaybackRecoveryStateMachineTest {
         harness.scheduler.runAllIncludingCancelled()
 
         assertFalse(harness.audioDisabled)
-        assertEquals(listOf(false, true, false), harness.audioDisabledChanges)
+        assertEquals(listOf(true, false), harness.audioDisabledChanges)
         assertEquals(listOf(PlaybackRecoveryReason.AUDIO_RECOVERY_EXHAUSTED), harness.reasons)
     }
 
@@ -278,7 +278,7 @@ class PlaybackRecoveryStateMachineTest {
         harness.scheduler.runAllIncludingCancelled()
 
         assertFalse(harness.audioDisabled)
-        assertEquals(listOf(false, true, false), harness.audioDisabledChanges)
+        assertEquals(listOf(true, false), harness.audioDisabledChanges)
         assertTrue(harness.reasons.isEmpty())
     }
 
@@ -294,7 +294,7 @@ class PlaybackRecoveryStateMachineTest {
         harness.scheduler.runNextActive()
 
         assertFalse(harness.audioDisabled)
-        assertEquals(listOf(false, true, false), harness.audioDisabledChanges)
+        assertEquals(listOf(true, false), harness.audioDisabledChanges)
         assertTrue(harness.scheduler.activeDelays().isEmpty())
         harness.scheduler.runAllIncludingCancelled()
         assertTrue(harness.reasons.isEmpty())
@@ -315,12 +315,12 @@ class PlaybackRecoveryStateMachineTest {
         harness.scheduler.runNextActive()
 
         assertTrue(harness.audioDisabled)
-        assertEquals(listOf(false, true, false, false, true), harness.audioDisabledChanges)
+        assertEquals(listOf(true, false, true), harness.audioDisabledChanges)
         assertTrue(harness.reasons.isEmpty())
     }
 
     @Test
-    fun `new target re-enables audio and rejects stale timeout`() {
+    fun `new target rejects stale timeout without touching audio it never disabled`() {
         val harness = RecoveryHarness()
         harness.selectedAudio = false
         harness.begin()
@@ -331,7 +331,95 @@ class PlaybackRecoveryStateMachineTest {
         stale.runEvenIfCancelled()
 
         assertFalse(harness.audioDisabled)
-        assertEquals(listOf(false, false), harness.audioDisabledChanges)
+        assertTrue(harness.audioDisabledChanges.isEmpty())
+        assertTrue(harness.reasons.isEmpty())
+    }
+
+    @Test
+    fun `new targets and restoration leave audio the application disabled untouched`() {
+        val harness = RecoveryHarness()
+        harness.audioDisabled = true
+        harness.begin()
+        harness.playback(Player.STATE_READY)
+        harness.begin()
+        harness.playback(Player.STATE_IDLE)
+
+        harness.machine.close()
+
+        assertTrue(harness.audioDisabled)
+        assertTrue(harness.audioDisabledChanges.isEmpty())
+    }
+
+    @Test
+    fun `recovery does not claim audio the application disabled before selection caught up`() {
+        val harness = RecoveryHarness()
+        harness.begin()
+        harness.playback(Player.STATE_BUFFERING)
+        // The application disabled audio while the selected tracks still report it.
+        harness.audioDisabled = true
+
+        harness.scheduler.runNextActive()
+        harness.playback(Player.STATE_READY)
+        harness.machine.close()
+
+        assertTrue(harness.audioDisabled)
+        assertTrue(harness.audioDisabledChanges.isEmpty())
+        assertTrue(harness.reasons.isEmpty())
+    }
+
+    @Test
+    fun `application re-enabling audio takes back the recovery disable`() {
+        val harness = RecoveryHarness()
+        harness.begin()
+        harness.playback(Player.STATE_BUFFERING)
+        harness.scheduler.runNextActive()
+        assertEquals(listOf(true), harness.audioDisabledChanges)
+
+        harness.applicationSetsAudioDisabled(false)
+        harness.applicationSetsAudioDisabled(true)
+        harness.playback(Player.STATE_READY)
+        harness.begin()
+        harness.machine.close()
+
+        assertTrue(harness.audioDisabled)
+        assertEquals(listOf(true), harness.audioDisabledChanges)
+    }
+
+    @Test
+    fun `recovery stands down and restores its own disable once its target is no longer current`() {
+        val harness = RecoveryHarness()
+        harness.begin()
+        harness.playback(Player.STATE_BUFFERING)
+        harness.scheduler.runNextActive()
+        assertTrue(harness.audioDisabled)
+
+        harness.targetCurrent = false
+        harness.scheduler.runNextActive()
+        harness.playback(Player.STATE_BUFFERING)
+        harness.playback(Player.STATE_ENDED)
+        harness.scheduler.runAllIncludingCancelled()
+
+        assertFalse(harness.audioDisabled)
+        assertEquals(listOf(true, false), harness.audioDisabledChanges)
+        assertTrue(harness.reasons.isEmpty())
+    }
+
+    @Test
+    fun `recovery stands down at the item transition without waiting for another player callback`() {
+        val harness = RecoveryHarness()
+        harness.begin()
+        harness.playback(Player.STATE_BUFFERING)
+        harness.scheduler.runNextActive()
+        assertTrue(harness.audioDisabled)
+
+        harness.targetCurrent = false
+        harness.machine.onCurrentItemChanged()
+
+        assertFalse(harness.audioDisabled)
+        assertEquals(emptyList<Long>(), harness.scheduler.activeDelays())
+        harness.targetCurrent = true
+        harness.machine.onCurrentItemChanged()
+        assertEquals(listOf(true, false), harness.audioDisabledChanges)
         assertTrue(harness.reasons.isEmpty())
     }
 
@@ -344,6 +432,23 @@ class PlaybackRecoveryStateMachineTest {
         harness.playback(Player.STATE_ENDED)
 
         assertEquals(listOf(PlaybackRecoveryReason.LIVE_ENDED), harness.reasons)
+    }
+
+    @Test
+    fun `item transition restores owned audio even after recovery escalated`() {
+        val harness = RecoveryHarness()
+        harness.begin()
+        harness.playback(Player.STATE_BUFFERING)
+        harness.scheduler.runNextActive()
+        harness.scheduler.runNextActive()
+        assertTrue(harness.audioDisabled)
+        assertEquals(1, harness.reasons.size)
+
+        harness.targetCurrent = false
+        harness.machine.onCurrentItemChanged()
+
+        assertFalse(harness.audioDisabled)
+        assertEquals(listOf(true, false), harness.audioDisabledChanges)
     }
 
     @Test
@@ -371,7 +476,7 @@ class PlaybackRecoveryStateMachineTest {
         harness.machine.close()
 
         assertFalse(harness.audioDisabled)
-        assertEquals(listOf(false, true, false), harness.audioDisabledChanges)
+        assertEquals(listOf(true, false), harness.audioDisabledChanges)
         assertTrue(harness.reasons.isEmpty())
     }
 }
@@ -382,18 +487,27 @@ private class RecoveryHarness {
     val audioDisabledChanges = mutableListOf<Boolean>()
     var selectedAudio = true
     var audioDisabled = false
+    var targetCurrent = true
     var onAudioDisabledChanged: ((Boolean) -> Unit)? = null
     val machine = PlaybackRecoveryStateMachine(
         policy = PlaybackRecoveryPolicy(),
         scheduler = scheduler,
         hasSelectedAudio = { selectedAudio },
+        isAudioDisabled = { audioDisabled },
         setAudioDisabled = { disabled ->
             audioDisabled = disabled
             audioDisabledChanges += disabled
             onAudioDisabledChanged?.invoke(disabled)
         },
         onRecoveryRequired = reasons::add,
+        isTargetCurrent = { targetCurrent },
     )
+
+    /** Changes the audio flag as the application would, notifying recovery like the player does. */
+    fun applicationSetsAudioDisabled(disabled: Boolean) {
+        audioDisabled = disabled
+        machine.onAudioDisabledChanged(disabled)
+    }
 
     fun begin() {
         machine.beginPlaybackTarget()

@@ -45,6 +45,9 @@ internal class TestCoordinatorRecordingTarget(
     var bindGrowingAction: () -> RecordingFileResult<GrowingRecordingFileLease> = { growingResult }
     val reports: MutableList<Pair<GrowingRecordingFileLease?, DvrPlaybackProgress>> = mutableListOf()
 
+    /** Suspends each upload after it was recorded, so later reports stay pending meanwhile. */
+    var reportGate: (suspend () -> Unit)? = null
+
     override val admission: CoordinatorRecordingAdmission
         get() = admissionState
 
@@ -58,6 +61,7 @@ internal class TestCoordinatorRecordingTarget(
         progress: DvrPlaybackProgress,
     ): DvrProgressResult {
         reports += growingLease to progress
+        reportGate?.invoke()
         return reportResult
     }
 }
