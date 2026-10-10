@@ -3023,6 +3023,126 @@ internal class TvheadendPlaybackCoordinatorTest {
     }
 
     @Test
+    fun `paused live without timeshift ends on full buffers and retunes at live when installed again`() = runTest {
+        val fixture = CoordinatorFixture()
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+        assertSame(PlaybackTargetResult.STARTED, fixture.coordinator.setLiveTarget(ChannelId(1)))
+        fixture.player.attachTimeshift(FakeTimeshiftSubscription(null))
+        assertSame(LiveTimeshiftState.Unavailable, fixture.liveObservation().timeshiftState)
+        fixture.player.snapshot = snapshot(position = 40, duration = null)
+
+        assertTrue(fixture.player.requireTimeshiftControls().bufferExhausted())
+        runCurrent()
+
+        assertEquals(listOf(PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED), fixture.recoveryReasons)
+        // Retirement stops the borrowed player, which closes the subscription and releases its queues.
+        assertEquals(listOf("live:1", "stop"), fixture.player.operations)
+        assertFalse(fixture.player.hasActiveTarget)
+        assertSame(LivePlaybackObservation.NoTarget, fixture.coordinator.livePlaybackObservation.value)
+
+        // Resuming installs the target again, which subscribes anew at the live edge.
+        assertSame(PlaybackTargetResult.STARTED, fixture.coordinator.setLiveTarget(ChannelId(1)))
+        assertEquals(listOf("live:1", "stop", "live:1"), fixture.player.operations)
+        assertEquals(listOf(PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED), fixture.recoveryReasons)
+        fixture.coordinator.shutdown(1.seconds)
+        owner.join()
+    }
+
+    @Test
+    fun `full live buffers retire a playing player but a timeshift grant refuses handoff`() = runTest {
+        val fixture = CoordinatorFixture()
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+        fixture.coordinator.setLiveTarget(ChannelId(1))
+        fixture.player.attachTimeshift(FakeTimeshiftSubscription(null))
+        fixture.player.snapshot = snapshot(position = 40, duration = null)
+        assertTrue(fixture.player.requireTimeshiftControls().bufferExhausted())
+        runCurrent()
+
+        assertEquals(listOf("live:1", "stop"), fixture.player.operations)
+        assertEquals(listOf(PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED), fixture.recoveryReasons)
+
+        fixture.coordinator.setLiveTarget(ChannelId(2))
+        fixture.player.attachTimeshift(FakeTimeshiftSubscription(60.seconds))
+        fixture.player.snapshot = snapshot(position = 40, duration = null)
+        assertFalse(fixture.player.requireTimeshiftControls().bufferExhausted())
+        runCurrent()
+        assertEquals(listOf("live:1", "stop", "live:2"), fixture.player.operations)
+        assertEquals(listOf(PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED), fixture.recoveryReasons)
+        fixture.coordinator.shutdown(1.seconds)
+        owner.join()
+    }
+
+    @Test
+    fun `stale buffer exhaustion leaves a restarted, re-prepared or replaced live target alone`() = runTest {
+        for (stage in listOf("before handling", "before looper stop", "replaced target")) {
+            val fixture = CoordinatorFixture()
+            val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+            fixture.coordinator.setLiveTarget(ChannelId(1))
+            val subscription = FakeTimeshiftSubscription(null)
+            fixture.player.attachTimeshift(subscription)
+            fixture.player.snapshot = snapshot(position = 40, duration = null)
+            val exhausted = fixture.player.requireTimeshiftControls()
+            // A same-subscription restart or source re-preparation binds a successor period.
+            val restart = { fixture.player.replaceTimeshiftPeriod(subscription) }
+            when (stage) {
+                "before handling" -> {
+                    assertTrue(exhausted.bufferExhausted())
+                    restart()
+                }
+                "before looper stop" -> {
+                    fixture.player.beforeStop = restart
+                    assertTrue(exhausted.bufferExhausted())
+                }
+                "replaced target" -> {
+                    val replacement = async(start = CoroutineStart.UNDISPATCHED) {
+                        fixture.coordinator.setLiveTarget(ChannelId(2))
+                    }
+                    assertTrue(exhausted.bufferExhausted())
+                    runCurrent()
+                    assertSame(PlaybackTargetResult.STARTED, replacement.await())
+                }
+            }
+            runCurrent()
+
+            val installed = if (stage == "replaced target") listOf("live:1", "live:2") else listOf("live:1")
+            assertEquals(installed, fixture.player.operations, stage)
+            assertTrue(fixture.player.hasActiveTarget, stage)
+            assertTrue(fixture.recoveryReasons.isEmpty(), stage)
+            fixture.coordinator.shutdown(1.seconds)
+            owner.join()
+        }
+    }
+
+    @Test
+    fun `buffer exhaustion retires resumed playback and reports cleanup failure independently`() = runTest {
+        for (stage in listOf("resumed before looper stop", "cleanup failed")) {
+            val fixture = CoordinatorFixture()
+            val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+            fixture.coordinator.setLiveTarget(ChannelId(1))
+            fixture.player.attachTimeshift(FakeTimeshiftSubscription(null))
+            fixture.player.snapshot = snapshot(position = 40, duration = null)
+            when (stage) {
+                "resumed before looper stop" -> fixture.player.beforeStop = {
+                    fixture.player.snapshot = snapshot(position = 40, duration = null)
+                }
+                "cleanup failed" -> fixture.player.stopCleanupFails = true
+            }
+            assertTrue(fixture.player.requireTimeshiftControls().bufferExhausted())
+            runCurrent()
+
+            val reason = if (stage == "cleanup failed") {
+                PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED_CLEANUP_FAILED
+            } else {
+                PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED
+            }
+            assertEquals(listOf(reason), fixture.recoveryReasons, stage)
+            assertEquals(listOf("live:1", "stop"), fixture.player.operations, stage)
+            fixture.coordinator.shutdown(1.seconds)
+            owner.join()
+        }
+    }
+
+    @Test
     fun `claimed seek survives caller cancellation but queued command performs no work`() = runTest {
         val fixture = CoordinatorFixture()
         val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
@@ -3749,11 +3869,12 @@ private class CoordinatorFixture {
     val player = FakePlaybackCoordinatorPlayer()
     val growingLease = MutableGrowingLease()
     val time = ManualPlaybackCoordinatorTimeSource()
+    val recoveryReasons = mutableListOf<PlaybackRecoveryReason>()
     private val delegate = TvheadendPlaybackCoordinator(
         player = player,
         playerEvents = events,
         progressPolicy = DvrProgressPolicy(),
-        onRecoveryRequired = {},
+        onRecoveryRequired = { reason -> recoveryReasons += reason },
         timeSource = time,
     )
     val coordinator = TestCoordinatorHarness(delegate) { recordingId ->
@@ -3971,6 +4092,7 @@ private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
     var detachTimeshiftOnStop = false
     var stopCleanupFails = false
     var stopUnavailable = false
+    var beforeStop: (() -> Unit)? = null
     var liveInstallEntered: CompletableDeferred<Unit>? = null
     var liveInstallRelease: CompletableDeferred<Unit>? = null
     private var timeshiftControls: LiveTimeshiftControlBridge? = null
@@ -4043,8 +4165,17 @@ private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
         )
     }
 
-    override suspend fun stop(ticket: PlayerOperationTicket): PlaybackPlayerStopResult {
+    override suspend fun stop(
+        ticket: PlayerOperationTicket,
+        retireOnlyIf: (() -> Boolean)?,
+    ): PlaybackPlayerStopResult {
         if (!ticket.claim()) return PlaybackPlayerStopResult(cancelled = true)
+        // Runs where the Media3 player evaluates its condition: on the looper, before mutation.
+        beforeStop?.also { beforeStop = null }?.invoke()
+        if (retireOnlyIf != null && (active == null || !retireOnlyIf())) {
+            ticket.complete()
+            return PlaybackPlayerStopResult()
+        }
         if (stopUnavailable) {
             ticket.complete()
             return PlaybackPlayerStopResult(playerAvailable = false)
@@ -4057,6 +4188,7 @@ private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
         ticket.complete()
         return PlaybackPlayerStopResult(
             playerAvailable = !stopCleanupFails,
+            playerStoppedAndCleared = !stopCleanupFails,
             retiredTarget = retirement.first,
             retiredRecording = retirement.second,
         )

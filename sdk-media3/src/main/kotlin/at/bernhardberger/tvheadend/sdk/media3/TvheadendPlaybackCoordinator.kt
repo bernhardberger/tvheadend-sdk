@@ -893,6 +893,7 @@ private class CoordinatorActor(
 ) {
     private val mailbox = PlaybackProgressMailbox()
     private val ticks = Channel<PlaybackTargetToken>(Channel.CONFLATED)
+    private val exhaustions = Channel<LiveBufferExhaustion>(Channel.UNLIMITED)
     private var activeTarget: ActorTarget? = null
     private var ticker: Job? = null
     private var pausedSeek: PausedSeekBuffer? = null
@@ -923,6 +924,9 @@ private class CoordinatorActor(
                     playerEvents.signal.onReceive {
                         drainPlayerEvents()
                     }
+                    exhaustions.onReceive { exhaustion ->
+                        endExhaustedLiveTarget(exhaustion)
+                    }
                     ticks.onReceive { token ->
                         observeElapsed(token)
                     }
@@ -937,6 +941,11 @@ private class CoordinatorActor(
             endPausedSeek(failure)
             throw failure
         } finally {
+            exhaustions.close()
+            while (true) {
+                val pending = exhaustions.tryReceive().getOrNull() ?: break
+                pending.settle(true)
+            }
             owedPause?.watcher?.cancel()
             owedPause = null
             activeTarget?.token?.retire()
@@ -988,6 +997,9 @@ private class CoordinatorActor(
                 publish = {},
                 publishIssue = {},
                 publishObservation = { observation -> publishLiveObservation(token, observation) },
+                onBufferExhausted = { attachment, settle ->
+                    exhaustions.trySend(LiveBufferExhaustion(token, attachment, settle)).isSuccess
+                },
             )
             val result = player.installLive(
                 ticket = command.ticket,
@@ -1471,6 +1483,54 @@ private class CoordinatorActor(
         }
     }
 
+    /**
+     * Ends a live target whose bounded queues filled without server timeshift.
+     *
+     * Retirement is claimed under the bridge ownership lock on the player's looper. Replacement
+     * before the claim invalidates the event; after the claim no successor can bind. Player calls
+     * remain outside that lock. Current play intent does not undo exhaustion of the live queues.
+     * Application departure before admission rejects retirement without a recovery callback,
+     * and settles the original consumer call as a buffer-limit failure outside all player locks.
+     */
+    private suspend fun endExhaustedLiveTarget(exhaustion: LiveBufferExhaustion) {
+        var failed = false
+        try {
+            failed = retireExhaustedLiveTarget(exhaustion)
+        } finally {
+            exhaustion.settle(failed)
+        }
+    }
+
+    /** Fail delivery after departure or incomplete cleanup of a retired target. */
+    private suspend fun retireExhaustedLiveTarget(exhaustion: LiveBufferExhaustion): Boolean {
+        if (!exhaustion.isCurrent()) return false
+        var claimed = false
+        val retirement = player.stop(PlayerOperationTicket()) {
+            exhaustion.attachment.claimExhaustionRetirement().also { claimed = it }
+        }
+        applyRetirement(retirement.retiredTarget, retirement.retiredRecording)
+        // Conditional retirement also rejects a player item the application has already left.
+        if (!retirement.retiredTarget && retirement.playerAvailable && !claimed) {
+            return !exhaustion.token.ownsPlayerItem()
+        }
+        // A claim intentionally ends attachment leadership. Failure after claiming is not stale work.
+        if (!retirement.retiredTarget && !claimed && !exhaustion.isCurrent()) return false
+        val reason = if (retirement.playerStoppedAndCleared) {
+            PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED
+        } else {
+            PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED_CLEANUP_FAILED
+        }
+        try {
+            onRecoveryRequired(reason)
+        } catch (_: Exception) {
+            // Application callbacks must not terminate the coordinator owner.
+        }
+        return retirement.retiredTarget && !retirement.playerStoppedAndCleared
+    }
+
+    private fun LiveBufferExhaustion.isCurrent(): Boolean =
+        (activeTarget as? ActorTarget.Live)?.token === token && token.isActive() && attachment.leadsTarget()
+
     private suspend fun observeElapsed(token: PlaybackTargetToken) {
         val target = activeTarget as? ActorTarget.Recording ?: return
         if (target.token !== token || target.terminalized) return
@@ -1632,6 +1692,13 @@ private class CoordinatorActor(
         val transport: LiveTimeshiftControlBridge.BufferingTransport,
         val watcher: Job,
         val settled: Channel<Unit>,
+    )
+
+    /** A live period's queues that filled without timeshift, awaiting ownership-checked retirement. */
+    private class LiveBufferExhaustion(
+        val token: PlaybackTargetToken,
+        val attachment: LiveTimeshiftControlBridge.Attachment,
+        val settle: (failed: Boolean) -> Unit,
     )
 
     private companion object {

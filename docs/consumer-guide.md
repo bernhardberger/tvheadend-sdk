@@ -638,6 +638,80 @@ are also non-exhaustive. Its stable `category` and
 `isConfigurationOrAccessRelated` predicate support broad handling; retry and
 terminal behavior depend on the surrounding subscription event.
 
+### Pausing live TV without timeshift
+
+Server timeshift is the way to pause live TV. Request a `timeshiftPeriod` in
+`LivePlaybackOptions`; once `timeshiftState` is `LiveTimeshiftState.Available`,
+pause the player and call `pauseTimeshift()` so the server holds the stream.
+
+The SDK has no client-side timeshift store. It only keeps live media in bounded
+Media3 sample queues on its way to the decoders: at most 64 MiB in total and
+4,096 samples per track. While `timeshiftState` is
+`LiveTimeshiftState.Unavailable`, the server keeps delivering live media into
+those queues even when the player cannot advance, either because
+`playWhenReady` is off or because Media3 suppresses playback (for example
+transient audio-focus loss or an unsuitable audio output). How soon they fill
+depends on the channel's bitrate and frame rate: a high-bitrate channel reaches
+the byte bound, and a low-bitrate one reaches the sample bound.
+
+When the queues fill while the live item still belongs to the target, the
+coordinator stops the player and removes only the
+TVHeadend item, which closes the subscription and releases the buffers. It
+then retires the target and reports `PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED`
+through the `onRecoveryRequired` callback of `createTvheadendPlaybackCoordinator`.
+This is not a player error, and the player stays application-owned. Resuming
+retunes to live: call `setLiveTarget()` again once playback can advance, that
+is when `playWhenReady` is true and `playbackSuppressionReason` is
+`PLAYBACK_SUPPRESSION_REASON_NONE`. Watch `onPlayWhenReadyChanged` and
+`onPlaybackSuppressionReasonChanged`, and retune immediately if that already
+holds when the callback runs. Exhaustion retires the target regardless of the
+current play state, including playback resumed near the limit. Retuning while
+playback still cannot advance fills the queues again. With a timeshift grant,
+or outside `TvheadendPlaybackCoordinator`, overflow still fails with
+"Live sample buffer limit reached".
+
+If the application has already replaced or left the live item before exhaustion
+retirement is admitted, exhaustion does not stop the player, remove items, or
+report either exhaustion recovery reason. Instead the period fails with
+"Live sample buffer limit reached" and the subscription closes without waiting for
+another event, including when departure races an already queued exhaustion hand-off.
+The subscription ends with `ConsumerFailed`, or with `Closed` when the replay of packets
+buffered before period creation fails first. Returning
+to that item does not restore ownership or resume its closed subscription; the
+period exposes the error rather than buffering forever. As with other departed targets, the observation can remain
+`Active` until the next `stop()`, target change, or shutdown removes any lingering
+coordinator-owned item. The application's items are preserved. To play that channel
+again, explicitly install it with `setLiveTarget()` when the application wants it.
+
+If stopping the player or removing the item cannot be confirmed, the callback
+instead reports `PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED_CLEANUP_FAILED`.
+Neither of the following cases guarantees buffer release.
+
+- **Retirement never started.** The target may still be active: call the
+  coordinator's `stop()` or `setLiveTarget()` to retry retirement. Subscription
+  closure and a period error are not guaranteed.
+- **Retirement completed with incomplete Player cleanup.** The target is already
+  retired and `stop()` returns `PlaybackStopResult.AlreadyStopped`; it does not
+  retry item removal. The period fails and server delivery ends without another
+  event (`ConsumerFailed` or `Closed`), even if the application never reconciles
+  the Player. If the leftover TVHeadend item is still current, the Player may also
+  report "Live sample buffer limit reached" as a player error; it needs no
+  handling beyond the callback. In this retired case the application must
+  reconcile its Player itself and remove any remaining TVHeadend item before
+  retuning.
+
+Also reconcile after `PlaybackStopResult.PlayerUnavailable` or
+`PlaybackTargetResult.PLAYER_UNAVAILABLE`; neither those results nor
+`AlreadyStopped` confirm that the item was removed. Use the callback to
+reconcile rather than relying on a player error. Ancillary cleanup failures
+(such as listener removal) do not change `LIVE_BUFFER_EXHAUSTED` when stopping
+and item removal both succeeded. A coordinator whose run is cancelled while an
+exhaustion is still pending fails that period, so the Player can report
+"Live sample buffer limit reached" just before the coordinator abandons the item.
+
+While `timeshiftState` is `Unavailable`, disable the pause control or label it
+so viewers know that resuming returns to live.
+
 ### 0.4.0 app migration inventory
 
 The enum-to-singleton replacement is an intentional provisional 0.x source and

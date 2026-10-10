@@ -233,6 +233,8 @@ internal class LiveTimeshiftControlBridge(
     private val publishIssue: (SubscriptionIssue?) -> Unit,
     private val publishDiagnostics: (LiveSubscriptionDiagnostics?) -> Unit = {},
     private val publishObservation: (LivePlaybackObservation.Active) -> Unit = {},
+    /** Receives a period's queues that filled without timeshift; null keeps that a period failure. */
+    private val onBufferExhausted: ((attachment: Attachment, settle: (failed: Boolean) -> Unit) -> Boolean)? = null,
 ) {
     internal constructor(
         token: PlaybackTargetToken,
@@ -246,6 +248,7 @@ internal class LiveTimeshiftControlBridge(
     private var activeAttachment: Attachment? = null
     private var attachedPeriodCount = 0
     private var retired = false
+    private var exhaustionRetiring = false
     private var currentState: LiveTimeshiftState = LiveTimeshiftState.Unavailable
     private var currentIssue: SubscriptionIssue? = null
     private var currentDiagnostics: LiveSubscriptionDiagnostics? = null
@@ -800,6 +803,36 @@ internal class LiveTimeshiftControlBridge(
         @Volatile internal var bufferingCapacitySeek: TimeshiftSeekToken? = null
 
         internal fun currentSeek(): TimeshiftSeekToken? = synchronized(lock) { appliedSeek }
+
+        /**
+         * Hands this period's queues, filled without a server timeshift grant, to the coordinator.
+         * It ends the target regardless of the player's current play intent. Returns false
+         * while timeshift is granted, the app has departed, or this attachment no longer leads
+         * the target, so the period fails as before. The handler settles accepted admission outside
+         * this lock; a true result tells the original consumer call to fail after raced departure.
+         */
+        internal fun bufferExhausted(settle: (failed: Boolean) -> Unit = {}): Boolean = synchronized(lock) {
+            val handler = onBufferExhausted
+            if (handler == null || !token.ownsPlayerItem() || !leadsTarget() || grant?.let { it > Duration.ZERO } == true) {
+                return@synchronized false
+            }
+            handler(this, settle)
+        }
+
+        /**
+         * True while this attachment's period is still the one the target plays. A restart,
+         * period replacement, re-preparation or retirement ends it.
+         */
+        internal fun leadsTarget(): Boolean = synchronized(lock) {
+            !retired && !exhaustionRetiring && !detached && !terminal && token.isActive() && activeAttachment === this
+        }
+
+        /** Claims retirement atomically with ownership validation; no successor may bind afterwards. */
+        internal fun claimExhaustionRetirement(): Boolean = synchronized(lock) {
+            if (!leadsTarget() || grant?.let { it > Duration.ZERO } == true) return@synchronized false
+            exhaustionRetiring = true
+            true
+        }
         @Volatile internal var bufferingSeek: Boolean = false
         internal fun playbackDiscontinuity() {
             synchronized(lock) { pendingPlaybackDiscontinuity = false }
@@ -815,6 +848,7 @@ internal class LiveTimeshiftControlBridge(
             synchronized(lock) {
                 if (
                     retired ||
+                    exhaustionRetiring ||
                     detached ||
                     terminal ||
                     !token.isActive() ||

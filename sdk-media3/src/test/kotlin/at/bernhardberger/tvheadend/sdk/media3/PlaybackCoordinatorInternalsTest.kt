@@ -7,8 +7,11 @@ package at.bernhardberger.tvheadend.sdk.media3
 
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
 import java.io.IOException
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.async
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -16,8 +19,77 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 
 internal class PlaybackCoordinatorInternalsTest {
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `dispatch throwing after admission cannot replace the claimed result`(concurrent: Boolean) = runTest {
+        val started = CountDownLatch(1)
+        val finish = CountDownLatch(1)
+        var worker: Thread? = null
+        val looper = object : CoordinatorLooper {
+            override fun isCurrent(): Boolean = false
+            override fun remove(runnable: Runnable) = Unit
+            override fun post(runnable: Runnable): Boolean {
+                if (concurrent) {
+                    worker = Thread(runnable).also { it.start() }
+                    check(started.await(5, TimeUnit.SECONDS)) { "Claim did not start" }
+                } else {
+                    runnable.run()
+                }
+                throw IOException("scripted dispatch failure after admission")
+            }
+        }
+        val result = async {
+            PlayerLooperExecutor(looper).execute(PlayerOperationTicket()) {
+                started.countDown()
+                if (concurrent) check(finish.await(5, TimeUnit.SECONDS)) { "Claim did not finish" }
+                42
+            }
+        }
+        try {
+            runCurrent()
+            if (concurrent) assertFalse(result.isCompleted, "Claimed work must settle its own result")
+        } finally {
+            finish.countDown()
+            worker?.join(5_000)
+        }
+        assertEquals(LooperOperationResult.Success(42), result.await())
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["operation", "post", "looper check"])
+    fun `foreign cancellation inside a looper operation reports unavailability`(stage: String) = runTest {
+        val cancellation = CancellationException("scripted cancellation")
+        val looper = object : CoordinatorLooper {
+            override fun remove(runnable: Runnable) = Unit
+            override fun post(runnable: Runnable): Boolean = throw cancellation
+            override fun isCurrent(): Boolean {
+                if (stage == "looper check") throw cancellation
+                return stage == "operation"
+            }
+        }
+        val result = PlayerLooperExecutor(looper).execute(PlayerOperationTicket()) { throw cancellation }
+        assertSame(LooperOperationResult.Unavailable, result)
+    }
+
+    @Test
+    fun `real caller cancellation propagates and fences queued looper work`() = runTest {
+        val looper = QueuedCoordinatorLooper()
+        val ticket = PlayerOperationTicket()
+        var mutations = 0
+        val operation = async { PlayerLooperExecutor(looper).execute(ticket) { mutations += 1 } }
+        runCurrent()
+
+        operation.cancel(CancellationException("scripted caller cancellation"))
+        assertTrue(runCatching { operation.await() }.exceptionOrNull() is CancellationException)
+        looper.runAll()
+        assertTrue(ticket.isCancelled())
+        assertEquals(0, mutations)
+    }
+
     @Test
     fun `cancellation before current looper claim prevents inline mutation`() = runTest {
         val executor = PlayerLooperExecutor(CurrentCoordinatorLooper)

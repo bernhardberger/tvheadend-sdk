@@ -217,9 +217,17 @@ internal class PlayerLooperExecutor(
             complete(LooperOperationResult.Cancelled)
         }
         continuation.invokeOnCancellation { ticket.cancel() }
-        if (looper.isCurrent()) {
-            runnable.run()
-        } else if (!looper.post(runnable)) {
+        try {
+            if (looper.isCurrent()) {
+                runnable.run()
+            } else if (!looper.post(runnable)) {
+                when {
+                    ticket.failBeforeClaim() -> complete(LooperOperationResult.Unavailable)
+                    ticket.isCancelled() -> complete(LooperOperationResult.Cancelled)
+                }
+            }
+        } catch (_: Exception) {
+            // Fence any runnable queued by a dispatcher that threw before confirming admission.
             when {
                 ticket.failBeforeClaim() -> complete(LooperOperationResult.Unavailable)
                 ticket.isCancelled() -> complete(LooperOperationResult.Cancelled)

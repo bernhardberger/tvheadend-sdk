@@ -35,11 +35,14 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionState
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStream
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTerminalReason
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTracks
 import at.bernhardberger.tvheadend.sdk.playback.createSubscriptionManager
 import at.bernhardberger.tvheadend.sdk.testing.ScriptedSubscriptionConnection
 import at.bernhardberger.tvheadend.sdk.testing.SubscriptionBinaryFixture
 import java.io.IOException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
@@ -62,11 +65,32 @@ import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Duration.Companion.microseconds
 
 internal class LiveStreamRestartTest {
-    companion object {
-        @org.junit.jupiter.api.BeforeAll
-        @JvmStatic
-        fun enableStrictMedia3BoundsChecks() {
-            androidx.media3.common.util.ParsableByteArray.setShouldEnforceLimitOnLegacyMethods(true)
+    private var previousBoundsChecks: Boolean? = null
+
+    @org.junit.jupiter.api.BeforeEach
+    fun rememberMedia3BoundsChecks() {
+        previousBoundsChecks = media3LegacyBoundsChecksOverride()
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    fun restoreMedia3BoundsChecks() {
+        androidx.media3.common.util.ParsableByteArray.setShouldEnforceLimitOnLegacyMethods(previousBoundsChecks)
+    }
+
+    @Test
+    fun `bounds check restoration preserves earlier test configuration`() {
+        val original = previousBoundsChecks
+        try {
+            for (previous in listOf(null, false, true)) {
+                androidx.media3.common.util.ParsableByteArray.setShouldEnforceLimitOnLegacyMethods(previous)
+                rememberMedia3BoundsChecks()
+                androidx.media3.common.util.ParsableByteArray.setShouldEnforceLimitOnLegacyMethods(true)
+                restoreMedia3BoundsChecks()
+                assertEquals(previous, media3LegacyBoundsChecksOverride())
+            }
+        } finally {
+            previousBoundsChecks = original
+            restoreMedia3BoundsChecks()
         }
     }
 
@@ -703,22 +727,237 @@ internal class LiveStreamRestartTest {
             assertEquals(1, harness.connection.unsubscribeCount)
         } finally { harness.close() }
     }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `replay overflow closes its subscription without another consumer event`(rejectedAfterHandoff: Boolean) = runTest {
+        val token = PlaybackTargetToken()
+        var settle: ((Boolean) -> Unit)? = null
+        val bridge = LiveTimeshiftControlBridge(token, onBufferExhausted = { _, decision ->
+            settle = decision
+            true
+        }, publish = {}, publishIssue = {})
+        val harness = RestartSourceHarness(this, timeshiftSeconds = null, bridgeOverride = bridge)
+        try {
+            harness.start()
+            harness.started(SubscriptionStreamType.MPEG2_AUDIO)
+            harness.queueLiveOverflow()
+            if (!rejectedAfterHandoff) token.releasePlayerItem()
+            val calls = harness.consumerCalls
+            val period = harness.createPeriod()
+            harness.flush()
+            if (rejectedAfterHandoff) {
+                assertTrue(harness.subscription.state.value is SubscriptionState.Playable)
+                requireNotNull(settle)(true)
+                harness.flush()
+            }
+            assertEquals("Live sample buffer limit reached", assertThrows(IOException::class.java) {
+                period.maybeThrowPrepareError()
+            }.message)
+            assertSame(SubscriptionTerminalReason.Closed, (harness.subscription.state.value as SubscriptionState.Terminal).reason)
+            assertEquals(1, harness.connection.unsubscribeCount)
+            assertEquals(calls, harness.consumerCalls, "Replay must close without another consumer call")
+        } finally { harness.close() }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `late replay rejection cannot close a successor period or preparation`(reprepare: Boolean) = runTest {
+        val decisions = mutableListOf<(Boolean) -> Unit>()
+        val bridge = LiveTimeshiftControlBridge(PlaybackTargetToken(), onBufferExhausted = { _, decision ->
+            decisions += decision
+            true
+        }, publish = {}, publishIssue = {})
+        val harness = RestartSourceHarness(this, timeshiftSeconds = null, bridgeOverride = bridge)
+        try {
+            harness.start()
+            harness.started(SubscriptionStreamType.MPEG2_AUDIO)
+            harness.queueLiveOverflow()
+            harness.createPeriod()
+            harness.flush()
+            assertEquals(1, decisions.size)
+            // Queue the failed replay continuation, then replace its owner before it can resume.
+            decisions.single()(true)
+            if (reprepare) harness.reprepare(beforeWorkers = true)
+            val successor = harness.createPeriod()
+            if (reprepare) harness.started(SubscriptionStreamType.MPEG2_AUDIO)
+            harness.audio(0)
+            harness.flush()
+            val closes = harness.connection.unsubscribeCount
+            harness.flush()
+            assertEquals(closes, harness.connection.unsubscribeCount)
+            assertTrue(harness.subscription.state.value is SubscriptionState.Playable)
+            successor.maybeThrowPrepareError()
+            harness.source.maybeThrowSourceInfoRefreshError()
+        } finally { harness.close() }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["release", "reprepare", "teardown"])
+    fun `unsettled handoff is released or cancelled by bounded teardown`(action: String) = runTest {
+        val bridge = LiveTimeshiftControlBridge(PlaybackTargetToken(), onBufferExhausted = { _, _ -> true }, publish = {}, publishIssue = {})
+        val harness = RestartSourceHarness(this, timeshiftSeconds = null, bridgeOverride = bridge)
+        try {
+            harness.start()
+            val period = harness.createPeriod()
+            harness.started(SubscriptionStreamType.MPEG2_AUDIO)
+            harness.fillLiveQueues(period)
+            assertEquals(1, harness.pendingConsumerCalls)
+            val subscription = harness.subscription
+            when (action) {
+                "release" -> harness.source.releasePeriod(period)
+                "reprepare" -> harness.reprepare()
+                else -> {
+                    val closing = async { harness.close(releaseSourceFirst = false) }
+                    runCurrent()
+                    assertFalse(closing.isCompleted)
+                    advanceTimeBy(5.seconds)
+                    runCurrent()
+                    closing.await()
+                }
+            }
+            harness.flush()
+            assertEquals(0, harness.pendingConsumerCalls)
+            assertEquals(action == "teardown", subscription.diagnostics.value.consumerDrainTimedOut)
+            assertEquals(if (action == "teardown") 1 else 0, harness.cancelledConsumerCalls)
+        } finally { harness.close() }
+    }
+
+    @Test
+    fun `refused exhaustion handoff fails the original consumer`() = runTest {
+        val bridge = LiveTimeshiftControlBridge(PlaybackTargetToken(), onBufferExhausted = { _, _ -> false }, publish = {}, publishIssue = {})
+        val harness = RestartSourceHarness(this, timeshiftSeconds = null, bridgeOverride = bridge)
+        try {
+            harness.start()
+            val period = harness.createPeriod()
+            harness.started(SubscriptionStreamType.MPEG2_AUDIO)
+            harness.fillLiveQueues(period)
+            assertSame(SubscriptionTerminalReason.ConsumerFailed, (harness.subscription.state.value as SubscriptionState.Terminal).reason)
+            assertEquals(0, harness.pendingConsumerCalls)
+            assertEquals(1, harness.connection.unsubscribeCount)
+        } finally { harness.close() }
+    }
+
+    @Test
+    fun `live queues filled without timeshift wait for the coordinator and retirement closes the subscription`() = runTest {
+        val handedOver = mutableListOf<LiveTimeshiftControlBridge.Attachment>()
+        val harness = RestartSourceHarness(this, timeshiftSeconds = null) { handedOver += it }
+        try {
+            harness.start()
+            val period = harness.createPeriod()
+            harness.started(SubscriptionStreamType.MPEG2_AUDIO)
+            harness.fillLiveQueues(period)
+            assertEquals(1, handedOver.size)
+            // The paused player can still present what it already queued.
+            harness.flush()
+            assertEquals(1, harness.preparations(period))
+            assertEquals(0L, harness.sampleTime(harness.select(period, 0)))
+            assertTrue(harness.subscription.state.value is SubscriptionState.Playable)
+            period.maybeThrowPrepareError()
+            harness.source.maybeThrowSourceInfoRefreshError()
+            // A paused player keeps its queued media; later delivery is dropped until retirement.
+            assertTrue(harness.allocator.totalBytesAllocated > 0)
+            val late = PrefixCountingBinary(fixture("mpeg-audio.bin"))
+            harness.emit(SubscriptionEvent.Packet(MuxFrameType.I, StreamIndex(0), 1_000_000, 1_000_000, 40_000, late))
+            assertEquals(0, late.copies)
+            assertEquals(0, harness.connection.unsubscribeCount)
+        } finally { harness.close() }
+        // Retiring the target releases Media3's period and source, as the coordinator's stop does.
+        assertEquals(1, harness.connection.unsubscribeCount)
+        assertEquals(0, harness.allocator.totalBytesAllocated)
+        assertEquals(1, handedOver.size)
+    }
+
+    @Test
+    fun `live queues filled with timeshift granted still fail the subscription with an accurate reason`() = runTest {
+        val handedOver = mutableListOf<LiveTimeshiftControlBridge.Attachment>()
+        val harness = RestartSourceHarness(this) { handedOver += it }
+        try {
+            harness.start()
+            val period = harness.createPeriod()
+            harness.started(SubscriptionStreamType.MPEG2_AUDIO)
+            harness.fillLiveQueues(period)
+            assertTrue(handedOver.isEmpty())
+            val reason = (harness.subscription.state.value as SubscriptionState.Terminal).reason
+            assertSame(at.bernhardberger.tvheadend.sdk.playback.SubscriptionTerminalReason.ConsumerFailed, reason)
+            val error = assertThrows(IOException::class.java) { period.maybeThrowPrepareError() }
+            assertEquals("Live sample buffer limit reached", error.message)
+        } finally { harness.close() }
+    }
+
+    @Test
+    fun `live queues filled without a coordinator handler still fail the subscription with an accurate reason`() = runTest {
+        val harness = RestartSourceHarness(this, timeshiftSeconds = null)
+        try {
+            harness.start()
+            val period = harness.createPeriod()
+            harness.started(SubscriptionStreamType.MPEG2_AUDIO)
+            harness.fillLiveQueues(period)
+            val reason = (harness.subscription.state.value as SubscriptionState.Terminal).reason
+            assertSame(at.bernhardberger.tvheadend.sdk.playback.SubscriptionTerminalReason.ConsumerFailed, reason)
+            val error = assertThrows(IOException::class.java) { period.maybeThrowPrepareError() }
+            assertEquals("Live sample buffer limit reached", error.message)
+        } finally { harness.close() }
+    }
+
+    @Test
+    fun `only the attachment leading the target can hand over full queues`() {
+        val handedOver = mutableListOf<LiveTimeshiftControlBridge.Attachment>()
+        val bridge = LiveTimeshiftControlBridge(
+            token = PlaybackTargetToken(),
+            publish = {},
+            publishIssue = {},
+            onBufferExhausted = { attachment, settle -> handedOver += attachment; settle(false); true },
+        )
+        val subscription = FakeTimeshiftSubscription(null)
+        val replaced = bridge.newAttachment().also { it.bind(subscription) }
+        val restarted = bridge.newAttachment().also { it.bind(subscription) }
+        assertFalse(replaced.bufferExhausted())
+        assertTrue(restarted.bufferExhausted())
+        restarted.detach()
+        assertFalse(restarted.bufferExhausted())
+        assertFalse(restarted.leadsTarget())
+        assertEquals(listOf(restarted), handedOver)
+
+        val unhandled = LiveTimeshiftControlBridge(PlaybackTargetToken()) {}
+        assertFalse(unhandled.newAttachment().also { it.bind(subscription) }.bufferExhausted())
+    }
 }
 
-private class RestartSourceHarness(private val scope: TestScope) {
+/** Media3 exposes a nullable setter but no getter; preserve its exact pinned-library test override. */
+internal fun media3LegacyBoundsChecksOverride(): Boolean? {
+    val field = androidx.media3.common.util.ParsableByteArray::class.java
+        .getDeclaredField("shouldEnforceLimitOnLegacyMethods").also { it.isAccessible = true }
+    return (field.get(null) as java.util.concurrent.atomic.AtomicReference<*>).get() as Boolean?
+}
+
+internal class RestartSourceHarness(
+    private val scope: TestScope,
+    private val timeshiftSeconds: Long? = 120,
+    bridgeOverride: LiveTimeshiftControlBridge? = null,
+    onBufferExhausted: ((LiveTimeshiftControlBridge.Attachment) -> Unit)? = null,
+) {
+    init {
+        // The shared harness must also work when a coordinator regression runs in isolation.
+        androidx.media3.common.util.ParsableByteArray.setShouldEnforceLimitOnLegacyMethods(true)
+    }
+
     val connection = ScriptedSubscriptionConnection()
     val looper = QueuedCoordinatorLooper()
     val allocator = DefaultAllocator(false, 1_024)
     private val dispatcher = StandardTestDispatcher(scope.testScheduler)
     private val manager = createSubscriptionManager(connection, dispatcher)
     lateinit var subscription: ActiveSubscription
+    var consumerCalls = 0
+    var pendingConsumerCalls = 0
+    var cancelledConsumerCalls = 0
     val timelines = mutableListOf<Timeline>()
     private val periods = mutableListOf<TvheadendLiveMediaPeriod>()
     private val preparations = mutableMapOf<MediaPeriod, Int>()
     var state: LiveTimeshiftState = LiveTimeshiftState.Unavailable
     val observedIssues = mutableListOf<SubscriptionIssue?>()
     val observations = mutableListOf<LivePlaybackObservation.Active>()
-    val bridge = LiveTimeshiftControlBridge(
+    val bridge = bridgeOverride ?: LiveTimeshiftControlBridge(
         token = PlaybackTargetToken(),
         publish = { state = it },
         publishIssue = {},
@@ -728,21 +967,40 @@ private class RestartSourceHarness(private val scope: TestScope) {
                 observedIssues += observation.subscriptionIssue
             }
         },
+        onBufferExhausted = onBufferExhausted?.let { handler ->
+            { attachment, settle -> handler(attachment); settle(false); true }
+        },
     )
     val source = TvheadendLiveMediaSource(object : CoordinatorLiveTarget {
         override val isCurrent = true
         override suspend fun open(consumer: SubscriptionEventConsumer, options: SubscriptionOptions): SubscriptionOpenResult =
-            manager.open(SubscriptionChannelId(1), consumer, options).also {
+            manager.open(SubscriptionChannelId(1), object : SubscriptionEventConsumer {
+                override fun tracksReady(tracks: SubscriptionTracks) = consumer.tracksReady(tracks)
+                override suspend fun accept(event: SubscriptionEvent) {
+                    consumerCalls++
+                    pendingConsumerCalls++
+                    try {
+                        consumer.accept(event)
+                    } catch (cancellation: CancellationException) {
+                        cancelledConsumerCalls++
+                        throw cancellation
+                    } finally {
+                        pendingConsumerCalls--
+                    }
+                }
+            }, options).also {
                 if (it is SubscriptionOpenResult.Opened) subscription = it.subscription
             }
-    }, SubscriptionOptions(timeshiftPeriod = 120.seconds), bridge, {}, dispatcher, { looper })
+    }, SubscriptionOptions(timeshiftPeriod = (timeshiftSeconds ?: 0L).seconds), bridge, {}, dispatcher, { looper })
     private val caller = MediaSource.MediaSourceCaller { _, timeline ->
         assertTrue(looper.isCurrent())
         timelines += timeline
     }
 
     fun start() {
-        connection.scriptSubscribe(SubscriptionOperationResult.Ok(SubscriptionConfirmation(null, null, null, 120)))
+        connection.scriptSubscribe(
+            SubscriptionOperationResult.Ok(SubscriptionConfirmation(null, null, null, timeshiftSeconds)),
+        )
         manager.startAdmission()
         looper.post { source.prepareSource(caller, PlayerId.UNSET, BandwidthMeter.NO_OP) }
         flush()
@@ -775,13 +1033,30 @@ private class RestartSourceHarness(private val scope: TestScope) {
     suspend fun emit(event: SubscriptionEvent) { connection.emit(event); scope.runCurrent() }
     fun flush() { scope.runCurrent(); looper.runAll(); scope.runCurrent(); looper.runAll() }
     fun preparations(period: MediaPeriod): Int = preparations[period] ?: 0
-    fun reprepare() {
+
+    /** Delivers audio no player reads until the period's bounded queues are full. */
+    suspend fun fillLiveQueues(period: TvheadendLiveMediaPeriod) {
+        var packets = 0
+        while (period.isLoading) {
+            check(++packets <= 4_200) { "Live queues did not fill" }
+            audio(0)
+        }
+    }
+
+    /** Multiple complete fixture frames fit the source hand-off bound but overflow the sample bound. */
+    suspend fun queueLiveOverflow() {
+        val frame = fixture("mpeg-audio.bin")
+        val packet = ByteArray(frame.size * 8) { frame[it % frame.size] }
+        repeat(600) { packet(0, 1_000_000, packet) }
+    }
+    fun reprepare(beforeWorkers: Boolean = false) {
         periods.forEach(source::releasePeriod)
         periods.clear()
         looper.post {
             source.releaseSource(caller)
             source.prepareSource(caller, PlayerId.UNSET, BandwidthMeter.NO_OP)
         }
+        if (beforeWorkers) looper.runAll()
         flush()
     }
     fun releaseOldPeriods() { periods.dropLast(1).forEach(source::releasePeriod) }
@@ -798,7 +1073,8 @@ private class RestartSourceHarness(private val scope: TestScope) {
         assertEquals(C.RESULT_BUFFER_READ, stream.readData(holder, buffer, 0))
         return buffer.timeUs
     }
-    suspend fun close() {
+    suspend fun close(releaseSourceFirst: Boolean = true) {
+        if (!releaseSourceFirst) manager.closeAndJoin()
         periods.forEach(source::releasePeriod)
         source.releaseSource(caller)
         flush()

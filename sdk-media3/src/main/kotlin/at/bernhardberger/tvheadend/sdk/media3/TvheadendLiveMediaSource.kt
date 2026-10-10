@@ -108,7 +108,9 @@ internal class TvheadendLiveMediaSource(
         }
         refreshSourceInfo(restartTimeline(mediaItem, epoch))
         val consumer = object : SubscriptionEventConsumer {
-            override suspend fun accept(event: SubscriptionEvent) { acceptOrdered(owner, event) }
+            override suspend fun accept(event: SubscriptionEvent) {
+                acceptOrdered(owner, event)?.awaitExhaustionDecision()
+            }
             override fun tracksReady(tracks: SubscriptionTracks) { acceptTracks(owner, tracks) }
         }
         opening = scope.launch {
@@ -118,7 +120,7 @@ internal class TvheadendLiveMediaSource(
                 when (val result = target.open(consumer, openOptions)) {
                     is SubscriptionOpenResult.Opened -> {
                         val closeLate = synchronized(lock) {
-                            if (released || preparation !== owner) true else {
+                            if (released || preparation !== owner || error != null) true else {
                                 subscription = result.subscription
                                 period?.bind(result.subscription)
                                 false
@@ -208,9 +210,9 @@ internal class TvheadendLiveMediaSource(
         }
     }
 
-    private fun acceptOrdered(owner: Any, event: SubscriptionEvent) {
+    private fun acceptOrdered(owner: Any, event: SubscriptionEvent): TvheadendLiveMediaPeriod? {
         synchronized(lock) {
-            if (released || error != null || preparation !== owner) return
+            if (released || error != null || preparation !== owner) return null
             when (event) {
                 is SubscriptionEvent.Stopped -> {
                     // The stop reason stays observable while no period receives events.
@@ -218,7 +220,7 @@ internal class TvheadendLiveMediaSource(
                     if (!stopped) replaceEpochLocked()
                     stopped = true
                     started = false
-                    return
+                    return null
                 }
                 is SubscriptionEvent.Started -> {
                     timeshiftControls?.subscriptionRestarted(event.issue)
@@ -226,17 +228,18 @@ internal class TvheadendLiveMediaSource(
                     started = true
                     stopped = false
                 }
-                is SubscriptionEvent.Packet, is SubscriptionEvent.Dropped -> if (!started) return
+                is SubscriptionEvent.Packet, is SubscriptionEvent.Dropped -> if (!started) return null
                 is SubscriptionEvent.Terminated -> timeshiftControls?.subscriptionEnded()
                 // Interruption observations have no successor segment provenance. Only Started
                 // can reopen observation ingress; terminal events retain their ordered route.
                 else -> if (stopped) {
                     if (event is SubscriptionEvent.Status) timeshiftControls?.subscriptionStopped(event.issue)
-                    return
+                    return null
                 }
             }
             enqueueLocked(event)
             drainLocked()
+            return period
         }
     }
 
@@ -273,17 +276,33 @@ internal class TvheadendLiveMediaSource(
 
     private fun postDrainLocked() {
         if (drainPosted) return
+        val draining = period ?: return
         drainPosted = true
         val owner = preparation
         scope.launch {
-            synchronized(lock) {
-                if (preparation !== owner) return@synchronized
-                drainPosted = false
-                if (!released && error == null) {
-                    try { drainLocked() } catch (cancellation: CancellationException) {
-                        throw cancellation
-                    } catch (_: Exception) { failLocked() }
+            try {
+                synchronized(lock) {
+                    if (preparation !== owner) return@launch
+                    drainPosted = false
+                    if (released || error != null) return@launch
+                    if (period !== draining) {
+                        postDrainLocked()
+                        return@launch
+                    }
+                    drainLocked()
                 }
+                draining.awaitExhaustionDecision()
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Exception) {
+                // Replay has no consumer call to fail. Close only its own handle, outside locks.
+                // If open has not returned yet, error makes that preparation close its late handle.
+                val handle = synchronized(lock) {
+                    if (released || preparation !== owner || period !== draining) return@launch
+                    failLocked()
+                    subscription
+                }
+                handle?.close()
             }
         }
     }

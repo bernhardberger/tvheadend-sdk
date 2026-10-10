@@ -39,6 +39,8 @@ internal data class PlaybackPlayerStopResult(
     val playerAvailable: Boolean = true,
     val retiredTarget: Boolean = false,
     val retiredRecording: RetiredRecordingTarget? = null,
+    /** Required stop and source-specific item removal succeeded, independently of ancillary cleanup. */
+    val playerStoppedAndCleared: Boolean = false,
 )
 
 internal data class RetiredRecordingTarget(
@@ -93,7 +95,16 @@ internal interface PlaybackCoordinatorPlayer {
         start: RecordingPlaybackStart,
     ): PlaybackPlayerInstallResult
 
-    suspend fun stop(ticket: PlayerOperationTicket): PlaybackPlayerStopResult
+    /**
+     * Retires the installed target. With [retireOnlyIf], the check runs on the player's looper
+     * only while the installed item still describes the target, without reading a snapshot first.
+     * A departed item or a false check retires nothing; exceptions from looper operations
+     * report unavailability. Caller cancellation is handled by the operation ticket.
+     */
+    suspend fun stop(
+        ticket: PlayerOperationTicket,
+        retireOnlyIf: (() -> Boolean)? = null,
+    ): PlaybackPlayerStopResult
 
     suspend fun snapshot(token: PlaybackTargetToken): PlaybackPlayerSnapshot?
 
@@ -215,14 +226,24 @@ internal class Media3PlaybackCoordinatorPlayer(
             PlaybackPlayerInstallResult(PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE)
     }
 
-    override suspend fun stop(ticket: PlayerOperationTicket): PlaybackPlayerStopResult = when (
+    override suspend fun stop(
+        ticket: PlayerOperationTicket,
+        retireOnlyIf: (() -> Boolean)?,
+    ): PlaybackPlayerStopResult = when (
         val operation = executor.execute(ticket) {
-            val retirement = retireActiveOnLooper()
-            PlaybackPlayerStopResult(
-                playerAvailable = retirement.playerAvailable,
-                retiredTarget = retirement.retiredTarget,
-                retiredRecording = retirement.retiredRecording,
-            )
+            val admitted = retireOnlyIf == null ||
+                (active?.let { describesTarget(it) && retireOnlyIf() } == true)
+            if (!admitted) {
+                PlaybackPlayerStopResult()
+            } else {
+                val retirement = retireActiveOnLooper()
+                PlaybackPlayerStopResult(
+                    playerAvailable = retirement.playerAvailable,
+                    retiredTarget = retirement.retiredTarget,
+                    retiredRecording = retirement.retiredRecording,
+                    playerStoppedAndCleared = retirement.playerStoppedAndCleared,
+                )
+            }
         }
     ) {
         is LooperOperationResult.Success -> operation.value
@@ -799,7 +820,8 @@ internal class Media3PlaybackCoordinatorPlayer(
                 playerAvailable = false
             }
         }
-        if (clearPlayer && !removeOwnItems(listOfNotNull(installed, alsoInstalled))) playerAvailable = false
+        val playerStoppedAndCleared = clearPlayer && removeOwnItems(listOfNotNull(installed, alsoInstalled))
+        if (clearPlayer && !playerStoppedAndCleared) playerAvailable = false
         val retirementSnapshot = terminal?.snapshot ?: snapshot ?: installed.lastOwnedSnapshot
         val retiredRecording = if (installed is InstalledPlayerTarget.Recording && retirementSnapshot != null) {
             RetiredRecordingTarget(
@@ -821,6 +843,7 @@ internal class Media3PlaybackCoordinatorPlayer(
             playerAvailable = playerAvailable,
             retiredTarget = true,
             retiredRecording = retiredRecording,
+            playerStoppedAndCleared = playerStoppedAndCleared,
         )
     }
 
@@ -908,6 +931,7 @@ internal class Media3PlaybackCoordinatorPlayer(
         val playerAvailable: Boolean = true,
         val retiredTarget: Boolean = false,
         val retiredRecording: RetiredRecordingTarget? = null,
+        val playerStoppedAndCleared: Boolean = false,
     ) {
         fun failedInstall(): PlaybackPlayerInstallResult = PlaybackPlayerInstallResult(
             status = PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE,

@@ -33,6 +33,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTracks
 import java.io.IOException
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -74,6 +75,11 @@ internal class TvheadendLiveMediaPeriod(
     private var preOriginBytes = 0L
     @Volatile private var cleanEndOfStream = false
     @Volatile private var prepareError: IOException? = null
+    // Queues filled without server timeshift; the coordinator decides how the target ends.
+    @Volatile private var exhausted = false
+    // Completed under the period (and source) lock; safe only because every waiter resumes on a
+    // dispatching (never inline) dispatcher.
+    @Volatile private var exhaustionDecision: CompletableDeferred<Boolean>? = null
     private var trackGroups = TrackGroupArray.EMPTY
     private var seekDiscontinuityPending = false
     private var finitePausedInputPending = false
@@ -107,6 +113,7 @@ internal class TvheadendLiveMediaPeriod(
     internal fun interrupt() {
         synchronized(lock) {
             interrupted = true
+            exhaustionDecision?.complete(false)
             outputs.forEach { it.preview = null }
             clearPreOriginEvents()
             alternativeFormatsWait?.cancel()
@@ -197,11 +204,23 @@ internal class TvheadendLiveMediaPeriod(
 
     override fun continueLoading(loadingInfo: LoadingInfo): Boolean = false
 
-    override fun isLoading(): Boolean = !cleanEndOfStream && prepareError == null && !released && !interrupted
+    override fun isLoading(): Boolean =
+        !cleanEndOfStream && prepareError == null && !released && !interrupted && !exhausted
 
     override fun reevaluateBuffer(positionUs: Long): Unit = Unit
 
-    override suspend fun accept(event: SubscriptionEvent) = acceptOrdered(event)
+    override suspend fun accept(event: SubscriptionEvent) {
+        acceptOrdered(event)
+        awaitExhaustionDecision()
+    }
+
+    /**
+     * Wait outside source/period locks until actor admission settles (or release interrupts it).
+     * Rejected admission then fails the original consumer call, even if no next packet arrives.
+     */
+    internal suspend fun awaitExhaustionDecision() {
+        if (exhaustionDecision?.await() == true) throw LiveSampleBufferLimitException()
+    }
 
     internal fun acceptOrdered(event: SubscriptionEvent): Unit = synchronized(lock) {
         if (released || interrupted) return
@@ -221,14 +240,36 @@ internal class TvheadendLiveMediaPeriod(
         } catch (cancellation: CancellationException) {
             failPeriod()
             throw cancellation
+        } catch (failure: LiveSampleBufferLimitException) {
+            if (exhaust()) return
+            failPeriod(SAMPLE_BUFFER_LIMIT_FAILURE)
+            throw failure
         } catch (failure: Exception) {
             failPeriod()
             throw failure
         }
     }
 
+    /**
+     * Hands queues that filled without server timeshift to the coordinator for retirement.
+     * Returns false when no current target accepts them, so the period fails instead.
+     */
+    private fun exhaust(): Boolean = synchronized(lock) {
+        if (released || interrupted || prepareError != null) return false
+        val decision = CompletableDeferred<Boolean>()
+        val accepted = timeshiftControls?.bufferExhausted { failed ->
+            if (failed) failPeriod(SAMPLE_BUFFER_LIMIT_FAILURE)
+            decision.complete(failed)
+        } == true
+        if (!accepted) return false
+        exhaustionDecision = decision
+        exhausted = true
+        clearPreOriginEvents()
+        true
+    }
+
     private fun consumeEvent(event: SubscriptionEvent, terminalEvent: Boolean): Boolean = synchronized(lock) {
-        if (released || interrupted || prepareError != null || cleanEndOfStream) return false
+        if (released || interrupted || prepareError != null || cleanEndOfStream || exhausted) return false
         when (event) {
             is SubscriptionEvent.Packet -> {
                 val binding = adapterFor(event.streamIndex) ?: return false
@@ -402,6 +443,7 @@ internal class TvheadendLiveMediaPeriod(
         synchronized(lock) {
             if (released) return
             released = true
+            exhaustionDecision?.complete(false)
             outputs.forEach { it.preview = null }
             clearPreOriginEvents()
             alternativeFormatsWait?.cancel()
@@ -478,11 +520,11 @@ internal class TvheadendLiveMediaPeriod(
         }
     }
 
-    private fun failPeriod() {
+    private fun failPeriod(message: String = "Live subscription preparation failed") {
         synchronized(lock) {
             outputs.forEach { it.preview = null }
             clearPreOriginEvents()
-            if (!released && prepareError == null) prepareError = IOException("Live subscription preparation failed")
+            if (!released && prepareError == null) prepareError = IOException(message)
         }
     }
 
@@ -498,11 +540,15 @@ internal class TvheadendLiveMediaPeriod(
         const val MAX_PRE_ORIGIN_EVENTS = 256
         const val MAX_PRE_ORIGIN_BYTES = 4L * 1024L * 1024L
         const val MAX_PACKET_BYTES = 1024 * 1024
+        const val SAMPLE_BUFFER_LIMIT_FAILURE = "Live sample buffer limit reached"
     }
 }
 
 private const val MAX_ALLOCATED_BYTES = 64 * 1024 * 1024
 private const val MAX_BUFFERED_SAMPLES = 4_096
+
+/** The bounded queues are full; the period decides whether that ends or fails the live target. */
+private class LiveSampleBufferLimitException : IllegalStateException("Media3 sample buffer limit reached")
 
 private class QueueExtractorOutput(
     private val allocator: Allocator,
@@ -521,8 +567,8 @@ private class QueueExtractorOutput(
         private fun checkBytes(length: Int) {
             val block = allocator.individualAllocationLength.toLong()
             val reservation = (length.toLong() + block - 1) / block * block
-            check(allocator.totalBytesAllocated.toLong() + reservation <= MAX_ALLOCATED_BYTES) {
-                "Media3 sample buffer limit reached"
+            if (allocator.totalBytesAllocated.toLong() + reservation > MAX_ALLOCATED_BYTES) {
+                throw LiveSampleBufferLimitException()
             }
         }
 
@@ -543,9 +589,7 @@ private class QueueExtractorOutput(
         }
 
         override fun sampleMetadata(timeUs: Long, flags: Int, size: Int, offset: Int, cryptoData: TrackOutput.CryptoData?) {
-            check(queue.writeIndex - queue.readIndex < MAX_BUFFERED_SAMPLES) {
-                "Media3 sample buffer limit reached"
-            }
+            if (queue.writeIndex - queue.readIndex >= MAX_BUFFERED_SAMPLES) throw LiveSampleBufferLimitException()
             queue.sampleMetadata(timeUs, flags, size, offset, cryptoData)
         }
     }

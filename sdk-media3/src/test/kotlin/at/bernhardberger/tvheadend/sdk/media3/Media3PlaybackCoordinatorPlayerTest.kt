@@ -22,12 +22,16 @@ import at.bernhardberger.tvheadend.sdk.playback.RecordingFile
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionState
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTerminalReason
 import java.io.IOException
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
@@ -38,11 +42,403 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.CsvSource
+import org.junit.jupiter.params.provider.ValueSource
 
 internal class Media3PlaybackCoordinatorPlayerTest {
+    private var previousBoundsChecks: Boolean? = null
+
+    @org.junit.jupiter.api.BeforeEach
+    fun rememberMedia3BoundsChecks() {
+        previousBoundsChecks = media3LegacyBoundsChecksOverride()
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    fun restoreMedia3BoundsChecks() {
+        androidx.media3.common.util.ParsableByteArray.setShouldEnforceLimitOnLegacyMethods(previousBoundsChecks)
+    }
+
+    @ParameterizedTest
+    @CsvSource("replaced,false", "mixed,false", "returned,false", "replaced,true", "mixed,true", "returned,true")
+    fun `exhaustion after application departure leaves its player untouched`(departure: String, queuedFirst: Boolean) = runTest {
+        val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
+        val events = PlaybackPlayerEventAccumulator()
+        val reasons = mutableListOf<PlaybackRecoveryReason>()
+        val adapter = Media3PlaybackCoordinatorPlayer(access, events) { _, _ -> RecordingAdmission.Completed(null) }
+        val coordinator = TvheadendPlaybackCoordinator(
+            player = adapter,
+            playerEvents = events,
+            progressPolicy = DvrProgressPolicy(),
+            onRecoveryRequired = reasons::add,
+            timeSource = SystemPlaybackCoordinatorTimeSource,
+        )
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { coordinator.run() }
+        coordinator.setLiveTarget(PlaybackBindingTestFactory.currentLive())
+        val harness = RestartSourceHarness(this, timeshiftSeconds = null, bridgeOverride = requireNotNull(access.liveControls))
+        harness.start()
+        val period = harness.createPeriod()
+        harness.started(SubscriptionStreamType.MPEG2_AUDIO)
+        // Hold the real adapter's admission until the app has departed, without blocking delivery.
+        access.looperQueue.current = false
+        if (queuedFirst) harness.fillLiveQueues(period)
+        if (departure == "replaced") access.replaceWithApplicationItem() else access.addApplicationItem(moveToIt = true)
+        if (departure == "returned") access.seekBackToCoordinatorItem()
+        val item = access.currentItem
+        val playlist = access.playlistKinds
+        access.operations.clear()
+
+        val posts = access.looperQueue.posts
+        if (!queuedFirst) {
+            harness.fillLiveQueues(period)
+        }
+        access.looperQueue.runAll()
+        access.looperQueue.current = true
+        runCurrent()
+
+        if (!queuedFirst) {
+            assertEquals(posts, access.looperQueue.posts, "Departure before overflow must refuse the hand-off")
+        }
+        assertSame(item, access.currentItem)
+        assertEquals(playlist, access.playlistKinds)
+        assertTrue(access.operations.isEmpty(), "Departed targets must not mutate the player on exhaustion")
+        assertTrue(reasons.isEmpty())
+        assertTrue(coordinator.livePlaybackObservation.value is LivePlaybackObservation.Active)
+        val error = assertThrows(IOException::class.java) { period.maybeThrowPrepareError() }
+        assertEquals("Live sample buffer limit reached", error.message)
+        assertSame(SubscriptionTerminalReason.ConsumerFailed, (harness.subscription.state.value as SubscriptionState.Terminal).reason)
+        assertEquals(1, harness.connection.unsubscribeCount)
+
+        if (departure == "returned") access.transitionToApplicationItem(Player.MEDIA_ITEM_TRANSITION_REASON_SEEK)
+        val applicationItem = access.currentItem
+        assertTrue(coordinator.stop() is PlaybackStopResult.Stopped)
+        assertSame(applicationItem, access.currentItem)
+        assertEquals(listOf("application"), access.playlistKinds)
+        assertFalse("stop" in access.operations)
+        assertSame(LivePlaybackObservation.NoTarget, coordinator.livePlaybackObservation.value)
+        coordinator.shutdown(1.seconds)
+        owner.join()
+        harness.close()
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `ordinary staged rollback cleanup failure settles observations and fails closed`(recording: Boolean) = runTest {
+        val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
+        val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator()) { _, _ ->
+            RecordingAdmission.Completed(null)
+        }
+        val previous = PlaybackTargetToken()
+        val bridge = controls(previous)
+        player.installLive(PlayerOperationTicket(), previous, TestCoordinatorLiveTarget(), timeshiftControls = bridge)
+        val staged = PlaybackTargetToken()
+        access.prepareAction = {
+            access.failNextRemoveListener = true
+            throw IOException("scripted replacement preparation failure")
+        }
+        access.operations.clear()
+
+        val result = if (recording) {
+            player.installRecording(
+                PlayerOperationTicket(), staged, TestCoordinatorRecordingTarget(), RecordingPlaybackStart.RESUME,
+            )
+        } else {
+            player.installLive(PlayerOperationTicket(), staged, TestCoordinatorLiveTarget(), timeshiftControls = controls(staged))
+        }
+
+        assertSame(PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE, result.status)
+        assertEquals("none", access.currentSourceKind)
+        assertEquals(listOf("stop", if (recording) "remove-recording" else "remove-live"), access.operations.takeLast(2))
+        assertFalse(previous.isActive())
+        assertFalse(staged.isActive())
+        assertNull(player.snapshot(previous))
+        assertNull(player.snapshot(staged))
+        // A stranded transaction rejects a new begin, even when its playback token has retired.
+        bridge.commitObservationReplacement(bridge.beginObservationReplacement())
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["stop", "exhaustion", "callback", "cleanup callback"])
+    fun `foreign cancellation in player operations or recovery callbacks keeps the coordinator running`(failure: String) = runTest {
+        val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
+        val events = PlaybackPlayerEventAccumulator()
+        val reasons = mutableListOf<PlaybackRecoveryReason>()
+        val player = Media3PlaybackCoordinatorPlayer(access, events) { _, _ -> RecordingAdmission.Completed(null) }
+        val coordinator = TvheadendPlaybackCoordinator(
+            player = player,
+            playerEvents = events,
+            progressPolicy = DvrProgressPolicy(),
+            onRecoveryRequired = {
+                reasons += it
+                if (failure.endsWith("callback")) throw CancellationException("scripted callback failure")
+            },
+            timeSource = SystemPlaybackCoordinatorTimeSource,
+        )
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { coordinator.run() }
+        coordinator.setLiveTarget(PlaybackBindingTestFactory.currentLive())
+        val attachment = requireNotNull(access.liveControls).newAttachment()
+            .also { it.bind(FakeTimeshiftSubscription(null)) }
+        if (failure != "callback") access.stopAction = { throw CancellationException("scripted player failure") }
+        access.operations.clear()
+
+        if (failure == "stop") {
+            assertTrue(coordinator.stop() is PlaybackStopResult.PlayerUnavailable)
+            assertTrue(reasons.isEmpty())
+        } else {
+            assertTrue(attachment.bufferExhausted())
+            runCurrent()
+            assertEquals(listOf(if (failure == "callback") PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED
+                else PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED_CLEANUP_FAILED), reasons)
+        }
+
+        assertTrue(owner.isActive)
+        assertEquals(listOf("close-recovery", "remove-listener", "stop", "remove-live"), access.operations)
+        assertEquals("none", access.currentSourceKind)
+        assertFalse(attachment.leadsTarget())
+        access.stopAction = null
+        assertSame(PlaybackTargetResult.STARTED, coordinator.setLiveTarget(PlaybackBindingTestFactory.currentLive()))
+        coordinator.shutdown(1.seconds)
+        owner.join()
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["false", "throw", "true", "no target"])
+    fun `conditional stop uses the real adapter without mutating rejected targets`(condition: String) = runTest {
+        val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
+        val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator()) { _, _ ->
+            RecordingAdmission.Completed(null)
+        }
+        val token = PlaybackTargetToken()
+        if (condition != "no target") {
+            player.installLive(
+                PlayerOperationTicket(), token, TestCoordinatorLiveTarget(), timeshiftControls = controls(token),
+            )
+        }
+        access.operations.clear()
+        var predicates = 0
+
+        val result = player.stop(PlayerOperationTicket()) {
+            predicates += 1
+            when (condition) {
+                "throw" -> error("scripted predicate failure")
+                "false" -> false
+                else -> true
+            }
+        }
+
+        assertEquals(condition == "true", result.retiredTarget)
+        assertEquals(condition != "throw", result.playerAvailable)
+        assertEquals(condition == "true", result.playerStoppedAndCleared)
+        assertEquals(condition != "true", token.isActive())
+        assertEquals(if (condition == "no target") 0 else 1, predicates)
+        assertEquals(condition == "true", "stop" in access.operations)
+        assertEquals(condition == "true", "remove-live" in access.operations)
+        if (condition != "true") assertTrue(access.operations.isEmpty())
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `exhaustion claim fences replacement between predicate and retirement`(afterClaim: Boolean) = runTest {
+        val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
+        val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator()) { _, _ ->
+            RecordingAdmission.Completed(null)
+        }
+        val token = PlaybackTargetToken()
+        val bridge = controls(token)
+        player.installLive(PlayerOperationTicket(), token, TestCoordinatorLiveTarget(), timeshiftControls = bridge)
+        val subscription = FakeTimeshiftSubscription(null)
+        val exhausted = bridge.newAttachment().also { it.bind(subscription) }
+        val successor = bridge.newAttachment()
+        var snapshots = 0
+        access.snapshotAction = {
+            snapshots += 1
+            // The sole snapshot now happens after the ownership claim, before retirement commits.
+            exhausted.detach()
+            successor.bind(subscription)
+        }
+        if (!afterClaim) {
+            exhausted.detach()
+            successor.bind(subscription)
+        }
+
+        val result = player.stop(PlayerOperationTicket()) { exhausted.claimExhaustionRetirement() }
+
+        assertEquals(afterClaim, result.retiredTarget)
+        assertEquals(!afterClaim, token.isActive())
+        if (afterClaim) {
+            assertEquals(1, snapshots)
+            assertNull(successor.subscription, "retiring target must reject successor admission")
+        } else {
+            assertSame(subscription, successor.subscription)
+            assertTrue(successor.leadsTarget())
+            assertFalse("stop" in access.operations)
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["snapshot", "predicate", "after claim", "post rejected", "post throws", "looper check"])
+    fun `exhaustion evaluation failures cannot silently leave the target installed`(failure: String) = runTest {
+        val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
+        val events = PlaybackPlayerEventAccumulator()
+        val reasons = mutableListOf<PlaybackRecoveryReason>()
+        val adapter = Media3PlaybackCoordinatorPlayer(access, events) { _, _ -> RecordingAdmission.Completed(null) }
+        // Inject predicate failures without replacing the production adapter's stop implementation.
+        val player = object : PlaybackCoordinatorPlayer by adapter {
+            override suspend fun stop(
+                ticket: PlayerOperationTicket,
+                retireOnlyIf: (() -> Boolean)?,
+            ): PlaybackPlayerStopResult = adapter.stop(ticket, retireOnlyIf?.let { predicate ->
+                {
+                    if (failure == "predicate") error("scripted evaluation failure")
+                    val admitted = predicate()
+                    if (failure == "after claim") error("scripted evaluation failure")
+                    admitted
+                }
+            })
+        }
+        val coordinator = TvheadendPlaybackCoordinator(
+            player = player,
+            playerEvents = events,
+            progressPolicy = DvrProgressPolicy(),
+            onRecoveryRequired = reasons::add,
+            timeSource = SystemPlaybackCoordinatorTimeSource,
+        )
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { coordinator.run() }
+        coordinator.setLiveTarget(PlaybackBindingTestFactory.currentLive())
+        val attachment = requireNotNull(access.liveControls).newAttachment()
+            .also { it.bind(FakeTimeshiftSubscription(null)) }
+        var snapshots = 0
+        if (failure == "snapshot") access.snapshotAction = {
+            snapshots += 1
+            error("scripted snapshot failure")
+        }
+        access.looperQueue.rejectPosts = failure == "post rejected"
+        access.looperQueue.throwOnPost = failure == "post throws"
+        access.looperQueue.throwOnIsCurrent = failure == "looper check"
+
+        assertTrue(attachment.bufferExhausted())
+        runCurrent()
+
+        val expected = if (failure == "snapshot") {
+            PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED
+        } else {
+            PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED_CLEANUP_FAILED
+        }
+        assertEquals(listOf(expected), reasons)
+        if (failure == "snapshot") {
+            assertEquals(1, snapshots)
+            assertEquals("none", access.currentSourceKind)
+            assertTrue("stop" in access.operations)
+            assertSame(LivePlaybackObservation.NoTarget, coordinator.livePlaybackObservation.value)
+        } else {
+            assertTrue(coordinator.livePlaybackObservation.value is LivePlaybackObservation.Active)
+            assertEquals("live", access.currentSourceKind)
+        }
+        access.snapshotAction = null
+        access.looperQueue.rejectPosts = false
+        access.looperQueue.throwOnPost = false
+        access.looperQueue.throwOnIsCurrent = false
+        if (failure != "snapshot") {
+            assertTrue(coordinator.stop() is PlaybackStopResult.Stopped)
+            assertSame(LivePlaybackObservation.NoTarget, coordinator.livePlaybackObservation.value)
+            assertEquals("none", access.currentSourceKind)
+        }
+        coordinator.shutdown(1.seconds)
+        owner.join()
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["stop", "remove", "listener", "recovery"])
+    fun `exhaustion cleanup reports an app outcome independent of the period`(failure: String) = runTest {
+        val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
+        val events = PlaybackPlayerEventAccumulator()
+        val reasons = mutableListOf<PlaybackRecoveryReason>()
+        val player = Media3PlaybackCoordinatorPlayer(access, events) { _, _ -> RecordingAdmission.Completed(null) }
+        val coordinator = TvheadendPlaybackCoordinator(
+            player = player,
+            playerEvents = events,
+            progressPolicy = DvrProgressPolicy(),
+            onRecoveryRequired = reasons::add,
+            timeSource = SystemPlaybackCoordinatorTimeSource,
+        )
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { coordinator.run() }
+        coordinator.setLiveTarget(PlaybackBindingTestFactory.currentLive())
+        val attachment = requireNotNull(access.liveControls).newAttachment()
+            .also { it.bind(FakeTimeshiftSubscription(null)) }
+        when (failure) {
+            "stop" -> access.failNextStop = true
+            "remove" -> access.failRemove = true
+            "listener" -> access.failNextRemoveListener = true
+            "recovery" -> access.failRecoveryClose = true
+        }
+        assertTrue(attachment.bufferExhausted())
+        runCurrent()
+
+        val expected = if (failure == "stop" || failure == "remove") {
+            PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED_CLEANUP_FAILED
+        } else {
+            PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED
+        }
+        assertEquals(listOf(expected), reasons)
+        assertTrue("stop" in access.operations)
+        assertTrue("remove-live" in access.operations)
+        assertSame(LivePlaybackObservation.NoTarget, coordinator.livePlaybackObservation.value)
+        if (failure == "remove") {
+            assertEquals(listOf("live"), access.playlistKinds)
+            access.failRemove = false
+            access.operations.clear()
+            assertSame(PlaybackStopResult.AlreadyStopped, coordinator.stop())
+            assertEquals(listOf("live"), access.playlistKinds, "Stop cannot retry cleanup after retirement")
+            assertTrue(access.operations.isEmpty())
+        }
+        coordinator.shutdown(1.seconds)
+        owner.join()
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `failed removal ends delivery even when shutdown wins exhaustion admission`(shutdownFirst: Boolean) = runTest {
+        val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
+        val events = PlaybackPlayerEventAccumulator()
+        val reasons = mutableListOf<PlaybackRecoveryReason>()
+        val player = Media3PlaybackCoordinatorPlayer(access, events) { _, _ -> RecordingAdmission.Completed(null) }
+        val coordinator = TvheadendPlaybackCoordinator(player, events, DvrProgressPolicy(), reasons::add, SystemPlaybackCoordinatorTimeSource)
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { coordinator.run() }
+        coordinator.setLiveTarget(PlaybackBindingTestFactory.currentLive())
+        val harness = RestartSourceHarness(this, timeshiftSeconds = null, bridgeOverride = requireNotNull(access.liveControls))
+        try {
+            harness.start()
+            val period = harness.createPeriod()
+            harness.started(SubscriptionStreamType.MPEG2_AUDIO)
+            access.failRemove = true
+            access.looperQueue.current = false
+            val shuttingDown = if (shutdownFirst) async { coordinator.shutdown(1.seconds) } else null
+            runCurrent() // Shutdown waits on the player looper while the still-current period fills.
+            harness.fillLiveQueues(period)
+            assertEquals(1, harness.pendingConsumerCalls)
+            access.looperQueue.runAll()
+            access.looperQueue.current = true
+            runCurrent()
+            shuttingDown?.await()
+            assertEquals(0, harness.pendingConsumerCalls)
+            assertSame(SubscriptionTerminalReason.ConsumerFailed, (harness.subscription.state.value as SubscriptionState.Terminal).reason)
+            assertEquals(1, harness.connection.unsubscribeCount)
+            assertEquals("Live sample buffer limit reached", assertThrows(IOException::class.java) {
+                period.maybeThrowPrepareError()
+            }.message)
+            assertEquals(listOf("live"), access.playlistKinds, "No application cleanup is needed to stop server delivery")
+            assertEquals(if (shutdownFirst) emptyList() else listOf(PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED_CLEANUP_FAILED), reasons)
+        } finally {
+            access.looperQueue.current = true
+            access.failRemove = false
+            coordinator.shutdown(1.seconds)
+            owner.join()
+            harness.close()
+        }
+    }
+
     @Test
     fun `recording ownership survives metadata-only item replacement but not a reused media id`() {
         val identity = RecordingMediaIdentity()
@@ -1992,6 +2388,9 @@ private class FakeCoordinatorPlaybackAccess(
     var growingFinalEndCallback: (() -> Unit)? = null
     var growingLease: GrowingRecordingFileLease? = null
     var liveOptions: SubscriptionOptions? = null
+    var liveControls: LiveTimeshiftControlBridge? = null
+    var snapshotAction: (() -> Unit)? = null
+    var failRemove = false
     val currentSourceKind: String
         get() = kindOf(playlist.getOrNull(currentIndex))
     val playlistKinds: List<String>
@@ -2012,6 +2411,7 @@ private class FakeCoordinatorPlaybackAccess(
 
     override fun snapshot(): PlaybackPlayerSnapshot {
         requireApplicationLooper()
+        snapshotAction?.invoke()
         return snapshot
     }
 
@@ -2040,6 +2440,7 @@ private class FakeCoordinatorPlaybackAccess(
         requireApplicationLooper()
         operations += "create-live"
         liveOptions = options
+        liveControls = timeshiftControls
         return FakeCoordinatorMediaSource("live")
     }
 
@@ -2318,6 +2719,7 @@ private class FakeCoordinatorPlaybackAccess(
         requireApplicationLooper()
         val index = playlist.indexOfFirst { it === source }.takeIf { it >= 0 } ?: return
         operations += "remove-${kindOf(source)}"
+        if (failRemove) throw IOException("scripted removal failure")
         playlist.removeAt(index)
         if (index < currentIndex || currentIndex > playlist.lastIndex) currentIndex = maxOf(0, currentIndex - 1)
         notifyPlaylistChanged()
@@ -2348,9 +2750,14 @@ private class TestCoordinatorLooper(initiallyCurrent: Boolean = false) : Coordin
     var current = initiallyCurrent
     var posts: Int = 0
         private set
+    var rejectPosts = false
+    var throwOnPost = false
+    var throwOnIsCurrent = false
 
     override fun post(runnable: Runnable): Boolean {
         posts += 1
+        if (throwOnPost) error("scripted dispatch failure")
+        if (rejectPosts) return false
         queue += runnable
         return true
     }
@@ -2359,7 +2766,10 @@ private class TestCoordinatorLooper(initiallyCurrent: Boolean = false) : Coordin
         queue.remove(runnable)
     }
 
-    override fun isCurrent(): Boolean = current
+    override fun isCurrent(): Boolean {
+        if (throwOnIsCurrent) error("scripted looper check failure")
+        return current && !rejectPosts && !throwOnPost
+    }
 
     fun runAll() {
         while (queue.isNotEmpty()) runOnLooper { queue.removeFirst().run() }

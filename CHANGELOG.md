@@ -49,6 +49,17 @@
   only restores audio it disabled itself and yields when the application changes
   track selection. See
   [ownership and shutdown](docs/consumer-guide.md#ownership-and-shutdown).
+- **BREAKING:** `PlaybackRecoveryReason` gains `LIVE_BUFFER_EXHAUSTED` and
+  `LIVE_BUFFER_EXHAUSTED_CLEANUP_FAILED`; exhaustive `when` expressions need new
+  branches. When a live target without server timeshift fills its bounded sample
+  queues (for example while paused), `TvheadendPlaybackCoordinator` stops the
+  Player, removes only its item, retires the target and reports
+  `LIVE_BUFFER_EXHAUSTED` instead of failing playback with a player error; call
+  `setLiveTarget()` again to resume at live. `LIVE_BUFFER_EXHAUSTED_CLEANUP_FAILED`
+  reports that stopping or removal could not be confirmed. If the application has
+  already left the item, the period fails and the subscription closes without a
+  recovery reason. See
+  [pausing live TV without timeshift](docs/consumer-guide.md#pausing-live-tv-without-timeshift).
 
 ### Fixed
 
@@ -107,6 +118,13 @@
   before the subscribe acknowledgement no longer times out.
 - Live subscription diagnostics saturate drop counts at `Long.MAX_VALUE` and
   withhold adapter labels that contain a device path or URI.
+- The live sample-queue overflow error now reads "Live sample buffer limit
+  reached" instead of a generic preparation failure. An overflow while replaying
+  packets buffered before the Media3 period existed now closes the subscription;
+  before, the period failed while the server kept streaming.
+- A throwing Player operation or looper dispatch in `TvheadendPlaybackCoordinator`
+  now completes that command as player-unavailable instead of escaping the
+  coordinator, and a command that already ran keeps its real result.
 
 ## [0.23.0]
 

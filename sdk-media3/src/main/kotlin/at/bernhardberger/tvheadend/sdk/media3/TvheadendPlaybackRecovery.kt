@@ -50,6 +50,57 @@ public enum class PlaybackRecoveryReason {
 
     /** A live source ended and must be replaced rather than treated as completed media. */
     LIVE_ENDED,
+
+    /**
+     * A live target without server timeshift could not advance until the SDK's bounded live sample
+     * queues filled. Only [TvheadendPlaybackCoordinator] reports this.
+     *
+     * This can follow a pause or playback suppression, for example transient audio-focus loss or
+     * an unsuitable audio output. Retirement occurs even if playback has since resumed. Timeshift
+     * was unavailable, so it could not hold the live stream. Before reporting this, the coordinator
+     * has stopped the player and removed the TVHeadend item, which closes the subscription and
+     * releases its buffers, and has retired the target. The player stays application-owned.
+     *
+     * If the application already left the target's item before retirement is admitted, neither
+     * exhaustion reason is reported and exhaustion does not mutate the player. The departed target
+     * instead fails its period with "Live sample buffer limit reached" and closes its subscription
+     * without another event, even if departure raced the exhaustion hand-off. The subscription
+     * ends with `ConsumerFailed` or, when the replay of packets buffered before period creation
+     * fails first, with `Closed`. Returning to the item
+     * does not restore ownership or resume that subscription. The target can remain active until
+     * an explicit stop, target change, or shutdown retires it; playing it again requires an explicit
+     * [TvheadendPlaybackCoordinator.setLiveTarget].
+     *
+     * Resuming retunes to live: install the target again with
+     * [TvheadendPlaybackCoordinator.setLiveTarget] once playback can advance again, that is when
+     * `playWhenReady` is true and `playbackSuppressionReason` is `PLAYBACK_SUPPRESSION_REASON_NONE`
+     * (for example from `onPlayWhenReadyChanged` or `onPlaybackSuppressionReasonChanged`). If that
+     * already holds when this is reported, retune immediately. Retuning while playback still cannot
+     * advance fills the queues again.
+     */
+    LIVE_BUFFER_EXHAUSTED,
+
+    /**
+     * A live target without server timeshift exhausted its bounded queues, but stopping the player
+     * or removing its TVHeadend item could not be confirmed. Unlike [LIVE_BUFFER_EXHAUSTED], this
+     * does not promise buffer release. Only [TvheadendPlaybackCoordinator]
+     * reports this.
+     *
+     * If retirement could not start, the target may still be active: call
+     * [TvheadendPlaybackCoordinator.stop] or [TvheadendPlaybackCoordinator.setLiveTarget] to retry.
+     * In that case neither subscription closure nor a period error is guaranteed.
+     *
+     * If retirement completed with incomplete player cleanup, the target is already retired and
+     * `stop()` returns [PlaybackStopResult.AlreadyStopped] without retrying item removal. The period
+     * fails and server delivery ends without another event (`ConsumerFailed` or `Closed`), even if
+     * the application never reconciles the player. If the leftover TVHeadend item is still current,
+     * the player may also report "Live sample buffer limit reached" as a player error; it needs no
+     * handling beyond this callback. In this retired case the application must reconcile its player
+     * and remove any remaining TVHeadend item before retuning. Also reconcile after
+     * [PlaybackStopResult.PlayerUnavailable] or [PlaybackTargetResult.PLAYER_UNAVAILABLE]; none of
+     * these results confirms item removal.
+     */
+    LIVE_BUFFER_EXHAUSTED_CLEANUP_FAILED,
 }
 
 /**
