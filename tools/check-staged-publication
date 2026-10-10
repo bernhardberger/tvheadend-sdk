@@ -127,13 +127,13 @@ def pom_dependencies(module: str, version: str) -> set[tuple[str, str, str, str]
         "sdk-android": {
             (GROUP, "sdk-core", version, "compile"),
             ("io.coil-kt.coil3", "coil-core", "3.5.0", "compile"),
-            ("org.jetbrains.kotlinx", "kotlinx-coroutines-core", "1.10.2", "compile"),
+            ("org.jetbrains.kotlinx", "kotlinx-coroutines-core", "1.11.0", "compile"),
             ("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.10", "compile"),
             ("androidx.datastore", "datastore-preferences", "1.2.1", "runtime"),
             ("com.google.crypto.tink", "tink-android", "1.23.0", "runtime"),
         },
         "sdk-core": {
-            ("org.jetbrains.kotlinx", "kotlinx-coroutines-core-jvm", "1.10.2", "compile"),
+            ("org.jetbrains.kotlinx", "kotlinx-coroutines-core-jvm", "1.11.0", "compile"),
             (GROUP, "sdk-playback", version, "compile"),
             ("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.10", "compile"),
             (GROUP, "htsp", "0.10.0", "runtime"),
@@ -145,10 +145,10 @@ def pom_dependencies(module: str, version: str) -> set[tuple[str, str, str, str]
             ("androidx.media3", "media3-exoplayer", "1.11.0", "compile"),
             ("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.10", "compile"),
             ("androidx.media3", "media3-extractor", "1.11.0", "runtime"),
-            ("org.jetbrains.kotlinx", "kotlinx-coroutines-core", "1.10.2", "runtime"),
+            ("org.jetbrains.kotlinx", "kotlinx-coroutines-core", "1.11.0", "runtime"),
         },
         "sdk-playback": {
-            ("org.jetbrains.kotlinx", "kotlinx-coroutines-core-jvm", "1.10.2", "compile"),
+            ("org.jetbrains.kotlinx", "kotlinx-coroutines-core-jvm", "1.11.0", "compile"),
             ("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.10", "compile"),
         },
         "sdk-testing": {
@@ -461,7 +461,7 @@ def self_test() -> list[str]:
     if PUBLICATION_NAMES != expected_publication_names:
         errors.append("self-test rejected the configured human-readable publication names")
     core_dependencies = [
-        ("org.jetbrains.kotlinx", "kotlinx-coroutines-core-jvm", "1.10.2", "compile"),
+        ("org.jetbrains.kotlinx", "kotlinx-coroutines-core-jvm", "1.11.0", "compile"),
         (GROUP, "sdk-playback", "0.8.0", "compile"),
         ("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.10", "compile"),
         (GROUP, "htsp", "0.10.0", "runtime"),

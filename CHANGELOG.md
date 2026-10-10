@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- The `api` dependency `kotlinx-coroutines-core` moves from 1.10.2 to 1.11.0, so
+  consumers resolve 1.11.0 transitively. The build now uses Gradle 9.8.1 and
+  Android Gradle Plugin 9.4.1. Media3 remains at 1.11.0.
+
 ## [0.23.0]
 
 Released 2026-10-04.

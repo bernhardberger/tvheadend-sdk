@@ -6,24 +6,24 @@ Android modules use AGP's built-in Kotlin support and never apply
 
 | Component | Pin |
 |---|---:|
-| Gradle wrapper | 9.7.0 binary distribution |
+| Gradle wrapper | 9.8.1 binary distribution |
 | Build JDK and Kotlin toolchain | 21 |
 | JVM target and Java release | 17, class-file major 61 |
 | Kotlin | 2.4.10 |
-| Android Gradle Plugin | 9.3.1 |
+| Android Gradle Plugin | 9.4.1 |
 | Android compile / target / minimum SDK | 36 / 36 / 24 |
 | Android Build Tools | 36.0.0 |
-| Coroutines | 1.10.2 |
+| Coroutines | 1.11.0 |
 | Coil core | 3.5.0 |
 | AndroidX DataStore Preferences | 1.2.1 |
 | Google Tink Android | 1.23.0 |
-| HTSP | 0.7.0 |
+| HTSP | 0.10.0 |
 | Media3 | 1.11.0 |
 | JUnit Jupiter | 6.1.3 |
 | AndroidX Test runner / ext JUnit | 1.7.0 / 1.3.0 |
 | Turbine | 1.2.1 |
 | detekt | 2.0.0-alpha.6 |
-| Konsist | 0.17.3 |
+| Konsist | 0.18.0 |
 | Dokka | 2.2.0 |
 | Foojay resolver | 1.0.0 |
 
@@ -38,7 +38,7 @@ enabled independently in the three JVM modules.
 
 ## Android ABI limitation
 
-KGP 2.4.10's ABI setup action is not run by AGP 9.3.1's built-in Kotlin path.
+KGP 2.4.10's ABI setup action is not run by AGP 9.4.1's built-in Kotlin path.
 Enabling `abiValidation()` in an Android library therefore creates
 `checkKotlinAbi` and `updateKotlinAbi` tasks whose required release-output
 provider has no value. This was reproduced in both Android modules. Kotlin's

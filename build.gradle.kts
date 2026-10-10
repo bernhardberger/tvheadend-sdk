@@ -72,13 +72,13 @@ allprojects {
 
 val versionCatalog = extensions.getByType<VersionCatalogsExtension>().named("libs")
 val requiredVersions = mapOf(
-    "agp" to "9.3.1",
+    "agp" to "9.4.1",
     "androidxTestExtJunit" to "1.3.0",
     "androidxTestRunner" to "1.7.0",
     "buildTools" to "36.0.0",
     "coil" to "3.5.0",
     "compileSdk" to "36",
-    "coroutines" to "1.10.2",
+    "coroutines" to "1.11.0",
     "dataStore" to "1.2.1",
     "detekt" to "2.0.0-alpha.6",
     "dokka" to "2.2.0",
@@ -87,7 +87,7 @@ val requiredVersions = mapOf(
     "jdk" to "21",
     "junit" to "6.1.3",
     "jvmTarget" to "17",
-    "konsist" to "0.17.3",
+    "konsist" to "0.18.0",
     "kotlin" to "2.4.10",
     "media3" to "1.11.0",
     "minSdk" to "24",
@@ -124,14 +124,14 @@ val verifyBuildMatrix = tasks.register("verifyBuildMatrix") {
         val loadedAgpVersion = values.getValue("loadedAgpVersion") as String
         val loadedKotlinPluginVersion = values.getValue("loadedKotlinPluginVersion") as String
 
-        check(runningGradleVersion == "9.7.0") {
-            "Gradle $runningGradleVersion is running; expected 9.7.0"
+        check(runningGradleVersion == "9.8.1") {
+            "Gradle $runningGradleVersion is running; expected 9.8.1"
         }
         check(runningJavaVersion == "21") {
             "The build must run on JDK 21, found $runningJavaVersion"
         }
-        check(loadedAgpVersion == "9.3.1") {
-            "AGP $loadedAgpVersion is loaded; expected 9.3.1"
+        check(loadedAgpVersion == "9.4.1") {
+            "AGP $loadedAgpVersion is loaded; expected 9.4.1"
         }
         check(loadedKotlinPluginVersion == "2.4.10") {
             "Kotlin Gradle plugin $loadedKotlinPluginVersion is loaded; expected 2.4.10"
@@ -175,9 +175,9 @@ val commonResolved = setOf(
 val coreResolved = (commonResolved - "org.jetbrains:annotations:13.0") + setOf(
     "at.bernhardberger.tvheadend:htsp:0.10.0",
     "org.jetbrains:annotations:23.0.0",
-    "org.jetbrains.kotlinx:kotlinx-coroutines-bom:1.10.2",
-    "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
-    "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.10.2",
+    "org.jetbrains.kotlinx:kotlinx-coroutines-bom:1.11.0",
+    "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0",
+    "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.11.0",
     "org.jetbrains.kotlinx:kotlinx-serialization-bom:1.11.0",
     "org.jetbrains.kotlinx:kotlinx-serialization-core:1.11.0",
     "org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.11.0",
@@ -202,7 +202,7 @@ val productionGraphs = sdkModules.associateWith {
         direct = commonDirect + setOf(
             "project::sdk-playback",
             "at.bernhardberger.tvheadend:htsp:0.10.0",
-            "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
+            "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0",
             "org.jetbrains.kotlinx:kotlinx-serialization-protobuf:1.11.0",
         ),
         resolved = (if (useHtspComposite) {
@@ -217,7 +217,7 @@ val productionGraphs = sdkModules.associateWith {
             "com.google.crypto.tink:tink-android:1.23.0",
             "io.coil-kt.coil3:coil-core:3.5.0",
             "project::sdk-core",
-            "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
+            "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0",
         ),
         resolved = (if (useHtspComposite) {
             (coreResolved - "at.bernhardberger.tvheadend:htsp:0.10.0") +
@@ -272,7 +272,7 @@ val productionGraphs = sdkModules.associateWith {
             "com.squareup.okio:okio:3.17.0",
             "io.coil-kt.coil3:coil-core-android:3.5.0",
             "io.coil-kt.coil3:coil-core:3.5.0",
-            "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2",
+            "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0",
             "org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:1.11.0",
             "org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0",
             "org.jspecify:jspecify:1.0.0",
@@ -281,7 +281,7 @@ val productionGraphs = sdkModules.associateWith {
         ),
     )
     this["sdk-playback"] = ProductionGraph(
-        direct = setOf("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2"),
+        direct = setOf("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0"),
         resolved = coroutineResolved,
     )
     this["sdk-media3"] = ProductionGraph(
@@ -291,7 +291,7 @@ val productionGraphs = sdkModules.associateWith {
             "androidx.media3:media3-exoplayer:1.11.0",
             "androidx.media3:media3-extractor:1.11.0",
             "file:media3-decoder-ffmpeg-1.11.0.jar",
-            "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
+            "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0",
         ),
         resolved = (if (useHtspComposite) {
             (coreResolved - "at.bernhardberger.tvheadend:htsp:0.10.0") +
@@ -314,9 +314,9 @@ val productionGraphs = sdkModules.associateWith {
             "com.google.guava:guava:33.3.1-android",
             "com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava",
             "org.jetbrains.kotlin:kotlin-stdlib:2.4.10",
-            "org.jetbrains.kotlinx:kotlinx-coroutines-bom:1.10.2",
-            "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.10.2",
-            "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
+            "org.jetbrains.kotlinx:kotlinx-coroutines-bom:1.11.0",
+            "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.11.0",
+            "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0",
             "org.jetbrains:annotations:23.0.0",
             "project::sdk-core",
             "project::sdk-playback",
@@ -334,19 +334,19 @@ val productionGraphs = sdkModules.associateWith {
 val scopedDirectDependencies = sdkModules.associateWith { emptySet<String>() }.toMutableMap().apply {
     this["sdk-core"] = setOf(
         "api=project::sdk-playback",
-        "api=org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
+        "api=org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0",
         "implementation=at.bernhardberger.tvheadend:htsp:0.10.0",
         "implementation=org.jetbrains.kotlinx:kotlinx-serialization-protobuf:1.11.0",
     )
     this["sdk-android"] = setOf(
         "api=project::sdk-core",
         "api=io.coil-kt.coil3:coil-core:3.5.0",
-        "api=org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
+        "api=org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0",
         "implementation=androidx.datastore:datastore-preferences:1.2.1",
         "implementation=com.google.crypto.tink:tink-android:1.23.0",
     )
     this["sdk-playback"] = setOf(
-        "api=org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
+        "api=org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0",
     )
     this["sdk-media3"] = setOf(
         "api=project::sdk-core",
@@ -354,7 +354,7 @@ val scopedDirectDependencies = sdkModules.associateWith { emptySet<String>() }.t
         "api=androidx.media3:media3-exoplayer:1.11.0",
         "implementation=androidx.media3:media3-extractor:1.11.0",
         "implementation=file:media3-decoder-ffmpeg-1.11.0.jar",
-        "implementation=org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
+        "implementation=org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0",
     )
     this["sdk-testing"] = setOf(
         "api=project::sdk-core",
