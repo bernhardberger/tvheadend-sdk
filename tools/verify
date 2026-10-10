@@ -1,0 +1,15 @@
+#!/bin/sh
+# Use the shared bounded build launcher when installed; preserve normal Gradle elsewhere.
+set -eu
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$ROOT"
+if [ "$#" -eq 0 ]; then set -- build check; fi
+if [ -x /usr/local/bin/tvhplayer-verify ]; then
+    exec /usr/local/bin/tvhplayer-verify --gradle "$ROOT" "$@"
+fi
+# A host with the managed build slice but no launcher is misconfigured, not ordinary.
+if [ -f /etc/systemd/system/tvhbuild.slice ]; then
+    echo "Missing shared build launcher; refusing an unbounded build." >&2
+    exit 1
+fi
+exec ./gradlew "$@"

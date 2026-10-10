@@ -83,12 +83,24 @@ notices, and do not describe this project as official TVHeadend software.
   raw server errors, or subscription ids.
 - Exactly one server profile and protocol connection may be active. Switching
   profiles performs full teardown, repository reset, reconnect, and sync.
-- Applications fake the SDK boundary. SDK tests fake the internal protocol
-  gateway, not `HtspConnection`.
+- Applications fake the SDK boundary. SDK tests above the gateway fake the
+  internal protocol gateway, not `HtspConnection`; only the gateway's own tests
+  fake `HtspConnection`.
 - Compatibility shims for pre-1.0 SDK APIs are not required for the in-repo app
   consumer. Make clean SDK API changes and migrate that app together with them.
 
 ## Build and verify
+
+On hosts that install the shared build launcher
+(`/usr/local/bin/tvhplayer-verify`), use `./tools/verify [Gradle tasks/options]`
+for **all local Gradle builds**, including staged-publication and
+`-p consumer-contract` runs. With no arguments it runs `build check`. The
+launcher runs single-use Gradle with in-process Kotlin inside a memory-bounded
+build slice shared with other projects, so avoid overlapping heavy verification.
+Direct `./gradlew` bypasses containment; do not retry a cancelled or OOM build
+that way. Other hosts retain normal Gradle behavior. Cold-cache checks are
+exceptional: point `GRADLE_USER_HOME` at a fresh disk-backed directory, never a
+tmpfs. Retain ordinary persistent caches; do not clean by default.
 
 The checked-in Gradle wrapper is the build prerequisite. JDK toolchains resolve
 automatically. CI (`.github/workflows/ci.yml`) is the authoritative gate.
