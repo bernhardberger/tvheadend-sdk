@@ -3,8 +3,8 @@ agp = "9.4.1"
 androidxTestExtJunit = "1.3.0"
 androidxTestRunner = "1.7.0"
 buildTools = "36.0.0"
-coil = "3.5.0"
-compileSdk = "36"
+coil = "3.6.3"
+compileSdk = "37"
 coroutines = "1.11.0"
 dataStore = "1.2.1"
 detekt = "2.0.0-alpha.6"
@@ -16,8 +16,9 @@ junit = "6.1.3"
 jvmTarget = "17"
 konsist = "0.18.0"
 kotlin = "2.4.10"
-media3 = "1.11.0"
+media3 = "1.11.1"
 minSdk = "24"
+okio = "3.18.2"
 serialization = "1.11.0"
 targetSdk = "36"
 tink = "1.23.0"
@@ -37,6 +38,7 @@ kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-t
 kotlinx-serialization-protobuf = { module = "org.jetbrains.kotlinx:kotlinx-serialization-protobuf", version.ref = "serialization" }
 media3-exoplayer = { module = "androidx.media3:media3-exoplayer", version.ref = "media3" }
 media3-extractor = { module = "androidx.media3:media3-extractor", version.ref = "media3" }
+okio = { module = "com.squareup.okio:okio", version.ref = "okio" }
 tink-android = { module = "com.google.crypto.tink:tink-android", version.ref = "tink" }
 turbine = { module = "app.cash.turbine:turbine", version.ref = "turbine" }
 

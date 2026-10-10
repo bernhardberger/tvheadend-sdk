@@ -11,7 +11,7 @@ import androidx.media3.exoplayer.audio.AudioRendererEventListener
 import androidx.media3.exoplayer.audio.AudioSink
 
 /**
- * Stands in for an application-supplied Media3 FFmpeg audio extension. Media3 1.11.0
+ * Stands in for an application-supplied Media3 FFmpeg audio extension. Media3 1.11.1
  * `DefaultRenderersFactory.buildAudioRenderers` loads this class name reflectively through a
  * public `(Handler, AudioRendererEventListener, AudioSink)` constructor, so both stay public.
  */

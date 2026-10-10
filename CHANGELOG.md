@@ -6,7 +6,20 @@
 
 - The `api` dependency `kotlinx-coroutines-core` moves from 1.10.2 to 1.11.0, so
   consumers resolve 1.11.0 transitively. The build now uses Gradle 9.8.1 and
-  Android Gradle Plugin 9.4.1. Media3 remains at 1.11.0.
+  Android Gradle Plugin 9.4.1.
+- The `sdk-media3` dependencies move from Media3 1.11.0 to 1.11.1, a patch
+  release; the adapted `H264Reader` is unchanged upstream.
+- The `api` dependency `coil-core` moves from 3.5.0 to 3.6.3. Coil 3.6.3's AAR
+  metadata requires compileSdk 37, so the Android modules now compile against
+  API 37. Their AAR metadata records that as the minimum, so consumers of
+  `sdk-android` or `sdk-media3` must use compileSdk 37 or newer; the JVM modules
+  are unaffected. targetSdk stays 36 and minSdk stays 24.
+- `sdk-android` publishes a dependency constraint that raises Okio to 3.18.2.
+  Coil 3.6.3 brings Okio 3.18.1, which encodes base64 without padding for code
+  compiled against Okio releases before 3.18, such as HTTP Basic credentials
+  built by older OkHttp versions. Maven consumers do not inherit POM
+  `dependencyManagement`, so they must pin `okio` and `okio-jvm` 3.18.2
+  themselves.
 - **BREAKING:** `sdk-media3` no longer bundles the Media3 FFmpeg audio decoder or
   its native libraries and no longer publishes the `ffmpeg-sources` classifier.
   Software audio decoding is application policy: an audio track with neither a

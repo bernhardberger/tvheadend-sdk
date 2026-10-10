@@ -42,7 +42,7 @@ the layout is unchanged. The application-owned Player and its play intent are re
 
 ## Media3 and timestamp handling
 
-Maintained Media3 1.11.0 supplies timeline resolution, renderer teardown/selection,
+Maintained Media3 1.11.1 supplies timeline resolution, renderer teardown/selection,
 elementary readers, subtitle conversion, and `SampleQueue` timestamp offsets. No new
 parser, codec, or clock conversion was implemented.
 
@@ -56,9 +56,11 @@ playlist UID with Media3's `AbstractConcatenatedTimeline` utility.
 Media3's `ExoPlayerImplInternal` resolves disappearing periods against the surviving
 window, clears the old queue/renderers, prepares a replacement holder, and selects its
 fresh groups. Already-published groups never mutate and `onPrepared` is not repeated.
-Relevant 1.11.0 implementation regions are 1838–1917, 2644–2655, 2769–2786, 3443–3460,
-3985–4047, and 4393–4408. `SinglePeriodTimeline`'s explicit constructor controls default
-projection; `SampleQueue.setSampleOffsetUs` adjusts both media and subtitle sample timing.
+Relevant 1.11.1 implementation regions are 1838–1917, 2644–2655, 2769–2786, 3443–3460,
+3985–4047, and 4396–4411. Its only change since 1.11.0 is server-side ad insertion
+period handling outside these regions. `SinglePeriodTimeline`'s explicit constructor
+controls default projection; `SampleQueue.setSampleOffsetUs` adjusts both media and
+subtitle sample timing.
 
 The established subscription clock and delivered seek-rebase offset survive restart.
 Only the track-dependent anchor candidates are replaced; an already accepted seek's

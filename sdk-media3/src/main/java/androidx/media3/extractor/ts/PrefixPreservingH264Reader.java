@@ -38,10 +38,11 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * Media3 1.11.0 H264Reader with access-unit prefix preservation.
+ * Media3 1.11.1 H264Reader with access-unit prefix preservation.
  *
  * <p>Version-pinned adaptation of
- * https://github.com/androidx/media/blob/1.11.0/libraries/extractor/src/main/java/androidx/media3/extractor/ts/H264Reader.java.
+ * https://github.com/androidx/media/blob/1.11.1/libraries/extractor/src/main/java/androidx/media3/extractor/ts/H264Reader.java.
+ * The upstream reader and NalUnitTargetBuffer are unchanged from Media3 1.11.0.
  * The maintained slice parser is unchanged. SampleReader retains prefix NALs with the following
  * picture instead of excluding the first prefix and assigning later recovery SEI to the prior sample.
  * This package deliberately permits reuse of Media3's package-private NalUnitTargetBuffer.

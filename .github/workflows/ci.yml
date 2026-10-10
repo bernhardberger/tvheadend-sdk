@@ -38,7 +38,7 @@ jobs:
           key: sdk-dependencies-v1-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', '**/gradle.properties', 'gradle/libs.versions.toml', 'gradle/verification-metadata.xml', 'gradle/wrapper/gradle-wrapper.properties') }}-${{ github.sha }}
           restore-keys: sdk-dependencies-v1-${{ runner.os }}-
       - name: Install pinned Android SDK packages
-        run: '"$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"'
+        run: '"$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0"'
       - name: Verify release tool self-tests
         run: |
           ./tools/check-staged-publication --self-test

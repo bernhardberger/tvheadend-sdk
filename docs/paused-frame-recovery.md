@@ -7,20 +7,24 @@ remain investigation evidence. They are not the source of SDK 0.12.0 artifacts.
 
 ## Maintained lifecycle
 
-The pinned [MediaCodecRenderer 1.11.0 source](https://github.com/androidx/media/blob/1.11.0/libraries/exoplayer/src/main/java/androidx/media3/exoplayer/mediacodec/MediaCodecRenderer.java)
-was compared with the locally extracted source; both SHA-256 values were
-`d6c42a8080a299650f36c818cb9949b016c1b65061ea486b0dc8fb5428b3dd55`.
+The pinned [MediaCodecRenderer 1.11.1 source](https://github.com/androidx/media/blob/1.11.1/libraries/exoplayer/src/main/java/androidx/media3/exoplayer/mediacodec/MediaCodecRenderer.java)
+has SHA-256 `df094c84cc314d4007eeeafff57f21d892035fa8b365588ef5745672464a2ff6`.
+These semantics were first verified against the 1.11.0 source, whose GitHub and
+locally extracted copies both had SHA-256
+`d6c42a8080a299650f36c818cb9949b016c1b65061ea486b0dc8fb5428b3dd55`. 1.11.1 changes
+only skipped-flush bookkeeping, which runs only when scrubbing mode allows Media3
+to skip a codec flush, and renames the adapter's buffer-use call.
 
-- `shouldReinitCodec()` is protected (660-666) and checked before the next source
-  read (1502-1509). `onQueueInputBuffer` precedes codec submission (1687-1702);
-  successful feed then sets `codecReceivedBuffers` (1712-1716) before another hook
+- `shouldReinitCodec()` is protected (663-669) and checked before the next source
+  read (1507-1514). `onQueueInputBuffer` precedes codec submission (1695-1710);
+  successful feed then sets `codecReceivedBuffers` (1720-1724) before another hook
   invocation. It is not itself a rendered-frame acknowledgement.
-- `drainAndReinitializeCodec` (2227-2234) requests Media3-owned drain and
-  reinitialization. Internal codec EOS (1521-1535) releases buffered output through
-  ordinary output processing (2241-2338).
-- `processEndOfStream` (2436-2455) recreates the codec for `REINITIALIZE`, rather
+- `drainAndReinitializeCodec` (2235-2242) requests Media3-owned drain and
+  reinitialization. Internal codec EOS (1526-1540) releases buffered output through
+  ordinary output processing (2249-2350).
+- `processEndOfStream` (2448-2467) recreates the codec for `REINITIALIZE`, rather
   than setting `outputStreamEnded`. Recreation releases and initializes the codec
-  (2616-2619). The fresh decoder skips non-keyframe input (1623-1637).
+  (2628-2631). The fresh decoder skips non-keyframe input (1628-1642).
 - The SDK does not signal source EOS, manipulate private codec state, fabricate
   format/audio data, modify SPS reorder requirements, or resume playback.
 

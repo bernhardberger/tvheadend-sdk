@@ -11,14 +11,15 @@ Android modules use AGP's built-in Kotlin support and never apply
 | JVM target and Java release | 17, class-file major 61 |
 | Kotlin | 2.4.10 |
 | Android Gradle Plugin | 9.4.1 |
-| Android compile / target / minimum SDK | 36 / 36 / 24 |
+| Android compile / target / minimum SDK | 37 / 36 / 24 |
 | Android Build Tools | 36.0.0 |
 | Coroutines | 1.11.0 |
-| Coil core | 3.5.0 |
+| Coil core | 3.6.3 |
+| Okio (sdk-android constraint) | 3.18.2 |
 | AndroidX DataStore Preferences | 1.2.1 |
 | Google Tink Android | 1.23.0 |
 | HTSP | 0.10.0 |
-| Media3 | 1.11.0 |
+| Media3 | 1.11.1 |
 | JUnit Jupiter | 6.1.3 |
 | AndroidX Test runner / ext JUnit | 1.7.0 / 1.3.0 |
 | Turbine | 1.2.1 |

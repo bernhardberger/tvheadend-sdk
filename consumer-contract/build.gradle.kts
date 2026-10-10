@@ -154,6 +154,12 @@ tasks.register("verifyConsumerDependencyGraph") {
         check(runtimeModules.contains("$sdkGroup:htsp:${libs.versions.htsp.get()}")) {
             "The staged runtime graph must retain the SDK's HTSP implementation dependency"
         }
+        listOf("okio", "okio-jvm").forEach { artifact ->
+            val okio = "com.squareup.okio:$artifact:${libs.versions.okio.get()}"
+            check(okio in compileModules && okio in runtimeModules) {
+                "The staged sdk-android constraint must raise $artifact to ${libs.versions.okio.get()}"
+            }
+        }
 
         sdkArtifactExtensions.keys.forEach { module ->
             val identityConfiguration = stagedArtifactIdentity.getValue(module)

@@ -74,7 +74,8 @@ The recorded fixture's streams have independent timestamp origins; resumed
 fixtures align their origins while preserving per-stream spacing and decode
 offsets. These scripted timings do not characterize a live server.
 
-Pinned Media3 1.11.0 `MediaPeriod.readDiscontinuity` resets output pipelines.
+Pinned Media3 1.11.1 `MediaPeriod.readDiscontinuity` resets output pipelines;
+`MediaPeriod`, `SampleQueue` and `onPositionReset` are unchanged since 1.11.0.
 `ExoPlayerImplInternal.updatePlaybackPositions` calls `resetRendererPosition`
 even for an equal-position discontinuity. `MediaCodecVideoRenderer.onPositionReset`
 resets first-frame release eligibility, permitting a new first frame while paused.

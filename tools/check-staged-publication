@@ -107,7 +107,7 @@ def pom_dependencies(module: str, version: str) -> set[tuple[str, str, str, str]
     return {
         "sdk-android": {
             (GROUP, "sdk-core", version, "compile"),
-            ("io.coil-kt.coil3", "coil-core", "3.5.0", "compile"),
+            ("io.coil-kt.coil3", "coil-core", "3.6.3", "compile"),
             ("org.jetbrains.kotlinx", "kotlinx-coroutines-core", "1.11.0", "compile"),
             ("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.10", "compile"),
             ("androidx.datastore", "datastore-preferences", "1.2.1", "runtime"),
@@ -123,9 +123,9 @@ def pom_dependencies(module: str, version: str) -> set[tuple[str, str, str, str]
         "sdk-media3": {
             (GROUP, "sdk-core", version, "compile"),
             (GROUP, "sdk-playback", version, "compile"),
-            ("androidx.media3", "media3-exoplayer", "1.11.0", "compile"),
+            ("androidx.media3", "media3-exoplayer", "1.11.1", "compile"),
             ("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.10", "compile"),
-            ("androidx.media3", "media3-extractor", "1.11.0", "runtime"),
+            ("androidx.media3", "media3-extractor", "1.11.1", "runtime"),
             ("org.jetbrains.kotlinx", "kotlinx-coroutines-core", "1.11.0", "runtime"),
         },
         "sdk-playback": {
@@ -138,6 +138,10 @@ def pom_dependencies(module: str, version: str) -> set[tuple[str, str, str, str]
             ("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.10", "compile"),
         },
     }[module]
+
+
+def dependency_constraints(module: str) -> set[tuple[str, str, str]]:
+    return {"sdk-android": {("com.squareup.okio", "okio", "3.18.2")}}.get(module, set())
 
 
 def module_variants(module: str, version: str) -> dict[str, tuple[str, set[tuple[str, str, str]]]]:
@@ -240,6 +244,15 @@ def verify_pom(data: bytes, module: str, version: str) -> None:
         coordinates.append(tuple(xml_text(dependency, name, label) for name in ("groupId", "artifactId", "version", "scope")))
     require(len(coordinates) == len(set(coordinates)), f"{label} contains duplicate dependencies")
     require(set(coordinates) == pom_dependencies(module, version), f"{label} dependencies differ")
+    managed: list[tuple[str, str, str]] = []
+    for management in xml_children(root, "dependencyManagement"):
+        for dependency in xml_children(xml_one(management, "dependencies", label), "dependency"):
+            require(
+                {child.tag.rsplit("}", 1)[-1] for child in dependency} == {"groupId", "artifactId", "version"},
+                f"{label} dependency constraint contains unsupported metadata",
+            )
+            managed.append(tuple(xml_text(dependency, name, label) for name in ("groupId", "artifactId", "version")))
+    require(len(managed) == len(set(managed)) and set(managed) == dependency_constraints(module), f"{label} dependency constraints differ")
 
 
 def verify_module_metadata(data: bytes, module: str, version: str, artifacts: dict[str, bytes]) -> None:
@@ -285,6 +298,17 @@ def verify_module_metadata(data: bytes, module: str, version: str, artifacts: di
             require(all(isinstance(value, str) for value in coordinate), f"{module} {variant_name} dependency coordinate is malformed")
             actual_dependencies.append(coordinate)
         require(len(actual_dependencies) == len(set(actual_dependencies)) and set(actual_dependencies) == expected_dependencies, f"{module} {variant_name} dependencies differ")
+        constraints = variant.get("dependencyConstraints", [])
+        require(isinstance(constraints, list), f"{module} {variant_name} dependency constraints are malformed")
+        actual_constraints: list[tuple[str, str, str]] = []
+        for constraint in constraints:
+            require(isinstance(constraint, dict) and set(constraint) == {"group", "module", "version", "reason"}, f"{module} {variant_name} dependency constraint shape differs")
+            constraint_version = constraint.get("version")
+            require(isinstance(constraint_version, dict) and set(constraint_version) == {"requires"}, f"{module} {variant_name} dependency constraint version differs")
+            require(isinstance(constraint.get("reason"), str) and bool(constraint["reason"]), f"{module} {variant_name} dependency constraint reason is missing")
+            actual_constraints.append((constraint.get("group"), constraint.get("module"), constraint_version.get("requires")))
+        expected_constraints = set() if label in {"sources", "javadoc"} else dependency_constraints(module)
+        require(len(actual_constraints) == len(set(actual_constraints)) and set(actual_constraints) == expected_constraints, f"{module} {variant_name} dependency constraints differ")
         files = variant.get("files")
         require(isinstance(files, list) and len(files) == 1 and isinstance(files[0], dict), f"{module} {variant_name} file metadata differs")
         entry = files[0]
@@ -441,6 +465,12 @@ def self_test() -> list[str]:
         verify_pom(ET.tostring(core_pom), "sdk-core", "0.8.0")
     except VerificationError as error:
         errors.append(f"self-test rejected core protobuf POM: {error}")
+    management = ET.SubElement(core_pom, "dependencyManagement")
+    managed_node = ET.SubElement(ET.SubElement(management, "dependencies"), "dependency")
+    for name, value in zip(("groupId", "artifactId", "version"), ("com.squareup.okio", "okio", "3.18.2")):
+        ET.SubElement(managed_node, name).text = value
+    expect_error(errors, "unexpected POM dependency management", lambda: verify_pom(ET.tostring(core_pom), "sdk-core", "0.8.0"))
+    core_pom.remove(management)
     protobuf_node = dependency_nodes[-1]
     for field, wrong in (("version", "1.10.0"), ("scope", "compile"), ("artifactId", "kotlinx-serialization-core-jvm")):
         child = protobuf_node.find(field)
@@ -473,12 +503,45 @@ def self_test() -> list[str]:
         verify_core_metadata()
     except VerificationError as error:
         errors.append(f"self-test rejected core protobuf module metadata: {error}")
+    variants[1]["dependencyConstraints"] = [{"group": "com.squareup.okio", "module": "okio", "version": {"requires": "3.18.2"}, "reason": "fixture"}]
+    expect_error(errors, "unexpected module dependency constraint", verify_core_metadata)
+    del variants[1]["dependencyConstraints"]
     protobuf_dependency = variants[1]["dependencies"][-1]
     protobuf_dependency["version"]["requires"] = "1.10.0"
     expect_error(errors, "wrong protobuf module version", verify_core_metadata)
     protobuf_dependency["version"]["requires"] = "1.11.0"
     variants[1]["dependencies"].remove(protobuf_dependency)
     expect_error(errors, "missing protobuf module dependency", verify_core_metadata)
+
+    android_artifacts = {label: b"fixture" for label in ("main", "sources")}
+    okio_constraint = {"group": "com.squareup.okio", "module": "okio", "version": {"requires": "3.18.2"}, "reason": "fixture"}
+    android_variants = []
+    for variant_name, (label, expected) in module_variants("sdk-android", "0.8.0").items():
+        name = artifact_names("sdk-android", "0.8.0")[label]
+        variant = {"name": variant_name, "dependencies": [{"group": group, "module": artifact, "version": {"requires": version}}
+                                                          for group, artifact, version in sorted(expected)],
+                   "files": [{"name": name, "url": name, "size": 7, "sha256": sha256(b"fixture")}]}
+        if label == "sources":
+            variant["attributes"] = {"org.gradle.category": "documentation", "org.gradle.docstype": label}
+        else:
+            variant["attributes"] = {"org.gradle.category": "library", "org.gradle.libraryelements": "aar"}
+            variant["dependencyConstraints"] = [okio_constraint]
+        android_variants.append(variant)
+    android_metadata = {"formatVersion": "1.1", "component": {"group": GROUP, "module": "sdk-android", "version": "0.8.0",
+                        "attributes": {"org.gradle.status": "release"}}, "variants": android_variants}
+    def verify_android_metadata() -> None:
+        verify_module_metadata(json.dumps(android_metadata).encode(), "sdk-android", "0.8.0", android_artifacts)
+    try:
+        verify_android_metadata()
+    except VerificationError as error:
+        errors.append(f"self-test rejected android Okio constraint metadata: {error}")
+    runtime_variant = android_variants[1]
+    del runtime_variant["dependencyConstraints"]
+    expect_error(errors, "missing android Okio constraint", verify_android_metadata)
+    runtime_variant["dependencyConstraints"] = [dict(okio_constraint, version={"requires": "3.18.1"})]
+    expect_error(errors, "android Okio constraint requiring 3.18.1", verify_android_metadata)
+    runtime_variant["dependencyConstraints"] = [{key: value for key, value in okio_constraint.items() if key != "reason"}]
+    expect_error(errors, "android Okio constraint without reason", verify_android_metadata)
     for module, name in expected_publication_names.items():
         root = ET.fromstring(f"<project><name>{name}</name></project>")
         try:

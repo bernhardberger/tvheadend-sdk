@@ -71,6 +71,11 @@ dependencies {
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.kotlinx.coroutines.test)
+    constraints {
+        api(libs.okio) {
+            because("Okio 3.18.1, pulled in by Coil, drops base64 padding for callers compiled against older Okio")
+        }
+    }
 }
 
 detekt {

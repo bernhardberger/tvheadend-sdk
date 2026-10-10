@@ -76,8 +76,8 @@ val requiredVersions = mapOf(
     "androidxTestExtJunit" to "1.3.0",
     "androidxTestRunner" to "1.7.0",
     "buildTools" to "36.0.0",
-    "coil" to "3.5.0",
-    "compileSdk" to "36",
+    "coil" to "3.6.3",
+    "compileSdk" to "37",
     "coroutines" to "1.11.0",
     "dataStore" to "1.2.1",
     "detekt" to "2.0.0-alpha.6",
@@ -89,8 +89,9 @@ val requiredVersions = mapOf(
     "jvmTarget" to "17",
     "konsist" to "0.18.0",
     "kotlin" to "2.4.10",
-    "media3" to "1.11.0",
+    "media3" to "1.11.1",
     "minSdk" to "24",
+    "okio" to "3.18.2",
     "targetSdk" to "36",
     "tink" to "1.23.0",
     "turbine" to "1.2.1",
@@ -150,7 +151,7 @@ val verifyBuildMatrix = tasks.register("verifyBuildMatrix") {
             check(values.getValue("$moduleName.kotlinAndroidApplied") == false) {
                 "$moduleName must use AGP built-in Kotlin"
             }
-            check(values.getValue("$moduleName.compileSdk") == 36)
+            check(values.getValue("$moduleName.compileSdk") == 37)
             check(values.getValue("$moduleName.buildTools") == "36.0.0")
             check(values.getValue("$moduleName.minSdk") == 24)
             check(values.getValue("$moduleName.targetSdk") == 36)
@@ -215,7 +216,7 @@ val productionGraphs = sdkModules.associateWith {
         direct = setOf(
             "androidx.datastore:datastore-preferences:1.2.1",
             "com.google.crypto.tink:tink-android:1.23.0",
-            "io.coil-kt.coil3:coil-core:3.5.0",
+            "io.coil-kt.coil3:coil-core:3.6.3",
             "project::sdk-core",
             "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0",
         ),
@@ -268,10 +269,10 @@ val productionGraphs = sdkModules.associateWith {
             "com.google.crypto.tink:tink-android:1.23.0",
             "com.google.errorprone:error_prone_annotations:2.41.0",
             "com.google.guava:listenablefuture:1.0",
-            "com.squareup.okio:okio-jvm:3.17.0",
-            "com.squareup.okio:okio:3.17.0",
-            "io.coil-kt.coil3:coil-core-android:3.5.0",
-            "io.coil-kt.coil3:coil-core:3.5.0",
+            "com.squareup.okio:okio-jvm:3.18.2",
+            "com.squareup.okio:okio:3.18.2",
+            "io.coil-kt.coil3:coil-core-android:3.6.3",
+            "io.coil-kt.coil3:coil-core:3.6.3",
             "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0",
             "org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:1.11.0",
             "org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0",
@@ -288,8 +289,8 @@ val productionGraphs = sdkModules.associateWith {
         direct = setOf(
             "project::sdk-core",
             "project::sdk-playback",
-            "androidx.media3:media3-exoplayer:1.11.0",
-            "androidx.media3:media3-extractor:1.11.0",
+            "androidx.media3:media3-exoplayer:1.11.1",
+            "androidx.media3:media3-extractor:1.11.1",
             "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0",
         ),
         resolved = (if (useHtspComposite) {
@@ -302,13 +303,13 @@ val productionGraphs = sdkModules.associateWith {
             "androidx.annotation:annotation-jvm:1.6.0",
             "androidx.annotation:annotation:1.6.0",
             "androidx.exifinterface:exifinterface:1.3.6",
-            "androidx.media3:media3-common:1.11.0",
-            "androidx.media3:media3-container:1.11.0",
-            "androidx.media3:media3-database:1.11.0",
-            "androidx.media3:media3-datasource:1.11.0",
-            "androidx.media3:media3-decoder:1.11.0",
-            "androidx.media3:media3-exoplayer:1.11.0",
-            "androidx.media3:media3-extractor:1.11.0",
+            "androidx.media3:media3-common:1.11.1",
+            "androidx.media3:media3-container:1.11.1",
+            "androidx.media3:media3-database:1.11.1",
+            "androidx.media3:media3-datasource:1.11.1",
+            "androidx.media3:media3-decoder:1.11.1",
+            "androidx.media3:media3-exoplayer:1.11.1",
+            "androidx.media3:media3-extractor:1.11.1",
             "com.google.guava:failureaccess:1.0.2",
             "com.google.guava:guava:33.3.1-android",
             "com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava",
@@ -339,7 +340,7 @@ val scopedDirectDependencies = sdkModules.associateWith { emptySet<String>() }.t
     )
     this["sdk-android"] = setOf(
         "api=project::sdk-core",
-        "api=io.coil-kt.coil3:coil-core:3.5.0",
+        "api=io.coil-kt.coil3:coil-core:3.6.3",
         "api=org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0",
         "implementation=androidx.datastore:datastore-preferences:1.2.1",
         "implementation=com.google.crypto.tink:tink-android:1.23.0",
@@ -350,8 +351,8 @@ val scopedDirectDependencies = sdkModules.associateWith { emptySet<String>() }.t
     this["sdk-media3"] = setOf(
         "api=project::sdk-core",
         "api=project::sdk-playback",
-        "api=androidx.media3:media3-exoplayer:1.11.0",
-        "implementation=androidx.media3:media3-extractor:1.11.0",
+        "api=androidx.media3:media3-exoplayer:1.11.1",
+        "implementation=androidx.media3:media3-extractor:1.11.1",
         "implementation=org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0",
     )
     this["sdk-testing"] = setOf(

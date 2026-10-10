@@ -6,11 +6,11 @@ one selected track at group index zero. Unavailable groups and invalid indices
 are rejected. Equality includes the group ID and complete format; it is not a
 language-only or codec-only fallback across changed tracks.
 
-Media3 1.11.0 `DefaultTrackSelector` matches `TrackSelectionOverride` by group
-equality, then constructs its selection definition with the stored override's
-group. An override from an earlier period can therefore legitimately reach the
-new period with an equal group that is not the same object. Media3's own
-`ProgressiveMediaPeriod` uses `TrackGroupArray.indexOf` (equality) and validates
+Media3 1.11.1 `DefaultTrackSelector`, unchanged since 1.11.0, matches
+`TrackSelectionOverride` by group equality, then constructs its selection
+definition with the stored override's group. An override from an earlier
+period can therefore legitimately reach the new period with an equal group that
+is not the same object. Media3's own `ProgressiveMediaPeriod` uses `TrackGroupArray.indexOf` (equality) and validates
 the same single-track boundary. SDK 0.10.0 instead required object identity.
 
 SDK 0.10.1 resolves that equal group to the current output, never to the earlier
