@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- `SubscriptionDiagnostics.consumerDrainTimedOut` reports that teardown
+  cancelled consumer code still running when a teardown grace period expired.
+
 ### Changed
 
 - The `api` dependency `kotlinx-coroutines-core` moves from 1.10.2 to 1.11.0, so
@@ -73,6 +78,18 @@
   restarted periods keep the acknowledged pause. A seek or return-to-live that a
   later command interrupts while refilling a paused player still reports the
   server's acceptance.
+- Closing a live subscription can no longer hang or end with the wrong reason.
+  A close ends `Closed` even while a restart deadline is pending, and an ordered
+  server termination keeps its reason across restart and seek-acknowledgement
+  deadlines. A pending seek completes with `SubscriptionEnded` and packets
+  drained during close are discarded. Teardown waits up to 5 s for running
+  consumer code, then cancels it and returns `CLEANUP_FAILED` instead of waiting
+  indefinitely; a nested `close()`, `seek()` or `closeAndJoin()` from consumer
+  delivery throws `IllegalStateException` instead of deadlocking. Stop and
+  restart events during the closing drain are fenced, and a stream restarted
+  before the subscribe acknowledgement no longer times out.
+- Live subscription diagnostics saturate drop counts at `Long.MAX_VALUE` and
+  withhold adapter labels that contain a device path or URI.
 
 ## [0.23.0]
 

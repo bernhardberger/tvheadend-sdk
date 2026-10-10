@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.EnumSource
 import org.junit.jupiter.params.provider.ValueSource
 import kotlin.time.Duration.Companion.seconds
 
@@ -127,6 +128,157 @@ internal class SubscriptionRestartTest {
             assertTrue(opening.await() is SubscriptionOpenResult.Opened)
         } finally { manager.closeAndJoin() }
     }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `validated restart tracks end the deadline while subscribe acknowledgement is pending`(restarted: Boolean) = runTest {
+        val acknowledgement = CompletableDeferred<Unit>()
+        val connection = RecordingSubscriptionConnection().apply {
+            subscribeAction = { acknowledgement.await(); successfulConfirmation(120) }
+        }
+        val manager = createSubscriptionManager(connection, StandardTestDispatcher(testScheduler))
+        manager.startAdmission()
+        val opening = async { manager.open(SubscriptionChannelId(1), SubscriptionEventConsumer {}) }
+        try {
+            runCurrent()
+            connection.emit(started(stream()))
+            connection.emit(SubscriptionEvent.Stopped(SubscriptionCondition.NO_DETAIL))
+            if (restarted) connection.emit(started(stream(type = SubscriptionStreamType.AAC)))
+            runCurrent()
+            advanceTimeBy(6.seconds)
+            runCurrent()
+            if (restarted) {
+                assertFalse(opening.isCompleted, "Validated restart tracks must leave the acknowledgement to subscribe")
+                assertEquals(0, connection.unsubscribeCount)
+                acknowledgement.complete(Unit)
+                runCurrent()
+                val state = (opening.await() as SubscriptionOpenResult.Opened).subscription.state.value
+                assertEquals(SubscriptionStreamType.AAC, (state as SubscriptionState.Playable).tracks.streams.single().type)
+            } else {
+                assertSame(SubscriptionTerminalReason.Timeout, (opening.await() as SubscriptionOpenResult.Failed).reason)
+            }
+        } finally {
+            acknowledgement.complete(Unit)
+            manager.closeAndJoin()
+        }
+    }
+
+    @Test
+    fun `close during a slow unsubscribe cancels the restart deadline and keeps the ordered drain`() = runTest {
+        val unsubscribeEntered = CompletableDeferred<Unit>()
+        val releaseUnsubscribe = CompletableDeferred<Unit>()
+        val fixture = openRestartFixture()
+        fixture.connection.unsubscribeAction = {
+            unsubscribeEntered.complete(Unit)
+            releaseUnsubscribe.await()
+            SubscriptionOperationResult.Ok(Unit)
+        }
+        try {
+            fixture.connection.emit(SubscriptionEvent.Stopped(SubscriptionCondition.NO_DETAIL))
+            runCurrent()
+            val closing = async { fixture.subscription.close() }
+            runCurrent()
+            assertTrue(unsubscribeEntered.isCompleted)
+            advanceTimeBy(6.seconds)
+            runCurrent()
+            assertSame(SubscriptionState.Starting, fixture.subscription.state.value, "Close must own the terminal reason")
+            fixture.connection.emit(SubscriptionEvent.Status(SubscriptionCondition.STATUS_REPORTED))
+            runCurrent()
+            releaseUnsubscribe.complete(Unit)
+            runCurrent()
+            assertSame(SubscriptionCloseResult.CLOSED, closing.await())
+            assertSame(SubscriptionTerminalReason.Closed,
+                (fixture.subscription.state.value as SubscriptionState.Terminal).reason)
+            assertTrue(fixture.events.last() is SubscriptionEvent.Status, "Close must not truncate the ordered drain")
+            assertEquals(1, fixture.connection.unsubscribeCount)
+        } finally {
+            releaseUnsubscribe.complete(Unit)
+            fixture.manager.closeAndJoin()
+        }
+    }
+
+    @ParameterizedTest
+    @EnumSource(SubscriptionTermination::class, names = ["REMOTE_EOF", "GENERATION_LOST"])
+    fun `an ordered terminal delivered across the restart deadline keeps its reason`(
+        termination: SubscriptionTermination,
+    ) = runTest {
+        val terminalEntered = CompletableDeferred<Unit>()
+        val releaseTerminal = CompletableDeferred<Unit>()
+        val fixture = openRestartFixture { event ->
+            if (event is SubscriptionEvent.Terminated) {
+                terminalEntered.complete(Unit)
+                releaseTerminal.await()
+            }
+        }
+        try {
+            fixture.connection.emit(SubscriptionEvent.Stopped(SubscriptionCondition.NO_DETAIL))
+            fixture.connection.emit(SubscriptionEvent.Terminated(termination))
+            runCurrent()
+            assertTrue(terminalEntered.isCompleted)
+            advanceTimeBy(6.seconds)
+            runCurrent()
+            assertSame(
+                SubscriptionState.Starting,
+                fixture.subscription.state.value,
+                "The restart deadline must not overtake a terminal in delivery",
+            )
+
+            releaseTerminal.complete(Unit)
+            runCurrent()
+            val expected = mapOf(
+                SubscriptionTermination.REMOTE_EOF to SubscriptionTerminalReason.RemoteEof,
+                SubscriptionTermination.GENERATION_LOST to SubscriptionTerminalReason.GenerationLost,
+            ).getValue(termination)
+            assertSame(expected, (fixture.subscription.state.value as SubscriptionState.Terminal).reason)
+        } finally {
+            releaseTerminal.complete(Unit)
+            fixture.manager.closeAndJoin()
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `a boundary in the close drain fences later packets from the delivered tracks`(stopFirst: Boolean) =
+        runTest {
+            val releaseUnsubscribe = CompletableDeferred<Unit>()
+            val fixture = openRestartFixture()
+            fixture.connection.unsubscribeAction = {
+                releaseUnsubscribe.await()
+                SubscriptionOperationResult.Ok(Unit)
+            }
+            try {
+                val closing = async { fixture.subscription.close() }
+                runCurrent()
+                assertEquals(1, fixture.connection.unsubscribeCount)
+                fixture.connection.emit(packet(presentationTimeUs = 100L))
+                if (stopFirst) {
+                    fixture.connection.emit(SubscriptionEvent.Stopped(SubscriptionCondition.NO_DETAIL))
+                }
+                fixture.connection.emit(started(stream(type = SubscriptionStreamType.AAC)))
+                fixture.connection.emit(packet(presentationTimeUs = 200L))
+                fixture.connection.emit(SubscriptionEvent.Status(SubscriptionCondition.STATUS_REPORTED))
+                runCurrent()
+                releaseUnsubscribe.complete(Unit)
+                runCurrent()
+
+                assertSame(SubscriptionCloseResult.CLOSED, closing.await())
+                assertEquals(
+                    listOf<Long?>(100L),
+                    fixture.events.filterIsInstance<SubscriptionEvent.Packet>().map { it.presentationTimeUs },
+                    "Packets after a drained boundary must not reach readers of the delivered tracks",
+                )
+                assertEquals(2, fixture.events.count { it is SubscriptionEvent.Started })
+                assertTrue(fixture.events.last() is SubscriptionEvent.Status)
+                assertEquals(1, fixture.tracks.size, "A closing drain publishes no successor tracks")
+                assertSame(
+                    SubscriptionTerminalReason.Closed,
+                    (fixture.subscription.state.value as SubscriptionState.Terminal).reason,
+                )
+            } finally {
+                releaseUnsubscribe.complete(Unit)
+                fixture.manager.closeAndJoin()
+            }
+        }
 
     @ParameterizedTest
     @ValueSource(booleans = [false, true])
@@ -287,7 +439,7 @@ internal class SubscriptionRestartTest {
     }
 
     private suspend fun TestScope.openRestartFixture(
-        onEvent: (SubscriptionEvent) -> Unit = {},
+        onEvent: suspend (SubscriptionEvent) -> Unit = {},
     ): RestartFixture {
         val connection = RecordingSubscriptionConnection().apply {
             subscribeAction = { successfulConfirmation(120) }

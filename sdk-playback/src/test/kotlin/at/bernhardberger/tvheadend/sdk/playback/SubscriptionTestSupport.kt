@@ -7,6 +7,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /** Deterministic single-collector transport shared by the playback state-machine tests. */
 internal class RecordingSubscriptionConnection : SubscriptionConnection {
@@ -240,6 +241,17 @@ internal fun skipped(outcome: SkipOutcome): SubscriptionEvent.Skipped = Subscrip
     time = null,
     sizeBytes = null,
 )
+
+/** Lifecycle calls that wait for subscription teardown, so consumer code must never make them. */
+enum class JoiningCall { CLOSE, SEEK, CLOSE_AND_JOIN }
+
+internal suspend fun JoiningCall.perform(subscription: ActiveSubscription, manager: SubscriptionManager) {
+    when (this) {
+        JoiningCall.CLOSE -> subscription.close()
+        JoiningCall.SEEK -> subscription.seek(SubscriptionSeekTarget.Absolute(30.seconds))
+        JoiningCall.CLOSE_AND_JOIN -> manager.closeAndJoin()
+    }
+}
 
 internal suspend fun caughtCancellation(block: suspend () -> Unit): CancellationException = try {
     block()

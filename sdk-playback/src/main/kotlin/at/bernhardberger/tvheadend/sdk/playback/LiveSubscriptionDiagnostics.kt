@@ -259,7 +259,9 @@ public class LiveSubscriptionDiagnostics internal constructor(
                 previous?.source,
                 previous?.frontend,
                 previous?.queue,
-                (previous?.clientDroppedPacketCount ?: 0L) + event.count,
+                (previous?.clientDroppedPacketCount ?: 0L).let { current ->
+                    if (Long.MAX_VALUE - current < event.count) Long.MAX_VALUE else current + event.count
+                },
             )
             is SubscriptionEvent.Stopped,
             is SubscriptionEvent.Terminated,
@@ -423,8 +425,12 @@ private val HARDWARE_ADDRESS = Regex(
 private val URI_USERINFO = Regex(
     """(?i)(?:[a-z][a-z0-9+.-]*://)?[^\s/:@]+(?::[^\s/@]*)?@[^\s]+""",
 )
+/**
+ * Any locator not glued to a preceding word character counts, so brackets and quotes cannot hide one.
+ * A label with a locator directly after punctuation, such as a device path in parentheses, is withheld.
+ */
 private val URI_OR_PATH = Regex(
-    """(?i)(?:^|\s)(?:[a-z][a-z0-9+.-]*:\S|(?:\.{1,2})?[/\\]\S*)""",
+    """(?i)(?<![\p{L}\p{M}\p{N}_])(?:[a-z][a-z0-9+.-]*:\S|(?:\.{1,2})?[/\\]\S*)""",
 )
 private val EQUALS_ASSIGNMENT = Regex(
     """(?:^|[^\p{L}\p{N}])[\p{L}\p{N}_-]+(?:\s+[\p{L}\p{N}_-]+){0,2}\s*=\s*\S+""",

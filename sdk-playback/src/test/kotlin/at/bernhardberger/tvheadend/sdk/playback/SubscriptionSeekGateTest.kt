@@ -6,14 +6,20 @@ import java.util.concurrent.CancellationException
 import kotlin.coroutines.ContinuationInterceptor
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
@@ -21,6 +27,9 @@ import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.EnumSource
+import org.junit.jupiter.params.provider.ValueSource
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -201,6 +210,54 @@ class SubscriptionSeekGateTest {
         val terminal = fixture.subscription.state.value as SubscriptionState.Terminal
         assertSame(SubscriptionTerminalReason.ConsumerFailed, terminal.reason)
         fixture.manager.closeAndJoin()
+    }
+
+    @ParameterizedTest
+    @EnumSource(JoiningCall::class)
+    fun `joining calls fail fast from a coroutine that inherits a replay`(call: JoiningCall) = runTest {
+        val elsewhere = StandardTestDispatcher(testScheduler)
+        val failure = CompletableDeferred<Throwable?>()
+        lateinit var handle: ActiveSubscription
+        lateinit var owner: SubscriptionManager
+        val fixture = openSeekable(
+            onEvent = { event ->
+                if (event is SubscriptionEvent.Packet && event.presentationTimeUs == 170L) {
+                    // The dispatcher switch runs the call in its own child job of the replaying driver.
+                    val outcome = runCatching { withContext(elsewhere) { call.perform(handle, owner) } }
+                    failure.complete(outcome.exceptionOrNull())
+                }
+            },
+        )
+        handle = fixture.subscription
+        owner = fixture.manager
+        val packetWithheld = CompletableDeferred<Unit>()
+        fixture.connection.skipAction = {
+            packetWithheld.await()
+            SubscriptionOperationResult.NotSupported
+        }
+        try {
+            val seeking = async { fixture.subscription.seek(absoluteSeek()) }
+            runCurrent()
+            fixture.connection.emit(packet(presentationTimeUs = 170L))
+            fixture.connection.emit(packet(presentationTimeUs = 180L))
+            runCurrent()
+            assertEquals(listOf("started"), fixture.received)
+            packetWithheld.complete(Unit)
+            runCurrent()
+
+            assertTrue(failure.isCompleted, "A nested joining call must fail fast, not wait on its own teardown")
+            assertTrue(failure.await() is IllegalStateException)
+            assertTrue(seeking.await() is SubscriptionSeekResult.Refused)
+            assertEquals(listOf("started", "packet:170", "packet:180"), fixture.received)
+            assertTrue(fixture.subscription.state.value is SubscriptionState.Playable)
+            assertSame(SubscriptionCloseResult.CLOSED, fixture.subscription.close())
+            val terminal = fixture.subscription.state.value as SubscriptionState.Terminal
+            assertSame(SubscriptionTerminalReason.Closed, terminal.reason)
+        } finally {
+            packetWithheld.complete(Unit)
+            // A regressed guard leaves the call waiting on its own teardown; joining would hang the suite.
+            if (failure.isCompleted) fixture.manager.closeAndJoin()
+        }
     }
 
     @Test
@@ -556,6 +613,442 @@ class SubscriptionSeekGateTest {
     }
 
     @Test
+    fun `teardown abandons a pending seek before the close drain and discards its packets`() = runTest {
+        val releaseUnsubscribe = CompletableDeferred<Unit>()
+        val fixture = openSeekable()
+        fixture.connection.unsubscribeAction = {
+            releaseUnsubscribe.await()
+            SubscriptionOperationResult.Ok(Unit)
+        }
+        try {
+            val seeking = async { fixture.subscription.seek(absoluteSeek()) }
+            runCurrent()
+            val closing = async { fixture.subscription.close() }
+            runCurrent()
+            assertEquals(1, fixture.connection.unsubscribeCount)
+            assertTrue(seeking.isCompleted, "Teardown must settle the request before the drain")
+            assertSame(SubscriptionSeekResult.SubscriptionEnded, seeking.await())
+            repeat(3) { index -> fixture.connection.emit(packet(presentationTimeUs = index.toLong())) }
+            fixture.connection.emit(SubscriptionEvent.Status(SubscriptionCondition.STATUS_REPORTED))
+            runCurrent()
+            releaseUnsubscribe.complete(Unit)
+            runCurrent()
+
+            assertSame(SubscriptionCloseResult.CLOSED, closing.await())
+            val terminal = fixture.subscription.state.value as SubscriptionState.Terminal
+            assertSame(SubscriptionTerminalReason.Closed, terminal.reason)
+            assertEquals(
+                listOf("started", "status"),
+                fixture.received,
+                "Packets of an abandoned request must not reach the consumer during the close drain",
+            )
+        } finally {
+            releaseUnsubscribe.complete(Unit)
+            fixture.manager.closeAndJoin()
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `a gate decision while teardown waits for the seek driver abandons the request for close`(
+        unrecognisedAcknowledgement: Boolean,
+    ) = runTest {
+        val releaseSkip = CompletableDeferred<Unit>()
+        val fixture = openSeekable(gate = SeekGateSettings(maximumPendingEvents = 2))
+        // A skip command that ignores cancellation holds teardown before its own abandonment.
+        fixture.connection.skipAction = {
+            withContext(NonCancellable) { releaseSkip.await() }
+            SubscriptionOperationResult.Ok(Unit)
+        }
+        try {
+            val seeking = async { fixture.subscription.seek(absoluteSeek()) }
+            runCurrent()
+            val closing = async { fixture.subscription.close() }
+            runCurrent()
+            assertFalse(seeking.isCompleted, "Teardown must still be waiting for the seek driver")
+            if (unrecognisedAcknowledgement) {
+                fixture.connection.emit(packet(presentationTimeUs = 0L))
+                fixture.connection.emit(skipped(SkipOutcome.UNKNOWN))
+                fixture.connection.emit(packet(presentationTimeUs = 1L))
+            } else {
+                repeat(3) { index -> fixture.connection.emit(packet(presentationTimeUs = index.toLong())) }
+            }
+            fixture.connection.emit(SubscriptionEvent.Status(SubscriptionCondition.STATUS_REPORTED))
+            runCurrent()
+
+            assertEquals(0, fixture.connection.unsubscribeCount, "The gate, not teardown, must settle the request")
+            assertTrue(seeking.isCompleted)
+            assertSame(SubscriptionSeekResult.SubscriptionEnded, seeking.await())
+            releaseSkip.complete(Unit)
+            runCurrent()
+
+            assertSame(SubscriptionCloseResult.CLOSED, closing.await())
+            val terminal = fixture.subscription.state.value as SubscriptionState.Terminal
+            assertSame(SubscriptionTerminalReason.Closed, terminal.reason)
+            val expected = if (unrecognisedAcknowledgement) {
+                listOf("started", "skipped", "status")
+            } else {
+                listOf("started", "status")
+            }
+            assertEquals(expected, fixture.received)
+            assertEquals(1, fixture.connection.unsubscribeCount)
+        } finally {
+            releaseSkip.complete(Unit)
+            fixture.manager.closeAndJoin()
+        }
+    }
+
+    @Test
+    fun `an ordered terminal delivered across the acknowledgement deadline keeps its reason`() = runTest {
+        val terminalEntered = CompletableDeferred<Unit>()
+        val releaseTerminal = CompletableDeferred<Unit>()
+        val fixture = openSeekable(
+            onEvent = { event ->
+                if (event is SubscriptionEvent.Terminated) {
+                    terminalEntered.complete(Unit)
+                    releaseTerminal.await()
+                }
+            },
+        )
+        try {
+            val seeking = async { fixture.subscription.seek(absoluteSeek()) }
+            runCurrent()
+            fixture.connection.emit(packet(presentationTimeUs = 200L))
+            fixture.connection.emit(SubscriptionEvent.Terminated(SubscriptionTermination.REMOTE_EOF))
+            runCurrent()
+            assertTrue(terminalEntered.isCompleted)
+            advanceTimeBy(GATE_TIMEOUT + 1.seconds)
+            runCurrent()
+
+            assertTrue(seeking.isCompleted)
+            assertSame(SubscriptionSeekResult.SubscriptionEnded, seeking.await())
+            releaseTerminal.complete(Unit)
+            runCurrent()
+            val terminal = fixture.subscription.state.value as SubscriptionState.Terminal
+            assertSame(SubscriptionTerminalReason.RemoteEof, terminal.reason)
+            assertEquals(listOf("started", "terminated"), fixture.received)
+        } finally {
+            releaseTerminal.complete(Unit)
+            fixture.manager.closeAndJoin()
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `close waits for a committed replay that finishes within the grace period`(closerCancelled: Boolean) = runTest {
+        val replayEntered = CompletableDeferred<Unit>()
+        val releaseReplay = CompletableDeferred<Unit>()
+        val fixture = openSeekable(
+            onEvent = { event ->
+                if (event is SubscriptionEvent.Packet && event.presentationTimeUs == 200L) {
+                    replayEntered.complete(Unit)
+                    releaseReplay.await()
+                }
+            },
+        )
+        val packetWithheld = CompletableDeferred<Unit>()
+        fixture.connection.skipAction = {
+            packetWithheld.await()
+            SubscriptionOperationResult.AccessDenied
+        }
+        try {
+            val seeking = async { fixture.subscription.seek(absoluteSeek()) }
+            runCurrent()
+            fixture.connection.emit(packet(presentationTimeUs = 200L))
+            fixture.connection.emit(packet(presentationTimeUs = 210L))
+            runCurrent()
+            packetWithheld.complete(Unit)
+            runCurrent()
+            assertTrue(replayEntered.isCompleted)
+            assertTrue(seeking.await() is SubscriptionSeekResult.Refused)
+
+            val closing = async { fixture.subscription.close() }
+            runCurrent()
+            assertFalse(closing.isCompleted, "Close must join the committed replay")
+            if (closerCancelled) {
+                closing.cancel()
+                runCurrent()
+                assertFalse(closing.isCompleted, "A cancelled closer still joins teardown")
+            }
+            releaseReplay.complete(Unit)
+            runCurrent()
+
+            if (closerCancelled) {
+                assertTrue(closing.isCancelled)
+                caughtCancellation { closing.await() }
+            } else {
+                assertSame(SubscriptionCloseResult.CLOSED, closing.await())
+            }
+            assertEquals(listOf("started", "packet:200", "packet:210"), fixture.received)
+            val terminal = fixture.subscription.state.value as SubscriptionState.Terminal
+            assertSame(SubscriptionTerminalReason.Closed, terminal.reason)
+            assertFalse(fixture.subscription.diagnostics.value.consumerDrainTimedOut)
+            fixture.manager.closeAndJoin()
+            assertEquals(1, fixture.connection.unsubscribeCount)
+        } finally {
+            packetWithheld.complete(Unit)
+            releaseReplay.complete(Unit)
+            fixture.manager.closeAndJoin()
+        }
+    }
+
+    @Test
+    fun `close cancels a committed replay that outlasts the grace period`() = runTest {
+        val replayEntered = CompletableDeferred<Unit>()
+        var consumerCancelled = false
+        val fixture = openSeekable(
+            onEvent = { event ->
+                if (event is SubscriptionEvent.Packet && event.presentationTimeUs == 200L) {
+                    replayEntered.complete(Unit)
+                    try {
+                        awaitCancellation()
+                    } catch (cancellation: CancellationException) {
+                        consumerCancelled = true
+                        throw cancellation
+                    }
+                }
+            },
+        )
+        val packetWithheld = CompletableDeferred<Unit>()
+        fixture.connection.skipAction = {
+            packetWithheld.await()
+            SubscriptionOperationResult.AccessDenied
+        }
+        try {
+            val seeking = async { fixture.subscription.seek(absoluteSeek()) }
+            runCurrent()
+            fixture.connection.emit(packet(presentationTimeUs = 200L))
+            fixture.connection.emit(packet(presentationTimeUs = 210L))
+            runCurrent()
+            packetWithheld.complete(Unit)
+            runCurrent()
+            assertTrue(replayEntered.isCompleted)
+            assertTrue(seeking.await() is SubscriptionSeekResult.Refused)
+
+            val closing = async { fixture.subscription.close() }
+            runCurrent()
+            advanceTimeBy(TEARDOWN_GRACE - 1.milliseconds)
+            runCurrent()
+            assertFalse(closing.isCompleted, "Close must wait for the whole grace period")
+            assertFalse(consumerCancelled)
+            advanceTimeBy(1.milliseconds)
+            runCurrent()
+
+            assertTrue(closing.isCompleted, "Close must not wait past the grace period")
+            assertSame(SubscriptionCloseResult.CLEANUP_FAILED, closing.await())
+            assertTrue(consumerCancelled)
+            assertEquals(listOf("started", "packet:200"), fixture.received)
+            val terminal = fixture.subscription.state.value as SubscriptionState.Terminal
+            assertSame(SubscriptionTerminalReason.Closed, terminal.reason)
+            assertTrue(fixture.subscription.diagnostics.value.consumerDrainTimedOut)
+            assertEquals(1, fixture.connection.unsubscribeCount)
+        } finally {
+            packetWithheld.complete(Unit)
+            fixture.manager.closeAndJoin()
+        }
+    }
+
+    @Test
+    fun `a committed replay that ends exactly at the grace deadline is not reported as timed out`() = runTest {
+        var consumerCancelled = false
+        val fixture = openSeekable(
+            onEvent = { event ->
+                if (event is SubscriptionEvent.Packet && event.presentationTimeUs == 200L) {
+                    // Started before close, so this delay and the teardown deadline expire together.
+                    try {
+                        delay(TEARDOWN_GRACE)
+                    } catch (cancellation: CancellationException) {
+                        consumerCancelled = true
+                        throw cancellation
+                    }
+                }
+            },
+        )
+        val packetWithheld = CompletableDeferred<Unit>()
+        val releaseUnsubscribe = CompletableDeferred<Unit>()
+        fixture.connection.skipAction = {
+            packetWithheld.await()
+            SubscriptionOperationResult.AccessDenied
+        }
+        fixture.connection.unsubscribeAction = {
+            releaseUnsubscribe.await()
+            SubscriptionOperationResult.Ok(Unit)
+        }
+        try {
+            val seeking = async { fixture.subscription.seek(absoluteSeek()) }
+            runCurrent()
+            fixture.connection.emit(packet(presentationTimeUs = 200L))
+            fixture.connection.emit(packet(presentationTimeUs = 210L))
+            runCurrent()
+            packetWithheld.complete(Unit)
+            runCurrent()
+            assertTrue(seeking.await() is SubscriptionSeekResult.Refused)
+
+            val closing = async { fixture.subscription.close() }
+            runCurrent()
+            advanceTimeBy(TEARDOWN_GRACE)
+            runCurrent()
+            // The replay counts as finished, so the consumer still receives the close drain.
+            fixture.connection.emit(packet(presentationTimeUs = 300L))
+            runCurrent()
+            assertEquals(listOf("started", "packet:200", "packet:210", "packet:300"), fixture.received)
+            releaseUnsubscribe.complete(Unit)
+            runCurrent()
+
+            assertTrue(closing.isCompleted)
+            assertSame(SubscriptionCloseResult.CLOSED, closing.await())
+            assertFalse(consumerCancelled)
+            assertFalse(fixture.subscription.diagnostics.value.consumerDrainTimedOut)
+            val terminal = fixture.subscription.state.value as SubscriptionState.Terminal
+            assertSame(SubscriptionTerminalReason.Closed, terminal.reason)
+        } finally {
+            packetWithheld.complete(Unit)
+            releaseUnsubscribe.complete(Unit)
+            fixture.manager.closeAndJoin()
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `an expired replay wait cannot attribute the next collection failure to teardown`(
+        replayChildStillActive: Boolean,
+    ) = runTest {
+        val cancellationReached = CompletableDeferred<Unit>()
+        val resumeCancellation = CompletableDeferred<Unit>()
+        val releaseReplay = CompletableDeferred<Unit>()
+        val collectionEntered = CompletableDeferred<Unit>()
+        val releaseFailure = CompletableDeferred<Unit>()
+        val fixture = openSeekable(
+            beforeTeardownCancellation = {
+                cancellationReached.complete(Unit)
+                resumeCancellation.await()
+            },
+            onEvent = { event ->
+                if (event is SubscriptionEvent.Packet) {
+                    when (event.presentationTimeUs) {
+                        200L -> {
+                            if (replayChildStillActive) {
+                                // Keep the replay job active even after its body releases delivery.
+                                CoroutineScope(currentCoroutineContext()).launch { awaitCancellation() }
+                            }
+                            releaseReplay.await()
+                        }
+                        300L -> {
+                            collectionEntered.complete(Unit)
+                            releaseFailure.await()
+                            error("consumer failed")
+                        }
+                    }
+                }
+            },
+        )
+        val packetWithheld = CompletableDeferred<Unit>()
+        fixture.connection.skipAction = {
+            packetWithheld.await()
+            SubscriptionOperationResult.AccessDenied
+        }
+        try {
+            val seeking = async { fixture.subscription.seek(absoluteSeek()) }
+            runCurrent()
+            fixture.connection.emit(packet(presentationTimeUs = 200L))
+            runCurrent()
+            packetWithheld.complete(Unit)
+            runCurrent()
+            assertTrue(seeking.await() is SubscriptionSeekResult.Refused)
+            fixture.connection.emit(packet(presentationTimeUs = 300L))
+            val closing = async { fixture.subscription.close() }
+            runCurrent()
+            advanceTimeBy(TEARDOWN_GRACE)
+            runCurrent()
+            assertTrue(cancellationReached.isCompleted, "The replay wait must expire before the handoff")
+            assertFalse(collectionEntered.isCompleted)
+
+            // Pause between timeout detection and cancellation, then finish the replay and admit
+            // collection's next call. Cancellation targets either the completed replay job or its
+            // remaining child, never the collection call now owning the delivery mutex.
+            releaseReplay.complete(Unit)
+            runCurrent()
+            assertTrue(collectionEntered.isCompleted)
+            resumeCancellation.complete(Unit)
+            runCurrent()
+            assertEquals(1, fixture.connection.unsubscribeCount)
+            assertFalse(closing.isCompleted)
+            releaseFailure.complete(Unit)
+            runCurrent()
+
+            assertTrue(closing.isCompleted)
+            closing.await()
+            val terminal = fixture.subscription.state.value as SubscriptionState.Terminal
+            assertSame(SubscriptionTerminalReason.ConsumerFailed, terminal.reason)
+            assertFalse(fixture.subscription.diagnostics.value.consumerDrainTimedOut)
+            assertEquals(listOf("started", "packet:200", "packet:300"), fixture.received)
+        } finally {
+            releaseReplay.complete(Unit)
+            resumeCancellation.complete(Unit)
+            releaseFailure.complete(Unit)
+            packetWithheld.complete(Unit)
+            fixture.manager.closeAndJoin()
+        }
+    }
+
+    @Test
+    fun `the replay and the close drain each get their own grace period`() = runTest {
+        var drainCancelled = false
+        val fixture = openSeekable(
+            onEvent = { event ->
+                if (event is SubscriptionEvent.Packet) {
+                    when (event.presentationTimeUs) {
+                        200L -> delay(3.seconds)
+                        300L -> try {
+                            awaitCancellation()
+                        } catch (cancellation: CancellationException) {
+                            drainCancelled = true
+                            throw cancellation
+                        }
+                    }
+                }
+            },
+        )
+        val packetWithheld = CompletableDeferred<Unit>()
+        fixture.connection.skipAction = {
+            packetWithheld.await()
+            SubscriptionOperationResult.AccessDenied
+        }
+        try {
+            val seeking = async { fixture.subscription.seek(absoluteSeek()) }
+            runCurrent()
+            fixture.connection.emit(packet(presentationTimeUs = 200L))
+            runCurrent()
+            packetWithheld.complete(Unit)
+            runCurrent()
+            assertTrue(seeking.await() is SubscriptionSeekResult.Refused)
+            // Committed after the request resolved, so the close drain delivers it once the replay ends.
+            fixture.connection.emit(packet(presentationTimeUs = 300L))
+            val closing = async { fixture.subscription.close() }
+            runCurrent()
+
+            advanceTimeBy(3.seconds + TEARDOWN_GRACE - 1.milliseconds)
+            runCurrent()
+            assertFalse(closing.isCompleted, "The drain gets its own grace period after the replay finished")
+            assertFalse(drainCancelled)
+            advanceTimeBy(1.milliseconds)
+            runCurrent()
+
+            assertTrue(closing.isCompleted, "Close must not wait past the drain's grace period")
+            assertSame(SubscriptionCloseResult.CLEANUP_FAILED, closing.await())
+            assertTrue(drainCancelled)
+            assertEquals(listOf("started", "packet:200", "packet:300"), fixture.received)
+            assertTrue(fixture.subscription.diagnostics.value.consumerDrainTimedOut)
+            val terminal = fixture.subscription.state.value as SubscriptionState.Terminal
+            assertSame(SubscriptionTerminalReason.Closed, terminal.reason)
+            assertEquals(1, fixture.connection.unsubscribeCount)
+        } finally {
+            packetWithheld.complete(Unit)
+            fixture.manager.closeAndJoin()
+        }
+    }
+
+    @Test
     fun `transport cancellation settles the seek and discards uncertain packets`() = runTest {
         val fixture = openSeekable()
         val release = CompletableDeferred<Unit>()
@@ -705,6 +1198,7 @@ class SubscriptionSeekGateTest {
         grantedTimeshiftSeconds: Long? = 300L,
         gate: SeekGateSettings = SeekGateSettings(),
         dispatcher: CoroutineDispatcher = StandardTestDispatcher(testScheduler),
+        beforeTeardownCancellation: (suspend () -> Unit)? = null,
         onEvent: suspend (SubscriptionEvent) -> Unit = {},
     ): SeekFixture {
         val connection = RecordingSubscriptionConnection()
@@ -713,6 +1207,7 @@ class SubscriptionSeekGateTest {
             connection,
             dispatcher,
             gate,
+            beforeTeardownCancellation = beforeTeardownCancellation,
         )
         manager.startAdmission()
         val received = ArrayList<String>()
@@ -747,6 +1242,8 @@ private class SeekFixture(
 }
 
 private val GATE_TIMEOUT = 5.seconds
+
+private val TEARDOWN_GRACE = 5.seconds
 
 private fun absoluteSeek(): SubscriptionSeekTarget = SubscriptionSeekTarget.Absolute(30.seconds)
 

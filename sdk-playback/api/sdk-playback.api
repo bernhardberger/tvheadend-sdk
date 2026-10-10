@@ -264,6 +264,7 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionConnecti
 public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionDiagnostics {
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getCondition ()Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionCondition;
+	public final fun getConsumerDrainTimedOut ()Z
 	public final fun getDroppedPacketCount ()J
 	public final fun getDroppedPacketCountOverflowed ()Z
 	public final fun getGraceTimeoutSeconds ()Ljava/lang/Long;

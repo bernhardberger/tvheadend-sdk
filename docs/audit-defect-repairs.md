@@ -15,7 +15,10 @@ frequency on broadcasts or physical playback acceptance.
   caller exceptionally and terminates the uncertain subscription without replaying
   buffered packets. A previously ordered acknowledgement remains authoritative.
   Caller cancellation still leaves a claimed gate under subscription ownership;
-  owner teardown retains its existing settlement behavior. When called through
+  owner teardown waits up to its grace period for a committed replay and settles any
+  unresolved request as `SubscriptionEnded` before the ordered drain. If an ordered
+  transport terminal is already being delivered, the request ends as `SubscriptionEnded`
+  and the terminal keeps its reason. When called through
   the playback coordinator, transport cancellation also retires that coordinator
   owner, as other operation cancellations do.
 - SDK-03: content-seek cancellation reaches its caller as cancellation, just like

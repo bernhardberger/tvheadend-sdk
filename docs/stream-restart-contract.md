@@ -20,9 +20,11 @@ the layout is unchanged. The application-owned Player and its play intent are re
   subscription rather than blocking its consumer waiting for Media3. At most one timeline
   refresh and one worker drain are pending per source preparation; rapid epochs coalesce.
 - Missing restart metadata has a five-second interruption deadline. Repeated stops do
-  not extend it. Validated playability cancels it, and its owner token prevents a stale
-  timer from terminating a later segment. This is a bounded policy, not a measured
-  broadcast guarantee. Actual transport termination, generation loss, and close stay terminal.
+  not extend it. Validated restart tracks end it, even while the subscribe acknowledgement
+  is still pending, and close cancels it. Its owner token prevents a stale timer from
+  terminating a later segment. This is a bounded policy, not a measured broadcast
+  guarantee. Actual transport termination, generation loss, and close keep their own
+  terminal reason.
   If initial open is still pending, the deadline's failure returns only after unsubscribe
   and ordered consumer drain complete, like other startup failures.
 - Between stop and the next Started, Media3 drops nonterminal observations as well as
@@ -103,6 +105,33 @@ In this narrow uncertain-seek case the boundary itself and subsequent consumer e
 are suppressed, not replayed into possibly mismatched readers. The terminal state flow
 is authoritative for that invalidation. The general ordered-control delivery guarantee
 does not promise consumer delivery after this fail-closed decision.
+
+Once close or owner teardown begins, an unresolved seek ends as `SubscriptionEnded`
+instead of an invalidation, so close keeps its own terminal reason. Its withheld packets
+and every later `Packet` and `Dropped` event of the closing drain are discarded, because
+their position on the delivered timeline is unknown; other events are still delivered.
+A stop or restart boundary inside the closing drain discards the drain's later packets
+and drop markers the same way, since its successor segment is never published.
+
+Teardown first waits for a committed refusal replay. After a successful unsubscribe it then
+waits for the in-flight delivery and the ordered drain; after a failed unsubscribe it waits
+only for the in-flight delivery. Each of these two waits has its own five-second grace
+period, the same bound as the restart deadline, so a cancellation-cooperative consumer can
+hold teardown for at most two grace periods. When a wait expires, teardown cancels consumer
+code still running and skips every later event. That cancellation is not a subscription
+failure, and neither is a non-cancellation exception the cancelled call throws afterwards:
+close keeps its terminal reason and returns `CLEANUP_FAILED`, and
+`SubscriptionDiagnostics.consumerDrainTimedOut` records it. Any other cancellation thrown by
+the consumer remains an infrastructure failure that is rethrown to close callers.
+
+`close()`, `seek()` and `closeAndJoin()` fail fast with `IllegalStateException` when called
+from the consumer callback or from any coroutine that inherits its coroutine context, such as
+one started by `withContext`, `coroutineScope`, `launch` or `async` inside it; such a call
+would otherwise wait for the teardown that waits for it. A consumer that instead waits on an
+unrelated coroutine making these calls is not detected. The grace period bounds that wait
+only while it honours cancellation, and a blocking or non-cancellable wait holds teardown
+indefinitely. Consumers must still cooperate with cancellation; teardown joins the cancelled
+delivery.
 
 `TimeshiftTimeline.describesSameSubscription` retains transport-identity semantics.
 `describesSameSegment` is the additional check for combining sampled content and history

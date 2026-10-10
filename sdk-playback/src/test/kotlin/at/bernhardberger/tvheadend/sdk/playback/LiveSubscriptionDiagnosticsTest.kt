@@ -145,6 +145,42 @@ internal class LiveSubscriptionDiagnosticsTest {
     }
 
     @Test
+    fun `client queue evictions saturate instead of wrapping`() {
+        val nearLimit = LiveSubscriptionDiagnostics.update(null, SubscriptionEvent.Dropped(count = Long.MAX_VALUE - 1L))
+        val saturated = requireNotNull(LiveSubscriptionDiagnostics.update(nearLimit, SubscriptionEvent.Dropped(count = 3L)))
+        assertEquals(Long.MAX_VALUE, saturated.clientDroppedPacketCount)
+        val repeated = requireNotNull(LiveSubscriptionDiagnostics.update(saturated, SubscriptionEvent.Dropped(Long.MAX_VALUE)))
+        assertEquals(Long.MAX_VALUE, repeated.clientDroppedPacketCount)
+    }
+
+    @Test
+    fun `source labels reject locators that follow punctuation`() {
+        assertNull(
+            LiveSubscriptionSource.create(
+                adapterName = "DVB (/dev/dvb/adapter0)",
+                muxName = "Tuner [/dev/dvb/adapter1/frontend0]",
+                networkName = "Feed \"./recordings/live\"",
+                providerName = "IPTV <rtsp://camera/stream>",
+                serviceName = "Archive,C:\\Recordings\\live",
+            ),
+        )
+        val labels = requireNotNull(
+            LiveSubscriptionSource.create(
+                adapterName = "TBS 6981 DVB-S/S2 (DVB-S #0)",
+                muxName = "Mux 11778V (H)",
+                networkName = "\u0939\u093f\u0902\u0926\u0940/English",
+                providerName = "AC/DC Radio [1/2]",
+                serviceName = "ORF1 HD (AT)",
+            ),
+        )
+        assertEquals("TBS 6981 DVB-S/S2 (DVB-S #0)", labels.adapterName)
+        assertEquals("Mux 11778V (H)", labels.muxName)
+        assertEquals("\u0939\u093f\u0902\u0926\u0940/English", labels.networkName)
+        assertEquals("AC/DC Radio [1/2]", labels.providerName)
+        assertEquals("ORF1 HD (AT)", labels.serviceName)
+    }
+
+    @Test
     fun `source labels enforce the structural display boundary`() {
         val source = requireNotNull(
             LiveSubscriptionSource.create(

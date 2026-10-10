@@ -4,16 +4,22 @@ package at.bernhardberger.tvheadend.sdk.playback
 
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -21,6 +27,9 @@ import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.EnumSource
+import org.junit.jupiter.params.provider.ValueSource
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SubscriptionStateMachineTest {
@@ -557,6 +566,45 @@ class SubscriptionStateMachineTest {
             assertEquals(2, connection.unsubscribeCount)
         }
 
+    @ParameterizedTest
+    @EnumSource(JoiningCall::class)
+    fun `joining calls fail fast from a coroutine that inherits the delivery`(call: JoiningCall) = runTest {
+        val connection = RecordingSubscriptionConnection()
+        connection.subscribeAction = { successfulConfirmation(timeshiftPeriodSeconds = 300L) }
+        val elsewhere = StandardTestDispatcher(testScheduler)
+        val failure = CompletableDeferred<Throwable?>()
+        val delivered = ArrayList<Long?>()
+        lateinit var active: ActiveSubscription
+        val manager = manager(connection)
+        manager.startAdmission()
+        try {
+            active = openActive(manager, connection, SubscriptionChannelId(34L), 300.seconds) { event ->
+                if (event is SubscriptionEvent.Packet) {
+                    delivered += event.presentationTimeUs
+                    if (event.presentationTimeUs == 200L) {
+                        // The dispatcher switch runs the call in its own child job of the delivery.
+                        val outcome = runCatching { withContext(elsewhere) { call.perform(active, manager) } }
+                        failure.complete(outcome.exceptionOrNull())
+                    }
+                }
+            }
+            connection.emit(SubscriptionId(0L), packet(presentationTimeUs = 200L))
+            connection.emit(SubscriptionId(0L), packet(presentationTimeUs = 210L))
+            runCurrent()
+
+            assertTrue(failure.isCompleted, "A nested joining call must fail fast, not wait on its own teardown")
+            assertTrue(failure.await() is IllegalStateException)
+            assertEquals(listOf<Long?>(200L, 210L), delivered)
+            assertTrue(active.state.value is SubscriptionState.Playable)
+            assertSame(SubscriptionCloseResult.CLOSED, active.close())
+            val terminal = active.state.value as SubscriptionState.Terminal
+            assertSame(SubscriptionTerminalReason.Closed, terminal.reason)
+        } finally {
+            // A regressed guard leaves the call waiting on its own teardown; joining would hang the suite.
+            if (failure.isCompleted) manager.closeAndJoin()
+        }
+    }
+
     @Test
     fun `pre-cancelled admission propagates cancellation`() = runTest {
         val connection = RecordingSubscriptionConnection()
@@ -645,6 +693,404 @@ class SubscriptionStateMachineTest {
         assertSame(cancellation, observedCancellation)
         assertEquals(1, connection.unsubscribeCount)
         manager.closeAndJoin()
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `failed unsubscribe stops collection between deliveries instead of cancelling the consumer`(
+        closerCancelled: Boolean,
+    ) = runTest {
+        val connection = RecordingSubscriptionConnection()
+        connection.unsubscribeAction = { SubscriptionOperationResult.Timeout }
+        val delivered = ArrayList<Long?>()
+        val consumerEntered = CompletableDeferred<Unit>()
+        val releaseConsumer = CompletableDeferred<Unit>()
+        var consumerCancellation: CancellationException? = null
+        val manager = manager(connection)
+        manager.startAdmission()
+        try {
+            val opening = async {
+                manager.open(
+                    SubscriptionChannelId(31L),
+                    SubscriptionEventConsumer { event ->
+                        if (event is SubscriptionEvent.Packet) {
+                            delivered += event.presentationTimeUs
+                            if (event.presentationTimeUs == 200L) {
+                                consumerEntered.complete(Unit)
+                                try {
+                                    releaseConsumer.await()
+                                } catch (cancellation: CancellationException) {
+                                    consumerCancellation = cancellation
+                                    throw cancellation
+                                }
+                            }
+                        }
+                    },
+                )
+            }
+            runCurrent()
+            connection.emit(SubscriptionId(0L), started(stream()))
+            runCurrent()
+            val active = (opening.await() as SubscriptionOpenResult.Opened).subscription
+            connection.emit(SubscriptionId(0L), packet(presentationTimeUs = 200L))
+            consumerEntered.await()
+            connection.emit(SubscriptionId(0L), packet(presentationTimeUs = 210L))
+
+            val closing = async { active.close() }
+            runCurrent()
+            assertEquals(1, connection.unsubscribeCount)
+            assertFalse(closing.isCompleted, "Close must wait for the in-flight delivery")
+            if (closerCancelled) {
+                closing.cancel()
+                runCurrent()
+                assertFalse(closing.isCompleted, "A cancelled closer still joins teardown")
+            }
+            releaseConsumer.complete(Unit)
+            runCurrent()
+
+            if (closerCancelled) {
+                assertTrue(closing.isCancelled)
+                caughtCancellation { closing.await() }
+            } else {
+                assertSame(SubscriptionCloseResult.CLEANUP_FAILED, closing.await())
+            }
+            assertEquals(null, consumerCancellation)
+            assertEquals(listOf<Long?>(200L), delivered)
+            val terminal = active.state.value as SubscriptionState.Terminal
+            assertSame(SubscriptionTerminalReason.Closed, terminal.reason)
+            assertFalse(active.diagnostics.value.consumerDrainTimedOut)
+        } finally {
+            releaseConsumer.complete(Unit)
+            manager.closeAndJoin()
+        }
+        assertEquals(1, connection.unsubscribeCount)
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `failed unsubscribe cancels a delivery that outlasts the grace period`(closerCancelled: Boolean) = runTest {
+        val connection = RecordingSubscriptionConnection()
+        connection.unsubscribeAction = { SubscriptionOperationResult.Timeout }
+        val consumerEntered = CompletableDeferred<Unit>()
+        var consumerCancelled = false
+        val manager = manager(connection)
+        manager.startAdmission()
+        try {
+            val opening = async {
+                manager.open(
+                    SubscriptionChannelId(32L),
+                    SubscriptionEventConsumer { event ->
+                        if (event is SubscriptionEvent.Packet) {
+                            consumerEntered.complete(Unit)
+                            try {
+                                awaitCancellation()
+                            } catch (cancellation: CancellationException) {
+                                consumerCancelled = true
+                                throw cancellation
+                            }
+                        }
+                    },
+                )
+            }
+            runCurrent()
+            connection.emit(SubscriptionId(0L), started(stream()))
+            runCurrent()
+            val active = (opening.await() as SubscriptionOpenResult.Opened).subscription
+            connection.emit(SubscriptionId(0L), packet())
+            consumerEntered.await()
+
+            val closing = async { active.close() }
+            runCurrent()
+            if (closerCancelled) {
+                closing.cancel()
+                runCurrent()
+            }
+            advanceTimeBy(TEARDOWN_GRACE - 1.milliseconds)
+            runCurrent()
+            assertFalse(closing.isCompleted, "Close must wait for the whole grace period")
+            assertFalse(consumerCancelled)
+            advanceTimeBy(1.milliseconds)
+            runCurrent()
+
+            assertTrue(closing.isCompleted, "Close must not wait past the grace period")
+            if (closerCancelled) {
+                assertTrue(closing.isCancelled)
+                caughtCancellation { closing.await() }
+            } else {
+                assertSame(SubscriptionCloseResult.CLEANUP_FAILED, closing.await())
+            }
+            assertTrue(consumerCancelled)
+            val terminal = active.state.value as SubscriptionState.Terminal
+            assertSame(SubscriptionTerminalReason.Closed, terminal.reason)
+            assertTrue(active.diagnostics.value.consumerDrainTimedOut)
+        } finally {
+            manager.closeAndJoin()
+        }
+        assertEquals(1, connection.unsubscribeCount)
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `ordered close drain waits for the consumer only within the grace period`(finishesInTime: Boolean) =
+        runTest {
+            val connection = RecordingSubscriptionConnection()
+            val consumerEntered = CompletableDeferred<Unit>()
+            val releaseConsumer = CompletableDeferred<Unit>()
+            var consumerCancelled = false
+            val delivered = ArrayList<Long?>()
+            val manager = manager(connection)
+            manager.startAdmission()
+            try {
+                val opening = async {
+                    manager.open(
+                        SubscriptionChannelId(33L),
+                        SubscriptionEventConsumer { event ->
+                            if (event is SubscriptionEvent.Packet) {
+                                delivered += event.presentationTimeUs
+                                if (event.presentationTimeUs == 200L) {
+                                    consumerEntered.complete(Unit)
+                                    try {
+                                        releaseConsumer.await()
+                                    } catch (cancellation: CancellationException) {
+                                        consumerCancelled = true
+                                        throw cancellation
+                                    }
+                                }
+                            }
+                        },
+                    )
+                }
+                runCurrent()
+                connection.emit(SubscriptionId(0L), started(stream()))
+                runCurrent()
+                val active = (opening.await() as SubscriptionOpenResult.Opened).subscription
+                connection.emit(SubscriptionId(0L), packet(presentationTimeUs = 200L))
+                consumerEntered.await()
+                connection.emit(SubscriptionId(0L), packet(presentationTimeUs = 210L))
+
+                val closing = async { active.close() }
+                runCurrent()
+                assertEquals(1, connection.unsubscribeCount)
+                advanceTimeBy(TEARDOWN_GRACE - 1.milliseconds)
+                runCurrent()
+                assertFalse(closing.isCompleted, "Close must wait for the ordered drain")
+                if (finishesInTime) releaseConsumer.complete(Unit) else advanceTimeBy(1.milliseconds)
+                runCurrent()
+
+                assertTrue(closing.isCompleted)
+                val expectedResult = if (finishesInTime) {
+                    SubscriptionCloseResult.CLOSED
+                } else {
+                    SubscriptionCloseResult.CLEANUP_FAILED
+                }
+                assertSame(expectedResult, closing.await())
+                assertEquals(!finishesInTime, consumerCancelled)
+                assertEquals(if (finishesInTime) listOf<Long?>(200L, 210L) else listOf<Long?>(200L), delivered)
+                assertEquals(!finishesInTime, active.diagnostics.value.consumerDrainTimedOut)
+                val terminal = active.state.value as SubscriptionState.Terminal
+                assertSame(SubscriptionTerminalReason.Closed, terminal.reason)
+            } finally {
+                releaseConsumer.complete(Unit)
+                manager.closeAndJoin()
+            }
+        }
+
+    @Test
+    fun `a close drain that ends exactly at the grace deadline is not reported as timed out`() = runTest {
+        val connection = RecordingSubscriptionConnection()
+        val delivered = ArrayList<Long?>()
+        var consumerCancelled = false
+        val manager = manager(connection)
+        manager.startAdmission()
+        try {
+            val active = openActive(manager, connection, SubscriptionChannelId(35L)) { event ->
+                if (event is SubscriptionEvent.Packet) {
+                    delivered += event.presentationTimeUs
+                    // Started before close, so this delay and the teardown deadline expire together.
+                    if (event.presentationTimeUs == 200L) {
+                        try {
+                            delay(TEARDOWN_GRACE)
+                        } catch (cancellation: CancellationException) {
+                            consumerCancelled = true
+                            throw cancellation
+                        }
+                    }
+                }
+            }
+            connection.emit(SubscriptionId(0L), packet(presentationTimeUs = 200L))
+            connection.emit(SubscriptionId(0L), packet(presentationTimeUs = 210L))
+            runCurrent()
+            val closing = async { active.close() }
+            runCurrent()
+            advanceTimeBy(TEARDOWN_GRACE)
+            runCurrent()
+
+            assertTrue(closing.isCompleted, "Close must end at the grace deadline")
+            assertSame(SubscriptionCloseResult.CLOSED, closing.await())
+            assertFalse(consumerCancelled)
+            assertEquals(listOf<Long?>(200L, 210L), delivered)
+            assertFalse(active.diagnostics.value.consumerDrainTimedOut)
+            val terminal = active.state.value as SubscriptionState.Terminal
+            assertSame(SubscriptionTerminalReason.Closed, terminal.reason)
+        } finally {
+            manager.closeAndJoin()
+        }
+    }
+
+    @Test
+    fun `a delivery that ends at the grace deadline after a failed unsubscribe is not reported as timed out`() =
+        runTest {
+            val connection = RecordingSubscriptionConnection()
+            connection.unsubscribeAction = { SubscriptionOperationResult.Timeout }
+            var consumerCancelled = false
+            val manager = manager(connection)
+            manager.startAdmission()
+            try {
+                val active = openActive(manager, connection, SubscriptionChannelId(36L)) { event ->
+                    if (event is SubscriptionEvent.Packet) {
+                        try {
+                            delay(TEARDOWN_GRACE)
+                        } catch (cancellation: CancellationException) {
+                            consumerCancelled = true
+                            throw cancellation
+                        }
+                    }
+                }
+                connection.emit(SubscriptionId(0L), packet())
+                runCurrent()
+                val closing = async { active.close() }
+                runCurrent()
+                advanceTimeBy(TEARDOWN_GRACE)
+                runCurrent()
+
+                assertTrue(closing.isCompleted, "Close must end at the grace deadline")
+                assertSame(SubscriptionCloseResult.CLEANUP_FAILED, closing.await())
+                assertFalse(consumerCancelled)
+                assertFalse(active.diagnostics.value.consumerDrainTimedOut)
+                val terminal = active.state.value as SubscriptionState.Terminal
+                assertSame(SubscriptionTerminalReason.Closed, terminal.reason)
+                manager.closeAndJoin()
+                assertEquals(1, connection.unsubscribeCount)
+            } finally {
+                manager.closeAndJoin()
+            }
+        }
+
+    @Test
+    fun `a consumer waiting on an unrelated close is cancelled after the grace period`() = runTest {
+        val connection = RecordingSubscriptionConnection()
+        val unrelatedClose = CompletableDeferred<Deferred<SubscriptionCloseResult>>()
+        var consumerCancelled = false
+        lateinit var active: ActiveSubscription
+        val manager = manager(connection)
+        manager.startAdmission()
+        try {
+            active = openActive(manager, connection, SubscriptionChannelId(37L)) { event ->
+                if (event is SubscriptionEvent.Packet) {
+                    // The background scope does not inherit the delivery, so no guard can see this wait.
+                    val closing = backgroundScope.async { active.close() }
+                    unrelatedClose.complete(closing)
+                    try {
+                        closing.await()
+                    } catch (cancellation: CancellationException) {
+                        consumerCancelled = true
+                        throw cancellation
+                    }
+                }
+            }
+            connection.emit(SubscriptionId(0L), packet())
+            runCurrent()
+            val closing = unrelatedClose.await()
+            advanceTimeBy(TEARDOWN_GRACE - 1.milliseconds)
+            runCurrent()
+            assertFalse(closing.isCompleted, "A cancellable wait holds teardown for the grace period")
+            assertFalse(consumerCancelled)
+            advanceTimeBy(1.milliseconds)
+            runCurrent()
+
+            assertTrue(closing.isCompleted, "Cancelling the waiting consumer must release teardown")
+            assertSame(SubscriptionCloseResult.CLEANUP_FAILED, closing.await())
+            assertTrue(consumerCancelled)
+            val terminal = active.state.value as SubscriptionState.Terminal
+            assertSame(SubscriptionTerminalReason.Closed, terminal.reason)
+            assertTrue(active.diagnostics.value.consumerDrainTimedOut)
+        } finally {
+            manager.closeAndJoin()
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `a consumer's own cancellation during the close drain still propagates`(afterGrace: Boolean) = runTest {
+        val connection = RecordingSubscriptionConnection()
+        val consumerEntered = CompletableDeferred<Unit>()
+        val releaseConsumer = CompletableDeferred<Unit>()
+        val manager = manager(connection)
+        manager.startAdmission()
+        try {
+            val active = openActive(manager, connection, SubscriptionChannelId(38L)) { event ->
+                if (event is SubscriptionEvent.Packet) {
+                    consumerEntered.complete(Unit)
+                    // Teardown's cancellation cannot end this wait; the consumer then raises its own.
+                    withContext(NonCancellable) { releaseConsumer.await() }
+                    throw CancellationException("consumer stopped")
+                }
+            }
+            connection.emit(SubscriptionId(0L), packet())
+            consumerEntered.await()
+            val closing = async { active.close() }
+            runCurrent()
+            if (afterGrace) {
+                advanceTimeBy(TEARDOWN_GRACE)
+                runCurrent()
+                assertFalse(closing.isCompleted, "Teardown still joins the delivery it cancelled")
+            }
+            releaseConsumer.complete(Unit)
+            runCurrent()
+
+            assertTrue(closing.isCompleted)
+            assertEquals("consumer stopped", caughtCancellation { closing.await() }.message)
+            val terminal = active.state.value as SubscriptionState.Terminal
+            assertSame(SubscriptionTerminalReason.InfrastructureFailed, terminal.reason)
+            assertEquals(afterGrace, active.diagnostics.value.consumerDrainTimedOut)
+        } finally {
+            releaseConsumer.complete(Unit)
+            manager.closeAndJoin()
+        }
+    }
+
+    @Test
+    fun `a failure raised in response to the teardown cancellation keeps the close reason`() = runTest {
+        val connection = RecordingSubscriptionConnection()
+        val consumerEntered = CompletableDeferred<Unit>()
+        val manager = manager(connection)
+        manager.startAdmission()
+        try {
+            val active = openActive(manager, connection, SubscriptionChannelId(39L)) { event ->
+                if (event is SubscriptionEvent.Packet) {
+                    consumerEntered.complete(Unit)
+                    try {
+                        awaitCancellation()
+                    } catch (cancellation: CancellationException) {
+                        throw IllegalStateException("consumer stopped", cancellation)
+                    }
+                }
+            }
+            connection.emit(SubscriptionId(0L), packet())
+            consumerEntered.await()
+            val closing = async { active.close() }
+            runCurrent()
+            advanceTimeBy(TEARDOWN_GRACE)
+            runCurrent()
+
+            assertTrue(closing.isCompleted, "Close must not wait past the grace period")
+            assertSame(SubscriptionCloseResult.CLEANUP_FAILED, closing.await())
+            val terminal = active.state.value as SubscriptionState.Terminal
+            assertSame(SubscriptionTerminalReason.Closed, terminal.reason)
+            assertTrue(active.diagnostics.value.consumerDrainTimedOut)
+        } finally {
+            manager.closeAndJoin()
+        }
     }
 
     @Test
@@ -921,6 +1367,24 @@ class SubscriptionStateMachineTest {
         assertTrue(allocator.allocate() == null, "Exhaustion must be permanent")
     }
 
+    private suspend fun TestScope.openActive(
+        manager: SubscriptionManager,
+        connection: RecordingSubscriptionConnection,
+        channelId: SubscriptionChannelId,
+        timeshiftPeriod: Duration = Duration.ZERO,
+        onEvent: suspend (SubscriptionEvent) -> Unit,
+    ): ActiveSubscription {
+        val opening = async {
+            manager.open(channelId, SubscriptionEventConsumer { event -> onEvent(event) }, timeshiftPeriod)
+        }
+        runCurrent()
+        connection.emit(SubscriptionId(0L), started(stream()))
+        runCurrent()
+        return (opening.await() as SubscriptionOpenResult.Opened).subscription
+    }
+
     private fun TestScope.manager(connection: SubscriptionConnection): SubscriptionManager =
         createSubscriptionManager(connection, StandardTestDispatcher(testScheduler))
 }
+
+private val TEARDOWN_GRACE = 5.seconds

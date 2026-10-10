@@ -30,6 +30,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Duration.Companion.microseconds
@@ -40,10 +42,24 @@ public fun interface SubscriptionEventConsumer {
     /**
      * Consumes one event without an SDK-owned holding queue.
      *
-     * Implementations must remain cancellation-cooperative and must not suspend indefinitely,
-     * because ordered subscription shutdown drains already committed events through this call.
-     * Implementations must not call joining lifecycle methods such as [ActiveSubscription.close]
-     * or [ActiveSubscription.seek] from this callback.
+     * Implementations must remain cancellation-cooperative and must not suspend indefinitely.
+     * Subscription teardown first waits for a committed seek replay. After a successful
+     * unsubscribe it then waits for the in-flight delivery and the ordered drain of the remaining
+     * stream events; after a failed unsubscribe it waits only for the in-flight delivery. Each of
+     * these two waits has its own five-second grace period. When one expires, teardown cancels
+     * consumer code still running and skips every later event. That cancellation is not a
+     * subscription failure, and neither is a non-cancellation exception the cancelled call throws
+     * afterwards: close keeps its terminal reason, returns [SubscriptionCloseResult.CLEANUP_FAILED],
+     * and sets [SubscriptionDiagnostics.consumerDrainTimedOut]. Any other cancellation thrown by
+     * this callback is still an infrastructure failure that is rethrown to close callers.
+     *
+     * The joining lifecycle methods [ActiveSubscription.close], [ActiveSubscription.seek], and
+     * [SubscriptionManager.closeAndJoin] fail fast with [IllegalStateException] when called from
+     * this callback or from any coroutine that inherits its coroutine context, for example through
+     * `withContext`, `coroutineScope`, or `launch` and `async` in such a scope. A wait on an
+     * unrelated coroutine that calls them is not detected: the grace period bounds it only while
+     * the wait honours cancellation, and a blocking or non-cancellable wait holds teardown
+     * indefinitely.
      *
      * While a seek acknowledgement is pending, [SubscriptionEvent.Packet] and
      * [SubscriptionEvent.Dropped] are withheld and every other event is still delivered
@@ -52,6 +68,11 @@ public fun interface SubscriptionEventConsumer {
      * The exception is a stop/start boundary intersecting an unresolved seek: uncertain request
      * provenance disables consumer delivery, including that boundary and later controls. Observe
      * [ActiveSubscription.state] for the terminal seek invalidation; no unsafe replay is attempted.
+     * Once close or owner teardown begins, an unresolved seek instead ends as
+     * [SubscriptionSeekResult.SubscriptionEnded]: its withheld events and every later
+     * [SubscriptionEvent.Packet] and [SubscriptionEvent.Dropped] of the closing drain are
+     * discarded, while other events are still delivered. A stop or restart boundary in that drain
+     * discards its later packets and drop markers the same way, because no successor is published.
      *
      * After an accepted [SubscriptionEvent.Skipped], packets are discarded until the timeline
      * re-anchors, and one shared offset is then applied to the presentation and decoding
@@ -130,7 +151,10 @@ public sealed interface SubscriptionTerminalReason {
     /** A recognized subscription message was malformed. */
     public data object MalformedMessage : SubscriptionTerminalReason
 
-    /** Transport timeout teardown terminated the stream. */
+    /**
+     * Transport timeout teardown terminated the stream, or a stopped segment received no
+     * validated restart tracks within the restart deadline.
+     */
     public data object Timeout : SubscriptionTerminalReason
 
     /** The local protocol connection explicitly retired the stream. */
@@ -268,6 +292,13 @@ public class SubscriptionDiagnostics internal constructor(
     public val timestampAnchorCount: Long,
     /** Packets discarded while awaiting a re-anchor or below the post-seek floor. */
     public val rebaseDiscardedPacketCount: Long,
+    /**
+     * Teardown cancelled consumer code that was still running when a teardown grace period
+     * expired; the close result then reports cleanup failure. The value is final once
+     * [ActiveSubscription.close] or [SubscriptionManager.closeAndJoin] returns, which can be after
+     * [ActiveSubscription.state] became terminal.
+     */
+    public val consumerDrainTimedOut: Boolean,
 ) {
     override fun equals(other: Any?): Boolean = other is SubscriptionDiagnostics &&
         condition == other.condition &&
@@ -275,7 +306,8 @@ public class SubscriptionDiagnostics internal constructor(
         droppedPacketCount == other.droppedPacketCount &&
         droppedPacketCountOverflowed == other.droppedPacketCountOverflowed &&
         timestampAnchorCount == other.timestampAnchorCount &&
-        rebaseDiscardedPacketCount == other.rebaseDiscardedPacketCount
+        rebaseDiscardedPacketCount == other.rebaseDiscardedPacketCount &&
+        consumerDrainTimedOut == other.consumerDrainTimedOut
 
     override fun hashCode(): Int {
         var result = condition.hashCode()
@@ -283,7 +315,8 @@ public class SubscriptionDiagnostics internal constructor(
         result = 31 * result + droppedPacketCount.hashCode()
         result = 31 * result + droppedPacketCountOverflowed.hashCode()
         result = 31 * result + timestampAnchorCount.hashCode()
-        return 31 * result + rebaseDiscardedPacketCount.hashCode()
+        result = 31 * result + rebaseDiscardedPacketCount.hashCode()
+        return 31 * result + consumerDrainTimedOut.hashCode()
     }
 
     override fun toString(): String = "SubscriptionDiagnostics(<redacted>)"
@@ -453,14 +486,18 @@ public fun createSubscriptionManager(
     dispatcher: CoroutineDispatcher,
 ): SubscriptionManager = SubscriptionManagerImpl(connection, dispatcher)
 
-/** Creates a manager whose seek and rebase bounds are non-default for deterministic tests. */
+/** Creates a manager with injectable bounds and a pre-cancellation handoff for deterministic tests. */
 internal fun createSubscriptionManager(
     connection: SubscriptionConnection,
     dispatcher: CoroutineDispatcher,
     seekGate: SeekGateSettings,
     rebase: TimestampRebaseSettings = TimestampRebaseSettings(),
+    beforeTeardownCancellation: (suspend () -> Unit)? = null,
 ): SubscriptionManager =
-    SubscriptionManagerImpl(connection, dispatcher, seekGate = seekGate, rebase = rebase)
+    SubscriptionManagerImpl(
+        connection, dispatcher, seekGate = seekGate, rebase = rebase,
+        beforeTeardownCancellation = beforeTeardownCancellation,
+    )
 
 /** Bounded seek-gate limits kept internal and injectable. */
 internal class SeekGateSettings(
@@ -479,6 +516,9 @@ internal class SeekGateSettings(
 
 private val DEFAULT_SEEK_ACKNOWLEDGEMENT_TIMEOUT = 5.seconds
 private val DEFAULT_RESTART_TIMEOUT = 5.seconds
+
+/** Each teardown wait for consumer code lasts no longer than a stopped stream waits for restart metadata. */
+private val TEARDOWN_CONSUMER_GRACE = DEFAULT_RESTART_TIMEOUT
 private const val DEFAULT_SEEK_PENDING_EVENTS = 2_048
 private const val DEFAULT_SEEK_PENDING_BYTES = 16L * 1024L * 1024L
 private const val PAUSED_SUBSCRIPTION_SPEED = 0
@@ -497,6 +537,7 @@ private class SubscriptionManagerImpl(
     initialSubscriptionId: Long = 0L,
     private val seekGate: SeekGateSettings = SeekGateSettings(),
     private val rebase: TimestampRebaseSettings = TimestampRebaseSettings(),
+    private val beforeTeardownCancellation: (suspend () -> Unit)? = null,
 ) : SubscriptionManager {
     private val lock = Any()
     private val rootJob = SupervisorJob()
@@ -550,6 +591,7 @@ private class SubscriptionManagerImpl(
                 scope = scope,
                 seekGate = seekGate,
                 rebase = rebase,
+                beforeTeardownCancellation = beforeTeardownCancellation,
                 options = options,
                 tryCommitPlayable = { candidate, publication ->
                     connection.commitIfLive {
@@ -582,7 +624,7 @@ private class SubscriptionManagerImpl(
     }
 
     override suspend fun closeAndJoin() {
-        val callerJob = currentCoroutineContext()[Job]
+        val callerContext = currentCoroutineContext()
         val callerCancellation: CancellationException? = try {
             currentCoroutineContext().ensureActive()
             null
@@ -590,7 +632,7 @@ private class SubscriptionManagerImpl(
             cancellation
         }
         val handles = synchronized(lock) {
-            check(handlesDoNotOwnCaller(handles = active.values, callerJob = callerJob)) {
+            check(handlesDoNotOwnCaller(handles = active.values, callerContext = callerContext)) {
                 "Subscription manager cannot join from its event consumer"
             }
             accepting = false
@@ -613,8 +655,8 @@ private class SubscriptionManagerImpl(
 
     private fun handlesDoNotOwnCaller(
         handles: Collection<ActiveSubscriptionImpl>,
-        callerJob: Job?,
-    ): Boolean = handles.none { handle -> handle.ownsDeliveryJob(callerJob) }
+        callerContext: CoroutineContext,
+    ): Boolean = handles.none { handle -> handle.deliversIn(callerContext) }
 }
 
 private class ActiveSubscriptionImpl(
@@ -626,6 +668,7 @@ private class ActiveSubscriptionImpl(
     private val scope: CoroutineScope,
     private val seekGate: SeekGateSettings,
     rebase: TimestampRebaseSettings,
+    private val beforeTeardownCancellation: (suspend () -> Unit)?,
     private val options: SubscriptionOptions,
     private val tryCommitPlayable: (
         ActiveSubscriptionImpl,
@@ -635,6 +678,63 @@ private class ActiveSubscriptionImpl(
 ) : ActiveSubscription {
     private val lock = Any()
     private val deliveryMutex = Mutex()
+
+    /** Committed under [lock], invoked outside every monitor in commit order. */
+    private val notifications = ArrayDeque<() -> Unit>()
+    private var notifying = false
+
+    /** Mutates state, then releases the monitor before resuming any potentially unconfined caller. */
+    private inline fun <T> transition(block: () -> T): T = try {
+        synchronized(lock) { block() }
+    } finally {
+        notifyCommitted()
+    }
+
+    /** One drainer preserves publication order without holding the monitor across caller code. */
+    private fun notifyCommitted() {
+        synchronized(lock) {
+            if (notifying) return
+            notifying = true
+        }
+        try {
+            while (true) {
+                val notification = synchronized(lock) {
+                    if (notifications.isEmpty()) {
+                        notifying = false
+                        return
+                    }
+                    notifications.removeFirst()
+                }
+                notification()
+            }
+        } catch (failure: Throwable) {
+            synchronized(lock) { notifying = false }
+            throw failure
+        }
+    }
+
+    /**
+     * Waits outside the monitor for this delivery's committed prefix, not for later notifications.
+     * Usually [transition] has already drained it and this does not allocate or suspend. Another
+     * drainer may still be resuming an unconfined caller, though: FIFO alone does not make the state
+     * visible before this coroutine delivers its next boundary or committed replay.
+     */
+    private suspend fun awaitCommittedNotifications() {
+        val published = synchronized(lock) {
+            if (!notifying && notifications.isEmpty()) return
+            CompletableDeferred<Unit>().also { completion ->
+                notifications.addLast { completion.complete(Unit) }
+            }
+        }
+        notifyCommitted()
+        published.await()
+    }
+
+    /** Detaches the deadline under the monitor; cancelling it can run coroutine completion code. */
+    private fun retireInterruptionDeadlineLocked() {
+        interruptionDeadline?.let { deadline -> notifications.addLast { deadline.cancel() } }
+        interruptionDeadline = null
+    }
 
     /** Confined to [deliveryMutex], which serializes every ordered and replayed delivery. */
     private val rebaser = SubscriptionTimestampRebaser(rebase)
@@ -660,11 +760,33 @@ private class ActiveSubscriptionImpl(
     private var interruption: Any? = null
     private var terminalCancellation: CancellationException? = null
     private var stopEventCollection = false
-    private var collectionJob: Job? = null
     private var consumerEnabled = true
     private var pendingSeek: PendingSeek? = null
     private var seekAdmissionClosed = false
     private val seekDrivers = LinkedHashSet<Job>()
+
+    /** The driver replaying a committed refusal; teardown joins it instead of cancelling it. */
+    private var replayingSeekDriver: Job? = null
+
+    /**
+     * Set once a closing or ended subscription can no longer place drained packets: an abandoned
+     * request left them at an unknown position, or a stop began a segment that is never published.
+     */
+    private var drainPacketsFenced = false
+
+    /** Set once an ordered [SubscriptionEvent.Terminated] is admitted; it owns the terminal reason. */
+    private var streamTerminalAdmitted = false
+
+    /** Identifies the call and delivery job that an expiring teardown grace period may interrupt. */
+    private var consumerCallInFlight: ConsumerCall? = null
+
+    /** Set once teardown cancels consumer code that outlasted [TEARDOWN_CONSUMER_GRACE]. */
+    private var consumerCancelledByTeardown = false
+    /** A grace expiry cancelled live delivery work, even if it had not entered consumer code. */
+    private var deliverySkippedByTeardown = false
+
+    /** Carried by every coroutine that runs consumer code, and inherited by the coroutines it starts. */
+    private val deliveryContext = ConsumerDelivery(this)
 
     override val state: StateFlow<SubscriptionState> = mutableState.asStateFlow()
     override val diagnostics: StateFlow<SubscriptionDiagnostics> = mutableDiagnostics.asStateFlow()
@@ -686,13 +808,19 @@ private class ActiveSubscriptionImpl(
         throw synchronized(lock) { terminalCancellation } ?: cancellation
     }
 
-    /** Reports whether [job] is one of the coroutines that delivers events to the consumer. */
-    internal fun ownsDeliveryJob(job: Job?): Boolean =
-        synchronized(lock) { job != null && (collectionJob === job || job in seekDrivers) }
+    /**
+     * Reports whether [context] belongs to a coroutine that runs this subscription's consumer code,
+     * or to one started from it; a joining call from there would wait for its own teardown.
+     */
+    internal fun deliversIn(context: CoroutineContext): Boolean = context[ConsumerDelivery]?.subscription === this
 
     internal fun requestClose() {
-        synchronized(lock) { closeRequestedFlag = true }
-        closeRequested.complete(Unit)
+        transition {
+            closeRequestedFlag = true
+            // Close owns the terminal reason; the interruption itself still fences stale packets.
+            retireInterruptionDeadlineLocked()
+            notifications.addLast { closeRequested.complete(Unit) }
+        }
     }
 
     internal suspend fun awaitFinished(): SubscriptionCloseResult = finished.await()
@@ -713,7 +841,7 @@ private class ActiveSubscriptionImpl(
         target: SubscriptionSeekTarget,
         expectedTracks: SubscriptionTracks?,
     ): SubscriptionSeekResult {
-        check(!ownsDeliveryJob(currentCoroutineContext()[Job])) {
+        check(!deliversIn(currentCoroutineContext())) {
             "Subscription seek cannot join from its event consumer"
         }
         currentCoroutineContext().ensureActive()
@@ -732,7 +860,7 @@ private class ActiveSubscriptionImpl(
             if (pendingSeek != null) return SubscriptionSeekResult.AlreadyPending
             val created = PendingSeek(target)
             // A lazy start runs no user code under the monitor and keeps registration atomic.
-            val job = scope.launch(start = CoroutineStart.LAZY) { driveSeek(created) }
+            val job = scope.launch(deliveryContext, start = CoroutineStart.LAZY) { driveSeek(created) }
             pendingSeek = created
             seekDrivers += job
             created to job
@@ -790,7 +918,7 @@ private class ActiveSubscriptionImpl(
     }
 
     override suspend fun close(): SubscriptionCloseResult {
-        check(!ownsDeliveryJob(currentCoroutineContext()[Job])) {
+        check(!deliversIn(currentCoroutineContext())) {
             "Subscription close cannot join from its event consumer"
         }
         requestClose()
@@ -815,7 +943,7 @@ private class ActiveSubscriptionImpl(
         var primaryCancellation: CancellationException? = null
         try {
             supervisorScope {
-                val collection = async(start = CoroutineStart.UNDISPATCHED) {
+                val collection = async(deliveryContext, start = CoroutineStart.UNDISPATCHED) {
                     collectEvents()
                 }
                 val subscribe = async { invokeSubscribe() }
@@ -884,15 +1012,28 @@ private class ActiveSubscriptionImpl(
                 } finally {
                     withContext(NonCancellable) {
                         subscribe.cancelAndJoin()
-                        val drivers = synchronized(lock) {
+                        val (drivers, replaying) = synchronized(lock) {
                             seekAdmissionClosed = true
-                            seekDrivers.toList()
+                            seekDrivers.filter { driver -> driver !== replayingSeekDriver } to
+                                replayingSeekDriver
                         }
                         drivers.forEach { driver -> driver.cancelAndJoin() }
+                        // A committed replay may finish within the grace period before it is cancelled.
+                        if (replaying != null && !joinWithinGrace(replaying)) cancelAfterGrace(replaying)
+                        transition { pendingSeek?.let(::abandonSeekLocked) }
                         val cleanup = cleanUpCollection(collection)
                         closeResult = cleanup.result
                         if (primaryCancellation == null) {
                             primaryCancellation = cleanup.cancellation
+                        }
+                        if (synchronized(lock) { deliverySkippedByTeardown }) {
+                            closeResult = SubscriptionCloseResult.CLEANUP_FAILED
+                        }
+                        if (synchronized(lock) { consumerCancelledByTeardown }) {
+                            // Every delivery has ended, so the free mutex keeps diagnostics confined to it.
+                            deliveryMutex.withLock {
+                                mutableDiagnostics.value = mutableDiagnostics.value.with(consumerDrainTimedOut = true)
+                            }
                         }
                     }
                 }
@@ -914,23 +1055,27 @@ private class ActiveSubscriptionImpl(
                 if (terminalCancellation == null) terminalCancellation = primaryCancellation
                 terminalCancellation
             }
-            if (primaryCancellation != null) {
-                openCompletion.completeExceptionally(requireNotNull(primaryCancellation))
-                closeResult = SubscriptionCloseResult.CLEANUP_FAILED
+            val cancellation = primaryCancellation
+            if (cancellation != null) closeResult = SubscriptionCloseResult.CLEANUP_FAILED
+            val result = closeResult
+            transition {
+                setTerminalLocked(finalReason, completeOpen = false)
+                if (cancellation != null) {
+                    notifications.addLast { openCompletion.completeExceptionally(cancellation) }
+                }
+                if (cancellation == null) {
+                    notifications.addLast { openCompletion.complete(SubscriptionOpenResult.Failed(finalReason)) }
+                }
+                notifications.addLast {
+                    onFinished()
+                    finished.complete(result)
+                }
             }
-            setTerminal(finalReason)
-            if (primaryCancellation == null) {
-                openCompletion.complete(SubscriptionOpenResult.Failed(finalReason))
-            }
-            onFinished()
-            finished.complete(closeResult)
         }
         primaryCancellation?.let { throw it }
     }
 
     private suspend fun collectEvents(): CollectionOutcome {
-        val currentJob = currentCoroutineContext()[Job]
-        synchronized(lock) { collectionJob = currentJob }
         return try {
             connection.events(id).takeWhile { event -> acceptEvent(event) }.collect()
             if (synchronized(lock) { terminal } == null) {
@@ -942,8 +1087,6 @@ private class ActiveSubscriptionImpl(
             CollectionOutcome.Cancelled(cancellation)
         } catch (_: Exception) {
             CollectionOutcome.Failed
-        } finally {
-            synchronized(lock) { collectionJob = null }
         }
     }
 
@@ -963,7 +1106,9 @@ private class ActiveSubscriptionImpl(
             ) {
                 interruptSegment()
             }
-            when (val decision = admitToGate(event)) {
+            val decision = admitToGate(event)
+            awaitCommittedNotifications()
+            when (decision) {
                 GateDecision.Pass -> deliverToConsumer(event)
                 GateDecision.Withheld, GateDecision.Discarded -> Unit
                 is GateDecision.Resolved -> {
@@ -973,6 +1118,7 @@ private class ActiveSubscriptionImpl(
             }
             // Ordered terminal delivery precedes terminal state so consumers can preserve clean EOS.
             applyEventState(event)
+            awaitCommittedNotifications()
         }
         return synchronized(lock) { !stopEventCollection }
     }
@@ -983,17 +1129,30 @@ private class ActiveSubscriptionImpl(
      * Mux packets and drop markers are withheld while an acknowledgement is pending; every other
      * event is delivered immediately so terminal handling is never delayed by a gate.
      */
-    private fun admitToGate(event: SubscriptionEvent): GateDecision = synchronized(lock) {
+    private fun admitToGate(event: SubscriptionEvent): GateDecision = transition {
+        if (event is SubscriptionEvent.Terminated) {
+            // Its state applies only after the consumer returns, so no deadline may expire first.
+            streamTerminalAdmitted = true
+            interruption = null
+            retireInterruptionDeadlineLocked()
+        }
         if (interruption != null && tracks == null && (event is SubscriptionEvent.Packet || event is SubscriptionEvent.Dropped)) {
             return GateDecision.Discarded
         }
+        if (drainPacketsFenced && (event is SubscriptionEvent.Packet || event is SubscriptionEvent.Dropped)) {
+            return GateDecision.Discarded
+        }
         val pending = pendingSeek ?: return GateDecision.Pass
+        val closing = closeRequestedFlag || seekAdmissionClosed
         when (event) {
             is SubscriptionEvent.Packet, is SubscriptionEvent.Dropped -> {
                 val bytes = (event as? SubscriptionEvent.Packet)?.payload?.size?.toLong() ?: 0L
                 if (pending.canAccept(bytes, seekGate)) {
                     pending.enqueue(event, bytes)
                     GateDecision.Withheld
+                } else if (closing) {
+                    abandonSeekLocked(pending)
+                    GateDecision.Discarded
                 } else {
                     val cause = SubscriptionSeekInvalidation.PENDING_QUEUE_OVERFLOW
                     pending.discard()
@@ -1022,13 +1181,17 @@ private class ActiveSubscriptionImpl(
                     GateDecision.Resolved(replayed)
                 }
                 SkipOutcome.UNKNOWN -> {
-                    val cause = SubscriptionSeekInvalidation.UNRECOGNIZED_ACKNOWLEDGEMENT
-                    pending.discard()
-                    resolveSeekLocked(
-                        pending = pending,
-                        result = SubscriptionSeekResult.Invalidated(cause),
-                        terminalReason = SubscriptionTerminalReason.SeekInvalidated(cause),
-                    )
+                    if (closing) {
+                        abandonSeekLocked(pending)
+                    } else {
+                        val cause = SubscriptionSeekInvalidation.UNRECOGNIZED_ACKNOWLEDGEMENT
+                        pending.discard()
+                        resolveSeekLocked(
+                            pending = pending,
+                            result = SubscriptionSeekResult.Invalidated(cause),
+                            terminalReason = SubscriptionTerminalReason.SeekInvalidated(cause),
+                        )
+                    }
                     GateDecision.Resolved(emptyList())
                 }
             }
@@ -1049,10 +1212,23 @@ private class ActiveSubscriptionImpl(
         terminalReason: SubscriptionTerminalReason? = null,
     ) {
         if (pendingSeek === pending) pendingSeek = null
-        pending.outcome.complete(result)
         terminalReason?.let { reason ->
             setTerminalLocked(reason, stopCollection = true, completeOpen = false)
         }
+        notifications.addLast { pending.outcome.complete(result) }
+    }
+
+    /**
+     * Ends [pending] with its subscription while something else owns the terminal reason: close,
+     * an admitted ordered terminal, or owner teardown after subscribe or collection cancellation.
+     *
+     * Later packets of the closing drain have the same unknown position as the withheld ones, so
+     * they are discarded rather than delivered; controls and terminal events still pass.
+     */
+    private fun abandonSeekLocked(pending: PendingSeek) {
+        pending.discard()
+        drainPacketsFenced = true
+        resolveSeekLocked(pending, SubscriptionSeekResult.SubscriptionEnded)
     }
 
     /**
@@ -1083,18 +1259,24 @@ private class ActiveSubscriptionImpl(
                 }
             }
         } catch (cancellation: CancellationException) {
-            synchronized(lock) {
+            transition {
                 // An ordered acknowledgement or owner teardown may already own settlement.
-                if (pendingSeek === pending && terminal == null && !closeRequestedFlag && !seekAdmissionClosed) {
+                if (
+                    pendingSeek === pending &&
+                    terminal == null &&
+                    !closeRequestedFlag &&
+                    !seekAdmissionClosed &&
+                    !streamTerminalAdmitted
+                ) {
                     pendingSeek = null
                     pending.discard()
                     consumerEnabled = false
-                    pending.outcome.completeExceptionally(cancellation)
                     setTerminalLocked(
                         SubscriptionTerminalReason.SeekInvalidated(SubscriptionSeekInvalidation.UNCERTAIN_REQUEST_OUTCOME),
                         stopCollection = true,
                         completeOpen = false,
                     )
+                    notifications.addLast { pending.outcome.completeExceptionally(cancellation) }
                 }
             }
             throw cancellation
@@ -1118,25 +1300,37 @@ private class ActiveSubscriptionImpl(
         null
     }
 
-    /** Completes [pending] and then replays every withheld event in committed order. */
+    /**
+     * Completes [pending] and then replays every withheld event in committed order.
+     *
+     * The replay commits under the same monitor that closes seek admission, so teardown either
+     * abandons the request before the commit or joins the whole replay after it.
+     */
     private suspend fun replaySeek(pending: PendingSeek, result: SubscriptionSeekResult) {
+        val driver = currentCoroutineContext()[Job]
         deliveryMutex.withLock {
-            val replayed = synchronized(lock) {
-                if (pendingSeek !== pending) return@withLock
+            val replayed = transition {
+                if (pendingSeek !== pending || seekAdmissionClosed) return@withLock
+                replayingSeekDriver = driver
                 pending.drain().also { resolveSeekLocked(pending, result) }
             }
-            replayed.forEach { withheld -> deliverToConsumer(withheld) }
+            try {
+                awaitCommittedNotifications()
+                replayed.forEach { withheld -> deliverToConsumer(withheld) }
+            } finally {
+                synchronized(lock) { if (replayingSeekDriver === driver) replayingSeekDriver = null }
+            }
         }
     }
 
     /** Discards withheld events and ends the subscription rather than mixing uncertain packets. */
     private fun invalidateSeek(pending: PendingSeek, cause: SubscriptionSeekInvalidation) {
-        synchronized(lock) {
+        transition {
             if (pendingSeek !== pending) return
-            pending.discard()
-            if (terminal != null || closeRequestedFlag) {
-                resolveSeekLocked(pending, SubscriptionSeekResult.SubscriptionEnded)
+            if (terminal != null || closeRequestedFlag || streamTerminalAdmitted) {
+                abandonSeekLocked(pending)
             } else {
+                pending.discard()
                 // The collection coroutine stops only after its next delivery, so silence the
                 // consumer here or one packet of unknown provenance still reaches the readers.
                 consumerEnabled = false
@@ -1166,11 +1360,19 @@ private class ActiveSubscriptionImpl(
                 decision.event
             }
         }
+        val call = ConsumerCall(checkNotNull(currentCoroutineContext()[Job]))
+        synchronized(lock) {
+            // An expired teardown grace period skips later calls and cancels only one in flight.
+            if (!consumerEnabled) return
+            consumerCallInFlight = call
+        }
         try {
             consumer.accept(rebased)
         } catch (cancellation: CancellationException) {
-            synchronized(lock) {
+            transition {
                 consumerEnabled = false
+                // Teardown's own cancellation of a call that outlasted its grace period is not a failure.
+                if (cancellation.causedByTeardown()) return
                 terminalCancellation = terminalCancellation ?: cancellation
                 setTerminalLocked(
                     SubscriptionTerminalReason.InfrastructureFailed,
@@ -1179,14 +1381,18 @@ private class ActiveSubscriptionImpl(
                 )
             }
         } catch (_: Exception) {
-            synchronized(lock) {
+            transition {
                 consumerEnabled = false
+                // Once teardown cancelled this call, its failure follows from that; close keeps its reason.
+                if (call.cancelledByTeardown) return
                 setTerminalLocked(
                     SubscriptionTerminalReason.ConsumerFailed,
                     stopCollection = false,
                     completeOpen = false,
                 )
             }
+        } finally {
+            synchronized(lock) { consumerCallInFlight = null }
         }
     }
 
@@ -1197,7 +1403,7 @@ private class ActiveSubscriptionImpl(
      * decay into an unbounded silent discard that still reports a playable subscription.
      */
     private fun invalidateUnanchorableSegment() {
-        synchronized(lock) {
+        transition {
             // The collection coroutine stops only after its next delivery, so silence the
             // consumer here as well; no later packet can be placed on the delivered timeline.
             consumerEnabled = false
@@ -1275,7 +1481,7 @@ private class ActiveSubscriptionImpl(
         try {
             consumer.tracksReady(candidate)
         } catch (cancellation: CancellationException) {
-            synchronized(lock) {
+            transition {
                 terminalCancellation = terminalCancellation ?: cancellation
                 consumerEnabled = false
                 setTerminalLocked(
@@ -1289,9 +1495,12 @@ private class ActiveSubscriptionImpl(
             setLocalFailure(SubscriptionTerminalReason.ConsumerFailed)
             return
         }
-        synchronized(lock) {
+        transition {
             if (tracks != null || terminal != null || closeRequestedFlag) return
             tracks = candidate
+            // Restart metadata ends the interruption; the subscribe command owns its acknowledgement.
+            interruption = null
+            retireInterruptionDeadlineLocked()
         }
         tryPublishPlayable()
     }
@@ -1305,25 +1514,32 @@ private class ActiveSubscriptionImpl(
                 !playablePublished
         }
         if (!ready) return
-        when (tryCommitPlayable(this) {
-            synchronized(lock) {
-                val currentTracks = tracks
-                if (
-                    subscribeAccepted &&
-                    currentTracks != null &&
-                    terminal == null &&
-                    !closeRequestedFlag &&
-                    !playablePublished
-                ) {
-                    playablePublished = true
-                    interruption = null
-                    interruptionDeadline?.cancel()
-                    interruptionDeadline = null
-                    mutableState.value = SubscriptionState.Playable(currentTracks)
-                    openCompletion.complete(SubscriptionOpenResult.Opened(this))
+        val committed = try {
+            tryCommitPlayable(this) {
+                synchronized(lock) {
+                    val currentTracks = tracks
+                    if (
+                        subscribeAccepted &&
+                        currentTracks != null &&
+                        terminal == null &&
+                        !closeRequestedFlag &&
+                        !playablePublished
+                    ) {
+                        playablePublished = true
+                        interruption = null
+                        retireInterruptionDeadlineLocked()
+                        notifications.addLast { mutableState.value = SubscriptionState.Playable(currentTracks) }
+                        notifications.addLast { openCompletion.complete(SubscriptionOpenResult.Opened(this)) }
+                    }
                 }
             }
-        }) {
+        } finally {
+            // The publication callback also holds the manager and connection-generation monitors.
+            // This thread does not resume callers until the complete commit boundary has returned;
+            // an already-active drainer on another thread can publish the committed notifications.
+            notifyCommitted()
+        }
+        when (committed) {
             PlayableCommitResult.COMMITTED -> Unit
             PlayableCommitResult.LOCALLY_REJECTED ->
                 setStartupFailure(SubscriptionTerminalReason.Closed)
@@ -1333,13 +1549,23 @@ private class ActiveSubscriptionImpl(
     }
 
     private fun setStreamTerminal(reason: SubscriptionTerminalReason) {
-        synchronized(lock) { setTerminalLocked(reason, stopCollection = true, completeOpen = false) }
+        transition { setTerminalLocked(reason, stopCollection = true, completeOpen = false) }
     }
 
-    /** Repeated stops share one deadline; a validated Started ends that interruption. */
+    /**
+     * Fences the current segment and bounds the wait for its restart metadata.
+     *
+     * Repeated stops share one deadline. Committing the validated tracks of a later Started ends
+     * the interruption even before the subscribe acknowledgement; close cancels the deadline.
+     * A boundary in a closing or ended drain cannot publish its successor, so it only fences the
+     * drain's later packets from readers prepared for the delivered tracks.
+     */
     private fun interruptSegment() {
-        synchronized(lock) {
-            if (terminal != null || closeRequestedFlag) return
+        transition {
+            if (terminal != null || closeRequestedFlag) {
+                drainPacketsFenced = true
+                return
+            }
             pendingSeek?.let { pending ->
                 consumerEnabled = false
                 pending.discard()
@@ -1350,14 +1576,14 @@ private class ActiveSubscriptionImpl(
             }
             tracks = null
             playablePublished = false
-            mutableState.value = SubscriptionState.Starting
+            notifications.addLast { mutableState.value = SubscriptionState.Starting }
             if (interruption == null) {
                 val epoch = Any()
                 interruption = epoch
-                interruptionDeadline = scope.launch {
+                val deadline = scope.launch(start = CoroutineStart.LAZY) {
                     delay(DEFAULT_RESTART_TIMEOUT)
-                    synchronized(lock) {
-                        if (interruption === epoch && terminal == null) {
+                    transition {
+                        if (interruption === epoch && terminal == null && !closeRequestedFlag) {
                             consumerEnabled = false
                             setTerminalLocked(
                                 SubscriptionTerminalReason.Timeout,
@@ -1367,23 +1593,25 @@ private class ActiveSubscriptionImpl(
                         }
                     }
                 }
+                interruptionDeadline = deadline
+                notifications.addLast { deadline.start() }
             }
         }
     }
 
     private fun setLocalFailure(reason: SubscriptionTerminalReason) {
-        synchronized(lock) {
+        transition {
             consumerEnabled = false
             setTerminalLocked(reason, stopCollection = false, completeOpen = false)
         }
     }
 
     private fun setTerminal(reason: SubscriptionTerminalReason) {
-        synchronized(lock) { setTerminalLocked(reason, stopCollection = true, completeOpen = false) }
+        transition { setTerminalLocked(reason, stopCollection = true, completeOpen = false) }
     }
 
     private fun setStartupFailure(reason: SubscriptionTerminalReason) {
-        synchronized(lock) { setTerminalLocked(reason, stopCollection = false, completeOpen = false) }
+        transition { setTerminalLocked(reason, stopCollection = false, completeOpen = false) }
     }
 
     private fun currentTerminal(): SubscriptionTerminalReason? = synchronized(lock) { terminal }
@@ -1397,16 +1625,15 @@ private class ActiveSubscriptionImpl(
         if (terminal != null) return
         terminal = reason
         interruption = null
-        interruptionDeadline?.cancel()
-        interruptionDeadline = null
-        mutableState.value = SubscriptionState.Terminal(reason)
+        retireInterruptionDeadlineLocked()
+        notifications.addLast { mutableState.value = SubscriptionState.Terminal(reason) }
         pendingSeek?.let { pending ->
             pendingSeek = null
             pending.discard()
-            pending.outcome.complete(SubscriptionSeekResult.SubscriptionEnded)
+            notifications.addLast { pending.outcome.complete(SubscriptionSeekResult.SubscriptionEnded) }
         }
-        terminalSignal.complete(reason)
-        if (completeOpen) openCompletion.complete(SubscriptionOpenResult.Failed(reason))
+        notifications.addLast { terminalSignal.complete(reason) }
+        if (completeOpen) notifications.addLast { openCompletion.complete(SubscriptionOpenResult.Failed(reason)) }
     }
 
     private fun updateDiagnostics(
@@ -1442,6 +1669,36 @@ private class ActiveSubscriptionImpl(
         )
     }
 
+    /** Waits up to [TEARDOWN_CONSUMER_GRACE] for [job]; a job that completed at the deadline still counts. */
+    private suspend fun joinWithinGrace(job: Job): Boolean =
+        withTimeoutOrNull(TEARDOWN_CONSUMER_GRACE) { job.join() } != null || job.isCompleted
+
+    /**
+     * Cancels [job] after its teardown wait expired. Later deliveries are skipped, and consumer code
+     * still running receives a [TeardownCancellation], which never counts as a subscription failure
+     * and is never thrown to close callers.
+     */
+    private suspend fun cancelAfterGrace(job: Job) {
+        beforeTeardownCancellation?.invoke()
+        val cancel = synchronized(lock) {
+            // A completed replay may already have handed delivery to collection. Neither stop that
+            // delivery nor attribute its failure to cancellation of the old replay.
+            if (job.isActive) {
+                consumerEnabled = false
+                deliverySkippedByTeardown = true
+                consumerCallInFlight?.takeIf { it.owner === job }?.let { call ->
+                    call.cancelledByTeardown = true
+                    consumerCancelledByTeardown = true
+                }
+                // The request is committed to this call only. A later call must not inherit it.
+                true
+            } else false
+        }
+        // Cancellation may synchronously invoke consumer-installed handlers. Never hold the monitor.
+        if (cancel) job.cancel(TeardownCancellation())
+        job.join()
+    }
+
     private suspend fun cleanUpCollection(collection: Deferred<CollectionOutcome>): CleanupOutcome =
         withContext(NonCancellable) {
             var cancellation: CancellationException? = null
@@ -1465,7 +1722,12 @@ private class ActiveSubscriptionImpl(
                 unsubscribe is SubscriptionOperationResult.Ok || generationGone
             ) {
                 try {
-                    collection.await()
+                    if (joinWithinGrace(collection)) {
+                        collection.await()
+                    } else {
+                        cancelAfterGrace(collection)
+                        CollectionOutcome.Failed
+                    }
                 } catch (failure: CancellationException) {
                     if (cancellation == null) cancellation = failure
                     CollectionOutcome.Failed
@@ -1473,7 +1735,22 @@ private class ActiveSubscriptionImpl(
                     CollectionOutcome.Failed
                 }
             } else {
-                collection.cancelAndJoin()
+                // The stream may never end, so stop it between deliveries while the grace period lasts.
+                var betweenDeliveries = false
+                withTimeoutOrNull(TEARDOWN_CONSUMER_GRACE) {
+                    deliveryMutex.lock()
+                    // No suspension follows, so a racing timeout cannot hide an acquired lock.
+                    betweenDeliveries = true
+                }
+                if (betweenDeliveries) {
+                    try {
+                        collection.cancelAndJoin()
+                    } finally {
+                        deliveryMutex.unlock()
+                    }
+                } else {
+                    cancelAfterGrace(collection)
+                }
                 CollectionOutcome.Failed
             }
             if (collectionOutcome is CollectionOutcome.Cancelled && cancellation == null) {
@@ -1501,6 +1778,7 @@ private fun emptyDiagnostics(): SubscriptionDiagnostics = SubscriptionDiagnostic
     droppedPacketCountOverflowed = false,
     timestampAnchorCount = 0L,
     rebaseDiscardedPacketCount = 0L,
+    consumerDrainTimedOut = false,
 )
 
 private fun SubscriptionDiagnostics.with(
@@ -1510,6 +1788,7 @@ private fun SubscriptionDiagnostics.with(
     droppedPacketCountOverflowed: Boolean = this.droppedPacketCountOverflowed,
     timestampAnchorCount: Long = this.timestampAnchorCount,
     rebaseDiscardedPacketCount: Long = this.rebaseDiscardedPacketCount,
+    consumerDrainTimedOut: Boolean = this.consumerDrainTimedOut,
 ): SubscriptionDiagnostics = SubscriptionDiagnostics(
     condition = condition,
     graceTimeoutSeconds = graceTimeoutSeconds,
@@ -1517,10 +1796,40 @@ private fun SubscriptionDiagnostics.with(
     droppedPacketCountOverflowed = droppedPacketCountOverflowed,
     timestampAnchorCount = timestampAnchorCount,
     rebaseDiscardedPacketCount = rebaseDiscardedPacketCount,
+    consumerDrainTimedOut = consumerDrainTimedOut,
 )
 
 /** Counts one more occurrence without wrapping a durable diagnostic counter. */
 private fun saturatingIncrement(value: Long): Long = if (value == Long.MAX_VALUE) value else value + 1L
+
+/**
+ * Marks the coroutines that run [subscription]'s consumer code. Every coroutine started from them
+ * inherits it, so a joining lifecycle call from that code fails fast instead of waiting on itself.
+ */
+private class ConsumerDelivery(
+    internal val subscription: ActiveSubscriptionImpl,
+) : AbstractCoroutineContextElement(ConsumerDelivery) {
+    companion object Key : CoroutineContext.Key<ConsumerDelivery>
+}
+
+/** Teardown's cancellation of consumer code that outlasted its grace period; consumers cannot create it. */
+private class TeardownCancellation : CancellationException("Subscription teardown cancelled consumer delivery")
+
+/** One invocation, with its owning delivery job; mutable attribution is guarded by the subscription lock. */
+private class ConsumerCall(val owner: Job) {
+    var cancelledByTeardown: Boolean = false
+}
+
+/** Reports whether this cancellation is teardown's own, possibly copied or wrapped on its way back. */
+private fun CancellationException.causedByTeardown(): Boolean {
+    val seen = HashSet<Throwable>()
+    var current: Throwable? = this
+    while (current != null && seen.add(current)) {
+        if (current is TeardownCancellation) return true
+        current = current.cause
+    }
+    return false
+}
 
 /** One in-flight seek request and its bounded queue of withheld data-plane events. */
 private class PendingSeek(internal val target: SubscriptionSeekTarget) {
