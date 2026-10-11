@@ -319,6 +319,7 @@ public data class EpgSnapshot private constructor(
  * limits range from 1 through 250,000, inclusive. When the event limit is full, asynchronous
  * additions are ignored and a query requiring more capacity is rejected atomically without
  * advancing its coverage boundary; time-window retention or server deletion frees capacity.
+ * Policies compare by their horizon and retained-event limit.
  */
 public class EpgCoveragePolicy private constructor(
     public val futureHorizon: Duration,
@@ -338,6 +339,13 @@ public class EpgCoveragePolicy private constructor(
             "EpgCoveragePolicy maximumRetainedEvents must be between 1 and 250000"
         }
     }
+
+    override fun equals(other: Any?): Boolean =
+        other is EpgCoveragePolicy &&
+            futureHorizon == other.futureHorizon &&
+            maximumRetainedEvents == other.maximumRetainedEvents
+
+    override fun hashCode(): Int = 31 * futureHorizon.hashCode() + maximumRetainedEvents
 
     override fun toString(): String =
         "EpgCoveragePolicy(futureHorizon=$futureHorizon, " +

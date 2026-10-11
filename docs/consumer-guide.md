@@ -51,6 +51,14 @@ calls return the same instance until terminal `shutdown()` completes, so an
 application should share it rather than construct feature-specific sessions.
 Exactly one server profile and protocol generation can be active.
 
+Calls without policies reuse the owner regardless of its configuration. Calls with policies
+reuse it only when their configuration equals the active owner's; otherwise they throw
+`IllegalStateException` with a configuration-free message. The EPG-only overload requests
+caching disabled. Comparison and acquisition are atomic. After terminal shutdown completes,
+new policies can be supplied. Both policy types use value equality; cache roots are stored
+and compared as normalized absolute paths, without resolving symlinks or requiring the
+directory to exist.
+
 `connect(profile)` selects a profile and returns a `SessionCommandResult`. That
 result reports command admission, not connection readiness. Observe the atomic
 `TvheadendSession.observation` flow for the durable lifecycle:
@@ -315,7 +323,7 @@ server query capability.
 The default `EpgCoveragePolicy` keeps a 24-hour future horizon and at most
 100,000 events. A custom policy supplied to `createTvheadendSession(policy)` can
 request 24 hours through 7 days and 1 through 250,000 retained events. The
-policy applies only when that call creates a fresh process-wide session owner.
+policy configures a fresh process-wide session owner; a conflicting active policy is rejected.
 
 ### Already-received programme history
 

@@ -1472,8 +1472,10 @@ public final class at/bernhardberger/tvheadend/sdk/core/EpgCoveragePolicy {
 	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/EpgCoveragePolicy$Companion;
 	public static final fun createFromHours (J)Lat/bernhardberger/tvheadend/sdk/core/EpgCoveragePolicy;
 	public static final fun createFromHours (JI)Lat/bernhardberger/tvheadend/sdk/core/EpgCoveragePolicy;
+	public fun equals (Ljava/lang/Object;)Z
 	public final fun getFutureHorizon-UwyO8pc ()J
 	public final fun getMaximumRetainedEvents ()I
+	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
 
@@ -1766,9 +1768,11 @@ public final class at/bernhardberger/tvheadend/sdk/core/EventId {
 
 public final class at/bernhardberger/tvheadend/sdk/core/MetadataCachePolicy {
 	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/MetadataCachePolicy$Companion;
+	public fun equals (Ljava/lang/Object;)Z
 	public final fun getArtworkMaxBytes ()J
 	public final fun getArtworkRetention-UwyO8pc ()J
 	public final fun getMetadataRetention-UwyO8pc ()J
+	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
 

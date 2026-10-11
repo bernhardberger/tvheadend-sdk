@@ -126,15 +126,19 @@ public interface TvheadendSession {
  * Repeated calls return the same instance until its terminal [TvheadendSession.shutdown] completes.
  * A newly created owner uses the default 24-hour EPG coverage policy. Shutdown affects every holder
  * of that shared instance; a later call creates a fresh owner.
+ * An existing owner's policies are preserved regardless of their configuration.
  */
 public fun createTvheadendSession(): TvheadendSession =
-    SessionRegistry.acquire(EpgCoveragePolicy.create(), cachePolicy = null)
+    SessionRegistry.acquire()
 
 /**
  * Returns the process-wide TVHeadend session owner with [epgCoveragePolicy].
  *
- * The policy applies when this call creates a fresh owner. If an owner is already active, this call
- * returns that instance without reconfiguring its connection generation.
+ * Requests [epgCoveragePolicy] with caching disabled. An existing owner is returned only when its
+ * configuration equals this request. Comparison and acquisition are atomic.
+ *
+ * @throws IllegalStateException if an existing owner has different policies. The message contains
+ * no configuration values. After terminal shutdown completes, different policies may be supplied.
  */
 public fun createTvheadendSession(epgCoveragePolicy: EpgCoveragePolicy): TvheadendSession =
     SessionRegistry.acquire(epgCoveragePolicy, cachePolicy = null)
@@ -144,7 +148,11 @@ public fun createTvheadendSession(epgCoveragePolicy: EpgCoveragePolicy): Tvheade
  *
  * With a cache policy the owner restores the last channel catalog and programme guide of a
  * profile as stale metadata before connecting, and persists published metadata under
- * [MetadataCachePolicy.root]. Both policies apply only when this call creates a fresh owner.
+ * [MetadataCachePolicy.root]. An existing owner is returned only when both policies compare equal,
+ * using [MetadataCachePolicy]'s normalized absolute root-path rule. Comparison and acquisition are atomic.
+ *
+ * @throws IllegalStateException if an existing owner has different policies. The message contains
+ * no configuration values. After terminal shutdown completes, different policies may be supplied.
  */
 public fun createTvheadendSession(
     epgCoveragePolicy: EpgCoveragePolicy,
@@ -152,14 +160,30 @@ public fun createTvheadendSession(
 ): TvheadendSession = SessionRegistry.acquire(epgCoveragePolicy, cachePolicy)
 
 internal object SessionRegistry {
-    private var active: ConnectionOwner? = null
+    private class ActiveOwner(
+        val owner: ConnectionOwner,
+        val epgCoveragePolicy: EpgCoveragePolicy,
+        val cachePolicy: MetadataCachePolicy?,
+    )
+
+    private var active: ActiveOwner? = null
 
     internal fun acquire(
-        epgCoveragePolicy: EpgCoveragePolicy,
-        cachePolicy: MetadataCachePolicy?,
+        epgCoveragePolicy: EpgCoveragePolicy? = null,
+        cachePolicy: MetadataCachePolicy? = null,
     ): TvheadendSession = synchronized(this) {
-        active ?: createOwner(epgCoveragePolicy, cacheRuntime = cachePolicy?.let(::createCacheRuntime))
-            .also { active = it }
+        val existing = active
+        if (existing != null) {
+            check(
+                epgCoveragePolicy == null ||
+                    (existing.epgCoveragePolicy == epgCoveragePolicy && existing.cachePolicy == cachePolicy)
+            ) { "The active TVHeadend session has different policies" }
+            existing.owner
+        } else {
+            val policy = epgCoveragePolicy ?: EpgCoveragePolicy.create()
+            createOwner(policy, cacheRuntime = cachePolicy?.let(::createCacheRuntime))
+                .also { active = ActiveOwner(it, policy, cachePolicy) }
+        }
     }
 
     private fun createCacheRuntime(policy: MetadataCachePolicy): MetadataCacheRuntime =
@@ -235,7 +259,7 @@ internal object SessionRegistry {
             ),
             onShutdown = {
                 synchronized(this) {
-                    if (active === owner) {
+                    if (active?.owner === owner) {
                         active = null
                     }
                 }

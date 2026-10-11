@@ -17,6 +17,10 @@ import kotlin.time.Duration.Companion.days
  * Cached snapshots never claim [RetainedMetadataAuthority.CURRENT]. A cold start publishes a
  * cached catalog and EPG as [ChannelRepositoryState.Stale] and [EpgRepositoryState.Stale] until a
  * connection completes its initial synchronisation.
+ *
+ * Policies compare by all configuration values. The root is stored and compared as a normalized
+ * absolute path, removing lexical `.` and `..` segments without resolving symlinks or requiring
+ * the directory to exist. Different symlink paths therefore remain distinct configurations.
  */
 public class MetadataCachePolicy private constructor(
     internal val root: File,
@@ -39,6 +43,21 @@ public class MetadataCachePolicy private constructor(
         }
     }
 
+    override fun equals(other: Any?): Boolean =
+        other is MetadataCachePolicy &&
+            root == other.root &&
+            metadataRetention == other.metadataRetention &&
+            artworkRetention == other.artworkRetention &&
+            artworkMaxBytes == other.artworkMaxBytes
+
+    override fun hashCode(): Int {
+        var result = root.hashCode()
+        result = 31 * result + metadataRetention.hashCode()
+        result = 31 * result + artworkRetention.hashCode()
+        result = 31 * result + artworkMaxBytes.hashCode()
+        return result
+    }
+
     override fun toString(): String =
         "MetadataCachePolicy(metadataRetention=$metadataRetention, " +
             "artworkRetention=$artworkRetention, artworkMaxBytes=$artworkMaxBytes)"
@@ -57,7 +76,7 @@ public class MetadataCachePolicy private constructor(
             artworkRetention: Duration = DEFAULT_ARTWORK_RETENTION,
             artworkMaxBytes: Long = DEFAULT_ARTWORK_MAX_BYTES,
         ): MetadataCachePolicy = MetadataCachePolicy(
-            root = root,
+            root = root.toPath().toAbsolutePath().normalize().toFile(),
             metadataRetention = metadataRetention,
             artworkRetention = artworkRetention,
             artworkMaxBytes = artworkMaxBytes,
