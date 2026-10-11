@@ -1,5 +1,88 @@
 # Changelog
 
+## [0.26.0]
+
+Unreleased; development target.
+
+### Added
+
+- Shared open `TvheadendFailure` with transient, fresh-observation, access and
+  unsupported predicates; transient does not authorize automatic retries. See
+  the [0.26 API shape](docs/api-shape-0.26.md) for the migration design.
+
+### Changed
+
+- **BREAKING:** `SessionRecoveryDisposition`, `DvrEntryState`,
+  `DvrSubscriptionError`, `DvrCutpointAction`, `DvrChangeKind`,
+  `SubscriptionStreamType`, `PlaybackShutdownResult`, `PlaybackRecoveryReason`
+  and `TvheadendDiscoveryFailure` are open sets, not enums. Compare their
+  SCREAMING_CASE values with a fallback; replace enum iteration and parsing.
+- **BREAKING:** `SessionFailure` and `PlaybackStopResult` are value-equal classes
+  with open `kind` and `outcome`. Use SCREAMING_CASE constants and lowerCamel
+  factories (`synchronizationFailed`, `stopped`, `retiredAfterDeparture`,
+  `playerUnavailable`); replace nested-case type checks with value comparisons.
+- **BREAKING:** `DvrMutationResult`, `DvrProgressResult`, `DvrCutpointsResult`,
+  `StreamProfilesResult`, `EpgSearchResult`, `RecordingFileResult` and
+  `SubscriptionOperationResult` now use value-equal `Failed(failure)` cases.
+  Match `is Failed`, then inspect `TvheadendFailure` with a fallback.
+- **BREAKING:** DVR mutation and progress `Failed` constructors also require
+  `mayHaveApplied`: false only for provably unsent or explicitly refused commands.
+  Supply this stage evidence in fakes and check it before deciding to retry.
+- **BREAKING:** `EpgSearchResult.InvalidQuery` becomes `SERVER_REJECTED`, and
+  interrupted stream-profile discovery reports `CONNECTION_CHANGED`.
+  Match these shared failure values and obtain a fresh observation when required.
+- **BREAKING:** DVR weekdays use `Set<DayOfWeek>`, timerec times `LocalTime`,
+  autorec times `AutorecTime`, and padding `Duration`; supply whole minutes.
+  `AnyTime` writes -1; creating a rule with either window bound set to any time
+  makes both bounds any time. Use `DvrPriority`, `DuplicateDetection` and
+  `BroadcastType` values, not wire integers; requests reject `UNKNOWN`.
+  `DvrEntry.duplicate` is `Boolean?`; entry and EPG artwork use `ArtworkId?`.
+  Migrate request and fake fields to these types; update nulls still mean unchanged.
+- **BREAKING:** `RecordingPlaybackAdmission.GrowingStartOverOnly` is now `Growing`.
+  Rename matches and opt in with `@OptIn(ExperimentalTvheadendApi::class)` for it,
+  `GrowingRecordingFileReader` and `GrowingRecordingFileLease`; completed-recording
+  playback remains stable.
+- **BREAKING:** `createTvheadendSession` throws `IllegalStateException` for
+  conflicting policies. Pass equal configuration or omit policies to reuse an
+  owner, including during shutdown. Policies compare by value; cache roots use
+  normalized absolute paths resolved at creation, without resolving symlinks.
+- **BREAKING:** interrupted DVR mutation, progress and cutpoint operations report
+  `CONNECTION_CHANGED` on generation retirement; disconnect/shutdown reports
+  `NOT_READY` for current unsent work, or `OBSERVATION_EXPIRED` for stale input.
+  Possibly sent work reports `CONNECTION_CHANGED`; refresh observations and check
+  `mayHaveApplied` before retrying mutations or progress updates.
+
+### Removed
+
+- **BREAKING:** `SessionOperationFailure`, `ArtworkFailure`, `RecordingFileFailure`
+  and `SubscriptionOperationFailure` are removed. Use `TvheadendFailure` in
+  `SessionFailure.operationFailure`, artwork `Unavailable`/load exceptions, file
+  failures and subscription seek/terminal failures; import the core
+  `recoveryDisposition` extension for the former session-operation mapping,
+  with `EXPLICIT_RETRY` as its fallback.
+- **BREAKING:** `contentType` is removed from entry/event models and factories.
+  Use `contentGenre` instead.
+- **BREAKING:** DVR `owner`, `creator` and file `path` are no longer public or
+  accepted by `DvrEntry.create`, `AutorecRule.create` and `TimerecRule.create`.
+  Drop those arguments; use `DvrRecordingFile.create` without a path instead of
+  its now-internal constructor or `copy`, and use SDK file access for playback.
+- **BREAKING:** `TvheadendCredentialStore`, `CredentialReadResult`,
+  `CredentialOperationResult` and legacy v1 storage are removed.
+  Move credential persistence to `TvheadendServerProfileStore`.
+- **BREAKING:** `PlaybackTargetResult.GROWING_RECORDING_RESUME_UNSUPPORTED` and
+  `EpgCoverageBatchSettlement.channelIdValue` are removed; drop the obsolete
+  result branch and use `channelId` instead of its raw-value shortcut.
+- **BREAKING:** `TimeshiftTestFixture` is no longer published from `sdk-media3`.
+  Replace it with application-owned test fixtures.
+
+### Fixed
+
+- Autorec "any time" values now read as `AnyTime`, rather than null: negative
+  values and values of 1440 or more are accepted, and writes use -1.
+- Timerec rules with unset or out-of-day times are retained with null time fields.
+- Invalid metadata cache roots throw a fixed-message `IllegalArgumentException`
+  without a cause, preventing the path from leaking through exception diagnostics.
+
 ## [0.25.0]
 
 Released 2026-10-11.
