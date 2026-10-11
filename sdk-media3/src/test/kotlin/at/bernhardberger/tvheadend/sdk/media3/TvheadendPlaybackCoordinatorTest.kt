@@ -81,6 +81,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
@@ -4103,6 +4104,7 @@ private class FakeCoordinatorEnvironment {
 }
 
 private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
+    override val playerCleanupPending = MutableStateFlow(false)
     private var active: FakeTarget? = null
     var snapshot: PlaybackPlayerSnapshot = snapshot(position = 0, duration = null)
     var retirementExit: DvrPlaybackExit = DvrPlaybackExit.ORDERLY
@@ -4191,6 +4193,7 @@ private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
 
     override suspend fun stop(
         ticket: PlayerOperationTicket,
+        abandonPendingCleanup: Boolean,
         retireOnlyIf: (() -> Boolean)?,
     ): PlaybackPlayerStopResult {
         if (!ticket.claim()) return PlaybackPlayerStopResult(cancelled = true)

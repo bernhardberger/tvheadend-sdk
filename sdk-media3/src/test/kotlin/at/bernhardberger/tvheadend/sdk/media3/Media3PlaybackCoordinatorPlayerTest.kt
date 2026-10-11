@@ -62,6 +62,301 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         androidx.media3.common.util.ParsableByteArray.setShouldEnforceLimitOnLegacyMethods(previousBoundsChecks)
     }
 
+    @Test
+    fun `retired pending item cannot disable audio when recovery detachment fails`() = runTest {
+        var timer: (() -> Unit)? = null
+        val access = FakeCoordinatorPlaybackAccess(
+            looperInitiallyCurrent = true,
+            recoveryScheduler = RecoveryScheduler { _, action ->
+                timer = action
+                ScheduledRecoveryTask { }
+            },
+        )
+        val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator()) { _, _ ->
+            RecordingAdmission.Completed(null)
+        }
+        val token = PlaybackTargetToken()
+        player.installLive(PlayerOperationTicket(), token, TestCoordinatorLiveTarget(), timeshiftControls = controls(token))
+        requireNotNull(access.recoveryBuffering).invoke()
+        val fire = requireNotNull(timer)
+        access.failRecoveryClose = true // Model an uncooperative recovery helper with a surviving timer.
+        access.failNextStop = true
+        access.failRemove = true
+        assertFalse(player.stop(PlayerOperationTicket()).playerAvailable)
+        assertTrue(player.playerCleanupPending.value)
+        assertFalse(token.isActive())
+        access.operations.clear()
+
+        fire()
+
+        assertTrue(access.operations.isEmpty(), "A retired current item must not mutate audio or tracks")
+        assertFalse(requireNotNull(access.recoveryTargetCurrent).invoke())
+        access.failRemove = false
+        player.abandon()
+    }
+
+    @Test
+    fun `recovery closes its state machine even when listener detachment throws`() {
+        var listener: Player.Listener? = null
+        var timer: (() -> Unit)? = null
+        var cancellations = 0
+        val reasons = mutableListOf<PlaybackRecoveryReason>()
+        val player = java.lang.reflect.Proxy.newProxyInstance(
+            Player::class.java.classLoader, arrayOf(Player::class.java),
+        ) { _, method, arguments ->
+            when (method.name) {
+                "getApplicationLooper" -> null // Local Android stubs also return null for myLooper().
+                "getPlayWhenReady" -> true
+                "getCurrentTracks" -> androidx.media3.common.Tracks.EMPTY
+                "addListener" -> { listener = arguments!![0] as Player.Listener; null }
+                "removeListener" -> throw IllegalStateException("scripted listener removal failure")
+                else -> error("Unexpected recovery player access")
+            }
+        } as Player
+        val recovery = TvheadendPlaybackRecovery(
+            player, PlaybackRecoveryPolicy(), reasons::add,
+            scheduler = RecoveryScheduler { _, action ->
+                timer = action
+                ScheduledRecoveryTask { cancellations += 1 }
+            },
+        )
+        recovery.beginPlaybackTarget()
+        requireNotNull(listener).onPlaybackStateChanged(Player.STATE_BUFFERING)
+        val fire = requireNotNull(timer)
+
+        assertThrows(IllegalStateException::class.java) { recovery.close() }
+        assertEquals(1, cancellations)
+        fire()
+        requireNotNull(listener).onPlaybackStateChanged(Player.STATE_ENDED)
+        assertTrue(reasons.isEmpty())
+    }
+
+    @Test
+    fun `terminal cleanup fence rejects a claimed operation completing after cancelled owner abandonment`() = runTest {
+        val access = FakeCoordinatorPlaybackAccess()
+        val events = PlaybackPlayerEventAccumulator()
+        val player = Media3PlaybackCoordinatorPlayer(access, events) { _, _ -> RecordingAdmission.Completed(null) }
+        val coordinator = TvheadendPlaybackCoordinator(player, events, DvrProgressPolicy(), {}, SystemPlaybackCoordinatorTimeSource)
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { coordinator.run() }
+        access.prepareAction = {
+            // The install is claimed on the looper, but its actor continuation can already be cancelled.
+            owner.cancel()
+            access.looperQueue.rejectPosts = true
+            runCurrent() // Terminal abandon cannot dispatch onto the quitting looper.
+            assertTrue(owner.isCompleted)
+            assertFalse(coordinator.playerCleanupPending.value)
+            access.looperQueue.rejectPosts = false
+            access.failNextStop = true
+            access.failRemove = true
+            throw IOException("scripted late preparation failure")
+        }
+        val install = async { coordinator.setLiveTarget(TestCoordinatorLiveTarget()) }
+        runCurrent()
+        access.looperQueue.runAll() // Continue the claimed operation after terminal abandonment.
+        runCurrent()
+        install.await()
+        owner.join()
+
+        assertEquals(listOf("live"), access.playlistKinds)
+        assertTrue("remove-live" in access.operations, "The late rollback must reach failed item removal")
+        assertFalse(coordinator.playerCleanupPending.value)
+    }
+
+    @Test
+    fun `failed stop with successful removal clears pending on retry without stopping again`() = runTest {
+        val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
+        val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator()) { _, _ ->
+            RecordingAdmission.Completed(null)
+        }
+        val token = PlaybackTargetToken()
+        player.installLive(PlayerOperationTicket(), token, TestCoordinatorLiveTarget(), timeshiftControls = controls(token))
+        access.failNextStop = true
+        assertFalse(player.stop(PlayerOperationTicket()).playerAvailable)
+        assertTrue(player.playerCleanupPending.value)
+        assertTrue(access.playlistKinds.isEmpty())
+        access.operations.clear()
+
+        assertTrue(player.stop(PlayerOperationTicket()).playerAvailable)
+        assertFalse(player.playerCleanupPending.value)
+        assertTrue(access.operations.isEmpty(), "An already removed item does not require another stop")
+    }
+
+    @Test
+    fun `pending current item cleanup stops and removes only it while retaining a queued application item`() = runTest {
+        val faults = CleanupFaults()
+        val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true, cleanupFaults = faults)
+        val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator()) { _, _ ->
+            RecordingAdmission.Completed(null)
+        }
+        val token = PlaybackTargetToken()
+        player.installLive(PlayerOperationTicket(), token, TestCoordinatorLiveTarget(), timeshiftControls = controls(token))
+        access.addApplicationItem(moveToIt = false)
+        access.snapshot = PlaybackPlayerSnapshot(37.seconds, 100.seconds, Player.STATE_READY, failed = false)
+        faults.enabled = false
+        access.operations.clear()
+
+        assertTrue(player.stop(PlayerOperationTicket()).playerAvailable)
+        assertEquals(listOf("stop", "remove-live"), access.operations)
+        assertEquals(listOf("application"), access.playlistKinds)
+        assertEquals(Duration.ZERO, access.snapshot.position)
+        assertEquals(Player.STATE_IDLE, access.snapshot.playbackState)
+        assertFalse(player.playerCleanupPending.value)
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `run cancellation retries pending cleanup once then abandons it`(cleared: Boolean) = runTest {
+        val faults = CleanupFaults()
+        val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true, cleanupFaults = faults)
+        val events = PlaybackPlayerEventAccumulator()
+        val player = Media3PlaybackCoordinatorPlayer(access, events) { _, _ -> RecordingAdmission.Completed(null) }
+        val coordinator = TvheadendPlaybackCoordinator(player, events, DvrProgressPolicy(), {}, SystemPlaybackCoordinatorTimeSource)
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { coordinator.run() }
+        assertSame(PlaybackTargetResult.PLAYER_UNAVAILABLE, coordinator.setLiveTarget(TestCoordinatorLiveTarget()))
+        assertTrue(coordinator.playerCleanupPending.value)
+        faults.enabled = !cleared
+        access.operations.clear()
+
+        owner.cancel()
+        owner.join()
+
+        assertEquals(listOf("stop", "remove-live"), access.operations)
+        assertEquals(if (cleared) emptyList() else listOf("live"), access.playlistKinds)
+        assertFalse(coordinator.playerCleanupPending.value)
+    }
+
+    @ParameterizedTest
+    @CsvSource("false,false", "false,true", "true,false", "true,true")
+    fun `pending cleanup after failed install is retried by stop or the next target`(
+        recording: Boolean,
+        directInstall: Boolean,
+    ) = runTest {
+        val faults = CleanupFaults()
+        val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true, cleanupFaults = faults)
+        val events = PlaybackPlayerEventAccumulator()
+        val player = Media3PlaybackCoordinatorPlayer(access, events) { _, _ -> RecordingAdmission.Completed(null) }
+        val coordinator = TvheadendPlaybackCoordinator(player, events, DvrProgressPolicy(), {}, SystemPlaybackCoordinatorTimeSource)
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { coordinator.run() }
+        val target = TestCoordinatorRecordingTarget()
+        try {
+            val result = if (recording) coordinator.setRecordingTarget(target, RecordingPlaybackStart.START_OVER)
+            else coordinator.setLiveTarget(TestCoordinatorLiveTarget())
+            assertSame(PlaybackTargetResult.PLAYER_UNAVAILABLE, result)
+            assertTrue(coordinator.playerCleanupPending.value)
+            assertEquals(listOf(if (recording) "recording" else "live"), access.playlistKinds)
+
+            access.snapshot = PlaybackPlayerSnapshot(100.seconds, 100.seconds, Player.STATE_ENDED, failed = false)
+            access.deliver { it.onPlaybackStateChanged(Player.STATE_ENDED) }
+            runCurrent()
+            assertTrue(target.reports.isEmpty(), "Retired items cannot report progress or watched state")
+            faults.enabled = false
+            access.operations.clear()
+            if (!directInstall) {
+                assertSame(PlaybackStopResult.AlreadyStopped, coordinator.stop())
+                assertEquals(emptyList<String>(), access.playlistKinds)
+                assertFalse(coordinator.playerCleanupPending.value)
+            }
+            assertSame(PlaybackTargetResult.STARTED, coordinator.setLiveTarget(TestCoordinatorLiveTarget()))
+            assertEquals(listOf("stop", if (recording) "remove-recording" else "remove-live"), access.operations.take(2))
+            assertEquals(1, access.operations.count { it.startsWith("remove-") })
+            assertEquals(listOf("live"), access.playlistKinds)
+            assertFalse(coordinator.playerCleanupPending.value)
+            assertTrue(target.reports.isEmpty())
+        } finally {
+            faults.enabled = false
+            coordinator.shutdown(1.seconds)
+            owner.join()
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `pending cleanup preserves a current application item and its play intent`(replaced: Boolean) = runTest {
+        val faults = CleanupFaults()
+        val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true, cleanupFaults = faults)
+        val events = PlaybackPlayerEventAccumulator()
+        val player = Media3PlaybackCoordinatorPlayer(access, events) { _, _ -> RecordingAdmission.Completed(null) }
+        val coordinator = TvheadendPlaybackCoordinator(player, events, DvrProgressPolicy(), {}, SystemPlaybackCoordinatorTimeSource)
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { coordinator.run() }
+        try {
+            assertSame(PlaybackTargetResult.PLAYER_UNAVAILABLE, coordinator.setLiveTarget(TestCoordinatorLiveTarget()))
+            assertTrue(coordinator.playerCleanupPending.value)
+            if (replaced) access.replaceWithApplicationItem() else access.addApplicationItem(moveToIt = true)
+            val item = access.currentItem
+            val playing = PlaybackPlayerSnapshot(37.seconds, 100.seconds, Player.STATE_READY, failed = false)
+            access.snapshot = playing
+            access.playWhenReady = true
+            faults.enabled = false
+            access.operations.clear()
+
+            assertSame(PlaybackStopResult.AlreadyStopped, coordinator.stop())
+            assertEquals(listOf("application"), access.playlistKinds)
+            assertSame(item, access.currentItem)
+            assertEquals(playing, access.snapshot)
+            assertTrue(access.playWhenReady)
+            assertFalse("stop" in access.operations)
+            assertEquals(if (replaced) emptyList() else listOf("remove-live"), access.operations)
+            assertFalse(coordinator.playerCleanupPending.value)
+        } finally {
+            faults.enabled = false
+            coordinator.shutdown(1.seconds)
+            owner.join()
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `pending cleanup blocks source creation and stop reports persistent failure`(recording: Boolean) = runTest {
+        val faults = CleanupFaults()
+        val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true, cleanupFaults = faults)
+        val events = PlaybackPlayerEventAccumulator()
+        val player = Media3PlaybackCoordinatorPlayer(access, events) { _, _ -> RecordingAdmission.Completed(null) }
+        val coordinator = TvheadendPlaybackCoordinator(player, events, DvrProgressPolicy(), {}, SystemPlaybackCoordinatorTimeSource)
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { coordinator.run() }
+        try {
+            assertSame(PlaybackTargetResult.PLAYER_UNAVAILABLE, coordinator.setLiveTarget(TestCoordinatorLiveTarget()))
+            val item = access.currentItem
+            access.operations.clear()
+            val result = if (recording) coordinator.setRecordingTarget(TestCoordinatorRecordingTarget(), RecordingPlaybackStart.START_OVER)
+            else coordinator.setLiveTarget(TestCoordinatorLiveTarget())
+            assertSame(PlaybackTargetResult.PLAYER_UNAVAILABLE, result)
+            assertEquals(listOf("stop", "remove-live"), access.operations)
+            assertTrue(coordinator.stop() is PlaybackStopResult.PlayerUnavailable)
+            assertEquals(listOf("stop", "remove-live", "stop", "remove-live"), access.operations)
+            assertSame(item, access.currentItem)
+            assertTrue(coordinator.playerCleanupPending.value)
+        } finally {
+            faults.enabled = false
+            coordinator.shutdown(1.seconds)
+            owner.join()
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `shutdown retries pending cleanup once then forgets any remainder`(cleared: Boolean) = runTest {
+        val faults = CleanupFaults()
+        val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true, cleanupFaults = faults)
+        val events = PlaybackPlayerEventAccumulator()
+        val player = Media3PlaybackCoordinatorPlayer(access, events) { _, _ -> RecordingAdmission.Completed(null) }
+        val coordinator = TvheadendPlaybackCoordinator(player, events, DvrProgressPolicy(), {}, SystemPlaybackCoordinatorTimeSource)
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { coordinator.run() }
+        assertSame(PlaybackTargetResult.PLAYER_UNAVAILABLE, coordinator.setLiveTarget(TestCoordinatorLiveTarget()))
+        assertTrue(coordinator.playerCleanupPending.value)
+        faults.enabled = !cleared
+        access.operations.clear()
+
+        assertSame(
+            if (cleared) PlaybackShutdownResult.DRAINED else PlaybackShutdownResult.PLAYER_UNAVAILABLE,
+            coordinator.shutdown(1.seconds),
+        )
+        assertFalse(coordinator.playerCleanupPending.value)
+        owner.join()
+        assertEquals(listOf("stop", "remove-live"), access.operations)
+        assertEquals(if (cleared) emptyList() else listOf("live"), access.playlistKinds)
+        assertFalse(coordinator.playerCleanupPending.value)
+    }
+
     @ParameterizedTest
     @CsvSource("replaced,false", "mixed,false", "returned,false", "replaced,true", "mixed,true", "returned,true")
     fun `exhaustion after application departure leaves its player untouched`(departure: String, queuedFirst: Boolean) = runTest {
@@ -289,8 +584,9 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         val player = object : PlaybackCoordinatorPlayer by adapter {
             override suspend fun stop(
                 ticket: PlayerOperationTicket,
+                abandonPendingCleanup: Boolean,
                 retireOnlyIf: (() -> Boolean)?,
-            ): PlaybackPlayerStopResult = adapter.stop(ticket, retireOnlyIf?.let { predicate ->
+            ): PlaybackPlayerStopResult = adapter.stop(ticket, abandonPendingCleanup, retireOnlyIf?.let { predicate ->
                 {
                     if (failure == "predicate") error("scripted evaluation failure")
                     val admitted = predicate()
@@ -351,7 +647,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = ["stop", "remove", "listener", "recovery"])
+    @ValueSource(strings = ["stop", "remove", "remove retune", "listener", "recovery"])
     fun `exhaustion cleanup reports an app outcome independent of the period`(failure: String) = runTest {
         val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
         val events = PlaybackPlayerEventAccumulator()
@@ -370,14 +666,14 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             .also { it.bind(FakeTimeshiftSubscription(null)) }
         when (failure) {
             "stop" -> access.failNextStop = true
-            "remove" -> access.failRemove = true
+            "remove", "remove retune" -> access.failRemove = true
             "listener" -> access.failNextRemoveListener = true
             "recovery" -> access.failRecoveryClose = true
         }
         assertTrue(attachment.bufferExhausted())
         runCurrent()
 
-        val expected = if (failure == "stop" || failure == "remove") {
+        val expected = if (failure == "stop" || failure.startsWith("remove")) {
             PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED_PLAYER_CLEANUP_FAILED
         } else {
             PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED
@@ -386,13 +682,21 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         assertTrue("stop" in access.operations)
         assertTrue("remove-live" in access.operations)
         assertSame(LivePlaybackObservation.NoTarget, coordinator.livePlaybackObservation.value)
-        if (failure == "remove") {
+        if (failure.startsWith("remove")) {
             assertEquals(listOf("live"), access.playlistKinds)
+            assertTrue(coordinator.playerCleanupPending.value)
             access.failRemove = false
             access.operations.clear()
-            assertSame(PlaybackStopResult.AlreadyStopped, coordinator.stop())
-            assertEquals(listOf("live"), access.playlistKinds, "Stop cannot retry cleanup after retirement")
-            assertTrue(access.operations.isEmpty())
+            if (failure == "remove retune") {
+                assertSame(PlaybackTargetResult.STARTED, coordinator.setLiveTarget(TestCoordinatorLiveTarget()))
+                assertEquals(listOf("live"), access.playlistKinds)
+                assertEquals(listOf("stop", "remove-live", "create-live"), access.operations.take(3))
+            } else {
+                assertSame(PlaybackStopResult.AlreadyStopped, coordinator.stop())
+                assertEquals(emptyList<String>(), access.playlistKinds)
+                assertEquals(listOf("stop", "remove-live"), access.operations)
+            }
+            assertFalse(coordinator.playerCleanupPending.value)
         }
         coordinator.shutdown(1.seconds)
         owner.join()
@@ -2482,14 +2786,19 @@ internal class Media3PlaybackCoordinatorPlayerTest {
     }
 }
 
+private class CleanupFaults(var enabled: Boolean = true)
+
 private class FakeCoordinatorPlaybackAccess(
     private val failSetMediaSource: Boolean = false,
     looperInitiallyCurrent: Boolean = false,
+    private val cleanupFaults: CleanupFaults? = null,
+    private val recoveryScheduler: RecoveryScheduler? = null,
 ) : CoordinatorPlaybackAccess {
     val looperQueue = TestCoordinatorLooper(looperInitiallyCurrent)
     override val looper: CoordinatorLooper = looperQueue
     val operations = mutableListOf<String>()
     var snapshot = PlaybackPlayerSnapshot(Duration.ZERO, null, Player.STATE_IDLE, failed = false)
+    var playWhenReady = false
     private val listeners = mutableListOf<Player.Listener>()
     val applicationListener: Player.Listener?
         get() = listeners.lastOrNull()
@@ -2500,6 +2809,7 @@ private class FakeCoordinatorPlaybackAccess(
     private val playlist = mutableListOf<Any>()
     private var currentIndex = 0
     var recoveryCallback: ((PlaybackRecoveryReason) -> Unit)? = null
+    var recoveryBuffering: (() -> Unit)? = null
     var recoveryTargetCurrent: (() -> Boolean)? = null
     var growingFinalEndCallback: (() -> Unit)? = null
     var growingLease: GrowingRecordingFileLease? = null
@@ -2589,16 +2899,26 @@ private class FakeCoordinatorPlaybackAccess(
         operations += "create-recovery"
         recoveryCallback = onRecoveryRequired
         recoveryTargetCurrent = isTargetCurrent
+        val recovery = recoveryScheduler?.let { scheduler ->
+            PlaybackRecoveryStateMachine(
+                PlaybackRecoveryPolicy(), scheduler, hasSelectedAudio = { true }, isAudioDisabled = { false },
+                setAudioDisabled = { operations += "audio-disabled:$it" },
+                onRecoveryRequired = onRecoveryRequired, isTargetCurrent = isTargetCurrent,
+            )
+        }
+        recoveryBuffering = { recovery?.onPlaybackStateChanged(Player.STATE_BUFFERING) }
         return object : CoordinatorPlaybackRecovery {
             override fun beginPlaybackTarget() {
                 requireApplicationLooper()
                 operations += "begin-recovery"
+                recovery?.beginPlaybackTarget()
             }
 
             override fun close() {
                 requireApplicationLooper()
                 operations += "close-recovery"
                 if (failRecoveryClose) throw IOException("scripted recovery close failure")
+                recovery?.close()
             }
         }
     }
@@ -2818,24 +3138,27 @@ private class FakeCoordinatorPlaybackAccess(
     override fun prepare() {
         requireApplicationLooper()
         operations += "prepare"
+        if (cleanupFaults?.enabled == true) throw IOException("scripted preparation failure")
         prepareAction?.invoke()
     }
 
     override fun stop() {
         requireApplicationLooper()
         operations += "stop"
+        if (cleanupFaults?.enabled == true) throw IOException("scripted stop failure")
         stopAction?.invoke()
         if (failNextStop) {
             failNextStop = false
             throw IOException("scripted stop failure")
         }
+        snapshot = snapshot.copy(position = Duration.ZERO, playbackState = Player.STATE_IDLE)
     }
 
     override fun removeMediaItems(source: CoordinatorMediaSource) {
         requireApplicationLooper()
         val index = playlist.indexOfFirst { it === source }.takeIf { it >= 0 } ?: return
         operations += "remove-${kindOf(source)}"
-        if (failRemove) throw IOException("scripted removal failure")
+        if (failRemove || cleanupFaults?.enabled == true) throw IOException("scripted removal failure")
         playlist.removeAt(index)
         if (index < currentIndex || currentIndex > playlist.lastIndex) currentIndex = maxOf(0, currentIndex - 1)
         notifyPlaylistChanged()

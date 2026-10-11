@@ -16,6 +16,9 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 internal enum class PlaybackPlayerInstallStatus {
     STARTED,
@@ -82,6 +85,8 @@ internal sealed interface RecordingAdmission {
 }
 
 internal interface PlaybackCoordinatorPlayer {
+    val playerCleanupPending: StateFlow<Boolean>
+
     suspend fun installLive(
         ticket: PlayerOperationTicket,
         token: PlaybackTargetToken,
@@ -102,9 +107,11 @@ internal interface PlaybackCoordinatorPlayer {
      * only while the installed item still describes the target, without reading a snapshot first.
      * A departed item or a false check retires nothing; exceptions from looper operations
      * report unavailability. Caller cancellation is handled by the operation ticket.
+     * Terminal shutdown uses [abandonPendingCleanup] to forget any unconfirmed cleanup after this attempt.
      */
     suspend fun stop(
         ticket: PlayerOperationTicket,
+        abandonPendingCleanup: Boolean = false,
         retireOnlyIf: (() -> Boolean)? = null,
     ): PlaybackPlayerStopResult
 
@@ -190,6 +197,12 @@ internal class Media3PlaybackCoordinatorPlayer(
 ) : PlaybackCoordinatorPlayer {
     private val executor = PlayerLooperExecutor(access.looper)
     private var active: InstalledPlayerTarget? = null
+    // Source identity only: retired targets must never regain observation or reporting ownership.
+    private val cleanupLock = Any()
+    private var cleanupAbandoned = false
+    private var pendingCleanup: List<CoordinatorMediaSource> = emptyList()
+    private val mutablePlayerCleanupPending = MutableStateFlow(false)
+    override val playerCleanupPending: StateFlow<Boolean> = mutablePlayerCleanupPending.asStateFlow()
 
     override suspend fun installLive(
         ticket: PlayerOperationTicket,
@@ -230,28 +243,35 @@ internal class Media3PlaybackCoordinatorPlayer(
 
     override suspend fun stop(
         ticket: PlayerOperationTicket,
+        abandonPendingCleanup: Boolean,
         retireOnlyIf: (() -> Boolean)?,
     ): PlaybackPlayerStopResult = when (
         val operation = executor.execute(ticket) {
+            // Pending cleanup implies no active target; retry before admitting any target retirement.
+            val cleanup = retryPendingCleanupOnLooper()
             val admitted = retireOnlyIf == null ||
                 (active?.let { describesTarget(it) && retireOnlyIf() } == true)
             if (!admitted) {
-                PlaybackPlayerStopResult()
+                PlaybackPlayerStopResult(playerAvailable = cleanup.available)
             } else {
                 val retirement = retireActiveOnLooper()
                 PlaybackPlayerStopResult(
-                    playerAvailable = retirement.playerAvailable,
+                    playerAvailable = cleanup.available && retirement.playerAvailable,
                     retiredTarget = retirement.retiredTarget,
                     retiredRecording = retirement.retiredRecording,
-                    playerStoppedAndCleared = retirement.playerStoppedAndCleared,
+                    playerStoppedAndCleared = cleanup.available && retirement.playerStoppedAndCleared,
                     retiredAfterDeparture = retirement.retiredAfterDeparture,
                 )
             }
         }
     ) {
-        is LooperOperationResult.Success -> operation.value
+        is LooperOperationResult.Success -> operation.value.also {
+            if (abandonPendingCleanup) forgetPendingCleanup()
+        }
         LooperOperationResult.Cancelled -> PlaybackPlayerStopResult(cancelled = true)
-        LooperOperationResult.Unavailable -> PlaybackPlayerStopResult(playerAvailable = false)
+        LooperOperationResult.Unavailable -> PlaybackPlayerStopResult(playerAvailable = false).also {
+            if (abandonPendingCleanup) forgetPendingCleanup()
+        }
     }
 
     override suspend fun snapshot(token: PlaybackTargetToken): PlaybackPlayerSnapshot? {
@@ -270,7 +290,14 @@ internal class Media3PlaybackCoordinatorPlayer(
     }
 
     override suspend fun abandon() {
-        executor.execute(PlayerOperationTicket()) { retireActiveOnLooper() }
+        try {
+            executor.execute(PlayerOperationTicket()) {
+                retryPendingCleanupOnLooper()
+                retireActiveOnLooper()
+            }
+        } finally {
+            forgetPendingCleanup()
+        }
     }
 
     private fun installLiveOnLooper(
@@ -301,7 +328,7 @@ internal class Media3PlaybackCoordinatorPlayer(
             installed.listenerAttached = true
             access.addListener(listener)
             installed.recovery = access.createRecovery(
-                isTargetCurrent = { describesTarget(installed) },
+                isTargetCurrent = { installed.token.isActive() && describesTarget(installed) },
             ) { reason -> publishRecovery(token, reason) }
             installed.recovery?.beginPlaybackTarget()
             installed.sourceInstalled = true
@@ -626,6 +653,11 @@ internal class Media3PlaybackCoordinatorPlayer(
     private inline fun installAfterApplicationReplacementOnLooper(
         install: () -> PlaybackPlayerInstallResult,
     ): PlaybackPlayerInstallResult {
+        // Pending cleanup implies no active target: a new installation cannot pass this barrier
+        // until all retired sources are cleaned. Failed rollback retires both candidate targets.
+        if (!retryPendingCleanupOnLooper().available) {
+            return PlaybackPlayerInstallResult(PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE)
+        }
         val replaced = retireApplicationReplacedOnLooper() ?: return install()
         if (!replaced.playerAvailable) return replaced.failedInstall()
         return install().copy(retiredTarget = true, retiredRecording = replaced.retiredRecording)
@@ -826,7 +858,9 @@ internal class Media3PlaybackCoordinatorPlayer(
                 playerAvailable = false
             }
         }
-        val removal = if (clearPlayer) removeOwnItems(listOfNotNull(installed, alsoInstalled)) else null
+        val removal = if (clearPlayer) removeOwnItems(
+            listOfNotNull(installed, alsoInstalled).filter { it.sourceInstalled }.map { it.source },
+        ) else null
         val playerStoppedAndCleared = removal?.available == true
         if (clearPlayer && !playerStoppedAndCleared) playerAvailable = false
         val retirementSnapshot = terminal?.snapshot ?: snapshot ?: installed.lastOwnedSnapshot
@@ -862,13 +896,12 @@ internal class Media3PlaybackCoordinatorPlayer(
      * listener may react to the stop by setting or adding its own items, which must survive.
      * Reports cleanup availability separately from whether stopping the Player was required.
      */
-    private fun removeOwnItems(owners: List<InstalledPlayerTarget>): PlayerItemRemoval {
-        val installedOwners = owners.filter { it.sourceInstalled }
-        if (installedOwners.isEmpty()) return PlayerItemRemoval(available = true, playerStopped = false)
+    private fun removeOwnItems(owners: List<CoordinatorMediaSource>): PlayerItemRemoval {
+        if (owners.isEmpty()) return PlayerItemRemoval(available = true, playerStopped = false)
         var available = true
         var stopped = false
         val current = try {
-            installedOwners.any(::playsInstalledSource)
+            owners.any(access::isCurrent)
         } catch (_: Exception) {
             available = false
             false
@@ -881,14 +914,38 @@ internal class Media3PlaybackCoordinatorPlayer(
                 available = false
             }
         }
-        installedOwners.forEach { owner ->
+        val stopConfirmed = available
+        owners.forEach { source ->
+            var removed = false
             try {
-                access.removeMediaItems(owner.source)
+                access.removeMediaItems(source)
+                removed = true
             } catch (_: Exception) {
                 available = false
             }
+            synchronized(cleanupLock) {
+                if (!cleanupAbandoned) {
+                    pendingCleanup = pendingCleanup.filterNot { it === source }
+                    if (!stopConfirmed || !removed) pendingCleanup = pendingCleanup + source
+                    mutablePlayerCleanupPending.value = pendingCleanup.isNotEmpty()
+                }
+            }
         }
         return PlayerItemRemoval(available, stopped)
+    }
+
+    private fun retryPendingCleanupOnLooper(): PlayerItemRemoval {
+        access.requireApplicationLooper()
+        return removeOwnItems(synchronized(cleanupLock) { pendingCleanup })
+    }
+
+    /** Fences late writes from a claimed operation when cancellation or failed dispatch cannot join it. */
+    private fun forgetPendingCleanup() {
+        synchronized(cleanupLock) {
+            cleanupAbandoned = true
+            pendingCleanup = emptyList()
+            mutablePlayerCleanupPending.value = false
+        }
     }
 
     private data class PlayerItemRemoval(val available: Boolean, val playerStopped: Boolean)

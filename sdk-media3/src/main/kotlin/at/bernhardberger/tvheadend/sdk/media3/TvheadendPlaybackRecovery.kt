@@ -92,15 +92,15 @@ public enum class PlaybackRecoveryReason {
     /**
      * A live target exhausted its bounded queues and was retired, but stopping the player or
      * removing its TVHeadend item could not be confirmed. Buffer release is not guaranteed.
-     * Only [TvheadendPlaybackCoordinator] reports this. The target is already retired and
-     * `stop()` returns [PlaybackStopResult.AlreadyStopped] without retrying item removal. The period
+     * Only [TvheadendPlaybackCoordinator] reports this. The target is already retired; cleanup is
+     * pending and retried by [TvheadendPlaybackCoordinator.stop] or the next target installation. The period
      * fails and server delivery ends without another event (`ConsumerFailed` or `Closed`), even if
-     * the application never reconciles the player. If the leftover TVHeadend item is still current,
+     * cleanup remains pending. If the leftover TVHeadend item is still current,
      * the player may also report "Live sample buffer limit reached" as a player error; it needs no
-     * handling beyond this callback. In this retired case the application must reconcile its player
-     * and remove any remaining TVHeadend item before retuning. Also reconcile after
-     * [PlaybackStopResult.PlayerUnavailable] or [PlaybackTargetResult.PLAYER_UNAVAILABLE]; none of
-     * these results confirms item removal.
+     * handling beyond this callback. Observe [TvheadendPlaybackCoordinator.playerCleanupPending]
+     * and retry stop or installation once the Player fault clears. The same applies after
+     * [PlaybackStopResult.PlayerUnavailable] or [PlaybackTargetResult.PLAYER_UNAVAILABLE].
+     * Applications must not infer coordinator item ownership or remove those items themselves.
      */
     LIVE_BUFFER_EXHAUSTED_PLAYER_CLEANUP_FAILED,
 }
@@ -122,11 +122,12 @@ public class TvheadendPlaybackRecovery internal constructor(
     policy: PlaybackRecoveryPolicy,
     onRecoveryRequired: (PlaybackRecoveryReason) -> Unit,
     isTargetCurrent: () -> Boolean = { true },
+    scheduler: RecoveryScheduler? = null,
 ) : AutoCloseable {
     private val handler = Handler(player.applicationLooper)
     private val stateMachine = PlaybackRecoveryStateMachine(
         policy = policy,
-        scheduler = HandlerRecoveryScheduler(handler),
+        scheduler = scheduler ?: HandlerRecoveryScheduler(handler),
         hasSelectedAudio = { player.currentTracks.isTypeSelected(C.TRACK_TYPE_AUDIO) },
         isAudioDisabled = { C.TRACK_TYPE_AUDIO in player.trackSelectionParameters.disabledTrackTypes },
         setAudioDisabled = { disabled ->
@@ -183,8 +184,11 @@ public class TvheadendPlaybackRecovery internal constructor(
         requirePlayerLooper()
         if (closed) return
         closed = true
-        player.removeListener(listener)
-        stateMachine.close()
+        try {
+            player.removeListener(listener)
+        } finally {
+            stateMachine.close()
+        }
     }
 
     private fun requirePlayerLooper() {

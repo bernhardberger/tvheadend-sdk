@@ -710,19 +710,29 @@ of the following distinct reasons. Neither case guarantees buffer release.
   coordinator's `stop()` or `setLiveTarget()` to retry retirement. Subscription
   closure and a period error are not guaranteed.
 - **`LIVE_BUFFER_EXHAUSTED_PLAYER_CLEANUP_FAILED`: retirement completed with incomplete Player cleanup.** The target is already
-  retired and `stop()` returns `PlaybackStopResult.AlreadyStopped`; it does not
-  retry item removal. The period fails and server delivery ends without another
-  event (`ConsumerFailed` or `Closed`), even if the application never reconciles
-  the Player. If the leftover TVHeadend item is still current, the Player may also
+  retired, with cleanup pending. `stop()` or the next `setLiveTarget()` /
+  `setRecordingTarget()` retries cleanup. The period fails and server delivery ends without another
+  event (`ConsumerFailed` or `Closed`), even while cleanup remains pending.
+  If the leftover TVHeadend item is still current, the Player may also
   report "Live sample buffer limit reached" as a player error; it needs no
-  handling beyond the callback. In this retired case the application must
-  reconcile its Player itself and remove any remaining TVHeadend item before
-  retuning.
+  handling beyond the callback.
 
-Also reconcile after `PlaybackStopResult.PlayerUnavailable` or
-`PlaybackTargetResult.PLAYER_UNAVAILABLE`; neither those results nor
-`AlreadyStopped` confirm that the item was removed. Use the callback to
-reconcile rather than relying on a player error. Ancillary cleanup failures
+Observe `playerCleanupPending: StateFlow<Boolean>` after these callbacks,
+`PlaybackStopResult.PlayerUnavailable`, or `PlaybackTargetResult.PLAYER_UNAVAILABLE`.
+When the transient Player fault clears, call `stop()` or simply retry either target setter.
+The SDK retains exact source references, removes only its own items, and stops the Player
+only when one of those items is current. Applications must not infer ownership from media IDs,
+URIs, or the current item, and must not reconcile coordinator items themselves.
+If cleanup still fails, installation returns `PLAYER_UNAVAILABLE` without creating or setting a
+new source, and `stop()` returns `PlayerUnavailable`. `AlreadyStopped` means no target is
+installed and no coordinator item remains to clean up. Pending items never regain progress,
+watched-reporting, error, or recovery ownership. `shutdown()` retries pending cleanup once,
+then abandons unconfirmed items and resets `playerCleanupPending` to false. Unconfirmed cleanup
+returns `PlaybackShutdownResult.PLAYER_UNAVAILABLE`, even with no target installed. Cancellation
+of `run()` also attempts cleanup once before abandoning any remainder and resetting the flag.
+After shutdown or run cancellation, no later retry is possible and the coordinator no longer owns
+any items: the application may clear or release its Player. Releasing it remains the normal next step.
+Ancillary cleanup failures
 (such as listener removal) do not change `LIVE_BUFFER_EXHAUSTED` when stopping
 and item removal both succeeded. A coordinator whose run is cancelled while an
 exhaustion is still pending fails that period, so the Player can report

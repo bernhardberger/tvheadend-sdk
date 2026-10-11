@@ -187,6 +187,11 @@ public class PlaybackTargetResult private constructor(
             PlaybackOutcomeCategory.UNSUPPORTED,
         )
 
+        /**
+         * Player work could not be confirmed. Any leftover coordinator item is retained for SDK-owned
+         * cleanup; observe [TvheadendPlaybackCoordinator.playerCleanupPending] and retry stop or installation
+         * once the Player fault clears. Applications must not infer item ownership or remove coordinator items.
+         */
         @JvmField
         public val PLAYER_UNAVAILABLE: PlaybackTargetResult = transient("PLAYER_UNAVAILABLE")
 
@@ -285,7 +290,7 @@ public sealed interface PlaybackStopResult {
         public val finalSubscriptionIssue: SubscriptionIssue?,
     ) : PlaybackStopResult
 
-    /** No target was installed. */
+    /** No target is installed and no coordinator item remains to clean up. */
     public data object AlreadyStopped : PlaybackStopResult
 
     /** The coordinator has not been launched. */
@@ -301,6 +306,8 @@ public sealed interface PlaybackStopResult {
      * that case [finalSubscriptionIssue] is the last [SubscriptionIssue] published for the retired
      * live target, as for [Stopped]. It is null when no live target was retired, for a recording
      * target, or when no issue was current for the retired live target.
+     * Any unconfirmed item cleanup remains SDK-owned: observe
+     * [TvheadendPlaybackCoordinator.playerCleanupPending] and retry stop or target installation.
      */
     public data class PlayerUnavailable(
         public val finalSubscriptionIssue: SubscriptionIssue?,
@@ -416,6 +423,17 @@ public class TvheadendPlaybackCoordinator internal constructor(
     /** Latest coherent observation for the active live target, or [LivePlaybackObservation.NoTarget]. */
     public val livePlaybackObservation: StateFlow<LivePlaybackObservation> =
         mutableLivePlaybackObservation.asStateFlow()
+
+    /**
+     * True while a retired coordinator source still needs confirmed Player cleanup. Retired items
+     * never regain reporting or recovery ownership. Once a transient Player fault clears, call [stop]
+     * or retry [setLiveTarget] / [setRecordingTarget]; the SDK removes only its own items and stops the
+     * Player only if one is current. Applications must not reconcile coordinator items themselves.
+     * False after confirmed cleanup, terminal shutdown, or cancellation of [run]. Shutdown and run
+     * cancellation attempt cleanup once, then abandon any remainder. The coordinator no longer owns
+     * those items; the application may clear or release its Player after termination.
+     */
+    public val playerCleanupPending: StateFlow<Boolean> = player.playerCleanupPending
 
     /**
      * Launches this one-shot coordinator immediately as a child of [scope].
@@ -687,6 +705,9 @@ public class TvheadendPlaybackCoordinator internal constructor(
      * supplies closing progress without marking it watched, unless a terminal was already captured
      * or reported. No owned snapshot means no report. While ownership has never been lost and its
      * item is still current, an orderly stop can mark it watched according to the configured progress policy.
+     * Also retries [playerCleanupPending] items, even without an installed target. Unconfirmed cleanup
+     * returns [PlaybackStopResult.PlayerUnavailable]; confirmed cleanup without a target returns
+     * [PlaybackStopResult.AlreadyStopped].
      */
     public suspend fun stop(): PlaybackStopResult {
         val reply = CompletableDeferred<PlaybackStopResult>()
@@ -699,6 +720,11 @@ public class TvheadendPlaybackCoordinator internal constructor(
      *
      * After this returns, join [run], then shut down the session and release the player. The timeout
      * must be finite, non-negative, and no greater than ten seconds.
+     * Retries pending Player cleanup once, then abandons anything unconfirmed and resets
+     * [playerCleanupPending] to false. Unconfirmed cleanup returns [PlaybackShutdownResult.PLAYER_UNAVAILABLE]
+     * even with no target installed. This coordinator cannot retry after shutdown or [run] cancellation
+     * and no longer owns any items. The application may then clear or release its Player; releasing it
+     * remains the normal next step.
      */
     public suspend fun shutdown(drainTimeout: Duration): PlaybackShutdownResult {
         validatePlaybackShutdownDrainTimeout(drainTimeout)
@@ -1196,7 +1222,7 @@ private class CoordinatorActor(
             false
         }
         is CoordinatorCommand.Shutdown -> {
-            val result = player.stop(command.ticket)
+            val result = player.stop(command.ticket, abandonPendingCleanup = true)
             if (result.cancelled) return false
             onShutdownClaimed()
             applyRetirement(result.retiredTarget, result.retiredRecording)

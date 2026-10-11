@@ -6,8 +6,26 @@
 
 - `SubscriptionDiagnostics.consumerDrainTimedOut` reports that teardown
   cancelled consumer code still running when a teardown grace period expired.
+- `TvheadendPlaybackCoordinator.playerCleanupPending` reports coordinator items
+  whose Player stop or removal could not be confirmed. The coordinator keeps
+  their exact sources and retries their cleanup in `stop()`, `setLiveTarget()`,
+  `setRecordingTarget()` and live-buffer retirement, and once more when
+  `shutdown()` runs or `run()` is cancelled before abandoning it. It
+  removes only its own items and stops the Player only while one of them is
+  current, so application items keep their position and play intent. Pending
+  items never report DVR progress, errors or recovery.
 
 ### Changed
+
+- **BREAKING:** applications no longer reconcile the Player themselves after
+  `PlaybackTargetResult.PLAYER_UNAVAILABLE`, `PlaybackStopResult.PlayerUnavailable`
+  or `LIVE_BUFFER_EXHAUSTED_PLAYER_CLEANUP_FAILED`; they retry `stop()` or the
+  target once the fault clears, and the coordinator cleans up its own items.
+  While cleanup keeps failing, installation returns `PLAYER_UNAVAILABLE`
+  without creating a source, `stop()` returns `PlayerUnavailable` and
+  `shutdown()` returns `PLAYER_UNAVAILABLE`, even with no target installed.
+  `AlreadyStopped` means no target and no pending cleanup. See
+  [pausing live TV without timeshift](docs/consumer-guide.md#pausing-live-tv-without-timeshift).
 
 - The `api` dependency `kotlinx-coroutines-core` moves from 1.10.2 to 1.11.0, so
   consumers resolve 1.11.0 transitively. The build now uses Gradle 9.8.1 and
@@ -72,8 +90,8 @@
   `LIVE_BUFFER_EXHAUSTED_RETIREMENT_FAILED` reports that retirement could not
   start, so the target may still be active and `stop()` or `setLiveTarget()`
   retries it. `LIVE_BUFFER_EXHAUSTED_PLAYER_CLEANUP_FAILED` reports a retired
-  target whose Player stop or item removal could not be confirmed; the
-  application reconciles its Player before retuning. If the application has
+  target whose Player stop or item removal could not be confirmed; the SDK
+  keeps that cleanup pending (see `playerCleanupPending`). If the application has
   already left the item, the period fails and the subscription closes without a
   recovery reason. See
   [pausing live TV without timeshift](docs/consumer-guide.md#pausing-live-tv-without-timeshift).
