@@ -6,6 +6,7 @@
 package at.bernhardberger.tvheadend.sdk.core
 
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
+import at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
@@ -18,6 +19,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.StateFlow
+import kotlin.time.Duration
 
 /** Marks narrowly scoped construction APIs intended only for fake-backed tests. */
 @RequiresOptIn(
@@ -64,7 +66,7 @@ public class SessionGenerationTestAuthority(
         }
     }
 }
-/** Validated factories for otherwise opaque playback bindings used by session fakes. */
+/** Test-only factories for otherwise opaque playback bindings and admission values used by session fakes. */
 @TvheadendTestingApi
 public object TvheadendTestResultFactory {
     /** Creates an authority-only binding whose subscription opens return NotReady. */
@@ -143,6 +145,22 @@ public object TvheadendTestResultFactory {
         recordingId,
         cutpoints,
     )
+
+    /** Creates a completed-recording admission with scripted resume and progress capability. */
+    @JvmStatic
+    public fun completedRecordingAdmission(
+        resumePosition: Duration?,
+        progressCapability: RecordingProgressCapability,
+    ): RecordingPlaybackAdmission.Completed = RecordingPlaybackAdmission.Completed(resumePosition, progressCapability)
+
+    /** Creates a growing-recording admission with scripted resume and progress capability. */
+    @ExperimentalTvheadendApi
+    @JvmStatic
+    public fun growingRecordingAdmission(
+        resumePosition: Duration?,
+        progressCapability: RecordingProgressCapability,
+    ): RecordingPlaybackAdmission.Growing = RecordingPlaybackAdmission.Growing(resumePosition, progressCapability)
+
     private fun boundRecordingPlayback(
         session: TvheadendSession,
         currentSession: CurrentSessionObservation,

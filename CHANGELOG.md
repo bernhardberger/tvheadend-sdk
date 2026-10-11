@@ -8,6 +8,11 @@ Unreleased; development target.
 
 - `DvrEntry.folder` provides unmodifiable storage-root-relative folder components
   for display and archive grouping, without exposing file-system paths.
+- `DvrEntry.create` accepts a validated, defensively copied `folder` for
+  application-built entries without server paths.
+- `TvheadendTestResultFactory.completedRecordingAdmission` and
+  `growingRecordingAdmission` create test-only admission values; the growing
+  helper also requires `ExperimentalTvheadendApi` opt-in.
 - Shared open `TvheadendFailure` with transient, fresh-observation, access and
   unsupported predicates; transient does not authorize automatic retries. See
   the [0.26 API shape](docs/api-shape-0.26.md) for the migration design.

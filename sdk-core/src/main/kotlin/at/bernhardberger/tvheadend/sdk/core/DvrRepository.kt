@@ -206,17 +206,20 @@ public data class DvrEntry private constructor(
     public val streamErrors: Long?,
     public val dataErrors: Long?,
     public val dataSizeBytes: Long?,
+    internal val suppliedFolder: List<String>?,
 ) {
     /**
      * Common folder components relative to the server's DVR storage root, for display and grouping only.
      * This is not a file-system path. An empty list denotes the storage root.
      *
      * Uses the common directory prefix of all files, or the entry's directory when there are no files.
+     * Without files or an entry path, uses the folder supplied to [create].
      * Returns `null` if a required path is unknown or any component is `.` or `..`.
      * The returned list is unmodifiable. Treat its contents as private metadata, not diagnostics.
      */
     public val folder: List<String>?
         get() {
+            if (files.isNullOrEmpty() && path == null) return suppliedFolder
             val paths = if (files.isNullOrEmpty()) listOf(path) else files.map { it.path }
             val directories = paths.map { filePath ->
                 val components = filePath?.split('/')?.filter { it.isNotEmpty() } ?: return null
@@ -232,7 +235,11 @@ public data class DvrEntry private constructor(
     override fun toString(): String = "DvrEntry(<redacted>)"
 
     public companion object {
-        /** Creates an entry while validating wire domains and defensively copying files. */
+        /**
+         * Creates an entry while validating wire domains and defensively copying files and [folder].
+         * [folder] is optional display/grouping data used only without server paths; `null` means unknown.
+         * Empty, `.` and `..` components are rejected; an empty list denotes the storage root.
+         */
         public fun create(
             id: DvrEntryId,
             uuid: String? = null,
@@ -270,6 +277,7 @@ public data class DvrEntry private constructor(
             streamErrors: Long? = null,
             dataErrors: Long? = null,
             dataSizeBytes: Long? = null,
+            folder: List<String>? = null,
         ): DvrEntry = create(
             id = id,
             uuid = uuid,
@@ -310,6 +318,12 @@ public data class DvrEntry private constructor(
             owner = null,
             creator = null,
             path = null,
+        ).copy(
+            suppliedFolder = folder?.toDvrImmutableList()?.also { components ->
+                require(components.none { it.isEmpty() || it == "." || it == ".." }) {
+                    "DvrEntry folder contains invalid components"
+                }
+            },
         )
 
         internal fun create(
@@ -407,6 +421,7 @@ public data class DvrEntry private constructor(
                 streamErrors = streamErrors,
                 dataErrors = dataErrors,
                 dataSizeBytes = dataSizeBytes,
+                suppliedFolder = null,
             )
         }
     }

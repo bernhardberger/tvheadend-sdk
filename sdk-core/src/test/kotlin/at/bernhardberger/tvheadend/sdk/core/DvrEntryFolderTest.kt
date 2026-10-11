@@ -6,10 +6,65 @@ import at.bernhardberger.tvheadend.sdk.core.metadata.ReducedDvrEntry
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 
 internal class DvrEntryFolderTest {
+    @Test
+    fun `application folder is defensively copied and unmodifiable`() {
+        val supplied = mutableListOf("archive", "series")
+        val entry = DvrEntry.create(DvrEntryId(1), folder = supplied)
+        supplied.clear()
+
+        assertEquals(listOf("archive", "series"), entry.folder)
+        assertThrows(UnsupportedOperationException::class.java) {
+            (entry.folder as MutableList<String>).add("extra")
+        }
+        val root = DvrEntry.create(DvrEntryId(1), folder = emptyList())
+        assertEquals(emptyList<String>(), root.folder)
+        assertThrows(UnsupportedOperationException::class.java) {
+            (root.folder as MutableList<String>).add("extra")
+        }
+        assertNull(DvrEntry.create(DvrEntryId(1)).folder)
+    }
+
+    @Test
+    fun `invalid application folder components fail with a fixed redacted message`() {
+        listOf("", ".", "..").forEach { invalid ->
+            val failure = assertThrows(IllegalArgumentException::class.java) {
+                DvrEntry.create(DvrEntryId(1), folder = listOf("private-folder-marker", invalid))
+            }
+            assertEquals("DvrEntry folder contains invalid components", failure.message)
+            assertFalse(failure.message.orEmpty().contains("private-folder-marker"))
+        }
+    }
+
+    @Test
+    fun `server file paths take precedence over an application folder including unknown derivations`() {
+        listOf("/server-folder/one.ts", "/one.ts", "/server-folder/../one.ts", null).forEach { path ->
+            val serverEntry = entry(listOf(path))
+            val applicationEntry = DvrEntry.create(
+                DvrEntryId(1), files = serverEntry.files, folder = listOf("application-folder"),
+            )
+            assertEquals(serverEntry.folder, applicationEntry.folder)
+        }
+    }
+
+    @Test
+    fun `application folder participates in value equality without appearing in diagnostics`() {
+        val entry = DvrEntry.create(DvrEntryId(1), folder = listOf("private-folder-marker"))
+        val equal = DvrEntry.create(DvrEntryId(1), folder = mutableListOf("private-folder-marker"))
+
+        assertEquals(entry, equal)
+        assertEquals(entry.hashCode(), equal.hashCode())
+        assertNotEquals(entry, DvrEntry.create(DvrEntryId(1), folder = listOf("other-folder")))
+        assertNotEquals(entry, DvrEntry.create(DvrEntryId(1)))
+        assertNotEquals(DvrEntry.create(DvrEntryId(1), folder = emptyList()), DvrEntry.create(DvrEntryId(1)))
+        assertEquals("DvrEntry(<redacted>)", entry.toString())
+        assertFalse(listOf(entry).toString().contains("private-folder-marker"))
+    }
+
     @Test
     fun `single file supplies directory components instead of the entry path`() {
         val entry = entry(listOf("/archive/series/episode.ts"), path = "/other/recording.ts")
