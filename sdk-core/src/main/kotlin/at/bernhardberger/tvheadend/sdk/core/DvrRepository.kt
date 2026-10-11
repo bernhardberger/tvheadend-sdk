@@ -207,6 +207,28 @@ public data class DvrEntry private constructor(
     public val dataErrors: Long?,
     public val dataSizeBytes: Long?,
 ) {
+    /**
+     * Common folder components relative to the server's DVR storage root, for display and grouping only.
+     * This is not a file-system path. An empty list denotes the storage root.
+     *
+     * Uses the common directory prefix of all files, or the entry's directory when there are no files.
+     * Returns `null` if a required path is unknown or any component is `.` or `..`.
+     * The returned list is unmodifiable. Treat its contents as private metadata, not diagnostics.
+     */
+    public val folder: List<String>?
+        get() {
+            val paths = if (files.isNullOrEmpty()) listOf(path) else files.map { it.path }
+            val directories = paths.map { filePath ->
+                val components = filePath?.split('/')?.filter { it.isNotEmpty() } ?: return null
+                if (components.any { it == "." || it == ".." }) return null
+                components.dropLast(1)
+            }
+            val common = directories.reduce { prefix, directory ->
+                prefix.zip(directory).takeWhile { (left, right) -> left == right }.map { it.first }
+            }
+            return common.toDvrImmutableList()
+        }
+
     override fun toString(): String = "DvrEntry(<redacted>)"
 
     public companion object {

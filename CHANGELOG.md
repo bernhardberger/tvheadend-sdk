@@ -6,6 +6,8 @@ Unreleased; development target.
 
 ### Added
 
+- `DvrEntry.folder` provides unmodifiable storage-root-relative folder components
+  for display and archive grouping, without exposing file-system paths.
 - Shared open `TvheadendFailure` with transient, fresh-observation, access and
   unsupported predicates; transient does not authorize automatic retries. See
   the [0.26 API shape](docs/api-shape-0.26.md) for the migration design.
@@ -65,7 +67,8 @@ Unreleased; development target.
 - **BREAKING:** DVR `owner`, `creator` and file `path` are no longer public or
   accepted by `DvrEntry.create`, `AutorecRule.create` and `TimerecRule.create`.
   Drop those arguments; use `DvrRecordingFile.create` without a path instead of
-  its now-internal constructor or `copy`, and use SDK file access for playback.
+  its now-internal constructor or `copy`. Use `DvrEntry.folder` for grouping and
+  SDK file access for playback.
 - **BREAKING:** `TvheadendCredentialStore`, `CredentialReadResult`,
   `CredentialOperationResult` and legacy v1 storage are removed.
   Move credential persistence to `TvheadendServerProfileStore`.

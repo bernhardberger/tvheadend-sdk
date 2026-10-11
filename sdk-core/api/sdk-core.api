@@ -932,6 +932,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/DvrEntry {
 	public final fun getEventId-IwUpMHo ()Lat/bernhardberger/tvheadend/sdk/core/EventId;
 	public final fun getFanartImage-qky1Ors ()Lat/bernhardberger/tvheadend/sdk/core/ArtworkId;
 	public final fun getFiles ()Ljava/util/List;
+	public final fun getFolder ()Ljava/util/List;
 	public final fun getId-YcJ-2to ()J
 	public final fun getImage-qky1Ors ()Lat/bernhardberger/tvheadend/sdk/core/ArtworkId;
 	public final fun getPlayCount ()Ljava/lang/Long;
