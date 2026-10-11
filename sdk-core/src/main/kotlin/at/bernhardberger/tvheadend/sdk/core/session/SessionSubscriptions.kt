@@ -1,4 +1,7 @@
-@file:OptIn(SubscriptionInfrastructureApi::class)
+@file:OptIn(
+    SubscriptionInfrastructureApi::class,
+    at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class,
+)
 
 package at.bernhardberger.tvheadend.sdk.core.session
 

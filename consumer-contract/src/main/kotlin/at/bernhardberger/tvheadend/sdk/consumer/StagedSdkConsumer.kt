@@ -1,5 +1,8 @@
 @file:androidx.media3.common.util.UnstableApi
-@file:OptIn(at.bernhardberger.tvheadend.sdk.testing.FakePlaybackApi::class)
+@file:OptIn(
+    at.bernhardberger.tvheadend.sdk.testing.FakePlaybackApi::class,
+    at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class,
+)
 
 package at.bernhardberger.tvheadend.sdk.consumer
 
@@ -36,6 +39,7 @@ import at.bernhardberger.tvheadend.sdk.core.EpgSearchResult
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.PlaybackBinding
 import at.bernhardberger.tvheadend.sdk.core.PlaybackBindingResult
+import at.bernhardberger.tvheadend.sdk.core.RecordingPlaybackAdmission
 import at.bernhardberger.tvheadend.sdk.core.SessionObservation
 import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
 import at.bernhardberger.tvheadend.sdk.core.SessionGenerationIdentity
@@ -379,13 +383,10 @@ public class StagedSdkConsumer(
 
     public suspend fun resumeTimeshift(): TimeshiftCommandResult = coordinator.resumeTimeshift()
 
-    public fun isGrowingResumeUnsupported(result: PlaybackTargetResult): Boolean =
-        when (result) {
-            PlaybackTargetResult.GROWING_RECORDING_RESUME_UNSUPPORTED -> true
-            else -> false
-        }
-
     public fun targetStarted(result: PlaybackTargetResult): Boolean = result.isStarted
+
+    public fun isGrowingRecording(admission: RecordingPlaybackAdmission): Boolean =
+        admission is RecordingPlaybackAdmission.Growing
 
     public fun targetMayChange(result: PlaybackTargetResult): Boolean = result.isTransient
 

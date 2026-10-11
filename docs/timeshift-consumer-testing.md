@@ -1,8 +1,9 @@
-# Timeshift Consumer Tests
+# Internal Timeshift Tests
 
 `at.bernhardberger.tvheadend.sdk.media3.testing.TimeshiftTestFixture` is an
-SDK-owned host-test fixture in `sdk-media3`, introduced in candidate `0.6.1`.
-It is not in published `0.6.0`; consume it only after `0.6.1` is verified. It needs no Player,
+internal host-test fixture in `sdk-media3` test sources, not a published API.
+The examples below describe SDK tests. Application tests use their own injected boundary.
+The fixture needs no Player,
 Android runtime, server, reflection, infrastructure opt-in or dependency
 substitution. `sdk-testing` remains pure JVM and does not depend on Media3.
 

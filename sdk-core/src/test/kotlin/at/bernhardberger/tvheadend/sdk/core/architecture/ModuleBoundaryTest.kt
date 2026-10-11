@@ -226,7 +226,7 @@ internal class ModuleBoundaryTest {
             "TargetUnavailable",
             "RecordingPlaybackAdmission",
             "Completed",
-            "GrowingStartOverOnly",
+            "Growing",
             "GrowingDeferred",
             "EpgRating",
             "EpgEpisode",
@@ -293,7 +293,6 @@ internal class ModuleBoundaryTest {
             "src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/Artwork.kt",
             "src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/ServerProfileStore.kt",
             "../sdk-media3/src/main/kotlin/at/bernhardberger/tvheadend/sdk/media3/TvheadendPlaybackCoordinator.kt",
-            "../sdk-media3/src/main/kotlin/at/bernhardberger/tvheadend/sdk/media3/testing/TimeshiftTestFixture.kt",
         ).joinToString(" ") { path -> File(path).readText() }.replace(Regex("\\s+"), " ")
         val expectedSignatures = listOf(
             "public suspend fun connect(profile: ServerProfile): SessionCommandResult",
@@ -335,7 +334,6 @@ internal class ModuleBoundaryTest {
             "public suspend fun seekTimeshift(target: TimeshiftContentTarget): TimeshiftContentSeekResult",
             "public suspend fun seekTimeshift(selection: TimeshiftSeekSelection): TimeshiftContentSeekResult",
             "public suspend fun timeshiftPlaybackPosition(): TimeshiftPlaybackPosition",
-            "public suspend fun seek( target: TimeshiftContentTarget, dispatch: suspend (TimeshiftContentTarget) -> TimeshiftContentSeekResult.Completed = { completed() }, ): TimeshiftContentSeekResult",
             "public suspend fun returnToLive(): TimeshiftCommandResult",
             "public suspend fun pauseTimeshift(): TimeshiftCommandResult",
             "public suspend fun resumeTimeshift(): TimeshiftCommandResult",
@@ -445,7 +443,6 @@ internal class ModuleBoundaryTest {
             "TimeshiftWallClockMapping",
             "TimeshiftPlaybackPosition",
             "TimeshiftContentSeekResult",
-            "TimeshiftTestFixture",
             "LivePlaybackTargetResult",
             "TimeshiftCommandDisposition",
             "PlaybackOutcomeCategory",
@@ -471,8 +468,6 @@ internal class ModuleBoundaryTest {
             "isTvheadendLive",
         )
         val expectedAndroid = setOf(
-            "CredentialOperationResult",
-            "CredentialReadResult",
             "ServerProfileEditReadResult",
             "TvheadendDiscovery",
             "DiscoveredTvheadendServer",
@@ -480,7 +475,6 @@ internal class ModuleBoundaryTest {
             "TvheadendDiscoveryFailure",
             "TvheadendConnectivity",
             "TvheadendConnectivityStatus",
-            "TvheadendCredentialStore",
             "TvheadendServerProfileStore",
             "TvheadendArtwork",
             "TvheadendArtworkLoadException",
@@ -488,19 +482,6 @@ internal class ModuleBoundaryTest {
         )
 
         assertPublicInfrastructure("sdk-android", expectedAndroid, unannotatedCount = expectedAndroid.size)
-        val credentialStoreSource = File(
-            repositoryRoot,
-            "sdk-android/src/main/kotlin/at/bernhardberger/tvheadend/sdk/android/" +
-                "TvheadendCredentialStore.kt",
-        ).readText()
-        assertTrue(
-            Regex(
-                """@Deprecated\(\s*message = \"Use TvheadendServerProfileStore\",\s*""" +
-                    """level = DeprecationLevel\.WARNING,\s*\)\s*""" +
-                    """public class TvheadendCredentialStore""",
-            ).containsMatchIn(credentialStoreSource),
-            "The compatibility credential store must be warning-deprecated without ReplaceWith",
-        )
         // The codec classification and live priority are intentionally stable for sdk-media3 callers.
         assertPublicInfrastructure("sdk-playback", expectedPlayback, unannotatedCount = 12)
         assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 10)
@@ -521,7 +502,7 @@ internal class ModuleBoundaryTest {
             ),
             fakePlaybackFunctions,
         )
-        assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 32)
+        assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 31)
 
         val coordinatorApi = File(
             "../sdk-media3/src/main/kotlin/at/bernhardberger/tvheadend/sdk/media3/" +
@@ -625,7 +606,6 @@ internal class ModuleBoundaryTest {
             .forEach { function -> function.referencedPublicTypes().forEach(::enqueue) }
         setOf(
             "at.bernhardberger.tvheadend.sdk.android.TvheadendConnectivity",
-            "at.bernhardberger.tvheadend.sdk.android.TvheadendCredentialStore",
             "at.bernhardberger.tvheadend.sdk.android.TvheadendServerProfileStore",
             "at.bernhardberger.tvheadend.sdk.android.TvheadendDiscovery",
             "at.bernhardberger.tvheadend.sdk.android.TvheadendArtwork",
@@ -634,7 +614,6 @@ internal class ModuleBoundaryTest {
             "at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi",
             "at.bernhardberger.tvheadend.sdk.media3.PlaybackRecoveryReason",
             "at.bernhardberger.tvheadend.sdk.media3.TvheadendRecordingException",
-            "at.bernhardberger.tvheadend.sdk.media3.testing.TimeshiftTestFixture",
             "at.bernhardberger.tvheadend.sdk.core.TvheadendSession",
             "at.bernhardberger.tvheadend.sdk.core.EpgRepository",
             "at.bernhardberger.tvheadend.sdk.core.DvrRepository",

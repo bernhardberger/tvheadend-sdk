@@ -825,6 +825,11 @@ is unknown or unsupported. `RecordingPlaybackStart.RESUME` uses a positive
 server position only when `recordingProgressCapability` is `SUPPORTED`; normal
 completed-recording playback otherwise starts over and disables reporting.
 
+`RecordingPlaybackAdmission.Growing`, `GrowingRecordingFileReader`, and
+`GrowingRecordingFileLease` require `@OptIn(ExperimentalTvheadendApi::class)` from
+`at.bernhardberger.tvheadend.sdk.playback`. The shared admission type, completed
+playback, and `DvrRepository.changes` remain stable.
+
 Growing playback is deliberately bounded, and its admission gates are the same
 for `START_OVER` and `RESUME`: unknown progress support returns `NOT_READY`,
 unsupported progress returns `RECORDING_PROGRESS_UNSUPPORTED`, an active
@@ -832,8 +837,8 @@ recording without exactly one usable file returns `TARGET_UNAVAILABLE`, and a
 file that is not `.ts` returns `GROWING_RECORDING_DEFERRED`. For an admitted
 active single-file `.ts` recording, `START_OVER` or a missing or zero saved
 position plays from the beginning. `RESUME` with a positive saved server
-position (exposed as `RecordingPlaybackAdmission.GrowingStartOverOnly.resumePosition`;
-the historical name is kept) starts at 0:00 and seeks once, as soon as the
+position (exposed as `RecordingPlaybackAdmission.Growing.resumePosition`)
+starts at 0:00 and seeks once, as soon as the
 growing timeline below becomes seekable. On the maintained fixtures that happens
 in the first probe cycle; slow file reads can delay it, so a brief start from
 0:00 is expected. A saved position within 3 s of, or past, the probed recorded
@@ -847,8 +852,7 @@ seek is issued or the resume is cancelled or abandoned, and after at most 60 s
 for a completed recording whose timeline stays unseekable; that seek stays
 pending until the timeline becomes seekable. After the hold ends, progress
 reports follow the real position. The coordinator does not yet expose whether a resume
-was applied or abandoned. `GROWING_RECORDING_RESUME_UNSUPPORTED` remains public
-for compatibility but is no longer returned. Growing seek is approximate and starts
+was applied or abandoned. Growing seek is approximate and starts
 only after the maintained MPEG-TS extractor has validated MPEG-2, H.264, or HEVC
 and bounded head/tail PCR reads establish the existing recorded extent. The timeline
 includes content not yet consumed by playback and refreshes while playing or paused.
@@ -1036,8 +1040,7 @@ does not coordinate Android multi-process access.
 
 #### Exclude the profile from backups
 
-`TvheadendServerProfileStore` and the deprecated `TvheadendCredentialStore`
-share one DataStore file,
+`TvheadendServerProfileStore` uses one DataStore file,
 `files/datastore/tvheadend_sdk_credentials.preferences_pb`. Android Auto Backup
 and device-to-device transfer include it by default, together with its
 plaintext endpoint fields. The Keystore key that encrypts password profiles is

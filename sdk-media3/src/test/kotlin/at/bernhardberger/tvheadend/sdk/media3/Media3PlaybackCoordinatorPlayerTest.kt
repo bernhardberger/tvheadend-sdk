@@ -1,5 +1,6 @@
 @file:androidx.media3.common.util.UnstableApi
 @file:OptIn(
+    at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class,
     at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class,
     kotlinx.coroutines.ExperimentalCoroutinesApi::class,
 )

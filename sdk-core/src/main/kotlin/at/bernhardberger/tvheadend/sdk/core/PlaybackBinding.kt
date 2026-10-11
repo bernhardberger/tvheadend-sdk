@@ -1,4 +1,7 @@
-@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class)
+@file:OptIn(
+    at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class,
+    at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class,
+)
 
 package at.bernhardberger.tvheadend.sdk.core
 
@@ -113,18 +116,18 @@ public sealed interface RecordingPlaybackAdmission {
     /**
      * An active single-file MPEG-TS target may play while TVHeadend is still appending to it.
      *
-     * The historical name predates growing resume and is kept for compatibility. [resumePosition]
-     * is the positive saved server position and is present only when [progressCapability] is
+     * [resumePosition] is the positive saved server position and is present only when [progressCapability] is
      * supported, exactly as for [Completed]. The Media3 coordinator plays this target only with
      * supported progress; it starts over without [resumePosition] or for an explicit start-over
      * request, and otherwise seeks near [resumePosition] once the growing timeline is seekable.
      */
-    public class GrowingStartOverOnly internal constructor(
+    @at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
+    public class Growing internal constructor(
         public val resumePosition: Duration?,
         public val progressCapability: RecordingProgressCapability,
     ) : RecordingPlaybackAdmission {
         override fun toString(): String =
-            "RecordingPlaybackAdmission.GrowingStartOverOnly(<redacted>)"
+            "RecordingPlaybackAdmission.Growing(<redacted>)"
     }
 
     /** The active recording is outside the supported single-file MPEG-TS path. */
@@ -215,7 +218,7 @@ internal class SessionPlaybackBindingFactory(
                         is RecordingPlaybackAdmission.Completed ->
                             children.openRecording(target)
                         RecordingPlaybackAdmission.ObservationExpired -> changedRecording()
-                        is RecordingPlaybackAdmission.GrowingStartOverOnly,
+                        is RecordingPlaybackAdmission.Growing,
                         RecordingPlaybackAdmission.GrowingDeferred,
                         RecordingPlaybackAdmission.TargetUnavailable,
                         -> unavailableRecording()
@@ -223,7 +226,7 @@ internal class SessionPlaybackBindingFactory(
                 },
                 bindGrowingTarget = {
                     when (admission()) {
-                        is RecordingPlaybackAdmission.GrowingStartOverOnly ->
+                        is RecordingPlaybackAdmission.Growing ->
                             children.bindGrowingRecording(target)
                         is RecordingPlaybackAdmission.Completed -> if (startedGrowing) {
                             children.bindGrowingRecording(target)
@@ -255,7 +258,7 @@ internal class SessionPlaybackBindingFactory(
                                 metadata.reportProgress(lease, progress)
                             }
                         }
-                        is RecordingPlaybackAdmission.GrowingStartOverOnly ->
+                        is RecordingPlaybackAdmission.Growing ->
                             when (current.progressCapability) {
                                 RecordingProgressCapability.UNKNOWN ->
                                     DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
@@ -275,7 +278,7 @@ internal class SessionPlaybackBindingFactory(
                 loadTargetCutpoints = {
                     when (admission()) {
                         is RecordingPlaybackAdmission.Completed,
-                        is RecordingPlaybackAdmission.GrowingStartOverOnly,
+                        is RecordingPlaybackAdmission.Growing,
                         -> metadata.getCutpoints(target)
                         RecordingPlaybackAdmission.ObservationExpired ->
                             DvrCutpointsResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED)
@@ -311,7 +314,7 @@ private fun recordingAdmission(
             if (path.isBlank()) {
                 RecordingPlaybackAdmission.TargetUnavailable
             } else if (path.endsWith(".ts", ignoreCase = true)) {
-                RecordingPlaybackAdmission.GrowingStartOverOnly(
+                RecordingPlaybackAdmission.Growing(
                     resumePosition = resumePosition,
                     progressCapability = observation.recordingProgressCapability,
                 )

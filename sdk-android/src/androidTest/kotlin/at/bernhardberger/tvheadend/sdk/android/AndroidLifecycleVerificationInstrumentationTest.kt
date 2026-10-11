@@ -1,5 +1,3 @@
-@file:Suppress("DEPRECATION")
-
 package at.bernhardberger.tvheadend.sdk.android
 
 import android.content.Context
@@ -7,7 +5,7 @@ import android.os.Bundle
 import android.os.Process
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import at.bernhardberger.tvheadend.sdk.core.ServerAuthentication
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileReadResult
 import at.bernhardberger.tvheadend.sdk.core.ServerProfile
 import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
 import at.bernhardberger.tvheadend.sdk.core.SessionState
@@ -62,11 +60,11 @@ internal class AndroidLifecycleVerificationInstrumentationTest {
         if (markerFile.exists()) {
             check(markerFile.delete()) { "Stale lifecycle marker could not be removed" }
         }
-        val store = TvheadendCredentialStore(context)
-        assertEquals(CredentialOperationResult.SUCCESS, store.clearPassword())
-        assertEquals(
-            CredentialOperationResult.SUCCESS,
-            store.storePassword(profile.username, profile.password),
+        val store = TvheadendServerProfileStore(context)
+        assertEquals(ServerProfileReadResult.Missing, store.clearProfile())
+        assertTrue(
+            store.storePassword(profile.host, profile.port, profile.username, profile.password)
+                is ServerProfileReadResult.Available,
         )
         try {
             context.openFileOutput(PROCESS_MARKER_FILE_NAME, Context.MODE_PRIVATE).bufferedWriter().use { writer ->
@@ -80,7 +78,7 @@ internal class AndroidLifecycleVerificationInstrumentationTest {
             }
         } catch (_: Exception) {
             val markerRemoved = !markerFile.exists() || markerFile.delete()
-            val credentialsCleared = store.clearPassword() == CredentialOperationResult.SUCCESS
+            val credentialsCleared = store.clearProfile() == ServerProfileReadResult.Missing
             if (!markerRemoved || !credentialsCleared) {
                 throw AssertionError("Process-restart marker failure cleanup failed")
             }
@@ -100,7 +98,7 @@ internal class AndroidLifecycleVerificationInstrumentationTest {
     fun discovers_server_and_loads_credentials_after_process_restart() = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
-        val store = TvheadendCredentialStore(context)
+        val store = TvheadendServerProfileStore(context)
         var connectivityResult: TvheadendConnectivityStatus? = null
         var apiVersion: Long? = null
         var primaryFailure: Throwable? = null
@@ -113,12 +111,12 @@ internal class AndroidLifecycleVerificationInstrumentationTest {
             val lifecycle = consumeLifecycleMarker(context.filesDir)
             assertNotEquals("Verification must resume in a new process", lifecycle.process, Process.myPid())
 
-            val loaded = store.loadPassword()
+            val loaded = store.loadProfile()
             assertTrue(
                 "Encrypted credentials must survive the process restart",
-                loaded is CredentialReadResult.Available,
+                loaded is ServerProfileReadResult.Available,
             )
-            val authentication = (loaded as CredentialReadResult.Available).authentication
+            val profile = (loaded as ServerProfileReadResult.Available).profile
 
             instrumentation.checkpoint("connectivity-first-started")
             val firstConnectivity = observeConnectivity(context)
@@ -130,13 +128,13 @@ internal class AndroidLifecycleVerificationInstrumentationTest {
             assertEquals(TvheadendConnectivityStatus.AVAILABLE, secondConnectivity)
 
             verifyDiscoveryLifecycles(context, instrumentation)
-            apiVersion = connectToServer(lifecycle.host, lifecycle.port, authentication)
+            apiVersion = connectToServer(profile)
         } catch (failure: Throwable) {
             primaryFailure = failure
             throw failure
         } finally {
             var cleanupFailure = try {
-                if (store.clearPassword() == CredentialOperationResult.SUCCESS) {
+                if (store.clearProfile() == ServerProfileReadResult.Missing) {
                     null
                 } else {
                     AssertionError("Credential cleanup failed")
@@ -165,7 +163,7 @@ internal class AndroidLifecycleVerificationInstrumentationTest {
 
         assertTrue(
             "Credential cleanup did not produce a missing state",
-            store.loadPassword() === CredentialReadResult.Missing,
+            store.loadProfile() === ServerProfileReadResult.Missing,
         )
         instrumentation.sendStatus(
             0,
@@ -226,22 +224,12 @@ private suspend fun discoverFixture(
         state.servers.single { server -> server.name == fixtureName && server.port == fixturePort }
     }
 
-private suspend fun connectToServer(
-    host: String,
-    port: Int,
-    authentication: ServerAuthentication.Password,
-): Long? {
+private suspend fun connectToServer(profile: ServerProfile): Long? {
     val session = createTvheadendSession()
     return try {
         assertEquals(
             SessionCommandResult.STARTED,
-            session.connect(
-                ServerProfile(
-                    host = host,
-                    port = port,
-                    authentication = authentication,
-                ),
-            ),
+            session.connect(profile),
         )
         val state = withTimeout(CONNECTION_TIMEOUT_MS) {
             session.observation.first { current ->

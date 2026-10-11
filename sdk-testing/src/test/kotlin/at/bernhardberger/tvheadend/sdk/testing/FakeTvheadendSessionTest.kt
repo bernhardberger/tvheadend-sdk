@@ -1,4 +1,5 @@
 @file:OptIn(
+    at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class,
     at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class,
     at.bernhardberger.tvheadend.sdk.testing.FakePlaybackApi::class,
 )

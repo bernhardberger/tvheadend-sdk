@@ -32,7 +32,10 @@ class TimeshiftFixtureConsumerTest {
         }
         fixture.replaceSubscription()
         fixture.updateHistory(0.seconds, 100.seconds)
-        assertSame(TimeshiftWallClockMapping.Unavailable, (fixture.state.value as LiveTimeshiftState.Available).timeline!!.wallClockMapping)
+        assertSame(
+            TimeshiftWallClockMapping.Unavailable,
+            (fixture.state.value as LiveTimeshiftState.Available).timeline!!.wallClockMapping,
+        )
         assertSame(TimeshiftContentSeekResult.Replaced, fixture.seek(selected))
     }
 

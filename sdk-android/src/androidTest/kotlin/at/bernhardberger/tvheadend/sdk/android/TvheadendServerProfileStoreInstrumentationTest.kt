@@ -1,5 +1,3 @@
-@file:Suppress("DEPRECATION")
-
 package at.bernhardberger.tvheadend.sdk.android
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -13,41 +11,9 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
-internal class TvheadendCredentialStoreInstrumentationTest {
+internal class TvheadendServerProfileStoreInstrumentationTest {
     @Test
-    fun encrypted_credentials_round_trip_through_recreated_store_object() = runTest {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val first = TvheadendCredentialStore(context)
-        assertEquals(
-            ServerProfileReadResult.Missing,
-            TvheadendServerProfileStore(context).clearProfile(),
-        )
-
-        try {
-            assertEquals(
-                CredentialOperationResult.SUCCESS,
-                first.storePassword("instrumented-user", "instrumented-password"),
-            )
-
-            val loaded = TvheadendCredentialStore(context).loadPassword()
-
-            assertTrue(loaded is CredentialReadResult.Available)
-            assertTrue(
-                "Credential result rendering was not redacted",
-                loaded.toString() == "CredentialReadResult.Available(<redacted>)",
-            )
-        } finally {
-            first.clearPassword()
-        }
-
-        assertTrue(
-            "Credential cleanup did not produce a missing state",
-            TvheadendCredentialStore(context).loadPassword() === CredentialReadResult.Missing,
-        )
-    }
-
-    @Test
-    fun server_profile_round_trips_through_recreated_stores_and_legacy_clear_preserves_endpoint() = runTest {
+    fun server_profile_round_trips_through_recreated_stores_and_anonymous_replacement() = runTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val profileStore = TvheadendServerProfileStore(context)
         assertEquals(ServerProfileReadResult.Missing, profileStore.clearProfile())
@@ -69,12 +35,9 @@ internal class TvheadendCredentialStoreInstrumentationTest {
             assertEquals("instrumented.invalid", loaded.host)
             assertEquals(4_242, loaded.port)
             assertEquals(ServerProfileAuthenticationMode.PASSWORD, loaded.authenticationMode)
+            assertEquals("ServerProfileReadResult.Available(<redacted>)", loaded.toString())
             assertTrue(
-                TvheadendCredentialStore(context).loadPassword() is CredentialReadResult.Available,
-            )
-            assertEquals(
-                CredentialOperationResult.SUCCESS,
-                TvheadendCredentialStore(context).clearPassword(),
+                profileStore.storeAnonymous(loaded.host, loaded.port) is ServerProfileReadResult.Available,
             )
 
             val anonymous = TvheadendServerProfileStore(context).loadProfile()

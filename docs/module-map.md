@@ -18,10 +18,10 @@ question still spans an unknown flow after these paths are checked.
 | Recording and growing playback | `sdk-media3` | `TvheadendRecordingDataSource.kt`, `TvheadendGrowingRecordingDataSource.kt`, and `GrowingTsExtractor.kt` |
 | Decoder and elementary streams | `sdk-media3` | `TvheadendDecoderPolicy.kt`, `ElementaryStreamReaderFactory.kt`, and `SubscriptionElementaryStreamAdapter.kt` |
 | Android discovery and connectivity | `sdk-android` | `TvheadendDiscovery.kt` and `TvheadendConnectivity.kt` |
-| Profiles, credentials, and artwork | `sdk-android` | `TvheadendServerProfileStore.kt`, `TvheadendCredentialStore.kt`, and `TvheadendArtwork.kt` |
+| Profiles, credentials, and artwork | `sdk-android` | `TvheadendServerProfileStore.kt` and `TvheadendArtwork.kt` |
 | Persistent metadata and artwork cache | `sdk-core`, `sdk-android` | `docs/persistent-cache-design.md` |
 | Consumer fakes and scripted protocol events | `sdk-testing` | `FakeSessionObservation.kt` and `ScriptedSubscriptionConnection.kt` |
-| Opaque timeshift consumer host fixtures | `sdk-media3` | `testing/TimeshiftTestFixture.kt` and `docs/timeshift-consumer-testing.md` |
+| Internal timeshift host fixtures | `sdk-media3` tests | `testing/TimeshiftTestFixture.kt` |
 | Published-coordinate contract | `consumer-contract` | `consumer-contract/src/main/kotlin/at/bernhardberger/tvheadend/sdk/consumer/StagedSdkConsumer.kt` |
 
 ## Commands and release tooling

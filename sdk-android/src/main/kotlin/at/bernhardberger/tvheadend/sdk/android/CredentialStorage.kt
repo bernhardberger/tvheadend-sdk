@@ -1,5 +1,3 @@
-@file:Suppress("DEPRECATION")
-
 package at.bernhardberger.tvheadend.sdk.android
 
 import android.content.Context
@@ -12,203 +10,15 @@ import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import at.bernhardberger.tvheadend.sdk.core.ServerAuthentication
 import com.google.crypto.tink.Aead
 import com.google.crypto.tink.integration.android.AndroidKeystore
 import java.nio.ByteBuffer
 import java.security.GeneralSecurityException
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlin.jvm.JvmSynthetic
-
-/**
- * Persists TVHeadend password authentication without an endpoint.
- *
- * Use [TvheadendServerProfileStore] for new integrations. This compatibility
- * store remains scoped to one application process and shares its record with the profile store.
- */
-@Deprecated(
-    message = "Use TvheadendServerProfileStore",
-    level = DeprecationLevel.WARNING,
-)
-public class TvheadendCredentialStore private constructor(
-    private val storage: CredentialStorage,
-    private val cipher: CredentialCipher,
-    private val operationMutex: Mutex,
-) {
-    /** Creates a credential store scoped to the application that owns [context]. */
-    public constructor(context: Context) : this(
-        storage = productionCredentialStorage(context),
-        cipher = AndroidTinkCredentialCipher,
-        operationMutex = credentialOperationMutex,
-    )
-
-    internal companion object {
-        @JvmSynthetic
-        internal fun create(
-            storage: CredentialStorage,
-            cipher: CredentialCipher,
-            operationMutex: Mutex = Mutex(),
-        ): TvheadendCredentialStore = TvheadendCredentialStore(storage, cipher, operationMutex)
-    }
-
-    /** Loads opaque password authentication, or a typed safe state when none can be loaded. */
-    public suspend fun loadPassword(): CredentialReadResult = credentialResult(
-        unavailable = CredentialReadResult.Unavailable,
-    ) {
-        operationMutex.withLock {
-            when (val stored = storage.read()) {
-                StoredCredentialRead.Missing -> CredentialReadResult.Missing
-                StoredCredentialRead.Unavailable -> CredentialReadResult.Unavailable
-                is StoredCredentialRead.Available -> when (val record = stored.record) {
-                    is StoredCredentialRecord.LegacyPassword -> CredentialReadResult.Available.create(
-                        cipher.decrypt(
-                            credentials = record.credentials,
-                            context = CredentialCipherContext.Legacy,
-                        ) { username, password ->
-                            ServerAuthentication.Password(username, password)
-                        },
-                    )
-                    is StoredCredentialRecord.Profile -> when (record.authenticationMode) {
-                        StoredAuthenticationMode.ANONYMOUS -> CredentialReadResult.Missing
-                        StoredAuthenticationMode.PASSWORD -> CredentialReadResult.Available.create(
-                            cipher.decrypt(
-                                credentials = checkNotNull(record.credentials),
-                                context = record.cipherContext(),
-                            ) { username, password ->
-                                ServerAuthentication.Password(username, password)
-                            },
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    /**
-     * Atomically replaces password authentication while preserving a stored profile endpoint.
-     *
-     * @throws IllegalArgumentException if [username] or [password] is blank.
-     */
-    public suspend fun storePassword(
-        username: String,
-        password: String,
-    ): CredentialOperationResult {
-        val normalizedUsername = username.trim()
-        require(normalizedUsername.isNotEmpty()) { "Username must not be blank" }
-        require(password.isNotBlank()) { "Password must not be blank" }
-
-        return credentialResult(CredentialOperationResult.UNAVAILABLE) {
-            operationMutex.withLock {
-                when (val stored = storage.read()) {
-                    StoredCredentialRead.Unavailable -> CredentialOperationResult.UNAVAILABLE
-                    StoredCredentialRead.Missing -> {
-                        writeLegacyPassword(normalizedUsername, password)
-                        CredentialOperationResult.SUCCESS
-                    }
-                    is StoredCredentialRead.Available -> when (val record = stored.record) {
-                        is StoredCredentialRecord.LegacyPassword -> {
-                            writeLegacyPassword(normalizedUsername, password)
-                            CredentialOperationResult.SUCCESS
-                        }
-                        is StoredCredentialRecord.Profile -> {
-                            validateStoredPassword(record)
-                            val updated = record.withPassword(
-                                cipher.encrypt(
-                                    normalizedUsername,
-                                    password,
-                                    record.passwordCipherContext(),
-                                ),
-                            )
-                            storage.write(updated)
-                            CredentialOperationResult.SUCCESS
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /** Removes password authentication while preserving a valid stored profile endpoint. */
-    public suspend fun clearPassword(): CredentialOperationResult = credentialResult(
-        unavailable = CredentialOperationResult.UNAVAILABLE,
-    ) {
-        operationMutex.withLock {
-            when (val stored = storage.read()) {
-                StoredCredentialRead.Unavailable -> CredentialOperationResult.UNAVAILABLE
-                StoredCredentialRead.Missing -> {
-                    storage.clear()
-                    CredentialOperationResult.SUCCESS
-                }
-                is StoredCredentialRead.Available -> when (val record = stored.record) {
-                    is StoredCredentialRecord.LegacyPassword -> {
-                        storage.clear()
-                        CredentialOperationResult.SUCCESS
-                    }
-                    is StoredCredentialRecord.Profile -> {
-                        validateStoredPassword(record)
-                        storage.write(record.withAnonymousAuthentication())
-                        CredentialOperationResult.SUCCESS
-                    }
-                }
-            }
-        }
-    }
-
-    private suspend fun writeLegacyPassword(username: String, password: String) {
-        storage.write(
-            StoredCredentialRecord.LegacyPassword(
-                cipher.encrypt(username, password, CredentialCipherContext.Legacy),
-            ),
-        )
-    }
-
-    private suspend fun validateStoredPassword(record: StoredCredentialRecord.Profile) {
-        if (record.authenticationMode == StoredAuthenticationMode.PASSWORD) {
-            cipher.decrypt(
-                credentials = checkNotNull(record.credentials),
-                context = record.cipherContext(),
-            ) { username, password ->
-                ServerAuthentication.Password(username, password)
-            }
-        }
-    }
-}
-
-/** Safe result of loading stored password authentication. */
-public sealed interface CredentialReadResult {
-    /** No password authentication is stored. */
-    public data object Missing : CredentialReadResult
-
-    /** Stored password authentication is available without exposing credential getters. */
-    public class Available private constructor(
-        public val authentication: ServerAuthentication.Password,
-    ) : CredentialReadResult {
-        internal companion object {
-            @JvmSynthetic
-            internal fun create(authentication: ServerAuthentication.Password): Available =
-                Available(authentication)
-        }
-
-        override fun toString(): String = "CredentialReadResult.Available(<redacted>)"
-    }
-
-    /** Stored authentication could not be read or decrypted. */
-    public data object Unavailable : CredentialReadResult
-}
-
-/** Safe result of a credential storage mutation. */
-public enum class CredentialOperationResult {
-    /** The complete requested mutation was persisted. */
-    SUCCESS,
-
-    /** The mutation could not be persisted. */
-    UNAVAILABLE,
-}
 
 internal interface CredentialStorage {
     suspend fun read(): StoredCredentialRead
@@ -233,8 +43,6 @@ internal interface CredentialCipher {
 }
 
 internal sealed interface CredentialCipherContext {
-    data object Legacy : CredentialCipherContext
-
     class Profile(
         val host: String,
         val port: Int,
@@ -251,10 +59,6 @@ internal sealed interface StoredCredentialRead {
 }
 
 internal sealed interface StoredCredentialRecord {
-    class LegacyPassword(val credentials: EncryptedCredentials) : StoredCredentialRecord {
-        override fun toString(): String = "StoredCredentialRecord.LegacyPassword(<redacted>)"
-    }
-
     class Profile(
         val host: String,
         val port: Int,
@@ -269,26 +73,6 @@ internal sealed interface StoredCredentialRecord {
             host = host,
             port = port,
             authenticationMode = authenticationMode,
-        )
-
-        fun passwordCipherContext(): CredentialCipherContext.Profile = CredentialCipherContext.Profile(
-            host = host,
-            port = port,
-            authenticationMode = StoredAuthenticationMode.PASSWORD,
-        )
-
-        fun withPassword(encrypted: EncryptedCredentials): Profile = Profile(
-            host = host,
-            port = port,
-            authenticationMode = StoredAuthenticationMode.PASSWORD,
-            credentials = encrypted,
-        )
-
-        fun withAnonymousAuthentication(): Profile = Profile(
-            host = host,
-            port = port,
-            authenticationMode = StoredAuthenticationMode.ANONYMOUS,
-            credentials = null,
         )
 
         override fun toString(): String = "StoredCredentialRecord.Profile(<redacted>)"
@@ -323,11 +107,6 @@ internal class DataStoreCredentialStorage(
         dataStore.edit { preferences ->
             preferences.clear()
             when (record) {
-                is StoredCredentialRecord.LegacyPassword -> {
-                    preferences[CREDENTIAL_VERSION_KEY] = LEGACY_CREDENTIAL_FORMAT_VERSION
-                    preferences[ENCRYPTED_USERNAME_KEY] = record.credentials.copyUsername()
-                    preferences[ENCRYPTED_PASSWORD_KEY] = record.credentials.copyPassword()
-                }
                 is StoredCredentialRecord.Profile -> {
                     preferences[CREDENTIAL_VERSION_KEY] = PROFILE_CREDENTIAL_FORMAT_VERSION
                     preferences[SERVER_HOST_KEY] = record.host
@@ -426,10 +205,6 @@ internal fun credentialAssociatedData(
     context: CredentialCipherContext,
     field: CredentialField,
 ): ByteArray = when (context) {
-    CredentialCipherContext.Legacy -> when (field) {
-        CredentialField.USERNAME -> LEGACY_USERNAME_ASSOCIATED_DATA.copyOf()
-        CredentialField.PASSWORD -> LEGACY_PASSWORD_ASSOCIATED_DATA.copyOf()
-    }
     is CredentialCipherContext.Profile -> {
         val hostBytes = context.host.encodeToByteArray()
         ByteBuffer.allocate(
@@ -463,15 +238,6 @@ internal fun decodeCredentialRecord(preferences: Preferences): StoredCredentialR
     val mode = preferences[AUTHENTICATION_MODE_KEY]
 
     return when (version) {
-        LEGACY_CREDENTIAL_FORMAT_VERSION -> {
-            if (username == null || password == null || host != null || port != null || mode != null) {
-                StoredCredentialRead.Unavailable
-            } else {
-                StoredCredentialRead.Available(
-                    StoredCredentialRecord.LegacyPassword(EncryptedCredentials(username, password)),
-                )
-            }
-        }
         PROFILE_CREDENTIAL_FORMAT_VERSION -> decodeProfileRecord(host, port, mode, username, password)
         else -> StoredCredentialRead.Unavailable
     }
@@ -505,23 +271,12 @@ private fun decodeProfileRecord(
     )
 }
 
-private suspend fun <T> credentialResult(
-    unavailable: T,
-    operation: suspend () -> T,
-): T = try {
-    operation()
-} catch (cancelled: CancellationException) {
-    throw cancelled
-} catch (_: Exception) {
-    unavailable
-}
-
 internal fun productionCredentialStorage(context: Context): CredentialStorage =
     DataStoreCredentialStorage((context.applicationContext ?: context).tvheadendCredentialDataStore)
 
 internal val credentialOperationMutex = Mutex()
-private const val LEGACY_CREDENTIAL_FORMAT_VERSION = 1
 private const val PROFILE_CREDENTIAL_FORMAT_VERSION = 2
+// Existing format-2 profiles use this key; the alias is not the record format version.
 private const val KEY_ALIAS = "at.bernhardberger.tvheadend.sdk.credentials.v1"
 internal val CREDENTIAL_VERSION_KEY = intPreferencesKey("format_version")
 internal val ENCRYPTED_USERNAME_KEY = byteArrayPreferencesKey("encrypted_username")
@@ -538,10 +293,6 @@ private val KNOWN_CREDENTIAL_KEYS = setOf(
     AUTHENTICATION_MODE_KEY,
 )
 private val CREDENTIAL_NAMESPACE = "at.bernhardberger.tvheadend.sdk.credentials".encodeToByteArray()
-private val LEGACY_USERNAME_ASSOCIATED_DATA =
-    "at.bernhardberger.tvheadend.sdk.credentials.username.v1".encodeToByteArray()
-private val LEGACY_PASSWORD_ASSOCIATED_DATA =
-    "at.bernhardberger.tvheadend.sdk.credentials.password.v1".encodeToByteArray()
 
 // An unreadable file is replaced with an empty record so it reads as no profile and stays clearable.
 internal val credentialCorruptionHandler: ReplaceFileCorruptionHandler<Preferences> =

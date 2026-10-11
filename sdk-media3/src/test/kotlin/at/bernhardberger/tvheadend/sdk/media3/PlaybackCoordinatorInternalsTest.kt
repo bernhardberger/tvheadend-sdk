@@ -1,5 +1,6 @@
 @file:OptIn(
     at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class,
+    at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class,
     kotlinx.coroutines.ExperimentalCoroutinesApi::class,
 )
 

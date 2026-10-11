@@ -1,5 +1,8 @@
 @file:androidx.media3.common.util.UnstableApi
-@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class)
+@file:OptIn(
+    at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class,
+    at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class,
+)
 
 package at.bernhardberger.tvheadend.sdk.media3
 
@@ -165,18 +168,6 @@ public class PlaybackTargetResult private constructor(
 
         @JvmField
         public val TARGET_UNAVAILABLE: PlaybackTargetResult = result("TARGET_UNAVAILABLE")
-
-        /**
-         * Formerly returned when an active recording was requested with server-progress resume.
-         *
-         * Active single-file `.ts` recordings now resume, so the coordinator no longer produces
-         * this result. It remains for source and binary compatibility of exhaustive consumers.
-         */
-        @JvmField
-        public val GROWING_RECORDING_RESUME_UNSUPPORTED: PlaybackTargetResult = categorized(
-            "GROWING_RECORDING_RESUME_UNSUPPORTED",
-            PlaybackOutcomeCategory.UNSUPPORTED,
-        )
 
         /** The active recording is outside the supported single-file pass-through MPEG-TS path. */
         @JvmField

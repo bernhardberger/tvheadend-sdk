@@ -91,9 +91,8 @@ while the active secure edit surface needs it, then drop every reference; never
 serialize it, place it in saved state, log it, or use it as a diagnostic.
 
 Anonymous profiles do not use the Android Keystore. Password fields remain
-encrypted at rest with endpoint-bound associated data. The deprecated
-`TvheadendCredentialStore` remains binary compatible for existing applications
-and shares the same atomic record.
+encrypted at rest with endpoint-bound associated data. Legacy v1 credential
+records are unsupported and load as `Unavailable`; store a complete profile to replace them.
 
 Successful writes return the locally normalized connectable profile, and a
 successful clear returns `Missing`; neither requires a follow-up read. This
@@ -417,12 +416,16 @@ within 3 s of or past it). Without a seekable timeline within 20 s the resume is
 abandoned and playback simply continues; a viewer seek, replacement or stop
 cancels it. While its progress hold remains active (until the seek, a
 cancellation or the 20 s abandonment), no earlier position is reported.
-`GROWING_RECORDING_RESUME_UNSUPPORTED` is no longer returned. Growing seek is approximate and becomes available
+Growing seek is approximate and becomes available
 only after the maintained `TsExtractor` wrapper has validated MPEG-2, H.264, or
 HEVC and indexed already parsed keyframes. Other TS codecs remain forward-only.
 
 Temporary EOF stays inside the growth reader and never marks the recording
-watched. Growing progress is best-effort and generation-local with one RPC in
+watched. `RecordingPlaybackAdmission.Growing`, `GrowingRecordingFileReader`, and
+`GrowingRecordingFileLease` require `@OptIn(ExperimentalTvheadendApi::class)`.
+Completed-recording playback and `DvrRepository.changes` remain stable.
+
+Growing progress is best-effort and generation-local with one RPC in
 flight and one latest pending observation. The dynamic indexed horizon is not a
 final duration, so orderly replacement never uses it to infer watched state.
 Natural end may mark watched only after both fresh completion and final EOF are

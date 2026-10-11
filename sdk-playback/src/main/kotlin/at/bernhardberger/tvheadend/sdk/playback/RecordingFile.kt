@@ -70,6 +70,7 @@ public interface RecordingFile {
  * safe for concurrent use. The caller owns the reader and must [close] it.
  */
 @SubscriptionInfrastructureApi
+@ExperimentalTvheadendApi
 public interface GrowingRecordingFileReader {
     /** Validated file extent when this reader opened; null if the server omitted its size. */
     public val sizeBytes: Long?
@@ -109,6 +110,7 @@ public interface GrowingRecordingFileReader {
  * reconnect, replacement, rollover, or clone. Once [isCurrent] becomes false it stays false.
  */
 @SubscriptionInfrastructureApi
+@ExperimentalTvheadendApi
 public interface GrowingRecordingFileLease {
     /** Whether the originally bound generation, incarnation, and physical file remain current. */
     public val isCurrent: Boolean

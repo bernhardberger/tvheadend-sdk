@@ -25,6 +25,7 @@ import at.bernhardberger.tvheadend.sdk.core.EpgSearchRequest;
 import at.bernhardberger.tvheadend.sdk.core.EpgSearchResult;
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot;
 import at.bernhardberger.tvheadend.sdk.core.PlaybackBindingResult;
+import at.bernhardberger.tvheadend.sdk.core.RecordingPlaybackAdmission;
 import at.bernhardberger.tvheadend.sdk.core.RetainedMetadataAuthority;
 import at.bernhardberger.tvheadend.sdk.core.ServerProfile;
 import at.bernhardberger.tvheadend.sdk.core.ServerProfileReadResult;
@@ -166,10 +167,12 @@ public final class StagedSdkJavaConsumer {
         return repository.acquireCoverageBatchFromIds(currentSession, channelIds, through, continuation);
     }
 
-    public static long[] acquiredGuideChannelIds(EpgCoverageBatchResult result) {
-        return result.getSettlements().stream()
-                .mapToLong(settlement -> settlement.getChannelIdValue())
-                .toArray();
+    public static int acquiredGuideChannelCount(EpgCoverageBatchResult result) {
+        return result.getSettlements().size();
+    }
+
+    public static boolean isGrowingRecording(RecordingPlaybackAdmission admission) {
+        return admission instanceof RecordingPlaybackAdmission.Growing;
     }
 
     public static EpgSearchRequest epgSearchRequest(String query) {

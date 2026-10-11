@@ -449,10 +449,6 @@ public sealed interface EpgCoverageBatchSettlement {
     /** Channel selected by the consumer. */
     public val channelId: ChannelId
 
-    /** Numeric channel identifier for Java consumers. */
-    public val channelIdValue: Long
-        get() = channelId.value
-
     /** Authoritative coverage settled with retained programme data. */
     public class CoveredWithData(
         override val channelId: ChannelId,

@@ -95,13 +95,6 @@ internal fun encryptedCredentials(
     )
 }
 
-internal fun legacyPasswordRecord(
-    username: String = "test-user",
-    password: String = "test-password",
-): StoredCredentialRecord.LegacyPassword = StoredCredentialRecord.LegacyPassword(
-    encryptedCredentials(username, password, CredentialCipherContext.Legacy),
-)
-
 internal fun passwordProfileRecord(
     host: String = "test.invalid",
     port: Int = 9_982,
@@ -128,7 +121,6 @@ internal fun anonymousProfileRecord(
 )
 
 private fun contextPrefix(context: CredentialCipherContext): String = when (context) {
-    CredentialCipherContext.Legacy -> "v1"
     is CredentialCipherContext.Profile ->
         "v2:${context.host}:${context.port}:${context.authenticationMode.serializedName}"
 }

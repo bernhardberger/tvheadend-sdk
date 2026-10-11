@@ -21,7 +21,7 @@ import kotlin.time.Duration
  * Targets are valid only within this fixture's current subscription, never a real coordinator.
  * The fixture models observations and dispatch results, not app coalescing, rendering or protocol timing.
  */
-public class TimeshiftTestFixture(public val grantedPeriod: Duration) {
+internal class TimeshiftTestFixture(public val grantedPeriod: Duration) {
     init {
         require(grantedPeriod.isFinite() && grantedPeriod > Duration.ZERO)
     }
@@ -71,7 +71,10 @@ public class TimeshiftTestFixture(public val grantedPeriod: Duration) {
     }
 
     /** Script displayed-content evidence independently from history and reader movement. Null means unavailable. */
-    public fun playbackPosition(position: Duration?, seek: TimeshiftSeekToken? = null): TimeshiftPlaybackPosition = synchronized(lock) {
+    public fun playbackPosition(
+        position: Duration?,
+        seek: TimeshiftSeekToken? = null,
+    ): TimeshiftPlaybackPosition = synchronized(lock) {
         require(position == null || (position.isFinite() && position >= Duration.ZERO))
         require(seek == null || seek.owner === owner) { "Seek belongs to another segment" }
         val current = owner

@@ -5,11 +5,11 @@ Its format stores normalized host, validated port, and authentication mode in th
 existing private Preferences DataStore. Password fields remain opaque inside a
 connectable `ServerProfile` and are encrypted with format-, field-, endpoint-,
 port-, and mode-bound associated data. Anonymous records contain no ciphertext
-and do not consult the Keystore. The deprecated `TvheadendCredentialStore`
-shares the same record and process mutex for compatibility.
+and do not consult the Keystore. Legacy v1 records are unsupported and load as
+`Unavailable`; storing a complete profile replaces them.
 
-Focused JVM tests cover strict record decoding, v1 compatibility, failed-write
-preservation, cancellation, old/new concurrency, and associated-data mismatch.
+Focused JVM tests cover strict record decoding, v1 rejection, failed-write
+preservation, cancellation, and associated-data mismatch.
 The instrumentation contract covers production DataStore, Tink, Keystore, and
 recreated-store round trips. The process-restart evidence below predates format 2;
 new format-2 process-restart device evidence was explicitly outside this change.

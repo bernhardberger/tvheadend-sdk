@@ -43,7 +43,6 @@ public class TvheadendServerProfileStore private constructor(
                 StoredCredentialRead.Missing -> ServerProfileReadResult.Missing
                 StoredCredentialRead.Unavailable -> ServerProfileReadResult.Unavailable
                 is StoredCredentialRead.Available -> when (val record = stored.record) {
-                    is StoredCredentialRecord.LegacyPassword -> ServerProfileReadResult.Missing
                     is StoredCredentialRecord.Profile -> loadProfile(record)
                 }
             }
@@ -65,7 +64,6 @@ public class TvheadendServerProfileStore private constructor(
                 StoredCredentialRead.Missing -> ServerProfileEditReadResult.Missing
                 StoredCredentialRead.Unavailable -> ServerProfileEditReadResult.Unavailable
                 is StoredCredentialRead.Available -> when (val record = stored.record) {
-                    is StoredCredentialRecord.LegacyPassword -> ServerProfileEditReadResult.Missing
                     is StoredCredentialRecord.Profile -> loadProfileForEditing(record)
                 }
             }

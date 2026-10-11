@@ -1,4 +1,7 @@
-@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class)
+@file:OptIn(
+    at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class,
+    at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class,
+)
 
 package at.bernhardberger.tvheadend.sdk.core
 
@@ -348,7 +351,7 @@ internal class PlaybackBindingTest {
                 val binding = fixture.factory
                     .bindRecording(fixture.currentSession, DvrEntryId(7))
                     .requireBound()
-                val admission = binding.admission as RecordingPlaybackAdmission.GrowingStartOverOnly
+                val admission = binding.admission as RecordingPlaybackAdmission.Growing
 
                 assertEquals(expected, admission.resumePosition, "$capability")
                 assertSame(capability, admission.progressCapability)
@@ -361,7 +364,7 @@ internal class PlaybackBindingTest {
                     ),
                 )
                 assertNull(
-                    (binding.admission as RecordingPlaybackAdmission.GrowingStartOverOnly).resumePosition,
+                    (binding.admission as RecordingPlaybackAdmission.Growing).resumePosition,
                     "$capability",
                 )
             }
@@ -413,7 +416,7 @@ internal class PlaybackBindingTest {
             publishReady(GatewayGeneration(), recordingState = DvrEntryState.RECORDING)
         }
         assertEquals(
-            "RecordingPlaybackAdmission.GrowingStartOverOnly(<redacted>)",
+            "RecordingPlaybackAdmission.Growing(<redacted>)",
             growing.factory
                 .bindRecording(growing.currentSession, DvrEntryId(7))
                 .requireBound()

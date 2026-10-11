@@ -1,4 +1,7 @@
-@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class)
+@file:OptIn(
+    at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class,
+    at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class,
+)
 
 package at.bernhardberger.tvheadend.sdk.media3
 
@@ -109,7 +112,7 @@ private fun RecordingPlaybackAdmission.toCoordinatorAdmission(): CoordinatorReco
             resumePosition,
             progressCapability,
         )
-        is RecordingPlaybackAdmission.GrowingStartOverOnly ->
+        is RecordingPlaybackAdmission.Growing ->
             CoordinatorRecordingAdmission.GrowingStartOverOnly(progressCapability, resumePosition)
         RecordingPlaybackAdmission.GrowingDeferred -> CoordinatorRecordingAdmission.GrowingDeferred
         RecordingPlaybackAdmission.TargetUnavailable ->

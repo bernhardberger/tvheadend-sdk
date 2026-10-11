@@ -1,5 +1,6 @@
 @file:androidx.media3.common.util.UnstableApi
 @file:OptIn(
+    at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class,
     at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class,
     at.bernhardberger.tvheadend.sdk.testing.FakePlaybackApi::class,
     kotlinx.coroutines.ExperimentalCoroutinesApi::class,
@@ -268,8 +269,6 @@ internal class TvheadendPlaybackCoordinatorTest {
             PlaybackTargetResult.RECORDING_PROGRESS_UNSUPPORTED to
                 setOf(PlaybackOutcomeCategory.UNSUPPORTED),
             PlaybackTargetResult.TARGET_UNAVAILABLE to emptySet(),
-            PlaybackTargetResult.GROWING_RECORDING_RESUME_UNSUPPORTED to
-                setOf(PlaybackOutcomeCategory.UNSUPPORTED),
             PlaybackTargetResult.GROWING_RECORDING_DEFERRED to setOf(
                 PlaybackOutcomeCategory.TRANSIENT,
                 PlaybackOutcomeCategory.UNSUPPORTED,
@@ -289,10 +288,6 @@ internal class TvheadendPlaybackCoordinatorTest {
             assertEquals(false, result.isConfigurationOrAccessRelated)
             assertEquals(false, result.isOutcomeUncertain)
         }
-        assertEquals(
-            "GROWING_RECORDING_RESUME_UNSUPPORTED",
-            PlaybackTargetResult.GROWING_RECORDING_RESUME_UNSUPPORTED.toString(),
-        )
         assertNotEquals(
             PlaybackTargetResult.NOT_RUNNING,
             PlaybackTargetResult.PLAYER_UNAVAILABLE,
@@ -4096,7 +4091,7 @@ private class FakeCoordinatorEnvironment {
             DvrEntryState.COMPLETED -> completedCoordinatorAdmission()
             DvrEntryState.RECORDING -> {
                 val file = entry.files?.singleOrNull()
-                if (file?.fileId == 1L && file.path == "/recording.ts") {
+                if (file?.fileId == 1L) {
                     CoordinatorRecordingAdmission.GrowingStartOverOnly(
                         RecordingProgressCapability.SUPPORTED,
                     )

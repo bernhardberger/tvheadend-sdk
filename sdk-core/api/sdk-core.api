@@ -75,8 +75,6 @@ public final class at/bernhardberger/tvheadend/sdk/core/AutorecRule {
 	public final fun component20 ()Ljava/lang/Boolean;
 	public final fun component21 ()Ljava/lang/String;
 	public final fun component22 ()Ljava/lang/String;
-	public final fun component23 ()Ljava/lang/String;
-	public final fun component24 ()Ljava/lang/String;
 	public final fun component25-tg-tQzc ()Lat/bernhardberger/tvheadend/sdk/core/ChannelId;
 	public final fun component26 ()Ljava/lang/String;
 	public final fun component27-2_39p4U ()Ljava/lang/String;
@@ -93,7 +91,6 @@ public final class at/bernhardberger/tvheadend/sdk/core/AutorecRule {
 	public final fun getChannelId-tg-tQzc ()Lat/bernhardberger/tvheadend/sdk/core/ChannelId;
 	public final fun getComment ()Ljava/lang/String;
 	public final fun getConfigId-2_39p4U ()Ljava/lang/String;
-	public final fun getCreator ()Ljava/lang/String;
 	public final fun getDaysOfWeekMask ()Ljava/util/Set;
 	public final fun getDirectory ()Ljava/lang/String;
 	public final fun getDuplicateDetection ()Lat/bernhardberger/tvheadend/sdk/core/DuplicateDetection;
@@ -105,7 +102,6 @@ public final class at/bernhardberger/tvheadend/sdk/core/AutorecRule {
 	public final fun getMergeText ()Ljava/lang/Boolean;
 	public final fun getMinDuration-FghU774 ()Lkotlin/time/Duration;
 	public final fun getName ()Ljava/lang/String;
-	public final fun getOwner ()Ljava/lang/String;
 	public final fun getPriority ()Lat/bernhardberger/tvheadend/sdk/core/DvrPriority;
 	public final fun getRemovalDays ()Ljava/lang/Long;
 	public final fun getRetentionDays ()Ljava/lang/Long;
@@ -900,15 +896,12 @@ public final class at/bernhardberger/tvheadend/sdk/core/DvrEntry {
 	public final fun component22 ()Ljava/lang/String;
 	public final fun component23 ()Ljava/lang/String;
 	public final fun component24 ()Ljava/lang/String;
-	public final fun component25 ()Ljava/lang/String;
-	public final fun component26 ()Ljava/lang/String;
 	public final fun component27 ()Ljava/lang/String;
 	public final fun component28-qky1Ors ()Lat/bernhardberger/tvheadend/sdk/core/ArtworkId;
 	public final fun component29-qky1Ors ()Lat/bernhardberger/tvheadend/sdk/core/ArtworkId;
 	public final fun component3 ()Ljava/lang/Boolean;
 	public final fun component30 ()Ljava/lang/Long;
 	public final fun component31 ()Ljava/util/List;
-	public final fun component32 ()Ljava/lang/String;
 	public final fun component33-2_39p4U ()Ljava/lang/String;
 	public final fun component34 ()Ljava/lang/Boolean;
 	public final fun component35 ()Lat/bernhardberger/tvheadend/sdk/core/DvrEntryState;
@@ -930,7 +923,6 @@ public final class at/bernhardberger/tvheadend/sdk/core/DvrEntry {
 	public final fun getConfigId-2_39p4U ()Ljava/lang/String;
 	public final fun getContentGenre ()Lat/bernhardberger/tvheadend/sdk/core/ContentGenre;
 	public final fun getCopyrightYear ()Ljava/lang/Long;
-	public final fun getCreator ()Ljava/lang/String;
 	public final fun getDataErrors ()Ljava/lang/Long;
 	public final fun getDataSizeBytes ()Ljava/lang/Long;
 	public final fun getDescription ()Ljava/lang/String;
@@ -942,8 +934,6 @@ public final class at/bernhardberger/tvheadend/sdk/core/DvrEntry {
 	public final fun getFiles ()Ljava/util/List;
 	public final fun getId-YcJ-2to ()J
 	public final fun getImage-qky1Ors ()Lat/bernhardberger/tvheadend/sdk/core/ArtworkId;
-	public final fun getOwner ()Ljava/lang/String;
-	public final fun getPath ()Ljava/lang/String;
 	public final fun getPlayCount ()Ljava/lang/Long;
 	public final fun getPlayPosition-FghU774 ()Lkotlin/time/Duration;
 	public final fun getPriority ()Lat/bernhardberger/tvheadend/sdk/core/DvrPriority;
@@ -1183,7 +1173,6 @@ public final class at/bernhardberger/tvheadend/sdk/core/DvrProgressTracker {
 public final class at/bernhardberger/tvheadend/sdk/core/DvrRecordingFile {
 	public fun <init> (Ljava/lang/Long;Ljava/lang/String;Lkotlin/time/Instant;Lkotlin/time/Instant;Ljava/lang/Long;)V
 	public final fun component1 ()Ljava/lang/Long;
-	public final fun component2 ()Ljava/lang/String;
 	public final fun component3 ()Lkotlin/time/Instant;
 	public final fun component4 ()Lkotlin/time/Instant;
 	public final fun component5 ()Ljava/lang/Long;
@@ -1191,7 +1180,6 @@ public final class at/bernhardberger/tvheadend/sdk/core/DvrRecordingFile {
 	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/DvrRecordingFile;Ljava/lang/Long;Ljava/lang/String;Lkotlin/time/Instant;Lkotlin/time/Instant;Ljava/lang/Long;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/DvrRecordingFile;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getFileId ()Ljava/lang/Long;
-	public final fun getPath ()Ljava/lang/String;
 	public final fun getSizeBytes ()Ljava/lang/Long;
 	public final fun getStart ()Lkotlin/time/Instant;
 	public final fun getStop ()Lkotlin/time/Instant;
@@ -1446,13 +1434,11 @@ public final class at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchResult$C
 
 public abstract interface class at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchSettlement {
 	public abstract fun getChannelId-X9YaTts ()J
-	public fun getChannelIdValue ()J
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchSettlement$CoveredEmpty : at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchSettlement {
 	public synthetic fun <init> (JLat/bernhardberger/tvheadend/sdk/core/SessionObservation;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun getChannelId-X9YaTts ()J
-	public fun getChannelIdValue ()J
 	public final fun getObservation ()Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;
 	public fun toString ()Ljava/lang/String;
 }
@@ -1460,33 +1446,25 @@ public final class at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchSettleme
 public final class at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchSettlement$CoveredWithData : at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchSettlement {
 	public synthetic fun <init> (JLat/bernhardberger/tvheadend/sdk/core/SessionObservation;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun getChannelId-X9YaTts ()J
-	public fun getChannelIdValue ()J
 	public final fun getObservation ()Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;
 	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchSettlement$DefaultImpls {
-	public static fun getChannelIdValue (Lat/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchSettlement;)J
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchSettlement$ObservationExpired : at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchSettlement {
 	public synthetic fun <init> (JLkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun getChannelId-X9YaTts ()J
-	public fun getChannelIdValue ()J
 	public fun toString ()Ljava/lang/String;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchSettlement$Rejected : at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchSettlement {
 	public synthetic fun <init> (JLkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun getChannelId-X9YaTts ()J
-	public fun getChannelIdValue ()J
 	public fun toString ()Ljava/lang/String;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchSettlement$TargetAbsent : at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchSettlement {
 	public synthetic fun <init> (JLkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun getChannelId-X9YaTts ()J
-	public fun getChannelIdValue ()J
 	public fun toString ()Ljava/lang/String;
 }
 
@@ -1849,16 +1827,16 @@ public final class at/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmissi
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class at/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmission$Growing : at/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmission {
+	public final fun getProgressCapability ()Lat/bernhardberger/tvheadend/sdk/core/RecordingProgressCapability;
+	public final fun getResumePosition-FghU774 ()Lkotlin/time/Duration;
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class at/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmission$GrowingDeferred : at/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmission {
 	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmission$GrowingDeferred;
 	public fun equals (Ljava/lang/Object;)Z
 	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmission$GrowingStartOverOnly : at/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmission {
-	public final fun getProgressCapability ()Lat/bernhardberger/tvheadend/sdk/core/RecordingProgressCapability;
-	public final fun getResumePosition-FghU774 ()Lkotlin/time/Duration;
 	public fun toString ()Ljava/lang/String;
 }
 
@@ -2270,8 +2248,6 @@ public final class at/bernhardberger/tvheadend/sdk/core/TimerecRule {
 	public final fun component1-bdPwwM0 ()Ljava/lang/String;
 	public final fun component10 ()Ljava/lang/Long;
 	public final fun component11 ()Ljava/lang/String;
-	public final fun component12 ()Ljava/lang/String;
-	public final fun component13 ()Ljava/lang/String;
 	public final fun component14-2_39p4U ()Ljava/lang/String;
 	public final fun component15 ()Ljava/lang/String;
 	public final fun component2 ()Ljava/lang/Boolean;
@@ -2286,13 +2262,11 @@ public final class at/bernhardberger/tvheadend/sdk/core/TimerecRule {
 	public final fun getChannelId-tg-tQzc ()Lat/bernhardberger/tvheadend/sdk/core/ChannelId;
 	public final fun getComment ()Ljava/lang/String;
 	public final fun getConfigId-2_39p4U ()Ljava/lang/String;
-	public final fun getCreator ()Ljava/lang/String;
 	public final fun getDaysOfWeekMask ()Ljava/util/Set;
 	public final fun getDirectory ()Ljava/lang/String;
 	public final fun getEnabled ()Ljava/lang/Boolean;
 	public final fun getId-bdPwwM0 ()Ljava/lang/String;
 	public final fun getName ()Ljava/lang/String;
-	public final fun getOwner ()Ljava/lang/String;
 	public final fun getPriority ()Lat/bernhardberger/tvheadend/sdk/core/DvrPriority;
 	public final fun getRetentionDays ()Ljava/lang/Long;
 	public final fun getStartMinutesSinceMidnight ()Ljava/time/LocalTime;

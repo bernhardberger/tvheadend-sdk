@@ -16,7 +16,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.runTest
-import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
@@ -132,7 +131,7 @@ internal class TvheadendServerProfileStoreTest {
     fun `edit read rejects legacy and corrupt credentials without exposing failure details`() = runTest {
         val legacyCipher = FakeCredentialCipher()
         val legacy = TvheadendServerProfileStore.create(
-            FakeCredentialStorage(StoredCredentialRead.Available(legacyPasswordRecord())),
+            FakeCredentialStorage(decodeCredentialRecord(mutablePreferencesOf(CREDENTIAL_VERSION_KEY to 1))),
             legacyCipher,
         ).loadProfileForEditing()
         val failure = IllegalStateException("private decryption detail")
@@ -155,7 +154,7 @@ internal class TvheadendServerProfileStoreTest {
             FakeCredentialCipher(),
         ).loadProfileForEditing()
 
-        assertSame(ServerProfileEditReadResult.Missing, legacy)
+        assertSame(ServerProfileEditReadResult.Unavailable, legacy)
         assertEquals(0, legacyCipher.decryptCalls)
         assertSame(ServerProfileEditReadResult.Unavailable, corrupt)
         assertSame(ServerProfileEditReadResult.Unavailable, endpointMismatch)
@@ -184,18 +183,11 @@ internal class TvheadendServerProfileStoreTest {
     }
 
     @Test
-    fun `missing and valid legacy records are missing profiles without crypto`() = runTest {
+    fun `missing records are missing profiles without crypto`() = runTest {
         val cipher = FakeCredentialCipher()
         assertSame(
             ServerProfileReadResult.Missing,
             TvheadendServerProfileStore.create(FakeCredentialStorage(), cipher).loadProfile(),
-        )
-        assertSame(
-            ServerProfileReadResult.Missing,
-            TvheadendServerProfileStore.create(
-                FakeCredentialStorage(StoredCredentialRead.Available(legacyPasswordRecord())),
-                cipher,
-            ).loadProfile(),
         )
         assertEquals(0, cipher.decryptCalls)
     }
@@ -203,6 +195,11 @@ internal class TvheadendServerProfileStoreTest {
     @Test
     fun `malformed unknown and partial records fail closed`() {
         val partialV1 = mutablePreferencesOf(CREDENTIAL_VERSION_KEY to 1)
+        val completeV1 = mutablePreferencesOf(
+            CREDENTIAL_VERSION_KEY to 1,
+            ENCRYPTED_USERNAME_KEY to byteArrayOf(1),
+            ENCRYPTED_PASSWORD_KEY to byteArrayOf(2),
+        )
         val partialV2 = mutablePreferencesOf(
             CREDENTIAL_VERSION_KEY to 2,
             SERVER_HOST_KEY to "test.invalid",
@@ -221,7 +218,7 @@ internal class TvheadendServerProfileStoreTest {
         val unknownVersion = mutablePreferencesOf(CREDENTIAL_VERSION_KEY to 3)
         val unknownKey = mutablePreferencesOf(intPreferencesKey("unknown") to 1)
 
-        listOf(partialV1, partialV2, damagedAnonymous, unknownVersion, unknownKey).forEach { record ->
+        listOf(partialV1, completeV1, partialV2, damagedAnonymous, unknownVersion, unknownKey).forEach { record ->
             assertSame(StoredCredentialRead.Unavailable, decodeCredentialRecord(record))
         }
     }
@@ -309,10 +306,6 @@ internal class TvheadendServerProfileStoreTest {
         assertFalse(username.contentEquals(anonymous))
         assertFalse(username.contentEquals(changedHost))
         assertFalse(username.contentEquals(changedPort))
-        assertArrayEquals(
-            "at.bernhardberger.tvheadend.sdk.credentials.username.v1".encodeToByteArray(),
-            credentialAssociatedData(CredentialCipherContext.Legacy, CredentialField.USERNAME),
-        )
     }
 
     @Test
@@ -344,7 +337,7 @@ internal class TvheadendServerProfileStoreTest {
     @Test
     fun `profile replacement and clear each use one atomic storage mutation`() = runTest {
         val storage = FakeCredentialStorage(
-            StoredCredentialRead.Available(legacyPasswordRecord()),
+            StoredCredentialRead.Unavailable,
         )
         val store = TvheadendServerProfileStore.create(storage, FakeCredentialCipher())
 
