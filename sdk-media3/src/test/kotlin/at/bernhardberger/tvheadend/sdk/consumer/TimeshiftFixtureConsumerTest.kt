@@ -1,5 +1,6 @@
 package at.bernhardberger.tvheadend.sdk.consumer
 
+import at.bernhardberger.tvheadend.sdk.core.TvheadendTestingApi
 import at.bernhardberger.tvheadend.sdk.media3.LiveTimeshiftState
 import at.bernhardberger.tvheadend.sdk.media3.TimeshiftContentSeekResult
 import at.bernhardberger.tvheadend.sdk.media3.TimeshiftPlaybackPosition
@@ -13,6 +14,7 @@ import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Test
 import kotlin.time.Duration.Companion.seconds
 
+@OptIn(TvheadendTestingApi::class)
 class TimeshiftFixtureConsumerTest {
     @Test
     fun `public programme preview keeps the sampled mapping and content target`() = runTest {

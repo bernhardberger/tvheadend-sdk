@@ -443,6 +443,7 @@ internal class ModuleBoundaryTest {
             "TimeshiftWallClockMapping",
             "TimeshiftPlaybackPosition",
             "TimeshiftContentSeekResult",
+            "TimeshiftTestFixture",
             "LivePlaybackTargetResult",
             "TimeshiftCommandDisposition",
             "PlaybackOutcomeCategory",
@@ -614,6 +615,7 @@ internal class ModuleBoundaryTest {
             "at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi",
             "at.bernhardberger.tvheadend.sdk.media3.PlaybackRecoveryReason",
             "at.bernhardberger.tvheadend.sdk.media3.TvheadendRecordingException",
+            "at.bernhardberger.tvheadend.sdk.media3.testing.TimeshiftTestFixture",
             "at.bernhardberger.tvheadend.sdk.core.TvheadendSession",
             "at.bernhardberger.tvheadend.sdk.core.EpgRepository",
             "at.bernhardberger.tvheadend.sdk.core.DvrRepository",
@@ -672,7 +674,7 @@ internal class ModuleBoundaryTest {
         )
         val actual = declaration.findAll(source).map { match -> match.groupValues[1] }.toSet()
         val annotatedCount = Regex(
-            "^@(?:SubscriptionInfrastructureApi|FakePlaybackApi)(?:\\s+@[^\\n]+)*\\s+public",
+            "^@(?:SubscriptionInfrastructureApi|FakePlaybackApi|TvheadendTestingApi)(?:\\s+@[^\\n]+)*\\s+public",
             RegexOption.MULTILINE,
         )
             .findAll(source)

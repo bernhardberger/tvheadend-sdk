@@ -75,8 +75,9 @@ Unreleased; development target.
 - **BREAKING:** `PlaybackTargetResult.GROWING_RECORDING_RESUME_UNSUPPORTED` and
   `EpgCoverageBatchSettlement.channelIdValue` are removed; drop the obsolete
   result branch and use `channelId` instead of its raw-value shortcut.
-- **BREAKING:** `TimeshiftTestFixture` is no longer published from `sdk-media3`.
-  Replace it with application-owned test fixtures.
+- **BREAKING:** `TimeshiftTestFixture` now requires
+  `@OptIn(TvheadendTestingApi::class)`. Its `sdk-media3` coordinate and
+  `at.bernhardberger.tvheadend.sdk.media3.testing` package are unchanged.
 
 ### Fixed
 

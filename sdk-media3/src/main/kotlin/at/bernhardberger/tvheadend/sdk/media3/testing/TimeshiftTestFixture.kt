@@ -1,5 +1,6 @@
 package at.bernhardberger.tvheadend.sdk.media3.testing
 
+import at.bernhardberger.tvheadend.sdk.core.TvheadendTestingApi
 import at.bernhardberger.tvheadend.sdk.media3.LiveTimeshiftState
 import at.bernhardberger.tvheadend.sdk.media3.TimeshiftCommandResult
 import at.bernhardberger.tvheadend.sdk.media3.TimeshiftContentSeekResult
@@ -20,8 +21,10 @@ import kotlin.time.Duration
  * Host-test fixture for application timeshift controls. It needs no Player, Android runtime or server.
  * Targets are valid only within this fixture's current subscription, never a real coordinator.
  * The fixture models observations and dispatch results, not app coalescing, rendering or protocol timing.
+ * @property grantedPeriod Scripted server-granted timeshift period.
  */
-internal class TimeshiftTestFixture(public val grantedPeriod: Duration) {
+@TvheadendTestingApi
+public class TimeshiftTestFixture(public val grantedPeriod: Duration) {
     init {
         require(grantedPeriod.isFinite() && grantedPeriod > Duration.ZERO)
     }
@@ -34,6 +37,7 @@ internal class TimeshiftTestFixture(public val grantedPeriod: Duration) {
         LiveTimeshiftState.Available(grantedPeriod, null, null, null),
     )
 
+    /** Current scripted timeshift observation. */
     public val state: StateFlow<LiveTimeshiftState> = mutableState.asStateFlow()
 
     /**

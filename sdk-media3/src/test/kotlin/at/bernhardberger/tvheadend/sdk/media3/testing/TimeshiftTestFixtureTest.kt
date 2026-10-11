@@ -1,5 +1,6 @@
 package at.bernhardberger.tvheadend.sdk.media3.testing
 
+import at.bernhardberger.tvheadend.sdk.core.TvheadendTestingApi
 import at.bernhardberger.tvheadend.sdk.media3.LiveTimeshiftState
 import at.bernhardberger.tvheadend.sdk.media3.TimeshiftCommandResult
 import at.bernhardberger.tvheadend.sdk.media3.TimeshiftContentSeekResult
@@ -17,7 +18,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import kotlin.time.Duration.Companion.seconds
 
-@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class, TvheadendTestingApi::class)
 class TimeshiftTestFixtureTest {
     @Test
     fun `accepted token scripts delayed post-seek samples independently of unknown reader position`() {
