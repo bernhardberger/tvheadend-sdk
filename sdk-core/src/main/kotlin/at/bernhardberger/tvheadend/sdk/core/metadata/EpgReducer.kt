@@ -1,6 +1,8 @@
 package at.bernhardberger.tvheadend.sdk.core.metadata
 
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
+import at.bernhardberger.tvheadend.sdk.core.ArtworkId
+import at.bernhardberger.tvheadend.sdk.core.ContentGenre
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverage
 import at.bernhardberger.tvheadend.sdk.core.EpgCoveragePolicy
 import at.bernhardberger.tvheadend.sdk.core.EpgEpisode
@@ -131,13 +133,13 @@ internal data class ReducedEpgEvent private constructor(
             keywords = keywords,
             seriesLinkUri = seriesLinkUri,
             episodeUri = episodeUri,
-            contentType = contentType,
+            contentGenre = ContentGenre.fromContentType(contentType),
             rating = ratingOrNull(),
             copyrightYear = copyrightYear,
             firstAired = firstAired,
             isNew = isNew,
             episode = episodeOrNull(),
-            image = image,
+            image = ArtworkId.parse(image),
             dvrEntryId = dvrEntryId,
             nextEventId = nextEventId,
         ).also { publicEvent = it }

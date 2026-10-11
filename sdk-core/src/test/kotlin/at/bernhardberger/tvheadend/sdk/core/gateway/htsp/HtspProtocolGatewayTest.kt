@@ -133,6 +133,13 @@ import at.bernhardberger.tvheadend.sdk.core.ChannelTagId
 import at.bernhardberger.tvheadend.sdk.core.EpgSearchRequest
 import at.bernhardberger.tvheadend.sdk.core.EventId
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleCreate
+import at.bernhardberger.tvheadend.sdk.core.AutorecTime
+import at.bernhardberger.tvheadend.sdk.core.BroadcastType
+import at.bernhardberger.tvheadend.sdk.core.DuplicateDetection
+import at.bernhardberger.tvheadend.sdk.core.DvrPriority
+import java.time.DayOfWeek
+import java.time.LocalTime
+import kotlin.time.Duration.Companion.minutes
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleId
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
@@ -1783,11 +1790,11 @@ internal class HtspProtocolGatewayTest {
             enabled = true,
             start = Instant.fromEpochSeconds(-5),
             stop = Instant.fromEpochSeconds(6),
-            startExtraMinutes = -7,
-            stopExtraMinutes = 8,
+            startExtraMinutes = (-7).minutes,
+            stopExtraMinutes = 8.minutes,
             retentionDays = 9,
             removalDays = 10,
-            priority = 11,
+            priority = DvrPriority.HIGH,
             ageRating = 13,
         )
         assertTrue(gateway.updateDvrEntry(generation, DvrEntryId(7), update) is GatewayResult.Ok)
@@ -1808,7 +1815,7 @@ internal class HtspProtocolGatewayTest {
         assertEquals(8L, updateRequest.stopExtraMinutes)
         assertEquals(9L, updateRequest.retentionDays)
         assertEquals(10L, updateRequest.removalDays)
-        assertEquals(11L, updateRequest.priority)
+        assertEquals(1L, updateRequest.priority)
         assertEquals(13L, updateRequest.ageRating)
         assertEquals(null, updateRequest.playCount)
         assertEquals(null, updateRequest.playPositionSeconds)
@@ -2012,6 +2019,40 @@ internal class HtspProtocolGatewayTest {
     }
 
     @Test
+    fun `title-only updates omit every untouched field including fallback policies`() = runTest {
+        val sourceGeneration = HtspConnectionGeneration()
+        val fake = FakeHtspConnection().apply {
+            liveConnectionValue.value = liveConnection(sourceGeneration)
+            connectOutcome = HtspConnectOutcome.Connected(requireNotNull(liveConnectionValue.value))
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+        fake.executeResult = HtspResult.Ok(UpdateDvrEntryResponse)
+        gateway.updateDvrEntry(generation, DvrEntryId(7), DvrEntryUpdate(title = "new"))
+        assertEquals(UpdateDvrEntryRequest(entryId = 7, title = "new"), fake.lastRequest)
+        fake.executeResult = HtspResult.Ok(UpdateAutorecEntryResponse)
+        gateway.updateAutorecRule(generation, AutorecRuleId("rule"), AutorecRuleUpdate(title = "new"))
+        assertEquals(UpdateAutorecEntryRequest(id = "rule", title = "new"), fake.lastRequest)
+        fake.executeResult = HtspResult.Ok(UpdateTimerecEntryResponse)
+        gateway.updateTimerecRule(generation, TimerecRuleId("time"), TimerecRuleUpdate(title = "new"))
+        assertEquals(UpdateTimerecEntryRequest(id = "time", title = "new"), fake.lastRequest)
+
+        // An explicit caller choice is required to send even a server-default policy.
+        fake.executeResult = HtspResult.Ok(UpdateAutorecEntryResponse)
+        gateway.updateAutorecRule(generation, AutorecRuleId("rule"), AutorecRuleUpdate(
+            priority = DvrPriority.DEFAULT, duplicateDetection = DuplicateDetection.DVR_PROFILE,
+            broadcastType = BroadcastType.ALL, daysOfWeekMask = emptySet(),
+            startMinutesSinceMidnight = AutorecTime.AnyTime,
+            startWindowEndMinutesSinceMidnight = AutorecTime.At(LocalTime.MIDNIGHT),
+        ))
+        assertEquals(UpdateAutorecEntryRequest(
+            id = "rule", priority = 6, duplicateDetection = 15, broadcastType = 0, daysOfWeekMask = 0,
+            startMinutesSinceMidnight = 1440, startWindowEndMinutesSinceMidnight = 0,
+        ), fake.lastRequest)
+    }
+
+    @Test
     fun `recording rule mutations map SDK fields identifiers and any-channel selection`() = runTest {
         val sourceGeneration = HtspConnectionGeneration()
         val fake = FakeHtspConnection().apply {
@@ -2030,24 +2071,24 @@ internal class HtspProtocolGatewayTest {
             maxDuration = 120.seconds,
             fullText = true,
             mergeText = false,
-            duplicateDetection = 3,
+            duplicateDetection = DuplicateDetection.DIFFERENT_DESCRIPTION,
             maximumRecordingCount = 4,
-            broadcastType = 5,
-            startExtraMinutes = -6,
-            stopExtraMinutes = 7,
+            broadcastType = BroadcastType.NEW,
+            startExtraMinutes = (-6).minutes,
+            stopExtraMinutes = 7.minutes,
             seriesLinkUri = "private-series",
-            approximateStartMinutesSinceMidnight = 8,
-            startMinutesSinceMidnight = 9,
-            startWindowEndMinutesSinceMidnight = 10,
+            approximateStartMinutesSinceMidnight = AutorecTime.At(LocalTime.of(0, 8)),
+            startMinutesSinceMidnight = AutorecTime.At(LocalTime.of(0, 9)),
+            startWindowEndMinutesSinceMidnight = AutorecTime.At(LocalTime.of(0, 10)),
             enabled = true,
             retentionDays = 11,
             removalDays = 12,
-            priority = 13,
+            priority = DvrPriority.LOW,
             name = "private-name",
             comment = "private-comment",
             directory = "private-directory",
             configId = DvrConfigId("private-config"),
-            daysOfWeekMask = 127,
+            daysOfWeekMask = DayOfWeek.values().toSet(),
         )
         fake.executeResult = HtspResult.Ok(AddAutorecEntryResponse("private-autorec-id"))
 
@@ -2061,7 +2102,7 @@ internal class HtspProtocolGatewayTest {
         assertEquals(false, addAutorec.mergeText)
         assertEquals(3L, addAutorec.duplicateDetection)
         assertEquals(4L, addAutorec.maximumRecordingCount)
-        assertEquals(5L, addAutorec.broadcastType)
+        assertEquals(3L, addAutorec.broadcastType)
         assertEquals(-6L, addAutorec.startExtraMinutes)
         assertEquals(7L, addAutorec.stopExtraMinutes)
         assertEquals("private-series", addAutorec.seriesLinkUri)
@@ -2071,7 +2112,7 @@ internal class HtspProtocolGatewayTest {
         assertEquals(true, addAutorec.enabled)
         assertEquals(11L, addAutorec.retentionDays)
         assertEquals(12L, addAutorec.removalDays)
-        assertEquals(13L, addAutorec.priority)
+        assertEquals(3L, addAutorec.priority)
         assertEquals("private-name", addAutorec.name)
         assertEquals("private-comment", addAutorec.comment)
         assertEquals("private-directory", addAutorec.directory)
@@ -2110,17 +2151,20 @@ internal class HtspProtocolGatewayTest {
             TimerecRuleCreate(
                 title = "private-time-title",
                 channel = RecordingRuleChannel.AllChannels,
-                startMinutesSinceMidnight = 60,
-                stopMinutesSinceMidnight = 120,
+                startMinutesSinceMidnight = LocalTime.of(1, 0),
+                stopMinutesSinceMidnight = LocalTime.of(2, 0),
                 enabled = true,
                 retentionDays = 1,
                 removalDays = 2,
-                priority = 3,
+                priority = DvrPriority.LOW,
                 name = "private-time-name",
                 comment = "private-time-comment",
                 directory = "private-time-directory",
                 configId = DvrConfigId("private-time-config"),
-                daysOfWeekMask = 31,
+                daysOfWeekMask = setOf(
+                    DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY,
+                    DayOfWeek.THURSDAY, DayOfWeek.FRIDAY,
+                ),
             ),
         ) as GatewayResult.Ok
         val addTimerec = fake.lastRequest as AddTimerecEntryRequest
@@ -2135,7 +2179,7 @@ internal class HtspProtocolGatewayTest {
             gateway.updateTimerecRule(
                 generation,
                 TimerecRuleId("private-timerec-id"),
-                TimerecRuleUpdate(title = "private-next-time", stopMinutesSinceMidnight = 180),
+                TimerecRuleUpdate(title = "private-next-time", stopMinutesSinceMidnight = LocalTime.of(3, 0)),
             ) is GatewayResult.Ok,
         )
         val updateTimerec = fake.lastRequest as UpdateTimerecEntryRequest

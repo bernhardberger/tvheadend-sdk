@@ -7,6 +7,8 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import java.time.LocalTime
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
@@ -34,9 +36,9 @@ internal class DvrRepositoryTest {
             timerecRuleId = TimerecRuleId("private-timerec"),
             start = instant(10),
             stop = instant(20),
-            startExtraMinutes = 3,
-            stopExtraMinutes = 4,
-            contentType = 5,
+            startExtraMinutes = 3.minutes,
+            stopExtraMinutes = 4.minutes,
+            contentGenre = ContentGenre.fromContentType(0x50),
             rating = EpgRating(12, "private-rating", null, null, null, null),
             playCount = 1,
             playPosition = 30.seconds,
@@ -62,7 +64,7 @@ internal class DvrRepositoryTest {
             DvrRecordingFile(fileId = -1, path = null, start = null, stop = null, sizeBytes = null)
         }
         assertThrows(IllegalArgumentException::class.java) {
-            TimerecRule.create(TimerecRuleId("rule"), startMinutesSinceMidnight = 1_441)
+            TimerecRule.create(TimerecRuleId("rule"), startMinutesSinceMidnight = LocalTime.of(0, 0, 1))
         }
         assertThrows(IllegalArgumentException::class.java) {
             AutorecRule.create(AutorecRuleId("rule"), retentionDays = -1)
@@ -95,8 +97,8 @@ internal class DvrRepositoryTest {
                 configId = DvrConfigId("private-config"),
             ),
             AutorecRuleUpdate(title = "private-title", maxDuration = 120.seconds),
-            TimerecRuleCreate(title = "private-title", startMinutesSinceMidnight = 60),
-            TimerecRuleUpdate(title = "private-title", stopMinutesSinceMidnight = 120),
+            TimerecRuleCreate(title = "private-title", startMinutesSinceMidnight = LocalTime.of(1, 0)),
+            TimerecRuleUpdate(title = "private-title", stopMinutesSinceMidnight = LocalTime.of(2, 0)),
         )
 
         assertTrue(requests.all { request -> request.toString().contains("<redacted>") })
@@ -117,10 +119,10 @@ internal class DvrRepositoryTest {
             AutorecRuleCreate(title = "title", minDuration = 500.milliseconds)
         }
         assertThrows(IllegalArgumentException::class.java) {
-            AutorecRuleUpdate(startMinutesSinceMidnight = 1_441)
+            AutorecRuleUpdate(startMinutesSinceMidnight = AutorecTime.At(LocalTime.of(0, 0, 1)))
         }
         assertThrows(IllegalArgumentException::class.java) {
-            TimerecRuleCreate(title = "title", stopMinutesSinceMidnight = -1)
+            TimerecRuleCreate(title = "title", stopMinutesSinceMidnight = LocalTime.of(0, 0, 0, 1))
         }
     }
 

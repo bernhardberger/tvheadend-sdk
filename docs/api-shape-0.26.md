@@ -385,6 +385,13 @@ unchanged". The existing sentinel tests move to the new type.
   - **The exception message contains no path.**
   - **Tests** cover equal fresh policies, a mismatch, concurrent
     acquisition, and replacement after shutdown.
+- DVR mutation and progress failures caused by a retired connection
+  generation report `CONNECTION_CHANGED`, not `TRANSPORT_UNAVAILABLE`, so
+  callers take a fresh observation before retrying an operation that may
+  have applied. Step 2 kept the old value. To be verified against the
+  coordinators in step 4: if any inactive-operation path is a session
+  shutdown rather than a generation change, it reports `NOT_READY` instead.
+  `mayHaveApplied` is unaffected.
 
 ### Not in 0.26
 

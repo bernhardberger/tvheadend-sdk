@@ -270,8 +270,7 @@ public enum class ContentSubgenre(public val category: ContentCategory, public v
  * ETSI EN 300 468 content classification decoded from a raw TVHeadend `contentType`.
  *
  * [subgenre] is `null` for a class's "general" or "user defined" byte and for level-2 values that
- * Table 28 leaves unassigned; [category] is still known in those cases. The raw byte remains
- * available as [EpgEvent.contentType] or [DvrEntry.contentType].
+ * Table 28 leaves unassigned; [category] is still known in those cases.
  */
 @ConsistentCopyVisibility
 public data class ContentGenre private constructor(

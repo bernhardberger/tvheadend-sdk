@@ -3,6 +3,7 @@
 package at.bernhardberger.tvheadend.sdk.core.cache
 
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
+import at.bernhardberger.tvheadend.sdk.core.ContentGenre
 import at.bernhardberger.tvheadend.sdk.core.Channel
 import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
@@ -270,13 +271,13 @@ internal fun EpgEvent.toDto(): EpgEventDto = EpgEventDto(
     keywords = keywords,
     seriesLinkUri = seriesLinkUri,
     episodeUri = episodeUri,
-    contentType = contentType,
+    contentType = contentGenre?.let { (it.subgenre?.code ?: (it.category.code shl 4)).toLong() },
     rating = rating?.toDto(),
     copyrightYear = copyrightYear,
     firstAired = firstAired?.toEpochMilliseconds(),
     isNew = isNew,
     episode = episode?.toDto(),
-    image = image,
+    image = image?.let { "imagecache/${it.value}" },
     dvrEntryId = dvrEntryId?.value,
     nextEventId = nextEventId?.value,
 )
@@ -295,13 +296,13 @@ internal fun EpgEventDto.toModel(): EpgEvent = EpgEvent.create(
     keywords = keywords,
     seriesLinkUri = seriesLinkUri,
     episodeUri = episodeUri,
-    contentType = contentType,
+    contentGenre = ContentGenre.fromContentType(contentType),
     rating = rating?.toModel(),
     copyrightYear = copyrightYear,
     firstAired = firstAired?.let(Instant::fromEpochMilliseconds),
     isNew = isNew,
     episode = episode?.toModel(),
-    image = image,
+    image = ArtworkId.parse(image),
     dvrEntryId = dvrEntryId?.let(::DvrEntryId),
     nextEventId = nextEventId?.let(::EventId),
 )

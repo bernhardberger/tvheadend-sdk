@@ -3,6 +3,8 @@ package at.bernhardberger.tvheadend.sdk.core
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.util.Collections
+import java.time.DayOfWeek
+import java.time.LocalTime
 import kotlinx.coroutines.flow.Flow
 import kotlin.time.Duration
 import kotlin.time.Instant
@@ -164,12 +166,12 @@ public data class DvrEntry private constructor(
     public val timerecRuleId: TimerecRuleId?,
     public val start: Instant?,
     public val stop: Instant?,
-    public val startExtraMinutes: Long?,
-    public val stopExtraMinutes: Long?,
+    public val startExtraMinutes: Duration?,
+    public val stopExtraMinutes: Duration?,
     public val retentionDays: Long?,
     public val removalDays: Long?,
-    public val priority: Long?,
-    public val contentType: Long?,
+    public val priority: DvrPriority?,
+    public val contentGenre: ContentGenre?,
     public val rating: EpgRating?,
     public val playCount: Long?,
     public val playPosition: Duration?,
@@ -181,23 +183,19 @@ public data class DvrEntry private constructor(
     public val owner: String?,
     public val creator: String?,
     public val comment: String?,
-    public val image: String?,
-    public val fanartImage: String?,
+    public val image: ArtworkId?,
+    public val fanartImage: ArtworkId?,
     public val copyrightYear: Long?,
     public val files: List<DvrRecordingFile>?,
     public val path: String?,
     public val configId: DvrConfigId?,
-    public val duplicate: Long?,
+    public val duplicate: Boolean?,
     public val state: DvrEntryState?,
     public val subscriptionError: DvrSubscriptionError?,
     public val streamErrors: Long?,
     public val dataErrors: Long?,
     public val dataSizeBytes: Long?,
 ) {
-    /** ETSI category and subgenre decoded from [contentType]. */
-    public val contentGenre: ContentGenre?
-        get() = ContentGenre.fromContentType(contentType)
-
     override fun toString(): String = "DvrEntry(<redacted>)"
 
     public companion object {
@@ -213,12 +211,12 @@ public data class DvrEntry private constructor(
             timerecRuleId: TimerecRuleId? = null,
             start: Instant? = null,
             stop: Instant? = null,
-            startExtraMinutes: Long? = null,
-            stopExtraMinutes: Long? = null,
+            startExtraMinutes: Duration? = null,
+            stopExtraMinutes: Duration? = null,
             retentionDays: Long? = null,
             removalDays: Long? = null,
-            priority: Long? = null,
-            contentType: Long? = null,
+            priority: DvrPriority? = null,
+            contentGenre: ContentGenre? = null,
             rating: EpgRating? = null,
             playCount: Long? = null,
             playPosition: Duration? = null,
@@ -230,13 +228,13 @@ public data class DvrEntry private constructor(
             owner: String? = null,
             creator: String? = null,
             comment: String? = null,
-            image: String? = null,
-            fanartImage: String? = null,
+            image: ArtworkId? = null,
+            fanartImage: ArtworkId? = null,
             copyrightYear: Long? = null,
             files: List<DvrRecordingFile>? = null,
             path: String? = null,
             configId: DvrConfigId? = null,
-            duplicate: Long? = null,
+            duplicate: Boolean? = null,
             state: DvrEntryState? = null,
             subscriptionError: DvrSubscriptionError? = null,
             streamErrors: Long? = null,
@@ -248,14 +246,13 @@ public data class DvrEntry private constructor(
             }
             retentionDays?.let { requireDvrU32("DvrEntry retentionDays", it) }
             removalDays?.let { requireDvrU32("DvrEntry removalDays", it) }
-            priority?.let { requireDvrU32("DvrEntry priority", it) }
-            contentType?.let { requireDvrU32("DvrEntry contentType", it) }
+            startExtraMinutes?.requireDvrExtraMinutes()
+            stopExtraMinutes?.requireDvrExtraMinutes()
             playCount?.let { requireDvrU32("DvrEntry playCount", it) }
             playPosition?.let {
                 require(!it.isNegative()) { "DvrEntry playPosition must not be negative" }
             }
             copyrightYear?.let { requireDvrU32("DvrEntry copyrightYear", it) }
-            duplicate?.let { requireDvrU32("DvrEntry duplicate", it) }
             streamErrors?.let { requireDvrU32("DvrEntry streamErrors", it) }
             dataErrors?.let { requireDvrU32("DvrEntry dataErrors", it) }
             return DvrEntry(
@@ -274,7 +271,7 @@ public data class DvrEntry private constructor(
                 retentionDays = retentionDays,
                 removalDays = removalDays,
                 priority = priority,
-                contentType = contentType,
+                contentGenre = contentGenre,
                 rating = rating,
                 playCount = playCount,
                 playPosition = playPosition,
@@ -312,16 +309,16 @@ public data class AutorecRule private constructor(
     public val minDuration: Duration?,
     public val retentionDays: Long?,
     public val removalDays: Long?,
-    public val daysOfWeekMask: Long?,
-    public val approximateStartMinutesSinceMidnight: Int?,
-    public val startMinutesSinceMidnight: Int?,
-    public val startWindowEndMinutesSinceMidnight: Int?,
-    public val priority: Long?,
-    public val startExtraMinutes: Long?,
-    public val stopExtraMinutes: Long?,
-    public val duplicateDetection: Long?,
+    public val daysOfWeekMask: Set<DayOfWeek>?,
+    public val approximateStartMinutesSinceMidnight: AutorecTime?,
+    public val startMinutesSinceMidnight: AutorecTime?,
+    public val startWindowEndMinutesSinceMidnight: AutorecTime?,
+    public val priority: DvrPriority?,
+    public val startExtraMinutes: Duration?,
+    public val stopExtraMinutes: Duration?,
+    public val duplicateDetection: DuplicateDetection?,
     public val maximumRecordingCount: Long?,
-    public val broadcastType: Long?,
+    public val broadcastType: BroadcastType?,
     public val comment: String?,
     public val title: String?,
     public val fullText: Boolean?,
@@ -345,16 +342,16 @@ public data class AutorecRule private constructor(
             minDuration: Duration? = null,
             retentionDays: Long? = null,
             removalDays: Long? = null,
-            daysOfWeekMask: Long? = null,
-            approximateStartMinutesSinceMidnight: Int? = null,
-            startMinutesSinceMidnight: Int? = null,
-            startWindowEndMinutesSinceMidnight: Int? = null,
-            priority: Long? = null,
-            startExtraMinutes: Long? = null,
-            stopExtraMinutes: Long? = null,
-            duplicateDetection: Long? = null,
+            daysOfWeekMask: Set<DayOfWeek>? = null,
+            approximateStartMinutesSinceMidnight: AutorecTime? = null,
+            startMinutesSinceMidnight: AutorecTime? = null,
+            startWindowEndMinutesSinceMidnight: AutorecTime? = null,
+            priority: DvrPriority? = null,
+            startExtraMinutes: Duration? = null,
+            stopExtraMinutes: Duration? = null,
+            duplicateDetection: DuplicateDetection? = null,
             maximumRecordingCount: Long? = null,
-            broadcastType: Long? = null,
+            broadcastType: BroadcastType? = null,
             comment: String? = null,
             title: String? = null,
             fullText: Boolean? = null,
@@ -371,11 +368,9 @@ public data class AutorecRule private constructor(
             minDuration?.let { require(!it.isNegative()) { "AutorecRule minDuration must not be negative" } }
             retentionDays?.let { requireDvrU32("AutorecRule retentionDays", it) }
             removalDays?.let { requireDvrU32("AutorecRule removalDays", it) }
-            daysOfWeekMask?.let { requireDvrU32("AutorecRule daysOfWeekMask", it) }
-            priority?.let { requireDvrU32("AutorecRule priority", it) }
-            duplicateDetection?.let { requireDvrU32("AutorecRule duplicateDetection", it) }
+            startExtraMinutes?.requireDvrExtraMinutes()
+            stopExtraMinutes?.requireDvrExtraMinutes()
             maximumRecordingCount?.let { requireDvrU32("AutorecRule maximumRecordingCount", it) }
-            broadcastType?.let { requireDvrU32("AutorecRule broadcastType", it) }
             return AutorecRule(
                 id = id,
                 enabled = enabled,
@@ -383,7 +378,7 @@ public data class AutorecRule private constructor(
                 minDuration = minDuration,
                 retentionDays = retentionDays,
                 removalDays = removalDays,
-                daysOfWeekMask = daysOfWeekMask,
+                daysOfWeekMask = daysOfWeekMask?.toDvrImmutableDays(),
                 approximateStartMinutesSinceMidnight = approximateStartMinutesSinceMidnight,
                 startMinutesSinceMidnight = startMinutesSinceMidnight,
                 startWindowEndMinutesSinceMidnight = startWindowEndMinutesSinceMidnight,
@@ -417,10 +412,10 @@ public data class TimerecRule private constructor(
     public val name: String?,
     public val title: String?,
     public val channelId: ChannelId?,
-    public val startMinutesSinceMidnight: Int?,
-    public val stopMinutesSinceMidnight: Int?,
-    public val daysOfWeekMask: Long?,
-    public val priority: Long?,
+    public val startMinutesSinceMidnight: LocalTime?,
+    public val stopMinutesSinceMidnight: LocalTime?,
+    public val daysOfWeekMask: Set<DayOfWeek>?,
+    public val priority: DvrPriority?,
     public val retentionDays: Long?,
     public val directory: String?,
     public val owner: String?,
@@ -438,10 +433,10 @@ public data class TimerecRule private constructor(
             name: String? = null,
             title: String? = null,
             channelId: ChannelId? = null,
-            startMinutesSinceMidnight: Int? = null,
-            stopMinutesSinceMidnight: Int? = null,
-            daysOfWeekMask: Long? = null,
-            priority: Long? = null,
+            startMinutesSinceMidnight: LocalTime? = null,
+            stopMinutesSinceMidnight: LocalTime? = null,
+            daysOfWeekMask: Set<DayOfWeek>? = null,
+            priority: DvrPriority? = null,
             retentionDays: Long? = null,
             directory: String? = null,
             owner: String? = null,
@@ -449,14 +444,8 @@ public data class TimerecRule private constructor(
             configId: DvrConfigId? = null,
             comment: String? = null,
         ): TimerecRule {
-            startMinutesSinceMidnight?.let {
-                require(it in 0..1_440) { "TimerecRule startMinutesSinceMidnight must be between 0 and 1440" }
-            }
-            stopMinutesSinceMidnight?.let {
-                require(it in 0..1_440) { "TimerecRule stopMinutesSinceMidnight must be between 0 and 1440" }
-            }
-            daysOfWeekMask?.let { requireDvrU32("TimerecRule daysOfWeekMask", it) }
-            priority?.let { requireDvrU32("TimerecRule priority", it) }
+            startMinutesSinceMidnight?.requireDvrWholeMinute()
+            stopMinutesSinceMidnight?.requireDvrWholeMinute()
             retentionDays?.let { requireDvrU32("TimerecRule retentionDays", it) }
             return TimerecRule(
                 id = id,
@@ -466,7 +455,7 @@ public data class TimerecRule private constructor(
                 channelId = channelId,
                 startMinutesSinceMidnight = startMinutesSinceMidnight,
                 stopMinutesSinceMidnight = stopMinutesSinceMidnight,
-                daysOfWeekMask = daysOfWeekMask,
+                daysOfWeekMask = daysOfWeekMask?.toDvrImmutableDays(),
                 priority = priority,
                 retentionDays = retentionDays,
                 directory = directory,

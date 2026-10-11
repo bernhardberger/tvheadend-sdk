@@ -242,6 +242,13 @@ such as `ACCESS_DENIED` without parsing exception text.
 
 ## Recording progress
 
+DVR rule weekdays use `Set<java.time.DayOfWeek>`, time-rule bounds use whole-minute
+`java.time.LocalTime`, and automatic-rule bounds use `AutorecTime.At(time)` or
+`AutorecTime.AnyTime`. Padding uses whole-minute `kotlin.time.Duration`. Priority,
+duplicate detection and broadcast selection use open typed sets. Update fields
+default to `null`, so `AutorecRuleUpdate(title = "Evening recordings")` preserves
+every other server setting, including unknown policy values.
+
 `SessionObservation.recordingProgressCapability` is `SUPPORTED` only when the
 current ready generation can close recording files without changing play count
 and can report position and watched state separately. Unknown and pre-v27

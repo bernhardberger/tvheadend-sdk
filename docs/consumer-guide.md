@@ -224,8 +224,8 @@ use `Channel.hasChannelNumber` before displaying or dialling `number`.
 `EpgEvent.contentGenre` and `DvrEntry.contentGenre` decode the raw ETSI EN 300 468
 `contentType` byte. `category` is the level-one `ContentCategory`; `subgenre` is
 the level-two `ContentSubgenre`, or `null` for a category's general, user-defined
-or unassigned value. Show `category` alone or both, without decoding
-`contentType` yourself.
+or unassigned value. Show `category` alone or both. The duplicated raw
+`contentType` property is no longer exposed.
 
 ## Search and extend EPG coverage
 
@@ -412,6 +412,31 @@ Application tests can use `DvrChange.create(...)` and
 publish observation state separately when a test needs both.
 
 ### Snapshots and commands
+
+DVR fields use `java.time.DayOfWeek`, whole-minute `java.time.LocalTime` and
+`kotlin.time.Duration`. `daysOfWeekMask` now takes a set (Monday is wire bit zero).
+Automatic-rule bounds use `AutorecTime.At(time)` or `AutorecTime.AnyTime` (wire 1440,
+distinct from midnight). Sub-minute times, non-finite or fractional-minute padding
+throw `IllegalArgumentException`; signed whole-minute padding is supported.
+`DvrEntry.duplicate` is nullable Boolean. Entry images, fanart and EPG images use
+`ArtworkId`; unsupported image references are omitted. Genre uses `contentGenre` only.
+
+`DvrPriority`, `DuplicateDetection` and `BroadcastType` are open sets: retain an
+`else` when comparing values. Unrecognized server values map to each type's `UNKNOWN`.
+`UNKNOWN` has no wire value and every create/update request rejects it with
+`IllegalArgumentException`. Leave an unknown setting unchanged rather than copying it
+into a request: every update field defaults to `null`. Only explicit known values are sent.
+
+```kotlin
+// Other settings, including unknown server policies, stay untouched.
+val rename = AutorecRuleUpdate(title = "Evening recordings")
+val window = AutorecRuleUpdate(
+    daysOfWeekMask = setOf(java.time.DayOfWeek.MONDAY, java.time.DayOfWeek.FRIDAY),
+    startMinutesSinceMidnight = AutorecTime.At(java.time.LocalTime.of(20, 0)),
+    startWindowEndMinutesSinceMidnight = AutorecTime.AnyTime,
+    priority = DvrPriority.HIGH,
+)
+```
 
 `SessionObservation.dvrState` carries immutable entries, automatic-recording
 rules, and time-based rules through the `Empty`, `Synchronizing`, `Current`, and

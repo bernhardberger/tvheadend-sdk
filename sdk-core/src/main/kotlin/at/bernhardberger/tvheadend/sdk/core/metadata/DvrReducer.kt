@@ -1,6 +1,15 @@
 package at.bernhardberger.tvheadend.sdk.core.metadata
 
 import at.bernhardberger.tvheadend.sdk.core.AutorecRule
+import at.bernhardberger.tvheadend.sdk.core.ArtworkId
+import at.bernhardberger.tvheadend.sdk.core.BroadcastType
+import at.bernhardberger.tvheadend.sdk.core.ContentGenre
+import at.bernhardberger.tvheadend.sdk.core.DuplicateDetection
+import at.bernhardberger.tvheadend.sdk.core.DvrPriority
+import at.bernhardberger.tvheadend.sdk.core.toAutorecTime
+import at.bernhardberger.tvheadend.sdk.core.toDvrDays
+import at.bernhardberger.tvheadend.sdk.core.toDvrExtraDuration
+import at.bernhardberger.tvheadend.sdk.core.toDvrLocalTime
 import at.bernhardberger.tvheadend.sdk.core.DvrEntry
 import at.bernhardberger.tvheadend.sdk.core.DvrRecordingFile
 import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
@@ -107,12 +116,12 @@ internal data class ReducedDvrEntry private constructor(
             timerecRuleId = timerecRuleId,
             start = start,
             stop = stop,
-            startExtraMinutes = startExtraMinutes,
-            stopExtraMinutes = stopExtraMinutes,
+            startExtraMinutes = startExtraMinutes?.toDvrExtraDuration(),
+            stopExtraMinutes = stopExtraMinutes?.toDvrExtraDuration(),
             retentionDays = retentionDays,
             removalDays = removalDays,
-            priority = priority,
-            contentType = contentType,
+            priority = priority?.let(DvrPriority::fromWire),
+            contentGenre = ContentGenre.fromContentType(contentType),
             rating = ratingOrNull(),
             playCount = playCount,
             playPosition = playPosition,
@@ -124,13 +133,13 @@ internal data class ReducedDvrEntry private constructor(
             owner = owner,
             creator = creator,
             comment = comment,
-            image = image,
-            fanartImage = fanartImage,
+            image = ArtworkId.parse(image),
+            fanartImage = ArtworkId.parse(fanartImage),
             copyrightYear = copyrightYear,
             files = files?.mapNotNull(GatewayDvrRecordingFile::toPublicOrNull),
             path = path,
             configId = configId,
-            duplicate = duplicate,
+            duplicate = duplicate?.let { it != 0L },
             state = resolvedState(),
             subscriptionError = subscriptionError,
             streamErrors = streamErrors,
@@ -362,16 +371,16 @@ internal data class ReducedAutorecRule private constructor(
         minDuration = minDuration,
         retentionDays = retentionDays,
         removalDays = removalDays,
-        daysOfWeekMask = daysOfWeekMask,
-        approximateStartMinutesSinceMidnight = approximateStartMinutesSinceMidnight,
-        startMinutesSinceMidnight = startMinutesSinceMidnight,
-        startWindowEndMinutesSinceMidnight = startWindowEndMinutesSinceMidnight,
-        priority = priority,
-        startExtraMinutes = startExtraMinutes,
-        stopExtraMinutes = stopExtraMinutes,
-        duplicateDetection = duplicateDetection,
+        daysOfWeekMask = daysOfWeekMask?.toDvrDays(),
+        approximateStartMinutesSinceMidnight = approximateStartMinutesSinceMidnight?.toAutorecTime(),
+        startMinutesSinceMidnight = startMinutesSinceMidnight?.toAutorecTime(),
+        startWindowEndMinutesSinceMidnight = startWindowEndMinutesSinceMidnight?.toAutorecTime(),
+        priority = priority?.let(DvrPriority::fromWire),
+        startExtraMinutes = startExtraMinutes?.toDvrExtraDuration(),
+        stopExtraMinutes = stopExtraMinutes?.toDvrExtraDuration(),
+        duplicateDetection = duplicateDetection?.let(DuplicateDetection::fromWire),
         maximumRecordingCount = maximumRecordingCount,
-        broadcastType = broadcastType,
+        broadcastType = broadcastType?.let(BroadcastType::fromWire),
         comment = comment,
         title = title,
         fullText = fullText,
@@ -448,10 +457,10 @@ internal data class ReducedTimerecRule private constructor(
             name = name,
             title = title,
             channelId = channelId,
-            startMinutesSinceMidnight = startMinutesSinceMidnight,
-            stopMinutesSinceMidnight = stopMinutesSinceMidnight,
-            daysOfWeekMask = daysOfWeekMask,
-            priority = priority,
+            startMinutesSinceMidnight = startMinutesSinceMidnight?.toDvrLocalTime(),
+            stopMinutesSinceMidnight = stopMinutesSinceMidnight?.toDvrLocalTime(),
+            daysOfWeekMask = daysOfWeekMask?.toDvrDays(),
+            priority = priority?.let(DvrPriority::fromWire),
             retentionDays = retentionDays,
             directory = directory,
             owner = owner,
@@ -605,7 +614,7 @@ private fun GatewayDvrRecordingFile.toPublicOrNull(): DvrRecordingFile? {
     )
 }
 
-private fun Int?.outOfDay(): Boolean = this != null && this !in 0..1_440
+private fun Int?.outOfDay(): Boolean = this != null && this !in 0..1_439
 
 private fun <T> Collection<T>.toImmutableList(): List<T> =
     Collections.unmodifiableList(ArrayList(this))

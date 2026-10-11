@@ -237,8 +237,8 @@ internal class DvrRealServerVerificationTest {
                 TimerecRuleCreate(
                     title = marker,
                     channel = RecordingRuleChannel.SpecificChannel(requireNotNull(channelId)),
-                    startMinutesSinceMidnight = 23 * 60 + 50,
-                    stopMinutesSinceMidnight = 23 * 60 + 55,
+                    startMinutesSinceMidnight = java.time.LocalTime.of(23, 50),
+                    stopMinutesSinceMidnight = java.time.LocalTime.of(23, 55),
                     enabled = false,
                     name = marker,
                     comment = marker,

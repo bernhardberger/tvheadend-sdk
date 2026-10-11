@@ -1,6 +1,7 @@
 package at.bernhardberger.tvheadend.sdk.core.metadata
 
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
+import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.EpgEpisodeId
 import at.bernhardberger.tvheadend.sdk.core.EpgEvent
 import at.bernhardberger.tvheadend.sdk.core.EpgSeriesLinkId
@@ -22,6 +23,16 @@ import kotlin.time.Instant
 
 internal class EpgReducerTest {
     private val generation = GatewayGeneration()
+
+    @Test
+    fun `event images expose only supported artwork identifiers`() {
+        val reducer = EpgReducer()
+        addChannel(reducer, 1)
+        reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20, image = "imagecache/7")))
+        assertEquals(ArtworkId(7), reducer.snapshot().events.single().image)
+        reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20, image = "private-uri")))
+        assertEquals(null, reducer.snapshot().events.single().image)
+    }
 
     @Test
     fun `replacement invalidates history even when live capacity rejects replacement`() {
@@ -698,6 +709,7 @@ internal class EpgReducerTest {
         ageRating: Long? = null,
         episodeId: EpgEpisodeId? = null,
         seriesLinkId: EpgSeriesLinkId? = null,
+        image: String? = null,
     ): GatewayEpgEvent = GatewayEpgEvent(
         id = EventId(id),
         channelId = channelId?.let(::ChannelId),
@@ -709,6 +721,7 @@ internal class EpgReducerTest {
         ageRating = ageRating,
         episodeId = episodeId,
         seriesLinkId = seriesLinkId,
+        image = image,
     )
 
     private fun update(

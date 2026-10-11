@@ -19,6 +19,14 @@ import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult
 import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
+import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
+import at.bernhardberger.tvheadend.sdk.core.AutorecTime
+import at.bernhardberger.tvheadend.sdk.core.BroadcastType
+import at.bernhardberger.tvheadend.sdk.core.DuplicateDetection
+import at.bernhardberger.tvheadend.sdk.core.DvrPriority
+import java.time.DayOfWeek
+import java.time.LocalTime
+import kotlin.time.Duration.Companion.minutes
 import at.bernhardberger.tvheadend.sdk.core.EpgEvent
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverageBatchResult
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverageBatchSettlement
@@ -72,6 +80,16 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+
+public fun typedAutorecUpdate(): AutorecRuleUpdate = AutorecRuleUpdate(
+    daysOfWeekMask = setOf(DayOfWeek.MONDAY),
+    startMinutesSinceMidnight = AutorecTime.At(LocalTime.of(20, 0)),
+    startWindowEndMinutesSinceMidnight = AutorecTime.AnyTime,
+    startExtraMinutes = 2.minutes,
+    priority = DvrPriority.HIGH,
+    duplicateDetection = DuplicateDetection.DIFFERENT_EPISODE_NUMBER,
+    broadcastType = BroadcastType.NEW,
+)
 
 public class StagedSdkConsumer(
     context: Context,

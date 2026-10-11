@@ -57,7 +57,7 @@ internal class EpgRepositoryTest {
             title = "private-title",
             categories = categories,
             keywords = keywords,
-            contentType = 2,
+            contentGenre = ContentGenre.fromContentType(0x20),
             rating = EpgRating(3, "private-rating", "private-icon", "private-authority", "GB", 4),
             copyrightYear = 2026,
             episode = EpgEpisode(

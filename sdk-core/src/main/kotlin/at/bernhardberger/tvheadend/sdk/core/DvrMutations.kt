@@ -2,6 +2,8 @@ package at.bernhardberger.tvheadend.sdk.core
 
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
+import java.time.DayOfWeek
+import java.time.LocalTime
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
@@ -68,11 +70,12 @@ public data class DvrEntryUpdate(
     public val enabled: Boolean? = null,
     public val start: Instant? = null,
     public val stop: Instant? = null,
-    public val startExtraMinutes: Long? = null,
-    public val stopExtraMinutes: Long? = null,
+    public val startExtraMinutes: Duration? = null,
+    public val stopExtraMinutes: Duration? = null,
     public val retentionDays: Long? = null,
     public val removalDays: Long? = null,
-    public val priority: Long? = null,
+    /** Priority to set; [DvrPriority.UNKNOWN] is rejected with [IllegalArgumentException]. */
+    public val priority: DvrPriority? = null,
     public val ageRating: Long? = null,
 ) {
     init {
@@ -81,8 +84,10 @@ public data class DvrEntryUpdate(
         }
         retentionDays?.requireDvrMutationU32("DvrEntryUpdate retentionDays")
         removalDays?.requireDvrMutationU32("DvrEntryUpdate removalDays")
-        priority?.requireDvrMutationU32("DvrEntryUpdate priority")
+        startExtraMinutes?.requireDvrExtraMinutes()
+        stopExtraMinutes?.requireDvrExtraMinutes()
         ageRating?.requireDvrMutationU32("DvrEntryUpdate ageRating")
+        require(priority != DvrPriority.UNKNOWN) { "DVR priority must be known" }
     }
 
     override fun toString(): String = "DvrEntryUpdate(<redacted>)"
@@ -109,40 +114,41 @@ public data class AutorecRuleCreate(
     public val maxDuration: Duration? = null,
     public val fullText: Boolean? = null,
     public val mergeText: Boolean? = null,
-    public val duplicateDetection: Long? = null,
+    /** Policy to set; [DuplicateDetection.UNKNOWN] is rejected with [IllegalArgumentException]. */
+    public val duplicateDetection: DuplicateDetection? = null,
     public val maximumRecordingCount: Long? = null,
-    public val broadcastType: Long? = null,
-    public val startExtraMinutes: Long? = null,
-    public val stopExtraMinutes: Long? = null,
+    /** Selection to set; [BroadcastType.UNKNOWN] is rejected with [IllegalArgumentException]. */
+    public val broadcastType: BroadcastType? = null,
+    public val startExtraMinutes: Duration? = null,
+    public val stopExtraMinutes: Duration? = null,
     public val seriesLinkUri: String? = null,
-    public val approximateStartMinutesSinceMidnight: Int? = null,
-    public val startMinutesSinceMidnight: Int? = null,
-    public val startWindowEndMinutesSinceMidnight: Int? = null,
+    public val approximateStartMinutesSinceMidnight: AutorecTime? = null,
+    public val startMinutesSinceMidnight: AutorecTime? = null,
+    public val startWindowEndMinutesSinceMidnight: AutorecTime? = null,
     public val enabled: Boolean? = null,
     public val retentionDays: Long? = null,
     public val removalDays: Long? = null,
-    public val priority: Long? = null,
+    /** Priority to set; [DvrPriority.UNKNOWN] is rejected with [IllegalArgumentException]. */
+    public val priority: DvrPriority? = null,
     public val name: String? = null,
     public val comment: String? = null,
     public val directory: String? = null,
     public val configId: DvrConfigId? = null,
-    public val daysOfWeekMask: Long? = null,
+    public val daysOfWeekMask: Set<DayOfWeek>? = null,
 ) {
     init {
         validateAutorecMutation(
             minDuration = minDuration,
             maxDuration = maxDuration,
-            duplicateDetection = duplicateDetection,
             maximumRecordingCount = maximumRecordingCount,
-            broadcastType = broadcastType,
-            approximateStartMinutesSinceMidnight = approximateStartMinutesSinceMidnight,
-            startMinutesSinceMidnight = startMinutesSinceMidnight,
-            startWindowEndMinutesSinceMidnight = startWindowEndMinutesSinceMidnight,
             retentionDays = retentionDays,
             removalDays = removalDays,
-            priority = priority,
-            daysOfWeekMask = daysOfWeekMask,
         )
+        startExtraMinutes?.requireDvrExtraMinutes()
+        stopExtraMinutes?.requireDvrExtraMinutes()
+        require(priority != DvrPriority.UNKNOWN) { "DVR priority must be known" }
+        require(duplicateDetection != DuplicateDetection.UNKNOWN) { "DVR duplicate policy must be known" }
+        require(broadcastType != BroadcastType.UNKNOWN) { "DVR broadcast selection must be known" }
     }
 
     override fun toString(): String = "AutorecRuleCreate(<redacted>)"
@@ -155,60 +161,62 @@ public data class AutorecRuleUpdate(
     public val maxDuration: Duration? = null,
     public val fullText: Boolean? = null,
     public val mergeText: Boolean? = null,
-    public val duplicateDetection: Long? = null,
+    /** Policy to set; [DuplicateDetection.UNKNOWN] is rejected with [IllegalArgumentException]. */
+    public val duplicateDetection: DuplicateDetection? = null,
     public val maximumRecordingCount: Long? = null,
-    public val broadcastType: Long? = null,
-    public val startExtraMinutes: Long? = null,
-    public val stopExtraMinutes: Long? = null,
+    /** Selection to set; [BroadcastType.UNKNOWN] is rejected with [IllegalArgumentException]. */
+    public val broadcastType: BroadcastType? = null,
+    public val startExtraMinutes: Duration? = null,
+    public val stopExtraMinutes: Duration? = null,
     public val seriesLinkUri: String? = null,
-    public val startMinutesSinceMidnight: Int? = null,
-    public val startWindowEndMinutesSinceMidnight: Int? = null,
+    public val startMinutesSinceMidnight: AutorecTime? = null,
+    public val startWindowEndMinutesSinceMidnight: AutorecTime? = null,
     public val enabled: Boolean? = null,
     public val retentionDays: Long? = null,
     public val removalDays: Long? = null,
-    public val priority: Long? = null,
+    /** Priority to set; [DvrPriority.UNKNOWN] is rejected with [IllegalArgumentException]. */
+    public val priority: DvrPriority? = null,
     public val name: String? = null,
     public val comment: String? = null,
     public val directory: String? = null,
     public val title: String? = null,
     public val configId: DvrConfigId? = null,
-    public val daysOfWeekMask: Long? = null,
+    public val daysOfWeekMask: Set<DayOfWeek>? = null,
 ) {
     init {
         validateAutorecMutation(
             minDuration = minDuration,
             maxDuration = maxDuration,
-            duplicateDetection = duplicateDetection,
             maximumRecordingCount = maximumRecordingCount,
-            broadcastType = broadcastType,
-            approximateStartMinutesSinceMidnight = null,
-            startMinutesSinceMidnight = startMinutesSinceMidnight,
-            startWindowEndMinutesSinceMidnight = startWindowEndMinutesSinceMidnight,
             retentionDays = retentionDays,
             removalDays = removalDays,
-            priority = priority,
-            daysOfWeekMask = daysOfWeekMask,
         )
+        startExtraMinutes?.requireDvrExtraMinutes()
+        stopExtraMinutes?.requireDvrExtraMinutes()
+        require(priority != DvrPriority.UNKNOWN) { "DVR priority must be known" }
+        require(duplicateDetection != DuplicateDetection.UNKNOWN) { "DVR duplicate policy must be known" }
+        require(broadcastType != BroadcastType.UNKNOWN) { "DVR broadcast selection must be known" }
     }
 
     override fun toString(): String = "AutorecRuleUpdate(<redacted>)"
 }
 
-/** Complete request for creating a time-based rule; supplied minutes must be in 0..1439. */
+/** Complete request for creating a time-based rule; local times must have whole-minute precision. */
 public data class TimerecRuleCreate(
     public val title: String,
     public val channel: RecordingRuleChannel? = null,
-    public val startMinutesSinceMidnight: Int? = null,
-    public val stopMinutesSinceMidnight: Int? = null,
+    public val startMinutesSinceMidnight: LocalTime? = null,
+    public val stopMinutesSinceMidnight: LocalTime? = null,
     public val enabled: Boolean? = null,
     public val retentionDays: Long? = null,
     public val removalDays: Long? = null,
-    public val priority: Long? = null,
+    /** Priority to set; [DvrPriority.UNKNOWN] is rejected with [IllegalArgumentException]. */
+    public val priority: DvrPriority? = null,
     public val name: String? = null,
     public val comment: String? = null,
     public val directory: String? = null,
     public val configId: DvrConfigId? = null,
-    public val daysOfWeekMask: Long? = null,
+    public val daysOfWeekMask: Set<DayOfWeek>? = null,
 ) {
     init {
         validateTimerecMutation(
@@ -216,29 +224,29 @@ public data class TimerecRuleCreate(
             stopMinutesSinceMidnight,
             retentionDays,
             removalDays,
-            priority,
-            daysOfWeekMask,
         )
+        require(priority != DvrPriority.UNKNOWN) { "DVR priority must be known" }
     }
 
     override fun toString(): String = "TimerecRuleCreate(<redacted>)"
 }
 
-/** Partial time-based rule change; null fields are omitted, supplied minutes must be in 0..1439. */
+/** Partial time-based rule change; null fields are omitted, local times must have whole-minute precision. */
 public data class TimerecRuleUpdate(
     public val channel: RecordingRuleChannel? = null,
-    public val startMinutesSinceMidnight: Int? = null,
-    public val stopMinutesSinceMidnight: Int? = null,
+    public val startMinutesSinceMidnight: LocalTime? = null,
+    public val stopMinutesSinceMidnight: LocalTime? = null,
     public val enabled: Boolean? = null,
     public val retentionDays: Long? = null,
     public val removalDays: Long? = null,
-    public val priority: Long? = null,
+    /** Priority to set; [DvrPriority.UNKNOWN] is rejected with [IllegalArgumentException]. */
+    public val priority: DvrPriority? = null,
     public val name: String? = null,
     public val comment: String? = null,
     public val directory: String? = null,
     public val title: String? = null,
     public val configId: DvrConfigId? = null,
-    public val daysOfWeekMask: Long? = null,
+    public val daysOfWeekMask: Set<DayOfWeek>? = null,
 ) {
     init {
         validateTimerecMutation(
@@ -246,9 +254,8 @@ public data class TimerecRuleUpdate(
             stopMinutesSinceMidnight,
             retentionDays,
             removalDays,
-            priority,
-            daysOfWeekMask,
         )
+        require(priority != DvrPriority.UNKNOWN) { "DVR priority must be known" }
     }
 
     override fun toString(): String = "TimerecRuleUpdate(<redacted>)"
@@ -408,55 +415,33 @@ internal fun Duration.toDvrMutationSeconds(): Long = inWholeSeconds
 private fun validateAutorecMutation(
     minDuration: Duration?,
     maxDuration: Duration?,
-    duplicateDetection: Long?,
     maximumRecordingCount: Long?,
-    broadcastType: Long?,
-    approximateStartMinutesSinceMidnight: Int?,
-    startMinutesSinceMidnight: Int?,
-    startWindowEndMinutesSinceMidnight: Int?,
     retentionDays: Long?,
     removalDays: Long?,
-    priority: Long?,
-    daysOfWeekMask: Long?,
 ) {
     minDuration?.requireDvrMutationDuration("Autorec minDuration")
     maxDuration?.requireDvrMutationDuration("Autorec maxDuration")
-    duplicateDetection?.requireDvrMutationU32("Autorec duplicateDetection")
     maximumRecordingCount?.requireDvrMutationU32("Autorec maximumRecordingCount")
-    broadcastType?.requireDvrMutationU32("Autorec broadcastType")
-    approximateStartMinutesSinceMidnight?.requireDvrMutationMinute("Autorec approximateStart")
-    startMinutesSinceMidnight?.requireDvrMutationMinute("Autorec start")
-    startWindowEndMinutesSinceMidnight?.requireDvrMutationMinute("Autorec startWindowEnd")
     retentionDays?.requireDvrMutationU32("Autorec retentionDays")
     removalDays?.requireDvrMutationU32("Autorec removalDays")
-    priority?.requireDvrMutationU32("Autorec priority")
-    daysOfWeekMask?.requireDvrMutationU32("Autorec daysOfWeekMask")
 }
 
 private fun validateTimerecMutation(
-    startMinutesSinceMidnight: Int?,
-    stopMinutesSinceMidnight: Int?,
+    startMinutesSinceMidnight: LocalTime?,
+    stopMinutesSinceMidnight: LocalTime?,
     retentionDays: Long?,
     removalDays: Long?,
-    priority: Long?,
-    daysOfWeekMask: Long?,
 ) {
-    startMinutesSinceMidnight?.let { require(it in 0..1439) { "Timerec start must be between 0 and 1439" } }
-    stopMinutesSinceMidnight?.let { require(it in 0..1439) { "Timerec stop must be between 0 and 1439" } }
+    startMinutesSinceMidnight?.requireDvrWholeMinute()
+    stopMinutesSinceMidnight?.requireDvrWholeMinute()
     retentionDays?.requireDvrMutationU32("Timerec retentionDays")
     removalDays?.requireDvrMutationU32("Timerec removalDays")
-    priority?.requireDvrMutationU32("Timerec priority")
-    daysOfWeekMask?.requireDvrMutationU32("Timerec daysOfWeekMask")
 }
 
 private fun Duration.requireDvrMutationDuration(name: String) {
     require(isFinite() && !isNegative()) { "$name must be a finite non-negative duration" }
     require(this == inWholeSeconds.seconds) { "$name must use whole seconds" }
     inWholeSeconds.requireDvrMutationU32(name)
-}
-
-private fun Int.requireDvrMutationMinute(name: String) {
-    require(this in 0..1_440) { "$name must be between 0 and 1440" }
 }
 
 private fun Long.requireDvrMutationU32(name: String) {

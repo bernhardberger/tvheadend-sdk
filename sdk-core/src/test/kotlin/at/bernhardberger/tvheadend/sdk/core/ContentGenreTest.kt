@@ -83,16 +83,14 @@ internal class ContentGenreTest {
             id = EventId(1),
             start = Instant.fromEpochSeconds(10),
             stop = Instant.fromEpochSeconds(20),
-            contentType = 0x43,
+            contentGenre = ContentGenre.fromContentType(0x43),
         )
-        val entry = DvrEntry.create(id = DvrEntryId(1), contentType = 0x10)
+        val entry = DvrEntry.create(id = DvrEntryId(1), contentGenre = ContentGenre.fromContentType(0x10))
 
         assertEquals(ContentCategory.SPORTS, event.contentGenre?.category)
         assertEquals(ContentSubgenre.FOOTBALL_SOCCER, event.contentGenre?.subgenre)
-        assertEquals(0x43L, event.contentType)
         assertEquals(ContentCategory.MOVIE_DRAMA, entry.contentGenre?.category)
         assertNull(entry.contentGenre?.subgenre)
-        assertEquals(0x10L, entry.contentType)
         assertNull(EpgEvent.create(EventId(2), start = event.start, stop = event.stop).contentGenre)
         assertNull(DvrEntry.create(id = DvrEntryId(2)).contentGenre)
     }

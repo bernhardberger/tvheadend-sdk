@@ -12,6 +12,11 @@ import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryKt;
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState;
 import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult;
 import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot;
+import at.bernhardberger.tvheadend.sdk.core.AutorecRule;
+import at.bernhardberger.tvheadend.sdk.core.AutorecTime;
+import at.bernhardberger.tvheadend.sdk.core.DvrPriority;
+import java.time.DayOfWeek;
+import java.time.LocalTime;
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryKt;
 import at.bernhardberger.tvheadend.sdk.core.EpgRepository;
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverageBatchResult;
@@ -61,6 +66,15 @@ import kotlinx.coroutines.CoroutineScope;
 
 public final class StagedSdkJavaConsumer {
     private StagedSdkJavaConsumer() {}
+
+    public static AutorecTime typedAutorecTime(LocalTime time) {
+        return time == null ? AutorecTime.AnyTime.INSTANCE : new AutorecTime.At(time);
+    }
+
+    public static boolean isHighPriorityMonday(AutorecRule rule) {
+        return rule.getPriority() == DvrPriority.HIGH
+                && rule.getDaysOfWeekMask() != null && rule.getDaysOfWeekMask().contains(DayOfWeek.MONDAY);
+    }
 
     public static FakeTvheadendSession stagedTestingFake(
             SessionObservation readyObservation,

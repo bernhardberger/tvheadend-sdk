@@ -101,13 +101,13 @@ public data class EpgEvent private constructor(
     public val keywords: List<String>?,
     public val seriesLinkUri: String?,
     public val episodeUri: String?,
-    public val contentType: Long?,
+    public val contentGenre: ContentGenre?,
     public val rating: EpgRating?,
     public val copyrightYear: Long?,
     public val firstAired: Instant?,
     public val isNew: Boolean?,
     public val episode: EpgEpisode?,
-    public val image: String?,
+    public val image: ArtworkId?,
     public val dvrEntryId: DvrEntryId?,
     public val nextEventId: EventId?,
 ) {
@@ -127,7 +127,7 @@ public data class EpgEvent private constructor(
         result = 31 * result + keywords.hashCode()
         result = 31 * result + seriesLinkUri.hashCode()
         result = 31 * result + episodeUri.hashCode()
-        result = 31 * result + contentType.hashCode()
+        result = 31 * result + contentGenre.hashCode()
         result = 31 * result + rating.hashCode()
         result = 31 * result + copyrightYear.hashCode()
         result = 31 * result + firstAired.hashCode()
@@ -139,10 +139,6 @@ public data class EpgEvent private constructor(
     }
 
     override fun hashCode(): Int = contentHash
-
-    /** ETSI category and subgenre decoded from [contentType]. */
-    public val contentGenre: ContentGenre?
-        get() = ContentGenre.fromContentType(contentType)
 
     override fun toString(): String = "EpgEvent(<redacted>)"
 
@@ -162,18 +158,17 @@ public data class EpgEvent private constructor(
             keywords: List<String>? = null,
             seriesLinkUri: String? = null,
             episodeUri: String? = null,
-            contentType: Long? = null,
+            contentGenre: ContentGenre? = null,
             rating: EpgRating? = null,
             copyrightYear: Long? = null,
             firstAired: Instant? = null,
             isNew: Boolean? = null,
             episode: EpgEpisode? = null,
-            image: String? = null,
+            image: ArtworkId? = null,
             dvrEntryId: DvrEntryId? = null,
             nextEventId: EventId? = null,
         ): EpgEvent {
             require(stop >= start) { "EpgEvent stop must not precede start" }
-            contentType?.let { requireEpgU32("EpgEvent contentType", it) }
             copyrightYear?.let { requireEpgU32("EpgEvent copyrightYear", it) }
             return EpgEvent(
                 id = id,
@@ -189,7 +184,7 @@ public data class EpgEvent private constructor(
                 keywords = keywords?.toEpgImmutableList(),
                 seriesLinkUri = seriesLinkUri,
                 episodeUri = episodeUri,
-                contentType = contentType,
+                contentGenre = contentGenre,
                 rating = rating,
                 copyrightYear = copyrightYear,
                 firstAired = firstAired,
