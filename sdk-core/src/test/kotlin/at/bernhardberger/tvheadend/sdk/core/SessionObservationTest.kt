@@ -239,6 +239,26 @@ internal class SessionObservationTest {
     }
 
     @Test
+    fun `repeated duplicate IDs stay ambiguous without hiding boundary IDs`() {
+        val first = event(0, 10, 20)
+        val last = event(0xffff_ffffL, 20, 30)
+        for (copies in listOf(2, 3, 8)) {
+            val duplicate = event(10, 30, 40)
+            val events = listOf(first) + List(copies) { duplicate } + last
+            val snapshot = EpgSnapshot.create(events)
+            snapshot.prepareForObservation()
+            val current = SessionObservation.create(epgState = EpgRepositoryState.Current(snapshot))
+            val retained = SessionObservation.create(epgState = EpgRepositoryState.Stale(snapshot))
+            for (observation in listOf(current, retained)) {
+                assertSame(first, observation.event(first.id))
+                assertSame(last, observation.event(last.id))
+                assertNull(observation.event(duplicate.id))
+                assertNull(observation.event(EventId(99)))
+            }
+        }
+    }
+
+    @Test
     fun `large retained snapshot selectors match scans with channel bounded candidate lists`() {
         val events = (1L..200).flatMap { channel ->
             (1L..100).map { slot -> EpgEvent.create(

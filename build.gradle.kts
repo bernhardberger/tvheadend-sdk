@@ -25,12 +25,14 @@ plugins {
     alias(libs.plugins.android.library) apply false
     alias(libs.plugins.kotlin.jvm) apply false
     alias(libs.plugins.kotlin.serialization) apply false
+    alias(libs.plugins.kotlin.allopen) apply false
+    alias(libs.plugins.kotlinx.benchmark) apply false
     alias(libs.plugins.detekt) apply false
     alias(libs.plugins.dokka) apply false
 }
 
 group = "at.bernhardberger.tvheadend"
-version = "0.24.0"
+version = "0.25.0"
 providers.gradleProperty("sdkCandidateVersion").orNull?.let { candidate ->
     require(candidate.matches(Regex("[0-9]+\\.[0-9]+\\.[0-9]+-[A-Za-z0-9.-]+-SNAPSHOT"))) {
         "sdkCandidateVersion must be a uniquely named snapshot candidate"
@@ -89,6 +91,7 @@ val requiredVersions = mapOf(
     "jvmTarget" to "17",
     "konsist" to "0.18.0",
     "kotlin" to "2.4.10",
+    "kotlinxBenchmark" to "0.5.0",
     "media3" to "1.11.1",
     "minSdk" to "28",
     "okio" to "3.18.2",
@@ -482,7 +485,7 @@ subprojects {
     }
 
     val productionKotlinCompiles = tasks.withType<KotlinJvmCompile>().matching { task ->
-        !task.name.contains("Test")
+        !task.name.contains("Test") && !task.name.contains("Benchmark")
     }
     val verifyClassMajor61 = tasks.register("verifyClassMajor61") {
         group = "verification"

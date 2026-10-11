@@ -403,7 +403,6 @@ internal class EpgReducer(
                 acceptAdd(event.event)
             }
             is MetadataEvent.EventUpdated -> {
-                cachedSnapshot = null
                 recordEventAuthority(event.event.id)
                 acceptUpdate(event.event)
             }
@@ -560,7 +559,9 @@ internal class EpgReducer(
             left.start < right.stop && right.start < left.stop
 
     private fun supersedeHistory(event: ReducedEpgEvent) {
-        history.entries.removeIf { it.key == event.id || overlaps(it.value, event) }
+        if (history.entries.removeIf { it.key == event.id || overlaps(it.value, event) }) {
+            cachedSnapshot = null
+        }
     }
 
     internal fun snapshot(): EpgSnapshot {
@@ -624,7 +625,12 @@ internal class EpgReducer(
             invalidateActiveQueriesAfterCapacityDrop()
             return
         }
-        events[update.id] = candidate
+        // Identical wire updates still advance query authority and supersede history,
+        // but do not require rebuilding an otherwise unchanged immutable snapshot.
+        if (events[update.id] != candidate) {
+            cachedSnapshot = null
+            events[update.id] = candidate
+        }
     }
 
     private fun invalidateActiveQueriesAfterCapacityDrop() {

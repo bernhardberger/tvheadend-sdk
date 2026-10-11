@@ -110,6 +110,35 @@ public data class EpgEvent private constructor(
     public val dvrEntryId: DvrEntryId?,
     public val nextEventId: EventId?,
 ) {
+    // Events are immutable and shared by successive snapshots. Preserve the data-class hash,
+    // but compute it only once rather than rehashing every field on each guide publication.
+    private val contentHash: Int = run {
+        var result = id.hashCode()
+        result = 31 * result + channelId.hashCode()
+        result = 31 * result + start.hashCode()
+        result = 31 * result + stop.hashCode()
+        result = 31 * result + title.hashCode()
+        result = 31 * result + subtitle.hashCode()
+        result = 31 * result + summary.hashCode()
+        result = 31 * result + description.hashCode()
+        result = 31 * result + genre.hashCode()
+        result = 31 * result + categories.hashCode()
+        result = 31 * result + keywords.hashCode()
+        result = 31 * result + seriesLinkUri.hashCode()
+        result = 31 * result + episodeUri.hashCode()
+        result = 31 * result + contentType.hashCode()
+        result = 31 * result + rating.hashCode()
+        result = 31 * result + copyrightYear.hashCode()
+        result = 31 * result + firstAired.hashCode()
+        result = 31 * result + isNew.hashCode()
+        result = 31 * result + episode.hashCode()
+        result = 31 * result + image.hashCode()
+        result = 31 * result + dvrEntryId.hashCode()
+        31 * result + nextEventId.hashCode()
+    }
+
+    override fun hashCode(): Int = contentHash
+
     /** ETSI category and subgenre decoded from [contentType]. */
     public val contentGenre: ContentGenre?
         get() = ContentGenre.fromContentType(contentType)
@@ -237,8 +266,13 @@ public data class EpgSnapshot private constructor(
     // Null values preserve singleOrNull semantics for duplicate IDs in consumer-created snapshots.
     @get:JvmSynthetic
     internal val eventsById: Map<EventId, EpgEvent?> by lazy {
-        buildMap {
-            for (event in events) put(event.id, if (containsKey(event.id)) null else event)
+        buildMap(events.size) {
+            val duplicates = HashSet<EventId>()
+            for (event in events) {
+                if (put(event.id, event) != null) duplicates.add(event.id)
+            }
+            // Mark ambiguity only after insertion so third and later duplicates stay ambiguous.
+            for (id in duplicates) put(id, null)
         }
     }
 

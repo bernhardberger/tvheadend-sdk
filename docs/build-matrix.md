@@ -25,6 +25,7 @@ Android modules use AGP's built-in Kotlin support and never apply
 | Turbine | 1.2.1 |
 | detekt | 2.0.0-alpha.6 |
 | Konsist | 0.18.0 |
+| kotlinx-benchmark (benchmark source set only) | 0.5.0 |
 | Dokka | 2.2.0 |
 | Foojay resolver | 1.0.0 |
 

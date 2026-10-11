@@ -95,6 +95,101 @@ internal class EpgReducerTest {
     }
 
     @Test
+    fun `identical updates reuse snapshot while still superseding an older query`() {
+        val reducer = EpgReducer()
+        addChannel(reducer, 1)
+        reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20, title = "current")))
+        val retained = reducer.snapshot()
+        val query = requireNotNull(reducer.beginQuery(ChannelId(1)))
+
+        repeat(3) {
+            reducer.accept(MetadataEvent.EventUpdated(generation, update(1, title = "current")))
+            assertSame(retained, reducer.snapshot())
+        }
+        reducer.acceptSuccessfulQuery(query, instant(30), listOf(queryEvent(1, 1, 10, 20, title = "stale")))
+        assertEquals("current", reducer.snapshot().events.single().title)
+        reducer.accept(MetadataEvent.EventUpdated(generation, update(1, title = "changed")))
+        assertEquals("changed", reducer.snapshot().events.single().title)
+        assertEquals("current", retained.events.single().title)
+    }
+
+    @Test
+    fun `equal collection updates reuse snapshot and isolate mutable input lists`() {
+        val reducer = EpgReducer()
+        addChannel(reducer, 1)
+        reducer.accept(MetadataEvent.EventAdded(generation,
+            event(1, 1, 10, 20, categories = listOf("category"), keywords = listOf("keyword"))))
+        val retained = reducer.snapshot()
+        val categories = mutableListOf("category")
+        val keywords = mutableListOf("keyword")
+
+        reducer.accept(MetadataEvent.EventUpdated(generation,
+            GatewayEpgUpdate(id = EventId(1), categories = categories, keywords = keywords)))
+        assertSame(retained, reducer.snapshot())
+        categories.clear()
+        keywords.clear()
+        assertEquals(listOf("category"), reducer.snapshot().events.single().categories)
+        assertEquals(listOf("keyword"), reducer.snapshot().events.single().keywords)
+
+        reducer.accept(MetadataEvent.EventUpdated(generation,
+            GatewayEpgUpdate(id = EventId(1), categories = categories, keywords = keywords)))
+        assertNotSame(retained, reducer.snapshot())
+        assertEquals(emptyList<String>(), reducer.snapshot().events.single().categories)
+        assertEquals(emptyList<String>(), reducer.snapshot().events.single().keywords)
+        assertEquals(listOf("category"), retained.events.single().categories)
+        assertEquals(listOf("keyword"), retained.events.single().keywords)
+    }
+
+    @Test
+    fun `update invalidates superseded history even when live capacity rejects it`() {
+        for (capacity in listOf(1, 2)) {
+            val reducer = EpgReducer(maximumRetainedEvents = capacity)
+            addChannel(reducer, 1)
+            reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20, title = "ended")))
+            reducer.accept(MetadataEvent.EventDeleted(generation, EventId(1)), instant(20))
+            reducer.accept(MetadataEvent.EventAdded(generation, event(2, 1, 30, 40)))
+            val retained = reducer.snapshot()
+            assertEquals(1, retained.historicalEvents.size)
+
+            reducer.accept(MetadataEvent.EventUpdated(generation,
+                update(3, channelId = 1, start = 10, stop = 20, title = "ended")))
+            val current = reducer.snapshot()
+            assertNotSame(retained, current)
+            assertTrue(current.historicalEvents.isEmpty())
+            assertEquals(capacity, current.events.size)
+            assertEquals(1, retained.historicalEvents.size)
+        }
+    }
+
+    @Test
+    fun `identical historical update still restores the event to the live snapshot`() {
+        val reducer = EpgReducer()
+        addChannel(reducer, 1)
+        reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20, title = "ended")))
+        reducer.accept(MetadataEvent.EventDeleted(generation, EventId(1)), instant(20))
+        val retained = reducer.snapshot()
+
+        reducer.accept(MetadataEvent.EventUpdated(generation, update(1, title = "ended")))
+        assertTrue(reducer.snapshot().historicalEvents.isEmpty())
+        assertEquals("ended", reducer.snapshot().events.single().title)
+        assertTrue(retained.events.isEmpty())
+    }
+
+    @Test
+    fun `identical live update still publishes expired history pruning`() {
+        val reducer = EpgReducer()
+        addChannel(reducer, 1)
+        reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20)))
+        reducer.accept(MetadataEvent.EventDeleted(generation, EventId(1)), instant(20))
+        reducer.accept(MetadataEvent.EventAdded(generation, event(2, 1, 30, 40, title = "current")))
+        val retained = reducer.snapshot()
+
+        reducer.accept(MetadataEvent.EventUpdated(generation, update(2, title = "current")), instant(21_620))
+        assertTrue(reducer.snapshot().historicalEvents.isEmpty())
+        assertEquals(1, retained.historicalEvents.size)
+    }
+
+    @Test
     fun `known channel updates reuse snapshot but new channel membership rebuilds coverage`() {
         val reducer = EpgReducer()
         addChannel(reducer, 1)

@@ -87,6 +87,20 @@ import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Duration.Companion.milliseconds
 
 @RunWith(AndroidJUnit4::class)
+internal class PacketAllocationInstrumentationTest {
+    /** Offline ART allocation diagnostic; fixtures and packets are loaded outside measurement. */
+    @Test
+    fun recorded_packet_allocation_diagnostic() {
+        val assets = InstrumentationRegistry.getInstrumentation().context.assets
+        val capture = RecordedMuxCapture.load(assets)
+        for ((channelOrdinal, streamOrdinal) in listOf(16 to 1, 4 to 1, 4 to 2, 4 to 3)) {
+            val channel = capture.channel(channelOrdinal, streamOrdinal)
+            measurePacketAllocation(channel.streams.single(), channel.packets.map { it.toEvent(assets) })
+        }
+    }
+}
+
+@RunWith(AndroidJUnit4::class)
 internal class Media3SampleQueueInstrumentationTest {
     /** Offline real-ExoPlayer premise check; no server, network data source, or device execution in CI. */
     @Test

@@ -132,6 +132,36 @@ internal class EpgRepositoryTest {
     }
 
     @Test
+    fun `equal reconstructed events remain usable as hash keys after input mutation`() {
+        val categories = mutableListOf("category")
+        val keywords = mutableListOf("keyword")
+        val original = EpgEvent.create(
+            EventId(1), start = instant(10), stop = instant(20),
+            categories = categories, keywords = keywords, isNew = false,
+        )
+        val keys = hashSetOf(original)
+        categories.clear()
+        keywords.clear()
+        val reconstructed = EpgEvent.create(
+            EventId(1), start = instant(10), stop = instant(20),
+            categories = listOf("category"), keywords = listOf("keyword"), isNew = false,
+        )
+        assertEquals(original, reconstructed)
+        assertTrue(reconstructed in keys)
+        assertEquals(EpgSnapshot.create(listOf(original)), EpgSnapshot.create(listOf(reconstructed)))
+    }
+
+    @Test
+    fun `event hash collisions do not make changed snapshots equal`() {
+        val first = EpgEvent.create(EventId(1), start = instant(10), stop = instant(20), title = "Aa")
+        val second = EpgEvent.create(EventId(1), start = instant(10), stop = instant(20), title = "BB")
+        assertEquals(first.hashCode(), second.hashCode())
+        assertFalse(first == second)
+        assertFalse(EpgSnapshot.create(listOf(first)) == EpgSnapshot.create(listOf(second)))
+        assertEquals(2, hashSetOf(first, second).size)
+    }
+
+    @Test
     fun `search models validate filters copy results and redact private text`() {
         val request = EpgSearchRequest.create(
             query = "private-query",

@@ -1,17 +1,22 @@
 # Versioning and compatibility
 
-The source is configured for the provisional `0.24.0` release under these
+The source targets the unreleased provisional `0.25.0` release under these
 coordinates:
 
-- `at.bernhardberger.tvheadend:sdk-android:0.24.0`
-- `at.bernhardberger.tvheadend:sdk-core:0.24.0`
-- `at.bernhardberger.tvheadend:sdk-media3:0.24.0`
-- `at.bernhardberger.tvheadend:sdk-playback:0.24.0`
-- `at.bernhardberger.tvheadend:sdk-testing:0.24.0`
+- `at.bernhardberger.tvheadend:sdk-android:0.25.0`
+- `at.bernhardberger.tvheadend:sdk-core:0.25.0`
+- `at.bernhardberger.tvheadend:sdk-media3:0.25.0`
+- `at.bernhardberger.tvheadend:sdk-playback:0.25.0`
+- `at.bernhardberger.tvheadend:sdk-testing:0.25.0`
 
 Source, local staging, and CI
-do not establish that the configured `0.24.0` coordinates are publicly available;
+do not establish that the configured `0.25.0` coordinates are publicly available;
 check Maven Central before selecting them.
+
+The development baseline is `v0.24.0`. Local prerelease builds may use
+`-PsdkCandidateVersion=0.25.0-optimization-SNAPSHOT`; the existing release checks
+require a plain major-zero version in source. This development target is not a
+release or publication claim. See [releasing](releasing.md).
 
 The signed `v0.3.3` tag is retained as development-release evidence after its
 Central deployment failed. No `0.3.3` Maven artifacts or GitHub release became

@@ -21,6 +21,8 @@ internal class SubscriptionElementaryStreamAdapter(
     private val payloadAllocator: (Int) -> ByteArray = ::ByteArray,
 ) {
     private var ended = false
+    private var payloadBuffer = EMPTY_PAYLOAD
+    private val input = ParsableByteArray()
 
     init {
         reader.createTracks(output, TsPayloadReader.TrackIdGenerator(firstTrackId, 1))
@@ -50,7 +52,11 @@ internal class SubscriptionElementaryStreamAdapter(
     fun end() {
         if (ended) return
         ended = true
-        reader.endOfInputReached()
+        try {
+            reader.endOfInputReached()
+        } finally {
+            payloadBuffer = EMPTY_PAYLOAD
+        }
     }
 
     fun acceptFiniteIdr(packet: SubscriptionEvent.Packet): Boolean {
@@ -59,32 +65,45 @@ internal class SubscriptionElementaryStreamAdapter(
     }
 
     private fun resetForDiscontinuity() {
+        payloadBuffer = EMPTY_PAYLOAD
         reader.seek()
         onDiscontinuity?.invoke()
     }
 
     private fun consume(packet: SubscriptionEvent.Packet, finiteInput: Boolean = false): Boolean {
-        val bytes = payloadAllocator(packet.payload.size)
-        check(bytes.size == packet.payload.size) { "Subscription payload allocation size was invalid" }
-        check(packet.payload.copyInto(bytes) == bytes.size) { "Subscription payload copy was incomplete" }
+        val size = packet.payload.size
+        val bytes = if (size <= payloadBuffer.size) payloadBuffer else payloadAllocator(size).also {
+            check(it.size == size) { "Subscription payload allocation size was invalid" }
+            // Bound idle retention per reader; unusually large packets use temporary storage.
+            if (size <= MAX_RETAINED_PAYLOAD_BYTES) payloadBuffer = it
+        }
+        check(packet.payload.copyInto(bytes) == size) { "Subscription payload copy was incomplete" }
         val flags = TsPayloadReader.FLAG_DATA_ALIGNMENT_INDICATOR or
             if (packet.frameType == MuxFrameType.I) {
                 TsPayloadReader.FLAG_RANDOM_ACCESS_INDICATOR
             } else {
                 0
             }
-        reader.packetStarted(packet.presentationTimeUs ?: C.TIME_UNSET, flags)
-        reader.consume(ParsableByteArray(bytes))
-        reader.packetFinished()
+        // Readers consume synchronously, just as they do with Media3's reusable TS input.
+        // Always reset the logical limit: a shorter packet must not expose stale trailing bytes.
+        input.reset(bytes, size)
+        try {
+            reader.packetStarted(packet.presentationTimeUs ?: C.TIME_UNSET, flags)
+            reader.consume(input)
+            reader.packetFinished()
+        } finally {
+            // In particular, do not retain oversized temporary arrays through this wrapper.
+            input.reset(EMPTY_PAYLOAD)
+        }
         if (!finiteInput) return false
         // The first picture must start at an IDR. Later dependent pictures are valid input
         // for that decoder state and may share the same finite packet (including field pairs).
         var offset = 0
         var idr = false
         val prefixFlags = BooleanArray(3)
-        while (offset < bytes.size) {
-            val start = NalUnitUtil.findNalUnit(bytes, offset, bytes.size, prefixFlags)
-            if (start + 3 >= bytes.size) break
+        while (offset < size) {
+            val start = NalUnitUtil.findNalUnit(bytes, offset, size, prefixFlags)
+            if (start + 3 >= size) break
             when (NalUnitUtil.getNalUnitType(bytes, start)) {
                 NalUnitUtil.H264_NAL_UNIT_TYPE_IDR -> {
                     idr = true
@@ -96,5 +115,10 @@ internal class SubscriptionElementaryStreamAdapter(
         }
         if (idr) reader.endOfInputReached()
         return idr
+    }
+
+    private companion object {
+        val EMPTY_PAYLOAD = ByteArray(0)
+        const val MAX_RETAINED_PAYLOAD_BYTES = 256 * 1024
     }
 }

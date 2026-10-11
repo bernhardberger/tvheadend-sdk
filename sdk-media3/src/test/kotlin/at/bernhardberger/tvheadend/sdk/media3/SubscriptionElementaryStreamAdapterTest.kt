@@ -54,7 +54,7 @@ class SubscriptionElementaryStreamAdapterTest {
     }
 
     @Test
-    fun `packet allocates exact payload once and copies once`() {
+    fun `first packet allocates exact payload once and copies once`() {
         val reader = RecordingReader()
         val binary = CountingBinary(byteArrayOf(1, 2, 3))
         val allocatedSizes = mutableListOf<Int>()
@@ -94,6 +94,69 @@ class SubscriptionElementaryStreamAdapterTest {
     }
 
     @Test
+    fun `successive packets reuse capacity but expose only current bytes including empty input`() {
+        val reader = RecordingReader()
+        val allocations = mutableListOf<Int>()
+        val adapter = SubscriptionElementaryStreamAdapter(reader, EmptyExtractorOutput, 0, payloadAllocator = {
+            allocations += it
+            ByteArray(it)
+        })
+        for (size in listOf(8, 3, 0, 12, 4)) {
+            val expected = ByteArray(size) { size.toByte() }
+            val binary = CountingBinary(expected)
+            adapter.accept(packet(binary, MuxFrameType.P, 0))
+            assertEquals(expected.toList(), reader.bytes.toList())
+            assertEquals(1, binary.copyCount)
+        }
+        assertEquals(listOf(8, 12), allocations)
+    }
+
+    @Test
+    fun `oversized packets do not grow retained scratch capacity`() {
+        val allocations = mutableListOf<Int>()
+        val reader = RecordingReader()
+        val adapter = SubscriptionElementaryStreamAdapter(reader, EmptyExtractorOutput, 0, payloadAllocator = {
+            allocations += it
+            ByteArray(it)
+        })
+        // The per-reader retention bound is 256 KiB; larger packets remain supported.
+        val oversized = 256 * 1024 + 1
+        for (size in listOf(3, oversized, 2, oversized, 1)) {
+            val bytes = ByteArray(size) { size.toByte() }
+            adapter.accept(packet(CountingBinary(bytes), MuxFrameType.P, 0))
+            assertEquals(bytes.toList(), reader.bytes.toList())
+        }
+        assertEquals(listOf(3, oversized, oversized), allocations)
+    }
+
+    @Test
+    fun `finite IDR validation cannot find an IDR in a previous larger packet tail`() {
+        val reader = RecordingReader()
+        val adapter = SubscriptionElementaryStreamAdapter(reader, EmptyExtractorOutput, 0)
+        val larger = ByteArray(8) + byteArrayOf(0, 0, 0, 1, 0x65, 0x10)
+        assertTrue(adapter.acceptFiniteIdr(packet(CountingBinary(larger), MuxFrameType.I, 0)))
+        assertFalse(adapter.acceptFiniteIdr(packet(CountingBinary(byteArrayOf(0, 0, 1)), MuxFrameType.I, 0)))
+        assertEquals(1, reader.calls.count { it == "flush" })
+        assertEquals(listOf<Byte>(0, 0, 1), reader.bytes.toList())
+    }
+
+    @Test
+    fun `incomplete copy into reused capacity fails before invoking the reader`() {
+        val reader = RecordingReader()
+        val adapter = SubscriptionElementaryStreamAdapter(reader, EmptyExtractorOutput, 0)
+        adapter.accept(packet(CountingBinary(ByteArray(8)), MuxFrameType.P, 0))
+        reader.calls.clear()
+        val incomplete = object : SubscriptionBinary {
+            override val size: Int = 3
+            override fun copyInto(destination: ByteArray, destinationOffset: Int): Int = 2
+        }
+        assertThrows(IllegalStateException::class.java) {
+            adapter.accept(packet(incomplete, MuxFrameType.P, 0))
+        }
+        assertTrue(reader.calls.isEmpty())
+    }
+
+    @Test
     fun `only accepted skip and dropped markers reset reader state`() {
         val reader = RecordingReader()
         var outputResetCount = 0
@@ -114,6 +177,23 @@ class SubscriptionElementaryStreamAdapterTest {
     }
 
     @Test
+    fun `discontinuities release previous scratch capacity`() {
+        val allocations = mutableListOf<Int>()
+        val adapter = SubscriptionElementaryStreamAdapter(RecordingReader(), EmptyExtractorOutput, 0, payloadAllocator = {
+            allocations += it
+            ByteArray(it)
+        })
+        adapter.accept(packet(CountingBinary(ByteArray(8)), MuxFrameType.P, 0))
+        adapter.accept(SubscriptionEvent.Skipped(null, SkipOutcome.REJECTED, null, null))
+        adapter.accept(packet(CountingBinary(ByteArray(4)), MuxFrameType.P, 0))
+        adapter.accept(SubscriptionEvent.Skipped(null, SkipOutcome.ACCEPTED, null, null))
+        adapter.accept(packet(CountingBinary(ByteArray(3)), MuxFrameType.P, 0))
+        adapter.accept(SubscriptionEvent.Dropped(3L))
+        adapter.accept(packet(CountingBinary(ByteArray(2)), MuxFrameType.P, 0))
+        assertEquals(listOf(8, 3, 2), allocations)
+    }
+
+    @Test
     fun `parser failure never finishes a partial packet`() {
         val reader = RecordingReader(throwOnConsume = true)
         val adapter = SubscriptionElementaryStreamAdapter(reader, EmptyExtractorOutput, 0)
@@ -124,6 +204,34 @@ class SubscriptionElementaryStreamAdapterTest {
         assertTrue("started" in reader.calls)
         assertTrue("consume" in reader.calls)
         assertFalse("finished" in reader.calls)
+    }
+
+    @Test
+    fun `parser failure releases oversized array from reusable input wrapper`() {
+        val reader = RecordingReader(throwOnConsume = true)
+        val adapter = SubscriptionElementaryStreamAdapter(reader, EmptyExtractorOutput, 0)
+        assertThrows(IllegalStateException::class.java) {
+            adapter.accept(packet(CountingBinary(ByteArray(256 * 1024 + 1)), MuxFrameType.P, 0))
+        }
+        val input = checkNotNull(reader.lastInput)
+        assertEquals(0, input.data.size)
+        assertEquals(0, input.limit())
+    }
+
+    @Test
+    fun `terminal flush failure still releases retained scratch and remains terminal`() {
+        val reader = RecordingReader(throwOnEnd = true)
+        val adapter = SubscriptionElementaryStreamAdapter(reader, EmptyExtractorOutput, 0)
+        adapter.accept(packet(CountingBinary(ByteArray(8)), MuxFrameType.P, 0))
+        assertThrows(IllegalStateException::class.java) { adapter.end() }
+        // A terminal adapter rejects further input, so inspect its retained reference directly.
+        val scratch = adapter.javaClass.getDeclaredField("payloadBuffer").apply { isAccessible = true }
+        assertEquals(0, (scratch.get(adapter) as ByteArray).size)
+        adapter.end()
+        assertEquals(1, reader.calls.count { it == "flush" })
+        assertThrows(IllegalStateException::class.java) {
+            adapter.accept(packet(CountingBinary(ByteArray(1)), MuxFrameType.P, 0))
+        }
     }
 
     private fun packet(
@@ -142,12 +250,14 @@ class SubscriptionElementaryStreamAdapterTest {
 
 private class RecordingReader(
     private val throwOnConsume: Boolean = false,
+    private val throwOnEnd: Boolean = false,
 ) : ElementaryStreamReader {
     internal val calls = mutableListOf<String>()
     internal var timeUs: Long = 0L
     internal var flags: Int = 0
     internal var bytes: ByteArray = byteArrayOf()
     internal var seekCount: Int = 0
+    internal var lastInput: ParsableByteArray? = null
 
     override fun seek() {
         seekCount += 1
@@ -163,6 +273,7 @@ private class RecordingReader(
 
     override fun consume(data: ParsableByteArray) {
         calls += "consume"
+        lastInput = data
         if (throwOnConsume) error("fixed parser failure")
         bytes = data.data.copyOfRange(data.position, data.limit())
         data.position = data.limit()
@@ -174,6 +285,7 @@ private class RecordingReader(
 
     override fun endOfInputReached() {
         calls += "flush"
+        if (throwOnEnd) error("fixed flush failure")
     }
 }
 

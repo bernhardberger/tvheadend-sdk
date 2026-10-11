@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.25.0]
+
+Unreleased; development target.
+
+### Added
+
+- Offline kotlinx-benchmark/JMH scenarios for EPG ingestion, updates and metadata
+  reader contention, with allocation measurements and synthetic guide sizes.
+- Mixed EPG trace benchmarks combining changed and duplicate updates, history
+  expiry, concurrent now/next browsing and bounded retained snapshots.
+- Cache restore/resync lifecycle benchmarks with opt-in JDK Flight Recorder
+  after-GC heap checkpoints and bounded consumer snapshot retention.
+- Android recorded-packet allocation diagnostics for four elementary-stream readers.
+
+### Changed
+
+- Pre-size the EPG event-ID index to reduce update-publication allocation by
+  25–37% in the synthetic guide benchmarks, without changing lookup semantics.
+- Reuse the immutable EPG snapshot for identical live-event updates while still
+  advancing query authority, superseding history and pruning expired history.
+- Cache immutable EPG event hashes to reduce repeated guide-publication work;
+  equality and hash-collision handling remain unchanged.
+- Reuse bounded Media3 packet scratch buffers to reduce steady reader allocation,
+  preserving packet copies, logical lengths and finite-IDR validation.
+- Build the EPG event-ID index with one insertion per event, reducing temporary
+  allocation while preserving ambiguity for duplicate IDs.
+
 ## [0.24.0]
 
 Released 2026-10-11.

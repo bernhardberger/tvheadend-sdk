@@ -18,7 +18,9 @@ The SDK is split into five libraries:
 | `sdk-android` | Android | Discovery, connectivity, atomic server-profile storage, and authenticated artwork |
 | `sdk-testing` | Kotlin/JVM | Aggregate observation fakes, scripted events, and packet fixtures |
 
-The source is configured for release `0.24.0`. The normal build never publishes.
+The source targets the unreleased `0.25.0` development cycle. For local prerelease
+builds, use `-PsdkCandidateVersion=0.25.0-optimization-SNAPSHOT` as described in
+[releasing](docs/releasing.md). The normal build never publishes.
 `./gradlew clean build check stageLocalPublication` verifies the repository and
 stages all five modules under `build/local-maven`; the Maven Central badge, not
 local source or staging, reports the latest publicly available version.
@@ -197,7 +199,8 @@ ineligible, or observation-expired. Covered results retain the exact immutable
 observation that established the coverage.
 
 See [the build matrix](docs/build-matrix.md) for the pinned toolchain and test
-runtime split. Phase 4 real-device
+runtime split, and [JVM benchmarks](docs/benchmarking.md) for EPG scaling,
+allocation profiling, and metadata reader contention. Phase 4 real-device
 acceptance is recorded in the
 [playback verification notes](docs/playback-device-verification.md). Phase 5
 process, credential, connectivity, and NSD acceptance is recorded in the
