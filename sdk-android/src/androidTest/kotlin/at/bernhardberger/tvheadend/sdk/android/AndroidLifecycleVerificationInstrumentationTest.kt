@@ -220,7 +220,7 @@ private suspend fun discoverFixture(
                     server.name == fixtureName && server.port == fixturePort
                 }
                 is TvheadendDiscoveryState.Unavailable ->
-                    throw AssertionError("Android NSD discovery failed; failure=${current.failure.name}")
+                    throw AssertionError("Android NSD discovery failed; failure=${current.failure}")
             }
         } as TvheadendDiscoveryState.Discovering
         state.servers.single { server -> server.name == fixtureName && server.port == fixturePort }

@@ -33,7 +33,7 @@ import at.bernhardberger.tvheadend.sdk.core.SessionObservation
 import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
 import at.bernhardberger.tvheadend.sdk.core.SessionGenerationIdentity
 import at.bernhardberger.tvheadend.sdk.core.SessionFailure
-import at.bernhardberger.tvheadend.sdk.core.SessionOperationFailure
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import at.bernhardberger.tvheadend.sdk.core.SessionRecoveryDisposition
 import at.bernhardberger.tvheadend.sdk.core.RetainedMetadataAuthority
 import at.bernhardberger.tvheadend.sdk.core.ServerProfileReadResult
@@ -170,11 +170,14 @@ public class StagedSdkConsumer(
             else -> true
         }
 
-    public fun synchronizationFailure(failure: SessionFailure): SessionOperationFailure? =
-        (failure as? SessionFailure.SynchronizationFailed)?.failure
+    public fun synchronizationFailure(failure: SessionFailure): TvheadendFailure? =
+        failure.operationFailure
 
     public fun isAuthenticationRejected(failure: SessionFailure): Boolean =
-        failure === SessionFailure.AuthenticationRejected
+        failure == SessionFailure.AUTHENTICATION_REJECTED
+
+    public fun synchronizationTimeout(): SessionFailure =
+        SessionFailure.synchronizationFailed(TvheadendFailure.TIMEOUT)
 
     public fun registerArtwork(
         components: ComponentRegistry.Builder,

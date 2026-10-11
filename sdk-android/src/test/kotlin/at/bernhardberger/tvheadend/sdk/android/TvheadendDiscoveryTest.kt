@@ -16,6 +16,17 @@ import org.junit.jupiter.api.Test
 
 internal class TvheadendDiscoveryTest {
     @Test
+    fun `discovery failures have distinct safe labels`() {
+        val cases = listOf(
+            TvheadendDiscoveryFailure.PERMISSION_DENIED to "PERMISSION_DENIED",
+            TvheadendDiscoveryFailure.START_FAILED to "START_FAILED",
+        )
+        assertEquals(cases.size, cases.map { it.first }.toSet().size)
+        assertEquals(cases.size, cases.map { it.second }.toSet().size)
+        cases.forEach { (value, label) -> assertEquals(label, value.toString()) }
+    }
+
+    @Test
     fun `discovery resolves sorted snapshots and removes lost services`() = runTest {
         val backend = FakeNsdDiscoveryBackend()
         val discovery = TvheadendDiscovery(backend)

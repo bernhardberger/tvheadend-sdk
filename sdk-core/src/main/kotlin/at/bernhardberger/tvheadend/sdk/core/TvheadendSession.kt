@@ -1,5 +1,7 @@
 package at.bernhardberger.tvheadend.sdk.core
 
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
+
 import at.bernhardberger.tvheadend.sdk.core.cache.CacheNamespace
 import at.bernhardberger.tvheadend.sdk.core.cache.FileMetadataCacheStore
 import at.bernhardberger.tvheadend.sdk.core.cache.MetadataCacheRuntime
@@ -368,77 +370,124 @@ public sealed interface SessionState {
     ) : SessionState
 }
 
-/** Safe, SDK-authored reason that a session is unavailable. */
-public sealed interface SessionFailure {
-    /** Stable recovery guidance for this failure. */
+/**
+ * Safe, value-equal reason that a session is unavailable.
+ *
+ * Compare [kind] with known values and retain a fallback for future kinds. Equality includes
+ * [operationFailure], preserving conflation of equal [SessionState.Unavailable] observations.
+ */
+public class SessionFailure private constructor(
+    /** The SDK-authored reason. */
+    public val kind: SessionFailureKind,
+    /** The operation failure, present only for synchronization failures. */
+    public val operationFailure: TvheadendFailure? = null,
+) {
+    init {
+        require((kind == SessionFailureKind.SYNCHRONIZATION_FAILED) == (operationFailure != null)) {
+            "Only synchronization failures require an operation failure"
+        }
+    }
+
+    /** Stable recovery guidance derived from the kind and operation failure. */
     public val recoveryDisposition: SessionRecoveryDisposition
+        get() = when (kind) {
+            SessionFailureKind.AUTHENTICATION_REJECTED,
+            SessionFailureKind.PERMISSION_DENIED,
+            SessionFailureKind.INCOMPATIBLE_SERVER -> SessionRecoveryDisposition.PROFILE_CHANGE_REQUIRED
+            SessionFailureKind.SERVER_UNREACHABLE,
+            SessionFailureKind.NETWORK_UNAVAILABLE,
+            SessionFailureKind.METADATA_OVERFLOW,
+            SessionFailureKind.TRANSPORT_UNAVAILABLE -> SessionRecoveryDisposition.AUTOMATIC_BACKOFF
+            SessionFailureKind.SYNCHRONIZATION_FAILED -> requireNotNull(operationFailure).recoveryDisposition
+            else -> SessionRecoveryDisposition.EXPLICIT_RETRY
+        }
 
-    /** Authentication was rejected; retry requires a profile configuration change. */
-    public data object AuthenticationRejected : SessionFailure {
-        override val recoveryDisposition: SessionRecoveryDisposition =
-            SessionRecoveryDisposition.PROFILE_CHANGE_REQUIRED
+    override fun equals(other: Any?): Boolean =
+        other is SessionFailure && kind == other.kind && operationFailure == other.operationFailure
+
+    override fun hashCode(): Int = 31 * kind.hashCode() + (operationFailure?.hashCode() ?: 0)
+
+    override fun toString(): String = "SessionFailure(kind=$kind, operationFailure=$operationFailure)"
+
+    /** Known session failures and synchronization failure factory. */
+    public companion object {
+        /** Authentication was rejected; recovery requires a changed profile. */
+        @JvmField
+        public val AUTHENTICATION_REJECTED: SessionFailure = SessionFailure(SessionFailureKind.AUTHENTICATION_REJECTED)
+        /** Permission was denied; recovery requires a changed profile. */
+        @JvmField
+        public val PERMISSION_DENIED: SessionFailure = SessionFailure(SessionFailureKind.PERMISSION_DENIED)
+        /** The server could not be reached; the SDK retries with backoff. */
+        @JvmField
+        public val SERVER_UNREACHABLE: SessionFailure = SessionFailure(SessionFailureKind.SERVER_UNREACHABLE)
+        /** The network is unavailable; the SDK retries with backoff. */
+        @JvmField
+        public val NETWORK_UNAVAILABLE: SessionFailure = SessionFailure(SessionFailureKind.NETWORK_UNAVAILABLE)
+        /** The protocol is incompatible; recovery requires a changed profile. */
+        @JvmField
+        public val INCOMPATIBLE_SERVER: SessionFailure = SessionFailure(SessionFailureKind.INCOMPATIBLE_SERVER)
+        /** The server needs an upgrade before an explicit retry. */
+        @JvmField
+        public val SERVER_UPGRADE_REQUIRED: SessionFailure = SessionFailure(SessionFailureKind.SERVER_UPGRADE_REQUIRED)
+        /** Metadata overflow requires a full resync with backoff. */
+        @JvmField
+        public val METADATA_OVERFLOW: SessionFailure = SessionFailure(SessionFailureKind.METADATA_OVERFLOW)
+        /** No channels were synchronized; only explicit retry is permitted. */
+        @JvmField
+        public val NO_CHANNELS: SessionFailure = SessionFailure(SessionFailureKind.NO_CHANNELS)
+        /** The active transport is unavailable; the SDK retries with backoff. */
+        @JvmField
+        public val TRANSPORT_UNAVAILABLE: SessionFailure = SessionFailure(SessionFailureKind.TRANSPORT_UNAVAILABLE)
+        /** An unexpected internal failure permits explicit retry without exposing its cause. */
+        @JvmField
+        public val UNEXPECTED_FAILURE: SessionFailure = SessionFailure(SessionFailureKind.UNEXPECTED_FAILURE)
+
+        /** Initial synchronization failed with the given safe operation failure. */
+        @JvmStatic
+        public fun synchronizationFailed(operationFailure: TvheadendFailure): SessionFailure =
+            SessionFailure(SessionFailureKind.SYNCHRONIZATION_FAILED, operationFailure)
     }
+}
 
-    /** The authenticated user lacks permission; retry requires a profile configuration change. */
-    public data object PermissionDenied : SessionFailure {
-        override val recoveryDisposition: SessionRecoveryDisposition =
-            SessionRecoveryDisposition.PROFILE_CHANGE_REQUIRED
-    }
+/** Open session failure classification. Consumers must retain a fallback for future values. */
+public class SessionFailureKind private constructor(private val label: String) {
+    override fun toString(): String = label
 
-    /** The server endpoint could not be reached and is retried with backoff. */
-    public data object ServerUnreachable : SessionFailure {
-        override val recoveryDisposition: SessionRecoveryDisposition =
-            SessionRecoveryDisposition.AUTOMATIC_BACKOFF
-    }
-
-    /** The client network is unavailable and is retried with backoff. */
-    public data object NetworkUnavailable : SessionFailure {
-        override val recoveryDisposition: SessionRecoveryDisposition =
-            SessionRecoveryDisposition.AUTOMATIC_BACKOFF
-    }
-
-    /** The server protocol is incompatible; retry requires a profile configuration change. */
-    public data object IncompatibleServer : SessionFailure {
-        override val recoveryDisposition: SessionRecoveryDisposition =
-            SessionRecoveryDisposition.PROFILE_CHANGE_REQUIRED
-    }
-
-    /** The server is below the supported protocol floor; upgrade it before explicitly retrying. */
-    public data object ServerUpgradeRequired : SessionFailure {
-        override val recoveryDisposition: SessionRecoveryDisposition =
-            SessionRecoveryDisposition.EXPLICIT_RETRY
-    }
-
-    /** Metadata delivery overflowed; a full resync is retried with increasing backoff. */
-    public data object MetadataOverflow : SessionFailure {
-        override val recoveryDisposition: SessionRecoveryDisposition =
-            SessionRecoveryDisposition.AUTOMATIC_BACKOFF
-    }
-
-    /** The synchronized server contains no channels and permits only explicit retry. */
-    public data object NoChannels : SessionFailure {
-        override val recoveryDisposition: SessionRecoveryDisposition =
-            SessionRecoveryDisposition.EXPLICIT_RETRY
-    }
-
-    /** The active transport is unavailable and is retried with backoff. */
-    public data object TransportUnavailable : SessionFailure {
-        override val recoveryDisposition: SessionRecoveryDisposition =
-            SessionRecoveryDisposition.AUTOMATIC_BACKOFF
-    }
-
-    /** Initial synchronization failed with a typed operation result and its documented policy. */
-    public data class SynchronizationFailed(
-        public val failure: SessionOperationFailure,
-    ) : SessionFailure {
-        override val recoveryDisposition: SessionRecoveryDisposition
-            get() = failure.recoveryDisposition
-    }
-
-    /** An unexpected internal operation failed without exposing its cause and permits explicit retry. */
-    public data object UnexpectedFailure : SessionFailure {
-        override val recoveryDisposition: SessionRecoveryDisposition =
-            SessionRecoveryDisposition.EXPLICIT_RETRY
+    /** Known session failure kinds. */
+    public companion object {
+        /** Authentication was rejected. */
+        @JvmField
+        public val AUTHENTICATION_REJECTED: SessionFailureKind = SessionFailureKind("AUTHENTICATION_REJECTED")
+        /** Permission was denied. */
+        @JvmField
+        public val PERMISSION_DENIED: SessionFailureKind = SessionFailureKind("PERMISSION_DENIED")
+        /** The server could not be reached. */
+        @JvmField
+        public val SERVER_UNREACHABLE: SessionFailureKind = SessionFailureKind("SERVER_UNREACHABLE")
+        /** The network is unavailable. */
+        @JvmField
+        public val NETWORK_UNAVAILABLE: SessionFailureKind = SessionFailureKind("NETWORK_UNAVAILABLE")
+        /** The server protocol is incompatible. */
+        @JvmField
+        public val INCOMPATIBLE_SERVER: SessionFailureKind = SessionFailureKind("INCOMPATIBLE_SERVER")
+        /** The server is below the supported protocol floor. */
+        @JvmField
+        public val SERVER_UPGRADE_REQUIRED: SessionFailureKind = SessionFailureKind("SERVER_UPGRADE_REQUIRED")
+        /** Metadata delivery overflowed. */
+        @JvmField
+        public val METADATA_OVERFLOW: SessionFailureKind = SessionFailureKind("METADATA_OVERFLOW")
+        /** No channels were synchronized. */
+        @JvmField
+        public val NO_CHANNELS: SessionFailureKind = SessionFailureKind("NO_CHANNELS")
+        /** The active transport is unavailable. */
+        @JvmField
+        public val TRANSPORT_UNAVAILABLE: SessionFailureKind = SessionFailureKind("TRANSPORT_UNAVAILABLE")
+        /** Initial synchronization failed. */
+        @JvmField
+        public val SYNCHRONIZATION_FAILED: SessionFailureKind = SessionFailureKind("SYNCHRONIZATION_FAILED")
+        /** An unexpected internal operation failed. */
+        @JvmField
+        public val UNEXPECTED_FAILURE: SessionFailureKind = SessionFailureKind("UNEXPECTED_FAILURE")
     }
 }
 
@@ -447,40 +496,47 @@ public sealed interface SessionFailure {
  *
  * Guidance describes who may initiate another attempt, not whether that attempt will succeed.
  * Applications retain ownership of copy, action labels, presentation of retry timing and counts,
- * connectivity, and navigation. Consumers should retain a fallback for future enum values.
+ * connectivity, and navigation. Consumers must retain a fallback for future values.
  */
-public enum class SessionRecoveryDisposition {
-    /** The SDK continues connection attempts using its internal backoff policy. */
-    AUTOMATIC_BACKOFF,
+public class SessionRecoveryDisposition private constructor(private val label: String) {
+    override fun toString(): String = label
 
-    /** The SDK has stopped retrying, but a user-requested [TvheadendSession.retry] is permitted. */
-    EXPLICIT_RETRY,
+    /** Known recovery dispositions. */
+    public companion object {
+        /** The SDK continues connection attempts using its internal backoff policy. */
+        @JvmField
+        public val AUTOMATIC_BACKOFF: SessionRecoveryDisposition = SessionRecoveryDisposition("AUTOMATIC_BACKOFF")
 
-    /** The current profile is not retried; recovery requires connecting a changed profile. */
-    PROFILE_CHANGE_REQUIRED,
+        /** The SDK has stopped retrying, but a user-requested [TvheadendSession.retry] is permitted. */
+        @JvmField
+        public val EXPLICIT_RETRY: SessionRecoveryDisposition = SessionRecoveryDisposition("EXPLICIT_RETRY")
 
-    /** Terminal guidance: the SDK offers no retry path for the failure. */
-    NO_RETRY,
+        /** The current profile is not retried; recovery requires connecting a changed profile. */
+        @JvmField
+        public val PROFILE_CHANGE_REQUIRED: SessionRecoveryDisposition = SessionRecoveryDisposition("PROFILE_CHANGE_REQUIRED")
+
+        /** Terminal guidance: the SDK offers no retry path for the failure. */
+        @JvmField
+        public val NO_RETRY: SessionRecoveryDisposition = SessionRecoveryDisposition("NO_RETRY")
+    }
 }
 
 /**
- * Safe failure returned by initial synchronization.
+ * Recovery guidance for an initial synchronization operation failure.
  *
  * Timeouts, transport unavailability, and connection limits use automatic backoff. Server rejection
- * permits explicit retry. Access denial and unsupported operations require a profile change.
+ * and malformed replies permit explicit retry. Access denial and unsupported operations require
+ * a profile change. All other and future failures conservatively permit only explicit retry.
  */
-public enum class SessionOperationFailure(
-    public val recoveryDisposition: SessionRecoveryDisposition,
-) {
-    SERVER_REJECTED(SessionRecoveryDisposition.EXPLICIT_RETRY),
-    ACCESS_DENIED(SessionRecoveryDisposition.PROFILE_CHANGE_REQUIRED),
-    CONNECTION_LIMIT(SessionRecoveryDisposition.AUTOMATIC_BACKOFF),
-    TIMEOUT(SessionRecoveryDisposition.AUTOMATIC_BACKOFF),
-    TRANSPORT_UNAVAILABLE(SessionRecoveryDisposition.AUTOMATIC_BACKOFF),
-    NOT_SUPPORTED(SessionRecoveryDisposition.PROFILE_CHANGE_REQUIRED),
-    /** The response was malformed; the SDK does not automatically retry or declare transport loss. */
-    MALFORMED_RESPONSE(SessionRecoveryDisposition.EXPLICIT_RETRY),
-}
+public val TvheadendFailure.recoveryDisposition: SessionRecoveryDisposition
+    get() = when (this) {
+        TvheadendFailure.ACCESS_DENIED,
+        TvheadendFailure.NOT_SUPPORTED -> SessionRecoveryDisposition.PROFILE_CHANGE_REQUIRED
+        TvheadendFailure.CONNECTION_LIMIT,
+        TvheadendFailure.TIMEOUT,
+        TvheadendFailure.TRANSPORT_UNAVAILABLE -> SessionRecoveryDisposition.AUTOMATIC_BACKOFF
+        else -> SessionRecoveryDisposition.EXPLICIT_RETRY
+    }
 
 /**
  * Capabilities and server observations proven for the current synchronized generation.

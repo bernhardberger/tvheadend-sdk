@@ -47,7 +47,7 @@ Under that promise:
 
 ### Problem
 
-The same server and transport failures are re-declared many times:
+In the pre-0.26 API, the same server and transport failures are re-declared many times:
 
 - as payload-free cases in five sealed results: `DvrMutationResult`,
   `DvrProgressResult`, `DvrCutpointsResult`, `StreamProfilesResult` and
@@ -172,7 +172,7 @@ Kept as they are:
 - **`SessionCommandResult`.** It reports lifecycle command outcomes.
 - **`ServerProfileReadResult`.** It covers local storage, not the server.
 
-`SessionOperationFailure` currently carries a `recoveryDisposition`. That
+The pre-0.26 `SessionOperationFailure` carries a `recoveryDisposition`. That
 mapping moves into `sdk-core`, because a playback-module type cannot
 reference the core enum:
 

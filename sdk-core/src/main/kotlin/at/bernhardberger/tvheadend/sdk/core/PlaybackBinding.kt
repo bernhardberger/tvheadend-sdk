@@ -315,15 +315,7 @@ private fun recordingAdmission(
                 RecordingPlaybackAdmission.GrowingDeferred
             }
         }
-        DvrEntryState.SCHEDULED,
-        DvrEntryState.MISSED,
-        DvrEntryState.INVALID,
-        DvrEntryState.RECORDING_ERROR,
-        DvrEntryState.COMPLETED_ERROR,
-        DvrEntryState.FILE_MISSING,
-        DvrEntryState.UNKNOWN,
-        null,
-        -> RecordingPlaybackAdmission.TargetUnavailable
+        else -> RecordingPlaybackAdmission.TargetUnavailable
     }
 }
 

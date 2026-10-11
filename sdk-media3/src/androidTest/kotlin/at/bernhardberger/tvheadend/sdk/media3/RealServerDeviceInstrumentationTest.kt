@@ -23,7 +23,7 @@ import at.bernhardberger.tvheadend.sdk.core.ServerAuthentication
 import at.bernhardberger.tvheadend.sdk.core.ServerProfile
 import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
 import at.bernhardberger.tvheadend.sdk.core.SessionFailure
-import at.bernhardberger.tvheadend.sdk.core.SessionOperationFailure
+import at.bernhardberger.tvheadend.sdk.core.SessionRecoveryDisposition
 import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.createTvheadendSession
 import at.bernhardberger.tvheadend.sdk.playback.ActiveSubscription
@@ -565,7 +565,7 @@ private data class RealServerChannel(
             require((numerator == null) == (denominator == null)) { "Real-server aspect ratio is invalid" }
             denominator?.let { require(it > 0L) { "Real-server aspect ratio is invalid" } }
             val expectedStreams = value.getJSONArray("expected_streams").streamTypes()
-            val expectedAudioStream = SubscriptionStreamType.valueOf(value.getString("expected_audio"))
+            val expectedAudioStream = fixtureStreamType(value.getString("expected_audio"))
             require(expectedAudioStream in expectedStreams) { "Real-server channel audio is invalid" }
             return RealServerChannel(
                 role = ChannelRole.valueOf(value.getString("role")),
@@ -586,31 +586,7 @@ private fun SessionState.isTerminalForVerification(): Boolean = when (this) {
     SessionState.Connecting,
     SessionState.Synchronizing,
     -> false
-    is SessionState.Unavailable -> when (val failure = reason) {
-        SessionFailure.ServerUnreachable,
-        SessionFailure.NetworkUnavailable,
-        SessionFailure.TransportUnavailable,
-        SessionFailure.MetadataOverflow,
-        -> false
-        SessionFailure.AuthenticationRejected,
-        SessionFailure.PermissionDenied,
-        SessionFailure.IncompatibleServer,
-        SessionFailure.ServerUpgradeRequired,
-        SessionFailure.NoChannels,
-        SessionFailure.UnexpectedFailure,
-        -> true
-        is SessionFailure.SynchronizationFailed -> when (failure.failure) {
-            SessionOperationFailure.CONNECTION_LIMIT,
-            SessionOperationFailure.TIMEOUT,
-            SessionOperationFailure.TRANSPORT_UNAVAILABLE,
-            -> false
-            SessionOperationFailure.SERVER_REJECTED,
-            SessionOperationFailure.ACCESS_DENIED,
-            SessionOperationFailure.NOT_SUPPORTED,
-            SessionOperationFailure.MALFORMED_RESPONSE,
-            -> true
-        }
-    }
+    is SessionState.Unavailable -> reason.recoveryDisposition != SessionRecoveryDisposition.AUTOMATIC_BACKOFF
 }
 
 private val VIDEO_STREAMS = setOf(
@@ -645,7 +621,7 @@ private fun JSONArray.mapObjects(transform: (JSONObject) -> RealServerChannel): 
     }
 
 private fun JSONArray.streamTypes(): Set<SubscriptionStreamType> = buildSet {
-    for (index in 0 until length()) add(SubscriptionStreamType.valueOf(getString(index)))
+    for (index in 0 until length()) add(fixtureStreamType(getString(index)))
 }
 
 private fun SubscriptionStreamType.videoMimeType(): String = when (this) {

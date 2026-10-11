@@ -29,7 +29,7 @@ import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult;
 import at.bernhardberger.tvheadend.sdk.core.SessionFailure;
 import at.bernhardberger.tvheadend.sdk.core.SessionGenerationIdentity;
 import at.bernhardberger.tvheadend.sdk.core.SessionObservation;
-import at.bernhardberger.tvheadend.sdk.core.SessionOperationFailure;
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure;
 import at.bernhardberger.tvheadend.sdk.core.SessionRecoveryDisposition;
 import at.bernhardberger.tvheadend.sdk.core.StreamProfilesResult;
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession;
@@ -40,6 +40,7 @@ import at.bernhardberger.tvheadend.sdk.media3.LivePlaybackTargetResult;
 import at.bernhardberger.tvheadend.sdk.media3.PlaybackCoordinatorLifetime;
 import at.bernhardberger.tvheadend.sdk.media3.PlaybackOutcomeCategory;
 import at.bernhardberger.tvheadend.sdk.media3.PlaybackShutdownResult;
+import at.bernhardberger.tvheadend.sdk.media3.PlaybackStopResult;
 import at.bernhardberger.tvheadend.sdk.media3.PlaybackTargetDisposition;
 import at.bernhardberger.tvheadend.sdk.media3.PlaybackTargetResult;
 import at.bernhardberger.tvheadend.sdk.media3.TimeshiftCommandDisposition;
@@ -214,14 +215,26 @@ public final class StagedSdkJavaConsumer {
                 disposition != SessionRecoveryDisposition.PROFILE_CHANGE_REQUIRED;
     }
 
-    public static SessionOperationFailure synchronizationFailure(SessionFailure failure) {
-        return failure instanceof SessionFailure.SynchronizationFailed synchronizationFailed
-                ? synchronizationFailed.getFailure()
-                : null;
+    public static TvheadendFailure synchronizationFailure(SessionFailure failure) {
+        return failure.getOperationFailure();
     }
 
     public static boolean isAuthenticationRejected(SessionFailure failure) {
-        return failure == SessionFailure.AuthenticationRejected.INSTANCE;
+        return failure.equals(SessionFailure.AUTHENTICATION_REJECTED);
+    }
+
+    public static SessionFailure synchronizationTimeout() {
+        return SessionFailure.synchronizationFailed(TvheadendFailure.TIMEOUT);
+    }
+
+    public static java.util.List<PlaybackStopResult> stopResults(SubscriptionIssue issue) {
+        return java.util.List.of(
+                PlaybackStopResult.stopped(issue),
+                PlaybackStopResult.retiredAfterDeparture(issue),
+                PlaybackStopResult.playerUnavailable(issue),
+                PlaybackStopResult.ALREADY_STOPPED,
+                PlaybackStopResult.NOT_RUNNING,
+                PlaybackStopResult.SHUT_DOWN);
     }
 
     public static ChannelCatalog channelCatalogForDisplay(ChannelRepositoryState state) {

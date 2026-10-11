@@ -40,7 +40,7 @@ import at.bernhardberger.tvheadend.sdk.core.ServerProfile
 import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
 import at.bernhardberger.tvheadend.sdk.core.SessionFailure
 import at.bernhardberger.tvheadend.sdk.core.SessionRecoveryDisposition
-import at.bernhardberger.tvheadend.sdk.core.SessionOperationFailure
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
@@ -1112,7 +1112,7 @@ internal class ConnectionOwnerTest {
         )
         runCurrent()
         assertEquals(
-            SessionState.Unavailable(SessionFailure.TransportUnavailable),
+            SessionState.Unavailable(SessionFailure.TRANSPORT_UNAVAILABLE),
             owner.observation.value.sessionState,
         )
         assertNull(owner.observation.value.currentSession)
@@ -1186,7 +1186,7 @@ internal class ConnectionOwnerTest {
         )
         runCurrent()
         assertEquals(
-            SessionState.Unavailable(SessionFailure.TransportUnavailable),
+            SessionState.Unavailable(SessionFailure.TRANSPORT_UNAVAILABLE),
             owner.observation.value.sessionState,
         )
 
@@ -1212,7 +1212,7 @@ internal class ConnectionOwnerTest {
         runCurrent()
 
         assertEquals(
-            SessionState.Unavailable(SessionFailure.TransportUnavailable),
+            SessionState.Unavailable(SessionFailure.TRANSPORT_UNAVAILABLE),
             owner.observation.value.sessionState,
         )
         assertTrue(metadata.channelsAndTags.value is ChannelRepositoryState.Stale)
@@ -1298,7 +1298,7 @@ internal class ConnectionOwnerTest {
         cleanupStarted.await()
 
         assertEquals(
-            SessionState.Unavailable(SessionFailure.TransportUnavailable),
+            SessionState.Unavailable(SessionFailure.TRANSPORT_UNAVAILABLE),
             owner.observation.value.sessionState,
         )
         assertTrue(metadata.channelsAndTags.value is ChannelRepositoryState.Stale)
@@ -1319,7 +1319,7 @@ internal class ConnectionOwnerTest {
         runCurrent()
         assertEquals(1, gateway.connectCalls)
         assertEquals(
-            SessionState.Unavailable(SessionFailure.ServerUnreachable),
+            SessionState.Unavailable(SessionFailure.SERVER_UNREACHABLE),
             owner.observation.value.sessionState,
         )
 
@@ -1363,7 +1363,7 @@ internal class ConnectionOwnerTest {
             }
             releaseSync.complete(Unit)
             runCurrent()
-            assertEquals(SessionState.Unavailable(SessionFailure.MetadataOverflow),
+            assertEquals(SessionState.Unavailable(SessionFailure.METADATA_OVERFLOW),
                 owner.observation.value.sessionState)
             if (!eventFirst) gateway.emitFailure(overflow)
             owner.shutdown()
@@ -1394,7 +1394,7 @@ internal class ConnectionOwnerTest {
                     GatewayConnectionFailure.METADATA_OVERFLOW, generation,
                 ))
                 runCurrent()
-                assertEquals(SessionState.Unavailable(SessionFailure.MetadataOverflow),
+                assertEquals(SessionState.Unavailable(SessionFailure.METADATA_OVERFLOW),
                     owner.observation.value.sessionState)
                 advanceTimeBy(seconds.seconds - 1.milliseconds)
                 runCurrent()
@@ -1412,47 +1412,47 @@ internal class ConnectionOwnerTest {
         val cases = listOf(
             ConnectionFailureCase(
                 GatewayConnectionFailure.AUTHENTICATION_REJECTED,
-                SessionFailure.AuthenticationRejected,
+                SessionFailure.AUTHENTICATION_REJECTED,
                 SessionCommandResult.RETRY_NOT_ALLOWED,
             ),
             ConnectionFailureCase(
                 GatewayConnectionFailure.PERMISSION_DENIED,
-                SessionFailure.PermissionDenied,
+                SessionFailure.PERMISSION_DENIED,
                 SessionCommandResult.RETRY_NOT_ALLOWED,
             ),
             ConnectionFailureCase(
                 GatewayConnectionFailure.SERVER_UNREACHABLE,
-                SessionFailure.ServerUnreachable,
+                SessionFailure.SERVER_UNREACHABLE,
                 SessionCommandResult.STARTED,
             ),
             ConnectionFailureCase(
                 GatewayConnectionFailure.NETWORK_UNAVAILABLE,
-                SessionFailure.NetworkUnavailable,
+                SessionFailure.NETWORK_UNAVAILABLE,
                 SessionCommandResult.STARTED,
             ),
             ConnectionFailureCase(
                 GatewayConnectionFailure.INCOMPATIBLE_SERVER,
-                SessionFailure.IncompatibleServer,
+                SessionFailure.INCOMPATIBLE_SERVER,
                 SessionCommandResult.RETRY_NOT_ALLOWED,
             ),
             ConnectionFailureCase(
                 GatewayConnectionFailure.UNSUPPORTED_SERVER_VERSION,
-                SessionFailure.ServerUpgradeRequired,
+                SessionFailure.SERVER_UPGRADE_REQUIRED,
                 SessionCommandResult.STARTED,
             ),
             ConnectionFailureCase(
                 GatewayConnectionFailure.METADATA_OVERFLOW,
-                SessionFailure.MetadataOverflow,
+                SessionFailure.METADATA_OVERFLOW,
                 SessionCommandResult.STARTED,
             ),
             ConnectionFailureCase(
                 GatewayConnectionFailure.NO_CHANNELS,
-                SessionFailure.NoChannels,
+                SessionFailure.NO_CHANNELS,
                 SessionCommandResult.STARTED,
             ),
             ConnectionFailureCase(
                 GatewayConnectionFailure.TRANSPORT_UNAVAILABLE,
-                SessionFailure.TransportUnavailable,
+                SessionFailure.TRANSPORT_UNAVAILABLE,
                 SessionCommandResult.STARTED,
             ),
         )
@@ -1493,37 +1493,37 @@ internal class ConnectionOwnerTest {
         val cases = listOf(
             SynchronizationFailureCase(
                 GatewayResult.ServerRejected,
-                SessionOperationFailure.SERVER_REJECTED,
+                TvheadendFailure.SERVER_REJECTED,
                 SessionCommandResult.STARTED,
             ),
             SynchronizationFailureCase(
                 GatewayResult.AccessDenied,
-                SessionOperationFailure.ACCESS_DENIED,
+                TvheadendFailure.ACCESS_DENIED,
                 SessionCommandResult.RETRY_NOT_ALLOWED,
             ),
             SynchronizationFailureCase(
                 GatewayResult.ConnectionLimit,
-                SessionOperationFailure.CONNECTION_LIMIT,
+                TvheadendFailure.CONNECTION_LIMIT,
                 SessionCommandResult.STARTED,
             ),
             SynchronizationFailureCase(
                 GatewayResult.Timeout,
-                SessionOperationFailure.TIMEOUT,
+                TvheadendFailure.TIMEOUT,
                 SessionCommandResult.STARTED,
             ),
             SynchronizationFailureCase(
                 GatewayResult.TransportUnavailable,
-                SessionOperationFailure.TRANSPORT_UNAVAILABLE,
+                TvheadendFailure.TRANSPORT_UNAVAILABLE,
                 SessionCommandResult.STARTED,
             ),
             SynchronizationFailureCase(
                 GatewayResult.MalformedReply,
-                SessionOperationFailure.MALFORMED_RESPONSE,
+                TvheadendFailure.MALFORMED_RESPONSE,
                 SessionCommandResult.STARTED,
             ),
             SynchronizationFailureCase(
                 GatewayResult.NotSupported,
-                SessionOperationFailure.NOT_SUPPORTED,
+                TvheadendFailure.NOT_SUPPORTED,
                 SessionCommandResult.RETRY_NOT_ALLOWED,
             ),
         )
@@ -1539,7 +1539,7 @@ internal class ConnectionOwnerTest {
 
             assertEquals(
                 SessionState.Unavailable(
-                    SessionFailure.SynchronizationFailed(case.operationFailure),
+                    SessionFailure.synchronizationFailed(case.operationFailure),
                 ),
                 owner.observation.value.sessionState,
             )
@@ -1629,7 +1629,7 @@ internal class ConnectionOwnerTest {
         owner.connect(ServerProfile("second"))
         runCurrent()
         assertEquals(
-            SessionState.Unavailable(SessionFailure.NoChannels),
+            SessionState.Unavailable(SessionFailure.NO_CHANNELS),
             owner.observation.value.sessionState,
         )
         assertEquals(ChannelRepositoryState.Empty, owner.observation.value.channelState)
@@ -1656,7 +1656,7 @@ internal class ConnectionOwnerTest {
         owner.connect(ServerProfile("third"))
         runCurrent()
         assertEquals(
-            SessionState.Unavailable(SessionFailure.NoChannels),
+            SessionState.Unavailable(SessionFailure.NO_CHANNELS),
             owner.observation.value.sessionState,
         )
         assertEquals(ChannelRepositoryState.Empty, owner.observation.value.channelState)
@@ -1761,7 +1761,7 @@ internal class ConnectionOwnerTest {
         runCurrent()
 
         assertEquals(
-            SessionState.Unavailable(SessionFailure.NoChannels),
+            SessionState.Unavailable(SessionFailure.NO_CHANNELS),
             owner.observation.value.sessionState,
         )
         assertEquals(ChannelRepositoryState.Empty, owner.observation.value.channelState)
@@ -2041,7 +2041,7 @@ private class ConnectionFailureCase(
 
 private class SynchronizationFailureCase(
     internal val gatewayResult: GatewayResult<Unit>,
-    internal val operationFailure: SessionOperationFailure,
+    internal val operationFailure: TvheadendFailure,
     internal val retryResult: SessionCommandResult,
 )
 

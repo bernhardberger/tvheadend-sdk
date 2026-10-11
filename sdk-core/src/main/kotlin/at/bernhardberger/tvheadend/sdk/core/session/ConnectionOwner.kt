@@ -21,7 +21,8 @@ import at.bernhardberger.tvheadend.sdk.core.ServerProfile
 import at.bernhardberger.tvheadend.sdk.core.SessionCache
 import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
 import at.bernhardberger.tvheadend.sdk.core.SessionFailure
-import at.bernhardberger.tvheadend.sdk.core.SessionOperationFailure
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
+import at.bernhardberger.tvheadend.sdk.core.recoveryDisposition
 import at.bernhardberger.tvheadend.sdk.core.SessionObservation
 import at.bernhardberger.tvheadend.sdk.core.SessionRecoveryDisposition
 import at.bernhardberger.tvheadend.sdk.core.SessionState
@@ -184,9 +185,6 @@ internal class ConnectionOwner(
             val profile = selectedProfile ?: return@withLock SessionCommandResult.NO_ACTIVE_PROFILE
             when (currentRetryDisposition()) {
                 null -> SessionCommandResult.NO_CHANGE
-                SessionRecoveryDisposition.PROFILE_CHANGE_REQUIRED,
-                SessionRecoveryDisposition.NO_RETRY,
-                -> SessionCommandResult.RETRY_NOT_ALLOWED
                 SessionRecoveryDisposition.AUTOMATIC_BACKOFF,
                 SessionRecoveryDisposition.EXPLICIT_RETRY,
                 -> {
@@ -199,6 +197,7 @@ internal class ConnectionOwner(
                     currentCoroutineContext().ensureActive()
                     SessionCommandResult.STARTED
                 }
+                else -> SessionCommandResult.RETRY_NOT_ALLOWED
             }
         }
     }
@@ -387,8 +386,8 @@ internal class ConnectionOwner(
         } catch (_: Exception) {
             commitUnavailable(
                 token,
-                SessionFailure.UnexpectedFailure,
-                SessionFailure.UnexpectedFailure.recoveryDisposition,
+                SessionFailure.UNEXPECTED_FAILURE,
+                SessionFailure.UNEXPECTED_FAILURE.recoveryDisposition,
             )
         }
     }
@@ -403,14 +402,14 @@ internal class ConnectionOwner(
                 throw exception
             } catch (_: Exception) {
                 AttemptOutcome(
-                    failure = SessionFailure.UnexpectedFailure,
-                    disposition = SessionFailure.UnexpectedFailure.recoveryDisposition,
+                    failure = SessionFailure.UNEXPECTED_FAILURE,
+                    disposition = SessionFailure.UNEXPECTED_FAILURE.recoveryDisposition,
                     connected = true,
                     reachedReady = false,
                 )
             }
 
-            if (outcome.reachedReady && outcome.failure != SessionFailure.MetadataOverflow) {
+            if (outcome.reachedReady && outcome.failure != SessionFailure.METADATA_OVERFLOW) {
                 failureIndex = 0
             }
             val unavailable = commitUnavailable(token, outcome.failure, outcome.disposition)
@@ -835,15 +834,15 @@ private fun GatewayConnectionFailure.toAttemptOutcome(
     reachedReady: Boolean = false,
 ): AttemptOutcome {
     val failure = when (this) {
-        GatewayConnectionFailure.AUTHENTICATION_REJECTED -> SessionFailure.AuthenticationRejected
-        GatewayConnectionFailure.PERMISSION_DENIED -> SessionFailure.PermissionDenied
-        GatewayConnectionFailure.SERVER_UNREACHABLE -> SessionFailure.ServerUnreachable
-        GatewayConnectionFailure.NETWORK_UNAVAILABLE -> SessionFailure.NetworkUnavailable
-        GatewayConnectionFailure.INCOMPATIBLE_SERVER -> SessionFailure.IncompatibleServer
-        GatewayConnectionFailure.UNSUPPORTED_SERVER_VERSION -> SessionFailure.ServerUpgradeRequired
-        GatewayConnectionFailure.METADATA_OVERFLOW -> SessionFailure.MetadataOverflow
-        GatewayConnectionFailure.NO_CHANNELS -> SessionFailure.NoChannels
-        GatewayConnectionFailure.TRANSPORT_UNAVAILABLE -> SessionFailure.TransportUnavailable
+        GatewayConnectionFailure.AUTHENTICATION_REJECTED -> SessionFailure.AUTHENTICATION_REJECTED
+        GatewayConnectionFailure.PERMISSION_DENIED -> SessionFailure.PERMISSION_DENIED
+        GatewayConnectionFailure.SERVER_UNREACHABLE -> SessionFailure.SERVER_UNREACHABLE
+        GatewayConnectionFailure.NETWORK_UNAVAILABLE -> SessionFailure.NETWORK_UNAVAILABLE
+        GatewayConnectionFailure.INCOMPATIBLE_SERVER -> SessionFailure.INCOMPATIBLE_SERVER
+        GatewayConnectionFailure.UNSUPPORTED_SERVER_VERSION -> SessionFailure.SERVER_UPGRADE_REQUIRED
+        GatewayConnectionFailure.METADATA_OVERFLOW -> SessionFailure.METADATA_OVERFLOW
+        GatewayConnectionFailure.NO_CHANNELS -> SessionFailure.NO_CHANNELS
+        GatewayConnectionFailure.TRANSPORT_UNAVAILABLE -> SessionFailure.TRANSPORT_UNAVAILABLE
     }
     return AttemptOutcome(
         failure = failure,
@@ -855,21 +854,21 @@ private fun GatewayConnectionFailure.toAttemptOutcome(
 
 private fun GatewayResult<*>.toSynchronizationFailure(): SynchronizationOutcome.Failed = when (this) {
     is GatewayResult.Ok -> error("A successful result is not a synchronization failure")
-    GatewayResult.ServerRejected -> synchronizationFailure(SessionOperationFailure.SERVER_REJECTED)
-    GatewayResult.AccessDenied -> synchronizationFailure(SessionOperationFailure.ACCESS_DENIED)
-    GatewayResult.ConnectionLimit -> synchronizationFailure(SessionOperationFailure.CONNECTION_LIMIT)
-    GatewayResult.Timeout -> synchronizationFailure(SessionOperationFailure.TIMEOUT)
+    GatewayResult.ServerRejected -> synchronizationFailure(TvheadendFailure.SERVER_REJECTED)
+    GatewayResult.AccessDenied -> synchronizationFailure(TvheadendFailure.ACCESS_DENIED)
+    GatewayResult.ConnectionLimit -> synchronizationFailure(TvheadendFailure.CONNECTION_LIMIT)
+    GatewayResult.Timeout -> synchronizationFailure(TvheadendFailure.TIMEOUT)
     GatewayResult.TransportUnavailable ->
-        synchronizationFailure(SessionOperationFailure.TRANSPORT_UNAVAILABLE)
-    GatewayResult.NotSupported -> synchronizationFailure(SessionOperationFailure.NOT_SUPPORTED)
-    GatewayResult.MalformedReply -> synchronizationFailure(SessionOperationFailure.MALFORMED_RESPONSE)
+        synchronizationFailure(TvheadendFailure.TRANSPORT_UNAVAILABLE)
+    GatewayResult.NotSupported -> synchronizationFailure(TvheadendFailure.NOT_SUPPORTED)
+    GatewayResult.MalformedReply -> synchronizationFailure(TvheadendFailure.MALFORMED_RESPONSE)
 }
 
 private fun synchronizationFailure(
-    failure: SessionOperationFailure,
+    failure: TvheadendFailure,
 ): SynchronizationOutcome.Failed = SynchronizationOutcome.Failed(
     AttemptOutcome(
-        failure = SessionFailure.SynchronizationFailed(failure),
+        failure = SessionFailure.synchronizationFailed(failure),
         disposition = failure.recoveryDisposition,
         connected = true,
         reachedReady = false,

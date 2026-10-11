@@ -372,9 +372,9 @@ target's canonical TVHeadend issue. Known server codes map to safe non-exhaustiv
 server text is never exposed. The exact no-input status maps to `NO_INPUT`
 unless a conflicting known canonical error is present. The state clears on
 period retry, target replacement, recording playback, stop, and shutdown;
-`finalSubscriptionIssue` on `PlaybackStopResult.Stopped`,
-`PlaybackStopResult.RetiredAfterDeparture`, and
-`PlaybackStopResult.PlayerUnavailable` keeps the retired live target's last issue,
+`finalSubscriptionIssue` on results with `PlaybackStopOutcome.STOPPED`,
+`PlaybackStopOutcome.RETIRED_AFTER_DEPARTURE`, and
+`PlaybackStopOutcome.PLAYER_UNAVAILABLE` keeps the retired live target's last issue,
 including when player cleanup fails after retirement.
 
 `TvheadendPlaybackCoordinator.liveDiagnostics` conditionally reports immutable

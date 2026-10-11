@@ -22,16 +22,37 @@ public class DvrChange private constructor(
     }
 }
 
-/** Server-observed DVR lifecycle changes. */
-public enum class DvrChangeKind {
-    SCHEDULED,
-    RECORDING_STARTED,
-    RECORDING_COMPLETED,
-    RECORDING_STOPPED,
-    RECORDING_ABORTED,
-    RECORDING_FAILED,
-    MISSED,
-    REMOVED,
+/** Server-observed DVR lifecycle changes. Consumers must retain a fallback for future values. */
+public class DvrChangeKind private constructor(private val label: String) {
+    override fun toString(): String = label
+
+    /** Known lifecycle changes. */
+    public companion object {
+        /** A recording was scheduled. */
+        @JvmField
+        public val SCHEDULED: DvrChangeKind = DvrChangeKind("SCHEDULED")
+        /** Recording started. */
+        @JvmField
+        public val RECORDING_STARTED: DvrChangeKind = DvrChangeKind("RECORDING_STARTED")
+        /** Recording completed. */
+        @JvmField
+        public val RECORDING_COMPLETED: DvrChangeKind = DvrChangeKind("RECORDING_COMPLETED")
+        /** Recording stopped. */
+        @JvmField
+        public val RECORDING_STOPPED: DvrChangeKind = DvrChangeKind("RECORDING_STOPPED")
+        /** Recording was aborted. */
+        @JvmField
+        public val RECORDING_ABORTED: DvrChangeKind = DvrChangeKind("RECORDING_ABORTED")
+        /** Recording failed. */
+        @JvmField
+        public val RECORDING_FAILED: DvrChangeKind = DvrChangeKind("RECORDING_FAILED")
+        /** Recording was missed. */
+        @JvmField
+        public val MISSED: DvrChangeKind = DvrChangeKind("MISSED")
+        /** The entry was removed. */
+        @JvmField
+        public val REMOVED: DvrChangeKind = DvrChangeKind("REMOVED")
+    }
 }
 
 /** Entry commands eligible for best-effort change attribution. */

@@ -162,15 +162,7 @@ internal class GrowingRecordingMetadataTracker(
         val completed = when (entry.state) {
             DvrEntryState.RECORDING -> false
             DvrEntryState.COMPLETED -> true
-            DvrEntryState.SCHEDULED,
-            DvrEntryState.MISSED,
-            DvrEntryState.INVALID,
-            DvrEntryState.RECORDING_ERROR,
-            DvrEntryState.COMPLETED_ERROR,
-            DvrEntryState.FILE_MISSING,
-            DvrEntryState.UNKNOWN,
-            null,
-            -> return GrowingMetadataValidation.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+            else -> return GrowingMetadataValidation.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
         }
         if (completionObserved && !completed) {
             return GrowingMetadataValidation.Failed(RecordingFileFailure.FILE_UNAVAILABLE)

@@ -237,11 +237,6 @@ internal class SubscriptionTimestampRebaser(private val settings: TimestampRebas
 }
 
 private fun SubscriptionStreamType.mayCarryVideo(): Boolean = when (this) {
-    SubscriptionStreamType.MPEG2_VIDEO,
-    SubscriptionStreamType.H264,
-    SubscriptionStreamType.H265,
-    SubscriptionStreamType.UNKNOWN,
-    -> true
     SubscriptionStreamType.AAC,
     SubscriptionStreamType.AC3,
     SubscriptionStreamType.EAC3,
@@ -250,6 +245,7 @@ private fun SubscriptionStreamType.mayCarryVideo(): Boolean = when (this) {
     SubscriptionStreamType.TEXT_SUBTITLE,
     SubscriptionStreamType.TELETEXT,
     -> false
+    else -> true
 }
 
 /** Adds without wrapping, because a wrapped media timestamp would silently move backwards. */

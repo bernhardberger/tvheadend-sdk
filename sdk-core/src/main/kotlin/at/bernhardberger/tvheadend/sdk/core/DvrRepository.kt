@@ -45,35 +45,91 @@ public data class DvrDiskSpace(
         "DvrDiskSpace(freeBytes=$freeBytes, usedBytes=$usedBytes, totalBytes=$totalBytes)"
 }
 
-/** Safe recording lifecycle observation. */
-public enum class DvrEntryState {
-    SCHEDULED,
-    RECORDING,
-    COMPLETED,
-    MISSED,
-    INVALID,
-    RECORDING_ERROR,
-    COMPLETED_ERROR,
-    FILE_MISSING,
-    UNKNOWN,
+/** Safe recording lifecycle observation. Consumers must retain a fallback for future values. */
+public class DvrEntryState private constructor(private val label: String) {
+    override fun toString(): String = label
+
+    /** Known lifecycle observations. */
+    public companion object {
+        /** Scheduled for recording. */
+        @JvmField
+        public val SCHEDULED: DvrEntryState = DvrEntryState("SCHEDULED")
+        /** Recording is in progress. */
+        @JvmField
+        public val RECORDING: DvrEntryState = DvrEntryState("RECORDING")
+        /** Recording completed. */
+        @JvmField
+        public val COMPLETED: DvrEntryState = DvrEntryState("COMPLETED")
+        /** Recording was missed. */
+        @JvmField
+        public val MISSED: DvrEntryState = DvrEntryState("MISSED")
+        /** The recording entry is invalid. */
+        @JvmField
+        public val INVALID: DvrEntryState = DvrEntryState("INVALID")
+        /** Recording is in progress with an error. */
+        @JvmField
+        public val RECORDING_ERROR: DvrEntryState = DvrEntryState("RECORDING_ERROR")
+        /** Recording completed with an error. */
+        @JvmField
+        public val COMPLETED_ERROR: DvrEntryState = DvrEntryState("COMPLETED_ERROR")
+        /** The recording file is missing. */
+        @JvmField
+        public val FILE_MISSING: DvrEntryState = DvrEntryState("FILE_MISSING")
+        /** An unrecognized wire state. */
+        @JvmField
+        public val UNKNOWN: DvrEntryState = DvrEntryState("UNKNOWN")
+    }
 }
 
-/** Safe subscription-failure observation attached to a recording. */
-public enum class DvrSubscriptionError {
-    NO_FREE_ADAPTER,
-    SCRAMBLED,
-    BAD_SIGNAL,
-    TUNING_FAILED,
-    SUBSCRIPTION_OVERRIDDEN,
-    MUX_NOT_ENABLED,
-    INVALID_TARGET,
-    NO_SERVICE,
-    INVALID_SERVICE,
-    USER_ACCESS,
-    USER_LIMIT,
-    WEAK_STREAM,
-    NO_DISK_SPACE,
-    UNKNOWN,
+/** Safe recording subscription failure. Consumers must retain a fallback for future values. */
+public class DvrSubscriptionError private constructor(private val label: String) {
+    override fun toString(): String = label
+
+    /** Known recording subscription failures. */
+    public companion object {
+        /** No tuner is available. */
+        @JvmField
+        public val NO_FREE_ADAPTER: DvrSubscriptionError = DvrSubscriptionError("NO_FREE_ADAPTER")
+        /** The service is scrambled. */
+        @JvmField
+        public val SCRAMBLED: DvrSubscriptionError = DvrSubscriptionError("SCRAMBLED")
+        /** The input signal is bad. */
+        @JvmField
+        public val BAD_SIGNAL: DvrSubscriptionError = DvrSubscriptionError("BAD_SIGNAL")
+        /** Tuning failed. */
+        @JvmField
+        public val TUNING_FAILED: DvrSubscriptionError = DvrSubscriptionError("TUNING_FAILED")
+        /** Another subscription took precedence. */
+        @JvmField
+        public val SUBSCRIPTION_OVERRIDDEN: DvrSubscriptionError = DvrSubscriptionError("SUBSCRIPTION_OVERRIDDEN")
+        /** The multiplex is disabled. */
+        @JvmField
+        public val MUX_NOT_ENABLED: DvrSubscriptionError = DvrSubscriptionError("MUX_NOT_ENABLED")
+        /** The target is invalid. */
+        @JvmField
+        public val INVALID_TARGET: DvrSubscriptionError = DvrSubscriptionError("INVALID_TARGET")
+        /** No service is available. */
+        @JvmField
+        public val NO_SERVICE: DvrSubscriptionError = DvrSubscriptionError("NO_SERVICE")
+        /** The service is invalid. */
+        @JvmField
+        public val INVALID_SERVICE: DvrSubscriptionError = DvrSubscriptionError("INVALID_SERVICE")
+        /** The user lacks access. */
+        @JvmField
+        public val USER_ACCESS: DvrSubscriptionError = DvrSubscriptionError("USER_ACCESS")
+        /** The user's limit was reached. */
+        @JvmField
+        public val USER_LIMIT: DvrSubscriptionError = DvrSubscriptionError("USER_LIMIT")
+        /** The stream is weak. */
+        @JvmField
+        public val WEAK_STREAM: DvrSubscriptionError = DvrSubscriptionError("WEAK_STREAM")
+        /** Recording storage is full. */
+        @JvmField
+        public val NO_DISK_SPACE: DvrSubscriptionError = DvrSubscriptionError("NO_DISK_SPACE")
+        /** An unrecognized wire error. */
+        @JvmField
+        public val UNKNOWN: DvrSubscriptionError = DvrSubscriptionError("UNKNOWN")
+    }
 }
 
 /** One bounded recording-file observation. */

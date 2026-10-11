@@ -109,10 +109,19 @@ public sealed interface TvheadendDiscoveryState {
     ) : TvheadendDiscoveryState
 }
 
-/** Safe reason that Android NSD discovery could not be started. */
-public enum class TvheadendDiscoveryFailure {
-    PERMISSION_DENIED,
-    START_FAILED,
+/** Safe NSD discovery failure. Consumers must retain a fallback for future values. */
+public class TvheadendDiscoveryFailure private constructor(private val label: String) {
+    override fun toString(): String = label
+
+    /** Known discovery failures. */
+    public companion object {
+        /** Android denied discovery permission. */
+        @JvmField
+        public val PERMISSION_DENIED: TvheadendDiscoveryFailure = TvheadendDiscoveryFailure("PERMISSION_DENIED")
+        /** Discovery could not start. */
+        @JvmField
+        public val START_FAILED: TvheadendDiscoveryFailure = TvheadendDiscoveryFailure("START_FAILED")
+    }
 }
 
 internal const val HTSP_SERVICE_TYPE: String = "_htsp._tcp."

@@ -146,7 +146,7 @@ internal class PlaybackDeviceVerificationInstrumentationTest {
                     putString("p4_r2_server_version", serverVersion)
                     putString(
                         "p4_r2_timeshift_streams",
-                        timeshift.observedStreamTypes().sortedBy(Enum<*>::name).joinToString(),
+                        timeshift.observedStreamTypes().sortedBy(SubscriptionStreamType::toString).joinToString(),
                     )
                     putLong("p4_r2_timestamp_anchors_before_seek", active.diagnostics.value.timestampAnchorCount)
                 },
@@ -219,7 +219,7 @@ internal class PlaybackDeviceVerificationInstrumentationTest {
 
             val evidence = Bundle().apply {
                 putString("p4_5_server_version", serverVersion)
-                putString("p4_5_timeshift_streams", timeshift.observedStreamTypes().sortedBy(Enum<*>::name).joinToString())
+                putString("p4_5_timeshift_streams", timeshift.observedStreamTypes().sortedBy(SubscriptionStreamType::toString).joinToString())
                 putLong("p4_5_timestamp_anchors", active.diagnostics.value.timestampAnchorCount)
                 putString("p4_5_device_result", "timeshift-and-recording-resume-passed")
             }
@@ -625,6 +625,7 @@ private class TimeshiftSampleObservation {
                             SubscriptionStreamType.UNKNOWN,
                             null,
                             -> Unit
+                            else -> Unit
                         }
                     }
                 }
@@ -649,7 +650,7 @@ private class TimeshiftSampleObservation {
         failure: Exception,
     ) {
         synchronized(lock) {
-            val streamType = streamIndex?.let { index -> streams[index]?.name ?: "UNMAPPED" }
+            val streamType = streamIndex?.let { index -> streams[index]?.toString() ?: "UNMAPPED" }
             consumerFailureCategory = listOfNotNull(
                 eventCategory,
                 streamType,
@@ -1081,7 +1082,7 @@ private fun android.app.Instrumentation.reportTimeshiftClosure(
         0,
         Bundle().apply {
             putString("p4_r2_server_version", serverVersion)
-            putString("p4_r2_timeshift_streams", streamTypes.sortedBy(Enum<*>::name).joinToString())
+            putString("p4_r2_timeshift_streams", streamTypes.sortedBy(SubscriptionStreamType::toString).joinToString())
             putString("p4_r2_terminal_reason", evidence.terminalReason)
             putString("p4_r2_session_at_terminal", evidence.sessionAtTerminal)
             putString("p4_r2_session_after_observation", evidence.sessionAfterObservation)
@@ -1121,7 +1122,7 @@ private fun android.app.Instrumentation.reportTimeshiftIsolation(
             putString("p4_r2_server_version", ready.capabilities.serverVersion ?: "unknown")
             putString(
                 "p4_r2_timeshift_streams",
-                observation.streamTypes().sortedBy(Enum<*>::name).joinToString(),
+                observation.streamTypes().sortedBy(SubscriptionStreamType::toString).joinToString(),
             )
             putString("p4_r2_rewind_result", rewindResult?.javaClass?.simpleName ?: "not-issued")
             putString(

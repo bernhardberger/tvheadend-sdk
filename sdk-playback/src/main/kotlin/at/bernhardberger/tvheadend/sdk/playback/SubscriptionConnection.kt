@@ -276,19 +276,46 @@ public data class SubscriptionStream(
     override fun toString(): String = "SubscriptionStream(<redacted>)"
 }
 
-/** SDK-authored stream codec classification. */
-public enum class SubscriptionStreamType {
-    MPEG2_VIDEO,
-    H264,
-    H265,
-    AAC,
-    AC3,
-    EAC3,
-    MPEG2_AUDIO,
-    DVB_SUBTITLE,
-    TEXT_SUBTITLE,
-    TELETEXT,
-    UNKNOWN,
+/** SDK-authored stream codec classification. Consumers must retain a fallback for future values. */
+public class SubscriptionStreamType private constructor(private val label: String) {
+    override fun toString(): String = label
+
+    /** Known stream types. */
+    public companion object {
+        /** MPEG-2 video. */
+        @JvmField
+        public val MPEG2_VIDEO: SubscriptionStreamType = SubscriptionStreamType("MPEG2_VIDEO")
+        /** H.264 video. */
+        @JvmField
+        public val H264: SubscriptionStreamType = SubscriptionStreamType("H264")
+        /** H.265 video. */
+        @JvmField
+        public val H265: SubscriptionStreamType = SubscriptionStreamType("H265")
+        /** AAC audio. */
+        @JvmField
+        public val AAC: SubscriptionStreamType = SubscriptionStreamType("AAC")
+        /** AC-3 audio. */
+        @JvmField
+        public val AC3: SubscriptionStreamType = SubscriptionStreamType("AC3")
+        /** Enhanced AC-3 audio. */
+        @JvmField
+        public val EAC3: SubscriptionStreamType = SubscriptionStreamType("EAC3")
+        /** MPEG-2 audio. */
+        @JvmField
+        public val MPEG2_AUDIO: SubscriptionStreamType = SubscriptionStreamType("MPEG2_AUDIO")
+        /** DVB bitmap subtitles. */
+        @JvmField
+        public val DVB_SUBTITLE: SubscriptionStreamType = SubscriptionStreamType("DVB_SUBTITLE")
+        /** Text subtitles. */
+        @JvmField
+        public val TEXT_SUBTITLE: SubscriptionStreamType = SubscriptionStreamType("TEXT_SUBTITLE")
+        /** Teletext. */
+        @JvmField
+        public val TELETEXT: SubscriptionStreamType = SubscriptionStreamType("TELETEXT")
+        /** An unrecognized wire codec. */
+        @JvmField
+        public val UNKNOWN: SubscriptionStreamType = SubscriptionStreamType("UNKNOWN")
+    }
 }
 
 /** Stable broad category for a canonical live-subscription issue. */

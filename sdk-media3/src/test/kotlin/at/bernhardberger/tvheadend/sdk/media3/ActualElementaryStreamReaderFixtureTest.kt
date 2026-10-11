@@ -241,7 +241,12 @@ class ActualElementaryStreamReaderFixtureTest {
 
     @Test
     fun `every stream type has an explicit reader classification`() {
-        val supported = SubscriptionStreamType.entries.filterTo(mutableSetOf()) { type ->
+        val supported = listOf(
+            SubscriptionStreamType.MPEG2_VIDEO, SubscriptionStreamType.H264, SubscriptionStreamType.H265,
+            SubscriptionStreamType.AAC, SubscriptionStreamType.AC3, SubscriptionStreamType.EAC3,
+            SubscriptionStreamType.MPEG2_AUDIO, SubscriptionStreamType.DVB_SUBTITLE,
+            SubscriptionStreamType.TEXT_SUBTITLE, SubscriptionStreamType.TELETEXT, SubscriptionStreamType.UNKNOWN,
+        ).filterTo(mutableSetOf()) { type ->
             createElementaryStreamReader(
                 stream(
                     type = type,

@@ -48,9 +48,7 @@ internal fun createElementaryStreamReader(stream: SubscriptionStream): ReaderRes
         )
         SubscriptionStreamType.DVB_SUBTITLE -> createDvbReader(stream)
         SubscriptionStreamType.TEXT_SUBTITLE -> ReaderResult.Supported(TextSubtitleReader(stream.language))
-        SubscriptionStreamType.TELETEXT,
-        SubscriptionStreamType.UNKNOWN,
-        -> ReaderResult.Unsupported
+        else -> ReaderResult.Unsupported
     }
 
 // Media3 owns the ISO/IEC 13818-1 audio_type mapping used by its TS extractor for recordings.

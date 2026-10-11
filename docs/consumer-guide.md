@@ -71,10 +71,10 @@ states may still be `Unknown` or `Synchronizing` after the session is ready.
 `ServerCapabilities.apiVersion`, `allLimit`, `dvrLimit`, `streamingLimit`, and
 `uiLevel` (including their `create()` parameters) are `Long?`, preserving the
 server's unsigned 32-bit values without narrowing. `null` still means absent.
-`SessionFailure.ServerUpgradeRequired` means the server is below the supported
+`SessionFailure.SERVER_UPGRADE_REQUIRED` means the server is below the supported
 protocol floor (HTSP 36). Its recovery disposition is `EXPLICIT_RETRY`: upgrade
 the server before retrying; changing the profile is not itself the remedy.
-`SessionFailure.MetadataOverflow` triggers a full reconnect and resync with
+`SessionFailure.METADATA_OVERFLOW` triggers a full reconnect and resync with
 increasing backoff, including when overflow follows a previously ready session.
 
 Capture related values from one observation:
@@ -648,10 +648,10 @@ your own items, and do not match media ids or URIs yourself.
 server text is not exposed. The exact no-input status maps to `NO_INPUT` unless
 a conflicting known canonical error is present. The state clears when the
 target or lifecycle no longer owns that issue. `stop()` returns
-`PlaybackStopResult.Stopped` or `PlaybackStopResult.RetiredAfterDeparture`, carrying
+`PlaybackStopResult.stopped(...)` or `PlaybackStopResult.retiredAfterDeparture(...)`, carrying
 the retired live target's last issue as `finalSubscriptionIssue`, so a consumer that gives up on a stuck target can
 report why without reading the flow first. When the target is retired but player
-cleanup fails, `PlaybackStopResult.PlayerUnavailable` carries the same
+cleanup fails, `PlaybackStopResult.playerUnavailable(...)` carries the same
 `finalSubscriptionIssue`; it is `null` when the player was unavailable before any
 live target was retired. `SubscriptionIssue` exact values
 are also non-exhaustive. Its stable `category` and
@@ -718,7 +718,7 @@ of the following distinct reasons. Neither case guarantees buffer release.
   handling beyond the callback.
 
 Observe `playerCleanupPending: StateFlow<Boolean>` after these callbacks,
-`PlaybackStopResult.PlayerUnavailable`, or `PlaybackTargetResult.PLAYER_UNAVAILABLE`.
+`PlaybackStopResult.playerUnavailable(...)`, or `PlaybackTargetResult.PLAYER_UNAVAILABLE`.
 When the transient Player fault clears, call `stop()` or simply retry either target setter.
 The SDK retains exact source references, removes only its own items, and stops the Player
 only when one of those items is current. Applications must not infer ownership from media IDs,
@@ -907,10 +907,10 @@ even if departure prevented the resume helper from starting.
 
 The next target, `stop()`, or `shutdown()` retires the target and removes only
 its item if it lingers in a mixed playlist, without stopping or removing the
-application's items. `stop()` returns `PlaybackStopResult.RetiredAfterDeparture`
+application's items. `stop()` returns a result with `PlaybackStopOutcome.RETIRED_AFTER_DEPARTURE`
 when retirement leaves application playback alone. If the application returned to the
 lingering coordinator item and it is current at retirement, retirement stops the Player
-and removes that item, and `stop()` returns `PlaybackStopResult.Stopped` instead.
+and removes that item, and `stop()` returns a result with `PlaybackStopOutcome.STOPPED` instead.
 This does not reclaim ownership for reporting. Both outcomes carry the
 final subscription issue. If no terminal has already been reported or captured, a
 replaced or cleared recording reports one closing `ORDERLY` progress update
@@ -1146,7 +1146,7 @@ already have applied the command. Never blindly retry non-idempotent requests
 | EPG search and stream-profile discovery | `EpgSearchResult.MalformedResponse`, `StreamProfilesResult.MalformedResponse` |
 | Artwork | `ArtworkLoadResult.Unavailable(ArtworkFailure.MALFORMED_RESPONSE)` |
 | Recording-file operations | `RecordingFileResult.Failed(RecordingFileFailure.MALFORMED_RESPONSE)` |
-| Initial synchronization | `SessionFailure.SynchronizationFailed(SessionOperationFailure.MALFORMED_RESPONSE)`, with `EXPLICIT_RETRY` rather than automatic backoff |
+| Initial synchronization | `SessionFailure.synchronizationFailed(TvheadendFailure.MALFORMED_RESPONSE)`, with `EXPLICIT_RETRY` rather than automatic backoff |
 | Low-level subscription commands | `SubscriptionOperationResult.MalformedResponse`; a failed startup reports `OperationFailed(MALFORMED_RESPONSE)` |
 | Media3 timeshift commands | `TimeshiftCommandResult.MALFORMED_RESPONSE`, with `UNCONFIRMED` disposition and an uncertain outcome |
 

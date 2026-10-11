@@ -1076,6 +1076,29 @@ internal class HtspProtocolGatewayTest {
     }
 
     @Test
+    fun `future DVR state and subscription error map to safe unknown values`() = runTest {
+        val generation = HtspConnectionGeneration()
+        val fake = FakeHtspConnection().apply {
+            eventsFlow = flowOf(
+                HtspTransportEvent.ServerMessage(
+                    HtspDvrEntryUpdateMessage(
+                        entryId = 1,
+                        state = "future-private-state",
+                        subscriptionError = "future-private-error",
+                    ),
+                    generation,
+                    1,
+                ),
+            )
+        }
+        val entry = (HtspProtocolGateway(fake).metadata.toList().single() as MetadataEvent.DvrEntryUpdated).entry
+        assertSame(DvrEntryState.UNKNOWN, entry.state)
+        assertSame(DvrSubscriptionError.UNKNOWN, entry.subscriptionError)
+        assertEquals("UNKNOWN", entry.state.toString())
+        assertEquals("UNKNOWN", entry.subscriptionError.toString())
+    }
+
+    @Test
     fun `DVR user abort is distinct from a recording failure`() = runTest {
         val generation = HtspConnectionGeneration()
         val fake = FakeHtspConnection().apply {

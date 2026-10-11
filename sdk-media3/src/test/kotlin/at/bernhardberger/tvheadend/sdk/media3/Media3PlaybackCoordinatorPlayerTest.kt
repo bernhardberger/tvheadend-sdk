@@ -252,7 +252,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             faults.enabled = false
             access.operations.clear()
             if (!directInstall) {
-                assertSame(PlaybackStopResult.AlreadyStopped, coordinator.stop())
+                assertSame(PlaybackStopResult.ALREADY_STOPPED, coordinator.stop())
                 assertEquals(emptyList<String>(), access.playlistKinds)
                 assertFalse(coordinator.playerCleanupPending.value)
             }
@@ -289,7 +289,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             faults.enabled = false
             access.operations.clear()
 
-            assertSame(PlaybackStopResult.AlreadyStopped, coordinator.stop())
+            assertSame(PlaybackStopResult.ALREADY_STOPPED, coordinator.stop())
             assertEquals(listOf("application"), access.playlistKinds)
             assertSame(item, access.currentItem)
             assertEquals(playing, access.snapshot)
@@ -321,7 +321,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             else coordinator.setLiveTarget(TestCoordinatorLiveTarget())
             assertSame(PlaybackTargetResult.PLAYER_UNAVAILABLE, result)
             assertEquals(listOf("stop", "remove-live"), access.operations)
-            assertTrue(coordinator.stop() is PlaybackStopResult.PlayerUnavailable)
+            assertTrue(coordinator.stop().outcome == PlaybackStopOutcome.PLAYER_UNAVAILABLE)
             assertEquals(listOf("stop", "remove-live", "stop", "remove-live"), access.operations)
             assertSame(item, access.currentItem)
             assertTrue(coordinator.playerCleanupPending.value)
@@ -409,7 +409,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
 
         if (departure == "returned") access.transitionToApplicationItem(Player.MEDIA_ITEM_TRANSITION_REASON_SEEK)
         val applicationItem = access.currentItem
-        assertTrue(coordinator.stop() is PlaybackStopResult.RetiredAfterDeparture)
+        assertTrue(coordinator.stop().outcome == PlaybackStopOutcome.RETIRED_AFTER_DEPARTURE)
         assertSame(applicationItem, access.currentItem)
         assertEquals(listOf("application"), access.playlistKinds)
         assertFalse("stop" in access.operations)
@@ -480,7 +480,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         access.operations.clear()
 
         if (failure == "stop") {
-            assertTrue(coordinator.stop() is PlaybackStopResult.PlayerUnavailable)
+            assertTrue(coordinator.stop().outcome == PlaybackStopOutcome.PLAYER_UNAVAILABLE)
             assertTrue(reasons.isEmpty())
         } else {
             assertTrue(attachment.bufferExhausted())
@@ -638,7 +638,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         access.looperQueue.throwOnPost = false
         access.looperQueue.throwOnIsCurrent = false
         if (failure != "snapshot") {
-            assertTrue(coordinator.stop() is PlaybackStopResult.Stopped)
+            assertTrue(coordinator.stop().outcome == PlaybackStopOutcome.STOPPED)
             assertSame(LivePlaybackObservation.NoTarget, coordinator.livePlaybackObservation.value)
             assertEquals("none", access.currentSourceKind)
         }
@@ -692,7 +692,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
                 assertEquals(listOf("live"), access.playlistKinds)
                 assertEquals(listOf("stop", "remove-live", "create-live"), access.operations.take(3))
             } else {
-                assertSame(PlaybackStopResult.AlreadyStopped, coordinator.stop())
+                assertSame(PlaybackStopResult.ALREADY_STOPPED, coordinator.stop())
                 assertEquals(emptyList<String>(), access.playlistKinds)
                 assertEquals(listOf("stop", "remove-live"), access.operations)
             }
@@ -1318,8 +1318,8 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             assertEquals(if (transition == "auto") 1 else 0, target.reports.size)
 
             assertEquals(
-                if (transition == "repeat") PlaybackStopResult.Stopped(null)
-                else PlaybackStopResult.RetiredAfterDeparture(null),
+                if (transition == "repeat") PlaybackStopResult.stopped(null)
+                else PlaybackStopResult.retiredAfterDeparture(null),
                 coordinator.stop(),
             )
             runCurrent()
@@ -1487,7 +1487,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             assertEquals("application", access.currentSourceKind)
             assertFalse(access.operations.contains("prepare"))
             assertEquals(listOf("set-live"), access.operations.filter { it.startsWith("set-") })
-            assertEquals(PlaybackStopResult.RetiredAfterDeparture(null), coordinator.stop())
+            assertEquals(PlaybackStopResult.retiredAfterDeparture(null), coordinator.stop())
             assertSame(LivePlaybackObservation.NoTarget, coordinator.livePlaybackObservation.value)
             assertEquals("application", access.currentSourceKind)
         } finally {
@@ -1537,7 +1537,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             assertEquals(listOf("set-recording"), access.operations.filter { it.startsWith("set-") })
             assertFalse(access.operations.contains("create-resume"))
             assertFalse(access.operations.contains("prepare"))
-            assertEquals(PlaybackStopResult.RetiredAfterDeparture(null), coordinator.stop())
+            assertEquals(PlaybackStopResult.retiredAfterDeparture(null), coordinator.stop())
             runCurrent()
             assertEquals(if (clear) "none" else "application", access.currentSourceKind)
             assertTrue(target.reports.isEmpty())
@@ -1567,7 +1567,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             access.deliverTimelineChange()
             access.operations.clear()
 
-            assertEquals(PlaybackStopResult.Stopped(null), coordinator.stop())
+            assertEquals(PlaybackStopResult.stopped(null), coordinator.stop())
             runCurrent()
             assertTrue(access.operations.contains("stop"))
             assertEquals(listOf("application"), access.playlistKinds)
@@ -1639,7 +1639,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             assertSame(LivePlaybackObservation.Departed, coordinator.livePlaybackObservation.value)
 
             access.transitionToApplicationItem(Player.MEDIA_ITEM_TRANSITION_REASON_SEEK)
-            assertEquals(PlaybackStopResult.RetiredAfterDeparture(null), coordinator.stop())
+            assertEquals(PlaybackStopResult.retiredAfterDeparture(null), coordinator.stop())
             assertSame(LivePlaybackObservation.NoTarget, coordinator.livePlaybackObservation.value)
         } finally {
             coordinator.shutdown(1.seconds)
@@ -2379,8 +2379,8 @@ internal class Media3PlaybackCoordinatorPlayerTest {
                 assertSame(PlaybackShutdownResult.DRAINED, coordinator.shutdown(1.seconds))
             } else {
                 assertEquals(
-                    if (applicationReplaced) PlaybackStopResult.RetiredAfterDeparture(null)
-                    else PlaybackStopResult.Stopped(null),
+                    if (applicationReplaced) PlaybackStopResult.retiredAfterDeparture(null)
+                    else PlaybackStopResult.stopped(null),
                     coordinator.stop(),
                 )
             }
@@ -2396,7 +2396,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             val finalReport = target.reports.single().second
             assertEquals(30.seconds, finalReport.position)
             assertFalse(finalReport.markWatched)
-            assertSame(if (shutdown) PlaybackStopResult.ShutDown else PlaybackStopResult.AlreadyStopped, coordinator.stop())
+            assertSame(if (shutdown) PlaybackStopResult.SHUT_DOWN else PlaybackStopResult.ALREADY_STOPPED, coordinator.stop())
             runCurrent()
             assertEquals(1, target.reports.size)
         } finally {
@@ -2443,11 +2443,11 @@ internal class Media3PlaybackCoordinatorPlayerTest {
                     replacedRetirement + install + listOf("close-recovery", "remove-listener", "stop", "remove-live"),
                     access.operations,
                 )
-                assertSame(PlaybackStopResult.AlreadyStopped, coordinator.stop())
+                assertSame(PlaybackStopResult.ALREADY_STOPPED, coordinator.stop())
             } else {
                 assertSame(PlaybackTargetResult.STARTED, result)
                 assertEquals(replacedRetirement + install + "prepare", access.operations)
-                assertEquals(PlaybackStopResult.Stopped(null), coordinator.stop())
+                assertEquals(PlaybackStopResult.stopped(null), coordinator.stop())
             }
             runCurrent()
             assertEquals(25.seconds, target.reports.single().second.position)
@@ -2607,7 +2607,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
 
             val retire = async(start = CoroutineStart.LAZY) {
                 when (retirement) {
-                    "stop" -> assertEquals(PlaybackStopResult.RetiredAfterDeparture(null), coordinator.stop())
+                    "stop" -> assertEquals(PlaybackStopResult.retiredAfterDeparture(null), coordinator.stop())
                     "shutdown" -> coordinator.shutdown(1.seconds)
                     "replace" -> assertSame(
                         PlaybackTargetResult.STARTED, coordinator.setLiveTarget(TestCoordinatorLiveTarget()),
@@ -2723,7 +2723,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             runCurrent()
 
             assertEquals(listOf(20.seconds), target.reports.map { it.second.position })
-            assertEquals(PlaybackStopResult.RetiredAfterDeparture(null), coordinator.stop())
+            assertEquals(PlaybackStopResult.retiredAfterDeparture(null), coordinator.stop())
             runCurrent()
             assertEquals(listOf(20.seconds, 30.seconds), target.reports.map { it.second.position })
             assertFalse(target.reports.last().second.markWatched)

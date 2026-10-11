@@ -1278,7 +1278,7 @@ private class RecordedMuxCapture(
 
 private fun JSONObject.toStream(): SubscriptionStream = SubscriptionStream(
     index = StreamIndex(getLong("streamOrdinal")),
-    type = SubscriptionStreamType.valueOf(getString("streamType").replace("MPEG2VIDEO", "MPEG2_VIDEO").replace("MPEG2AUDIO", "MPEG2_AUDIO")),
+    type = fixtureStreamType(getString("streamType").replace("MPEG2VIDEO", "MPEG2_VIDEO").replace("MPEG2AUDIO", "MPEG2_AUDIO")),
     language = nullableString("language"),
     compositionId = nullableLong("compositionId"),
     ancillaryId = nullableLong("ancillaryId"),

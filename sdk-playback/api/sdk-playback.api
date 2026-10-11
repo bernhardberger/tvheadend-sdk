@@ -14,6 +14,9 @@ public final class at/bernhardberger/tvheadend/sdk/playback/ActiveSubscription$D
 	public static fun setSpeed (Lat/bernhardberger/tvheadend/sdk/playback/ActiveSubscription;ILkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
+public abstract interface annotation class at/bernhardberger/tvheadend/sdk/playback/ExperimentalTvheadendApi : java/lang/annotation/Annotation {
+}
+
 public abstract interface class at/bernhardberger/tvheadend/sdk/playback/GrowingRecordingFileLease {
 	public abstract fun isCurrent ()Z
 	public abstract fun open (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -772,9 +775,10 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionStream {
 	public fun toString ()Ljava/lang/String;
 }
 
-public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionStreamType : java/lang/Enum {
+public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionStreamType {
 	public static final field AAC Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionStreamType;
 	public static final field AC3 Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionStreamType;
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionStreamType$Companion;
 	public static final field DVB_SUBTITLE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionStreamType;
 	public static final field EAC3 Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionStreamType;
 	public static final field H264 Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionStreamType;
@@ -784,9 +788,10 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionStreamTy
 	public static final field TELETEXT Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionStreamType;
 	public static final field TEXT_SUBTITLE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionStreamType;
 	public static final field UNKNOWN Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionStreamType;
-	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public static fun valueOf (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionStreamType;
-	public static fun values ()[Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionStreamType;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionStreamType$Companion {
 }
 
 public abstract interface class at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason {
@@ -944,5 +949,28 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionTracks {
 	public fun <init> (Ljava/util/List;)V
 	public final fun getStreams ()Ljava/util/List;
 	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/TvheadendFailure {
+	public static final field ACCESS_DENIED Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;
+	public static final field CONNECTION_CHANGED Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;
+	public static final field CONNECTION_LIMIT Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure$Companion;
+	public static final field FILE_UNAVAILABLE Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;
+	public static final field MALFORMED_RESPONSE Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;
+	public static final field NOT_READY Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;
+	public static final field NOT_SUPPORTED Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;
+	public static final field OBSERVATION_EXPIRED Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;
+	public static final field SERVER_REJECTED Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;
+	public static final field TIMEOUT Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;
+	public static final field TRANSPORT_UNAVAILABLE Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;
+	public final fun getRequiresFreshObservation ()Z
+	public final fun isAccessRelated ()Z
+	public final fun isTransient ()Z
+	public final fun isUnsupported ()Z
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/playback/TvheadendFailure$Companion {
 }
 

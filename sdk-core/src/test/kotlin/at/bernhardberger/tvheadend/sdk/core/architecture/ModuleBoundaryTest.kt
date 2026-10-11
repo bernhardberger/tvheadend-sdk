@@ -270,19 +270,9 @@ internal class ModuleBoundaryTest {
             "Ready",
             "Unavailable",
             "SessionFailure",
-            "AuthenticationRejected",
-            "PermissionDenied",
-            "ServerUnreachable",
-            "NetworkUnavailable",
-            "IncompatibleServer",
-            "ServerUpgradeRequired",
-            "MetadataOverflow",
-            "NoChannels",
             "TransportUnavailable",
-            "SynchronizationFailed",
-            "UnexpectedFailure",
+            "SessionFailureKind",
             "SessionRecoveryDisposition",
-            "SessionOperationFailure",
             "ServerCapabilities",
             "CapabilityAccess",
             "RecordingProgressCapability",
@@ -382,6 +372,8 @@ internal class ModuleBoundaryTest {
     @Test
     fun `playback and testing infrastructure APIs remain deliberate and opt in`() {
         val expectedPlayback = setOf(
+            "ExperimentalTvheadendApi",
+            "TvheadendFailure",
             "SubscriptionInfrastructureApi",
             "SubscriptionId",
             "SubscriptionChannelId",
@@ -469,6 +461,7 @@ internal class ModuleBoundaryTest {
             "PlaybackRecoveryPolicy",
             "PlaybackRecoveryReason",
             "PlaybackStopResult",
+            "PlaybackStopOutcome",
             "PlaybackTargetDisposition",
             "PlaybackTargetResult",
             "RecordingPlaybackStart",
@@ -515,7 +508,7 @@ internal class ModuleBoundaryTest {
             "The compatibility credential store must be warning-deprecated without ReplaceWith",
         )
         // The codec classification and live priority are intentionally stable for sdk-media3 callers.
-        assertPublicInfrastructure("sdk-playback", expectedPlayback, unannotatedCount = 10)
+        assertPublicInfrastructure("sdk-playback", expectedPlayback, unannotatedCount = 12)
         assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 10)
         val fakeSessionSource = File(
             repositoryRoot,
@@ -534,7 +527,7 @@ internal class ModuleBoundaryTest {
             ),
             fakePlaybackFunctions,
         )
-        assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 31)
+        assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 32)
 
         val coordinatorApi = File(
             "../sdk-media3/src/main/kotlin/at/bernhardberger/tvheadend/sdk/media3/" +
@@ -644,6 +637,7 @@ internal class ModuleBoundaryTest {
             "at.bernhardberger.tvheadend.sdk.android.TvheadendArtwork",
             "at.bernhardberger.tvheadend.sdk.android.TvheadendArtworkLoadException",
             "at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi",
+            "at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi",
             "at.bernhardberger.tvheadend.sdk.media3.PlaybackRecoveryReason",
             "at.bernhardberger.tvheadend.sdk.media3.TvheadendRecordingException",
             "at.bernhardberger.tvheadend.sdk.media3.testing.TimeshiftTestFixture",

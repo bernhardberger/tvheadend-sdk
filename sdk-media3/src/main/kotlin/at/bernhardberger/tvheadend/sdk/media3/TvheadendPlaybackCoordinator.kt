@@ -263,64 +263,128 @@ public sealed interface LivePlaybackObservation {
     ) : LivePlaybackObservation
 }
 
-/** Typed outcome of retiring the coordinator's current target. */
-public sealed interface PlaybackStopResult {
-    /**
-     * The installed target was retired and its item removed from the playlist. The player was
-     * stopped because the coordinator's item was current, including when the application returned
-     * to it after departure. This does not restore ownership for reporting. Application-added
-     * playlist items are retained.
-     *
-     * [finalSubscriptionIssue] is the last [SubscriptionIssue] published for the retired live target,
-     * so a consumer that stops a failing target can report why without reading
-     * [TvheadendPlaybackCoordinator.subscriptionIssue] first. It is null for a recording target or
-     * when no issue was current for the live target.
-     */
-    public data class Stopped(
-        public val finalSubscriptionIssue: SubscriptionIssue?,
-    ) : PlaybackStopResult
+/**
+ * Value-equal result of retiring the coordinator's current target.
+ * Compare [outcome] with known values and retain a fallback for future outcomes.
+ */
+public class PlaybackStopResult private constructor(
+    /** How target retirement and player cleanup completed. */
+    public val outcome: PlaybackStopOutcome,
+    /** Last safe live issue at retirement, or null for recordings or when no issue was current. */
+    public val finalSubscriptionIssue: SubscriptionIssue? = null,
+) {
+    override fun equals(other: Any?): Boolean = other is PlaybackStopResult &&
+        outcome == other.outcome && finalSubscriptionIssue == other.finalSubscriptionIssue
 
-    /**
-     * The target was retired without stopping the Player: no coordinator item was current, so
-     * application playback was left alone and only any lingering coordinator item was removed.
-     * If the application returned to that item and retirement stopped the Player, the result is
-     * [Stopped] instead. [finalSubscriptionIssue] has the same meaning as in [Stopped].
-     */
-    public data class RetiredAfterDeparture(
-        public val finalSubscriptionIssue: SubscriptionIssue?,
-    ) : PlaybackStopResult
+    override fun hashCode(): Int = 31 * outcome.hashCode() + (finalSubscriptionIssue?.hashCode() ?: 0)
 
-    /** No target is installed and no coordinator item remains to clean up. */
-    public data object AlreadyStopped : PlaybackStopResult
+    override fun toString(): String =
+        "PlaybackStopResult(outcome=$outcome, finalSubscriptionIssue=$finalSubscriptionIssue)"
 
-    /** The coordinator has not been launched. */
-    public data object NotRunning : PlaybackStopResult
+    /** Known payload-free results and factories for retirement observations. */
+    public companion object {
+        /**
+         * The installed target was retired and its item removed from the playlist. The player was
+         * stopped because the coordinator's item was current, including when the application returned
+         * to it after departure. This does not restore ownership for reporting. Application-added
+         * playlist items are retained.
+         *
+         * [finalSubscriptionIssue] is the last [SubscriptionIssue] published for the retired live target,
+         * so a consumer that stops a failing target can report why without reading
+         * [TvheadendPlaybackCoordinator.subscriptionIssue] first. It is null for a recording target or
+         * when no issue was current for the live target.
+         */
+        @JvmStatic
+        public fun stopped(finalSubscriptionIssue: SubscriptionIssue?): PlaybackStopResult =
+            PlaybackStopResult(PlaybackStopOutcome.STOPPED, finalSubscriptionIssue)
 
-    /** The coordinator was shut down. */
-    public data object ShutDown : PlaybackStopResult
+        /**
+         * The target was retired without stopping the Player: no coordinator item was current, so
+         * application playback was left alone and only any lingering coordinator item was removed.
+         * If the application returned to that item and retirement stopped the Player, the result is
+         * [stopped] instead. [finalSubscriptionIssue] has the same meaning as in [stopped].
+         */
+        @JvmStatic
+        public fun retiredAfterDeparture(finalSubscriptionIssue: SubscriptionIssue?): PlaybackStopResult =
+            PlaybackStopResult(PlaybackStopOutcome.RETIRED_AFTER_DEPARTURE, finalSubscriptionIssue)
 
-    /**
-     * The application-owned player was unavailable.
-     *
-     * The installed target may still have been retired before or while player cleanup failed. In
-     * that case [finalSubscriptionIssue] is the last [SubscriptionIssue] published for the retired
-     * live target, as for [Stopped]. It is null when no live target was retired, for a recording
-     * target, or when no issue was current for the retired live target.
-     * Any unconfirmed item cleanup remains SDK-owned: observe
-     * [TvheadendPlaybackCoordinator.playerCleanupPending] and retry stop or target installation.
-     */
-    public data class PlayerUnavailable(
-        public val finalSubscriptionIssue: SubscriptionIssue?,
-    ) : PlaybackStopResult
+        /** No target is installed and no coordinator item remains to clean up. */
+        @JvmField
+        public val ALREADY_STOPPED: PlaybackStopResult = PlaybackStopResult(PlaybackStopOutcome.ALREADY_STOPPED)
+
+        /** The coordinator has not been launched. */
+        @JvmField
+        public val NOT_RUNNING: PlaybackStopResult = PlaybackStopResult(PlaybackStopOutcome.NOT_RUNNING)
+
+        /** The coordinator was shut down. */
+        @JvmField
+        public val SHUT_DOWN: PlaybackStopResult = PlaybackStopResult(PlaybackStopOutcome.SHUT_DOWN)
+
+        /**
+         * The application-owned player was unavailable.
+         *
+         * The installed target may still have been retired before or while player cleanup failed. In
+         * that case [finalSubscriptionIssue] is the last [SubscriptionIssue] published for the retired
+         * live target, as for [stopped]. It is null when no live target was retired, for a recording
+         * target, or when no issue was current for the retired live target.
+         * Any unconfirmed item cleanup remains SDK-owned: observe
+         * [TvheadendPlaybackCoordinator.playerCleanupPending] and retry stop or target installation.
+         */
+        @JvmStatic
+        public fun playerUnavailable(finalSubscriptionIssue: SubscriptionIssue?): PlaybackStopResult =
+            PlaybackStopResult(PlaybackStopOutcome.PLAYER_UNAVAILABLE, finalSubscriptionIssue)
+    }
 }
 
-/** Typed outcome of terminal coordinator shutdown and its best-effort progress drain. */
-public enum class PlaybackShutdownResult {
-    DRAINED,
-    TIMED_OUT,
-    NOT_RUNNING,
-    ALREADY_SHUT_DOWN,
-    PLAYER_UNAVAILABLE,
+/** Open target-retirement outcome. Consumers must retain a fallback for future values. */
+public class PlaybackStopOutcome private constructor(private val label: String) {
+    override fun toString(): String = label
+
+    /** Known retirement outcomes. */
+    public companion object {
+        /** Target retired, coordinator item removed, and current coordinator playback stopped. */
+        @JvmField
+        public val STOPPED: PlaybackStopOutcome = PlaybackStopOutcome("STOPPED")
+        /** Target retired after departure without stopping application playback. */
+        @JvmField
+        public val RETIRED_AFTER_DEPARTURE: PlaybackStopOutcome = PlaybackStopOutcome("RETIRED_AFTER_DEPARTURE")
+        /** No target or coordinator item remained. */
+        @JvmField
+        public val ALREADY_STOPPED: PlaybackStopOutcome = PlaybackStopOutcome("ALREADY_STOPPED")
+        /** The coordinator has not launched. */
+        @JvmField
+        public val NOT_RUNNING: PlaybackStopOutcome = PlaybackStopOutcome("NOT_RUNNING")
+        /** The coordinator has shut down. */
+        @JvmField
+        public val SHUT_DOWN: PlaybackStopOutcome = PlaybackStopOutcome("SHUT_DOWN")
+        /** Player cleanup could not be confirmed; target retirement may have completed. */
+        @JvmField
+        public val PLAYER_UNAVAILABLE: PlaybackStopOutcome = PlaybackStopOutcome("PLAYER_UNAVAILABLE")
+    }
+}
+
+/** Terminal shutdown/drain outcome. Consumers must retain a fallback for future values. */
+public class PlaybackShutdownResult private constructor(private val label: String) {
+    override fun toString(): String = label
+
+    /** Known shutdown outcomes. */
+    public companion object {
+        /** Pending progress was drained. */
+        @JvmField
+        public val DRAINED: PlaybackShutdownResult = PlaybackShutdownResult("DRAINED")
+        /** The progress drain timed out. */
+        @JvmField
+        public val TIMED_OUT: PlaybackShutdownResult = PlaybackShutdownResult("TIMED_OUT")
+        /** The coordinator has not launched. */
+        @JvmField
+        public val NOT_RUNNING: PlaybackShutdownResult = PlaybackShutdownResult("NOT_RUNNING")
+        /** The coordinator was already shut down. */
+        @JvmField
+        public val ALREADY_SHUT_DOWN: PlaybackShutdownResult = PlaybackShutdownResult("ALREADY_SHUT_DOWN")
+        /** The application-owned player was unavailable. */
+        @JvmField
+        public val PLAYER_UNAVAILABLE: PlaybackShutdownResult = PlaybackShutdownResult("PLAYER_UNAVAILABLE")
+    }
 }
 
 /**
@@ -698,16 +762,16 @@ public class TvheadendPlaybackCoordinator internal constructor(
      * Retires the current target and removes only its item, stopping the player only while it plays that target.
      *
      * If the application moved to another item, any lingering target item is removed without
-     * stopping playback or removing application items. The result is [PlaybackStopResult.RetiredAfterDeparture].
-     * If it returned to the target's item, retirement stops the Player and returns [PlaybackStopResult.Stopped],
+     * stopping playback or removing application items. The result is [PlaybackStopResult.retiredAfterDeparture].
+     * If it returned to the target's item, retirement stops the Player and returns [PlaybackStopResult.stopped],
      * without reclaiming ownership for reporting.
      * If the application replaced or cleared the recording's item, its last observed owned position
      * supplies closing progress without marking it watched, unless a terminal was already captured
      * or reported. No owned snapshot means no report. While ownership has never been lost and its
      * item is still current, an orderly stop can mark it watched according to the configured progress policy.
      * Also retries [playerCleanupPending] items, even without an installed target. Unconfirmed cleanup
-     * returns [PlaybackStopResult.PlayerUnavailable]; confirmed cleanup without a target returns
-     * [PlaybackStopResult.AlreadyStopped].
+     * returns [PlaybackStopResult.playerUnavailable]; confirmed cleanup without a target returns
+     * [PlaybackStopResult.ALREADY_STOPPED].
      */
     public suspend fun stop(): PlaybackStopResult {
         val reply = CompletableDeferred<PlaybackStopResult>()
@@ -1212,10 +1276,10 @@ private class CoordinatorActor(
             if (!result.cancelled) {
                 command.reply.complete(
                     when {
-                        !result.playerAvailable -> PlaybackStopResult.PlayerUnavailable(finalSubscriptionIssue)
-                        result.retiredAfterDeparture -> PlaybackStopResult.RetiredAfterDeparture(finalSubscriptionIssue)
-                        result.retiredTarget -> PlaybackStopResult.Stopped(finalSubscriptionIssue)
-                        else -> PlaybackStopResult.AlreadyStopped
+                        !result.playerAvailable -> PlaybackStopResult.playerUnavailable(finalSubscriptionIssue)
+                        result.retiredAfterDeparture -> PlaybackStopResult.retiredAfterDeparture(finalSubscriptionIssue)
+                        result.retiredTarget -> PlaybackStopResult.stopped(finalSubscriptionIssue)
+                        else -> PlaybackStopResult.ALREADY_STOPPED
                     },
                 )
             }
@@ -1875,7 +1939,7 @@ private sealed class CoordinatorCommand(
             is LivePriority -> reply.complete(TimeshiftCommandResult.SHUT_DOWN)
             is ContentSeek -> reply.complete(TimeshiftContentSeekResult.Unavailable)
             is ContentPosition -> reply.complete(TimeshiftPlaybackPosition.Unavailable)
-            is Stop -> reply.complete(PlaybackStopResult.ShutDown)
+            is Stop -> reply.complete(PlaybackStopResult.SHUT_DOWN)
             is Shutdown -> reply.complete(PlaybackShutdownResult.ALREADY_SHUT_DOWN)
         }
     }
@@ -1897,11 +1961,11 @@ private fun CoordinatorLifecycle.targetUnavailableResult(): PlaybackTargetResult
 }
 
 private fun CoordinatorLifecycle.stopUnavailableResult(): PlaybackStopResult = when (this) {
-    CoordinatorLifecycle.NEW -> PlaybackStopResult.NotRunning
-    CoordinatorLifecycle.RUNNING -> PlaybackStopResult.ShutDown
+    CoordinatorLifecycle.NEW -> PlaybackStopResult.NOT_RUNNING
+    CoordinatorLifecycle.RUNNING -> PlaybackStopResult.SHUT_DOWN
     CoordinatorLifecycle.SHUTTING_DOWN,
     CoordinatorLifecycle.STOPPED,
-    -> PlaybackStopResult.ShutDown
+    -> PlaybackStopResult.SHUT_DOWN
 }
 
 private fun CoordinatorLifecycle.shutdownUnavailableResult(): PlaybackShutdownResult = when (this) {

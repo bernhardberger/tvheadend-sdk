@@ -373,7 +373,7 @@ internal class SessionObservationTest {
         assertNotSame(republishedCurrent.generationIdentity, directlyReplaced.generationIdentity)
 
         store.publishSessionState(
-            SessionState.Unavailable(SessionFailure.TransportUnavailable),
+            SessionState.Unavailable(SessionFailure.TRANSPORT_UNAVAILABLE),
             RecordingProgressCapability.UNKNOWN,
             generation = null,
         )

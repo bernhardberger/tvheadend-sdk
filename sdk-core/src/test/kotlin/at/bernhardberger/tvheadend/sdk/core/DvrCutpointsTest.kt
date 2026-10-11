@@ -40,7 +40,10 @@ internal class DvrCutpointsTest {
         val sceneMarker = DvrCutpoint(1_000.milliseconds, 4_000.milliseconds, DvrCutpointAction.SCENE_MARKER)
 
         assertEquals(4_000.milliseconds, sceneMarker.sceneBoundary)
-        DvrCutpointAction.entries
+        listOf(
+            DvrCutpointAction.CUT, DvrCutpointAction.MUTE, DvrCutpointAction.SCENE_MARKER,
+            DvrCutpointAction.COMMERCIAL_BREAK, DvrCutpointAction.UNKNOWN,
+        )
             .filterNot { it == DvrCutpointAction.SCENE_MARKER }
             .forEach { action ->
                 assertNull(DvrCutpoint(1_000.milliseconds, 4_000.milliseconds, action).sceneBoundary)

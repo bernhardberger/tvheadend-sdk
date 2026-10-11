@@ -7,22 +7,32 @@ import kotlin.time.Duration.Companion.milliseconds
 
 internal const val DVR_CUTPOINTS_MINIMUM_PROTOCOL_VERSION: Int = 12
 
-/** Safe action attached to one DVR cutpoint interval. */
-public enum class DvrCutpointAction {
-    /** Omit the interval from playback. */
-    CUT,
+/** Safe cutpoint action. Consumers must retain a fallback for future values. */
+public class DvrCutpointAction private constructor(private val label: String) {
+    override fun toString(): String = label
 
-    /** Silence the interval without removing it from the timeline. */
-    MUTE,
+    /** Known cutpoint actions. */
+    public companion object {
+        /** Omit the interval from playback. */
+        @JvmField
+        public val CUT: DvrCutpointAction = DvrCutpointAction("CUT")
 
-    /** Mark a scene boundary without changing playback automatically. */
-    SCENE_MARKER,
+        /** Silence the interval without removing it from the timeline. */
+        @JvmField
+        public val MUTE: DvrCutpointAction = DvrCutpointAction("MUTE")
 
-    /** Mark a commercial interval without imposing application skip policy. */
-    COMMERCIAL_BREAK,
+        /** Mark a scene boundary without changing playback automatically. */
+        @JvmField
+        public val SCENE_MARKER: DvrCutpointAction = DvrCutpointAction("SCENE_MARKER")
 
-    /** Preserve a cutpoint whose future server action is not understood. */
-    UNKNOWN,
+        /** Mark a commercial interval without imposing application skip policy. */
+        @JvmField
+        public val COMMERCIAL_BREAK: DvrCutpointAction = DvrCutpointAction("COMMERCIAL_BREAK")
+
+        /** Preserve a cutpoint whose future server action is not understood. */
+        @JvmField
+        public val UNKNOWN: DvrCutpointAction = DvrCutpointAction("UNKNOWN")
+    }
 }
 
 /** One bounded recording interval and the server action attached to it. */

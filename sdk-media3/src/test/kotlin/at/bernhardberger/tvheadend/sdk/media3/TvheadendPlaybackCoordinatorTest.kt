@@ -672,8 +672,8 @@ internal class TvheadendPlaybackCoordinatorTest {
             PlaybackTargetResult.STARTED,
             fixture.coordinator.setLiveTarget(ChannelId(1)),
         )
-        assertEquals(PlaybackStopResult.Stopped(null), fixture.coordinator.stop())
-        assertSame(PlaybackStopResult.AlreadyStopped, fixture.coordinator.stop())
+        assertEquals(PlaybackStopResult.stopped(null), fixture.coordinator.stop())
+        assertSame(PlaybackStopResult.ALREADY_STOPPED, fixture.coordinator.stop())
         assertEquals(
             PlaybackShutdownResult.DRAINED,
             fixture.coordinator.shutdown(1.seconds),
@@ -1138,7 +1138,7 @@ internal class TvheadendPlaybackCoordinatorTest {
                 )
                 assertEquals(
                     when (next) {
-                        "stop" -> PlaybackStopResult.Stopped(null)
+                        "stop" -> PlaybackStopResult.stopped(null)
                         "live" -> PlaybackTargetResult.STARTED
                         "live-not-ready" -> PlaybackTargetResult.NOT_READY
                         "shutdown" -> PlaybackShutdownResult.DRAINED
@@ -1478,7 +1478,7 @@ internal class TvheadendPlaybackCoordinatorTest {
                 advanceTimeBy(100.milliseconds)
                 assertTrue(command.isCompleted, "$next must not wait for readiness or the buffering timeout")
                 assertEquals(
-                    if (next == "stop") PlaybackStopResult.Stopped(null) else PlaybackShutdownResult.DRAINED,
+                    if (next == "stop") PlaybackStopResult.stopped(null) else PlaybackShutdownResult.DRAINED,
                     command.getCompleted(),
                     next,
                 )
@@ -1766,7 +1766,7 @@ internal class TvheadendPlaybackCoordinatorTest {
             assertEquals(listOf(100, 0, 100), subscription.speeds)
             assertEquals(listOf("live:4"), fixture.player.operations)
 
-            assertEquals(PlaybackStopResult.Stopped(null), fixture.coordinator.stop())
+            assertEquals(PlaybackStopResult.stopped(null), fixture.coordinator.stop())
             assertSame(LiveTimeshiftState.Unavailable, fixture.coordinator.timeshiftState.value)
             assertSame(TimeshiftCommandResult.UNAVAILABLE, fixture.coordinator.resumeTimeshift())
             fixture.coordinator.shutdown(1.seconds)
@@ -2108,7 +2108,7 @@ internal class TvheadendPlaybackCoordinatorTest {
         assertSame(PlaybackTargetResult.STARTED, fixture.coordinator.setRecordingTarget(DvrEntryId(7)))
         assertSame(LivePlaybackObservation.NoTarget, fixture.coordinator.livePlaybackObservation.value)
         assertSame(PlaybackTargetResult.STARTED, fixture.coordinator.setLiveTarget(ChannelId(4)))
-        assertEquals(PlaybackStopResult.Stopped(null), fixture.coordinator.stop())
+        assertEquals(PlaybackStopResult.stopped(null), fixture.coordinator.stop())
         assertSame(LivePlaybackObservation.NoTarget, fixture.coordinator.livePlaybackObservation.value)
         assertSame(PlaybackTargetResult.STARTED, fixture.coordinator.setLiveTarget(ChannelId(5)))
         assertSame(PlaybackShutdownResult.DRAINED, fixture.coordinator.shutdown(1.seconds))
@@ -2131,21 +2131,21 @@ internal class TvheadendPlaybackCoordinatorTest {
         assertSame(SubscriptionIssue.NO_FREE_ADAPTER, fixture.coordinator.subscriptionIssue.value)
 
         assertEquals(
-            PlaybackStopResult.Stopped(finalSubscriptionIssue = SubscriptionIssue.NO_FREE_ADAPTER),
+            PlaybackStopResult.stopped(finalSubscriptionIssue = SubscriptionIssue.NO_FREE_ADAPTER),
             fixture.coordinator.stop(),
         )
         assertSame(LivePlaybackObservation.NoTarget, fixture.coordinator.livePlaybackObservation.value)
         assertNull(fixture.coordinator.subscriptionIssue.value)
 
         assertSame(PlaybackTargetResult.STARTED, fixture.coordinator.setLiveTarget(ChannelId(2)))
-        assertEquals(PlaybackStopResult.Stopped(finalSubscriptionIssue = null), fixture.coordinator.stop())
+        assertEquals(PlaybackStopResult.stopped(finalSubscriptionIssue = null), fixture.coordinator.stop())
         assertSame(LivePlaybackObservation.NoTarget, fixture.coordinator.livePlaybackObservation.value)
 
         assertSame(PlaybackTargetResult.STARTED, fixture.coordinator.setRecordingTarget(DvrEntryId(7)))
-        assertEquals(PlaybackStopResult.Stopped(finalSubscriptionIssue = null), fixture.coordinator.stop())
+        assertEquals(PlaybackStopResult.stopped(finalSubscriptionIssue = null), fixture.coordinator.stop())
         assertSame(PlaybackShutdownResult.DRAINED, fixture.coordinator.shutdown(1.seconds))
         owner.join()
-        assertSame(PlaybackStopResult.ShutDown, fixture.coordinator.stop())
+        assertSame(PlaybackStopResult.SHUT_DOWN, fixture.coordinator.stop())
     }
 
     @Test
@@ -2164,7 +2164,7 @@ internal class TvheadendPlaybackCoordinatorTest {
         assertSame(SubscriptionIssue.NO_FREE_ADAPTER, fixture.coordinator.subscriptionIssue.value)
 
         assertEquals(
-            PlaybackStopResult.Stopped(finalSubscriptionIssue = SubscriptionIssue.NO_FREE_ADAPTER),
+            PlaybackStopResult.stopped(finalSubscriptionIssue = SubscriptionIssue.NO_FREE_ADAPTER),
             fixture.coordinator.stop(),
         )
         assertSame(LivePlaybackObservation.NoTarget, fixture.coordinator.livePlaybackObservation.value)
@@ -2189,7 +2189,7 @@ internal class TvheadendPlaybackCoordinatorTest {
         assertSame(SubscriptionIssue.NO_FREE_ADAPTER, fixture.coordinator.subscriptionIssue.value)
 
         assertEquals(
-            PlaybackStopResult.PlayerUnavailable(finalSubscriptionIssue = SubscriptionIssue.NO_FREE_ADAPTER),
+            PlaybackStopResult.playerUnavailable(finalSubscriptionIssue = SubscriptionIssue.NO_FREE_ADAPTER),
             fixture.coordinator.stop(),
         )
         assertSame(LivePlaybackObservation.NoTarget, fixture.coordinator.livePlaybackObservation.value)
@@ -2214,7 +2214,7 @@ internal class TvheadendPlaybackCoordinatorTest {
         )
 
         assertEquals(
-            PlaybackStopResult.PlayerUnavailable(finalSubscriptionIssue = null),
+            PlaybackStopResult.playerUnavailable(finalSubscriptionIssue = null),
             fixture.coordinator.stop(),
         )
         assertSame(SubscriptionIssue.NO_FREE_ADAPTER, fixture.coordinator.subscriptionIssue.value)
@@ -2775,7 +2775,7 @@ internal class TvheadendPlaybackCoordinatorTest {
         fixture.player.statusWhileStopped(SubscriptionIssue.NO_FREE_ADAPTER)
         assertSame(SubscriptionIssue.NO_FREE_ADAPTER, fixture.coordinator.subscriptionIssue.value)
 
-        assertEquals(PlaybackStopResult.Stopped(SubscriptionIssue.NO_FREE_ADAPTER), fixture.coordinator.stop())
+        assertEquals(PlaybackStopResult.stopped(SubscriptionIssue.NO_FREE_ADAPTER), fixture.coordinator.stop())
         assertEquals(
             listOf(null, SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN, SubscriptionIssue.NO_FREE_ADAPTER, null),
             issues,
@@ -2894,7 +2894,7 @@ internal class TvheadendPlaybackCoordinatorTest {
         fixture.player.replaceTimeshiftPeriod(FakeTimeshiftSubscription(60.seconds))
         fixture.player.stopLiveStream(null)
         assertTrue(fixture.liveObservation().serverStopped)
-        assertEquals(PlaybackStopResult.Stopped(null), fixture.coordinator.stop())
+        assertEquals(PlaybackStopResult.stopped(null), fixture.coordinator.stop())
         assertSame(LivePlaybackObservation.NoTarget, fixture.coordinator.livePlaybackObservation.value)
         fixture.coordinator.setLiveTarget(ChannelId(5))
         assertFalse(fixture.liveObservation().serverStopped)
