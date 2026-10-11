@@ -19,6 +19,7 @@ import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
 import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
 import at.bernhardberger.tvheadend.sdk.core.DvrConfigurationsState
 import at.bernhardberger.tvheadend.sdk.core.DvrCutpoint
+import at.bernhardberger.tvheadend.sdk.core.DvrCutpointsResult
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpaceState
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
@@ -720,13 +721,16 @@ internal class ConnectionOwnerTest {
     }
 
     @Test
-    fun `owner distinguishes connection retirement from disconnect and shutdown for unsent DVR commands`() = runTest {
+    fun `owner preserves stale DVR observations across disconnect shutdown and connection retirement`() = runTest {
         for (action in listOf("failure", "disconnect", "shutdown")) {
             val gateway = FakeProtocolGateway()
             val generation = GatewayGeneration()
             gateway.connectResults += connected(generation)
             val mutations = DvrMutationCoordinator(gateway)
             val progress = DvrProgressCoordinator(gateway)
+            val previous = GatewayGeneration()
+            mutations.bindGeneration(previous)
+            progress.bindGeneration(previous, 43)
             val owner = owner(gateway, dvrMutations = mutations, dvrProgress = progress)
             try {
                 owner.connect(ServerProfile("server"))
@@ -756,6 +760,21 @@ internal class ConnectionOwnerTest {
                 assertEquals(
                     DvrProgressResult.Failed(expected, false),
                     progress.reportProgress(generation, DvrEntryId(7), DvrPlaybackProgress.checkpoint(30.seconds)),
+                    action,
+                )
+                assertEquals(
+                    DvrMutationResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, false),
+                    mutations.scheduleEntry(previous, DvrScheduleRequest(DvrSchedule.Programme(EventId(1)))),
+                    action,
+                )
+                assertEquals(
+                    DvrProgressResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, false),
+                    progress.reportProgress(previous, DvrEntryId(7), DvrPlaybackProgress.checkpoint(30.seconds)),
+                    action,
+                )
+                assertEquals(
+                    DvrCutpointsResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED),
+                    progress.getCutpoints(previous, DvrEntryId(7)),
                     action,
                 )
             } finally {

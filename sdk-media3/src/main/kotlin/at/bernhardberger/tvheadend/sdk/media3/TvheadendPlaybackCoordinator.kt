@@ -932,7 +932,7 @@ internal fun admitRecordingTarget(
             progressReportingSupported =
                 initial.progressCapability == RecordingProgressCapability.SUPPORTED,
         )
-        is CoordinatorRecordingAdmission.GrowingStartOverOnly -> admitGrowingRecording(
+        is CoordinatorRecordingAdmission.Growing -> admitGrowingRecording(
             target = target,
             initial = initial,
             start = start,
@@ -945,7 +945,7 @@ internal fun admitRecordingTarget(
 
 private fun admitGrowingRecording(
     target: CoordinatorRecordingTarget,
-    initial: CoordinatorRecordingAdmission.GrowingStartOverOnly,
+    initial: CoordinatorRecordingAdmission.Growing,
     start: RecordingPlaybackStart,
 ): RecordingAdmission {
     when (initial.progressCapability) {
@@ -975,7 +975,7 @@ private fun admitGrowingRecording(
         } else {
             RecordingAdmission.NotReady
         }
-        is CoordinatorRecordingAdmission.GrowingStartOverOnly -> when (current.progressCapability) {
+        is CoordinatorRecordingAdmission.Growing -> when (current.progressCapability) {
             RecordingProgressCapability.UNKNOWN -> RecordingAdmission.NotReady
             RecordingProgressCapability.UNSUPPORTED -> RecordingAdmission.ProgressUnsupported
             RecordingProgressCapability.SUPPORTED -> RecordingAdmission.Growing(
@@ -1735,7 +1735,7 @@ private class CoordinatorActor(
                 DvrEntryState.COMPLETED.takeIf {
                     admission.progressCapability == RecordingProgressCapability.SUPPORTED
                 }
-            is CoordinatorRecordingAdmission.GrowingStartOverOnly ->
+            is CoordinatorRecordingAdmission.Growing ->
                 DvrEntryState.RECORDING.takeIf {
                     target.growingLease != null &&
                         admission.progressCapability == RecordingProgressCapability.SUPPORTED

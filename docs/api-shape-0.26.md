@@ -328,7 +328,7 @@ Update requests keep every field nullable:
 |---|---|---|
 | `daysOfWeekMask` | `Long?` | `Set<java.time.DayOfWeek>?` |
 | Timerec start and stop (`*MinutesSinceMidnight`, 0–1439) | `Int?` | `java.time.LocalTime?` |
-| Autorec window bounds (`*MinutesSinceMidnight`, 0–1440) | `Int?` | `AutorecTime?`, a closed type with `AnyTime` (the 1440 sentinel) and `At(time: LocalTime)` |
+| Autorec window bounds (`*MinutesSinceMidnight`, -1 or 0–1439) | `Int?` | `AutorecTime?`, a closed type with `AnyTime` (TVHeadend's -1) and `At(time: LocalTime)` |
 | `startExtraMinutes`, `stopExtraMinutes` | `Long?` | `Duration?` |
 | `priority` | `Long?` | `DvrPriority?` (open set of TVHeadend priorities, including its default value) |
 | `duplicateDetection` | `Long?` | `DuplicateDetection?` (open set, TVHeadend modes) |
@@ -349,10 +349,18 @@ Decided (maintainer, 2026-10-11): use `java.time`, not `kotlinx-datetime`.
   expensive. That trade-off is accepted. Roadmap decision 11 is relaxed
   accordingly.
 
-Time values must use whole minutes. Autorec keeps TVHeadend's 1440
-"any time" sentinel as `AutorecTime.AnyTime`. Mapping it to midnight would
-change its meaning, and mapping it to `null` would collide with "leave
-unchanged". The existing sentinel tests move to the new type.
+Time values must use whole minutes. TVHeadend encodes autorec "any time"
+as -1. It sends -1 (`htsp_server.c` `htsp_build_autorecentry`), and when
+it stores a time it turns blank values and values of 1440 or more into -1
+(`dvr_autorec.c` `dvr_autorec_entry_class_time_set`). An earlier draft of
+this note named 1440 as the sentinel; 1440 is only a value the server
+clamps. `AutorecTime.AnyTime` reads every negative value and every value of
+1440 or more, and is written as -1. Mapping it to midnight would change its
+meaning, and mapping it to `null` would collide with "leave unchanged".
+
+Timerec times have no "any time" value. TVHeadend uses -1 for a time that
+is not set, and such a rule never fires. A timerec time outside 0–1439
+reads as `null` on that field; the rule itself is kept.
 
 ### Removals and renames
 
@@ -388,10 +396,13 @@ unchanged". The existing sentinel tests move to the new type.
 - DVR mutation and progress failures caused by a retired connection
   generation report `CONNECTION_CHANGED`, not `TRANSPORT_UNAVAILABLE`, so
   callers take a fresh observation before retrying an operation that may
-  have applied. Step 2 kept the old value. To be verified against the
-  coordinators in step 4: if any inactive-operation path is a session
-  shutdown rather than a generation change, it reports `NOT_READY` instead.
-  `mayHaveApplied` is unaffected.
+  have applied. `mayHaveApplied` is unaffected. When the cause is a
+  session shutdown or disconnect rather than a generation change:
+  - a command that was never sent reports `NOT_READY`, unless the caller's
+    observation was already stale, in which case it reports
+    `OBSERVATION_EXPIRED`;
+  - a command that may already have been sent reports `CONNECTION_CHANGED`,
+    because the caller needs a fresh observation before retrying it.
 
 ### Not in 0.26
 

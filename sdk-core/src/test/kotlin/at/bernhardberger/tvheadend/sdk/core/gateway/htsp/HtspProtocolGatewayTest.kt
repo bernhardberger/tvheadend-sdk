@@ -2048,7 +2048,7 @@ internal class HtspProtocolGatewayTest {
         ))
         assertEquals(UpdateAutorecEntryRequest(
             id = "rule", priority = 6, duplicateDetection = 15, broadcastType = 0, daysOfWeekMask = 0,
-            startMinutesSinceMidnight = 1440, startWindowEndMinutesSinceMidnight = 0,
+            startMinutesSinceMidnight = -1, startWindowEndMinutesSinceMidnight = 0,
         ), fake.lastRequest)
     }
 
@@ -2119,6 +2119,16 @@ internal class HtspProtocolGatewayTest {
         assertEquals("private-config", addAutorec.configName)
         assertEquals(127L, addAutorec.daysOfWeekMask)
         assertSame(sourceGeneration, fake.lastExpectedGeneration)
+
+        gateway.createAutorecRule(generation, autorec.copy(
+            approximateStartMinutesSinceMidnight = AutorecTime.AnyTime,
+            startMinutesSinceMidnight = AutorecTime.AnyTime,
+            startWindowEndMinutesSinceMidnight = AutorecTime.AnyTime,
+        ))
+        val anyTimeRequest = fake.lastRequest as AddAutorecEntryRequest
+        assertEquals(-1, anyTimeRequest.approximateStartMinutesSinceMidnight)
+        assertEquals(-1, anyTimeRequest.startMinutesSinceMidnight)
+        assertEquals(-1, anyTimeRequest.startWindowEndMinutesSinceMidnight)
 
         fake.executeResult = HtspResult.Ok(UpdateAutorecEntryResponse)
         assertTrue(

@@ -4,6 +4,7 @@ package at.bernhardberger.tvheadend.sdk.core
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -14,6 +15,17 @@ import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
 internal class DvrRepositoryTest {
+    @Test
+    fun `public metadata factories leave server-private fields unset`() {
+        val file = DvrRecordingFile.create(fileId = 1, sizeBytes = 4)
+        val entry = DvrEntry.create(DvrEntryId(1), files = listOf(file))
+        val autorec = AutorecRule.create(AutorecRuleId("rule"))
+        val timerec = TimerecRule.create(TimerecRuleId("rule"))
+        listOf(file.path, entry.path, entry.owner, entry.creator, autorec.owner, autorec.creator,
+            timerec.owner, timerec.creator).forEach { assertNull(it) }
+        assertEquals(4L, entry.files?.single()?.sizeBytes)
+    }
+
     @Test
     fun `models validate wire domains timing and immutable collections`() {
         val files = mutableListOf(
@@ -45,7 +57,6 @@ internal class DvrRepositoryTest {
             episode = EpgEpisode(null, null, 1, null, 2, 3, null, null, null),
             title = "private-title",
             files = files,
-            path = "/private/path.ts",
             configId = DvrConfigId("private-config"),
             state = DvrEntryState.SCHEDULED,
             subscriptionError = DvrSubscriptionError.SCRAMBLED,
@@ -61,7 +72,7 @@ internal class DvrRepositoryTest {
             DvrEntry.create(DvrEntryId(1), start = instant(20), stop = instant(19))
         }
         assertThrows(IllegalArgumentException::class.java) {
-            DvrRecordingFile(fileId = -1, path = null, start = null, stop = null, sizeBytes = null)
+            DvrRecordingFile.create(fileId = -1)
         }
         assertThrows(IllegalArgumentException::class.java) {
             TimerecRule.create(TimerecRuleId("rule"), startMinutesSinceMidnight = LocalTime.of(0, 0, 1))

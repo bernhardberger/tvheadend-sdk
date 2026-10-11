@@ -12,6 +12,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryKt;
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState;
 import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult;
 import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot;
+import at.bernhardberger.tvheadend.sdk.core.DvrRecordingFile;
 import at.bernhardberger.tvheadend.sdk.core.AutorecRule;
 import at.bernhardberger.tvheadend.sdk.core.AutorecTime;
 import at.bernhardberger.tvheadend.sdk.core.DvrPriority;
@@ -67,6 +68,10 @@ import kotlinx.coroutines.CoroutineScope;
 
 public final class StagedSdkJavaConsumer {
     private StagedSdkJavaConsumer() {}
+
+    public static DvrRecordingFile recordingFileForFake() {
+        return DvrRecordingFile.Companion.create(1L, null, null, 4L);
+    }
 
     public static AutorecTime typedAutorecTime(LocalTime time) {
         return time == null ? AutorecTime.AnyTime.INSTANCE : new AutorecTime.At(time);

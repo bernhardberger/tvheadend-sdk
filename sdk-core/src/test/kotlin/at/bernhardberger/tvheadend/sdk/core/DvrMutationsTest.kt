@@ -19,7 +19,7 @@ internal class DvrMutationsTest {
     }
 
     @Test
-    fun `timerec minutes stop at 1439 but autorec retains the 1440 sentinel`() {
+    fun `timerec minutes stop at 1439 but autorec supports any time`() {
         for (minute in listOf(null, LocalTime.MIDNIGHT, LocalTime.of(23, 59))) {
             TimerecRuleCreate("Recording", startMinutesSinceMidnight = minute, stopMinutesSinceMidnight = minute)
             TimerecRuleUpdate(startMinutesSinceMidnight = minute, stopMinutesSinceMidnight = minute)

@@ -1,6 +1,7 @@
 package at.bernhardberger.tvheadend.sdk.core
 
 import java.io.File
+import java.nio.file.InvalidPathException
 import kotlinx.coroutines.flow.StateFlow
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
@@ -69,6 +70,9 @@ public class MetadataCachePolicy private constructor(
          * The SDK creates the directory on first write. The consumer must not place other files
          * under it. A root must have one owning session runtime; do not share it between
          * independently running application processes.
+         * Relative roots resolve against the working directory at creation time.
+         *
+         * @throws IllegalArgumentException if the root path or a policy value is invalid.
          */
         public fun create(
             root: File,
@@ -76,7 +80,11 @@ public class MetadataCachePolicy private constructor(
             artworkRetention: Duration = DEFAULT_ARTWORK_RETENTION,
             artworkMaxBytes: Long = DEFAULT_ARTWORK_MAX_BYTES,
         ): MetadataCachePolicy = MetadataCachePolicy(
-            root = root.toPath().toAbsolutePath().normalize().toFile(),
+            root = try {
+                root.toPath().toAbsolutePath().normalize().toFile()
+            } catch (_: InvalidPathException) {
+                throw IllegalArgumentException("MetadataCachePolicy root must be a valid path")
+            },
             metadataRetention = metadataRetention,
             artworkRetention = artworkRetention,
             artworkMaxBytes = artworkMaxBytes,

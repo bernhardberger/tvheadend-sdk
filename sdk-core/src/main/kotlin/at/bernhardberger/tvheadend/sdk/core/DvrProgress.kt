@@ -66,7 +66,8 @@ public sealed interface DvrProgressResult {
      * [mayHaveApplied] is false only before dispatch or after explicit server refusal, and true
      * whenever the command may have reached the server, including a lost reply or generation change.
      * Generation retirement reports [TvheadendFailure.CONNECTION_CHANGED]. Shutdown or revoked
-     * admission reports [TvheadendFailure.NOT_READY] before dispatch, and CONNECTION_CHANGED after
+     * admission reports [TvheadendFailure.NOT_READY] before dispatch on the latest observation;
+     * older observations still report [TvheadendFailure.OBSERVATION_EXPIRED]. It reports CONNECTION_CHANGED after
      * dispatch. This classification does not override explicit refusal evidence in [mayHaveApplied].
      */
     public data class Failed(

@@ -94,7 +94,7 @@ internal sealed interface CoordinatorRecordingAdmission {
         val progressCapability: at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability,
     ) : CoordinatorRecordingAdmission
 
-    data class GrowingStartOverOnly(
+    data class Growing(
         val progressCapability: at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability,
         val resumePosition: Duration? = null,
     ) : CoordinatorRecordingAdmission
@@ -113,7 +113,7 @@ private fun RecordingPlaybackAdmission.toCoordinatorAdmission(): CoordinatorReco
             progressCapability,
         )
         is RecordingPlaybackAdmission.Growing ->
-            CoordinatorRecordingAdmission.GrowingStartOverOnly(progressCapability, resumePosition)
+            CoordinatorRecordingAdmission.Growing(progressCapability, resumePosition)
         RecordingPlaybackAdmission.GrowingDeferred -> CoordinatorRecordingAdmission.GrowingDeferred
         RecordingPlaybackAdmission.TargetUnavailable ->
             CoordinatorRecordingAdmission.TargetUnavailable

@@ -5,12 +5,27 @@ import java.nio.file.Files
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
 
 internal class SessionPolicyTest {
+    @Test
+    fun `invalid root errors contain neither the private path nor a leaking cause`() {
+        val marker = "private-root-marker"
+        val failure = assertThrows(IllegalArgumentException::class.java) {
+            MetadataCachePolicy.create(File("$marker\u0000"))
+        }
+        assertEquals("MetadataCachePolicy root must be a valid path", failure.message)
+        assertNull(failure.cause)
+        generateSequence<Throwable>(failure) { it.cause }.forEach {
+            assertFalse(it.toString().contains(marker))
+        }
+    }
+
     @TempDir
     lateinit var root: File
 

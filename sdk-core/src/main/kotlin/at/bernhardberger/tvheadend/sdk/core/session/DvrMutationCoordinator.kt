@@ -74,6 +74,7 @@ internal class DvrMutationCoordinator(
     private val lock = Any()
     private val operationMutex = Mutex()
     private var generation: GatewayGeneration? = null
+    private var latestBoundGeneration: GatewayGeneration? = null
     private var admitted = false
     private var stoppedFailure: TvheadendFailure? = null
     private var pending: PendingMutation? = null
@@ -85,6 +86,7 @@ internal class DvrMutationCoordinator(
             admitted = false
             stoppedFailure = null
             this.generation = generation
+            latestBoundGeneration = generation
             intents.bind(generation)
             previous
         }
@@ -354,6 +356,8 @@ internal class DvrMutationCoordinator(
     ): MutationRegistration {
         val initiallyAdmitted = synchronized(lock) {
             when {
+                latestBoundGeneration !== expectedGeneration ->
+                    return MutationRegistration.Failed(TvheadendFailure.OBSERVATION_EXPIRED)
                 generation !== expectedGeneration -> return MutationRegistration.Failed(
                     stoppedFailure ?: TvheadendFailure.OBSERVATION_EXPIRED,
                 )

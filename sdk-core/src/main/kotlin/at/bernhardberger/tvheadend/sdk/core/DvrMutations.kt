@@ -282,7 +282,8 @@ public sealed interface DvrMutationResult<out T> {
      * It is true whenever the command may have reached the server, including failure after
      * acceptance while registering or awaiting authoritative metadata confirmation.
      * Generation retirement reports [TvheadendFailure.CONNECTION_CHANGED]. Shutdown or revoked
-     * admission reports [TvheadendFailure.NOT_READY] before dispatch, and CONNECTION_CHANGED after
+     * admission reports [TvheadendFailure.NOT_READY] before dispatch on the latest observation;
+     * older observations still report [TvheadendFailure.OBSERVATION_EXPIRED]. It reports CONNECTION_CHANGED after
      * dispatch. This classification does not override explicit refusal evidence in [mayHaveApplied].
      */
     public data class Failed(

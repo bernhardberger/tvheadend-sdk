@@ -299,7 +299,7 @@ internal class TvheadendPlaybackCoordinatorTest {
         val lease = MutableGrowingLease()
         val target = TestCoordinatorRecordingTarget(
             startedGrowing = true,
-            admissionState = CoordinatorRecordingAdmission.GrowingStartOverOnly(
+            admissionState = CoordinatorRecordingAdmission.Growing(
                 RecordingProgressCapability.SUPPORTED,
                 resumePosition = 90.seconds,
             ),
@@ -321,7 +321,7 @@ internal class TvheadendPlaybackCoordinatorTest {
         assertEquals(90.seconds, resume.resumePosition)
         assertTrue(resume.progressReportingSupported)
 
-        target.admissionState = CoordinatorRecordingAdmission.GrowingStartOverOnly(
+        target.admissionState = CoordinatorRecordingAdmission.Growing(
             RecordingProgressCapability.SUPPORTED,
         )
         assertNull(
@@ -347,7 +347,7 @@ internal class TvheadendPlaybackCoordinatorTest {
             ),
         )
 
-        target.admissionState = CoordinatorRecordingAdmission.GrowingStartOverOnly(
+        target.admissionState = CoordinatorRecordingAdmission.Growing(
             RecordingProgressCapability.SUPPORTED,
         )
         target.growingResult = RecordingFileResult.Failed(TvheadendFailure.CONNECTION_CHANGED)
@@ -385,7 +385,7 @@ internal class TvheadendPlaybackCoordinatorTest {
         val lease = MutableGrowingLease()
         val target = TestCoordinatorRecordingTarget(
             startedGrowing = true,
-            admissionState = CoordinatorRecordingAdmission.GrowingStartOverOnly(
+            admissionState = CoordinatorRecordingAdmission.Growing(
                 RecordingProgressCapability.SUPPORTED,
             ),
             growingResult = RecordingFileResult.Ok(lease),
@@ -400,7 +400,7 @@ internal class TvheadendPlaybackCoordinatorTest {
         )
         assertSame(RecordingAdmission.GrowingRecordingDeferred, reclassified)
 
-        target.admissionState = CoordinatorRecordingAdmission.GrowingStartOverOnly(
+        target.admissionState = CoordinatorRecordingAdmission.Growing(
             RecordingProgressCapability.SUPPORTED,
         )
         target.bindGrowingAction = { RecordingFileResult.Ok(lease) }
@@ -426,7 +426,7 @@ internal class TvheadendPlaybackCoordinatorTest {
             RecordingProgressCapability.UNSUPPORTED to RecordingAdmission.ProgressUnsupported,
         ).forEach { (capability, expected) ->
             // Core only carries a saved position with supported progress; the gate holds regardless.
-            target.admissionState = CoordinatorRecordingAdmission.GrowingStartOverOnly(capability)
+            target.admissionState = CoordinatorRecordingAdmission.Growing(capability)
             RecordingPlaybackStart.entries.forEach { start ->
                 assertSame(expected, admitRecordingTarget(target, start))
             }
@@ -438,7 +438,7 @@ internal class TvheadendPlaybackCoordinatorTest {
         val lease = MutableGrowingLease()
         val target = TestCoordinatorRecordingTarget(
             startedGrowing = true,
-            admissionState = CoordinatorRecordingAdmission.GrowingStartOverOnly(
+            admissionState = CoordinatorRecordingAdmission.Growing(
                 RecordingProgressCapability.SUPPORTED,
                 resumePosition = 90.seconds,
             ),
@@ -452,14 +452,14 @@ internal class TvheadendPlaybackCoordinatorTest {
         val resumed = admitRecordingTarget(target, RecordingPlaybackStart.RESUME) as RecordingAdmission.Growing
         assertSame(lease, resumed.lease)
         assertEquals(95.seconds, resumed.resumePosition)
-        target.admissionState = CoordinatorRecordingAdmission.GrowingStartOverOnly(
+        target.admissionState = CoordinatorRecordingAdmission.Growing(
             RecordingProgressCapability.SUPPORTED,
             resumePosition = 90.seconds,
         )
         val startOver = admitRecordingTarget(target, RecordingPlaybackStart.START_OVER) as RecordingAdmission.Growing
         assertNull(startOver.resumePosition)
 
-        target.admissionState = CoordinatorRecordingAdmission.GrowingStartOverOnly(
+        target.admissionState = CoordinatorRecordingAdmission.Growing(
             RecordingProgressCapability.SUPPORTED,
             resumePosition = 90.seconds,
         )
@@ -3585,7 +3585,7 @@ internal class TvheadendPlaybackCoordinatorTest {
         fixture.events.publish(pause(fixture, 20))
         runCurrent()
         fixture.environment.publishDvrState(currentDvr(
-            growingEntry(fileId = 2, filePath = "/replacement.ts"),
+            growingEntry(fileId = 2),
         ))
         blocker.complete(Unit)
         runCurrent()
@@ -3909,7 +3909,7 @@ private class CoordinatorFixture {
             environment = environment,
             startedGrowing = player.recordingAdmission is RecordingAdmission.Growing,
             admissionState = if (player.recordingAdmission is RecordingAdmission.Growing) {
-                CoordinatorRecordingAdmission.GrowingStartOverOnly(
+                CoordinatorRecordingAdmission.Growing(
                     RecordingProgressCapability.SUPPORTED,
                 )
             } else {
@@ -4070,7 +4070,7 @@ private class FakeCoordinatorEnvironment {
         val target = activeTarget ?: return
         target.admissionState = if (sessionState is SessionState.Ready) {
             if (target.startedGrowing) {
-                CoordinatorRecordingAdmission.GrowingStartOverOnly(
+                CoordinatorRecordingAdmission.Growing(
                     RecordingProgressCapability.SUPPORTED,
                 )
             } else {
@@ -4092,7 +4092,7 @@ private class FakeCoordinatorEnvironment {
             DvrEntryState.RECORDING -> {
                 val file = entry.files?.singleOrNull()
                 if (file?.fileId == 1L) {
-                    CoordinatorRecordingAdmission.GrowingStartOverOnly(
+                    CoordinatorRecordingAdmission.Growing(
                         RecordingProgressCapability.SUPPORTED,
                     )
                 } else {
@@ -4518,19 +4518,16 @@ private fun growingEntry(
     id: Long = 7,
     state: DvrEntryState = DvrEntryState.RECORDING,
     fileId: Long = 1,
-    filePath: String = "/recording.ts",
     fileSizeBytes: Long? = 1_000,
     dataSizeBytes: Long? = fileSizeBytes,
     extraFile: Boolean = false,
 ): DvrEntry = DvrEntry.create(
     id = DvrEntryId(id),
     uuid = "stable-entry",
-    path = filePath,
     files = buildList {
         add(
-            DvrRecordingFile(
+            DvrRecordingFile.create(
                 fileId = fileId,
-                path = filePath,
                 start = Instant.fromEpochSeconds(1),
                 stop = null,
                 sizeBytes = fileSizeBytes,
@@ -4538,9 +4535,8 @@ private fun growingEntry(
         )
         if (extraFile) {
             add(
-                DvrRecordingFile(
+                DvrRecordingFile.create(
                     fileId = fileId + 1,
-                    path = "/rollover.ts",
                     start = Instant.fromEpochSeconds(2),
                     stop = null,
                     sizeBytes = 1,

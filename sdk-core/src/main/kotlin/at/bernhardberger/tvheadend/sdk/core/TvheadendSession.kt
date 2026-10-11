@@ -171,6 +171,9 @@ internal object SessionRegistry {
     internal fun acquire(
         epgCoveragePolicy: EpgCoveragePolicy? = null,
         cachePolicy: MetadataCachePolicy? = null,
+        ownerFactory: (EpgCoveragePolicy, MetadataCachePolicy?) -> ConnectionOwner = { policy, cache ->
+            createOwner(policy, cacheRuntime = cache?.let(::createCacheRuntime))
+        },
     ): TvheadendSession = synchronized(this) {
         val existing = active
         if (existing != null) {
@@ -181,7 +184,7 @@ internal object SessionRegistry {
             existing.owner
         } else {
             val policy = epgCoveragePolicy ?: EpgCoveragePolicy.create()
-            createOwner(policy, cacheRuntime = cachePolicy?.let(::createCacheRuntime))
+            ownerFactory(policy, cachePolicy)
                 .also { active = ActiveOwner(it, policy, cachePolicy) }
         }
     }

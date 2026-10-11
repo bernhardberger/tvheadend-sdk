@@ -47,6 +47,7 @@ internal class DvrProgressCoordinator(
 ) : DvrProgressCommands, DvrCutpointCommands, DvrProgressLifecycle {
     private val lock = Any()
     private var generation: GatewayGeneration? = null
+    private var latestBoundGeneration: GatewayGeneration? = null
     private var admitted = false
     private var stoppedFailure: TvheadendFailure? = null
     private var notSupported = false
@@ -57,6 +58,7 @@ internal class DvrProgressCoordinator(
             admitted = false
             stoppedFailure = null
             this.generation = generation
+            latestBoundGeneration = generation
             notSupported = protocolVersion == null ||
                 protocolVersion < DVR_PROGRESS_MINIMUM_PROTOCOL_VERSION
             cutpointsNotSupported = protocolVersion == null ||
@@ -119,6 +121,9 @@ internal class DvrProgressCoordinator(
         targetIsCurrent: () -> Boolean,
     ): DvrProgressResult {
         val activeGeneration = synchronized(lock) {
+            if (latestBoundGeneration !== expectedGeneration) {
+                return DvrProgressResult.Failed(admissionExpired, mayHaveApplied = false)
+            }
             if (generation !== expectedGeneration) {
                 return DvrProgressResult.Failed(stoppedFailure ?: admissionExpired, mayHaveApplied = false)
             }
@@ -225,6 +230,9 @@ internal class DvrProgressCoordinator(
         targetIsCurrent: () -> Boolean,
     ): DvrCutpointsResult {
         val activeGeneration = synchronized(lock) {
+            if (latestBoundGeneration !== generation) {
+                return DvrCutpointsResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED)
+            }
             if (this.generation !== generation) {
                 return DvrCutpointsResult.Failed(stoppedFailure ?: TvheadendFailure.OBSERVATION_EXPIRED)
             }

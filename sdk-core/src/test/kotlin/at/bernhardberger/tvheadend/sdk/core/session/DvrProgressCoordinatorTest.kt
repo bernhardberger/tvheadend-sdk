@@ -111,6 +111,12 @@ internal class DvrProgressCoordinatorTest {
         )
         coordinator.stopAdmission()
         assertEquals(
+            DvrProgressResult.Failed(TvheadendFailure.CONNECTION_CHANGED, false),
+            coordinator.reportProgress(lease, checkpoint()),
+        )
+        coordinator.bindGeneration(original, 43)
+        coordinator.stopAdmission()
+        assertEquals(
             DvrProgressResult.Failed(TvheadendFailure.NOT_READY, false),
             coordinator.reportProgress(lease, checkpoint()),
         )

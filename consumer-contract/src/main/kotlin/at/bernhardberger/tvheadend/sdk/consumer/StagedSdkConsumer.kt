@@ -22,6 +22,12 @@ import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult
 import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
+import at.bernhardberger.tvheadend.sdk.core.DvrEntry
+import at.bernhardberger.tvheadend.sdk.core.DvrRecordingFile
+import at.bernhardberger.tvheadend.sdk.core.AutorecRule
+import at.bernhardberger.tvheadend.sdk.core.AutorecRuleId
+import at.bernhardberger.tvheadend.sdk.core.TimerecRule
+import at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.AutorecTime
 import at.bernhardberger.tvheadend.sdk.core.BroadcastType
@@ -84,6 +90,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+
+public fun recordingSnapshotForFake(): DvrSnapshot = DvrSnapshot.create(
+    entries = listOf(DvrEntry.create(DvrEntryId(1), files = listOf(DvrRecordingFile.create(fileId = 1)))),
+    autorecRules = listOf(AutorecRule.create(AutorecRuleId("autorec"))),
+    timerecRules = listOf(TimerecRule.create(TimerecRuleId("timerec"))),
+)
 
 public fun typedAutorecUpdate(): AutorecRuleUpdate = AutorecRuleUpdate(
     daysOfWeekMask = setOf(DayOfWeek.MONDAY),

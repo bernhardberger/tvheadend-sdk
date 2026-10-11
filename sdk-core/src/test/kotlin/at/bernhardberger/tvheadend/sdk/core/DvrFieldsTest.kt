@@ -108,12 +108,10 @@ internal class DvrFieldsTest {
             assertEquals(AutorecTime.At(time), wire.toAutorecTime())
             assertEquals(wire, AutorecTime.At(time).toDvrMinute())
         }
-        assertSame(AutorecTime.AnyTime, 1440.toAutorecTime())
-        assertEquals(1440, AutorecTime.AnyTime.toDvrMinute())
-        assertNull(1440.toDvrLocalTime())
-        for (wire in listOf(-1, 1441, Int.MAX_VALUE)) {
+        assertEquals(-1, AutorecTime.AnyTime.toDvrMinute())
+        for (wire in listOf(Int.MIN_VALUE, -1, 1440, 1441, Int.MAX_VALUE)) {
             assertNull(wire.toDvrLocalTime())
-            assertNull(wire.toAutorecTime())
+            assertSame(AutorecTime.AnyTime, wire.toAutorecTime())
         }
         assertThrows(IllegalArgumentException::class.java) { AutorecTime.At(LocalTime.of(0, 0, 1)) }
         assertThrows(IllegalArgumentException::class.java) { AutorecTime.At(LocalTime.of(0, 0, 0, 1)) }
@@ -169,7 +167,7 @@ internal class DvrFieldsTest {
         )))
         reducer.accept(MetadataEvent.AutorecRuleAdded(generation, GatewayAutorecRule(
             id = AutorecRuleId("rule"), priority = 999, duplicateDetection = 999, broadcastType = 999,
-            startMinutesSinceMidnight = 1440, startWindowEndMinutesSinceMidnight = 1439, daysOfWeekMask = 65,
+            startMinutesSinceMidnight = -1, startWindowEndMinutesSinceMidnight = 1439, daysOfWeekMask = 65,
         )))
         reducer.accept(MetadataEvent.TimerecRuleAdded(generation, GatewayTimerecRule(
             id = TimerecRuleId("time"), startMinutesSinceMidnight = 0, stopMinutesSinceMidnight = 1439,
@@ -195,5 +193,44 @@ internal class DvrFieldsTest {
         )))
         assertEquals(false, reducer.snapshot().entries.single().duplicate)
         assertNull(reducer.snapshot().entries.single().image)
+    }
+
+    @Test
+    fun `autorec reads all any-time fields and accepts the server clamp boundary`() {
+        val generation = GatewayGeneration()
+        val reducer = DvrReducer()
+        for (wire in listOf(-1, 1440, -2, 1441)) {
+            reducer.accept(MetadataEvent.AutorecRuleAdded(generation, GatewayAutorecRule(
+                id = AutorecRuleId("rule"), approximateStartMinutesSinceMidnight = wire,
+                startMinutesSinceMidnight = wire, startWindowEndMinutesSinceMidnight = wire,
+            )))
+            val rule = reducer.snapshot().autorecRules.single()
+            assertSame(AutorecTime.AnyTime, rule.approximateStartMinutesSinceMidnight)
+            assertSame(AutorecTime.AnyTime, rule.startMinutesSinceMidnight)
+            assertSame(AutorecTime.AnyTime, rule.startWindowEndMinutesSinceMidnight)
+        }
+    }
+
+    @Test
+    fun `unset timerec fields keep the rule and its valid time on add and update`() {
+        val generation = GatewayGeneration()
+        val reducer = DvrReducer()
+        for (wire in listOf(-1, 1440, Int.MIN_VALUE, Int.MAX_VALUE)) {
+            reducer.accept(MetadataEvent.TimerecRuleAdded(generation, GatewayTimerecRule(
+                id = TimerecRuleId("time"), name = "retained", startMinutesSinceMidnight = wire,
+                stopMinutesSinceMidnight = 1439,
+            )))
+            val added = reducer.snapshot().timerecRules.single()
+            assertNull(added.startMinutesSinceMidnight)
+            assertEquals(LocalTime.of(23, 59), added.stopMinutesSinceMidnight)
+            reducer.accept(MetadataEvent.TimerecRuleUpdated(generation, GatewayTimerecRule(
+                id = TimerecRuleId("time"), name = "updated", startMinutesSinceMidnight = 0,
+                stopMinutesSinceMidnight = wire,
+            )))
+            val updated = reducer.snapshot().timerecRules.single()
+            assertEquals("updated", updated.name)
+            assertEquals(LocalTime.MIDNIGHT, updated.startMinutesSinceMidnight)
+            assertNull(updated.stopMinutesSinceMidnight)
+        }
     }
 }

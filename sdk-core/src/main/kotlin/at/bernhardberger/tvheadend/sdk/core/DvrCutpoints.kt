@@ -86,7 +86,9 @@ public sealed interface DvrCutpointsResult {
      * is unavailable on this connection. A malformed reply implies neither transport loss nor
      * automatic retry. An expired observation must be replaced before another request.
      * Generation retirement reports [TvheadendFailure.CONNECTION_CHANGED]. Shutdown or revoked
-     * admission reports [TvheadendFailure.NOT_READY] before dispatch, and CONNECTION_CHANGED after dispatch.
+     * admission reports [TvheadendFailure.NOT_READY] before dispatch on the latest observation;
+     * older observations still report [TvheadendFailure.OBSERVATION_EXPIRED]. It reports CONNECTION_CHANGED
+     * after dispatch.
      */
     public data class Failed(public val failure: TvheadendFailure) : DvrCutpointsResult {
         override fun toString(): String = "DvrCutpointsResult.Failed(failure=$failure)"

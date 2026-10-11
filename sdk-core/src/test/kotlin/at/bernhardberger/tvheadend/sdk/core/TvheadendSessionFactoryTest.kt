@@ -2,6 +2,7 @@ package at.bernhardberger.tvheadend.sdk.core
 
 import at.bernhardberger.tvheadend.sdk.core.gateway.htsp.HtspProtocolGateway
 import at.bernhardberger.tvheadend.sdk.core.session.PlaybackSessionChildren
+import at.bernhardberger.tvheadend.sdk.core.session.SessionChildren
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertNotSame
@@ -14,6 +15,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -87,6 +89,43 @@ internal class TvheadendSessionFactoryTest {
         try {
             assertNotSame(first, replacement)
             assertSame(replacement, createTvheadendSession())
+        } finally {
+            replacement.shutdown()
+        }
+    }
+
+    @Test
+    fun `shutdown in progress retains the owner and rejects conflicting policies`() = runTest {
+        val shuttingDown = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val children = object : SessionChildren by SessionChildren.None {
+            override suspend fun closeAndJoinSubscriptions() {
+                shuttingDown.complete(Unit)
+                release.await()
+            }
+        }
+        val first = SessionRegistry.acquire(EpgCoveragePolicy.create(7.days)) { policy, _ ->
+            SessionRegistry.createOwner(policy, childrenFactory = { _, _, _ -> children })
+        }
+        val shutdown = launch { first.shutdown() }
+        try {
+            shuttingDown.await()
+            assertFalse(shutdown.isCompleted)
+            assertSame(first, createTvheadendSession())
+            assertSame(first, createTvheadendSession(EpgCoveragePolicy.create(7.days)))
+            assertThrows(IllegalStateException::class.java) {
+                createTvheadendSession(EpgCoveragePolicy.create(2.days))
+            }
+            assertThrows(IllegalStateException::class.java) {
+                createTvheadendSession(EpgCoveragePolicy.create(7.days), MetadataCachePolicy.create(cacheRoot))
+            }
+        } finally {
+            release.complete(Unit)
+            shutdown.join()
+        }
+        val replacement = createTvheadendSession(EpgCoveragePolicy.create(2.days))
+        try {
+            assertNotSame(first, replacement)
         } finally {
             replacement.shutdown()
         }

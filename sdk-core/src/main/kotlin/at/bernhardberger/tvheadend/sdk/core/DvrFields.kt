@@ -6,9 +6,13 @@ import java.util.Collections
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 
-/** Automatic-recording time selection, including TVHeadend's distinct 1440 any-time sentinel. */
+/**
+ * Automatic-recording time selection. TVHeadend encodes any time as -1; negative values and values
+ * at least 1440 are read as [AnyTime]. When creating a rule, TVHeadend sets both start and window end
+ * to any time if either is any time.
+ */
 public sealed interface AutorecTime {
-    /** Matches any time of day; encoded as 1440, not midnight or an omitted field. */
+    /** Matches any time of day; encoded as -1, not midnight or an omitted field. */
     public data object AnyTime : AutorecTime
 
     /** A local wall-clock time with whole-minute precision. */
@@ -179,12 +183,12 @@ internal fun Int.toDvrLocalTime(): LocalTime? =
     takeIf { it in 0..1439 }?.let { LocalTime.of(it / 60, it % 60) }
 
 internal fun AutorecTime.toDvrMinute(): Int = when (this) {
-    AutorecTime.AnyTime -> 1440
+    AutorecTime.AnyTime -> -1
     is AutorecTime.At -> time.toDvrMinute()
 }
 
-internal fun Int.toAutorecTime(): AutorecTime? =
-    if (this == 1440) AutorecTime.AnyTime else toDvrLocalTime()?.let(AutorecTime::At)
+internal fun Int.toAutorecTime(): AutorecTime =
+    toDvrLocalTime()?.let(AutorecTime::At) ?: AutorecTime.AnyTime
 
 // TVHeadend numbers Monday as 1 and Sunday as 7; bit zero therefore means Monday.
 internal fun Long.toDvrDays(): Set<DayOfWeek> =

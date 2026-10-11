@@ -643,7 +643,7 @@ private class FixtureRecordingTarget(
 
     override val startedGrowing: Boolean = true
 
-    override val admission: CoordinatorRecordingAdmission = CoordinatorRecordingAdmission.GrowingStartOverOnly(
+    override val admission: CoordinatorRecordingAdmission = CoordinatorRecordingAdmission.Growing(
         progressCapability = RecordingProgressCapability.SUPPORTED,
         resumePosition = savedPosition,
     )

@@ -449,8 +449,7 @@ internal data class ReducedTimerecRule private constructor(
 ) {
     override fun toString(): String = "ReducedTimerecRule(<redacted>)"
 
-    internal fun toPublicOrNull(): TimerecRule? {
-        if (hasInvalidMinutes()) return null
+    internal fun toPublic(): TimerecRule {
         return TimerecRule.create(
             id = id,
             enabled = enabled,
@@ -469,9 +468,6 @@ internal data class ReducedTimerecRule private constructor(
             comment = comment,
         )
     }
-
-    private fun hasInvalidMinutes(): Boolean =
-        startMinutesSinceMidnight.outOfDay() || stopMinutesSinceMidnight.outOfDay()
 
     internal companion object {
         internal fun fromAdd(rule: GatewayTimerecRule): ReducedTimerecRule = ReducedTimerecRule(
@@ -492,8 +488,7 @@ internal data class ReducedTimerecRule private constructor(
             comment = rule.comment,
         )
 
-        internal fun fromUpdate(rule: GatewayTimerecRule): ReducedTimerecRule? =
-            fromAdd(rule).takeUnless(ReducedTimerecRule::hasInvalidMinutes)
+        internal fun fromUpdate(rule: GatewayTimerecRule): ReducedTimerecRule = fromAdd(rule)
     }
 }
 
@@ -553,7 +548,7 @@ internal class DvrReducer {
     internal fun snapshot(): DvrSnapshot = cachedSnapshot ?: DvrSnapshot.create(
         entries = entries.values.mapNotNull(ReducedDvrEntry::toPublicOrNull),
         autorecRules = autorecRules.values.map(ReducedAutorecRule::toPublic),
-        timerecRules = timerecRules.values.mapNotNull(ReducedTimerecRule::toPublicOrNull),
+        timerecRules = timerecRules.values.map(ReducedTimerecRule::toPublic),
     ).also { cachedSnapshot = it }
 
     private fun acceptEntryAdd(entry: GatewayDvrEntry): Boolean {
@@ -591,13 +586,12 @@ internal class DvrReducer {
 
     private fun acceptTimerecAdd(rule: GatewayTimerecRule): Boolean {
         val candidate = ReducedTimerecRule.fromAdd(rule)
-        if (candidate.toPublicOrNull() == null) return false
         timerecRules[rule.id] = candidate
         return true
     }
 
     private fun acceptTimerecUpdate(rule: GatewayTimerecRule): Boolean {
-        val candidate = ReducedTimerecRule.fromUpdate(rule) ?: return false
+        val candidate = ReducedTimerecRule.fromUpdate(rule)
         timerecRules[rule.id] = candidate
         return true
     }
@@ -613,8 +607,6 @@ private fun GatewayDvrRecordingFile.toPublicOrNull(): DvrRecordingFile? {
         sizeBytes = sizeBytes,
     )
 }
-
-private fun Int?.outOfDay(): Boolean = this != null && this !in 0..1_439
 
 private fun <T> Collection<T>.toImmutableList(): List<T> =
     Collections.unmodifiableList(ArrayList(this))
