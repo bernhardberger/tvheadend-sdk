@@ -45,7 +45,8 @@ coordinator.
    At 1.0, anything still moving ships as experimental, not frozen.
 3. **Additive evolution.** Public API is shaped so that likely future needs
    are additive:
-   - classes with factories rather than public data-class constructors;
+   - new data-class properties appended with defaults, so existing Kotlin
+     calls keep compiling;
    - result types documented as open, so consumers keep a fallback branch;
    - typed values rather than raw server encodings.
 
@@ -135,16 +136,10 @@ stay additive.
 
 - Introduce the experimental opt-in annotation. Mark areas still in motion,
   such as the growing-recording resume observation.
-- Convert public data classes that will need new fields into classes with
-  factories:
-  - `DvrEntryUpdate` and `DvrScheduleRequest`;
-  - the autorec and timerec create and update requests;
-  - `DvrRecordingFile`, `DvrConfiguration` and `DvrDiskSpace`;
-  - `EpgRating`, `EpgEpisode` and `ChannelService`;
-  - `DvrPlaybackProgress` and `DvrProgressPolicy`.
-
-  Drop `componentN` from the large models (`DvrEntry`, `EpgEvent`, `Channel`,
-  `ServerCapabilities`).
+- Convert open enums and data-carrying sealed results into open sets, so new
+  values do not break exhaustive consumers. Public data classes stay; under
+  the source-compatibility promise, new properties are appended with
+  defaults. See the [0.26 design note](api-shape-0.26.md).
 - Unify the near-duplicate failure taxonomies of the DVR mutation, progress,
   cutpoint, stream-profile, and EPG search results around one shared failure
   value.
