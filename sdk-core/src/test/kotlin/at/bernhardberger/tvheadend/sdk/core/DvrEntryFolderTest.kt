@@ -42,13 +42,23 @@ internal class DvrEntryFolderTest {
 
     @Test
     fun `server file paths take precedence over an application folder including unknown derivations`() {
-        listOf("/server-folder/one.ts", "/one.ts", "/server-folder/../one.ts", null).forEach { path ->
+        listOf("/server-folder/one.ts", "/one.ts", "/server-folder/../one.ts").forEach { path ->
             val serverEntry = entry(listOf(path))
             val applicationEntry = DvrEntry.create(
                 DvrEntryId(1), files = serverEntry.files, folder = listOf("application-folder"),
             )
             assertEquals(serverEntry.folder, applicationEntry.folder)
         }
+    }
+
+    @Test
+    fun `application folder applies to files without server paths`() {
+        val files = listOf(DvrRecordingFile.create(fileId = 1), DvrRecordingFile.create(fileId = 2))
+        val entry = DvrEntry.create(DvrEntryId(1), files = files, folder = listOf("archive", "series"))
+
+        assertEquals(listOf("archive", "series"), entry.folder)
+        assertNull(DvrEntry.create(DvrEntryId(1), files = files).folder)
+        assertNull(entry(listOf(null, null)).folder)
     }
 
     @Test

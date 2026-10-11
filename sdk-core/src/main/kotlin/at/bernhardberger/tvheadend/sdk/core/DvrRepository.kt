@@ -213,13 +213,13 @@ public data class DvrEntry private constructor(
      * This is not a file-system path. An empty list denotes the storage root.
      *
      * Uses the common directory prefix of all files, or the entry's directory when there are no files.
-     * Without files or an entry path, uses the folder supplied to [create].
+     * When neither the entry nor any file has a server path, uses the folder supplied to [create].
      * Returns `null` if a required path is unknown or any component is `.` or `..`.
      * The returned list is unmodifiable. Treat its contents as private metadata, not diagnostics.
      */
     public val folder: List<String>?
         get() {
-            if (files.isNullOrEmpty() && path == null) return suppliedFolder
+            if (path == null && files.orEmpty().all { it.path == null }) return suppliedFolder
             val paths = if (files.isNullOrEmpty()) listOf(path) else files.map { it.path }
             val directories = paths.map { filePath ->
                 val components = filePath?.split('/')?.filter { it.isNotEmpty() } ?: return null
