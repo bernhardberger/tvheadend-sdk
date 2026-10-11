@@ -84,8 +84,9 @@ coordinator.
 11. **Linux playback.** Linux playback, when it comes, is a new adapter
     module beside `sdk-media3`, built on `sdk-playback`. That makes it an
     additive SDK minor. Whether to use Kotlin Multiplatform or native binaries
-    is decided after Android. Public `sdk-core` API avoids JVM-only types so
-    that option stays open.
+    is decided after Android. Public `sdk-core` API avoids JVM-only types
+    where that is cheap. `java.time` is accepted, because its stability
+    outweighs a cheaper Kotlin Multiplatform migration.
 
 ## 1.0 readiness criteria
 
@@ -158,8 +159,6 @@ stay additive.
   - `TimeshiftTestFixture` in `sdk-media3`;
   - `SessionGenerationTestAuthority` and `TvheadendTestResultFactory` in
     `sdk-core`.
-- Replace JVM-only types in public `sdk-core` API (`java.io.File`,
-  `InputStream`, `java.text.Collator`).
 - Remove leftovers:
   - the deprecated `TvheadendCredentialStore` and its legacy storage path;
   - `PlaybackTargetResult.GROWING_RECORDING_RESUME_UNSUPPORTED`;

@@ -1,6 +1,6 @@
 # 0.26 API shape: design note
 
-**Status:** draft for maintainer review, revised after an Opus and Astra
+**Status:** accepted for implementation, after an Opus and Astra
 review pair. Nothing in this note is implemented.
 
 0.26 is the breaking release that reshapes public API so that later releases,
@@ -285,15 +285,21 @@ public annotation class ExperimentalTvheadendApi
   annotation. Whether to graduate is decided per release, based on use in the
   player.
 
-Candidates at 0.26, for maintainer decision:
+Decided (maintainer, 2026-10-11):
 
-- **Growing-recording playback.** That covers growing admission, resume, and
-  the pending resume-outcome observation. The non-TS scope decision is still
-  open.
-- **`DvrRepository.changes`.** It was added in 0.23 and has had little player
-  use so far.
-- **Rule-to-upcoming-matches helper.** New in 0.27; it would start
-  experimental.
+- **Growing-recording playback: experimental.** Only the growing-specific
+  surface gets the annotation: the growing admission case, the growing
+  reader and lease, and the resume-outcome observation once it is added.
+  Growing resume already works today. What is still open is how its outcome
+  is observed, and the scope for non-TS containers. Completed-recording
+  playback and the shared admission type stay stable.
+- **Rule-to-upcoming-matches helper (0.27): experimental.** It is new and
+  unproven.
+- **`DvrRepository.changes`: stable.** Its contract is more than a flow:
+  loss, buffering, reconnect suppression, and generation checks. That whole
+  contract stays compatible. Before 1.0 the player must exercise those
+  semantics; otherwise it becomes experimental at 1.0 under the readiness
+  criteria.
 
 Not candidates:
 
@@ -320,8 +326,9 @@ Update requests keep every field nullable:
 
 | Field | Today | 0.26 |
 |---|---|---|
-| `daysOfWeekMask` | `Long?` | `Set<kotlinx.datetime.DayOfWeek>?` |
-| Rule time windows (`*MinutesSinceMidnight`) | `Int?` | `kotlinx.datetime.LocalTime?` |
+| `daysOfWeekMask` | `Long?` | `Set<java.time.DayOfWeek>?` |
+| Timerec start and stop (`*MinutesSinceMidnight`, 0–1439) | `Int?` | `java.time.LocalTime?` |
+| Autorec window bounds (`*MinutesSinceMidnight`, 0–1440) | `Int?` | `AutorecTime?`, a closed type with `AnyTime` (the 1440 sentinel) and `At(time: LocalTime)` |
 | `startExtraMinutes`, `stopExtraMinutes` | `Long?` | `Duration?` |
 | `priority` | `Long?` | `DvrPriority?` (open set of TVHeadend priorities, including its default value) |
 | `duplicateDetection` | `Long?` | `DuplicateDetection?` (open set, TVHeadend modes) |
@@ -330,13 +337,22 @@ Update requests keep every field nullable:
 | `DvrEntry.image`, `fanartImage`, `EpgEvent.image` | `String?` | `ArtworkId?` |
 | `contentType` next to `contentGenre` | duplicated | `contentType` removed |
 
-`kotlinx-datetime` is the maintained platform-neutral library for day and
-time-of-day values. On the JVM some versions alias `DayOfWeek` to
-`java.time.DayOfWeek`. That is the library's own multiplatform mechanism:
-SDK API stays expressed in the common type, consistent with roadmap
-decision 11. `java.time` directly would make public `sdk-core` API JVM-only.
-Adding the dependency needs maintainer approval, and the pinned version
-must be checked.
+Decided (maintainer, 2026-10-11): use `java.time`, not `kotlinx-datetime`.
+
+- **Why not `kotlinx-datetime`.** It is still a 0.x library and has made
+  breaking changes; 0.7 moved `Instant` into the standard library. Exposing
+  its types would tie SDK 1.0 public API to its evolution.
+- **Why `java.time`.** It is stable and adds no dependency. Android has had
+  it natively since API 26, so minSdk 28 needs no desugaring, and a JVM Linux
+  application has it too.
+- **The cost.** A later Kotlin Multiplatform migration becomes more
+  expensive. That trade-off is accepted. Roadmap decision 11 is relaxed
+  accordingly.
+
+Time values must use whole minutes. Autorec keeps TVHeadend's 1440
+"any time" sentinel as `AutorecTime.AnyTime`. Mapping it to midnight would
+change its meaning, and mapping it to `null` would collide with "leave
+unchanged". The existing sentinel tests move to the new type.
 
 ### Removals and renames
 
@@ -353,16 +369,31 @@ must be checked.
   `@TvheadendTestingApi`. `SessionGenerationTestAuthority` and
   `TvheadendTestResultFactory` already carry `@TvheadendTestingApi` and need
   no change.
-- Replace `java.io.File`, `InputStream` and `java.text.Collator` in public
-  `sdk-core` signatures.
-- Make `createTvheadendSession(policy)` fail, or return a typed result, when
-  an owner already exists with different policies, instead of ignoring them.
+- `createTvheadendSession` no longer ignores conflicting policies.
+  Decided (maintainer, 2026-10-11):
+  - **Conflicting policies throw.** When a process-wide owner exists, a call
+    with policies whose configuration differs throws
+    `IllegalStateException`. A call with equal configuration returns the
+    existing owner.
+  - **Calls without policies still look up the existing owner**, whatever
+    its configuration, as `TvheadendSessionFactoryTest` requires today.
+  - **Comparison is by configuration value, not object identity.**
+    `EpgCoveragePolicy` and `MetadataCachePolicy` currently use identity
+    equality, so they gain value equality. The cache root is compared under a
+    documented path-equivalence rule.
+  - **Comparison and acquisition are atomic.**
+  - **The exception message contains no path.**
+  - **Tests** cover equal fresh policies, a mismatch, concurrent
+    acquisition, and replacement after shutdown.
 
 ### Not in 0.26
 
 - **Converting public data classes to builders.** That is not needed under
   the source-compatibility promise; see the baseline above.
 - **Media3 types and opt-ins.** Deferred to 0.28.
+- **Replacing `java.io.File`, `InputStream` and `java.text.Collator`** in
+  public `sdk-core` signatures. That was only needed for strict
+  multiplatform neutrality, which is no longer a goal.
 
 ## Invariants the migration keeps
 
@@ -392,9 +423,11 @@ must be checked.
 An Opus and Astra review pair reviews the work after steps 1–2 and after
 step 4.
 
-## Open questions for the maintainer
+## Maintainer decisions
 
-1. Approve adding `kotlinx-datetime` to `sdk-core`.
-2. Which experimental candidates to annotate at 0.26.
-3. `createTvheadendSession` with conflicting policies: throw, or return a
-   typed result?
+All three open questions were decided on 2026-10-11, after a second opinion
+from Astra. The decisions are recorded in their sections:
+
+- `java.time` rather than `kotlinx-datetime`;
+- the experimental scope;
+- `createTvheadendSession` throwing on conflicting policies.
