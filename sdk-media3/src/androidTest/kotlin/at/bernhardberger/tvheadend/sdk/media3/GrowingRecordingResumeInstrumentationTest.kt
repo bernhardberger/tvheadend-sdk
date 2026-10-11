@@ -34,8 +34,8 @@ import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
 import at.bernhardberger.tvheadend.sdk.playback.RECORDING_END_OF_INPUT
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFile
-import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.security.MessageDigest
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -646,7 +646,7 @@ private class FixtureRecordingTarget(
     )
 
     override suspend fun openRecording(): RecordingFileResult<RecordingFile> =
-        RecordingFileResult.Failed(RecordingFileFailure.NOT_SUPPORTED)
+        RecordingFileResult.Failed(TvheadendFailure.NOT_SUPPORTED)
 
     override fun bindGrowingRecording(): RecordingFileResult<GrowingRecordingFileLease> = RecordingFileResult.Ok(lease)
 
@@ -898,7 +898,7 @@ private class GrowingFixtureRecording(
 
     override suspend fun open(position: Long): RecordingFileResult<GrowingRecordingFileReader> {
         if (position !in 0L..availableBytes.toLong()) {
-            return RecordingFileResult.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+            return RecordingFileResult.Failed(TvheadendFailure.FILE_UNAVAILABLE)
         }
         return RecordingFileResult.Ok(Reader(position.toInt()))
     }

@@ -17,16 +17,15 @@ import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionDiagnostics
 import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionPriority
-import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionIssue
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
-import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationFailure
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekInvalidation
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.time.Duration
@@ -966,14 +965,8 @@ private fun admitGrowingRecording(
     val lease = when (val binding = target.bindGrowingRecording()) {
         is RecordingFileResult.Ok -> binding.value
         is RecordingFileResult.Failed -> return when (binding.failure) {
-            RecordingFileFailure.CONNECTION_CHANGED -> RecordingAdmission.NotReady
-            RecordingFileFailure.ACCESS_DENIED,
-            RecordingFileFailure.FILE_UNAVAILABLE,
-            RecordingFileFailure.CONNECTION_LIMIT,
-            RecordingFileFailure.TIMEOUT,
-            RecordingFileFailure.NOT_SUPPORTED,
-            RecordingFileFailure.MALFORMED_RESPONSE,
-            -> RecordingAdmission.TargetUnavailable
+            TvheadendFailure.CONNECTION_CHANGED -> RecordingAdmission.NotReady
+            else -> RecordingAdmission.TargetUnavailable
         }
     }
     if (!lease.isCurrent) return RecordingAdmission.TargetUnavailable
@@ -2011,14 +2004,7 @@ internal fun SubscriptionSeekResult.toPublicTimeshiftResult(): TimeshiftCommandR
 private fun SubscriptionOperationResult<Unit>.toPublicTimeshiftResult(): TimeshiftCommandResult =
     when (this) {
         is SubscriptionOperationResult.Ok -> TimeshiftCommandResult.ACCEPTED
-        SubscriptionOperationResult.ServerRejected -> TimeshiftCommandResult.SERVER_REJECTED
-        SubscriptionOperationResult.AccessDenied -> TimeshiftCommandResult.ACCESS_DENIED
-        SubscriptionOperationResult.ConnectionLimit -> TimeshiftCommandResult.CONNECTION_LIMIT
-        SubscriptionOperationResult.Timeout -> TimeshiftCommandResult.TIMEOUT
-        SubscriptionOperationResult.TransportUnavailable ->
-            TimeshiftCommandResult.TRANSPORT_UNAVAILABLE
-        SubscriptionOperationResult.NotSupported -> TimeshiftCommandResult.NOT_SUPPORTED
-        SubscriptionOperationResult.MalformedResponse -> TimeshiftCommandResult.MALFORMED_RESPONSE
+        is SubscriptionOperationResult.Failed -> failure.toPublicTimeshiftResult()
     }
 
 private fun LiveTimeshiftControlBridge.PauseRestoration.toPublicTimeshiftResult(): TimeshiftCommandResult = when (this) {
@@ -2027,14 +2013,15 @@ private fun LiveTimeshiftControlBridge.PauseRestoration.toPublicTimeshiftResult(
     is LiveTimeshiftControlBridge.PauseRestoration.Answered -> result.toPublicTimeshiftResult()
 }
 
-private fun SubscriptionOperationFailure.toPublicTimeshiftResult(): TimeshiftCommandResult = when (this) {
-    SubscriptionOperationFailure.SERVER_REJECTED -> TimeshiftCommandResult.SERVER_REJECTED
-    SubscriptionOperationFailure.ACCESS_DENIED -> TimeshiftCommandResult.ACCESS_DENIED
-    SubscriptionOperationFailure.CONNECTION_LIMIT -> TimeshiftCommandResult.CONNECTION_LIMIT
-    SubscriptionOperationFailure.TIMEOUT -> TimeshiftCommandResult.TIMEOUT
-    SubscriptionOperationFailure.TRANSPORT_UNAVAILABLE -> TimeshiftCommandResult.TRANSPORT_UNAVAILABLE
-    SubscriptionOperationFailure.NOT_SUPPORTED -> TimeshiftCommandResult.NOT_SUPPORTED
-    SubscriptionOperationFailure.MALFORMED_RESPONSE -> TimeshiftCommandResult.MALFORMED_RESPONSE
+private fun TvheadendFailure.toPublicTimeshiftResult(): TimeshiftCommandResult = when (this) {
+    TvheadendFailure.SERVER_REJECTED -> TimeshiftCommandResult.SERVER_REJECTED
+    TvheadendFailure.ACCESS_DENIED -> TimeshiftCommandResult.ACCESS_DENIED
+    TvheadendFailure.CONNECTION_LIMIT -> TimeshiftCommandResult.CONNECTION_LIMIT
+    TvheadendFailure.TIMEOUT -> TimeshiftCommandResult.TIMEOUT
+    TvheadendFailure.TRANSPORT_UNAVAILABLE -> TimeshiftCommandResult.TRANSPORT_UNAVAILABLE
+    TvheadendFailure.NOT_SUPPORTED -> TimeshiftCommandResult.NOT_SUPPORTED
+    TvheadendFailure.MALFORMED_RESPONSE -> TimeshiftCommandResult.MALFORMED_RESPONSE
+    else -> TimeshiftCommandResult.UNAVAILABLE
 }
 
 private fun PlaybackPlayerInstallStatus.toPublicTargetResult(): PlaybackTargetResult = when (this) {

@@ -12,6 +12,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTermination
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
@@ -96,14 +97,14 @@ class ScriptedSubscriptionConnectionTest {
         connection.emit(status)
         val skip = connection.skip(id, SubscriptionSeekTarget.Absolute(30.seconds))
         val speed = connection.speed(id, 0)
-        connection.scriptPriority(SubscriptionOperationResult.NotSupported)
+        connection.scriptPriority(SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED))
         val priority = connection.changePriority(id, LiveSubscriptionPriority.NORMAL)
         val unsubscribe = connection.unsubscribe(id)
 
         assertTrue(subscribe is SubscriptionOperationResult.Ok)
         assertTrue(skip is SubscriptionOperationResult.Ok)
         assertTrue(speed is SubscriptionOperationResult.Ok)
-        assertTrue(priority is SubscriptionOperationResult.NotSupported)
+        assertEquals(SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED), priority)
         assertTrue(unsubscribe is SubscriptionOperationResult.Ok)
         assertEquals(listOf(status), collected.await())
         assertEquals(LiveSubscriptionPriority.YIELD, connection.requestedPriority)
@@ -241,7 +242,7 @@ class ScriptedSubscriptionConnectionTest {
 
         connection.loseGeneration()
         connection.setLive(true)
-        val unavailable = SubscriptionOperationResult.TransportUnavailable
+        val unavailable = SubscriptionOperationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE)
         assertEquals(unavailable, connection.subscribe(id, SubscriptionChannelId(4L), 60.seconds))
         assertEquals(unavailable, connection.skip(id, SubscriptionSeekTarget.Absolute(30.seconds)))
         assertEquals(unavailable, connection.speed(id, 0))

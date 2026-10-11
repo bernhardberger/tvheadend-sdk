@@ -33,12 +33,12 @@ import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
 import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
 import at.bernhardberger.tvheadend.sdk.core.createTvheadendSession
-import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionState
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
@@ -480,7 +480,7 @@ private object GrowingTsRealServerVerifier {
                 val generationFailure = awaitPlaybackFailure(failure)
                 assertTrue(
                     "Generation replacement must fail through the typed recording path",
-                    generationFailure.hasRecordingFailure(RecordingFileFailure.CONNECTION_CHANGED),
+                    generationFailure.hasRecordingFailure(TvheadendFailure.CONNECTION_CHANGED),
                 )
                 val failed = livePlayerSnapshot(instrumentation, player)
                 reconnectSession()
@@ -817,7 +817,7 @@ private suspend fun awaitPlaybackFailure(
     error("unreachable")
 }
 
-private fun Throwable.hasRecordingFailure(expected: RecordingFileFailure): Boolean {
+private fun Throwable.hasRecordingFailure(expected: TvheadendFailure): Boolean {
     var current: Throwable? = this
     while (current != null) {
         if (current is TvheadendRecordingException && current.failure == expected) return true

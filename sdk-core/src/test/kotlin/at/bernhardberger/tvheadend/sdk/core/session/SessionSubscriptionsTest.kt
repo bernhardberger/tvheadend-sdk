@@ -5,7 +5,6 @@ package at.bernhardberger.tvheadend.sdk.core.session
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleId
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
-import at.bernhardberger.tvheadend.sdk.core.ArtworkFailure
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
@@ -46,7 +45,6 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.ProtocolGateway
 import at.bernhardberger.tvheadend.sdk.core.gateway.ServerConfiguration
 import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionPriority
-import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.SkipOutcome
 import at.bernhardberger.tvheadend.sdk.playback.StreamIndex
@@ -58,7 +56,6 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
-import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationFailure
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekResult
@@ -68,6 +65,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStream
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTerminalReason
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTermination
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.util.IdentityHashMap
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -337,7 +335,7 @@ class SessionSubscriptionsTest {
             SubscriptionOptions(),
         ) as SubscriptionOpenResult.Failed
         assertSame(
-            SubscriptionOperationFailure.SERVER_REJECTED,
+            TvheadendFailure.SERVER_REJECTED,
             (unknown.reason as SubscriptionTerminalReason.OperationFailed).failure,
         )
         assertTrue(knownGateway.requestedTimeshiftPeriods.isEmpty())
@@ -363,7 +361,7 @@ class SessionSubscriptionsTest {
             SubscriptionOptions(),
         ) as SubscriptionOpenResult.Failed
         assertSame(
-            SubscriptionOperationFailure.ACCESS_DENIED,
+            TvheadendFailure.ACCESS_DENIED,
             (denied.reason as SubscriptionTerminalReason.OperationFailed).failure,
         )
         assertTrue(deniedGateway.requestedTimeshiftPeriods.isEmpty())
@@ -491,8 +489,8 @@ class SessionSubscriptionsTest {
             at.bernhardberger.tvheadend.sdk.core.SessionGenerationIdentity.create(),
         )
 
-        assertSame(
-            StreamProfilesResult.ObservationExpired,
+        assertEquals(
+            StreamProfilesResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED),
             children.getStreamProfiles(generation, expired),
         )
         metadata.bindKnownChannels(generation, 4L)
@@ -523,7 +521,10 @@ class SessionSubscriptionsTest {
         assertSame(currentSession, available.originatingSession)
         assertEquals(listOf(generation), gateway.profileDiscoveryGenerations)
         gateway.streamProfilesAction = { GatewayResult.MalformedReply }
-        assertSame(StreamProfilesResult.MalformedResponse, children.getStreamProfiles(generation, currentSession))
+        assertEquals(
+            StreamProfilesResult.Failed(TvheadendFailure.MALFORMED_RESPONSE),
+            children.getStreamProfiles(generation, currentSession),
+        )
         children.closeAndJoinSubscriptions()
 
         val replacementGeneration = GatewayGeneration()
@@ -597,7 +598,7 @@ class SessionSubscriptionsTest {
         children.closeAndJoinSubscriptions()
         children.bindGeneration(generationB)
         release.complete(Unit)
-        assertSame(StreamProfilesResult.TransportUnavailable, stale.await())
+        assertEquals(StreamProfilesResult.Failed(TvheadendFailure.CONNECTION_CHANGED), stale.await())
 
         val cancellation = CancellationException("private cancellation")
         gateway.streamProfilesAction = { throw cancellation }
@@ -676,7 +677,7 @@ class SessionSubscriptionsTest {
             val unavailable = async { subscription.seek(SubscriptionSeekTarget.Live) }
             runCurrent()
             val unavailableResult = unavailable.await() as SubscriptionSeekResult.Refused
-            assertSame(SubscriptionOperationFailure.NOT_SUPPORTED, unavailableResult.failure)
+            assertSame(TvheadendFailure.NOT_SUPPORTED, unavailableResult.failure)
             assertTrue(gateway.nearLiveStatuses.isEmpty())
             assertTrue(gateway.skippedTargets.isEmpty())
 
@@ -732,8 +733,8 @@ class SessionSubscriptionsTest {
 
         gateway.complete(generation)
         assertEquals(2, collected.await().size)
-        assertSame(
-            SubscriptionOperationResult.NotSupported,
+        assertEquals(
+            SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED),
             connection.skip(id, SubscriptionSeekTarget.Live),
         )
         assertEquals(1, gateway.nearLiveStatuses.size, "Completed collection must clear its status")
@@ -752,7 +753,10 @@ class SessionSubscriptionsTest {
         runCurrent()
         if (stopFirst) gateway.emitStopped(generation) else gateway.emitStarted(generation)
         runCurrent()
-        assertSame(SubscriptionOperationResult.NotSupported, connection.skip(id, SubscriptionSeekTarget.Live))
+        assertEquals(
+            SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED),
+            connection.skip(id, SubscriptionSeekTarget.Live),
+        )
         assertTrue(gateway.nearLiveStatuses.isEmpty())
         gateway.emitTimeshift(generation, start = 0, end = 100_000_000)
         runCurrent()
@@ -918,7 +922,7 @@ class SessionSubscriptionsTest {
         val generation = GatewayGeneration()
 
         assertSame(
-            RecordingFileFailure.CONNECTION_CHANGED,
+            TvheadendFailure.CONNECTION_CHANGED,
             (
                 children.openRecording(generation, DvrEntryId(5L)) as
                     RecordingFileResult.Failed
@@ -950,11 +954,11 @@ class SessionSubscriptionsTest {
             "Closing a recording handle twice must release the server handle once",
         )
         assertSame(
-            RecordingFileFailure.FILE_UNAVAILABLE,
+            TvheadendFailure.FILE_UNAVAILABLE,
             (file.seek(0L) as RecordingFileResult.Failed).failure,
         )
         assertSame(
-            RecordingFileFailure.FILE_UNAVAILABLE,
+            TvheadendFailure.FILE_UNAVAILABLE,
             (file.read(0L, destination, 0, 1) as RecordingFileResult.Failed).failure,
         )
         assertEquals(1, gateway.seekedRecordingGenerations.size)
@@ -962,7 +966,7 @@ class SessionSubscriptionsTest {
 
         children.closeAndJoinSubscriptions()
         assertSame(
-            RecordingFileFailure.CONNECTION_CHANGED,
+            TvheadendFailure.CONNECTION_CHANGED,
             (
                 children.openRecording(generation, DvrEntryId(5L)) as
                     RecordingFileResult.Failed
@@ -972,7 +976,7 @@ class SessionSubscriptionsTest {
         val replacementGeneration = GatewayGeneration()
         children.bindGeneration(replacementGeneration)
         assertSame(
-            RecordingFileFailure.CONNECTION_CHANGED,
+            TvheadendFailure.CONNECTION_CHANGED,
             (
                 children.openRecording(generation, DvrEntryId(5L)) as
                     RecordingFileResult.Failed
@@ -1032,11 +1036,11 @@ class SessionSubscriptionsTest {
         )
 
         assertSame(
-            RecordingFileFailure.FILE_UNAVAILABLE,
+            TvheadendFailure.FILE_UNAVAILABLE,
             (children.openRecording(target) as RecordingFileResult.Failed).failure,
         )
         assertSame(
-            RecordingFileFailure.FILE_UNAVAILABLE,
+            TvheadendFailure.FILE_UNAVAILABLE,
             (children.bindGrowingRecording(target) as RecordingFileResult.Failed).failure,
         )
         assertTrue(gateway.openedRecordingGenerations.isEmpty())
@@ -1055,13 +1059,13 @@ class SessionSubscriptionsTest {
         children.bindGeneration(generation)
 
         listOf(
-            GatewayResult.TransportUnavailable to RecordingFileFailure.CONNECTION_CHANGED,
-            GatewayResult.ServerRejected to RecordingFileFailure.FILE_UNAVAILABLE,
-            GatewayResult.MalformedReply to RecordingFileFailure.MALFORMED_RESPONSE,
-            GatewayResult.AccessDenied to RecordingFileFailure.ACCESS_DENIED,
-            GatewayResult.ConnectionLimit to RecordingFileFailure.CONNECTION_LIMIT,
-            GatewayResult.Timeout to RecordingFileFailure.TIMEOUT,
-            GatewayResult.NotSupported to RecordingFileFailure.NOT_SUPPORTED,
+            GatewayResult.TransportUnavailable to TvheadendFailure.CONNECTION_CHANGED,
+            GatewayResult.ServerRejected to TvheadendFailure.FILE_UNAVAILABLE,
+            GatewayResult.MalformedReply to TvheadendFailure.MALFORMED_RESPONSE,
+            GatewayResult.AccessDenied to TvheadendFailure.ACCESS_DENIED,
+            GatewayResult.ConnectionLimit to TvheadendFailure.CONNECTION_LIMIT,
+            GatewayResult.Timeout to TvheadendFailure.TIMEOUT,
+            GatewayResult.NotSupported to TvheadendFailure.NOT_SUPPORTED,
         ).forEach { (source, expected) ->
             gateway.recordingOpenResult = source
             assertSame(
@@ -1132,7 +1136,7 @@ class SessionSubscriptionsTest {
 
         assertFalse(lease.isCurrent)
         assertSame(
-            RecordingFileFailure.CONNECTION_CHANGED,
+            TvheadendFailure.CONNECTION_CHANGED,
             (lease.open(0L) as RecordingFileResult.Failed).failure,
         )
         assertEquals(listOf(firstGeneration), gateway.openedRecordingGenerations)
@@ -1162,7 +1166,7 @@ class SessionSubscriptionsTest {
 
         assertFalse(lease.isCurrent)
         assertSame(
-            RecordingFileFailure.FILE_UNAVAILABLE,
+            TvheadendFailure.FILE_UNAVAILABLE,
             (lease.open(0L) as RecordingFileResult.Failed).failure,
         )
         assertEquals(1, gateway.openedRecordingGenerations.size)
@@ -1191,7 +1195,7 @@ class SessionSubscriptionsTest {
         )
 
         assertSame(
-            RecordingFileFailure.FILE_UNAVAILABLE,
+            TvheadendFailure.FILE_UNAVAILABLE,
             (lease.open(0L) as RecordingFileResult.Failed).failure,
         )
         assertFalse(lease.isCurrent)
@@ -1222,7 +1226,7 @@ class SessionSubscriptionsTest {
 
         gateway.beforeRecordingOpenResult = null
         // A subsequent request must still reject a size below the now-proven extent of 66.
-        assertSame(RecordingFileFailure.FILE_UNAVAILABLE, (lease.open(0L) as RecordingFileResult.Failed).failure)
+        assertSame(TvheadendFailure.FILE_UNAVAILABLE, (lease.open(0L) as RecordingFileResult.Failed).failure)
         assertFalse(lease.isCurrent)
         children.closeAndJoinSubscriptions()
     }
@@ -1241,7 +1245,7 @@ class SessionSubscriptionsTest {
         children.bindGeneration(generation)
 
         assertSame(
-            RecordingFileFailure.FILE_UNAVAILABLE,
+            TvheadendFailure.FILE_UNAVAILABLE,
             (
                 children.bindGrowingRecording(generation, DvrEntryId(5L)) as
                     RecordingFileResult.Failed
@@ -1268,7 +1272,7 @@ class SessionSubscriptionsTest {
             children.bindGrowingRecording(generation, DvrEntryId(5L)) as RecordingFileResult.Ok
         ).value
         assertSame(
-            RecordingFileFailure.FILE_UNAVAILABLE,
+            TvheadendFailure.FILE_UNAVAILABLE,
             (lease.open(position = 65L) as RecordingFileResult.Failed).failure,
         )
         assertEquals(listOf(generation), gateway.openedRecordingGenerations)
@@ -1298,7 +1302,7 @@ class SessionSubscriptionsTest {
             children.bindGrowingRecording(generation, DvrEntryId(5L)) as RecordingFileResult.Ok
         ).value
         assertSame(
-            RecordingFileFailure.FILE_UNAVAILABLE,
+            TvheadendFailure.FILE_UNAVAILABLE,
             (lease.open(position = 0L) as RecordingFileResult.Failed).failure,
         )
         assertEquals(listOf(generation), gateway.openedRecordingGenerations)
@@ -1323,7 +1327,7 @@ class SessionSubscriptionsTest {
         )
 
         assertSame(
-            ArtworkFailure.OBSERVATION_EXPIRED,
+            TvheadendFailure.OBSERVATION_EXPIRED,
             (children.loadArtwork(expired, artworkId) as ArtworkLoadResult.Unavailable).failure,
         )
 
@@ -1347,13 +1351,13 @@ class SessionSubscriptionsTest {
         assertEquals("ArtworkLoadResult.Available(<redacted>)", available.toString())
 
         listOf(
-            GatewayResult.ServerRejected to ArtworkFailure.FILE_UNAVAILABLE,
-            GatewayResult.MalformedReply to ArtworkFailure.MALFORMED_RESPONSE,
-            GatewayResult.AccessDenied to ArtworkFailure.ACCESS_DENIED,
-            GatewayResult.ConnectionLimit to ArtworkFailure.CONNECTION_LIMIT,
-            GatewayResult.Timeout to ArtworkFailure.TIMEOUT,
-            GatewayResult.TransportUnavailable to ArtworkFailure.CONNECTION_CHANGED,
-            GatewayResult.NotSupported to ArtworkFailure.NOT_SUPPORTED,
+            GatewayResult.ServerRejected to TvheadendFailure.FILE_UNAVAILABLE,
+            GatewayResult.MalformedReply to TvheadendFailure.MALFORMED_RESPONSE,
+            GatewayResult.AccessDenied to TvheadendFailure.ACCESS_DENIED,
+            GatewayResult.ConnectionLimit to TvheadendFailure.CONNECTION_LIMIT,
+            GatewayResult.Timeout to TvheadendFailure.TIMEOUT,
+            GatewayResult.TransportUnavailable to TvheadendFailure.CONNECTION_CHANGED,
+            GatewayResult.NotSupported to TvheadendFailure.NOT_SUPPORTED,
         ).forEach { (sourceResult, expected) ->
             gateway.artworkLoadResult = sourceResult
             val unavailable = children.loadArtwork(
@@ -1369,7 +1373,7 @@ class SessionSubscriptionsTest {
 
         children.closeAndJoinSubscriptions()
         assertSame(
-            ArtworkFailure.OBSERVATION_EXPIRED,
+            TvheadendFailure.OBSERVATION_EXPIRED,
             (
                 children.loadArtwork(currentSession, artworkId) as ArtworkLoadResult.Unavailable
             ).failure,
@@ -1402,7 +1406,7 @@ class SessionSubscriptionsTest {
         metadata.clearAllState()
         replacementRelease.complete(Unit)
         val replacementFailure = replaced.await() as ArtworkLoadResult.Unavailable
-        assertSame(ArtworkFailure.CONNECTION_CHANGED, replacementFailure.failure)
+        assertSame(TvheadendFailure.CONNECTION_CHANGED, replacementFailure.failure)
 
         children.closeAndJoinSubscriptions()
         val generationB = GatewayGeneration()

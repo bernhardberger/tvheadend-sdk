@@ -121,7 +121,7 @@ class SubscriptionSeekGateTest {
         val packetWithheld = CompletableDeferred<Unit>()
         fixture.connection.skipAction = {
             packetWithheld.await()
-            SubscriptionOperationResult.AccessDenied
+            SubscriptionOperationResult.Failed(TvheadendFailure.ACCESS_DENIED)
         }
         val seeking = async { fixture.subscription.seek(absoluteSeek()) }
         runCurrent()
@@ -139,7 +139,7 @@ class SubscriptionSeekGateTest {
         val result = seeking.await()
         assertTrue(result is SubscriptionSeekResult.Refused)
         assertEquals(
-            SubscriptionOperationFailure.ACCESS_DENIED,
+            TvheadendFailure.ACCESS_DENIED,
             (result as SubscriptionSeekResult.Refused).failure,
         )
         assertEquals(listOf("started", "packet:60"), fixture.received)
@@ -161,7 +161,7 @@ class SubscriptionSeekGateTest {
         )
         fixture.connection.skipAction = {
             statusEntered.await()
-            SubscriptionOperationResult.ServerRejected
+            SubscriptionOperationResult.Failed(TvheadendFailure.SERVER_REJECTED)
         }
 
         val seeking = async { fixture.subscription.seek(absoluteSeek()) }
@@ -194,7 +194,7 @@ class SubscriptionSeekGateTest {
         val packetWithheld = CompletableDeferred<Unit>()
         fixture.connection.skipAction = {
             packetWithheld.await()
-            SubscriptionOperationResult.NotSupported
+            SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED)
         }
 
         val seeking = async { fixture.subscription.seek(absoluteSeek()) }
@@ -233,7 +233,7 @@ class SubscriptionSeekGateTest {
         val packetWithheld = CompletableDeferred<Unit>()
         fixture.connection.skipAction = {
             packetWithheld.await()
-            SubscriptionOperationResult.NotSupported
+            SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED)
         }
         try {
             val seeking = async { fixture.subscription.seek(absoluteSeek()) }
@@ -322,7 +322,10 @@ class SubscriptionSeekGateTest {
 
     @Test
     fun `a timed out or malformed command reply is uncertain and never replays withheld packets`() = runTest {
-        listOf(SubscriptionOperationResult.Timeout, SubscriptionOperationResult.MalformedResponse).forEach {
+        listOf(
+            SubscriptionOperationResult.Failed(TvheadendFailure.TIMEOUT),
+            SubscriptionOperationResult.Failed(TvheadendFailure.MALFORMED_RESPONSE),
+        ).forEach {
             verifyUncertainSeek(it)
         }
     }
@@ -484,9 +487,9 @@ class SubscriptionSeekGateTest {
             assertTrue(fixture.subscription.setSpeed(100) is SubscriptionOperationResult.Ok)
             assertEquals(listOf(0, 100), fixture.connection.speeds)
 
-            fixture.connection.speedAction = { SubscriptionOperationResult.ServerRejected }
-            assertSame(
-                SubscriptionOperationResult.ServerRejected,
+            fixture.connection.speedAction = { SubscriptionOperationResult.Failed(TvheadendFailure.SERVER_REJECTED) }
+            assertEquals(
+                SubscriptionOperationResult.Failed(TvheadendFailure.SERVER_REJECTED),
                 fixture.subscription.setSpeed(0),
             )
             val cancellation = CancellationException("scripted")
@@ -501,8 +504,8 @@ class SubscriptionSeekGateTest {
 
             assertSame(SubscriptionCloseResult.CLOSED, fixture.subscription.close())
             assertSame(SubscriptionCloseResult.CLOSED, fixture.subscription.close())
-            assertSame(
-                SubscriptionOperationResult.TransportUnavailable,
+            assertEquals(
+                SubscriptionOperationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE),
                 fixture.subscription.setSpeed(100),
             )
             fixture.manager.closeAndJoin()
@@ -542,19 +545,19 @@ class SubscriptionSeekGateTest {
                 SubscriptionOperationResult.Ok,
         )
         assertSame(subscriptionDispatcher, observedDispatcher)
-        fixture.connection.priorityAction = { SubscriptionOperationResult.NotSupported }
-        assertSame(
-            SubscriptionOperationResult.NotSupported,
+        fixture.connection.priorityAction = { SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED) }
+        assertEquals(
+            SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED),
             fixture.subscription.setPriority(LiveSubscriptionPriority.NORMAL),
         )
-        fixture.connection.priorityAction = { SubscriptionOperationResult.Timeout }
-        assertSame(
-            SubscriptionOperationResult.Timeout,
+        fixture.connection.priorityAction = { SubscriptionOperationResult.Failed(TvheadendFailure.TIMEOUT) }
+        assertEquals(
+            SubscriptionOperationResult.Failed(TvheadendFailure.TIMEOUT),
             fixture.subscription.setPriority(LiveSubscriptionPriority.NORMAL),
         )
         fixture.connection.priorityAction = { error("transport failed") }
-        assertSame(
-            SubscriptionOperationResult.TransportUnavailable,
+        assertEquals(
+            SubscriptionOperationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE),
             fixture.subscription.setPriority(LiveSubscriptionPriority.NORMAL),
         )
         val cancellation = CancellationException("scripted")
@@ -578,8 +581,8 @@ class SubscriptionSeekGateTest {
         )
 
         assertSame(SubscriptionCloseResult.CLOSED, fixture.subscription.close())
-        assertSame(
-            SubscriptionOperationResult.TransportUnavailable,
+        assertEquals(
+            SubscriptionOperationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE),
             fixture.subscription.setPriority(LiveSubscriptionPriority.NORMAL),
         )
         assertEquals(5, fixture.connection.calls.count { it == Call.PRIORITY })
@@ -755,7 +758,7 @@ class SubscriptionSeekGateTest {
         val packetWithheld = CompletableDeferred<Unit>()
         fixture.connection.skipAction = {
             packetWithheld.await()
-            SubscriptionOperationResult.AccessDenied
+            SubscriptionOperationResult.Failed(TvheadendFailure.ACCESS_DENIED)
         }
         try {
             val seeking = async { fixture.subscription.seek(absoluteSeek()) }
@@ -818,7 +821,7 @@ class SubscriptionSeekGateTest {
         val packetWithheld = CompletableDeferred<Unit>()
         fixture.connection.skipAction = {
             packetWithheld.await()
-            SubscriptionOperationResult.AccessDenied
+            SubscriptionOperationResult.Failed(TvheadendFailure.ACCESS_DENIED)
         }
         try {
             val seeking = async { fixture.subscription.seek(absoluteSeek()) }
@@ -871,7 +874,7 @@ class SubscriptionSeekGateTest {
         val packetWithheld = CompletableDeferred<Unit>()
         connection.skipAction = {
             packetWithheld.await()
-            SubscriptionOperationResult.AccessDenied
+            SubscriptionOperationResult.Failed(TvheadendFailure.ACCESS_DENIED)
         }
         try {
             val seeking = async { fixture.subscription.seek(absoluteSeek()) }
@@ -920,7 +923,7 @@ class SubscriptionSeekGateTest {
         val releaseUnsubscribe = CompletableDeferred<Unit>()
         fixture.connection.skipAction = {
             packetWithheld.await()
-            SubscriptionOperationResult.AccessDenied
+            SubscriptionOperationResult.Failed(TvheadendFailure.ACCESS_DENIED)
         }
         fixture.connection.unsubscribeAction = {
             releaseUnsubscribe.await()
@@ -997,7 +1000,7 @@ class SubscriptionSeekGateTest {
         val packetWithheld = CompletableDeferred<Unit>()
         fixture.connection.skipAction = {
             packetWithheld.await()
-            SubscriptionOperationResult.AccessDenied
+            SubscriptionOperationResult.Failed(TvheadendFailure.ACCESS_DENIED)
         }
         try {
             val seeking = async { fixture.subscription.seek(absoluteSeek()) }
@@ -1064,7 +1067,7 @@ class SubscriptionSeekGateTest {
         val packetWithheld = CompletableDeferred<Unit>()
         fixture.connection.skipAction = {
             packetWithheld.await()
-            SubscriptionOperationResult.AccessDenied
+            SubscriptionOperationResult.Failed(TvheadendFailure.ACCESS_DENIED)
         }
         try {
             val seeking = async { fixture.subscription.seek(absoluteSeek()) }

@@ -1,7 +1,6 @@
 package at.bernhardberger.tvheadend.sdk.android
 
 import at.bernhardberger.tvheadend.sdk.core.ArtworkContent
-import at.bernhardberger.tvheadend.sdk.core.ArtworkFailure
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoader
@@ -26,6 +25,7 @@ import at.bernhardberger.tvheadend.sdk.core.SessionObservation
 import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import coil3.ComponentRegistry
 import coil3.decode.DataSource
 import coil3.fetch.SourceFetchResult
@@ -131,7 +131,7 @@ internal class TvheadendArtworkTest {
         val failure = assertThrows(TvheadendArtworkLoadException::class.java) {
             runTest { TvheadendArtworkFetcher(first).fetch() }
         }
-        assertEquals(ArtworkFailure.OBSERVATION_EXPIRED, failure.failure)
+        assertEquals(TvheadendFailure.OBSERVATION_EXPIRED, failure.failure)
         assertNull(loader.lastId)
     }
 
@@ -167,7 +167,7 @@ internal class TvheadendArtworkTest {
     @Test
     fun `delayed fetch retains its originating observation after replacement`() {
         val loader = FakeArtworkLoader(
-            ArtworkLoadResult.Unavailable(ArtworkFailure.OBSERVATION_EXPIRED),
+            ArtworkLoadResult.Unavailable(TvheadendFailure.OBSERVATION_EXPIRED),
         )
         val initialObservation = currentObservation()
         val observations = MutableStateFlow(initialObservation)
@@ -183,7 +183,7 @@ internal class TvheadendArtworkTest {
             runTest { TvheadendArtworkFetcher(artwork).fetch() }
         }
 
-        assertSame(ArtworkFailure.OBSERVATION_EXPIRED, failure.failure)
+        assertSame(TvheadendFailure.OBSERVATION_EXPIRED, failure.failure)
         assertEquals("TVHeadend artwork load failed", failure.message)
         assertNull(loader.lastCurrentSession)
     }
@@ -191,7 +191,7 @@ internal class TvheadendArtworkTest {
     @Test
     fun `typed load failures become safe Coil errors and cancellation propagates`() {
         val loader = FakeArtworkLoader(
-            ArtworkLoadResult.Unavailable(ArtworkFailure.ACCESS_DENIED),
+            ArtworkLoadResult.Unavailable(TvheadendFailure.ACCESS_DENIED),
         )
         val observation = currentObservation()
         val session = sessionWith(loader, MutableStateFlow(observation))
@@ -204,7 +204,7 @@ internal class TvheadendArtworkTest {
         val failure = assertThrows(TvheadendArtworkLoadException::class.java) {
             runTest { TvheadendArtworkFetcher(artwork).fetch() }
         }
-        assertSame(ArtworkFailure.ACCESS_DENIED, failure.failure)
+        assertSame(TvheadendFailure.ACCESS_DENIED, failure.failure)
         assertEquals("TVHeadend artwork load failed", failure.message)
         assertFalse(failure.toString().contains("imagecache"))
         assertFalse(failure.toString().contains("27"))
@@ -266,7 +266,7 @@ private class FakeArtworkSession(
 
 private class FakeArtworkLoader(
     internal var result: ArtworkLoadResult =
-        ArtworkLoadResult.Unavailable(ArtworkFailure.FILE_UNAVAILABLE),
+        ArtworkLoadResult.Unavailable(TvheadendFailure.FILE_UNAVAILABLE),
 ) : ArtworkLoader {
     internal var lastId: ArtworkId? = null
     internal var lastCurrentSession: CurrentSessionObservation? = null

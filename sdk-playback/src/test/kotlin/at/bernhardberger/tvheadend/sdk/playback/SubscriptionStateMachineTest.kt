@@ -338,14 +338,15 @@ class SubscriptionStateMachineTest {
     @Test
     fun `all typed subscribe failures terminate and unsubscribe exactly once`() = runTest {
         val cases = listOf(
-            SubscriptionOperationResult.ServerRejected to SubscriptionOperationFailure.SERVER_REJECTED,
-            SubscriptionOperationResult.AccessDenied to SubscriptionOperationFailure.ACCESS_DENIED,
-            SubscriptionOperationResult.ConnectionLimit to SubscriptionOperationFailure.CONNECTION_LIMIT,
-            SubscriptionOperationResult.Timeout to SubscriptionOperationFailure.TIMEOUT,
-            SubscriptionOperationResult.MalformedResponse to SubscriptionOperationFailure.MALFORMED_RESPONSE,
-            SubscriptionOperationResult.TransportUnavailable to
-                SubscriptionOperationFailure.TRANSPORT_UNAVAILABLE,
-            SubscriptionOperationResult.NotSupported to SubscriptionOperationFailure.NOT_SUPPORTED,
+            SubscriptionOperationResult.Failed(TvheadendFailure.SERVER_REJECTED) to TvheadendFailure.SERVER_REJECTED,
+            SubscriptionOperationResult.Failed(TvheadendFailure.ACCESS_DENIED) to TvheadendFailure.ACCESS_DENIED,
+            SubscriptionOperationResult.Failed(TvheadendFailure.CONNECTION_LIMIT) to TvheadendFailure.CONNECTION_LIMIT,
+            SubscriptionOperationResult.Failed(TvheadendFailure.TIMEOUT) to TvheadendFailure.TIMEOUT,
+            SubscriptionOperationResult.Failed(TvheadendFailure.MALFORMED_RESPONSE) to
+                TvheadendFailure.MALFORMED_RESPONSE,
+            SubscriptionOperationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE) to
+                TvheadendFailure.TRANSPORT_UNAVAILABLE,
+            SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED) to TvheadendFailure.NOT_SUPPORTED,
         )
 
         cases.forEach { (result, expected) ->
@@ -387,7 +388,7 @@ class SubscriptionStateMachineTest {
                 runCurrent()
                 assertFalse(opened.isCompleted)
             }
-            reply.complete(SubscriptionOperationResult.ConnectionLimit)
+            reply.complete(SubscriptionOperationResult.Failed(TvheadendFailure.CONNECTION_LIMIT))
             runCurrent()
             if (!eventFirst) {
                 connection.emit(SubscriptionEvent.Terminated(SubscriptionTermination.SUBSCRIBE_REJECTED))
@@ -396,7 +397,7 @@ class SubscriptionStateMachineTest {
             cleanup.complete(Unit)
             runCurrent()
             val failure = opened.await() as SubscriptionOpenResult.Failed
-            assertEquals(SubscriptionOperationFailure.CONNECTION_LIMIT,
+            assertEquals(TvheadendFailure.CONNECTION_LIMIT,
                 (failure.reason as SubscriptionTerminalReason.OperationFailed).failure)
             manager.closeAndJoin()
             assertEquals(1, connection.unsubscribeCount)
@@ -422,7 +423,7 @@ class SubscriptionStateMachineTest {
         // Do not advance to the rejection deadline: the late reply itself must settle the open.
         assertTrue(opened.isCompleted)
         val failure = opened.await() as SubscriptionOpenResult.Failed
-        assertEquals(SubscriptionOperationFailure.SERVER_REJECTED,
+        assertEquals(TvheadendFailure.SERVER_REJECTED,
             (failure.reason as SubscriptionTerminalReason.OperationFailed).failure)
         assertEquals(1, connection.unsubscribeCount)
         manager.closeAndJoin()
@@ -466,7 +467,7 @@ class SubscriptionStateMachineTest {
         assertFalse(completedBeforeRequestJoined)
         assertEquals(0, unsubscribedBeforeRequestJoined)
         val failure = opened.await() as SubscriptionOpenResult.Failed
-        assertEquals(SubscriptionOperationFailure.SERVER_REJECTED,
+        assertEquals(TvheadendFailure.SERVER_REJECTED,
             (failure.reason as SubscriptionTerminalReason.OperationFailed).failure)
         assertEquals(1, connection.unsubscribeCount)
         manager.closeAndJoin()
@@ -559,7 +560,7 @@ class SubscriptionStateMachineTest {
     @Test
     fun `startup failure waits for ordered drain before returning`() = runTest {
         val connection = RecordingSubscriptionConnection().apply {
-            subscribeAction = { SubscriptionOperationResult.ServerRejected }
+            subscribeAction = { SubscriptionOperationResult.Failed(TvheadendFailure.SERVER_REJECTED) }
         }
         val unsubscribeEntered = CompletableDeferred<Unit>()
         val releaseUnsubscribe = CompletableDeferred<Unit>()
@@ -596,7 +597,7 @@ class SubscriptionStateMachineTest {
         runCurrent()
         val result = opened.await() as SubscriptionOpenResult.Failed
         assertEquals(
-            SubscriptionOperationFailure.SERVER_REJECTED,
+            TvheadendFailure.SERVER_REJECTED,
             (result.reason as SubscriptionTerminalReason.OperationFailed).failure,
         )
         assertEquals(1, connection.unsubscribeCount)
@@ -855,7 +856,7 @@ class SubscriptionStateMachineTest {
         closerCancelled: Boolean,
     ) = runTest {
         val connection = RecordingSubscriptionConnection()
-        connection.unsubscribeAction = { SubscriptionOperationResult.Timeout }
+        connection.unsubscribeAction = { SubscriptionOperationResult.Failed(TvheadendFailure.TIMEOUT) }
         val delivered = ArrayList<Long?>()
         val consumerEntered = CompletableDeferred<Unit>()
         val releaseConsumer = CompletableDeferred<Unit>()
@@ -924,7 +925,7 @@ class SubscriptionStateMachineTest {
     @ValueSource(booleans = [false, true])
     fun `failed unsubscribe cancels a delivery that outlasts the grace period`(closerCancelled: Boolean) = runTest {
         val connection = RecordingSubscriptionConnection()
-        connection.unsubscribeAction = { SubscriptionOperationResult.Timeout }
+        connection.unsubscribeAction = { SubscriptionOperationResult.Failed(TvheadendFailure.TIMEOUT) }
         val consumerEntered = CompletableDeferred<Unit>()
         var consumerCancelled = false
         val manager = manager(connection)
@@ -1126,7 +1127,7 @@ class SubscriptionStateMachineTest {
     fun `a delivery that ends at the grace deadline after a failed unsubscribe is not reported as timed out`() =
         runTest {
             val connection = RecordingSubscriptionConnection()
-            connection.unsubscribeAction = { SubscriptionOperationResult.Timeout }
+            connection.unsubscribeAction = { SubscriptionOperationResult.Failed(TvheadendFailure.TIMEOUT) }
             var consumerCancelled = false
             val manager = manager(connection)
             manager.startAdmission()

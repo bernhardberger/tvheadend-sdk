@@ -22,6 +22,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrUpdateProvenance
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -233,8 +234,13 @@ internal class DvrChangesTest {
         fixture.ready()
         val changes = collect(fixture)
         fixture.gateway.scheduleBehavior = { _, _ -> GatewayResult.AccessDenied }
-        assertSame(DvrMutationResult.AccessDenied, fixture.coordinator.scheduleEntry(
-            fixture.generation, DvrScheduleRequest(DvrSchedule.Programme(EventId(1)))))
+        assertEquals(
+            DvrMutationResult.Failed(TvheadendFailure.ACCESS_DENIED, mayHaveApplied = false),
+            fixture.coordinator.scheduleEntry(
+                fixture.generation,
+                DvrScheduleRequest(DvrSchedule.Programme(EventId(1))),
+            ),
+        )
         fixture.accept(MetadataEvent.DvrEntryAdded(fixture.generation, entry()))
         runCurrent()
         assertEquals(DvrChangeOrigin.External, changes.single().origin)
@@ -429,7 +435,7 @@ internal class DvrChangesTest {
         runCurrent()
         assertEquals(DvrChangeOrigin.ThisClient(DvrMutationKind.SCHEDULE), changes.single().origin)
         response.complete(GatewayResult.AccessDenied)
-        assertSame(DvrMutationResult.AccessDenied, command.await())
+        assertEquals(DvrMutationResult.Failed(TvheadendFailure.ACCESS_DENIED, mayHaveApplied = false), command.await())
         fixture.accept(MetadataEvent.DvrEntryUpdated(fixture.generation,
             entry(state = DvrEntryState.RECORDING), GatewayDvrUpdateProvenance.FULL))
         runCurrent()
@@ -469,7 +475,10 @@ internal class DvrChangesTest {
         fixture.metadata.bindGeneration(fixture.generation)
         fixture.ready()
         response.complete(GatewayResult.Ok(DvrEntryId(7)))
-        assertSame(DvrMutationResult.TransportUnavailable, command.await())
+        assertEquals(
+            DvrMutationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = true),
+            command.await(),
+        )
         fixture.accept(MetadataEvent.DvrEntryAdded(fixture.generation, entry()))
         runCurrent()
         assertEquals(DvrChangeOrigin.External, changes.single().origin)

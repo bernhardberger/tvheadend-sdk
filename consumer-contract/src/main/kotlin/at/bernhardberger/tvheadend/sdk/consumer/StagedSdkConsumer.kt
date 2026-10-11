@@ -10,7 +10,6 @@ import at.bernhardberger.tvheadend.sdk.android.TvheadendArtworkLoadException
 import at.bernhardberger.tvheadend.sdk.android.ServerProfileEditReadResult
 import at.bernhardberger.tvheadend.sdk.android.TvheadendServerProfileStore
 import at.bernhardberger.tvheadend.sdk.android.addTvheadendArtwork
-import at.bernhardberger.tvheadend.sdk.core.ArtworkFailure
 import at.bernhardberger.tvheadend.sdk.core.Channel
 import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
@@ -183,7 +182,7 @@ public class StagedSdkConsumer(
         components: ComponentRegistry.Builder,
     ): ComponentRegistry.Builder = components.addTvheadendArtwork()
 
-    public fun artworkFailure(failure: TvheadendArtworkLoadException): ArtworkFailure =
+    public fun artworkFailure(failure: TvheadendArtworkLoadException): TvheadendFailure =
         failure.failure
 
     public fun channel(id: ChannelId): Channel? = observation.value.channel(id)
@@ -410,9 +409,9 @@ public fun stagedTestingFake(
     captureCurrentSession()
     scriptConnect(SessionCommandResult.STARTED)
     scriptRetry(SessionCommandResult.NO_ACTIVE_PROFILE)
-    scriptStreamProfilesFailure(StreamProfilesResult.NotReady)
+    scriptStreamProfilesFailure(StreamProfilesResult.Failed(TvheadendFailure.NOT_READY))
     scriptStreamProfiles(emptyList())
-    epgRepository.scriptSearchFailure(EpgSearchResult.NotSupported)
+    epgRepository.scriptSearchFailure(EpgSearchResult.Failed(TvheadendFailure.NOT_SUPPORTED))
     epgRepository.scriptSearch(emptyList())
     epgRepository.scriptCoverage(
         at.bernhardberger.tvheadend.sdk.core.EpgCoverageAcquisitionResult.Ineligible,
@@ -422,19 +421,19 @@ public fun stagedTestingFake(
             listOf(EpgCoverageBatchSettlement.Rejected(ChannelId(1))),
         ),
     )
-    dvrRepository.scriptScheduleEntry(DvrMutationResult.NotReady)
-    dvrRepository.scriptUpdateEntry(DvrMutationResult.NotReady)
-    dvrRepository.scriptStopEntry(DvrMutationResult.NotReady)
-    dvrRepository.scriptCancelEntry(DvrMutationResult.NotReady)
-    dvrRepository.scriptDeleteEntry(DvrMutationResult.NotReady)
-    dvrRepository.scriptCreateAutorecRule(DvrMutationResult.NotReady)
-    dvrRepository.scriptUpdateAutorecRule(DvrMutationResult.NotReady)
-    dvrRepository.scriptDeleteAutorecRule(DvrMutationResult.NotReady)
-    dvrRepository.scriptCreateTimerecRule(DvrMutationResult.NotReady)
-    dvrRepository.scriptUpdateTimerecRule(DvrMutationResult.NotReady)
-    dvrRepository.scriptDeleteTimerecRule(DvrMutationResult.NotReady)
+    dvrRepository.scriptScheduleEntry(DvrMutationResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false))
+    dvrRepository.scriptUpdateEntry(DvrMutationResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false))
+    dvrRepository.scriptStopEntry(DvrMutationResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false))
+    dvrRepository.scriptCancelEntry(DvrMutationResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false))
+    dvrRepository.scriptDeleteEntry(DvrMutationResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false))
+    dvrRepository.scriptCreateAutorecRule(DvrMutationResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false))
+    dvrRepository.scriptUpdateAutorecRule(DvrMutationResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false))
+    dvrRepository.scriptDeleteAutorecRule(DvrMutationResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false))
+    dvrRepository.scriptCreateTimerecRule(DvrMutationResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false))
+    dvrRepository.scriptUpdateTimerecRule(DvrMutationResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false))
+    dvrRepository.scriptDeleteTimerecRule(DvrMutationResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false))
     artwork.scriptLoad(
-        at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult.Unavailable(ArtworkFailure.NOT_SUPPORTED),
+        at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult.Unavailable(TvheadendFailure.NOT_SUPPORTED),
     )
     scriptLivePlaybackFailure(PlaybackBindingResult.TargetUnavailable)
     scriptRecordingPlaybackFailure(PlaybackBindingResult.TargetUnavailable)

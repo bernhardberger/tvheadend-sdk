@@ -40,6 +40,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -81,11 +82,17 @@ internal class DvrMutationCoordinatorTest {
         coordinator.bindGeneration(generation)
         assertTrue(coordinator.startAdmission(generation))
 
-        assertSame(DvrMutationResult.NotReady, coordinator.scheduleEntry(generation, scheduleRequest()))
+        assertEquals(
+            DvrMutationResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false),
+            coordinator.scheduleEntry(generation, scheduleRequest()),
+        )
         assertEquals(0, commandCount)
 
         ready = true
-        assertSame(DvrMutationResult.AccessDenied, coordinator.scheduleEntry(generation, scheduleRequest()))
+        assertEquals(
+            DvrMutationResult.Failed(TvheadendFailure.ACCESS_DENIED, mayHaveApplied = false),
+            coordinator.scheduleEntry(generation, scheduleRequest()),
+        )
         assertEquals(1, commandCount)
     }
 
@@ -130,7 +137,10 @@ internal class DvrMutationCoordinatorTest {
             GatewayResult.ServerRejected
         }
 
-        assertSame(DvrMutationResult.ServerRejected, coordinator.scheduleEntry(generation, scheduleRequest()))
+        assertEquals(
+            DvrMutationResult.Failed(TvheadendFailure.SERVER_REJECTED, mayHaveApplied = false),
+            coordinator.scheduleEntry(generation, scheduleRequest()),
+        )
 
         gateway.scheduleBehavior = { _, _ -> GatewayResult.Ok(DvrEntryId(8)) }
         val timed = async { coordinator.scheduleEntry(generation, scheduleRequest()) }
@@ -157,17 +167,23 @@ internal class DvrMutationCoordinatorTest {
         coordinator.bindGeneration(generation)
         coordinator.startAdmission(generation)
         val cases = listOf(
-            GatewayResult.AccessDenied to DvrMutationResult.AccessDenied,
-            GatewayResult.ServerRejected to DvrMutationResult.ServerRejected,
-            GatewayResult.MalformedReply to DvrMutationResult.MalformedResponse,
-            GatewayResult.ConnectionLimit to DvrMutationResult.ConnectionLimit,
-            GatewayResult.Timeout to DvrMutationResult.Timeout,
-            GatewayResult.TransportUnavailable to DvrMutationResult.TransportUnavailable,
-            GatewayResult.NotSupported to DvrMutationResult.NotSupported,
+            GatewayResult.AccessDenied to
+                DvrMutationResult.Failed(TvheadendFailure.ACCESS_DENIED, mayHaveApplied = false),
+            GatewayResult.ServerRejected to
+                DvrMutationResult.Failed(TvheadendFailure.SERVER_REJECTED, mayHaveApplied = false),
+            GatewayResult.MalformedReply to
+                DvrMutationResult.Failed(TvheadendFailure.MALFORMED_RESPONSE, mayHaveApplied = true),
+            GatewayResult.ConnectionLimit to
+                DvrMutationResult.Failed(TvheadendFailure.CONNECTION_LIMIT, mayHaveApplied = false),
+            GatewayResult.Timeout to DvrMutationResult.Failed(TvheadendFailure.TIMEOUT, mayHaveApplied = true),
+            GatewayResult.TransportUnavailable to
+                DvrMutationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = true),
+            GatewayResult.NotSupported to
+                DvrMutationResult.Failed(TvheadendFailure.NOT_SUPPORTED, mayHaveApplied = false),
         )
         cases.forEach { (gatewayResult, expected) ->
             gateway.scheduleBehavior = { _, _ -> gatewayResult }
-            assertSame(expected, coordinator.scheduleEntry(generation, scheduleRequest()))
+            assertEquals(expected, coordinator.scheduleEntry(generation, scheduleRequest()))
         }
         assertEquals(listOf(false), proofs)
 
@@ -183,6 +199,60 @@ internal class DvrMutationCoordinatorTest {
     }
 
     @Test
+    fun `mutation uncertainty follows dispatch and refusal even when the generation retires`() = runTest {
+        val replies = listOf(
+            GatewayResult.ServerRejected to false,
+            GatewayResult.ConnectionLimit to false,
+            GatewayResult.NotSupported to false,
+            GatewayResult.MalformedReply to true,
+            GatewayResult.Timeout to true,
+            GatewayResult.TransportUnavailable to true,
+        )
+        for ((reply, mayHaveApplied) in replies) {
+            val generation = GatewayGeneration()
+            val gateway = MutationGateway()
+            val coordinator = DvrMutationCoordinator(gateway)
+            coordinator.bindGeneration(generation)
+            coordinator.startAdmission(generation)
+            gateway.updateBehavior = { _, _, _ ->
+                coordinator.stopAdmission()
+                reply
+            }
+
+            assertEquals(
+                DvrMutationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied),
+                coordinator.updateEntry(generation, DvrEntryId(7), DvrEntryUpdate()),
+            )
+        }
+    }
+
+    @Test
+    fun `access denial after dispatch and retirement cannot update proof and did not apply`() = runTest {
+        val generation = GatewayGeneration()
+        val gateway = MutationGateway()
+        val proofs = mutableListOf<Boolean>()
+        val coordinator = DvrMutationCoordinator(
+            gateway = gateway,
+            onDvrAccessProof = { _, allowed -> proofs += allowed },
+        )
+        coordinator.bindGeneration(generation)
+        coordinator.startAdmission(generation)
+        var calls = 0
+        gateway.updateBehavior = { _, _, _ ->
+            calls += 1
+            coordinator.stopAdmission()
+            GatewayResult.AccessDenied
+        }
+
+        assertEquals(
+            DvrMutationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = false),
+            coordinator.updateEntry(generation, DvrEntryId(7), DvrEntryUpdate()),
+        )
+        assertEquals(1, calls)
+        assertEquals(emptyList<Boolean>(), proofs)
+    }
+
+    @Test
     fun `malformed add reply is reported without retrying an uncertain command`() = runTest {
         val generation = GatewayGeneration()
         val gateway = MutationGateway()
@@ -195,7 +265,10 @@ internal class DvrMutationCoordinatorTest {
             GatewayResult.MalformedReply
         }
 
-        assertSame(DvrMutationResult.MalformedResponse, coordinator.scheduleEntry(generation, scheduleRequest()))
+        assertEquals(
+            DvrMutationResult.Failed(TvheadendFailure.MALFORMED_RESPONSE, mayHaveApplied = true),
+            coordinator.scheduleEntry(generation, scheduleRequest()),
+        )
         coordinator.acceptMetadata(dvrAdded(generation, 7))
         advanceTimeBy(60.seconds)
         runCurrent()
@@ -223,15 +296,18 @@ internal class DvrMutationCoordinatorTest {
         coordinator.acceptMetadata(dvrUpdated(generation, 1))
         runCurrent()
 
-        assertSame(DvrMutationResult.TransportUnavailable, result.await())
-        assertSame(
-            DvrMutationResult.ObservationExpired,
+        assertEquals(
+            DvrMutationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = true),
+            result.await(),
+        )
+        assertEquals(
+            DvrMutationResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false),
             coordinator.updateEntry(generation, DvrEntryId(1), DvrEntryUpdate()),
         )
     }
 
     @Test
-    fun `queued generation A mutation never dispatches on replacement generation B`() = runTest {
+    fun `accepted mutation may have applied on retirement while queued stale mutation was never sent`() = runTest {
         val generationA = GatewayGeneration()
         val generationB = GatewayGeneration()
         val gateway = MutationGateway()
@@ -259,9 +335,37 @@ internal class DvrMutationCoordinatorTest {
         coordinator.startAdmission(generationB)
         runCurrent()
 
-        assertSame(DvrMutationResult.TransportUnavailable, inFlight.await())
-        assertSame(DvrMutationResult.ObservationExpired, queued.await())
+        assertEquals(
+            DvrMutationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = true),
+            inFlight.await(),
+        )
+        assertEquals(
+            DvrMutationResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false),
+            queued.await(),
+        )
         assertEquals(listOf(generationA), dispatched)
+    }
+
+    @Test
+    fun `acceptance before confirmation registration retirement may have applied`() = runTest {
+        val generation = GatewayGeneration()
+        val gateway = MutationGateway()
+        lateinit var coordinator: DvrMutationCoordinator
+        coordinator = DvrMutationCoordinator(
+            gateway = gateway,
+            onDvrAccessProof = { _, allowed ->
+                assertTrue(allowed)
+                coordinator.stopAdmission()
+            },
+        )
+        gateway.scheduleBehavior = { _, _ -> GatewayResult.Ok(DvrEntryId(7)) }
+        coordinator.bindGeneration(generation)
+        coordinator.startAdmission(generation)
+
+        assertEquals(
+            DvrMutationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = true),
+            coordinator.scheduleEntry(generation, scheduleRequest()),
+        )
     }
 
     @Test
@@ -752,16 +856,16 @@ internal class MutationGateway : ProtocolGateway {
         channelId: ChannelId,
         timeshiftPeriod: Duration,
     ): SubscriptionOperationResult<SubscriptionConfirmation> =
-        SubscriptionOperationResult.NotSupported
+        SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED)
 
     override suspend fun skipSubscription(
         generation: GatewayGeneration,
         id: SubscriptionId,
         target: SubscriptionSeekTarget,
-    ): SubscriptionOperationResult<Unit> = SubscriptionOperationResult.NotSupported
+    ): SubscriptionOperationResult<Unit> = SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED)
 
     override suspend fun unsubscribe(
         generation: GatewayGeneration,
         id: SubscriptionId,
-    ): SubscriptionOperationResult<Unit> = SubscriptionOperationResult.NotSupported
+    ): SubscriptionOperationResult<Unit> = SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED)
 }

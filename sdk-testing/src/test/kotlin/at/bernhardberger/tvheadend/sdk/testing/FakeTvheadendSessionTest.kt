@@ -6,7 +6,6 @@
 package at.bernhardberger.tvheadend.sdk.testing
 
 import at.bernhardberger.tvheadend.sdk.core.ArtworkContent
-import at.bernhardberger.tvheadend.sdk.core.ArtworkFailure
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
@@ -53,6 +52,7 @@ import at.bernhardberger.tvheadend.sdk.core.StreamProfilesResult
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleUpdate
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.cancel
@@ -218,9 +218,12 @@ internal class FakeTvheadendSessionTest {
         val first = FakeTvheadendSession(currentObservation())
         val second = FakeTvheadendSession(currentObservation())
         val foreign = first.captureCurrentSession()
-        assertSame(StreamProfilesResult.ObservationExpired, second.getStreamProfiles(foreign))
-        assertSame(
-            EpgSearchResult.ObservationExpired,
+        assertEquals(
+            StreamProfilesResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED),
+            second.getStreamProfiles(foreign),
+        )
+        assertEquals(
+            EpgSearchResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED),
             second.epgRepository.search(foreign, EpgSearchRequest.create("news")),
         )
         val expiredCoverage = second.epgRepository.acquireCoverageBatch(
@@ -230,12 +233,12 @@ internal class FakeTvheadendSessionTest {
         )
         assertEquals(listOf(2L, 3L), expiredCoverage.settlements.map { it.channelId.value })
         assertTrue(expiredCoverage.settlements.all { it is EpgCoverageBatchSettlement.ObservationExpired })
-        assertSame(
-            DvrMutationResult.ObservationExpired,
+        assertEquals(
+            DvrMutationResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false),
             second.dvrRepository.scheduleEntry(foreign, scheduleRequest()),
         )
         val artwork = second.artwork.loadArtwork(foreign, ArtworkId(1)) as ArtworkLoadResult.Unavailable
-        assertEquals(ArtworkFailure.OBSERVATION_EXPIRED, artwork.failure)
+        assertEquals(TvheadendFailure.OBSERVATION_EXPIRED, artwork.failure)
         assertSame(
             PlaybackBindingResult.ObservationExpired,
             second.bindLivePlayback(foreign, ChannelId(1)),
@@ -264,11 +267,11 @@ internal class FakeTvheadendSessionTest {
     fun `scripts every failure and DVR command without provenance bypass`() = runTest {
         val fake = FakeTvheadendSession(currentObservation())
         val current = fake.captureCurrentSession()
-        val dvrFailure = DvrMutationResult.ConnectionLimit
-        fake.scriptStreamProfilesFailure(StreamProfilesResult.NotSupported)
-        fake.epgRepository.scriptSearchFailure(EpgSearchResult.NotSupported)
+        val dvrFailure = DvrMutationResult.Failed(TvheadendFailure.CONNECTION_LIMIT, mayHaveApplied = false)
+        fake.scriptStreamProfilesFailure(StreamProfilesResult.Failed(TvheadendFailure.NOT_SUPPORTED))
+        fake.epgRepository.scriptSearchFailure(EpgSearchResult.Failed(TvheadendFailure.NOT_SUPPORTED))
         fake.epgRepository.scriptCoverage(EpgCoverageAcquisitionResult.Ineligible)
-        fake.artwork.scriptLoad(ArtworkLoadResult.Unavailable(ArtworkFailure.NOT_SUPPORTED))
+        fake.artwork.scriptLoad(ArtworkLoadResult.Unavailable(TvheadendFailure.NOT_SUPPORTED))
         fake.scriptLivePlaybackFailure(PlaybackBindingResult.TargetUnavailable)
         fake.scriptRecordingPlaybackFailure(PlaybackBindingResult.TargetUnavailable)
         fake.dvrRepository.apply {
@@ -284,10 +287,13 @@ internal class FakeTvheadendSessionTest {
             scriptUpdateTimerecRule(dvrFailure)
             scriptDeleteTimerecRule(dvrFailure)
         }
-        assertSame(StreamProfilesResult.NotSupported, fake.getStreamProfiles(current))
+        assertEquals(StreamProfilesResult.Failed(TvheadendFailure.NOT_SUPPORTED), fake.getStreamProfiles(current))
         assertSame(PlaybackBindingResult.TargetUnavailable, fake.bindLivePlayback(current, ChannelId(1)))
         assertSame(PlaybackBindingResult.TargetUnavailable, fake.bindRecordingPlayback(current, DvrEntryId(1)))
-        assertSame(EpgSearchResult.NotSupported, fake.epgRepository.search(current, EpgSearchRequest.create("x")))
+        assertEquals(
+            EpgSearchResult.Failed(TvheadendFailure.NOT_SUPPORTED),
+            fake.epgRepository.search(current, EpgSearchRequest.create("x")),
+        )
         assertSame(
             EpgCoverageAcquisitionResult.Ineligible,
             fake.epgRepository.acquireCoverage(current, ChannelId(1), Instant.fromEpochSeconds(1)),
@@ -381,8 +387,18 @@ internal class FakeTvheadendSessionTest {
             release.complete(Unit)
             when (retirement) {
                 "none" -> assertSame(points, response.await(), retirement)
-                "generation" -> assertSame(at.bernhardberger.tvheadend.sdk.core.DvrCutpointsResult.ObservationExpired, response.await(), retirement)
-                "removal" -> assertSame(at.bernhardberger.tvheadend.sdk.core.DvrCutpointsResult.NotReady, response.await(), retirement)
+                "generation" -> assertEquals(
+                    at.bernhardberger.tvheadend.sdk.core.DvrCutpointsResult.Failed(
+                        TvheadendFailure.OBSERVATION_EXPIRED,
+                    ),
+                    response.await(),
+                    retirement,
+                )
+                "removal" -> assertEquals(
+                    at.bernhardberger.tvheadend.sdk.core.DvrCutpointsResult.Failed(TvheadendFailure.NOT_READY),
+                    response.await(),
+                    retirement,
+                )
                 "cancel" -> { response.join(); assertTrue(response.isCancelled) }
             }
         }
@@ -405,7 +421,7 @@ internal class FakeTvheadendSessionTest {
                     release.await()
                 }
                 scriptReturned = true
-                at.bernhardberger.tvheadend.sdk.core.DvrCutpointsResult.NotReady
+                at.bernhardberger.tvheadend.sdk.core.DvrCutpointsResult.Failed(TvheadendFailure.NOT_READY)
             },
         ) as PlaybackBindingResult.Bound).binding
         val response = launch {
@@ -436,10 +452,16 @@ internal class FakeTvheadendSessionTest {
             val defaultBinding = (at.bernhardberger.tvheadend.sdk.core.TvheadendTestResultFactory.boundCompletedRecordingPlayback(
                 fake, current, DvrEntryId(1),
             ) as PlaybackBindingResult.Bound).binding
-            assertSame(at.bernhardberger.tvheadend.sdk.core.DvrCutpointsResult.NotReady, defaultBinding.cutpoints())
+            assertEquals(
+                at.bernhardberger.tvheadend.sdk.core.DvrCutpointsResult.Failed(TvheadendFailure.NOT_READY),
+                defaultBinding.cutpoints(),
+            )
             val binding = (at.bernhardberger.tvheadend.sdk.core.TvheadendTestResultFactory.boundCompletedRecordingPlayback(
                 fake, current, DvrEntryId(1),
-                cutpoints = { calls++; at.bernhardberger.tvheadend.sdk.core.DvrCutpointsResult.NotReady },
+                cutpoints = {
+                    calls++
+                    at.bernhardberger.tvheadend.sdk.core.DvrCutpointsResult.Failed(TvheadendFailure.NOT_READY)
+                },
             ) as PlaybackBindingResult.Bound).binding
             when (retirement) {
                 "generation" -> fake.replaceGeneration(currentObservation())
@@ -447,11 +469,11 @@ internal class FakeTvheadendSessionTest {
                 "replacement" -> fake.publish(currentObservation(recordingTitle = "replacement"))
             }
             val expected = if (retirement == "generation") {
-                at.bernhardberger.tvheadend.sdk.core.DvrCutpointsResult.ObservationExpired
+                at.bernhardberger.tvheadend.sdk.core.DvrCutpointsResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED)
             } else {
-                at.bernhardberger.tvheadend.sdk.core.DvrCutpointsResult.NotReady
+                at.bernhardberger.tvheadend.sdk.core.DvrCutpointsResult.Failed(TvheadendFailure.NOT_READY)
             }
-            assertSame(expected, binding.cutpoints(), retirement)
+            assertEquals(expected, binding.cutpoints(), retirement)
             assertEquals(0, calls, retirement)
         }
     }
@@ -462,7 +484,9 @@ internal class FakeTvheadendSessionTest {
         val fake = FakeTvheadendSession(currentObservation())
         val binding = (at.bernhardberger.tvheadend.sdk.core.TvheadendTestResultFactory.boundCompletedRecordingPlayback(
             fake, fake.captureCurrentSession(), DvrEntryId(1),
-            cutpoints = { at.bernhardberger.tvheadend.sdk.core.DvrCutpointsResult.ObservationExpired },
+            cutpoints = {
+                at.bernhardberger.tvheadend.sdk.core.DvrCutpointsResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED)
+            },
         ) as PlaybackBindingResult.Bound).binding
         var rejected = false
         try { binding.cutpoints() } catch (_: IllegalArgumentException) { rejected = true }
@@ -595,23 +619,27 @@ internal class FakeTvheadendSessionTest {
         val current = fake.captureCurrentSession()
         assertThrows(IllegalArgumentException::class.java) { fake.retire(currentObservation()) }
         assertThrows(IllegalArgumentException::class.java) {
-            fake.scriptStreamProfilesFailure(StreamProfilesResult.ObservationExpired)
+            fake.scriptStreamProfilesFailure(StreamProfilesResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED))
         }
         assertThrows(IllegalArgumentException::class.java) {
-            fake.epgRepository.scriptSearchFailure(EpgSearchResult.ObservationExpired)
+            fake.epgRepository.scriptSearchFailure(EpgSearchResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED))
+        }
+        for (mayHaveApplied in listOf(false, true)) {
+            assertThrows(IllegalArgumentException::class.java) {
+                fake.dvrRepository.scriptStopEntry(
+                    DvrMutationResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied),
+                )
+            }
         }
         assertThrows(IllegalArgumentException::class.java) {
-            fake.dvrRepository.scriptStopEntry(DvrMutationResult.ObservationExpired)
-        }
-        assertThrows(IllegalArgumentException::class.java) {
-            fake.artwork.scriptLoad(ArtworkLoadResult.Unavailable(ArtworkFailure.OBSERVATION_EXPIRED))
+            fake.artwork.scriptLoad(ArtworkLoadResult.Unavailable(TvheadendFailure.OBSERVATION_EXPIRED))
         }
         assertThrows(IllegalArgumentException::class.java) {
             fake.scriptLivePlaybackFailure(PlaybackBindingResult.ObservationExpired)
         }
         fake.retire()
         assertFalse(fake.isCurrent(current))
-        assertSame(StreamProfilesResult.ObservationExpired, fake.getStreamProfiles(current))
+        assertEquals(StreamProfilesResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED), fake.getStreamProfiles(current))
     }
 }
 private fun scheduleRequest(): DvrScheduleRequest =

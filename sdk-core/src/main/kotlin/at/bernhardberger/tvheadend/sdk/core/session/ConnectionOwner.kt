@@ -129,7 +129,7 @@ internal class ConnectionOwner(
     ): StreamProfilesResult {
         currentCoroutineContext().ensureActive()
         val generation = metadata.resolveGeneration(currentSession)
-            ?: return StreamProfilesResult.ObservationExpired
+            ?: return StreamProfilesResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED)
         return children.getStreamProfiles(generation, currentSession)
     }
     override fun bindLivePlayback(

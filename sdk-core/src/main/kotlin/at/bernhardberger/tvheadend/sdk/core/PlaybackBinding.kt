@@ -9,13 +9,13 @@ import at.bernhardberger.tvheadend.sdk.core.session.SessionChildren
 import at.bernhardberger.tvheadend.sdk.core.session.SessionMetadata
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFile
-import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import kotlin.time.Duration
 
 /** Opaque, observation-bound authority for one playback target. */
@@ -241,12 +241,14 @@ internal class SessionPlaybackBindingFactory(
                         lease != null &&
                         (!startedGrowing || !lease.isBoundTo(generation, recordingId))
                     ) {
-                        return@report DvrProgressResult.NotReady
+                        return@report DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
                     }
                     when (val current = admission()) {
                         is RecordingPlaybackAdmission.Completed -> when (current.progressCapability) {
-                            RecordingProgressCapability.UNKNOWN -> DvrProgressResult.NotReady
-                            RecordingProgressCapability.UNSUPPORTED -> DvrProgressResult.NotSupported
+                            RecordingProgressCapability.UNKNOWN ->
+                                DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
+                            RecordingProgressCapability.UNSUPPORTED ->
+                                DvrProgressResult.Failed(TvheadendFailure.NOT_SUPPORTED, mayHaveApplied = false)
                             RecordingProgressCapability.SUPPORTED -> if (lease == null) {
                                 metadata.reportProgress(target, progress)
                             } else {
@@ -255,17 +257,19 @@ internal class SessionPlaybackBindingFactory(
                         }
                         is RecordingPlaybackAdmission.GrowingStartOverOnly ->
                             when (current.progressCapability) {
-                                RecordingProgressCapability.UNKNOWN -> DvrProgressResult.NotReady
-                                RecordingProgressCapability.UNSUPPORTED -> DvrProgressResult.NotSupported
+                                RecordingProgressCapability.UNKNOWN ->
+                                    DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
+                                RecordingProgressCapability.UNSUPPORTED ->
+                                    DvrProgressResult.Failed(TvheadendFailure.NOT_SUPPORTED, mayHaveApplied = false)
                                 RecordingProgressCapability.SUPPORTED -> lease?.let {
                                     metadata.reportProgress(it, progress)
-                                } ?: DvrProgressResult.NotReady
+                                } ?: DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
                             }
                         RecordingPlaybackAdmission.ObservationExpired ->
-                            DvrProgressResult.ObservationExpired
+                            DvrProgressResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false)
                         RecordingPlaybackAdmission.GrowingDeferred,
                         RecordingPlaybackAdmission.TargetUnavailable,
-                        -> DvrProgressResult.NotReady
+                        -> DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
                     }
                 },
                 loadTargetCutpoints = {
@@ -274,10 +278,10 @@ internal class SessionPlaybackBindingFactory(
                         is RecordingPlaybackAdmission.GrowingStartOverOnly,
                         -> metadata.getCutpoints(target)
                         RecordingPlaybackAdmission.ObservationExpired ->
-                            DvrCutpointsResult.ObservationExpired
+                            DvrCutpointsResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED)
                         RecordingPlaybackAdmission.GrowingDeferred,
                         RecordingPlaybackAdmission.TargetUnavailable,
-                        -> DvrCutpointsResult.NotReady
+                        -> DvrCutpointsResult.Failed(TvheadendFailure.NOT_READY)
                     }
                 },
             ),
@@ -327,13 +331,13 @@ private fun GrowingRecordingFileLease.isBoundTo(
 } == true
 
 private fun changedRecording(): RecordingFileResult<RecordingFile> =
-    RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
+    RecordingFileResult.Failed(TvheadendFailure.CONNECTION_CHANGED)
 
 private fun unavailableRecording(): RecordingFileResult<RecordingFile> =
-    RecordingFileResult.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+    RecordingFileResult.Failed(TvheadendFailure.FILE_UNAVAILABLE)
 
 private fun changedGrowingRecording(): RecordingFileResult<GrowingRecordingFileLease> =
-    RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
+    RecordingFileResult.Failed(TvheadendFailure.CONNECTION_CHANGED)
 
 private fun unavailableGrowingRecording(): RecordingFileResult<GrowingRecordingFileLease> =
-    RecordingFileResult.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+    RecordingFileResult.Failed(TvheadendFailure.FILE_UNAVAILABLE)

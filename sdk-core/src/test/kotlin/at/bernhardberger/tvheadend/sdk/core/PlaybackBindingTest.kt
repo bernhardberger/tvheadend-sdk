@@ -23,6 +23,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import kotlin.time.Duration.Companion.seconds
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -97,7 +98,7 @@ internal class PlaybackBindingTest {
 
             assertTrue(binding.openRecording() is RecordingFileResult.Ok)
             assertSame(DvrProgressResult.Accepted, binding.reportProgress(null, progress))
-            assertSame(DvrCutpointsResult.NotSupported, binding.cutpoints())
+            assertEquals(DvrCutpointsResult.Failed(TvheadendFailure.NOT_SUPPORTED), binding.cutpoints())
             assertEquals(listOf(generationA), fixture.children.recordingGenerations)
             assertEquals(listOf(generationA), fixture.metadata.progressGenerations)
             assertEquals(listOf(generationA), fixture.metadata.cutpointGenerations)
@@ -106,14 +107,14 @@ internal class PlaybackBindingTest {
 
             assertSame(RecordingPlaybackAdmission.ObservationExpired, binding.admission)
             assertSame(
-                at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure.CONNECTION_CHANGED,
+                at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure.CONNECTION_CHANGED,
                 (binding.openRecording() as RecordingFileResult.Failed).failure,
             )
-            assertSame(
-                DvrProgressResult.ObservationExpired,
+            assertEquals(
+                DvrProgressResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false),
                 binding.reportProgress(null, progress),
             )
-            assertSame(DvrCutpointsResult.ObservationExpired, binding.cutpoints())
+            assertEquals(DvrCutpointsResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED), binding.cutpoints())
             assertEquals(listOf(generationA), fixture.children.recordingGenerations)
             assertEquals(listOf(generationA), fixture.metadata.progressGenerations)
             assertEquals(listOf(generationA), fixture.metadata.cutpointGenerations)
@@ -123,8 +124,10 @@ internal class PlaybackBindingTest {
     fun `completed playback remains admitted without progress support and starts over`() =
         kotlinx.coroutines.test.runTest {
             listOf(
-                RecordingProgressCapability.UNKNOWN to DvrProgressResult.NotReady,
-                RecordingProgressCapability.UNSUPPORTED to DvrProgressResult.NotSupported,
+                RecordingProgressCapability.UNKNOWN to
+                    DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false),
+                RecordingProgressCapability.UNSUPPORTED to
+                    DvrProgressResult.Failed(TvheadendFailure.NOT_SUPPORTED, mayHaveApplied = false),
             ).forEach { (capability, expectedProgress) ->
                 val fixture = BindingFixture().apply {
                     publishReady(GatewayGeneration(), capability)
@@ -137,7 +140,7 @@ internal class PlaybackBindingTest {
                 assertNull(admission.resumePosition)
                 assertSame(capability, admission.progressCapability)
                 assertTrue(binding.openRecording() is RecordingFileResult.Ok)
-                assertSame(
+                assertEquals(
                     expectedProgress,
                     binding.reportProgress(null, DvrPlaybackProgress.checkpoint(12.seconds)),
                 )
@@ -167,14 +170,14 @@ internal class PlaybackBindingTest {
             assertSame(currentSession, fixture.currentSession)
             assertSame(RecordingPlaybackAdmission.TargetUnavailable, binding.admission)
             assertSame(
-                at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure.FILE_UNAVAILABLE,
+                at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure.FILE_UNAVAILABLE,
                 (binding.openRecording() as RecordingFileResult.Failed).failure,
             )
-            assertSame(
-                DvrProgressResult.NotReady,
+            assertEquals(
+                DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false),
                 binding.reportProgress(null, DvrPlaybackProgress.checkpoint(12.seconds)),
             )
-            assertSame(DvrCutpointsResult.NotReady, binding.cutpoints())
+            assertEquals(DvrCutpointsResult.Failed(TvheadendFailure.NOT_READY), binding.cutpoints())
             assertTrue(fixture.children.recordingGenerations.isEmpty())
             assertTrue(fixture.metadata.progressGenerations.isEmpty())
             assertTrue(fixture.metadata.cutpointGenerations.isEmpty())
@@ -220,7 +223,7 @@ internal class PlaybackBindingTest {
                     DvrProgressResult.Accepted,
                     binding.reportProgress(null, DvrPlaybackProgress.checkpoint(12.seconds)),
                 )
-                assertSame(DvrCutpointsResult.NotSupported, binding.cutpoints())
+                assertEquals(DvrCutpointsResult.Failed(TvheadendFailure.NOT_SUPPORTED), binding.cutpoints())
                 assertEquals(1, fixture.children.recordingGenerations.size)
                 assertEquals(1, fixture.metadata.progressGenerations.size)
                 assertEquals(1, fixture.metadata.cutpointGenerations.size)
@@ -234,14 +237,14 @@ internal class PlaybackBindingTest {
                 )
                 assertSame(RecordingPlaybackAdmission.TargetUnavailable, binding.admission)
                 assertSame(
-                    at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure.FILE_UNAVAILABLE,
+                    at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure.FILE_UNAVAILABLE,
                     (binding.openRecording() as RecordingFileResult.Failed).failure,
                 )
-                assertSame(
-                    DvrProgressResult.NotReady,
+                assertEquals(
+                    DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false),
                     binding.reportProgress(null, DvrPlaybackProgress.checkpoint(13.seconds)),
                 )
-                assertSame(DvrCutpointsResult.NotReady, binding.cutpoints())
+                assertEquals(DvrCutpointsResult.Failed(TvheadendFailure.NOT_READY), binding.cutpoints())
                 assertEquals(1, fixture.children.recordingGenerations.size)
                 assertEquals(1, fixture.metadata.progressGenerations.size)
                 assertEquals(1, fixture.metadata.cutpointGenerations.size)
@@ -276,14 +279,14 @@ internal class PlaybackBindingTest {
             )
             assertSame(RecordingPlaybackAdmission.TargetUnavailable, binding.admission)
             assertSame(
-                at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure.FILE_UNAVAILABLE,
+                at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure.FILE_UNAVAILABLE,
                 (binding.openRecording() as RecordingFileResult.Failed).failure,
             )
-            assertSame(
-                DvrProgressResult.NotReady,
+            assertEquals(
+                DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false),
                 binding.reportProgress(null, DvrPlaybackProgress.checkpoint(13.seconds)),
             )
-            assertSame(DvrCutpointsResult.NotReady, binding.cutpoints())
+            assertEquals(DvrCutpointsResult.Failed(TvheadendFailure.NOT_READY), binding.cutpoints())
             assertTrue(fixture.children.recordingGenerations.isEmpty())
             assertTrue(fixture.metadata.progressGenerations.isEmpty())
             assertTrue(fixture.metadata.cutpointGenerations.isEmpty())
@@ -380,7 +383,10 @@ internal class PlaybackBindingTest {
                 TestGrowingLease(GatewayGeneration(), DvrEntryId(7)),
                 PublicGrowingLease,
             ).forEach { lease ->
-                assertSame(DvrProgressResult.NotReady, binding.reportProgress(lease, progress))
+                assertEquals(
+                    DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false),
+                    binding.reportProgress(lease, progress),
+                )
             }
             assertTrue(fixture.metadata.progressLeases.isEmpty())
 
@@ -568,7 +574,7 @@ private class CapturingBindingMetadata(
         target: PlaybackRecordingTarget,
     ): DvrCutpointsResult {
         cutpointGenerations += target.generation
-        return DvrCutpointsResult.NotSupported
+        return DvrCutpointsResult.Failed(TvheadendFailure.NOT_SUPPORTED)
     }
 }
 

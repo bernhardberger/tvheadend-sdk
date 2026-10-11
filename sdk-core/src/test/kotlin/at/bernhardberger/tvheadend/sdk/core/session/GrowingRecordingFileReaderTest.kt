@@ -13,9 +13,9 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayRecordingFileStat
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.playback.RECORDING_END_OF_INPUT
-import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.time.Instant
@@ -47,9 +47,9 @@ class GrowingRecordingFileReaderTest {
         fixture.update(state = DvrEntryState.COMPLETED, fileSizeBytes = 64L)
         assertOk(64L, fixture.reader.refreshSize())
         assertTrue(fixture.reader.isFinal)
-        assertFailed(RecordingFileFailure.FILE_UNAVAILABLE, fixture.reader.seek(65L))
+        assertFailed(TvheadendFailure.FILE_UNAVAILABLE, fixture.reader.seek(65L))
         fixture.reader.close()
-        assertFailed(RecordingFileFailure.FILE_UNAVAILABLE, fixture.reader.refreshSize())
+        assertFailed(TvheadendFailure.FILE_UNAVAILABLE, fixture.reader.refreshSize())
     }
 
     @Test
@@ -60,7 +60,7 @@ class GrowingRecordingFileReaderTest {
         assertEquals(4L, fixture.tracker.transportExtentBeforeRequest())
         assertTrue(fixture.tracker.validate() is GrowingMetadataValidation.Valid)
         assertEquals(
-            RecordingFileFailure.FILE_UNAVAILABLE,
+            TvheadendFailure.FILE_UNAVAILABLE,
             fixture.tracker.validateTransportSize(2L, fixture.tracker.transportExtentBeforeRequest()),
         )
     }
@@ -112,7 +112,7 @@ class GrowingRecordingFileReaderTest {
             )
 
             assertFailed(
-                RecordingFileFailure.TIMEOUT,
+                TvheadendFailure.TIMEOUT,
                 fixture.reader.read(ByteArray(1), 0, 1),
             )
             assertEquals(60, fixture.transport.statStartNanos.size)
@@ -126,7 +126,7 @@ class GrowingRecordingFileReaderTest {
 
             val calls = fixture.transport.statStartNanos.size
             assertFailed(
-                RecordingFileFailure.TIMEOUT,
+                TvheadendFailure.TIMEOUT,
                 fixture.reader.read(ByteArray(1), 0, 1),
             )
             assertEquals(calls, fixture.transport.statStartNanos.size, "Timeout must be terminal")
@@ -157,7 +157,7 @@ class GrowingRecordingFileReaderTest {
         lateStat.transport.beforeStatResult = { statRuntime.now = NO_PROGRESS_TIMEOUT_NANOS_FOR_TEST }
 
         assertFailed(
-            RecordingFileFailure.TIMEOUT,
+            TvheadendFailure.TIMEOUT,
             lateStat.reader.read(ByteArray(1), 0, 1),
         )
         assertEquals(1, lateStat.transport.statStartNanos.size)
@@ -178,7 +178,7 @@ class GrowingRecordingFileReaderTest {
         }
 
         assertFailed(
-            RecordingFileFailure.TIMEOUT,
+            TvheadendFailure.TIMEOUT,
             lateRead.reader.read(ByteArray(1), 0, 1),
         )
         assertEquals(listOf(0L, 0L), lateRead.transport.readPositions)
@@ -190,7 +190,7 @@ class GrowingRecordingFileReaderTest {
         fixture.transport.suspendStat = true
 
         assertFailed(
-            RecordingFileFailure.TIMEOUT,
+            TvheadendFailure.TIMEOUT,
             fixture.reader.read(ByteArray(1), 0, 1),
         )
     }
@@ -240,7 +240,7 @@ class GrowingRecordingFileReaderTest {
         )
 
         assertFailed(
-            RecordingFileFailure.FILE_UNAVAILABLE,
+            TvheadendFailure.FILE_UNAVAILABLE,
             fixture.reader.read(ByteArray(4), 0, 4),
         )
     }
@@ -259,7 +259,7 @@ class GrowingRecordingFileReaderTest {
                 openSizeBytes = openSize,
             )
             assertFailed(
-                RecordingFileFailure.FILE_UNAVAILABLE,
+                TvheadendFailure.FILE_UNAVAILABLE,
                 fixture.reader.read(ByteArray(1), 0, 1),
             )
         }
@@ -281,7 +281,7 @@ class GrowingRecordingFileReaderTest {
         }
 
         assertFailed(
-            RecordingFileFailure.FILE_UNAVAILABLE,
+            TvheadendFailure.FILE_UNAVAILABLE,
             fixture.reader.read(ByteArray(1), 0, 1),
         )
         assertEquals(1, fixture.transport.statStartNanos.size)
@@ -304,7 +304,7 @@ class GrowingRecordingFileReaderTest {
             )
         }
         assertFailed(
-            RecordingFileFailure.FILE_UNAVAILABLE,
+            TvheadendFailure.FILE_UNAVAILABLE,
             rollover.reader.read(ByteArray(1), 0, 1),
         )
 
@@ -316,7 +316,7 @@ class GrowingRecordingFileReaderTest {
         )
         cloneRuntime.steps += WaitStep(advanceNanos = 0L) { clone.replaceWithClone() }
         assertFailed(
-            RecordingFileFailure.FILE_UNAVAILABLE,
+            TvheadendFailure.FILE_UNAVAILABLE,
             clone.reader.read(ByteArray(1), 0, 1),
         )
 
@@ -330,7 +330,7 @@ class GrowingRecordingFileReaderTest {
             reincarnation.replaceWithIdenticalIncarnation()
         }
         assertFailed(
-            RecordingFileFailure.FILE_UNAVAILABLE,
+            TvheadendFailure.FILE_UNAVAILABLE,
             reincarnation.reader.read(ByteArray(1), 0, 1),
         )
     }
@@ -350,7 +350,7 @@ class GrowingRecordingFileReaderTest {
         }
 
         assertFailed(
-            RecordingFileFailure.FILE_UNAVAILABLE,
+            TvheadendFailure.FILE_UNAVAILABLE,
             fixture.reader.read(ByteArray(1), 0, 1),
         )
     }
@@ -365,7 +365,7 @@ class GrowingRecordingFileReaderTest {
             identity.update()
         }
         assertFailed(
-            RecordingFileFailure.FILE_UNAVAILABLE,
+            TvheadendFailure.FILE_UNAVAILABLE,
             identity.reader.read(ByteArray(1), 0, 1),
         )
 
@@ -380,7 +380,7 @@ class GrowingRecordingFileReaderTest {
             multipleFiles.update()
         }
         assertFailed(
-            RecordingFileFailure.FILE_UNAVAILABLE,
+            TvheadendFailure.FILE_UNAVAILABLE,
             multipleFiles.reader.read(ByteArray(1), 0, 1),
         )
 
@@ -394,7 +394,7 @@ class GrowingRecordingFileReaderTest {
             shrink.update(fileSizeBytes = 10L)
         }
         assertFailed(
-            RecordingFileFailure.FILE_UNAVAILABLE,
+            TvheadendFailure.FILE_UNAVAILABLE,
             shrink.reader.read(ByteArray(1), 0, 1),
         )
 
@@ -408,7 +408,7 @@ class GrowingRecordingFileReaderTest {
             lifecycle.update(state = DvrEntryState.COMPLETED)
         }
         assertFailed(
-            RecordingFileFailure.FILE_UNAVAILABLE,
+            TvheadendFailure.FILE_UNAVAILABLE,
             lifecycle.reader.read(ByteArray(1), 0, 1),
         )
     }
@@ -421,7 +421,7 @@ class GrowingRecordingFileReaderTest {
         )
 
         assertFailed(
-            RecordingFileFailure.FILE_UNAVAILABLE,
+            TvheadendFailure.FILE_UNAVAILABLE,
             fixture.reader.read(ByteArray(1), 0, 1),
         )
         assertTrue(fixture.transport.readPositions.isEmpty())
@@ -440,7 +440,7 @@ class GrowingRecordingFileReaderTest {
         }
 
         assertFailed(
-            RecordingFileFailure.CONNECTION_CHANGED,
+            TvheadendFailure.CONNECTION_CHANGED,
             fixture.reader.read(ByteArray(1), 0, 1),
         )
     }
@@ -461,7 +461,7 @@ class GrowingRecordingFileReaderTest {
         }
 
         assertFailed(
-            RecordingFileFailure.FILE_UNAVAILABLE,
+            TvheadendFailure.FILE_UNAVAILABLE,
             fixture.reader.read(ByteArray(1), 0, 1),
         )
     }
@@ -536,7 +536,7 @@ class GrowingRecordingFileReaderTest {
         assertOk(Unit, fixture.reader.close())
         assertEquals(1, fixture.transport.closeCount)
         assertFailed(
-            RecordingFileFailure.FILE_UNAVAILABLE,
+            TvheadendFailure.FILE_UNAVAILABLE,
             fixture.reader.read(ByteArray(1), 0, 1),
         )
     }
@@ -755,7 +755,7 @@ private fun <T> assertOk(expected: T, actual: RecordingFileResult<T>) {
     assertEquals(expected, (actual as RecordingFileResult.Ok).value)
 }
 
-private fun assertFailed(expected: RecordingFileFailure, actual: RecordingFileResult<*>) {
+private fun assertFailed(expected: TvheadendFailure, actual: RecordingFileResult<*>) {
     assertTrue(actual is RecordingFileResult.Failed, "Expected failure but was $actual")
     assertSame(expected, (actual as RecordingFileResult.Failed).failure)
 }

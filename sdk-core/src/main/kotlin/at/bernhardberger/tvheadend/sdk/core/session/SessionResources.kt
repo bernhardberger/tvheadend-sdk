@@ -2,7 +2,6 @@
 
 package at.bernhardberger.tvheadend.sdk.core.session
 
-import at.bernhardberger.tvheadend.sdk.core.ArtworkFailure
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoader
@@ -60,13 +59,13 @@ import at.bernhardberger.tvheadend.sdk.core.metadata.EpgReducer
 import at.bernhardberger.tvheadend.sdk.core.metadata.ReducedEpgEvent
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFile
-import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.BufferOverflow
@@ -115,26 +114,26 @@ internal interface SessionMetadata {
         generation: GatewayGeneration,
         id: DvrEntryId,
         progress: DvrPlaybackProgress,
-    ): DvrProgressResult = DvrProgressResult.NotReady
+    ): DvrProgressResult = DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
 
     public suspend fun reportProgress(
         target: PlaybackRecordingTarget,
         progress: DvrPlaybackProgress,
-    ): DvrProgressResult = DvrProgressResult.NotReady
+    ): DvrProgressResult = DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
 
     public suspend fun reportProgress(
         lease: GrowingRecordingFileLease,
         progress: DvrPlaybackProgress,
-    ): DvrProgressResult = DvrProgressResult.NotReady
+    ): DvrProgressResult = DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
 
     public suspend fun getCutpoints(
         generation: GatewayGeneration,
         id: DvrEntryId,
-    ): DvrCutpointsResult = DvrCutpointsResult.NotReady
+    ): DvrCutpointsResult = DvrCutpointsResult.Failed(TvheadendFailure.NOT_READY)
 
     public suspend fun getCutpoints(
         target: PlaybackRecordingTarget,
-    ): DvrCutpointsResult = DvrCutpointsResult.NotReady
+    ): DvrCutpointsResult = DvrCutpointsResult.Failed(TvheadendFailure.NOT_READY)
 
     public fun publishSessionState(
         state: SessionState,
@@ -403,13 +402,13 @@ internal class PhaseOneSessionMetadata(
         ): EpgSearchResult {
             currentCoroutineContext().ensureActive()
             val generationFence = resolveSearchGeneration(currentSession)
-                ?: return EpgSearchResult.ObservationExpired
+                ?: return EpgSearchResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED)
             val result = searchCommands.search(generationFence.generation, request)
             currentCoroutineContext().ensureActive()
             val mappedResult = result.toEpgSearchResult(currentSession)
             val connectionChanged = hasReplacementGeneration(generationFence)
             currentCoroutineContext().ensureActive()
-            return if (connectionChanged) EpgSearchResult.ConnectionChanged else mappedResult
+            return if (connectionChanged) EpgSearchResult.Failed(TvheadendFailure.CONNECTION_CHANGED) else mappedResult
         }
 
         override suspend fun acquireCoverage(
@@ -1209,18 +1208,18 @@ private fun GatewayResult<List<GatewayEpgQueryEvent>>.toEpgSearchResult(
             val events = ArrayList<EpgEvent>(value.size)
             value.forEach { event ->
                 val mapped = ReducedEpgEvent.fromQuery(event)?.toPublicOrNull()
-                    ?: return EpgSearchResult.InvalidQuery
+                    ?: return EpgSearchResult.Failed(TvheadendFailure.SERVER_REJECTED)
                 events += mapped
             }
             EpgSearchResult.Available.create(events, originatingSession)
         }
-        GatewayResult.ServerRejected -> EpgSearchResult.InvalidQuery
-        GatewayResult.AccessDenied -> EpgSearchResult.AccessDenied
-        GatewayResult.ConnectionLimit -> EpgSearchResult.ConnectionLimit
-        GatewayResult.Timeout -> EpgSearchResult.Timeout
-        GatewayResult.TransportUnavailable -> EpgSearchResult.TransportUnavailable
-        GatewayResult.NotSupported -> EpgSearchResult.NotSupported
-        GatewayResult.MalformedReply -> EpgSearchResult.MalformedResponse
+        GatewayResult.ServerRejected -> EpgSearchResult.Failed(TvheadendFailure.SERVER_REJECTED)
+        GatewayResult.AccessDenied -> EpgSearchResult.Failed(TvheadendFailure.ACCESS_DENIED)
+        GatewayResult.ConnectionLimit -> EpgSearchResult.Failed(TvheadendFailure.CONNECTION_LIMIT)
+        GatewayResult.Timeout -> EpgSearchResult.Failed(TvheadendFailure.TIMEOUT)
+        GatewayResult.TransportUnavailable -> EpgSearchResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE)
+        GatewayResult.NotSupported -> EpgSearchResult.Failed(TvheadendFailure.NOT_SUPPORTED)
+        GatewayResult.MalformedReply -> EpgSearchResult.Failed(TvheadendFailure.MALFORMED_RESPONSE)
     }
 }
 
@@ -1271,23 +1270,23 @@ internal interface SessionChildren : ArtworkLoader {
     public suspend fun getStreamProfiles(
         generation: GatewayGeneration,
         currentSession: CurrentSessionObservation,
-    ): StreamProfilesResult = StreamProfilesResult.NotReady
+    ): StreamProfilesResult = StreamProfilesResult.Failed(TvheadendFailure.NOT_READY)
 
     /** Reports the changed connection until a child actually binds a generation to artwork. */
     public override suspend fun loadArtwork(
         currentSession: CurrentSessionObservation,
         artworkId: ArtworkId,
-    ): ArtworkLoadResult = ArtworkLoadResult.Unavailable(ArtworkFailure.OBSERVATION_EXPIRED)
+    ): ArtworkLoadResult = ArtworkLoadResult.Unavailable(TvheadendFailure.OBSERVATION_EXPIRED)
 
     public suspend fun openRecording(
         target: PlaybackRecordingTarget,
     ): RecordingFileResult<RecordingFile> =
-        RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
+        RecordingFileResult.Failed(TvheadendFailure.CONNECTION_CHANGED)
 
     public fun bindGrowingRecording(
         target: PlaybackRecordingTarget,
     ): RecordingFileResult<GrowingRecordingFileLease> =
-        RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
+        RecordingFileResult.Failed(TvheadendFailure.CONNECTION_CHANGED)
 
     public fun bindGeneration(generation: GatewayGeneration)
 

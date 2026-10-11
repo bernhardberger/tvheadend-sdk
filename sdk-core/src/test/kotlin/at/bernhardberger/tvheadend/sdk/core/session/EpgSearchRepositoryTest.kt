@@ -13,6 +13,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
@@ -83,8 +84,8 @@ internal class EpgSearchRepositoryTest {
         assertTrue(emptyResult.events.isEmpty())
         assertSame(currentSession, emptyResult.originatingSession)
         gatewayResult = GatewayResult.Timeout
-        assertSame(
-            EpgSearchResult.Timeout,
+        assertEquals(
+            EpgSearchResult.Failed(TvheadendFailure.TIMEOUT),
             metadata.epgRepository.search(currentSession, request),
         )
         assertEquals(List(3) { generation to request }, calls)
@@ -118,18 +119,18 @@ internal class EpgSearchRepositoryTest {
         val currentSession = requireNotNull(metadata.observation.value.currentSession)
         val request = EpgSearchRequest.create("query")
         val mappings = listOf(
-            GatewayResult.ServerRejected to EpgSearchResult.InvalidQuery,
-            GatewayResult.MalformedReply to EpgSearchResult.MalformedResponse,
-            GatewayResult.AccessDenied to EpgSearchResult.AccessDenied,
-            GatewayResult.ConnectionLimit to EpgSearchResult.ConnectionLimit,
-            GatewayResult.Timeout to EpgSearchResult.Timeout,
-            GatewayResult.TransportUnavailable to EpgSearchResult.TransportUnavailable,
-            GatewayResult.NotSupported to EpgSearchResult.NotSupported,
+            GatewayResult.ServerRejected to EpgSearchResult.Failed(TvheadendFailure.SERVER_REJECTED),
+            GatewayResult.MalformedReply to EpgSearchResult.Failed(TvheadendFailure.MALFORMED_RESPONSE),
+            GatewayResult.AccessDenied to EpgSearchResult.Failed(TvheadendFailure.ACCESS_DENIED),
+            GatewayResult.ConnectionLimit to EpgSearchResult.Failed(TvheadendFailure.CONNECTION_LIMIT),
+            GatewayResult.Timeout to EpgSearchResult.Failed(TvheadendFailure.TIMEOUT),
+            GatewayResult.TransportUnavailable to EpgSearchResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE),
+            GatewayResult.NotSupported to EpgSearchResult.Failed(TvheadendFailure.NOT_SUPPORTED),
         )
 
         mappings.forEach { (source, expected) ->
             result = source
-            assertSame(expected, metadata.epgRepository.search(currentSession, request))
+            assertEquals(expected, metadata.epgRepository.search(currentSession, request))
         }
         assertEquals(mappings.size, calls)
 
@@ -142,11 +143,14 @@ internal class EpgSearchRepositoryTest {
                 ),
             ),
         )
-        assertSame(EpgSearchResult.InvalidQuery, metadata.epgRepository.search(currentSession, request))
+        assertEquals(
+            EpgSearchResult.Failed(TvheadendFailure.SERVER_REJECTED),
+            metadata.epgRepository.search(currentSession, request),
+        )
 
         metadata.bindGeneration(GatewayGeneration())
-        assertSame(
-            EpgSearchResult.ObservationExpired,
+        assertEquals(
+            EpgSearchResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED),
             metadata.epgRepository.search(currentSession, request),
         )
         assertEquals(mappings.size + 1, calls)
@@ -174,7 +178,7 @@ internal class EpgSearchRepositoryTest {
         entered.await()
         metadata.bindGeneration(GatewayGeneration())
         release.complete(Unit)
-        assertSame(EpgSearchResult.ConnectionChanged, search.await())
+        assertEquals(EpgSearchResult.Failed(TvheadendFailure.CONNECTION_CHANGED), search.await())
     }
 
     @Test
@@ -202,7 +206,7 @@ internal class EpgSearchRepositoryTest {
         metadata.clearAllState()
         release.complete(Unit)
 
-        assertSame(EpgSearchResult.ConnectionChanged, search.await())
+        assertEquals(EpgSearchResult.Failed(TvheadendFailure.CONNECTION_CHANGED), search.await())
     }
 
     @Test
@@ -229,7 +233,7 @@ internal class EpgSearchRepositoryTest {
         metadata.clearAllState()
         release.complete(Unit)
 
-        assertSame(EpgSearchResult.TransportUnavailable, search.await())
+        assertEquals(EpgSearchResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE), search.await())
     }
 
     @Test
@@ -297,8 +301,8 @@ internal class EpgSearchRepositoryTest {
         publishReady(metadata, generation)
         val currentSession = requireNotNull(metadata.observation.value.currentSession)
 
-        assertSame(
-            EpgSearchResult.ConnectionChanged,
+        assertEquals(
+            EpgSearchResult.Failed(TvheadendFailure.CONNECTION_CHANGED),
             metadata.epgRepository.search(currentSession, EpgSearchRequest.create("query")),
         )
     }

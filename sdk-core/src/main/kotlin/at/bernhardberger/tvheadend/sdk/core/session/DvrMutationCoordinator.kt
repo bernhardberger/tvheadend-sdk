@@ -21,6 +21,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.ProtocolGateway
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
@@ -268,21 +269,23 @@ internal class DvrMutationCoordinator(
         val operation = when (
             val registration = register(expectedGeneration, createKind = confirmationKind)
         ) {
-            MutationRegistration.NotReady -> return@withLock DvrMutationResult.NotReady
+            MutationRegistration.NotReady ->
+                return@withLock DvrMutationResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
             MutationRegistration.ObservationExpired ->
-                return@withLock DvrMutationResult.ObservationExpired
+                return@withLock DvrMutationResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false)
             is MutationRegistration.Registered -> registration.operation
         }
         try {
             when (val outcome = awaitCommand(operation, command)) {
-                GatewayCommandOutcome.Retired -> DvrMutationResult.TransportUnavailable
+                GatewayCommandOutcome.Retired ->
+                    DvrMutationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = true)
                 is GatewayCommandOutcome.Cancelled -> throw outcome.exception
                 is GatewayCommandOutcome.Completed -> when (val result = outcome.result) {
                     is GatewayResult.Ok -> {
                         if (!applyProof(operation, allowed = true)) {
-                            DvrMutationResult.TransportUnavailable
+                            DvrMutationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = true)
                         } else if (!setExpected(operation, setOf(confirmation(result.value)))) {
-                            DvrMutationResult.TransportUnavailable
+                            DvrMutationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = true)
                         } else {
                             awaitConfirmation(operation, result.value)
                         }
@@ -310,19 +313,21 @@ internal class DvrMutationCoordinator(
         val operation = when (
             val registration = register(expectedGeneration, confirmations = confirmations)
         ) {
-            MutationRegistration.NotReady -> return@withLock DvrMutationResult.NotReady
+            MutationRegistration.NotReady ->
+                return@withLock DvrMutationResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
             MutationRegistration.ObservationExpired ->
-                return@withLock DvrMutationResult.ObservationExpired
+                return@withLock DvrMutationResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false)
             is MutationRegistration.Registered -> registration.operation
         }
         try {
             when (val outcome = awaitCommand(operation, command)) {
-                GatewayCommandOutcome.Retired -> DvrMutationResult.TransportUnavailable
+                GatewayCommandOutcome.Retired ->
+                    DvrMutationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = true)
                 is GatewayCommandOutcome.Cancelled -> throw outcome.exception
                 is GatewayCommandOutcome.Completed -> when (val result = outcome.result) {
                     is GatewayResult.Ok -> {
                         if (!applyProof(operation, allowed = true)) {
-                            DvrMutationResult.TransportUnavailable
+                            DvrMutationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = true)
                         } else {
                             awaitConfirmation(operation, Unit)
                         }
@@ -411,38 +416,49 @@ internal class DvrMutationCoordinator(
             ConfirmationOutcome.Confirmed -> if (isActive(operation)) {
                 DvrMutationResult.Confirmed(value)
             } else {
-                DvrMutationResult.TransportUnavailable
+                DvrMutationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = true)
             }
-            ConfirmationOutcome.Retired -> DvrMutationResult.TransportUnavailable
+            ConfirmationOutcome.Retired ->
+                DvrMutationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = true)
             ConfirmationOutcome.TimedOut -> if (isActive(operation)) {
                 DvrMutationResult.AcceptedButUnconfirmed(value)
             } else {
-                DvrMutationResult.TransportUnavailable
+                DvrMutationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = true)
             }
         }
     }
 
     private suspend fun denied(operation: PendingMutation): DvrMutationResult<Nothing> =
         if (applyProof(operation, allowed = false)) {
-            DvrMutationResult.AccessDenied
+            DvrMutationResult.Failed(TvheadendFailure.ACCESS_DENIED, mayHaveApplied = false)
         } else {
-            DvrMutationResult.TransportUnavailable
+            DvrMutationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = false)
         }
 
     private fun failure(
         operation: PendingMutation,
         result: GatewayResult<*>,
     ): DvrMutationResult<Nothing> {
-        if (!isActive(operation)) return DvrMutationResult.TransportUnavailable
+        if (!isActive(operation)) {
+            return DvrMutationResult.Failed(
+                TvheadendFailure.TRANSPORT_UNAVAILABLE,
+                mayHaveApplied = result.mayHaveAppliedDvrCommand(),
+            )
+        }
         return when (result) {
             is GatewayResult.Ok -> error("A successful result is not a DVR mutation failure")
-            GatewayResult.ServerRejected -> DvrMutationResult.ServerRejected
+            GatewayResult.ServerRejected ->
+                DvrMutationResult.Failed(TvheadendFailure.SERVER_REJECTED, mayHaveApplied = false)
             GatewayResult.AccessDenied -> error("Access denial must update DVR proof")
-            GatewayResult.ConnectionLimit -> DvrMutationResult.ConnectionLimit
-            GatewayResult.Timeout -> DvrMutationResult.Timeout
-            GatewayResult.TransportUnavailable -> DvrMutationResult.TransportUnavailable
-            GatewayResult.NotSupported -> DvrMutationResult.NotSupported
-            GatewayResult.MalformedReply -> DvrMutationResult.MalformedResponse
+            GatewayResult.ConnectionLimit ->
+                DvrMutationResult.Failed(TvheadendFailure.CONNECTION_LIMIT, mayHaveApplied = false)
+            GatewayResult.Timeout -> DvrMutationResult.Failed(TvheadendFailure.TIMEOUT, mayHaveApplied = true)
+            GatewayResult.TransportUnavailable ->
+                DvrMutationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = true)
+            GatewayResult.NotSupported ->
+                DvrMutationResult.Failed(TvheadendFailure.NOT_SUPPORTED, mayHaveApplied = false)
+            GatewayResult.MalformedReply ->
+                DvrMutationResult.Failed(TvheadendFailure.MALFORMED_RESPONSE, mayHaveApplied = true)
         }
     }
 
@@ -476,6 +492,20 @@ internal class DvrMutationCoordinator(
             if (pending === operation) pending = null
         }
     }
+}
+
+/** Called only after dispatch; an explicit refusal proves that the command did not take effect. */
+internal fun GatewayResult<*>.mayHaveAppliedDvrCommand(): Boolean = when (this) {
+    GatewayResult.ServerRejected,
+    GatewayResult.AccessDenied,
+    GatewayResult.ConnectionLimit,
+    GatewayResult.NotSupported,
+    -> false
+    is GatewayResult.Ok,
+    GatewayResult.Timeout,
+    GatewayResult.TransportUnavailable,
+    GatewayResult.MalformedReply,
+    -> true
 }
 
 private sealed interface MutationRegistration {

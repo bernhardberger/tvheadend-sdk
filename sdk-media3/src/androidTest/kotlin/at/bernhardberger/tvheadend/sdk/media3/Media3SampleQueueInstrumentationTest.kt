@@ -51,6 +51,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SkipOutcome
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStream
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import at.bernhardberger.tvheadend.sdk.playback.createSubscriptionManager
 import at.bernhardberger.tvheadend.sdk.testing.ScriptedSubscriptionConnection
 import at.bernhardberger.tvheadend.sdk.testing.SubscriptionBinaryFixture
@@ -59,7 +60,6 @@ import at.bernhardberger.tvheadend.sdk.core.DvrProgressResult
 import at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFile
-import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -192,10 +192,10 @@ internal class Media3SampleQueueInstrumentationTest {
         )
 
         override suspend fun openRecording(): RecordingFileResult<RecordingFile> =
-            RecordingFileResult.Failed(RecordingFileFailure.NOT_SUPPORTED)
+            RecordingFileResult.Failed(TvheadendFailure.NOT_SUPPORTED)
 
         override fun bindGrowingRecording(): RecordingFileResult<GrowingRecordingFileLease> =
-            RecordingFileResult.Failed(RecordingFileFailure.NOT_SUPPORTED)
+            RecordingFileResult.Failed(TvheadendFailure.NOT_SUPPORTED)
 
         override suspend fun reportProgress(
             growingLease: GrowingRecordingFileLease?,

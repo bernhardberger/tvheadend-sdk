@@ -8,8 +8,8 @@ import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
-import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.io.InterruptedIOException
 import java.util.concurrent.CancellationException
 import java.util.concurrent.CountDownLatch
@@ -67,7 +67,7 @@ class TvheadendGrowingRecordingDataSourceTest {
             source.read(ByteArray(GROWING_TS_PACKET_BYTES), 0, GROWING_TS_PACKET_BYTES)
         }
 
-        assertSame(RecordingFileFailure.FILE_UNAVAILABLE, failure.failure)
+        assertSame(TvheadendFailure.FILE_UNAVAILABLE, failure.failure)
         assertEquals(0, finalEnds)
         source.close()
     }
@@ -118,7 +118,7 @@ class TvheadendGrowingRecordingDataSourceTest {
             val failure = assertThrows(TvheadendRecordingException::class.java) {
                 dataSource(opener, GROWING_TS_PACKET_BYTES).open(spec)
             }
-            assertSame(RecordingFileFailure.FILE_UNAVAILABLE, failure.failure)
+            assertSame(TvheadendFailure.FILE_UNAVAILABLE, failure.failure)
         }
 
         assertTrue(opener.openPositions.isEmpty())
@@ -141,22 +141,22 @@ class TvheadendGrowingRecordingDataSourceTest {
     fun `typed open and read failures retain their safe classification`() {
         val denied = ScriptedGrowingLease(
             ReadStep.End,
-            openFailure = RecordingFileFailure.ACCESS_DENIED,
+            openFailure = TvheadendFailure.ACCESS_DENIED,
         )
         val openFailure = assertThrows(TvheadendRecordingException::class.java) {
             dataSource(denied, GROWING_TS_PACKET_BYTES).open(recordingSpec())
         }
-        assertSame(RecordingFileFailure.ACCESS_DENIED, openFailure.failure)
+        assertSame(TvheadendFailure.ACCESS_DENIED, openFailure.failure)
 
         val unavailable = ScriptedGrowingLease(
-            ReadStep.Failed(RecordingFileFailure.FILE_UNAVAILABLE),
+            ReadStep.Failed(TvheadendFailure.FILE_UNAVAILABLE),
         )
         val source = dataSource(unavailable, GROWING_TS_PACKET_BYTES)
         source.open(recordingSpec())
         val readFailure = assertThrows(TvheadendRecordingException::class.java) {
             source.read(ByteArray(1), 0, 1)
         }
-        assertSame(RecordingFileFailure.FILE_UNAVAILABLE, readFailure.failure)
+        assertSame(TvheadendFailure.FILE_UNAVAILABLE, readFailure.failure)
         source.close()
     }
 
@@ -170,7 +170,7 @@ class TvheadendGrowingRecordingDataSourceTest {
             source.read(ByteArray(1), 0, 1)
         }
 
-        assertSame(RecordingFileFailure.CONNECTION_CHANGED, failure.failure)
+        assertSame(TvheadendFailure.CONNECTION_CHANGED, failure.failure)
         source.close()
     }
 
@@ -318,7 +318,7 @@ class TvheadendGrowingRecordingDataSourceTest {
 private sealed interface ReadStep {
     class Bytes(val value: ByteArray) : ReadStep
 
-    class Failed(val failure: RecordingFileFailure) : ReadStep
+    class Failed(val failure: TvheadendFailure) : ReadStep
 
     data object End : ReadStep
 
@@ -327,7 +327,7 @@ private sealed interface ReadStep {
 
 private class ScriptedGrowingLease(
     vararg steps: ReadStep,
-    private val openFailure: RecordingFileFailure? = null,
+    private val openFailure: TvheadendFailure? = null,
 ) : GrowingRecordingFileLease {
     private val template = steps.toList()
     val openPositions = ArrayList<Long>()

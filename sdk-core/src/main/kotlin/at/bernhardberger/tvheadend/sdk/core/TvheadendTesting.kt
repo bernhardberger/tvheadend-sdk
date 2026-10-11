@@ -2,7 +2,6 @@
 
 package at.bernhardberger.tvheadend.sdk.core
 
-import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener
@@ -10,6 +9,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTracks
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.currentCoroutineContext
@@ -125,15 +125,15 @@ public object TvheadendTestResultFactory {
      * Creates a completed-recording binding tied to [currentSession].
      * [cutpoints] supplies test-owned responses while the same recording remains available.
      * The binding checks cancellation and authority before and after the suspending response.
-     * Scripts must not return [DvrCutpointsResult.ObservationExpired]; expiry belongs to the binding.
-     * Omitting [cutpoints] retains the default [DvrCutpointsResult.NotReady] response.
+     * Scripts must not return [TvheadendFailure.OBSERVATION_EXPIRED]; expiry belongs to the binding.
+     * Omitting [cutpoints] retains the default [TvheadendFailure.NOT_READY] response.
      */
     @JvmStatic
     public fun boundCompletedRecordingPlayback(
         session: TvheadendSession,
         currentSession: CurrentSessionObservation,
         recordingId: DvrEntryId,
-        cutpoints: suspend () -> DvrCutpointsResult = { DvrCutpointsResult.NotReady },
+        cutpoints: suspend () -> DvrCutpointsResult = { DvrCutpointsResult.Failed(TvheadendFailure.NOT_READY) },
     ): PlaybackBindingResult<PlaybackBinding.Recording> = boundRecordingPlayback(
         session,
         currentSession,
@@ -165,9 +165,9 @@ public object TvheadendTestResultFactory {
         }
         fun unavailableFile() = RecordingFileResult.Failed(
             if (admission() == RecordingPlaybackAdmission.ObservationExpired) {
-                RecordingFileFailure.CONNECTION_CHANGED
+                TvheadendFailure.CONNECTION_CHANGED
             } else {
-                RecordingFileFailure.FILE_UNAVAILABLE
+                TvheadendFailure.FILE_UNAVAILABLE
             },
         )
         return PlaybackBindingResult.Bound(
@@ -181,34 +181,36 @@ public object TvheadendTestResultFactory {
                         when (val state = admission()) {
                             is RecordingPlaybackAdmission.Completed ->
                                 if (state.progressCapability == RecordingProgressCapability.UNSUPPORTED) {
-                                    DvrProgressResult.NotSupported
+                                    DvrProgressResult.Failed(TvheadendFailure.NOT_SUPPORTED, mayHaveApplied = false)
                                 } else {
-                                    DvrProgressResult.NotReady
+                                    DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
                                 }
                             RecordingPlaybackAdmission.ObservationExpired ->
-                                DvrProgressResult.ObservationExpired
-                            else -> DvrProgressResult.NotReady
+                                DvrProgressResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false)
+                            else -> DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
                         }
                     }
                 },
                 loadTargetCutpoints = cutpoints@{
                     currentCoroutineContext().ensureActive()
                     when (admission()) {
-                        RecordingPlaybackAdmission.ObservationExpired -> return@cutpoints DvrCutpointsResult.ObservationExpired
+                        RecordingPlaybackAdmission.ObservationExpired ->
+                            return@cutpoints DvrCutpointsResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED)
                         is RecordingPlaybackAdmission.Completed -> Unit
-                        else -> return@cutpoints DvrCutpointsResult.NotReady
+                        else -> return@cutpoints DvrCutpointsResult.Failed(TvheadendFailure.NOT_READY)
                     }
                     val result = cutpoints()
                     currentCoroutineContext().ensureActive()
                     when (admission()) {
-                        RecordingPlaybackAdmission.ObservationExpired -> DvrCutpointsResult.ObservationExpired
+                        RecordingPlaybackAdmission.ObservationExpired ->
+                            DvrCutpointsResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED)
                         is RecordingPlaybackAdmission.Completed -> {
-                            require(result !== DvrCutpointsResult.ObservationExpired) {
+                            require(result != DvrCutpointsResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED)) {
                                 "Scripted cutpoint responses cannot counterfeit observation expiry"
                             }
                             result
                         }
-                        else -> DvrCutpointsResult.NotReady
+                        else -> DvrCutpointsResult.Failed(TvheadendFailure.NOT_READY)
                     }
                 },
             ),

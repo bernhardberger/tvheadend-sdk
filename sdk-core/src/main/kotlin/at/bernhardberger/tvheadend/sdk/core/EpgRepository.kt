@@ -1,5 +1,6 @@
 package at.bernhardberger.tvheadend.sdk.core
 
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.util.Collections
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -615,36 +616,16 @@ public sealed interface EpgSearchResult {
         }
     }
 
-    /** The originating observation was already retired before dispatch. */
-    public data object ObservationExpired : EpgSearchResult
-
     /**
-     * The server rejected the query.
-     *
-     * TVHeadend also uses its generic rejection path for inaccessible channel or tag filters.
+     * EPG search failed. TVHeadend answers inaccessible channel or tag filters with its generic
+     * rejection, [TvheadendFailure.SERVER_REJECTED]; [TvheadendFailure.ACCESS_DENIED] means the
+     * protocol explicitly denied EPG search permission. Unsupported means the requested filters
+     * are unavailable. A malformed reply implies neither transport loss nor automatic retry.
+     * An expired observation was retired before dispatch; a connection change occurred in flight.
      */
-    public data object InvalidQuery : EpgSearchResult
-
-    /** The response was malformed; transport loss and automatic retry are not implied. */
-    public data object MalformedResponse : EpgSearchResult
-
-    /** The protocol explicitly reported that the session lacks EPG search permission. */
-    public data object AccessDenied : EpgSearchResult
-
-    /** The server refused another concurrent operation. */
-    public data object ConnectionLimit : EpgSearchResult
-
-    /** The search did not settle before its protocol deadline. */
-    public data object Timeout : EpgSearchResult
-
-    /** The bound transport generation became unavailable. */
-    public data object TransportUnavailable : EpgSearchResult
-
-    /** A different session generation became current while the search was in flight. */
-    public data object ConnectionChanged : EpgSearchResult
-
-    /** The connected server does not support the requested search filters. */
-    public data object NotSupported : EpgSearchResult
+    public data class Failed(public val failure: TvheadendFailure) : EpgSearchResult {
+        override fun toString(): String = "EpgSearchResult.Failed(failure=$failure)"
+    }
 }
 
 /** Programme-guide commands for the selected server profile. */
@@ -661,7 +642,7 @@ public interface EpgRepository {
         request: EpgSearchRequest,
     ): EpgSearchResult {
         currentCoroutineContext().ensureActive()
-        return EpgSearchResult.NotSupported
+        return EpgSearchResult.Failed(TvheadendFailure.NOT_SUPPORTED)
     }
 
     /**

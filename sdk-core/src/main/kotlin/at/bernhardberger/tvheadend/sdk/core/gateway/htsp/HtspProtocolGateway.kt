@@ -171,6 +171,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStream
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTermination
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.io.ByteArrayOutputStream
 import java.lang.ref.WeakReference
 import at.bernhardberger.tvheadend.htsp.connection.HtspEventBufferOptions
@@ -1011,7 +1012,7 @@ internal class HtspProtocolGateway internal constructor(
         id: SubscriptionId,
         target: SubscriptionSeekTarget,
     ): SubscriptionOperationResult<Unit> = when (target) {
-        SubscriptionSeekTarget.Live -> SubscriptionOperationResult.NotSupported
+        SubscriptionSeekTarget.Live -> SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED)
         is SubscriptionSeekTarget.Absolute -> connection.subscriptionSkip(
             subscriptionId = id.value,
             position = SubscriptionSeekPosition.Time(target.position.inWholeMicroseconds),
@@ -1043,7 +1044,7 @@ internal class HtspProtocolGateway internal constructor(
                 speed = status.speed,
             )
         } catch (_: IllegalArgumentException) {
-            return SubscriptionOperationResult.NotSupported
+            return SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED)
         }
         return try {
             connection.subscriptionSkipNearLive(
@@ -1053,7 +1054,7 @@ internal class HtspProtocolGateway internal constructor(
                 expectedGeneration = expectedGeneration,
             ).toSubscriptionResult {}
         } catch (_: IllegalArgumentException) {
-            SubscriptionOperationResult.NotSupported
+            SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED)
         }
     }
 
@@ -1243,13 +1244,13 @@ private inline fun <T, R> HtspResult<T>.toSubscriptionResult(
     transform: (T) -> R,
 ): SubscriptionOperationResult<R> = when (this) {
     is HtspResult.Ok -> SubscriptionOperationResult.Ok(transform(value))
-    is HtspResult.ServerError -> SubscriptionOperationResult.ServerRejected
-    HtspResult.MalformedReply -> SubscriptionOperationResult.MalformedResponse
-    HtspResult.AccessDenied -> SubscriptionOperationResult.AccessDenied
-    HtspResult.ConnectionLimit -> SubscriptionOperationResult.ConnectionLimit
-    HtspResult.Timeout -> SubscriptionOperationResult.Timeout
-    HtspResult.TransportUnavailable -> SubscriptionOperationResult.TransportUnavailable
-    HtspResult.NotSupported -> SubscriptionOperationResult.NotSupported
+    is HtspResult.ServerError -> SubscriptionOperationResult.Failed(TvheadendFailure.SERVER_REJECTED)
+    HtspResult.MalformedReply -> SubscriptionOperationResult.Failed(TvheadendFailure.MALFORMED_RESPONSE)
+    HtspResult.AccessDenied -> SubscriptionOperationResult.Failed(TvheadendFailure.ACCESS_DENIED)
+    HtspResult.ConnectionLimit -> SubscriptionOperationResult.Failed(TvheadendFailure.CONNECTION_LIMIT)
+    HtspResult.Timeout -> SubscriptionOperationResult.Failed(TvheadendFailure.TIMEOUT)
+    HtspResult.TransportUnavailable -> SubscriptionOperationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE)
+    HtspResult.NotSupported -> SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED)
 }
 
 private fun HtspServerMessage.toGatewayMetadata(

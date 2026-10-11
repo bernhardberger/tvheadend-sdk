@@ -3,7 +3,6 @@
 package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.ArtworkContent
-import at.bernhardberger.tvheadend.sdk.core.ArtworkFailure
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
@@ -21,7 +20,6 @@ import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
 import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionPriority
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFile
-import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionConnection
@@ -32,11 +30,11 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionManager
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
-import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationFailure
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTerminalReason
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import at.bernhardberger.tvheadend.sdk.playback.createSubscriptionManager
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -116,7 +114,7 @@ internal class PlaybackSessionChildren(
             if (!isCurrent(admission)) return SubscriptionOpenResult.NotReady
             return SubscriptionOpenResult.Failed(
                 SubscriptionTerminalReason.OperationFailed(
-                    SubscriptionOperationFailure.ACCESS_DENIED,
+                    TvheadendFailure.ACCESS_DENIED,
                 ),
             )
         }
@@ -125,7 +123,7 @@ internal class PlaybackSessionChildren(
             false -> if (isCurrent(admission)) {
                 SubscriptionOpenResult.Failed(
                     SubscriptionTerminalReason.OperationFailed(
-                        SubscriptionOperationFailure.SERVER_REJECTED,
+                        TvheadendFailure.SERVER_REJECTED,
                     ),
                 )
             } else {
@@ -141,17 +139,17 @@ internal class PlaybackSessionChildren(
     ): StreamProfilesResult {
         currentCoroutineContext().ensureActive()
         val discovery = synchronized(lock) {
-            if (this.generation !== generation) return StreamProfilesResult.ObservationExpired
+            if (this.generation !== generation) return StreamProfilesResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED)
             ProfileDiscovery(
                 generation,
-                subscriptions ?: return StreamProfilesResult.NotReady,
+                subscriptions ?: return StreamProfilesResult.Failed(TvheadendFailure.NOT_READY),
             )
         }
         val result = gateway.getStreamProfiles(discovery.generation)
         currentCoroutineContext().ensureActive()
         return synchronized(lock) {
             if (this.generation !== discovery.generation || subscriptions !== discovery.manager) {
-                StreamProfilesResult.TransportUnavailable
+                StreamProfilesResult.Failed(TvheadendFailure.CONNECTION_CHANGED)
             } else {
                 result.toStreamProfilesResult(currentSession)
             }
@@ -180,15 +178,15 @@ internal class PlaybackSessionChildren(
         val bound = synchronized(lock) {
             this.generation?.takeIf { it === generation }
         }
-            ?: return RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
+            ?: return RecordingFileResult.Failed(TvheadendFailure.CONNECTION_CHANGED)
         when (target?.let(metadata::currentPlaybackRecording)) {
             null,
             is PlaybackRecordingLookup.Current,
             -> Unit
             PlaybackRecordingLookup.ObservationExpired ->
-                return RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
+                return RecordingFileResult.Failed(TvheadendFailure.CONNECTION_CHANGED)
             PlaybackRecordingLookup.TargetUnavailable ->
-                return RecordingFileResult.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+                return RecordingFileResult.Failed(TvheadendFailure.FILE_UNAVAILABLE)
         }
         return gateway.openRecordingFile(bound, GatewayDvrEntryId(recordingId.value))
             .toRecordingFileResult { file -> GatewayRecordingFileHandle(gateway, bound, file) }
@@ -216,7 +214,7 @@ internal class PlaybackSessionChildren(
         val bound = synchronized(lock) {
             this.generation?.takeIf { it === generation }
         }
-            ?: return RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
+            ?: return RecordingFileResult.Failed(TvheadendFailure.CONNECTION_CHANGED)
         val dvrEntryId = GatewayDvrEntryId(recordingId.value)
         val tracker = GrowingRecordingMetadataTracker(
             metadata = metadata,
@@ -271,10 +269,10 @@ internal class PlaybackSessionChildren(
             try {
                 val openSize = opened.sizeBytes
                 if (openSize != null && (openSize < 0L || position > openSize)) {
-                    return failed(RecordingFileFailure.FILE_UNAVAILABLE)
+                    return failed(TvheadendFailure.FILE_UNAVAILABLE)
                 }
                 if (openSize == null && position > 0L) {
-                    return failed(RecordingFileFailure.FILE_UNAVAILABLE)
+                    return failed(TvheadendFailure.FILE_UNAVAILABLE)
                 }
                 if (openSize != null) {
                     tracker.validateTransportSize(openSize, extentBeforeOpen)?.let { failure ->
@@ -286,7 +284,7 @@ internal class PlaybackSessionChildren(
                         .toRecordingFileResult { offset -> offset }
                 ) {
                     is RecordingFileResult.Ok -> if (seek.value != position) {
-                        return failed(RecordingFileFailure.FILE_UNAVAILABLE)
+                        return failed(TvheadendFailure.FILE_UNAVAILABLE)
                     }
                     is RecordingFileResult.Failed -> return failed(seek.failure)
                 }
@@ -309,7 +307,7 @@ internal class PlaybackSessionChildren(
             }
         }
 
-        private fun failed(failure: RecordingFileFailure): RecordingFileResult.Failed =
+        private fun failed(failure: TvheadendFailure): RecordingFileResult.Failed =
             RecordingFileResult.Failed(tracker.fenceFailure(failure))
 
         override fun toString(): String = "GrowingRecordingFileLease(<redacted>)"
@@ -321,16 +319,16 @@ internal class PlaybackSessionChildren(
     ): ArtworkLoadResult {
         currentCoroutineContext().ensureActive()
         val expectedGeneration = metadata.resolveGeneration(currentSession)
-            ?: return ArtworkLoadResult.Unavailable(ArtworkFailure.OBSERVATION_EXPIRED)
+            ?: return ArtworkLoadResult.Unavailable(TvheadendFailure.OBSERVATION_EXPIRED)
         val bound = synchronized(lock) {
             generation.takeIf { it === expectedGeneration }
-        } ?: return ArtworkLoadResult.Unavailable(ArtworkFailure.OBSERVATION_EXPIRED)
+        } ?: return ArtworkLoadResult.Unavailable(TvheadendFailure.OBSERVATION_EXPIRED)
         val result = gateway.loadArtwork(bound, artworkId)
         currentCoroutineContext().ensureActive()
         val proofRemainsCurrent = metadata.resolveGeneration(currentSession) === bound
         return synchronized(lock) {
             if (!proofRemainsCurrent || generation !== bound) {
-                ArtworkLoadResult.Unavailable(ArtworkFailure.CONNECTION_CHANGED)
+                ArtworkLoadResult.Unavailable(TvheadendFailure.CONNECTION_CHANGED)
             } else {
                 result.toArtworkLoadResult()
             }
@@ -566,7 +564,7 @@ internal class GatewaySubscriptionConnection(
                     marginSeconds = RETURN_TO_LIVE_MARGIN_SECONDS,
                 )
             }
-            ?: SubscriptionOperationResult.NotSupported
+            ?: SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED)
         is SubscriptionSeekTarget.Absolute,
         is SubscriptionSeekTarget.Relative,
         -> gateway.skipSubscription(generation, id, target)
@@ -592,25 +590,25 @@ private const val RETURN_TO_LIVE_MARGIN_SECONDS = 3L
 
 private fun GatewayResult<ByteArray>.toArtworkLoadResult(): ArtworkLoadResult = when (this) {
     is GatewayResult.Ok -> ArtworkLoadResult.Available(ArtworkContent(value))
-    GatewayResult.ServerRejected -> ArtworkLoadResult.Unavailable(ArtworkFailure.FILE_UNAVAILABLE)
-    GatewayResult.AccessDenied -> ArtworkLoadResult.Unavailable(ArtworkFailure.ACCESS_DENIED)
-    GatewayResult.ConnectionLimit -> ArtworkLoadResult.Unavailable(ArtworkFailure.CONNECTION_LIMIT)
-    GatewayResult.Timeout -> ArtworkLoadResult.Unavailable(ArtworkFailure.TIMEOUT)
+    GatewayResult.ServerRejected -> ArtworkLoadResult.Unavailable(TvheadendFailure.FILE_UNAVAILABLE)
+    GatewayResult.AccessDenied -> ArtworkLoadResult.Unavailable(TvheadendFailure.ACCESS_DENIED)
+    GatewayResult.ConnectionLimit -> ArtworkLoadResult.Unavailable(TvheadendFailure.CONNECTION_LIMIT)
+    GatewayResult.Timeout -> ArtworkLoadResult.Unavailable(TvheadendFailure.TIMEOUT)
     GatewayResult.TransportUnavailable ->
-        ArtworkLoadResult.Unavailable(ArtworkFailure.CONNECTION_CHANGED)
-    GatewayResult.NotSupported -> ArtworkLoadResult.Unavailable(ArtworkFailure.NOT_SUPPORTED)
-    GatewayResult.MalformedReply -> ArtworkLoadResult.Unavailable(ArtworkFailure.MALFORMED_RESPONSE)
+        ArtworkLoadResult.Unavailable(TvheadendFailure.CONNECTION_CHANGED)
+    GatewayResult.NotSupported -> ArtworkLoadResult.Unavailable(TvheadendFailure.NOT_SUPPORTED)
+    GatewayResult.MalformedReply -> ArtworkLoadResult.Unavailable(TvheadendFailure.MALFORMED_RESPONSE)
 }
 
 private fun GatewayResult<List<at.bernhardberger.tvheadend.sdk.core.StreamProfile>>.toStreamProfilesResult(
     originatingSession: CurrentSessionObservation,
 ): StreamProfilesResult = when (this) {
     is GatewayResult.Ok -> StreamProfilesResult.Available.create(value, originatingSession)
-    GatewayResult.ServerRejected -> StreamProfilesResult.ServerRejected
-    GatewayResult.AccessDenied -> StreamProfilesResult.AccessDenied
-    GatewayResult.ConnectionLimit -> StreamProfilesResult.ConnectionLimit
-    GatewayResult.Timeout -> StreamProfilesResult.Timeout
-    GatewayResult.TransportUnavailable -> StreamProfilesResult.TransportUnavailable
-    GatewayResult.NotSupported -> StreamProfilesResult.NotSupported
-    GatewayResult.MalformedReply -> StreamProfilesResult.MalformedResponse
+    GatewayResult.ServerRejected -> StreamProfilesResult.Failed(TvheadendFailure.SERVER_REJECTED)
+    GatewayResult.AccessDenied -> StreamProfilesResult.Failed(TvheadendFailure.ACCESS_DENIED)
+    GatewayResult.ConnectionLimit -> StreamProfilesResult.Failed(TvheadendFailure.CONNECTION_LIMIT)
+    GatewayResult.Timeout -> StreamProfilesResult.Failed(TvheadendFailure.TIMEOUT)
+    GatewayResult.TransportUnavailable -> StreamProfilesResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE)
+    GatewayResult.NotSupported -> StreamProfilesResult.Failed(TvheadendFailure.NOT_SUPPORTED)
+    GatewayResult.MalformedReply -> StreamProfilesResult.Failed(TvheadendFailure.MALFORMED_RESPONSE)
 }

@@ -1,6 +1,7 @@
 package at.bernhardberger.tvheadend.sdk.core
 
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.util.Collections
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -79,32 +80,15 @@ public sealed interface DvrCutpointsResult {
         }
     }
 
-    /** The session has not admitted DVR queries for a synchronized generation. */
-    public data object NotReady : DvrCutpointsResult
-
-    /** The originating observation is no longer current for its owning session. */
-    public data object ObservationExpired : DvrCutpointsResult
-
-    /** The server rejected the request or returned an invalid cutpoint interval. */
-    public data object ServerRejected : DvrCutpointsResult
-
-    /** The response was malformed; transport loss and automatic retry are not implied. */
-    public data object MalformedResponse : DvrCutpointsResult
-
-    /** The authenticated session cannot access the selected recording. */
-    public data object AccessDenied : DvrCutpointsResult
-
-    /** The server refused another concurrent operation. */
-    public data object ConnectionLimit : DvrCutpointsResult
-
-    /** The request was not accepted before its protocol deadline. */
-    public data object Timeout : DvrCutpointsResult
-
-    /** The bound transport generation is unavailable. */
-    public data object TransportUnavailable : DvrCutpointsResult
-
-    /** Cutpoint retrieval is unavailable for the current connection. */
-    public data object NotSupported : DvrCutpointsResult
+    /**
+     * Cutpoint retrieval failed. Server rejection includes an invalid cutpoint interval; access
+     * denial means the selected recording is inaccessible. Unsupported means cutpoint retrieval
+     * is unavailable on this connection. A malformed reply implies neither transport loss nor
+     * automatic retry. An expired observation must be replaced before another request.
+     */
+    public data class Failed(public val failure: TvheadendFailure) : DvrCutpointsResult {
+        override fun toString(): String = "DvrCutpointsResult.Failed(failure=$failure)"
+    }
 }
 
 internal interface DvrCutpointCommands {
@@ -120,6 +104,6 @@ internal interface DvrCutpointCommands {
             id: DvrEntryId,
             targetIsCurrent: () -> Boolean,
         ): DvrCutpointsResult =
-            DvrCutpointsResult.NotReady
+            DvrCutpointsResult.Failed(TvheadendFailure.NOT_READY)
     }
 }

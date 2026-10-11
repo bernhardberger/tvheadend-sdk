@@ -4,7 +4,6 @@ import at.bernhardberger.tvheadend.sdk.android.TvheadendArtworkKt;
 import at.bernhardberger.tvheadend.sdk.android.TvheadendArtworkLoadException;
 import at.bernhardberger.tvheadend.sdk.android.ServerProfileEditReadResult;
 import at.bernhardberger.tvheadend.sdk.android.TvheadendServerProfileStore;
-import at.bernhardberger.tvheadend.sdk.core.ArtworkFailure;
 import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog;
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryKt;
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState;
@@ -72,9 +71,9 @@ public final class StagedSdkJavaConsumer {
         fake.captureCurrentSession();
         fake.scriptConnect(SessionCommandResult.STARTED);
         fake.scriptRetry(SessionCommandResult.NO_ACTIVE_PROFILE);
-        fake.scriptStreamProfilesFailure(StreamProfilesResult.NotReady.INSTANCE);
+        fake.scriptStreamProfilesFailure(new StreamProfilesResult.Failed(TvheadendFailure.NOT_READY));
         fake.scriptStreamProfiles(java.util.List.of());
-        fake.getEpgRepository().scriptSearchFailure(EpgSearchResult.NotSupported.INSTANCE);
+        fake.getEpgRepository().scriptSearchFailure(new EpgSearchResult.Failed(TvheadendFailure.NOT_SUPPORTED));
         fake.getEpgRepository().scriptSearch(java.util.List.of());
         fake.getEpgRepository().scriptCoverage(
                 at.bernhardberger.tvheadend.sdk.core.EpgCoverageAcquisitionResult.Ineligible.INSTANCE);
@@ -90,7 +89,7 @@ public final class StagedSdkJavaConsumer {
         fake.getDvrRepository().scriptUpdateTimerecRule(notReady());
         fake.getDvrRepository().scriptDeleteTimerecRule(notReady());
         fake.getArtwork().scriptLoad(new at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult.Unavailable(
-                ArtworkFailure.NOT_SUPPORTED));
+                TvheadendFailure.NOT_SUPPORTED));
         fake.scriptLivePlaybackFailure(PlaybackBindingResult.TargetUnavailable.INSTANCE);
         fake.scriptRecordingPlaybackFailure(PlaybackBindingResult.TargetUnavailable.INSTANCE);
         fake.scriptLivePlaybackSuccess();
@@ -102,7 +101,7 @@ public final class StagedSdkJavaConsumer {
 
     @SuppressWarnings("unchecked")
     private static <T> DvrMutationResult<T> notReady() {
-        return (DvrMutationResult<T>) DvrMutationResult.NotReady.INSTANCE;
+        return (DvrMutationResult<T>) new DvrMutationResult.Failed(TvheadendFailure.NOT_READY, false);
     }
 
     public static Object loadServerProfileForEditing(
@@ -299,7 +298,7 @@ public final class StagedSdkJavaConsumer {
         return TvheadendArtworkKt.addTvheadendArtwork(components);
     }
 
-    public static ArtworkFailure artworkFailure(TvheadendArtworkLoadException failure) {
+    public static TvheadendFailure artworkFailure(TvheadendArtworkLoadException failure) {
         return failure.getFailure();
     }
 

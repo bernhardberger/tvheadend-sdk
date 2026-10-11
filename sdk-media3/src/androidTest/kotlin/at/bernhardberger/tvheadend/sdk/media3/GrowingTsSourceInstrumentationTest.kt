@@ -19,8 +19,8 @@ import androidx.test.platform.app.InstrumentationRegistry
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
 import at.bernhardberger.tvheadend.sdk.playback.RECORDING_END_OF_INPUT
-import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.security.MessageDigest
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
@@ -224,7 +224,7 @@ private class AppendableGrowingRecording(
         position: Long,
     ): RecordingFileResult<GrowingRecordingFileReader> {
         if (position !in 0L..availableBytes.toLong()) {
-            return RecordingFileResult.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+            return RecordingFileResult.Failed(TvheadendFailure.FILE_UNAVAILABLE)
         }
         opens += position
         return RecordingFileResult.Ok(Reader(position.toInt()))
@@ -290,7 +290,7 @@ private class AppendableGrowingRecording(
             if (retryFailureArmed && length == FIXTURE_READ_AHEAD_BYTES && position >= retryFailurePosition()) {
                 retryFailureArmed = false
                 retryFailureDelivered.set(true)
-                return@withLock RecordingFileResult.Failed(RecordingFileFailure.TIMEOUT)
+                return@withLock RecordingFileResult.Failed(TvheadendFailure.TIMEOUT)
             }
             val copied = minOf(length, availableBytes - position)
             bytes.copyInto(destination, destinationOffset, position, position + copied)

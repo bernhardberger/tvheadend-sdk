@@ -31,6 +31,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStream
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import at.bernhardberger.tvheadend.sdk.playback.StreamIndex
 import at.bernhardberger.tvheadend.sdk.playback.SkipOutcome
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import at.bernhardberger.tvheadend.sdk.playback.createSubscriptionManager
 import at.bernhardberger.tvheadend.sdk.testing.ScriptedSubscriptionConnection
 import at.bernhardberger.tvheadend.sdk.testing.SubscriptionBinaryFixture
@@ -209,7 +210,7 @@ internal class TvheadendLiveMediaSourceTest {
         val source = TvheadendLiveMediaSource(target, SubscriptionOptions(), bridge, {}, StandardTestDispatcher(testScheduler), { QueuedCoordinatorLooper() })
         val caller = MediaSource.MediaSourceCaller { _, _ -> }
         val opened = FakeTimeshiftSubscription(null)
-        opened.priorityAction = { SubscriptionOperationResult.Timeout }
+        opened.priorityAction = { SubscriptionOperationResult.Failed(TvheadendFailure.TIMEOUT) }
         val release = CompletableDeferred<Unit>()
         target.openResult = {
             release.await()
@@ -299,10 +300,16 @@ internal class TvheadendLiveMediaSourceTest {
         assertTrue(subscription.priorities.isEmpty())
 
         // TVHeadend applied YIELD but its reply was lost.
-        subscription.priorityAction = { SubscriptionOperationResult.Timeout }
-        assertSame(SubscriptionOperationResult.Timeout, bridge.setPriority(LiveSubscriptionPriority.YIELD))
-        subscription.priorityAction = { SubscriptionOperationResult.TransportUnavailable }
-        assertSame(SubscriptionOperationResult.TransportUnavailable, bridge.setPriority(LiveSubscriptionPriority.NORMAL))
+        subscription.priorityAction = { SubscriptionOperationResult.Failed(TvheadendFailure.TIMEOUT) }
+        assertEquals(
+            SubscriptionOperationResult.Failed(TvheadendFailure.TIMEOUT),
+            bridge.setPriority(LiveSubscriptionPriority.YIELD),
+        )
+        subscription.priorityAction = { SubscriptionOperationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE) }
+        assertEquals(
+            SubscriptionOperationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE),
+            bridge.setPriority(LiveSubscriptionPriority.NORMAL),
+        )
         subscription.priorityAction = { SubscriptionOperationResult.Ok(Unit) }
         assertTrue(bridge.setPriority(LiveSubscriptionPriority.NORMAL) is SubscriptionOperationResult.Ok)
         assertEquals(
@@ -311,14 +318,17 @@ internal class TvheadendLiveMediaSourceTest {
         )
 
         // Unsupported changes send nothing, so the server keeps the confirmed weight.
-        subscription.priorityAction = { SubscriptionOperationResult.NotSupported }
-        assertSame(SubscriptionOperationResult.NotSupported, bridge.setPriority(LiveSubscriptionPriority.YIELD))
+        subscription.priorityAction = { SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED) }
+        assertEquals(
+            SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED),
+            bridge.setPriority(LiveSubscriptionPriority.YIELD),
+        )
         assertTrue(bridge.setPriority(LiveSubscriptionPriority.NORMAL) is SubscriptionOperationResult.Ok)
         assertEquals(4, subscription.priorities.size)
 
         subscription.priorityAction = {
             subscription.mutableState.value = SubscriptionState.Terminal(SubscriptionTerminalReason.ConsumerFailed)
-            SubscriptionOperationResult.TransportUnavailable
+            SubscriptionOperationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE)
         }
         assertTrue(bridge.setPriority(LiveSubscriptionPriority.YIELD) is SubscriptionOperationResult.Ok)
         assertSame(LiveSubscriptionPriority.YIELD, bridge.subscriptionOptions(SubscriptionOptions()).priority)

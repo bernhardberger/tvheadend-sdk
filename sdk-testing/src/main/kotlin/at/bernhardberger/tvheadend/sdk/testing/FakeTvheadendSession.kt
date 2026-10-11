@@ -6,7 +6,6 @@
 
 package at.bernhardberger.tvheadend.sdk.testing
 
-import at.bernhardberger.tvheadend.sdk.core.ArtworkFailure
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoader
@@ -43,6 +42,7 @@ import at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
 import at.bernhardberger.tvheadend.sdk.core.TvheadendTestResultFactory
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.util.Collections
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.currentCoroutineContext
@@ -106,7 +106,7 @@ public class FakeTvheadendSession(
     private var connectResult = SessionCommandResult.STARTED
     private var retryResult = SessionCommandResult.NO_ACTIVE_PROFILE
     private var streamProfilesScript: StreamProfilesScript = StreamProfilesScript.Result(
-        StreamProfilesResult.NotReady,
+        StreamProfilesResult.Failed(TvheadendFailure.NOT_READY),
     )
     private var liveBindingScript: PlaybackBindingScript = PlaybackBindingScript.Failure(
         PlaybackBindingResult.TargetUnavailable,
@@ -150,7 +150,10 @@ public class FakeTvheadendSession(
     }
     /** Scripts failed stream-profile discovery. */
     public fun scriptStreamProfilesFailure(result: StreamProfilesResult) {
-        require(result !is StreamProfilesResult.Available && result !== StreamProfilesResult.ObservationExpired) {
+        require(
+            result !is StreamProfilesResult.Available &&
+                result != StreamProfilesResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED),
+        ) {
             "Scripted stream-profile failures require a current observation"
         }
         synchronized(lock) { streamProfilesScript = StreamProfilesScript.Result(result) }
@@ -199,7 +202,7 @@ public class FakeTvheadendSession(
     ): StreamProfilesResult = roundTrip(
         currentSession,
         FakeSessionCall.GET_STREAM_PROFILES,
-        StreamProfilesResult.ObservationExpired,
+        StreamProfilesResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED),
     ) {
         when (val script = synchronized(lock) { streamProfilesScript }) {
             is StreamProfilesScript.Available ->
@@ -291,12 +294,16 @@ public class FakeEpgRepository internal constructor(
     private val session: FakeTvheadendSession,
 ) : EpgRepository {
     private val lock = Any()
-    private var searchScript: EpgSearchScript = EpgSearchScript.Result(EpgSearchResult.NotSupported)
+    private var searchScript: EpgSearchScript =
+        EpgSearchScript.Result(EpgSearchResult.Failed(TvheadendFailure.NOT_SUPPORTED))
     private var coverageResult: EpgCoverageAcquisitionResult = EpgCoverageAcquisitionResult.Ineligible
     private var coverageBatchResult: EpgCoverageBatchResult? = null
     /** Scripts a failed search result. */
     public fun scriptSearchFailure(result: EpgSearchResult) {
-        require(result !is EpgSearchResult.Available && result !== EpgSearchResult.ObservationExpired) {
+        require(
+            result !is EpgSearchResult.Available &&
+                result != EpgSearchResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED),
+        ) {
             "Scripted search failures require a current observation"
         }
         synchronized(lock) { searchScript = EpgSearchScript.Result(result) }
@@ -338,7 +345,7 @@ public class FakeEpgRepository internal constructor(
     ): EpgSearchResult = session.roundTrip(
         currentSession,
         FakeSessionCall.EPG_SEARCH,
-        EpgSearchResult.ObservationExpired,
+        EpgSearchResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED),
     ) {
         when (val script = synchronized(lock) { searchScript }) {
             is EpgSearchScript.Available -> EpgSearchResult.Available.create(
@@ -554,7 +561,7 @@ public class FakeDvrRepository internal constructor(
         id: TimerecRuleId,
     ): DvrMutationResult<Unit> = result(currentSession, FakeSessionCall.DVR_DELETE_TIMEREC_RULE)
     private fun script(call: FakeSessionCall, result: DvrMutationResult<*>) {
-        require(result !== DvrMutationResult.ObservationExpired) {
+        require((result as? DvrMutationResult.Failed)?.failure != TvheadendFailure.OBSERVATION_EXPIRED) {
             "Scripted DVR results require a current observation"
         }
         synchronized(lock) { results[call] = result }
@@ -567,10 +574,11 @@ public class FakeDvrRepository internal constructor(
     ): DvrMutationResult<T> = session.roundTrip(
         currentSession,
         call,
-        DvrMutationResult.ObservationExpired,
+        DvrMutationResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false),
     ) {
         synchronized(lock) {
-            (results[call] ?: DvrMutationResult.NotReady) as DvrMutationResult<T>
+            (results[call] ?: DvrMutationResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false))
+                as DvrMutationResult<T>
         }
     }
 }
@@ -580,10 +588,10 @@ public class FakeArtworkLoader internal constructor(
     private val session: FakeTvheadendSession,
 ) : ArtworkLoader {
     private val lock = Any()
-    private var result: ArtworkLoadResult = ArtworkLoadResult.Unavailable(ArtworkFailure.NOT_SUPPORTED)
+    private var result: ArtworkLoadResult = ArtworkLoadResult.Unavailable(TvheadendFailure.NOT_SUPPORTED)
     /** Scripts the next and subsequent artwork result. */
     public fun scriptLoad(result: ArtworkLoadResult) {
-        require((result as? ArtworkLoadResult.Unavailable)?.failure != ArtworkFailure.OBSERVATION_EXPIRED) {
+        require((result as? ArtworkLoadResult.Unavailable)?.failure != TvheadendFailure.OBSERVATION_EXPIRED) {
             "Scripted artwork results require a current observation"
         }
         synchronized(lock) { this.result = result }
@@ -595,7 +603,7 @@ public class FakeArtworkLoader internal constructor(
     ): ArtworkLoadResult = session.roundTrip(
         currentSession,
         FakeSessionCall.LOAD_ARTWORK,
-        ArtworkLoadResult.Unavailable(ArtworkFailure.OBSERVATION_EXPIRED),
+        ArtworkLoadResult.Unavailable(TvheadendFailure.OBSERVATION_EXPIRED),
     ) { synchronized(lock) { result } }
 }
 

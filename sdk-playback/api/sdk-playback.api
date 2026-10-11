@@ -128,19 +128,6 @@ public abstract interface class at/bernhardberger/tvheadend/sdk/playback/Recordi
 	public abstract fun seek (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
-public final class at/bernhardberger/tvheadend/sdk/playback/RecordingFileFailure : java/lang/Enum {
-	public static final field ACCESS_DENIED Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileFailure;
-	public static final field CONNECTION_CHANGED Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileFailure;
-	public static final field CONNECTION_LIMIT Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileFailure;
-	public static final field FILE_UNAVAILABLE Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileFailure;
-	public static final field MALFORMED_RESPONSE Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileFailure;
-	public static final field NOT_SUPPORTED Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileFailure;
-	public static final field TIMEOUT Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileFailure;
-	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public static fun valueOf (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileFailure;
-	public static fun values ()[Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileFailure;
-}
-
 public abstract interface class at/bernhardberger/tvheadend/sdk/playback/RecordingFileOpener {
 	public abstract fun openRecording (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
@@ -163,8 +150,13 @@ public abstract interface class at/bernhardberger/tvheadend/sdk/playback/Recordi
 }
 
 public final class at/bernhardberger/tvheadend/sdk/playback/RecordingFileResult$Failed : at/bernhardberger/tvheadend/sdk/playback/RecordingFileResult {
-	public fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileFailure;)V
-	public final fun getFailure ()Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileFailure;
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;)V
+	public final fun component1 ()Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;
+	public final fun copy (Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;)Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileResult$Failed;
+	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileResult$Failed;Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileResult$Failed;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getFailure ()Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;
+	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
 
@@ -525,46 +517,16 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionOpener$D
 	public static fun open-ZgZDtJ4 (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOpener;JLat/bernhardberger/tvheadend/sdk/playback/SubscriptionEventConsumer;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
-public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationFailure : java/lang/Enum {
-	public static final field ACCESS_DENIED Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationFailure;
-	public static final field CONNECTION_LIMIT Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationFailure;
-	public static final field MALFORMED_RESPONSE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationFailure;
-	public static final field NOT_SUPPORTED Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationFailure;
-	public static final field SERVER_REJECTED Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationFailure;
-	public static final field TIMEOUT Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationFailure;
-	public static final field TRANSPORT_UNAVAILABLE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationFailure;
-	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public static fun valueOf (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationFailure;
-	public static fun values ()[Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationFailure;
-}
-
 public abstract interface class at/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult {
 }
 
-public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult$AccessDenied : at/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult$AccessDenied;
+public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult$Failed : at/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult {
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;)V
+	public final fun component1 ()Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;
+	public final fun copy (Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;)Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult$Failed;
+	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult$Failed;Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult$Failed;
 	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult$ConnectionLimit : at/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult$ConnectionLimit;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult$MalformedResponse : at/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult$MalformedResponse;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult$NotSupported : at/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult$NotSupported;
-	public fun equals (Ljava/lang/Object;)Z
+	public final fun getFailure ()Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
@@ -572,27 +534,6 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionOperatio
 public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult$Ok : at/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult {
 	public fun <init> (Ljava/lang/Object;)V
 	public final fun getValue ()Ljava/lang/Object;
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult$ServerRejected : at/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult$ServerRejected;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult$Timeout : at/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult$Timeout;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult$TransportUnavailable : at/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationResult$TransportUnavailable;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
 
@@ -660,8 +601,8 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResu
 }
 
 public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult$Refused : at/bernhardberger/tvheadend/sdk/playback/SubscriptionSeekResult {
-	public fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationFailure;)V
-	public final fun getFailure ()Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationFailure;
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;)V
+	public final fun getFailure ()Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;
 	public fun toString ()Ljava/lang/String;
 }
 
@@ -868,8 +809,8 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminal
 }
 
 public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason$OperationFailed : at/bernhardberger/tvheadend/sdk/playback/SubscriptionTerminalReason {
-	public fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationFailure;)V
-	public final fun getFailure ()Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOperationFailure;
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;)V
+	public final fun getFailure ()Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;
 	public fun toString ()Ljava/lang/String;
 }
 

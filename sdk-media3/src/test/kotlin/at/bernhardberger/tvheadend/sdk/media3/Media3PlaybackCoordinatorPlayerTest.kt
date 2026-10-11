@@ -16,7 +16,6 @@ import at.bernhardberger.tvheadend.sdk.core.DvrProgressPolicy
 import at.bernhardberger.tvheadend.sdk.core.DvrProgressResult
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
-import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFile
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
@@ -25,6 +24,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionState
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTerminalReason
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.io.IOException
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -3233,7 +3233,7 @@ private data object CurrentGrowingLease : GrowingRecordingFileLease {
     override val isCurrent: Boolean = true
 
     override suspend fun open(position: Long): RecordingFileResult<GrowingRecordingFileReader> =
-        RecordingFileResult.Failed(RecordingFileFailure.NOT_SUPPORTED)
+        RecordingFileResult.Failed(TvheadendFailure.NOT_SUPPORTED)
 }
 
 private fun controls(token: PlaybackTargetToken): LiveTimeshiftControlBridge =

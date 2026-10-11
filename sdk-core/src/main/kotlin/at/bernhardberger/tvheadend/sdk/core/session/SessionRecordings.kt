@@ -7,9 +7,9 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayRecordingFile
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.ProtocolGateway
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFile
-import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -56,23 +56,23 @@ internal class GatewayRecordingFileHandle(
 /**
  * Maps one gateway outcome onto the transport-neutral recording failure classification.
  *
- * A lost transport generation becomes [RecordingFileFailure.CONNECTION_CHANGED] so a caller can
+ * A lost transport generation becomes [TvheadendFailure.CONNECTION_CHANGED] so a caller can
  * distinguish a connection it may reopen from a file this server will not serve.
  */
 internal inline fun <T, R> GatewayResult<T>.toRecordingFileResult(
     transform: (T) -> R,
 ): RecordingFileResult<R> = when (this) {
     is GatewayResult.Ok -> RecordingFileResult.Ok(transform(value))
-    GatewayResult.ServerRejected -> RecordingFileResult.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
-    GatewayResult.AccessDenied -> RecordingFileResult.Failed(RecordingFileFailure.ACCESS_DENIED)
+    GatewayResult.ServerRejected -> RecordingFileResult.Failed(TvheadendFailure.FILE_UNAVAILABLE)
+    GatewayResult.AccessDenied -> RecordingFileResult.Failed(TvheadendFailure.ACCESS_DENIED)
     GatewayResult.ConnectionLimit ->
-        RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_LIMIT)
-    GatewayResult.Timeout -> RecordingFileResult.Failed(RecordingFileFailure.TIMEOUT)
+        RecordingFileResult.Failed(TvheadendFailure.CONNECTION_LIMIT)
+    GatewayResult.Timeout -> RecordingFileResult.Failed(TvheadendFailure.TIMEOUT)
     GatewayResult.TransportUnavailable ->
-        RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
-    GatewayResult.NotSupported -> RecordingFileResult.Failed(RecordingFileFailure.NOT_SUPPORTED)
-    GatewayResult.MalformedReply -> RecordingFileResult.Failed(RecordingFileFailure.MALFORMED_RESPONSE)
+        RecordingFileResult.Failed(TvheadendFailure.CONNECTION_CHANGED)
+    GatewayResult.NotSupported -> RecordingFileResult.Failed(TvheadendFailure.NOT_SUPPORTED)
+    GatewayResult.MalformedReply -> RecordingFileResult.Failed(TvheadendFailure.MALFORMED_RESPONSE)
 }
 
 private val CLOSED_RECORDING_HANDLE =
-    RecordingFileResult.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+    RecordingFileResult.Failed(TvheadendFailure.FILE_UNAVAILABLE)

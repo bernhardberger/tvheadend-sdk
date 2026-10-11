@@ -166,6 +166,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTermination
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
@@ -489,8 +490,8 @@ internal class HtspProtocolGatewayTest {
             as GatewayConnectResult.Connected).connection.generation
         assertSame(GatewayResult.MalformedReply, gateway.getDiskSpace(generation))
         assertSame(GatewayResult.MalformedReply, gateway.getDvrCutpoints(generation, DvrEntryId(7)))
-        assertSame(
-            SubscriptionOperationResult.MalformedResponse,
+        assertEquals(
+            SubscriptionOperationResult.Failed(TvheadendFailure.MALFORMED_RESPONSE),
             gateway.subscribe(generation, SubscriptionId(77), ChannelId(7), 60.seconds),
         )
         assertEquals(true, gateway.commitIfLive(generation) { true })
@@ -2214,17 +2215,19 @@ internal class HtspProtocolGatewayTest {
             as GatewayConnectResult.Connected).connection.generation
 
         val operationFailures = listOf(
-            HtspResult.ServerError("private error") to SubscriptionOperationResult.ServerRejected,
-            HtspResult.AccessDenied to SubscriptionOperationResult.AccessDenied,
-            HtspResult.ConnectionLimit to SubscriptionOperationResult.ConnectionLimit,
-            HtspResult.Timeout to SubscriptionOperationResult.Timeout,
-            HtspResult.TransportUnavailable to SubscriptionOperationResult.TransportUnavailable,
-            HtspResult.NotSupported to SubscriptionOperationResult.NotSupported,
+            HtspResult.ServerError("private error") to
+                SubscriptionOperationResult.Failed(TvheadendFailure.SERVER_REJECTED),
+            HtspResult.AccessDenied to SubscriptionOperationResult.Failed(TvheadendFailure.ACCESS_DENIED),
+            HtspResult.ConnectionLimit to SubscriptionOperationResult.Failed(TvheadendFailure.CONNECTION_LIMIT),
+            HtspResult.Timeout to SubscriptionOperationResult.Failed(TvheadendFailure.TIMEOUT),
+            HtspResult.TransportUnavailable to
+                SubscriptionOperationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE),
+            HtspResult.NotSupported to SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED),
         )
         operationFailures.forEach { (source, expected) ->
             fake.executeResult = source
             val result = gateway.subscribe(generation, SubscriptionId(10), ChannelId(20), Duration.ZERO)
-            assertSame(expected, result)
+            assertEquals(expected, result)
             assertSame(sourceGeneration, fake.lastExpectedGeneration)
             val request = fake.lastRequest as SubscribeRequest
             assertTrue(request.subscriptionId == 10L, "Subscribe request id mapping failed")
@@ -2353,8 +2356,8 @@ internal class HtspProtocolGatewayTest {
         assertEquals(false, relative.absolute)
 
         val requestBeforeLive = fake.lastRequest
-        assertSame(
-            SubscriptionOperationResult.NotSupported,
+        assertEquals(
+            SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED),
             gateway.skipSubscription(generation, SubscriptionId(5), SubscriptionSeekTarget.Live),
         )
         assertSame(requestBeforeLive, fake.lastRequest, "Direct live must never be dispatched")
@@ -2395,15 +2398,17 @@ internal class HtspProtocolGatewayTest {
         assertEquals(100, (fake.lastRequest as SubscriptionSpeedRequest).speed)
 
         listOf(
-            HtspResult.ServerError("private error") to SubscriptionOperationResult.ServerRejected,
-            HtspResult.AccessDenied to SubscriptionOperationResult.AccessDenied,
-            HtspResult.ConnectionLimit to SubscriptionOperationResult.ConnectionLimit,
-            HtspResult.Timeout to SubscriptionOperationResult.Timeout,
-            HtspResult.TransportUnavailable to SubscriptionOperationResult.TransportUnavailable,
-            HtspResult.NotSupported to SubscriptionOperationResult.NotSupported,
+            HtspResult.ServerError("private error") to
+                SubscriptionOperationResult.Failed(TvheadendFailure.SERVER_REJECTED),
+            HtspResult.AccessDenied to SubscriptionOperationResult.Failed(TvheadendFailure.ACCESS_DENIED),
+            HtspResult.ConnectionLimit to SubscriptionOperationResult.Failed(TvheadendFailure.CONNECTION_LIMIT),
+            HtspResult.Timeout to SubscriptionOperationResult.Failed(TvheadendFailure.TIMEOUT),
+            HtspResult.TransportUnavailable to
+                SubscriptionOperationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE),
+            HtspResult.NotSupported to SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED),
         ).forEach { (source, expected) ->
             fake.executeResult = source
-            assertSame(
+            assertEquals(
                 expected,
                 gateway.skipSubscriptionNearLive(
                     generation = generation,
@@ -2420,8 +2425,8 @@ internal class HtspProtocolGatewayTest {
             SubscriptionEvent.Timeshift(1, 0, null, 90_000_000, 100),
             SubscriptionEvent.Timeshift(1, 0, 88_000_000, 90_000_000, 100),
         ).forEach { invalidStatus ->
-            assertSame(
-                SubscriptionOperationResult.NotSupported,
+            assertEquals(
+                SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED),
                 gateway.skipSubscriptionNearLive(
                     generation = generation,
                     id = SubscriptionId(5),
@@ -2510,13 +2515,15 @@ internal class HtspProtocolGatewayTest {
         assertEquals(0L, (fake.lastRequest as SubscriptionChangeWeightRequest).weight)
 
         listOf(
-            HtspResult.ServerError("private error") to SubscriptionOperationResult.ServerRejected,
-            HtspResult.Timeout to SubscriptionOperationResult.Timeout,
-            HtspResult.TransportUnavailable to SubscriptionOperationResult.TransportUnavailable,
-            HtspResult.NotSupported to SubscriptionOperationResult.NotSupported,
+            HtspResult.ServerError("private error") to
+                SubscriptionOperationResult.Failed(TvheadendFailure.SERVER_REJECTED),
+            HtspResult.Timeout to SubscriptionOperationResult.Failed(TvheadendFailure.TIMEOUT),
+            HtspResult.TransportUnavailable to
+                SubscriptionOperationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE),
+            HtspResult.NotSupported to SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED),
         ).forEach { (source, expected) ->
             fake.executeResult = source
-            assertSame(
+            assertEquals(
                 expected,
                 gateway.changeSubscriptionPriority(generation, SubscriptionId(5), LiveSubscriptionPriority.YIELD),
             )

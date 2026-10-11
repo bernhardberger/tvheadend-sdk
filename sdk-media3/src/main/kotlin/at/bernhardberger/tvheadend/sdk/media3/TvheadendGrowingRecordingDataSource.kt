@@ -17,8 +17,8 @@ import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
 import at.bernhardberger.tvheadend.sdk.playback.MAX_RECORDING_READ_BYTES
 import at.bernhardberger.tvheadend.sdk.playback.RECORDING_END_OF_INPUT
-import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.io.InterruptedIOException
 import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicBoolean
@@ -86,13 +86,13 @@ private class TvheadendGrowingRecordingDataSource(
         check(reader == null) { "Growing recording data source is already open" }
         transferInitializing(dataSpec)
         if (dataSpec.uri.toString() != identity.uri) {
-            throw TvheadendRecordingException(RecordingFileFailure.FILE_UNAVAILABLE)
+            throw TvheadendRecordingException(TvheadendFailure.FILE_UNAVAILABLE)
         }
         if (
             dataSpec.position < 0L ||
             dataSpec.length != C.LENGTH_UNSET.toLong()
         ) {
-            throw TvheadendRecordingException(RecordingFileFailure.FILE_UNAVAILABLE)
+            throw TvheadendRecordingException(TvheadendFailure.FILE_UNAVAILABLE)
         }
         val openedReader = growingBlockingIo {
             lease.open(dataSpec.position - dataSpec.position % GROWING_TS_PACKET_BYTES)
@@ -113,7 +113,7 @@ private class TvheadendGrowingRecordingDataSource(
             throw InterruptedIOException("Growing recording operation interrupted")
         }
         val activeReader = reader
-            ?: throw TvheadendRecordingException(RecordingFileFailure.FILE_UNAVAILABLE)
+            ?: throw TvheadendRecordingException(TvheadendFailure.FILE_UNAVAILABLE)
         if (deliveryOffset == deliveryLimit && !fillCompletePackets(activeReader)) {
             return C.RESULT_END_OF_INPUT
         }
@@ -154,13 +154,13 @@ private class TvheadendGrowingRecordingDataSource(
             }.orThrowGrowing()
             if (read == RECORDING_END_OF_INPUT) {
                 if (bufferedLimit != 0) {
-                    throw TvheadendRecordingException(RecordingFileFailure.FILE_UNAVAILABLE)
+                    throw TvheadendRecordingException(TvheadendFailure.FILE_UNAVAILABLE)
                 }
                 onFinalEnd()
                 return false
             }
             if (read !in 1..writableBytes) {
-                throw TvheadendRecordingException(RecordingFileFailure.FILE_UNAVAILABLE)
+                throw TvheadendRecordingException(TvheadendFailure.FILE_UNAVAILABLE)
             }
             bufferedLimit += read
             deliveryLimit = bufferedLimit - bufferedLimit % GROWING_TS_PACKET_BYTES
@@ -201,7 +201,7 @@ private fun <T> growingBlockingIo(body: suspend () -> T): T {
         Thread.currentThread().interrupt()
         throw InterruptedIOException().apply { initCause(interrupt) }
     } catch (cancellation: CancellationException) {
-        throw TvheadendRecordingException(RecordingFileFailure.CONNECTION_CHANGED)
+        throw TvheadendRecordingException(TvheadendFailure.CONNECTION_CHANGED)
             .apply { initCause(cancellation) }
     }
 }
@@ -215,7 +215,7 @@ private fun <T> growingCleanupIo(body: suspend () -> T): T {
         Thread.currentThread().interrupt()
         throw InterruptedIOException().apply { initCause(interrupt) }
     } catch (cancellation: CancellationException) {
-        throw TvheadendRecordingException(RecordingFileFailure.CONNECTION_CHANGED)
+        throw TvheadendRecordingException(TvheadendFailure.CONNECTION_CHANGED)
             .apply { initCause(cancellation) }
     } finally {
         if (wasInterrupted) Thread.currentThread().interrupt()

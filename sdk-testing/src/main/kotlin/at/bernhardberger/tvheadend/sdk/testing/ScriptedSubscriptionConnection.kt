@@ -13,6 +13,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
@@ -38,7 +39,7 @@ public enum class ScriptedSubscriptionCall {
  *
  * Scripting a stream that unsubscribe or generation loss already completed is a no-op. After
  * [loseGeneration], late collectors receive only the generation-loss terminal without consuming
- * their id, and commands return [SubscriptionOperationResult.TransportUnavailable] without
+ * their id, and commands return [TvheadendFailure.TRANSPORT_UNAVAILABLE] without
  * recording their values. This models the HTSP 1.0 transport contract the SDK is migrating to.
  */
 @SubscriptionInfrastructureApi
@@ -303,7 +304,7 @@ public class ScriptedSubscriptionConnection : SubscriptionConnection {
     private fun lostCommandLocked(call: ScriptedSubscriptionCall): SubscriptionOperationResult<Nothing>? {
         if (!generationLost) return null
         mutableCalls += call
-        return SubscriptionOperationResult.TransportUnavailable
+        return SubscriptionOperationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE)
     }
 
     override fun toString(): String = "ScriptedSubscriptionConnection(<redacted>)"

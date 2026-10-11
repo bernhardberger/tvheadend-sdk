@@ -1,7 +1,5 @@
 package at.bernhardberger.tvheadend.sdk.core
 
-import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
-
 import at.bernhardberger.tvheadend.sdk.core.cache.CacheNamespace
 import at.bernhardberger.tvheadend.sdk.core.cache.FileMetadataCacheStore
 import at.bernhardberger.tvheadend.sdk.core.cache.MetadataCacheRuntime
@@ -21,6 +19,7 @@ import at.bernhardberger.tvheadend.sdk.core.session.PhaseOneSessionMetadata
 import at.bernhardberger.tvheadend.sdk.core.session.PlaybackSessionChildren
 import at.bernhardberger.tvheadend.sdk.core.session.SessionChildren
 import at.bernhardberger.tvheadend.sdk.core.session.SessionMetadata
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.util.Collections
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -83,7 +82,7 @@ public interface TvheadendSession {
         currentSession: CurrentSessionObservation,
     ): StreamProfilesResult {
         currentCoroutineContext().ensureActive()
-        return StreamProfilesResult.NotReady
+        return StreamProfilesResult.Failed(TvheadendFailure.NOT_READY)
     }
 
     /** Binds one live target to the exact observation that selected it. */

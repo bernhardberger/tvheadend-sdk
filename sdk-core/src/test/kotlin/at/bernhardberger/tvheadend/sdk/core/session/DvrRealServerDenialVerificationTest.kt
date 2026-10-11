@@ -20,6 +20,7 @@ import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
 import at.bernhardberger.tvheadend.sdk.core.createTvheadendSession
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -214,7 +215,7 @@ private fun <T> DvrMutationResult<T>.remembered(created: MutableSet<T>): DvrMuta
 
 private fun DvrMutationResult<*>.requireAccessDenied() {
     when (this) {
-        DvrMutationResult.AccessDenied -> Unit
+        DvrMutationResult.Failed(TvheadendFailure.ACCESS_DENIED, mayHaveApplied = false) -> Unit
         is DvrMutationResult.Confirmed,
         is DvrMutationResult.AcceptedButUnconfirmed,
         -> throw AssertionError("DVR mutation was accepted without write proof")

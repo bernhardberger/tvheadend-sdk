@@ -245,15 +245,10 @@ val request = EpgSearchRequest.create(
 
 when (val result = session.epgRepository.search(currentSession, request)) {
     is EpgSearchResult.Available -> consume(result.events, result.originatingSession)
-    EpgSearchResult.ObservationExpired -> Unit
-    EpgSearchResult.InvalidQuery -> Unit
-    EpgSearchResult.MalformedResponse -> Unit
-    EpgSearchResult.AccessDenied -> Unit
-    EpgSearchResult.ConnectionLimit -> Unit
-    EpgSearchResult.Timeout -> Unit
-    EpgSearchResult.TransportUnavailable -> Unit
-    EpgSearchResult.ConnectionChanged -> Unit
-    EpgSearchResult.NotSupported -> Unit
+    is EpgSearchResult.Failed -> when (result.failure) {
+        TvheadendFailure.OBSERVATION_EXPIRED, TvheadendFailure.CONNECTION_CHANGED -> Unit
+        else -> Unit // Open failure set: always include a fallback.
+    }
 }
 ```
 
@@ -261,10 +256,11 @@ when (val result = session.epgRepository.search(currentSession, request)) {
 records provenance only; the proof may already be retired when the result is
 observed. Check current state or wait for a replacement before a new operation.
 
-Search does not read or mutate retained coverage. `InvalidQuery` also covers the
-server's generic rejection of inaccessible channel or tag filters; an unusable
-payload is `MalformedResponse`. Search durations, when supplied, must be finite,
-non-negative whole seconds; content type is an unsigned eight-bit genre code.
+Search does not read or mutate retained coverage. `Failed(SERVER_REJECTED)` also
+covers the server's generic rejection of inaccessible channel or tag filters; an
+unusable payload is `Failed(MALFORMED_RESPONSE)`. Search durations, when supplied,
+must be finite, non-negative whole seconds; content type is an unsigned eight-bit
+genre code.
 
 Acquire a bounded future horizon separately:
 
@@ -440,15 +436,15 @@ val request = DvrScheduleRequest(
 when (val result = session.dvrRepository.scheduleEntry(currentSession, request)) {
     is DvrMutationResult.Confirmed -> select(result.value)
     is DvrMutationResult.AcceptedButUnconfirmed -> select(result.value)
-    DvrMutationResult.NotReady -> Unit
-    DvrMutationResult.ObservationExpired -> Unit
-    DvrMutationResult.ServerRejected -> Unit
-    DvrMutationResult.MalformedResponse -> Unit
-    DvrMutationResult.AccessDenied -> Unit
-    DvrMutationResult.ConnectionLimit -> Unit
-    DvrMutationResult.Timeout -> Unit
-    DvrMutationResult.TransportUnavailable -> Unit
-    DvrMutationResult.NotSupported -> Unit
+    is DvrMutationResult.Failed -> {
+        if (result.mayHaveApplied) {
+            // Reconcile authoritative metadata before deciding whether to try again.
+        }
+        when (result.failure) {
+            TvheadendFailure.ACCESS_DENIED -> Unit
+            else -> Unit // Open failure set: always include a fallback.
+        }
+    }
 }
 ```
 
@@ -458,6 +454,13 @@ did not arrive before the deadline; later observation data remains
 authoritative. Mutations and progress are admitted only for a ready generation.
 Cancellation remains caller-owned and is not converted into a failure result.
 
+`DvrMutationResult.Failed` and `DvrProgressResult.Failed` carry `mayHaveApplied`.
+It is false only when the command was never sent or the server explicitly refused
+it. It is true for uncertain dispatched commands and failures after acceptance,
+including generation retirement while awaiting confirmation. This is operation
+stage information, not a property of `TvheadendFailure`. Its `isTransient`
+predicate does not authorize automatic retry.
+
 Explicit-time schedules require a non-empty title (whitespace is permitted);
 programme schedules can omit it. Supplied start/stop minutes for time-based
 rule creation and updates must be in `0..1439`. Automatic-recording rule windows
@@ -465,8 +468,8 @@ retain their separate `1440` sentinel semantics.
 
 Cutpoints and progress belong to an observation-bound
 `PlaybackBinding.Recording`, not to the mutation repository. `cutpoints()`
-returns `DvrCutpointsResult`, including `Available`, readiness and expiration
-states, safe server failures, and `NotSupported`. Cutpoint actions are metadata;
+returns `DvrCutpointsResult.Available` or `Failed(failure: TvheadendFailure)`.
+Cutpoint actions are metadata;
 the SDK does not impose commercial-skip or scene policy. The Media3 coordinator
 handles supported progress reporting. Custom low-level integrations that opt in
 to `SubscriptionInfrastructureApi` can use `DvrProgressPolicy` and the binding's
@@ -1141,24 +1144,24 @@ already have applied the command. Never blindly retry non-idempotent requests
 
 | API | Malformed-response result |
 |---|---|
-| DVR mutations | `DvrMutationResult.MalformedResponse` |
-| DVR progress and cutpoints | `DvrProgressResult.MalformedResponse`, `DvrCutpointsResult.MalformedResponse` |
-| EPG search and stream-profile discovery | `EpgSearchResult.MalformedResponse`, `StreamProfilesResult.MalformedResponse` |
-| Artwork | `ArtworkLoadResult.Unavailable(ArtworkFailure.MALFORMED_RESPONSE)` |
-| Recording-file operations | `RecordingFileResult.Failed(RecordingFileFailure.MALFORMED_RESPONSE)` |
+| DVR mutations | `DvrMutationResult.Failed(TvheadendFailure.MALFORMED_RESPONSE, mayHaveApplied = true)` |
+| DVR progress | `DvrProgressResult.Failed(TvheadendFailure.MALFORMED_RESPONSE, mayHaveApplied = true)` |
+| Cutpoints, EPG search, stream-profile discovery | Each result's `Failed(TvheadendFailure.MALFORMED_RESPONSE)` |
+| Artwork | `ArtworkLoadResult.Unavailable(TvheadendFailure.MALFORMED_RESPONSE)` |
+| Recording-file operations | `RecordingFileResult.Failed(TvheadendFailure.MALFORMED_RESPONSE)` |
 | Initial synchronization | `SessionFailure.synchronizationFailed(TvheadendFailure.MALFORMED_RESPONSE)`, with `EXPLICIT_RETRY` rather than automatic backoff |
-| Low-level subscription commands | `SubscriptionOperationResult.MalformedResponse`; a failed startup reports `OperationFailed(MALFORMED_RESPONSE)` |
+| Low-level subscription commands | `SubscriptionOperationResult.Failed(TvheadendFailure.MALFORMED_RESPONSE)`; a failed startup carries the same failure in `OperationFailed` |
 | Media3 timeshift commands | `TimeshiftCommandResult.MALFORMED_RESPONSE`, with `UNCONFIRMED` disposition and an uncertain outcome |
 
 A malformed seek acknowledgement also invalidates uncertain packet evidence;
 the SDK does not replay packets withheld for that command. Ordinary server
-refusals remain distinct typed rejection outcomes. Exhaustive sealed-result and
-enum handling must include the malformed-response variants.
+refusals remain distinct typed classifications. Handle `Failed` in each sealed
+result, then compare known `TvheadendFailure` values with a fallback branch.
 
 ## Typed limits and privacy
 
 Public suspending server round trips return typed outcomes. Handle the complete
-sealed result or enum for the operation being called rather than parsing text or
+sealed result for the operation being called rather than parsing text or
 retrying every failure. Caller cancellation always propagates as
 `CancellationException`.
 

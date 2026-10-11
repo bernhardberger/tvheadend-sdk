@@ -55,7 +55,7 @@ class RecordingFileReaderTest {
         val reader = createRecordingFileReader(transport)
 
         assertFailed(
-            RecordingFileFailure.FILE_UNAVAILABLE,
+            TvheadendFailure.FILE_UNAVAILABLE,
             reader.open(position = 90L, length = 20L),
         )
         assertEquals(listOf("open", "close"), transport.calls)
@@ -67,7 +67,7 @@ class RecordingFileReaderTest {
         val reader = createRecordingFileReader(transport)
 
         assertFailed(
-            RecordingFileFailure.FILE_UNAVAILABLE,
+            TvheadendFailure.FILE_UNAVAILABLE,
             reader.open(position = 11L, length = null),
         )
         assertEquals(listOf("open", "close"), transport.calls)
@@ -96,7 +96,7 @@ class RecordingFileReaderTest {
         val reader = createRecordingFileReader(transport)
 
         assertFailed(
-            RecordingFileFailure.FILE_UNAVAILABLE,
+            TvheadendFailure.FILE_UNAVAILABLE,
             reader.open(position = 8L, length = null),
         )
         assertEquals(listOf("open", "seek@8", "close"), transport.calls)
@@ -106,12 +106,12 @@ class RecordingFileReaderTest {
     fun `an open propagates the transport failure without a further round trip`() = runTest {
         val transport = FakeRecordingTransport(
             content = ByteArray(8),
-            openFailure = RecordingFileFailure.CONNECTION_CHANGED,
+            openFailure = TvheadendFailure.CONNECTION_CHANGED,
         )
         val reader = createRecordingFileReader(transport)
 
         assertFailed(
-            RecordingFileFailure.CONNECTION_CHANGED,
+            TvheadendFailure.CONNECTION_CHANGED,
             reader.open(position = 0L, length = null),
         )
         assertEquals(listOf("open"), transport.calls)
@@ -219,7 +219,7 @@ class RecordingFileReaderTest {
 
         val destination = ByteArray(8)
         assertOk(6, reader.read(destination, 0, 8))
-        assertFailed(RecordingFileFailure.FILE_UNAVAILABLE, reader.read(destination, 0, 8))
+        assertFailed(TvheadendFailure.FILE_UNAVAILABLE, reader.read(destination, 0, 8))
     }
 
     @Test
@@ -228,19 +228,19 @@ class RecordingFileReaderTest {
         val reader = createRecordingFileReader(transport, readAheadBytes = 8)
         assertOk(64L, reader.open(position = 0L, length = null))
 
-        assertFailed(RecordingFileFailure.FILE_UNAVAILABLE, reader.read(ByteArray(32), 0, 32))
+        assertFailed(TvheadendFailure.FILE_UNAVAILABLE, reader.read(ByteArray(32), 0, 32))
     }
 
     @Test
     fun `a read propagates the transport failure classification`() = runTest {
         val transport = FakeRecordingTransport(
             content = ByteArray(64),
-            readFailure = RecordingFileFailure.TIMEOUT,
+            readFailure = TvheadendFailure.TIMEOUT,
         )
         val reader = createRecordingFileReader(transport)
         assertOk(64L, reader.open(position = 0L, length = null))
 
-        assertFailed(RecordingFileFailure.TIMEOUT, reader.read(ByteArray(32), 0, 32))
+        assertFailed(TvheadendFailure.TIMEOUT, reader.read(ByteArray(32), 0, 32))
     }
 
     @Test
@@ -397,7 +397,7 @@ class RecordingFileReaderTest {
         )
         assertEquals(
             "RecordingFileResult.Failed(failure=ACCESS_DENIED)",
-            RecordingFileResult.Failed(RecordingFileFailure.ACCESS_DENIED).toString(),
+            RecordingFileResult.Failed(TvheadendFailure.ACCESS_DENIED).toString(),
         )
     }
 }
@@ -407,7 +407,7 @@ private fun <T> assertOk(expected: T, actual: RecordingFileResult<T>) {
     assertEquals(expected, (actual as RecordingFileResult.Ok).value)
 }
 
-private fun assertFailed(expected: RecordingFileFailure, actual: RecordingFileResult<*>) {
+private fun assertFailed(expected: TvheadendFailure, actual: RecordingFileResult<*>) {
     assertTrue(actual is RecordingFileResult.Failed, "Expected failure but was $actual")
     assertEquals(expected, (actual as RecordingFileResult.Failed).failure)
 }
@@ -417,8 +417,8 @@ private class FakeRecordingTransport(
     private val reportSize: Boolean = true,
     private val reportedSizeOverride: Long? = null,
     private val seekOffsetOverride: Long? = null,
-    private val openFailure: RecordingFileFailure? = null,
-    private val readFailure: RecordingFileFailure? = null,
+    private val openFailure: TvheadendFailure? = null,
+    private val readFailure: TvheadendFailure? = null,
     private val overreadBy: Int = 0,
 ) : RecordingFileOpener {
     internal val calls = ArrayList<String>()

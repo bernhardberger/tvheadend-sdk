@@ -1,5 +1,6 @@
 package at.bernhardberger.tvheadend.sdk.core
 
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.io.ByteArrayInputStream
 import java.io.InputStream
 
@@ -36,19 +37,6 @@ public value class ArtworkId(public val value: Int) {
 
 private const val IMAGE_CACHE_SELECTOR_PREFIX = "imagecache/"
 
-/** Safe classification of a failed authenticated artwork load. */
-public enum class ArtworkFailure {
-    CONNECTION_CHANGED,
-    OBSERVATION_EXPIRED,
-    ACCESS_DENIED,
-    FILE_UNAVAILABLE,
-    CONNECTION_LIMIT,
-    TIMEOUT,
-    NOT_SUPPORTED,
-    /** Malformed response; callers must not infer connection loss or automatically retry. */
-    MALFORMED_RESPONSE,
-}
-
 /** Immutable encoded artwork bytes returned by the authenticated session. */
 public class ArtworkContent internal constructor(
     private val bytes: ByteArray,
@@ -75,8 +63,12 @@ public sealed interface ArtworkLoadResult {
         override fun toString(): String = "ArtworkLoadResult.Available(<redacted>)"
     }
 
-    /** Artwork could not be loaded for a safe, classified reason. */
-    public class Unavailable(public val failure: ArtworkFailure) : ArtworkLoadResult {
+    /**
+     * Artwork could not be loaded. Access denial means recorder access is missing; file
+     * unavailability means the image-cache file cannot be served. A malformed reply implies
+     * neither connection loss nor automatic retry.
+     */
+    public data class Unavailable(public val failure: TvheadendFailure) : ArtworkLoadResult {
         override fun toString(): String = "ArtworkLoadResult.Unavailable(failure=$failure)"
     }
 }
@@ -85,7 +77,7 @@ public sealed interface ArtworkLoadResult {
  * Loads encoded image-cache artwork on the currently bound connection generation.
  *
  * TVHeadend requires recorder access for authenticated image-cache files and reports
- * [ArtworkFailure.ACCESS_DENIED] when that permission is unavailable.
+ * [TvheadendFailure.ACCESS_DENIED] when that permission is unavailable.
  */
 public interface ArtworkLoader {
     /**

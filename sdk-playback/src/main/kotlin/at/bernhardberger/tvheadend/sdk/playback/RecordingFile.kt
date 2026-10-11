@@ -1,35 +1,5 @@
 package at.bernhardberger.tvheadend.sdk.playback
 
-/**
- * Safe classification of a failed recording file operation.
- *
- * [CONNECTION_CHANGED] and [FILE_UNAVAILABLE] are deliberately distinct: the first means the
- * handle's connection generation is gone and a caller may recover by reopening on a new
- * connection, while the second means this connection cannot serve this file at all.
- */
-@SubscriptionInfrastructureApi
-public enum class RecordingFileFailure {
-    /** The connection generation that owns the handle is no longer live. */
-    CONNECTION_CHANGED,
-
-    /** The authenticated session lacks recording file access. */
-    ACCESS_DENIED,
-
-    /** The server cannot serve this file, or served it inconsistently. */
-    FILE_UNAVAILABLE,
-
-    /** The server refused another concurrent operation. */
-    CONNECTION_LIMIT,
-
-    /** The operation did not complete before its deadline. */
-    TIMEOUT,
-
-    /** The server does not support recording file access. */
-    NOT_SUPPORTED,
-    /** Malformed response; callers must not infer connection loss or automatically retry. */
-    MALFORMED_RESPONSE,
-}
-
 /** Typed result of a recording file operation. */
 @SubscriptionInfrastructureApi
 public sealed interface RecordingFileResult<out T> {
@@ -38,8 +8,16 @@ public sealed interface RecordingFileResult<out T> {
         override fun toString(): String = "RecordingFileResult.Ok(<redacted>)"
     }
 
-    /** Failed operation carrying only its safe classification. */
-    public class Failed(public val failure: RecordingFileFailure) : RecordingFileResult<Nothing> {
+    /**
+     * Failed operation carrying only its safe classification.
+     *
+     * [TvheadendFailure.CONNECTION_CHANGED] means the handle's connection generation is gone;
+     * the caller may recover by reopening on a new connection. [TvheadendFailure.FILE_UNAVAILABLE]
+     * means this connection cannot serve this file, or served it inconsistently. Access denial
+     * means recording file access is missing; unsupported means the server lacks file access.
+     * A malformed reply implies neither connection loss nor automatic retry.
+     */
+    public data class Failed(public val failure: TvheadendFailure) : RecordingFileResult<Nothing> {
         override fun toString(): String = "RecordingFileResult.Failed(failure=$failure)"
     }
 }
@@ -48,7 +26,7 @@ public sealed interface RecordingFileResult<out T> {
  * Generation-bound handle to one open recording file.
  *
  * A handle stays valid only while the connection generation that opened it is live; afterwards
- * every operation reports [RecordingFileFailure.CONNECTION_CHANGED]. Each read carries its own
+ * every operation reports [TvheadendFailure.CONNECTION_CHANGED]. Each read carries its own
  * absolute position so a timed out or retried read can never desynchronise a server-side cursor.
  *
  * Implementations are not safe for concurrent use. One handle serves one sequential reader.
@@ -151,7 +129,7 @@ public fun interface RecordingFileOpener {
      * Opens the stored file selected when this opener was created.
      *
      * The caller owns the returned handle and must close it. When no generation is bound the
-     * result is [RecordingFileFailure.CONNECTION_CHANGED].
+     * result is [TvheadendFailure.CONNECTION_CHANGED].
      */
     public suspend fun openRecording(): RecordingFileResult<RecordingFile>
 }

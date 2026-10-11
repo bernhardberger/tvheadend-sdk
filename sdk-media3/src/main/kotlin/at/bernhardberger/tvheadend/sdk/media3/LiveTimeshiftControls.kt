@@ -13,6 +13,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionState
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTracks
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.util.Collections
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
@@ -556,7 +557,7 @@ internal class LiveTimeshiftControlBridge(
             synchronized(lock) { if (prioritySubscription === subscription) appliedPriority = null }
             throw cancellation
         } catch (_: Exception) {
-            SubscriptionOperationResult.TransportUnavailable
+            SubscriptionOperationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE)
         }
         synchronized(lock) {
             if (prioritySubscription !== subscription || subscription.state.value is SubscriptionState.Terminal) {
@@ -566,7 +567,7 @@ internal class LiveTimeshiftControlBridge(
             appliedPriority = when (result) {
                 is SubscriptionOperationResult.Ok -> desired
                 // No request was sent, so the server keeps the previous weight.
-                SubscriptionOperationResult.NotSupported -> appliedPriority
+                SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED) -> appliedPriority
                 // TVHeadend may apply a change before its reply is lost or rejected.
                 else -> null
             }
@@ -621,7 +622,7 @@ internal class LiveTimeshiftControlBridge(
             if (result is SubscriptionOperationResult.Ok) {
                 if (owedPause === subscription) owedPause = null
                 if (ownsSubscriptionLocked(subscription)) acknowledgePauseLocked(subscription, paused = true)
-            } else if (result === SubscriptionOperationResult.TransportUnavailable &&
+            } else if (result == SubscriptionOperationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE) &&
                 ownsSubscriptionLocked(subscription) &&
                 (attempted !is SubscriptionState.Playable || subscription.state.value !== attempted)
             ) {

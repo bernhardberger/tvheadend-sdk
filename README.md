@@ -121,7 +121,7 @@ val currentSession = requireNotNull(observed.currentSession)
 val channel = requireNotNull(observed.channel(channelId))
 val selected = when (val result = session.getStreamProfiles(currentSession)) {
     is StreamProfilesResult.Available -> result.profiles.firstOrNull()
-    else -> null
+    is StreamProfilesResult.Failed -> null
 }
 
 if (selected != null) {

@@ -2,7 +2,6 @@ package at.bernhardberger.tvheadend.sdk.core.cache
 
 import at.bernhardberger.tvheadend.sdk.core.CacheStatistics
 import at.bernhardberger.tvheadend.sdk.core.ArtworkContent
-import at.bernhardberger.tvheadend.sdk.core.ArtworkFailure
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
 import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
@@ -10,6 +9,7 @@ import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.MetadataCachePolicy
 import at.bernhardberger.tvheadend.sdk.core.SessionCache
 import at.bernhardberger.tvheadend.sdk.core.session.PublishedSnapshots
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -91,7 +91,7 @@ internal class MetadataCacheRuntime(
             refreshStatistics()
             bytes
         }
-        if (!isCurrent()) return ArtworkLoadResult.Unavailable(ArtworkFailure.CONNECTION_CHANGED)
+        if (!isCurrent()) return ArtworkLoadResult.Unavailable(TvheadendFailure.CONNECTION_CHANGED)
         if (cached != null) return ArtworkLoadResult.Available(ArtworkContent.create(cached))
         val result = fetch()
         accessStore {
@@ -102,14 +102,14 @@ internal class MetadataCacheRuntime(
                         namespace, id, result.content.openStream().use { it.readBytes() }, now,
                         now - policy.artworkRetention, policy.artworkMaxBytes,
                     )
-                    is ArtworkLoadResult.Unavailable -> if (result.failure == ArtworkFailure.FILE_UNAVAILABLE) {
+                    is ArtworkLoadResult.Unavailable -> if (result.failure == TvheadendFailure.FILE_UNAVAILABLE) {
                         artworkStore.remove(namespace, id, now - policy.artworkRetention)
                     }
                 }
                 refreshStatistics()
             }
         }
-        return if (isCurrent()) result else ArtworkLoadResult.Unavailable(ArtworkFailure.CONNECTION_CHANGED)
+        return if (isCurrent()) result else ArtworkLoadResult.Unavailable(TvheadendFailure.CONNECTION_CHANGED)
     }
 
     private suspend fun <T> accessStore(block: suspend () -> T): T = withContext(ioDispatcher) {

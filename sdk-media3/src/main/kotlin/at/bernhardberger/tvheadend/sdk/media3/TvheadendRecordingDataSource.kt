@@ -15,11 +15,11 @@ import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.extractor.DefaultExtractorsFactory
 import at.bernhardberger.tvheadend.sdk.playback.DEFAULT_RECORDING_READ_AHEAD_BYTES
 import at.bernhardberger.tvheadend.sdk.playback.RECORDING_END_OF_INPUT
-import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileOpener
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileReader
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import at.bernhardberger.tvheadend.sdk.playback.createRecordingFileReader
 import java.io.IOException
 import java.io.InterruptedIOException
@@ -37,7 +37,7 @@ internal const val RECORDING_URI_SCHEME: String = "tvheadend-recording"
  */
 @SubscriptionInfrastructureApi
 public class TvheadendRecordingException(
-    public val failure: RecordingFileFailure,
+    public val failure: TvheadendFailure,
 ) : IOException("Recording file operation failed: $failure")
 
 internal class RecordingMediaIdentity {
@@ -118,7 +118,7 @@ private class TvheadendRecordingDataSource(
         checkLoaderThread()
         transferInitializing(dataSpec)
         if (dataSpec.uri.toString() != identity.uri) {
-            throw TvheadendRecordingException(RecordingFileFailure.FILE_UNAVAILABLE)
+            throw TvheadendRecordingException(TvheadendFailure.FILE_UNAVAILABLE)
         }
         val length = dataSpec.length.takeIf { value -> value != C.LENGTH_UNSET.toLong() }
         val resolved = blockingIo { reader.open(dataSpec.position, length) }.orThrow()
@@ -182,7 +182,7 @@ private fun <T> blockingIo(body: suspend () -> T): T {
         Thread.currentThread().interrupt()
         throw InterruptedIOException().apply { initCause(interrupt) }
     } catch (cancellation: CancellationException) {
-        throw TvheadendRecordingException(RecordingFileFailure.CONNECTION_CHANGED)
+        throw TvheadendRecordingException(TvheadendFailure.CONNECTION_CHANGED)
             .apply { initCause(cancellation) }
     } finally {
         if (wasInterrupted) Thread.currentThread().interrupt()

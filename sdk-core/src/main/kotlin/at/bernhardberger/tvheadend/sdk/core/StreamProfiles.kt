@@ -1,5 +1,6 @@
 package at.bernhardberger.tvheadend.sdk.core
 
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.util.Collections
 
 /** Canonical lowercase 128-bit TVHeadend stream-profile UUID. */
@@ -50,32 +51,16 @@ public sealed interface StreamProfilesResult {
         }
     }
 
-    /** No connection generation is currently available for discovery. */
-    public data object NotReady : StreamProfilesResult
-
-    /** The originating observation is no longer current for its owning session. */
-    public data object ObservationExpired : StreamProfilesResult
-
-    /** The server rejected the request. */
-    public data object ServerRejected : StreamProfilesResult
-
-    /** The response was malformed; transport loss and automatic retry are not implied. */
-    public data object MalformedResponse : StreamProfilesResult
-
-    /** The authenticated session cannot discover stream profiles. */
-    public data object AccessDenied : StreamProfilesResult
-
-    /** The server refused another concurrent operation. */
-    public data object ConnectionLimit : StreamProfilesResult
-
-    /** The request was not accepted before its protocol deadline. */
-    public data object Timeout : StreamProfilesResult
-
-    /** The bound transport generation is unavailable or changed during discovery. */
-    public data object TransportUnavailable : StreamProfilesResult
-
-    /** Profile discovery is unavailable for the current connection. */
-    public data object NotSupported : StreamProfilesResult
+    /**
+     * Profile discovery failed. Access denial means the session cannot discover profiles;
+     * unsupported means discovery is unavailable on this connection. A malformed reply implies
+     * neither transport loss nor automatic retry. [TvheadendFailure.CONNECTION_CHANGED] means
+     * the generation changed during discovery; [TvheadendFailure.OBSERVATION_EXPIRED] means the
+     * originating observation was already retired before dispatch.
+     */
+    public data class Failed(public val failure: TvheadendFailure) : StreamProfilesResult {
+        override fun toString(): String = "StreamProfilesResult.Failed(failure=$failure)"
+    }
 }
 
 private const val STREAM_PROFILE_UUID_LENGTH = 32

@@ -38,7 +38,7 @@ public interface RecordingFileReader {
      * A non-null [length] requests exactly that many readable bytes; null leaves the readable
      * range open ended. The result is the resolved readable byte count, or null when the server
      * did not report a size and the caller did not bound the request. A bounded request that the
-     * reported size cannot satisfy fails with [RecordingFileFailure.FILE_UNAVAILABLE], as does a
+     * reported size cannot satisfy fails with [TvheadendFailure.FILE_UNAVAILABLE], as does a
      * [position] beyond the reported size.
      *
      * A handle left open by a previous [open] is released first, so a consumer that skips [close]
@@ -125,11 +125,11 @@ private class BufferedRecordingFileReader(
                 resolved = length
             } else {
                 if (size < 0L || position > size) {
-                    return RecordingFileResult.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+                    return RecordingFileResult.Failed(TvheadendFailure.FILE_UNAVAILABLE)
                 }
                 val available = size - position
                 if (length != null && length > available) {
-                    return RecordingFileResult.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+                    return RecordingFileResult.Failed(TvheadendFailure.FILE_UNAVAILABLE)
                 }
                 resolved = length ?: available
             }
@@ -138,7 +138,7 @@ private class BufferedRecordingFileReader(
                 is RecordingFileResult.Failed -> return seek
                 is RecordingFileResult.Ok ->
                     if (seek.value != position) {
-                        return RecordingFileResult.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+                        return RecordingFileResult.Failed(TvheadendFailure.FILE_UNAVAILABLE)
                     }
             }
 
@@ -195,12 +195,12 @@ private class BufferedRecordingFileReader(
                 is RecordingFileResult.Ok -> reading.value
             }
         if (read !in 0..chunk) {
-            return RecordingFileResult.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+            return RecordingFileResult.Failed(TvheadendFailure.FILE_UNAVAILABLE)
         }
         if (read == 0) {
             // A known readable range that stops early means the file changed under the reader.
             return if (left == null) RecordingFileResult.Ok(RECORDING_END_OF_INPUT)
-            else RecordingFileResult.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+            else RecordingFileResult.Failed(TvheadendFailure.FILE_UNAVAILABLE)
         }
 
         position += read

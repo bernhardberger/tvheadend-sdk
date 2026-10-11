@@ -1,11 +1,11 @@
 package at.bernhardberger.tvheadend.sdk.core.cache
 
 import at.bernhardberger.tvheadend.sdk.core.ArtworkContent
-import at.bernhardberger.tvheadend.sdk.core.ArtworkFailure
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
 import at.bernhardberger.tvheadend.sdk.core.CacheStatistics
 import at.bernhardberger.tvheadend.sdk.core.MetadataCachePolicy
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -95,7 +95,7 @@ internal class ArtworkCacheTest {
         val runtime = runtime()
         runtime.loadArtwork(namespace, id, { true }) { available() }
         now += 11.seconds
-        val unavailable = ArtworkLoadResult.Unavailable(ArtworkFailure.FILE_UNAVAILABLE)
+        val unavailable = ArtworkLoadResult.Unavailable(TvheadendFailure.FILE_UNAVAILABLE)
         assertSame(unavailable, runtime.loadArtwork(namespace, id, { true }) { unavailable })
         assertEquals(CacheStatistics.EMPTY, runtime.statistics.value)
 
@@ -126,7 +126,7 @@ internal class ArtworkCacheTest {
         assertEquals(CacheStatistics.EMPTY, runtime.statistics.value)
 
         val result = runtime.loadArtwork(namespace, id, { current }) { current = false; available() }
-        assertEquals(ArtworkFailure.CONNECTION_CHANGED, (result as ArtworkLoadResult.Unavailable).failure)
+        assertEquals(TvheadendFailure.CONNECTION_CHANGED, (result as ArtworkLoadResult.Unavailable).failure)
         assertEquals(CacheStatistics.EMPTY, runtime.statistics.value)
         val cancellation = CancellationException("cancelled")
         try {
@@ -164,7 +164,7 @@ internal class ArtworkCacheTest {
         val missing = async {
             runtime.loadArtwork(namespace, id, { true }) {
                 completion.await()
-                ArtworkLoadResult.Unavailable(ArtworkFailure.FILE_UNAVAILABLE)
+                ArtworkLoadResult.Unavailable(TvheadendFailure.FILE_UNAVAILABLE)
             }
         }
         runCurrent()

@@ -1,6 +1,7 @@
 package at.bernhardberger.tvheadend.sdk.core
 
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.util.Collections
 import kotlinx.coroutines.flow.Flow
 import kotlin.time.Duration
@@ -725,7 +726,7 @@ internal abstract class CommandBackedDvrRepository(
         request: DvrScheduleRequest,
     ): DvrMutationResult<DvrEntryId> = resolveGeneration(currentSession)?.let { generation ->
         mutations.scheduleEntry(generation, request)
-    } ?: DvrMutationResult.ObservationExpired
+    } ?: DvrMutationResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false)
 
     final override suspend fun updateEntry(
         currentSession: CurrentSessionObservation,
@@ -733,35 +734,35 @@ internal abstract class CommandBackedDvrRepository(
         update: DvrEntryUpdate,
     ): DvrMutationResult<Unit> = resolveGeneration(currentSession)?.let { generation ->
         mutations.updateEntry(generation, id, update)
-    } ?: DvrMutationResult.ObservationExpired
+    } ?: DvrMutationResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false)
 
     final override suspend fun stopEntry(
         currentSession: CurrentSessionObservation,
         id: DvrEntryId,
     ): DvrMutationResult<Unit> = resolveGeneration(currentSession)?.let { generation ->
         mutations.stopEntry(generation, id)
-    } ?: DvrMutationResult.ObservationExpired
+    } ?: DvrMutationResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false)
 
     final override suspend fun cancelEntry(
         currentSession: CurrentSessionObservation,
         id: DvrEntryId,
     ): DvrMutationResult<Unit> = resolveGeneration(currentSession)?.let { generation ->
         mutations.cancelEntry(generation, id)
-    } ?: DvrMutationResult.ObservationExpired
+    } ?: DvrMutationResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false)
 
     final override suspend fun deleteEntry(
         currentSession: CurrentSessionObservation,
         id: DvrEntryId,
     ): DvrMutationResult<Unit> = resolveGeneration(currentSession)?.let { generation ->
         mutations.deleteEntry(generation, id)
-    } ?: DvrMutationResult.ObservationExpired
+    } ?: DvrMutationResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false)
 
     final override suspend fun createAutorecRule(
         currentSession: CurrentSessionObservation,
         request: AutorecRuleCreate,
     ): DvrMutationResult<AutorecRuleId> = resolveGeneration(currentSession)?.let { generation ->
         mutations.createAutorecRule(generation, request)
-    } ?: DvrMutationResult.ObservationExpired
+    } ?: DvrMutationResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false)
 
     final override suspend fun updateAutorecRule(
         currentSession: CurrentSessionObservation,
@@ -769,21 +770,21 @@ internal abstract class CommandBackedDvrRepository(
         update: AutorecRuleUpdate,
     ): DvrMutationResult<Unit> = resolveGeneration(currentSession)?.let { generation ->
         mutations.updateAutorecRule(generation, id, update)
-    } ?: DvrMutationResult.ObservationExpired
+    } ?: DvrMutationResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false)
 
     final override suspend fun deleteAutorecRule(
         currentSession: CurrentSessionObservation,
         id: AutorecRuleId,
     ): DvrMutationResult<Unit> = resolveGeneration(currentSession)?.let { generation ->
         mutations.deleteAutorecRule(generation, id)
-    } ?: DvrMutationResult.ObservationExpired
+    } ?: DvrMutationResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false)
 
     final override suspend fun createTimerecRule(
         currentSession: CurrentSessionObservation,
         request: TimerecRuleCreate,
     ): DvrMutationResult<TimerecRuleId> = resolveGeneration(currentSession)?.let { generation ->
         mutations.createTimerecRule(generation, request)
-    } ?: DvrMutationResult.ObservationExpired
+    } ?: DvrMutationResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false)
 
     final override suspend fun updateTimerecRule(
         currentSession: CurrentSessionObservation,
@@ -791,14 +792,14 @@ internal abstract class CommandBackedDvrRepository(
         update: TimerecRuleUpdate,
     ): DvrMutationResult<Unit> = resolveGeneration(currentSession)?.let { generation ->
         mutations.updateTimerecRule(generation, id, update)
-    } ?: DvrMutationResult.ObservationExpired
+    } ?: DvrMutationResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false)
 
     final override suspend fun deleteTimerecRule(
         currentSession: CurrentSessionObservation,
         id: TimerecRuleId,
     ): DvrMutationResult<Unit> = resolveGeneration(currentSession)?.let { generation ->
         mutations.deleteTimerecRule(generation, id)
-    } ?: DvrMutationResult.ObservationExpired
+    } ?: DvrMutationResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false)
 
 }
 

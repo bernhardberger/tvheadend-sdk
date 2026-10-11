@@ -12,6 +12,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.util.concurrent.CancellationException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -44,27 +45,27 @@ internal class DvrProgressCoordinatorTest {
             GatewayResult.Ok(Unit)
         }
 
-        assertSame(
-            DvrProgressResult.ObservationExpired,
+        assertEquals(
+            DvrProgressResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false),
             coordinator.reportProgress(generation, DvrEntryId(7), checkpoint()),
         )
         coordinator.bindGeneration(generation, protocolVersion = 26)
         assertTrue(coordinator.startAdmission(generation))
-        assertSame(
-            DvrProgressResult.NotReady,
+        assertEquals(
+            DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false),
             coordinator.reportProgress(generation, DvrEntryId(7), checkpoint()),
         )
         ready = true
-        assertSame(
-            DvrProgressResult.NotSupported,
+        assertEquals(
+            DvrProgressResult.Failed(TvheadendFailure.NOT_SUPPORTED, mayHaveApplied = false),
             coordinator.reportProgress(generation, DvrEntryId(7), checkpoint()),
         )
         assertEquals(0, commandCount)
 
         coordinator.bindGeneration(generation, protocolVersion = null)
         assertTrue(coordinator.startAdmission(generation))
-        assertSame(
-            DvrProgressResult.NotSupported,
+        assertEquals(
+            DvrProgressResult.Failed(TvheadendFailure.NOT_SUPPORTED, mayHaveApplied = false),
             coordinator.reportProgress(generation, DvrEntryId(7), checkpoint()),
         )
         assertEquals(0, commandCount)
@@ -72,8 +73,8 @@ internal class DvrProgressCoordinatorTest {
         coordinator.bindGeneration(generation, protocolVersion = 27)
         assertTrue(coordinator.startAdmission(generation))
         ready = false
-        assertSame(
-            DvrProgressResult.NotReady,
+        assertEquals(
+            DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false),
             coordinator.reportProgress(generation, DvrEntryId(7), checkpoint()),
         )
         ready = true
@@ -102,12 +103,12 @@ internal class DvrProgressCoordinatorTest {
         coordinator.bindGeneration(generation, protocolVersion = 27)
         coordinator.startAdmission(generation)
 
-        assertSame(
-            DvrProgressResult.NotSupported,
+        assertEquals(
+            DvrProgressResult.Failed(TvheadendFailure.NOT_SUPPORTED, mayHaveApplied = false),
             coordinator.reportProgress(generation, DvrEntryId(7), checkpoint()),
         )
-        assertSame(
-            DvrProgressResult.NotSupported,
+        assertEquals(
+            DvrProgressResult.Failed(TvheadendFailure.NOT_SUPPORTED, mayHaveApplied = false),
             coordinator.reportProgress(generation, DvrEntryId(7), checkpoint()),
         )
         assertEquals(1, commandCount)
@@ -143,13 +144,13 @@ internal class DvrProgressCoordinatorTest {
             coordinator.startAdmission(generation)
 
             gateway.progressBehavior = { _, _, _ -> GatewayResult.AccessDenied }
-            assertSame(
-                DvrProgressResult.AccessDenied,
+            assertEquals(
+                DvrProgressResult.Failed(TvheadendFailure.ACCESS_DENIED, mayHaveApplied = false),
                 coordinator.reportProgress(generation, DvrEntryId(7), checkpoint()),
             )
             gateway.progressBehavior = { _, _, _ -> GatewayResult.MalformedReply }
-            assertSame(
-                DvrProgressResult.MalformedResponse,
+            assertEquals(
+                DvrProgressResult.Failed(TvheadendFailure.MALFORMED_RESPONSE, mayHaveApplied = true),
                 coordinator.reportProgress(generation, DvrEntryId(7), checkpoint()),
             )
             assertEquals(listOf(false), proofs)
@@ -179,7 +180,10 @@ internal class DvrProgressCoordinatorTest {
             runCurrent()
             coordinator.stopAdmission()
             blocked.complete(GatewayResult.NotSupported)
-            assertSame(DvrProgressResult.TransportUnavailable, inFlight.await())
+            assertEquals(
+                DvrProgressResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = false),
+                inFlight.await(),
+            )
             assertEquals(emptyList<GatewayGeneration>(), unsupportedGenerations)
         }
 
@@ -207,8 +211,8 @@ internal class DvrProgressCoordinatorTest {
             true
         }
 
-        assertSame(
-            DvrProgressResult.TransportUnavailable,
+        assertEquals(
+            DvrProgressResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = false),
             coordinator.reportProgress(lease, checkpoint()),
         )
         assertEquals(1, commandCount)
@@ -237,8 +241,8 @@ internal class DvrProgressCoordinatorTest {
             it.validate = { targetCurrent }
         }
 
-        assertSame(
-            DvrProgressResult.TransportUnavailable,
+        assertEquals(
+            DvrProgressResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = false),
             coordinator.reportProgress(lease, checkpoint()),
         )
         assertEquals(0, commandCount)
@@ -270,8 +274,8 @@ internal class DvrProgressCoordinatorTest {
             coordinator.bindGeneration(generation, protocolVersion = 43)
             coordinator.startAdmission(generation)
 
-            assertSame(
-                DvrProgressResult.TransportUnavailable,
+            assertEquals(
+                DvrProgressResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = false),
                 coordinator.reportProgress(
                     generation,
                     DvrEntryId(7),
@@ -280,8 +284,8 @@ internal class DvrProgressCoordinatorTest {
                 ),
             )
             targetCurrent = true
-            assertSame(
-                DvrCutpointsResult.TransportUnavailable,
+            assertEquals(
+                DvrCutpointsResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE),
                 coordinator.getCutpoints(
                     generation,
                     DvrEntryId(7),
@@ -291,6 +295,36 @@ internal class DvrProgressCoordinatorTest {
             assertEquals(0, progressCommands)
             assertEquals(0, cutpointCommands)
         }
+
+    @Test
+    fun `progress uncertainty follows dispatch and refusal even when the generation retires`() = runTest {
+        val replies = listOf(
+            GatewayResult.Ok(Unit) to true,
+            GatewayResult.ServerRejected to false,
+            GatewayResult.AccessDenied to false,
+            GatewayResult.ConnectionLimit to false,
+            GatewayResult.NotSupported to false,
+            GatewayResult.MalformedReply to true,
+            GatewayResult.Timeout to true,
+            GatewayResult.TransportUnavailable to true,
+        )
+        for ((reply, mayHaveApplied) in replies) {
+            val generation = GatewayGeneration()
+            val gateway = MutationGateway()
+            val coordinator = DvrProgressCoordinator(gateway)
+            coordinator.bindGeneration(generation, protocolVersion = 43)
+            coordinator.startAdmission(generation)
+            gateway.progressBehavior = { _, _, _ ->
+                coordinator.stopAdmission()
+                reply
+            }
+
+            assertEquals(
+                DvrProgressResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied),
+                coordinator.reportProgress(generation, DvrEntryId(7), checkpoint()),
+            )
+        }
+    }
 
     @Test
     fun `access proof runs after the coordinator lock is released`() = runTest {
@@ -320,8 +354,8 @@ internal class DvrProgressCoordinatorTest {
             DvrProgressResult.Accepted,
             coordinator.reportProgress(generation, DvrEntryId(7), checkpoint()),
         )
-        assertSame(
-            DvrProgressResult.ObservationExpired,
+        assertEquals(
+            DvrProgressResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false),
             coordinator.reportProgress(generation, DvrEntryId(7), checkpoint()),
         )
     }
@@ -350,15 +384,15 @@ internal class DvrProgressCoordinatorTest {
 
         coordinator.bindGeneration(generation, protocolVersion = 26)
         assertTrue(coordinator.startAdmission(generation))
-        assertSame(
-            DvrProgressResult.ObservationExpired,
+        assertEquals(
+            DvrProgressResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false),
             coordinator.reportProgress(generation, DvrEntryId(7), checkpoint()),
         )
 
         coordinator.bindGeneration(generation, protocolVersion = 11)
         assertTrue(coordinator.startAdmission(generation))
-        assertSame(
-            DvrCutpointsResult.ObservationExpired,
+        assertEquals(
+            DvrCutpointsResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED),
             coordinator.getCutpoints(generation, DvrEntryId(7)),
         )
     }
@@ -385,21 +419,30 @@ internal class DvrProgressCoordinatorTest {
             GatewayResult.Ok(listOf(cutpoint))
         }
 
-        assertSame(
-            DvrCutpointsResult.ObservationExpired,
+        assertEquals(
+            DvrCutpointsResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED),
             coordinator.getCutpoints(generation, DvrEntryId(7)),
         )
         coordinator.bindGeneration(generation, protocolVersion = 11)
         assertTrue(coordinator.startAdmission(generation))
-        assertSame(DvrCutpointsResult.NotReady, coordinator.getCutpoints(generation, DvrEntryId(7)))
+        assertEquals(
+            DvrCutpointsResult.Failed(TvheadendFailure.NOT_READY),
+            coordinator.getCutpoints(generation, DvrEntryId(7)),
+        )
         ready = true
-        assertSame(DvrCutpointsResult.NotSupported, coordinator.getCutpoints(generation, DvrEntryId(7)))
+        assertEquals(
+            DvrCutpointsResult.Failed(TvheadendFailure.NOT_SUPPORTED),
+            coordinator.getCutpoints(generation, DvrEntryId(7)),
+        )
         assertEquals(0, commandCount)
 
         coordinator.bindGeneration(generation, protocolVersion = 12)
         assertTrue(coordinator.startAdmission(generation))
         ready = false
-        assertSame(DvrCutpointsResult.NotReady, coordinator.getCutpoints(generation, DvrEntryId(7)))
+        assertEquals(
+            DvrCutpointsResult.Failed(TvheadendFailure.NOT_READY),
+            coordinator.getCutpoints(generation, DvrEntryId(7)),
+        )
         ready = true
         val available = coordinator.getCutpoints(
             generation,
@@ -423,12 +466,12 @@ internal class DvrProgressCoordinatorTest {
         coordinator.bindGeneration(generation, protocolVersion = 43)
         coordinator.startAdmission(generation)
 
-        assertSame(
-            DvrCutpointsResult.NotSupported,
+        assertEquals(
+            DvrCutpointsResult.Failed(TvheadendFailure.NOT_SUPPORTED),
             coordinator.getCutpoints(generation, DvrEntryId(7)),
         )
-        assertSame(
-            DvrCutpointsResult.NotSupported,
+        assertEquals(
+            DvrCutpointsResult.Failed(TvheadendFailure.NOT_SUPPORTED),
             coordinator.getCutpoints(generation, DvrEntryId(7)),
         )
         assertEquals(1, commandCount)
@@ -445,7 +488,7 @@ internal class DvrProgressCoordinatorTest {
         coordinator.stopAdmission()
         blocked.complete(GatewayResult.Ok(emptyList()))
 
-        assertSame(DvrCutpointsResult.TransportUnavailable, inFlight.await())
+        assertEquals(DvrCutpointsResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE), inFlight.await())
         assertEquals(2, commandCount)
     }
 
@@ -462,16 +505,16 @@ internal class DvrProgressCoordinatorTest {
         coordinator.startAdmission(generation)
 
         val failures = listOf(
-            GatewayResult.ServerRejected to DvrCutpointsResult.ServerRejected,
-            GatewayResult.MalformedReply to DvrCutpointsResult.MalformedResponse,
-            GatewayResult.AccessDenied to DvrCutpointsResult.AccessDenied,
-            GatewayResult.ConnectionLimit to DvrCutpointsResult.ConnectionLimit,
-            GatewayResult.Timeout to DvrCutpointsResult.Timeout,
-            GatewayResult.TransportUnavailable to DvrCutpointsResult.TransportUnavailable,
+            GatewayResult.ServerRejected to DvrCutpointsResult.Failed(TvheadendFailure.SERVER_REJECTED),
+            GatewayResult.MalformedReply to DvrCutpointsResult.Failed(TvheadendFailure.MALFORMED_RESPONSE),
+            GatewayResult.AccessDenied to DvrCutpointsResult.Failed(TvheadendFailure.ACCESS_DENIED),
+            GatewayResult.ConnectionLimit to DvrCutpointsResult.Failed(TvheadendFailure.CONNECTION_LIMIT),
+            GatewayResult.Timeout to DvrCutpointsResult.Failed(TvheadendFailure.TIMEOUT),
+            GatewayResult.TransportUnavailable to DvrCutpointsResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE),
         )
         failures.forEach { (gatewayFailure, expected) ->
             gateway.cutpointsBehavior = { _, _ -> gatewayFailure }
-            assertSame(expected, coordinator.getCutpoints(generation, DvrEntryId(7)))
+            assertEquals(expected, coordinator.getCutpoints(generation, DvrEntryId(7)))
         }
         assertEquals(emptyList<Boolean>(), proofs, "Per-entry reads must not change write authority")
 

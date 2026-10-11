@@ -20,6 +20,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlin.time.Duration
@@ -201,7 +202,7 @@ internal interface ProtocolGateway {
         if (streamProfileUuid == null) {
             subscribe(generation, id, channelId, timeshiftPeriod)
         } else {
-            SubscriptionOperationResult.NotSupported
+            SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED)
         }
 
     public suspend fun subscribe(
@@ -225,19 +226,19 @@ internal interface ProtocolGateway {
         id: SubscriptionId,
         status: SubscriptionEvent.Timeshift,
         marginSeconds: Long,
-    ): SubscriptionOperationResult<Unit> = SubscriptionOperationResult.NotSupported
+    ): SubscriptionOperationResult<Unit> = SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED)
 
     public suspend fun speedSubscription(
         generation: GatewayGeneration,
         id: SubscriptionId,
         speed: Int,
-    ): SubscriptionOperationResult<Unit> = SubscriptionOperationResult.NotSupported
+    ): SubscriptionOperationResult<Unit> = SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED)
 
     public suspend fun changeSubscriptionPriority(
         generation: GatewayGeneration,
         id: SubscriptionId,
         priority: LiveSubscriptionPriority,
-    ): SubscriptionOperationResult<Unit> = SubscriptionOperationResult.NotSupported
+    ): SubscriptionOperationResult<Unit> = SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED)
 
     public suspend fun unsubscribe(
         generation: GatewayGeneration,

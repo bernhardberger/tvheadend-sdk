@@ -9,20 +9,6 @@ public final class at/bernhardberger/tvheadend/sdk/core/ArtworkContent$Companion
 	public final fun create ([B)Lat/bernhardberger/tvheadend/sdk/core/ArtworkContent;
 }
 
-public final class at/bernhardberger/tvheadend/sdk/core/ArtworkFailure : java/lang/Enum {
-	public static final field ACCESS_DENIED Lat/bernhardberger/tvheadend/sdk/core/ArtworkFailure;
-	public static final field CONNECTION_CHANGED Lat/bernhardberger/tvheadend/sdk/core/ArtworkFailure;
-	public static final field CONNECTION_LIMIT Lat/bernhardberger/tvheadend/sdk/core/ArtworkFailure;
-	public static final field FILE_UNAVAILABLE Lat/bernhardberger/tvheadend/sdk/core/ArtworkFailure;
-	public static final field MALFORMED_RESPONSE Lat/bernhardberger/tvheadend/sdk/core/ArtworkFailure;
-	public static final field NOT_SUPPORTED Lat/bernhardberger/tvheadend/sdk/core/ArtworkFailure;
-	public static final field OBSERVATION_EXPIRED Lat/bernhardberger/tvheadend/sdk/core/ArtworkFailure;
-	public static final field TIMEOUT Lat/bernhardberger/tvheadend/sdk/core/ArtworkFailure;
-	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public static fun valueOf (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/ArtworkFailure;
-	public static fun values ()[Lat/bernhardberger/tvheadend/sdk/core/ArtworkFailure;
-}
-
 public final class at/bernhardberger/tvheadend/sdk/core/ArtworkId {
 	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/ArtworkId$Companion;
 	public static final synthetic fun box-impl (I)Lat/bernhardberger/tvheadend/sdk/core/ArtworkId;
@@ -53,8 +39,13 @@ public final class at/bernhardberger/tvheadend/sdk/core/ArtworkLoadResult$Availa
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/ArtworkLoadResult$Unavailable : at/bernhardberger/tvheadend/sdk/core/ArtworkLoadResult {
-	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/ArtworkFailure;)V
-	public final fun getFailure ()Lat/bernhardberger/tvheadend/sdk/core/ArtworkFailure;
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;)V
+	public final fun component1 ()Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;
+	public final fun copy (Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;)Lat/bernhardberger/tvheadend/sdk/core/ArtworkLoadResult$Unavailable;
+	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/ArtworkLoadResult$Unavailable;Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/ArtworkLoadResult$Unavailable;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getFailure ()Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;
+	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
 
@@ -749,13 +740,6 @@ public final class at/bernhardberger/tvheadend/sdk/core/DvrCutpointAction$Compan
 public abstract interface class at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult {
 }
 
-public final class at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$AccessDenied : at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$AccessDenied;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
 public final class at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$Available : at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult {
 	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$Available$Companion;
 	public final fun component1 ()Ljava/util/List;
@@ -769,58 +753,13 @@ public final class at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$Avail
 	public final fun create (Ljava/util/List;)Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$Available;
 }
 
-public final class at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$ConnectionLimit : at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$ConnectionLimit;
+public final class at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$Failed : at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult {
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;)V
+	public final fun component1 ()Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;
+	public final fun copy (Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;)Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$Failed;
+	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$Failed;Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$Failed;
 	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$MalformedResponse : at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$MalformedResponse;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$NotReady : at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$NotReady;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$NotSupported : at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$NotSupported;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$ObservationExpired : at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$ObservationExpired;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$ServerRejected : at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$ServerRejected;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$Timeout : at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$Timeout;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$TransportUnavailable : at/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrCutpointsResult$TransportUnavailable;
-	public fun equals (Ljava/lang/Object;)Z
+	public final fun getFailure ()Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
@@ -1069,71 +1008,21 @@ public final class at/bernhardberger/tvheadend/sdk/core/DvrMutationResult$Accept
 	public fun toString ()Ljava/lang/String;
 }
 
-public final class at/bernhardberger/tvheadend/sdk/core/DvrMutationResult$AccessDenied : at/bernhardberger/tvheadend/sdk/core/DvrMutationResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult$AccessDenied;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
 public final class at/bernhardberger/tvheadend/sdk/core/DvrMutationResult$Confirmed : at/bernhardberger/tvheadend/sdk/core/DvrMutationResult {
 	public fun <init> (Ljava/lang/Object;)V
 	public final fun getValue ()Ljava/lang/Object;
 	public fun toString ()Ljava/lang/String;
 }
 
-public final class at/bernhardberger/tvheadend/sdk/core/DvrMutationResult$ConnectionLimit : at/bernhardberger/tvheadend/sdk/core/DvrMutationResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult$ConnectionLimit;
+public final class at/bernhardberger/tvheadend/sdk/core/DvrMutationResult$Failed : at/bernhardberger/tvheadend/sdk/core/DvrMutationResult {
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;Z)V
+	public final fun component1 ()Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;
+	public final fun component2 ()Z
+	public final fun copy (Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;Z)Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult$Failed;
+	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult$Failed;Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;ZILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult$Failed;
 	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/DvrMutationResult$MalformedResponse : at/bernhardberger/tvheadend/sdk/core/DvrMutationResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult$MalformedResponse;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/DvrMutationResult$NotReady : at/bernhardberger/tvheadend/sdk/core/DvrMutationResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult$NotReady;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/DvrMutationResult$NotSupported : at/bernhardberger/tvheadend/sdk/core/DvrMutationResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult$NotSupported;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/DvrMutationResult$ObservationExpired : at/bernhardberger/tvheadend/sdk/core/DvrMutationResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult$ObservationExpired;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/DvrMutationResult$ServerRejected : at/bernhardberger/tvheadend/sdk/core/DvrMutationResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult$ServerRejected;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/DvrMutationResult$Timeout : at/bernhardberger/tvheadend/sdk/core/DvrMutationResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult$Timeout;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/DvrMutationResult$TransportUnavailable : at/bernhardberger/tvheadend/sdk/core/DvrMutationResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult$TransportUnavailable;
-	public fun equals (Ljava/lang/Object;)Z
+	public final fun getFailure ()Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;
+	public final fun getMayHaveApplied ()Z
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
@@ -1193,65 +1082,15 @@ public final class at/bernhardberger/tvheadend/sdk/core/DvrProgressResult$Accept
 	public fun toString ()Ljava/lang/String;
 }
 
-public final class at/bernhardberger/tvheadend/sdk/core/DvrProgressResult$AccessDenied : at/bernhardberger/tvheadend/sdk/core/DvrProgressResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrProgressResult$AccessDenied;
+public final class at/bernhardberger/tvheadend/sdk/core/DvrProgressResult$Failed : at/bernhardberger/tvheadend/sdk/core/DvrProgressResult {
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;Z)V
+	public final fun component1 ()Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;
+	public final fun component2 ()Z
+	public final fun copy (Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;Z)Lat/bernhardberger/tvheadend/sdk/core/DvrProgressResult$Failed;
+	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/DvrProgressResult$Failed;Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;ZILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/DvrProgressResult$Failed;
 	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/DvrProgressResult$ConnectionLimit : at/bernhardberger/tvheadend/sdk/core/DvrProgressResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrProgressResult$ConnectionLimit;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/DvrProgressResult$MalformedResponse : at/bernhardberger/tvheadend/sdk/core/DvrProgressResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrProgressResult$MalformedResponse;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/DvrProgressResult$NotReady : at/bernhardberger/tvheadend/sdk/core/DvrProgressResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrProgressResult$NotReady;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/DvrProgressResult$NotSupported : at/bernhardberger/tvheadend/sdk/core/DvrProgressResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrProgressResult$NotSupported;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/DvrProgressResult$ObservationExpired : at/bernhardberger/tvheadend/sdk/core/DvrProgressResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrProgressResult$ObservationExpired;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/DvrProgressResult$ServerRejected : at/bernhardberger/tvheadend/sdk/core/DvrProgressResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrProgressResult$ServerRejected;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/DvrProgressResult$Timeout : at/bernhardberger/tvheadend/sdk/core/DvrProgressResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrProgressResult$Timeout;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/DvrProgressResult$TransportUnavailable : at/bernhardberger/tvheadend/sdk/core/DvrProgressResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/DvrProgressResult$TransportUnavailable;
-	public fun equals (Ljava/lang/Object;)Z
+	public final fun getFailure ()Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;
+	public final fun getMayHaveApplied ()Z
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
@@ -1806,13 +1645,6 @@ public final class at/bernhardberger/tvheadend/sdk/core/EpgSearchRequest$Compani
 public abstract interface class at/bernhardberger/tvheadend/sdk/core/EpgSearchResult {
 }
 
-public final class at/bernhardberger/tvheadend/sdk/core/EpgSearchResult$AccessDenied : at/bernhardberger/tvheadend/sdk/core/EpgSearchResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/EpgSearchResult$AccessDenied;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
 public final class at/bernhardberger/tvheadend/sdk/core/EpgSearchResult$Available : at/bernhardberger/tvheadend/sdk/core/EpgSearchResult {
 	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/EpgSearchResult$Available$Companion;
 	public final fun getEvents ()Ljava/util/List;
@@ -1824,58 +1656,13 @@ public final class at/bernhardberger/tvheadend/sdk/core/EpgSearchResult$Availabl
 	public final fun create (Ljava/util/List;Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;)Lat/bernhardberger/tvheadend/sdk/core/EpgSearchResult$Available;
 }
 
-public final class at/bernhardberger/tvheadend/sdk/core/EpgSearchResult$ConnectionChanged : at/bernhardberger/tvheadend/sdk/core/EpgSearchResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/EpgSearchResult$ConnectionChanged;
+public final class at/bernhardberger/tvheadend/sdk/core/EpgSearchResult$Failed : at/bernhardberger/tvheadend/sdk/core/EpgSearchResult {
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;)V
+	public final fun component1 ()Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;
+	public final fun copy (Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;)Lat/bernhardberger/tvheadend/sdk/core/EpgSearchResult$Failed;
+	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/EpgSearchResult$Failed;Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/EpgSearchResult$Failed;
 	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/EpgSearchResult$ConnectionLimit : at/bernhardberger/tvheadend/sdk/core/EpgSearchResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/EpgSearchResult$ConnectionLimit;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/EpgSearchResult$InvalidQuery : at/bernhardberger/tvheadend/sdk/core/EpgSearchResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/EpgSearchResult$InvalidQuery;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/EpgSearchResult$MalformedResponse : at/bernhardberger/tvheadend/sdk/core/EpgSearchResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/EpgSearchResult$MalformedResponse;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/EpgSearchResult$NotSupported : at/bernhardberger/tvheadend/sdk/core/EpgSearchResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/EpgSearchResult$NotSupported;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/EpgSearchResult$ObservationExpired : at/bernhardberger/tvheadend/sdk/core/EpgSearchResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/EpgSearchResult$ObservationExpired;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/EpgSearchResult$Timeout : at/bernhardberger/tvheadend/sdk/core/EpgSearchResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/EpgSearchResult$Timeout;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/EpgSearchResult$TransportUnavailable : at/bernhardberger/tvheadend/sdk/core/EpgSearchResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/EpgSearchResult$TransportUnavailable;
-	public fun equals (Ljava/lang/Object;)Z
+	public final fun getFailure ()Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
@@ -2379,13 +2166,6 @@ public final class at/bernhardberger/tvheadend/sdk/core/StreamProfileId {
 public abstract interface class at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult {
 }
 
-public final class at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$AccessDenied : at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$AccessDenied;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
 public final class at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$Available : at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult {
 	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$Available$Companion;
 	public final fun component1 ()Ljava/util/List;
@@ -2401,58 +2181,13 @@ public final class at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$Ava
 	public final fun create (Ljava/util/List;Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;)Lat/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$Available;
 }
 
-public final class at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$ConnectionLimit : at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$ConnectionLimit;
+public final class at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$Failed : at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult {
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;)V
+	public final fun component1 ()Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;
+	public final fun copy (Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;)Lat/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$Failed;
+	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$Failed;Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$Failed;
 	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$MalformedResponse : at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$MalformedResponse;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$NotReady : at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$NotReady;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$NotSupported : at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$NotSupported;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$ObservationExpired : at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$ObservationExpired;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$ServerRejected : at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$ServerRejected;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$Timeout : at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$Timeout;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$TransportUnavailable : at/bernhardberger/tvheadend/sdk/core/StreamProfilesResult {
-	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/StreamProfilesResult$TransportUnavailable;
-	public fun equals (Ljava/lang/Object;)Z
+	public final fun getFailure ()Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }

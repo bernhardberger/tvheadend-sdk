@@ -35,7 +35,6 @@ import at.bernhardberger.tvheadend.sdk.playback.LiveFrontendState
 import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionDiagnostics
 import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionPriority
 import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionSource
-import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFile
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionCondition
@@ -60,6 +59,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionConfirmation
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStream
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTracks
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import at.bernhardberger.tvheadend.sdk.playback.createSubscriptionManager
 import at.bernhardberger.tvheadend.sdk.testing.FakeSessionCall
 import at.bernhardberger.tvheadend.sdk.testing.ScriptedSubscriptionConnection
@@ -355,7 +355,7 @@ internal class TvheadendPlaybackCoordinatorTest {
         target.admissionState = CoordinatorRecordingAdmission.GrowingStartOverOnly(
             RecordingProgressCapability.SUPPORTED,
         )
-        target.growingResult = RecordingFileResult.Failed(RecordingFileFailure.CONNECTION_CHANGED)
+        target.growingResult = RecordingFileResult.Failed(TvheadendFailure.CONNECTION_CHANGED)
         assertSame(
             RecordingAdmission.NotReady,
             admitRecordingTarget(
@@ -363,7 +363,7 @@ internal class TvheadendPlaybackCoordinatorTest {
                 start = RecordingPlaybackStart.START_OVER,
             ),
         )
-        target.growingResult = RecordingFileResult.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+        target.growingResult = RecordingFileResult.Failed(TvheadendFailure.FILE_UNAVAILABLE)
         assertSame(
             RecordingAdmission.TargetUnavailable,
             admitRecordingTarget(
@@ -978,7 +978,7 @@ internal class TvheadendPlaybackCoordinatorTest {
                 if (outcome == "stale-capacity") attachment.bufferingCapacityAvailable = false
                 subscription.speedAction = { speed ->
                     if (outcome.endsWith("pause-rejected") && speed == 0 && subscription.speeds.size > 1) {
-                        SubscriptionOperationResult.ServerRejected
+                        SubscriptionOperationResult.Failed(TvheadendFailure.SERVER_REJECTED)
                     } else {
                         fixture.player.emitTimeshift(SubscriptionEvent.Speed(speed))
                         SubscriptionOperationResult.Ok(Unit)
@@ -1344,7 +1344,11 @@ internal class TvheadendPlaybackCoordinatorTest {
                     assertEquals(paused + listOf(100, 100), transport.connection.speeds, "$variant: the owed pause is dropped")
                     continue
                 }
-                if (variant in rejected) transport.connection.scriptSpeed(SubscriptionOperationResult.ServerRejected)
+                if (variant in rejected) {
+                    transport.connection.scriptSpeed(
+                        SubscriptionOperationResult.Failed(TvheadendFailure.SERVER_REJECTED),
+                    )
+                }
                 transport.started()
                 runCurrent()
                 assertEquals(paused + listOf(100, 0), transport.connection.speeds, "$variant: the restart is paused again")
@@ -2709,14 +2713,17 @@ internal class TvheadendPlaybackCoordinatorTest {
         fixture.player.attachTimeshift(subscription)
 
         val operationFailures = listOf(
-            SubscriptionOperationResult.ServerRejected to TimeshiftCommandResult.SERVER_REJECTED,
-            SubscriptionOperationResult.MalformedResponse to TimeshiftCommandResult.MALFORMED_RESPONSE,
-            SubscriptionOperationResult.AccessDenied to TimeshiftCommandResult.ACCESS_DENIED,
-            SubscriptionOperationResult.ConnectionLimit to TimeshiftCommandResult.CONNECTION_LIMIT,
-            SubscriptionOperationResult.Timeout to TimeshiftCommandResult.TIMEOUT,
-            SubscriptionOperationResult.TransportUnavailable to
+            SubscriptionOperationResult.Failed(TvheadendFailure.SERVER_REJECTED) to
+                TimeshiftCommandResult.SERVER_REJECTED,
+            SubscriptionOperationResult.Failed(TvheadendFailure.MALFORMED_RESPONSE) to
+                TimeshiftCommandResult.MALFORMED_RESPONSE,
+            SubscriptionOperationResult.Failed(TvheadendFailure.ACCESS_DENIED) to TimeshiftCommandResult.ACCESS_DENIED,
+            SubscriptionOperationResult.Failed(TvheadendFailure.CONNECTION_LIMIT) to
+                TimeshiftCommandResult.CONNECTION_LIMIT,
+            SubscriptionOperationResult.Failed(TvheadendFailure.TIMEOUT) to TimeshiftCommandResult.TIMEOUT,
+            SubscriptionOperationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE) to
                 TimeshiftCommandResult.TRANSPORT_UNAVAILABLE,
-            SubscriptionOperationResult.NotSupported to TimeshiftCommandResult.NOT_SUPPORTED,
+            SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED) to TimeshiftCommandResult.NOT_SUPPORTED,
         )
         operationFailures.forEach { (source, expected) ->
             subscription.speedAction = { source }
@@ -2950,7 +2957,7 @@ internal class TvheadendPlaybackCoordinatorTest {
         )
         assertEquals(listOf(LiveSubscriptionPriority.YIELD), first.priorities)
 
-        first.priorityAction = { SubscriptionOperationResult.MalformedResponse }
+        first.priorityAction = { SubscriptionOperationResult.Failed(TvheadendFailure.MALFORMED_RESPONSE) }
         assertSame(
             TimeshiftCommandResult.MALFORMED_RESPONSE,
             fixture.coordinator.setLivePriority(LiveSubscriptionPriority.NORMAL),
@@ -2974,10 +2981,10 @@ internal class TvheadendPlaybackCoordinatorTest {
         assertTrue(second.priorities.isEmpty(), "The re-subscribe already carried the sticky priority")
 
         val failures = listOf(
-            SubscriptionOperationResult.NotSupported to TimeshiftCommandResult.NOT_SUPPORTED,
-            SubscriptionOperationResult.TransportUnavailable to
+            SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED) to TimeshiftCommandResult.NOT_SUPPORTED,
+            SubscriptionOperationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE) to
                 TimeshiftCommandResult.TRANSPORT_UNAVAILABLE,
-            SubscriptionOperationResult.Timeout to TimeshiftCommandResult.TIMEOUT,
+            SubscriptionOperationResult.Failed(TvheadendFailure.TIMEOUT) to TimeshiftCommandResult.TIMEOUT,
         )
         failures.forEach { (source, expected) ->
             second.priorityAction = { source }
@@ -4017,11 +4024,11 @@ private class NumberedRecordingTarget(
         get() = admissionState
 
     override suspend fun openRecording(): RecordingFileResult<RecordingFile> =
-        RecordingFileResult.Failed(RecordingFileFailure.NOT_SUPPORTED)
+        RecordingFileResult.Failed(TvheadendFailure.NOT_SUPPORTED)
 
     override fun bindGrowingRecording(): RecordingFileResult<GrowingRecordingFileLease> =
         growingLease?.let { lease -> RecordingFileResult.Ok(lease) }
-            ?: RecordingFileResult.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+            ?: RecordingFileResult.Failed(TvheadendFailure.FILE_UNAVAILABLE)
 
     override suspend fun reportProgress(
         growingLease: GrowingRecordingFileLease?,
@@ -4557,7 +4564,7 @@ private class MutableGrowingLease(
         get() = current
 
     override suspend fun open(position: Long): RecordingFileResult<GrowingRecordingFileReader> =
-        RecordingFileResult.Failed(RecordingFileFailure.NOT_SUPPORTED)
+        RecordingFileResult.Failed(TvheadendFailure.NOT_SUPPORTED)
 
     override fun toString(): String = "MutableGrowingLease(<redacted>)"
 }

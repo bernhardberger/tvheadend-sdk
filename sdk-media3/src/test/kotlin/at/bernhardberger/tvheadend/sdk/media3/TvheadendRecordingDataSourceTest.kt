@@ -8,9 +8,9 @@ import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.TransferListener
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFile
-import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileOpener
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.util.concurrent.CancellationException
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -45,7 +45,7 @@ class TvheadendRecordingDataSourceTest {
             source.open(recordingSpec(identity = RecordingMediaIdentity()))
         }
 
-        assertSame(RecordingFileFailure.FILE_UNAVAILABLE, failure.failure)
+        assertSame(TvheadendFailure.FILE_UNAVAILABLE, failure.failure)
         assertTrue(transport.calls.isEmpty())
     }
 
@@ -125,32 +125,32 @@ class TvheadendRecordingDataSourceTest {
     fun `a changed connection and an unreadable file stay distinguishable`() {
         val changed = FakeRecordingTransport(
             ByteArray(4),
-            openFailure = RecordingFileFailure.CONNECTION_CHANGED,
+            openFailure = TvheadendFailure.CONNECTION_CHANGED,
         )
         val connectionFailure = assertThrows(TvheadendRecordingException::class.java) {
             dataSource(changed, readAheadBytes = 4).open(recordingSpec())
         }
-        assertSame(RecordingFileFailure.CONNECTION_CHANGED, connectionFailure.failure)
+        assertSame(TvheadendFailure.CONNECTION_CHANGED, connectionFailure.failure)
 
         val denied = FakeRecordingTransport(
             ByteArray(4),
-            openFailure = RecordingFileFailure.ACCESS_DENIED,
+            openFailure = TvheadendFailure.ACCESS_DENIED,
         )
         val deniedFailure = assertThrows(TvheadendRecordingException::class.java) {
             dataSource(denied, readAheadBytes = 4).open(recordingSpec())
         }
-        assertSame(RecordingFileFailure.ACCESS_DENIED, deniedFailure.failure)
+        assertSame(TvheadendFailure.ACCESS_DENIED, deniedFailure.failure)
 
         val truncated = FakeRecordingTransport(
             ByteArray(8),
-            readFailure = RecordingFileFailure.FILE_UNAVAILABLE,
+            readFailure = TvheadendFailure.FILE_UNAVAILABLE,
         )
         val readSource = dataSource(truncated, readAheadBytes = 4)
         readSource.open(recordingSpec())
         val readingFailure = assertThrows(TvheadendRecordingException::class.java) {
             readSource.read(ByteArray(4), 0, 4)
         }
-        assertSame(RecordingFileFailure.FILE_UNAVAILABLE, readingFailure.failure)
+        assertSame(TvheadendFailure.FILE_UNAVAILABLE, readingFailure.failure)
         readSource.close()
         assertEquals(1, truncated.closes, "A failed read must still release its handle on close")
     }
@@ -166,7 +166,7 @@ class TvheadendRecordingDataSourceTest {
             source.open(DataSpec.Builder().setUri("http://host/dvrfile/7").build())
         }
 
-        assertSame(RecordingFileFailure.FILE_UNAVAILABLE, failure.failure)
+        assertSame(TvheadendFailure.FILE_UNAVAILABLE, failure.failure)
         assertTrue(transport.calls.isEmpty(), "A foreign uri must not reach the transport")
         assertEquals(0, listener.starts)
 
@@ -187,7 +187,7 @@ class TvheadendRecordingDataSourceTest {
         }
 
         assertSame(
-            RecordingFileFailure.CONNECTION_CHANGED,
+            TvheadendFailure.CONNECTION_CHANGED,
             failure.failure,
             "A superseded generation must stay distinguishable from an unreadable file",
         )
@@ -199,7 +199,7 @@ class TvheadendRecordingDataSourceTest {
 
     @Test
     fun `the failure message carries only the classification`() {
-        val message = TvheadendRecordingException(RecordingFileFailure.FILE_UNAVAILABLE).message
+        val message = TvheadendRecordingException(TvheadendFailure.FILE_UNAVAILABLE).message
         assertEquals("Recording file operation failed: FILE_UNAVAILABLE", message)
     }
 
@@ -251,8 +251,8 @@ private class RecordingTransferListener : TransferListener {
 
 private class FakeRecordingTransport(
     private val content: ByteArray,
-    private val openFailure: RecordingFileFailure? = null,
-    private val readFailure: RecordingFileFailure? = null,
+    private val openFailure: TvheadendFailure? = null,
+    private val readFailure: TvheadendFailure? = null,
     private val openCancellation: CancellationException? = null,
 ) : RecordingFileOpener {
     val calls = ArrayList<String>()

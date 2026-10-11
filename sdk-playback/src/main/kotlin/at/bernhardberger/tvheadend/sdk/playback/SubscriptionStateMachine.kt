@@ -186,7 +186,7 @@ public sealed interface SubscriptionTerminalReason {
     public data object InfrastructureFailed : SubscriptionTerminalReason
 
     /** Typed protocol operation failure. */
-    public class OperationFailed(public val failure: SubscriptionOperationFailure) :
+    public class OperationFailed(public val failure: TvheadendFailure) :
         SubscriptionTerminalReason {
         override fun toString(): String = "SubscriptionTerminalReason.OperationFailed"
     }
@@ -244,7 +244,7 @@ public sealed interface SubscriptionSeekResult {
     public data object Rejected : SubscriptionSeekResult
 
     /** The server refused the command itself; withheld packets were replayed unchanged. */
-    public class Refused(public val failure: SubscriptionOperationFailure) :
+    public class Refused(public val failure: TvheadendFailure) :
         SubscriptionSeekResult {
         override fun toString(): String = "SubscriptionSeekResult.Refused"
     }
@@ -269,19 +269,6 @@ public sealed interface SubscriptionSeekResult {
 
     /** The expected segment was replaced or has no playable tracks. No request was registered. */
     public data object SegmentUnavailable : SubscriptionSeekResult
-}
-
-/** Payload-free subscription operation failure. */
-@SubscriptionInfrastructureApi
-public enum class SubscriptionOperationFailure {
-    /** Malformed response; the server may have applied the operation. Never blindly retry it. */
-    MALFORMED_RESPONSE,
-    SERVER_REJECTED,
-    ACCESS_DENIED,
-    CONNECTION_LIMIT,
-    TIMEOUT,
-    TRANSPORT_UNAVAILABLE,
-    NOT_SUPPORTED,
 }
 
 /** Durable redacted numeric diagnostics for one subscription. */
@@ -413,17 +400,18 @@ public interface ActiveSubscription {
      * The ordered [SubscriptionEvent.Speed] event remains authoritative for observed state.
      */
     public suspend fun setSpeed(speed: Int): SubscriptionOperationResult<Unit> =
-        SubscriptionOperationResult.NotSupported
+        SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED)
 
     /**
      * Requests a server priority change for this accepted subscription.
      *
-     * Returns [SubscriptionOperationResult.TransportUnavailable] before the server accepted the
-     * subscription or after it ended or began closing. The default implementation returns
-     * [SubscriptionOperationResult.NotSupported].
+     * Returns [SubscriptionOperationResult.Failed] carrying [TvheadendFailure.TRANSPORT_UNAVAILABLE]
+     * before the server accepted the subscription or after it ended or began closing.
+     * The default implementation returns [SubscriptionOperationResult.Failed] carrying
+     * [TvheadendFailure.NOT_SUPPORTED].
      */
     public suspend fun setPriority(priority: LiveSubscriptionPriority): SubscriptionOperationResult<Unit> =
-        SubscriptionOperationResult.NotSupported
+        SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED)
 
     /** Closes, unsubscribes, and joins this subscription exactly once. */
     public suspend fun close(): SubscriptionCloseResult
@@ -901,7 +889,7 @@ private class ActiveSubscriptionImpl(
                 playablePublished &&
                 (grantedTimeshiftSeconds ?: 0L) > 0L
         }
-        if (!available) return SubscriptionOperationResult.TransportUnavailable
+        if (!available) return SubscriptionOperationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE)
         return invokeCommand { connection.speed(id, speed) }
     }
 
@@ -910,7 +898,7 @@ private class ActiveSubscriptionImpl(
         val available = synchronized(lock) {
             terminal == null && !closeRequestedFlag && subscribeAccepted
         }
-        if (!available) return SubscriptionOperationResult.TransportUnavailable
+        if (!available) return SubscriptionOperationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE)
         return invokeCommand { connection.changePriority(id, priority) }
     }
 
@@ -928,7 +916,7 @@ private class ActiveSubscriptionImpl(
     } catch (cancellation: CancellationException) {
         throw cancellation
     } catch (_: Exception) {
-        SubscriptionOperationResult.TransportUnavailable
+        SubscriptionOperationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE)
     }
 
     override suspend fun close(): SubscriptionCloseResult {
@@ -983,7 +971,7 @@ private class ActiveSubscriptionImpl(
                             OwnerOutcome.RejectionExpired -> {
                                 setStartupFailure(
                                     SubscriptionTerminalReason.OperationFailed(
-                                        SubscriptionOperationFailure.SERVER_REJECTED,
+                                        TvheadendFailure.SERVER_REJECTED,
                                     ),
                                 )
                                 lifecycleComplete = true
@@ -1014,7 +1002,7 @@ private class ActiveSubscriptionImpl(
                                             if (synchronized(lock) { subscribeRejectionPending }) {
                                                 setStartupFailure(
                                                     SubscriptionTerminalReason.OperationFailed(
-                                                        SubscriptionOperationFailure.SERVER_REJECTED,
+                                                        TvheadendFailure.SERVER_REJECTED,
                                                     ),
                                                 )
                                                 lifecycleComplete = true
@@ -1027,13 +1015,7 @@ private class ActiveSubscriptionImpl(
                                             }
                                             tryPublishPlayable()
                                         }
-                                        SubscriptionOperationResult.ServerRejected,
-                                        SubscriptionOperationResult.AccessDenied,
-                                        SubscriptionOperationResult.ConnectionLimit,
-                                        SubscriptionOperationResult.Timeout,
-                                        SubscriptionOperationResult.TransportUnavailable,
-                                        SubscriptionOperationResult.NotSupported,
-                                        SubscriptionOperationResult.MalformedResponse,
+                                        is SubscriptionOperationResult.Failed,
                                         -> {
                                             setStartupFailure(
                                                 SubscriptionTerminalReason.OperationFailed(
@@ -1304,8 +1286,9 @@ private class ActiveSubscriptionImpl(
                         SeekResolution.Acknowledged
                     }
                     // A timed out or malformed reply may follow an applied command; do not replay.
-                    SubscriptionOperationResult.Timeout,
-                    SubscriptionOperationResult.MalformedResponse -> SeekResolution.Invalidate(
+                    SubscriptionOperationResult.Failed(TvheadendFailure.TIMEOUT),
+                    SubscriptionOperationResult.Failed(TvheadendFailure.MALFORMED_RESPONSE),
+                    -> SeekResolution.Invalidate(
                         SubscriptionSeekInvalidation.UNCERTAIN_REQUEST_OUTCOME,
                     )
                     else -> SeekResolution.Replay(
@@ -1508,7 +1491,7 @@ private class ActiveSubscriptionImpl(
                     SubscriptionTermination.LOCAL_RETIREMENT ->
                         SubscriptionTerminalReason.LocalRetirement
                     SubscriptionTermination.SUBSCRIBE_REJECTED ->
-                        SubscriptionTerminalReason.OperationFailed(SubscriptionOperationFailure.SERVER_REJECTED)
+                        SubscriptionTerminalReason.OperationFailed(TvheadendFailure.SERVER_REJECTED)
                     SubscriptionTermination.PUBLICATION_FAILURE ->
                         SubscriptionTerminalReason.PublicationFailure
                     SubscriptionTermination.INTERNAL_FAILURE ->
@@ -2006,14 +1989,7 @@ private sealed interface CommandOutcome {
     public class Cancelled(internal val cancellation: CancellationException) : CommandOutcome
 }
 
-private fun SubscriptionOperationResult<*>.toFailure(): SubscriptionOperationFailure = when (this) {
+private fun SubscriptionOperationResult<*>.toFailure(): TvheadendFailure = when (this) {
     is SubscriptionOperationResult.Ok -> error("Successful operation has no failure")
-    SubscriptionOperationResult.ServerRejected -> SubscriptionOperationFailure.SERVER_REJECTED
-    SubscriptionOperationResult.AccessDenied -> SubscriptionOperationFailure.ACCESS_DENIED
-    SubscriptionOperationResult.ConnectionLimit -> SubscriptionOperationFailure.CONNECTION_LIMIT
-    SubscriptionOperationResult.Timeout -> SubscriptionOperationFailure.TIMEOUT
-    SubscriptionOperationResult.TransportUnavailable ->
-        SubscriptionOperationFailure.TRANSPORT_UNAVAILABLE
-    SubscriptionOperationResult.NotSupported -> SubscriptionOperationFailure.NOT_SUPPORTED
-    SubscriptionOperationResult.MalformedResponse -> SubscriptionOperationFailure.MALFORMED_RESPONSE
+    is SubscriptionOperationResult.Failed -> failure
 }

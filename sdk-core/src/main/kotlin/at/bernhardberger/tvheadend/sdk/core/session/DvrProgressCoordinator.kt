@@ -14,6 +14,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.ProtocolGateway
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -84,7 +85,7 @@ internal class DvrProgressCoordinator(
         id = id,
         progress = progress,
         expectedGeneration = generation,
-        admissionExpired = DvrProgressResult.ObservationExpired,
+        admissionExpired = DvrProgressResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false),
         targetIsCurrent = targetIsCurrent,
     )
 
@@ -93,12 +94,12 @@ internal class DvrProgressCoordinator(
         progress: DvrPlaybackProgress,
     ): DvrProgressResult {
         val bound = lease as? GenerationBoundGrowingRecordingFileLease
-            ?: return DvrProgressResult.NotReady
+            ?: return DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
         return reportProgress(
             id = bound.boundRecordingId,
             progress = progress,
             expectedGeneration = bound.boundGeneration,
-            admissionExpired = DvrProgressResult.TransportUnavailable,
+            admissionExpired = DvrProgressResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = false),
             targetIsCurrent = bound::isProgressBindingCurrent,
         )
     }
@@ -115,27 +116,29 @@ internal class DvrProgressCoordinator(
                 return admissionExpired
             }
             generation.takeIf { admitted }
-        } ?: return DvrProgressResult.NotReady
+        } ?: return DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
         if (!isSessionReady(activeGeneration)) {
-            return DvrProgressResult.NotReady
+            return DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
         }
         val unsupported = synchronized(lock) {
             if (!admitted || generation !== activeGeneration) {
                 return if (generation !== expectedGeneration) {
                     admissionExpired
                 } else {
-                    DvrProgressResult.NotReady
+                    DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
                 }
             }
             notSupported
         }
         if (unsupported) {
-            return DvrProgressResult.NotSupported
+            return DvrProgressResult.Failed(TvheadendFailure.NOT_SUPPORTED, mayHaveApplied = false)
         }
-        if (!targetIsCurrent()) return DvrProgressResult.TransportUnavailable
+        if (!targetIsCurrent()) {
+            return DvrProgressResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = false)
+        }
         synchronized(lock) {
             if (!admitted || generation !== activeGeneration) {
-                return DvrProgressResult.TransportUnavailable
+                return DvrProgressResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = false)
             }
         }
         val result = try {
@@ -148,32 +151,59 @@ internal class DvrProgressCoordinator(
         }
         val classified = synchronized(lock) {
             if (!admitted || generation !== activeGeneration) {
-                ClassifiedProgress(DvrProgressResult.TransportUnavailable, proof = null)
+                ClassifiedProgress(
+                    DvrProgressResult.Failed(
+                        TvheadendFailure.TRANSPORT_UNAVAILABLE,
+                        mayHaveApplied = result.mayHaveAppliedDvrCommand(),
+                    ),
+                    proof = null,
+                )
             } else {
                 when (result) {
                     is GatewayResult.Ok -> ClassifiedProgress(DvrProgressResult.Accepted, proof = true)
                     GatewayResult.AccessDenied ->
-                        ClassifiedProgress(DvrProgressResult.AccessDenied, proof = false)
+                        ClassifiedProgress(
+                            DvrProgressResult.Failed(TvheadendFailure.ACCESS_DENIED, mayHaveApplied = false),
+                            proof = false,
+                        )
                     GatewayResult.NotSupported -> {
                         notSupported = true
-                        ClassifiedProgress(DvrProgressResult.NotSupported, proof = null)
+                        ClassifiedProgress(
+                            DvrProgressResult.Failed(TvheadendFailure.NOT_SUPPORTED, mayHaveApplied = false),
+                            proof = null,
+                        )
                     }
                     GatewayResult.ServerRejected ->
-                        ClassifiedProgress(DvrProgressResult.ServerRejected, proof = null)
+                        ClassifiedProgress(
+                            DvrProgressResult.Failed(TvheadendFailure.SERVER_REJECTED, mayHaveApplied = false),
+                            proof = null,
+                        )
                     GatewayResult.MalformedReply ->
-                        ClassifiedProgress(DvrProgressResult.MalformedResponse, proof = null)
+                        ClassifiedProgress(
+                            DvrProgressResult.Failed(TvheadendFailure.MALFORMED_RESPONSE, mayHaveApplied = true),
+                            proof = null,
+                        )
                     GatewayResult.ConnectionLimit ->
-                        ClassifiedProgress(DvrProgressResult.ConnectionLimit, proof = null)
-                    GatewayResult.Timeout -> ClassifiedProgress(DvrProgressResult.Timeout, proof = null)
+                        ClassifiedProgress(
+                            DvrProgressResult.Failed(TvheadendFailure.CONNECTION_LIMIT, mayHaveApplied = false),
+                            proof = null,
+                        )
+                    GatewayResult.Timeout -> ClassifiedProgress(
+                        DvrProgressResult.Failed(TvheadendFailure.TIMEOUT, mayHaveApplied = true),
+                        proof = null,
+                    )
                     GatewayResult.TransportUnavailable ->
-                        ClassifiedProgress(DvrProgressResult.TransportUnavailable, proof = null)
+                        ClassifiedProgress(
+                            DvrProgressResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = true),
+                            proof = null,
+                        )
                 }
             }
         }
         classified.proof?.let { allowed -> onDvrAccessProof(activeGeneration, allowed) }
         if (
             result === GatewayResult.NotSupported &&
-            classified.result === DvrProgressResult.NotSupported
+            classified.result == DvrProgressResult.Failed(TvheadendFailure.NOT_SUPPORTED, mayHaveApplied = false)
         ) {
             onProgressNotSupported(activeGeneration)
         }
@@ -186,29 +216,29 @@ internal class DvrProgressCoordinator(
         targetIsCurrent: () -> Boolean,
     ): DvrCutpointsResult {
         val activeGeneration = synchronized(lock) {
-            if (this.generation !== generation) return DvrCutpointsResult.ObservationExpired
+            if (this.generation !== generation) return DvrCutpointsResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED)
             this.generation.takeIf { admitted }
-        } ?: return DvrCutpointsResult.NotReady
+        } ?: return DvrCutpointsResult.Failed(TvheadendFailure.NOT_READY)
         if (!isSessionReady(activeGeneration)) {
-            return DvrCutpointsResult.NotReady
+            return DvrCutpointsResult.Failed(TvheadendFailure.NOT_READY)
         }
         val unsupported = synchronized(lock) {
             if (!admitted || this.generation !== activeGeneration) {
                 return if (this.generation !== generation) {
-                    DvrCutpointsResult.ObservationExpired
+                    DvrCutpointsResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED)
                 } else {
-                    DvrCutpointsResult.NotReady
+                    DvrCutpointsResult.Failed(TvheadendFailure.NOT_READY)
                 }
             }
             cutpointsNotSupported
         }
         if (unsupported) {
-            return DvrCutpointsResult.NotSupported
+            return DvrCutpointsResult.Failed(TvheadendFailure.NOT_SUPPORTED)
         }
-        if (!targetIsCurrent()) return DvrCutpointsResult.TransportUnavailable
+        if (!targetIsCurrent()) return DvrCutpointsResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE)
         synchronized(lock) {
             if (!admitted || this.generation !== activeGeneration) {
-                return DvrCutpointsResult.TransportUnavailable
+                return DvrCutpointsResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE)
             }
         }
         val result = try {
@@ -221,20 +251,21 @@ internal class DvrProgressCoordinator(
         }
         return synchronized(lock) {
             if (!admitted || this.generation !== activeGeneration) {
-                DvrCutpointsResult.TransportUnavailable
+                DvrCutpointsResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE)
             } else {
                 when (result) {
                     is GatewayResult.Ok -> DvrCutpointsResult.Available.create(result.value)
-                    GatewayResult.AccessDenied -> DvrCutpointsResult.AccessDenied
+                    GatewayResult.AccessDenied -> DvrCutpointsResult.Failed(TvheadendFailure.ACCESS_DENIED)
                     GatewayResult.NotSupported -> {
                         cutpointsNotSupported = true
-                        DvrCutpointsResult.NotSupported
+                        DvrCutpointsResult.Failed(TvheadendFailure.NOT_SUPPORTED)
                     }
-                    GatewayResult.ServerRejected -> DvrCutpointsResult.ServerRejected
-                    GatewayResult.MalformedReply -> DvrCutpointsResult.MalformedResponse
-                    GatewayResult.ConnectionLimit -> DvrCutpointsResult.ConnectionLimit
-                    GatewayResult.Timeout -> DvrCutpointsResult.Timeout
-                    GatewayResult.TransportUnavailable -> DvrCutpointsResult.TransportUnavailable
+                    GatewayResult.ServerRejected -> DvrCutpointsResult.Failed(TvheadendFailure.SERVER_REJECTED)
+                    GatewayResult.MalformedReply -> DvrCutpointsResult.Failed(TvheadendFailure.MALFORMED_RESPONSE)
+                    GatewayResult.ConnectionLimit -> DvrCutpointsResult.Failed(TvheadendFailure.CONNECTION_LIMIT)
+                    GatewayResult.Timeout -> DvrCutpointsResult.Failed(TvheadendFailure.TIMEOUT)
+                    GatewayResult.TransportUnavailable ->
+                        DvrCutpointsResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE)
                 }
             }
         }

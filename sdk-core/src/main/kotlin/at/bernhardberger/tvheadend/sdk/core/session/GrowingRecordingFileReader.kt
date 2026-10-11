@@ -15,9 +15,9 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.ProtocolGateway
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
 import at.bernhardberger.tvheadend.sdk.playback.MAX_RECORDING_READ_BYTES
 import at.bernhardberger.tvheadend.sdk.playback.RECORDING_END_OF_INPUT
-import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.coroutineContext
 import kotlin.time.Duration.Companion.nanoseconds
@@ -37,7 +37,7 @@ internal sealed interface GrowingMetadataValidation {
     ) : GrowingMetadataValidation
 
     public class Failed(
-        internal val failure: RecordingFileFailure,
+        internal val failure: TvheadendFailure,
     ) : GrowingMetadataValidation
 }
 
@@ -56,7 +56,7 @@ internal class GrowingRecordingMetadataTracker(
     private var maximumDataSizeBytes: Long? = null
     private var maximumTransportExtentBytes: Long = 0L
     private var completionObserved: Boolean = false
-    private var terminalFailure: RecordingFileFailure? = null
+    private var terminalFailure: TvheadendFailure? = null
 
     internal fun validate(): GrowingMetadataValidation = synchronized(lock) {
         terminalFailure?.let { failure ->
@@ -71,33 +71,36 @@ internal class GrowingRecordingMetadataTracker(
 
     internal fun transportExtentBeforeRequest(): Long = synchronized(lock) { maximumTransportExtentBytes }
 
-    internal fun validateTransportSize(sizeBytes: Long, extentBeforeRequest: Long): RecordingFileFailure? = synchronized(lock) {
+    internal fun validateTransportSize(
+        sizeBytes: Long,
+        extentBeforeRequest: Long,
+    ): TvheadendFailure? = synchronized(lock) {
         terminalFailure?.let { failure -> return@synchronized failure }
         // Concurrent readers can finish a newer read while this open/stat snapshot is in flight.
         // Only evidence already established before that request can prove its response shrank.
         if (sizeBytes < 0L || sizeBytes < extentBeforeRequest) {
-            terminalFailure = RecordingFileFailure.FILE_UNAVAILABLE
-            return@synchronized RecordingFileFailure.FILE_UNAVAILABLE
+            terminalFailure = TvheadendFailure.FILE_UNAVAILABLE
+            return@synchronized TvheadendFailure.FILE_UNAVAILABLE
         }
         maximumTransportExtentBytes = maxOf(maximumTransportExtentBytes, sizeBytes)
         null
     }
 
-    internal fun observeTransportExtent(extentBytes: Long): RecordingFileFailure? = synchronized(lock) {
+    internal fun observeTransportExtent(extentBytes: Long): TvheadendFailure? = synchronized(lock) {
         terminalFailure?.let { failure -> return@synchronized failure }
         if (extentBytes < 0L) {
-            terminalFailure = RecordingFileFailure.FILE_UNAVAILABLE
-            return@synchronized RecordingFileFailure.FILE_UNAVAILABLE
+            terminalFailure = TvheadendFailure.FILE_UNAVAILABLE
+            return@synchronized TvheadendFailure.FILE_UNAVAILABLE
         }
         maximumTransportExtentBytes = maxOf(maximumTransportExtentBytes, extentBytes)
         null
     }
 
-    internal fun fenceFailure(failure: RecordingFileFailure): RecordingFileFailure = synchronized(lock) {
+    internal fun fenceFailure(failure: TvheadendFailure): TvheadendFailure = synchronized(lock) {
         terminalFailure?.let { retained -> return@synchronized retained }
         if (
-            failure == RecordingFileFailure.CONNECTION_CHANGED ||
-            failure == RecordingFileFailure.FILE_UNAVAILABLE
+            failure == TvheadendFailure.CONNECTION_CHANGED ||
+            failure == TvheadendFailure.FILE_UNAVAILABLE
         ) {
             terminalFailure = failure
         }
@@ -108,9 +111,9 @@ internal class GrowingRecordingMetadataTracker(
         val current = playbackTarget?.let { target ->
             when (val lookup = metadata.currentPlaybackRecording(target)) {
                 PlaybackRecordingLookup.ObservationExpired ->
-                    return GrowingMetadataValidation.Failed(RecordingFileFailure.CONNECTION_CHANGED)
+                    return GrowingMetadataValidation.Failed(TvheadendFailure.CONNECTION_CHANGED)
                 PlaybackRecordingLookup.TargetUnavailable ->
-                    return GrowingMetadataValidation.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+                    return GrowingMetadataValidation.Failed(TvheadendFailure.FILE_UNAVAILABLE)
                 is PlaybackRecordingLookup.Current -> CurrentDvrEntryLookup.Current(
                     state = lookup.state,
                     entry = lookup.entry,
@@ -120,41 +123,41 @@ internal class GrowingRecordingMetadataTracker(
             }
         } ?: when (val lookup = metadata.currentDvrEntry(generation, recordingId)) {
             CurrentDvrEntryLookup.GenerationLost ->
-                return GrowingMetadataValidation.Failed(RecordingFileFailure.CONNECTION_CHANGED)
+                return GrowingMetadataValidation.Failed(TvheadendFailure.CONNECTION_CHANGED)
             CurrentDvrEntryLookup.NotCurrent ->
-                return GrowingMetadataValidation.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+                return GrowingMetadataValidation.Failed(TvheadendFailure.FILE_UNAVAILABLE)
             is CurrentDvrEntryLookup.Current -> lookup
         }
         if (current.matchCount != 1) {
-            return GrowingMetadataValidation.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+            return GrowingMetadataValidation.Failed(TvheadendFailure.FILE_UNAVAILABLE)
         }
         val entry = current.entry
-            ?: return GrowingMetadataValidation.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+            ?: return GrowingMetadataValidation.Failed(TvheadendFailure.FILE_UNAVAILABLE)
         val candidateIncarnation = current.incarnation
-            ?: return GrowingMetadataValidation.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+            ?: return GrowingMetadataValidation.Failed(TvheadendFailure.FILE_UNAVAILABLE)
         val establishedIncarnation = incarnation
         if (establishedIncarnation == null) {
             incarnation = candidateIncarnation
         } else if (establishedIncarnation !== candidateIncarnation) {
-            return GrowingMetadataValidation.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+            return GrowingMetadataValidation.Failed(TvheadendFailure.FILE_UNAVAILABLE)
         }
         val candidateIdentity = entry.growingIdentity()
-            ?: return GrowingMetadataValidation.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+            ?: return GrowingMetadataValidation.Failed(TvheadendFailure.FILE_UNAVAILABLE)
         val establishedIdentity = identity
         if (establishedIdentity == null) {
             identity = candidateIdentity
         } else if (establishedIdentity != candidateIdentity) {
-            return GrowingMetadataValidation.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+            return GrowingMetadataValidation.Failed(TvheadendFailure.FILE_UNAVAILABLE)
         }
 
         // DVR counters validate their own stream; open-handle stat remains byte authority.
         val fileSize = entry.files?.singleOrNull()?.sizeBytes
         if (fileSize != null && (fileSize < 0L || fileSize < (maximumFileSizeBytes ?: 0L))) {
-            return GrowingMetadataValidation.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+            return GrowingMetadataValidation.Failed(TvheadendFailure.FILE_UNAVAILABLE)
         }
         val dataSize = entry.dataSizeBytes
         if (dataSize != null && (dataSize < 0L || dataSize < (maximumDataSizeBytes ?: 0L))) {
-            return GrowingMetadataValidation.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+            return GrowingMetadataValidation.Failed(TvheadendFailure.FILE_UNAVAILABLE)
         }
         if (fileSize != null) maximumFileSizeBytes = fileSize
         if (dataSize != null) maximumDataSizeBytes = dataSize
@@ -162,10 +165,10 @@ internal class GrowingRecordingMetadataTracker(
         val completed = when (entry.state) {
             DvrEntryState.RECORDING -> false
             DvrEntryState.COMPLETED -> true
-            else -> return GrowingMetadataValidation.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+            else -> return GrowingMetadataValidation.Failed(TvheadendFailure.FILE_UNAVAILABLE)
         }
         if (completionObserved && !completed) {
-            return GrowingMetadataValidation.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+            return GrowingMetadataValidation.Failed(TvheadendFailure.FILE_UNAVAILABLE)
         }
         completionObserved = completionObserved || completed
         return GrowingMetadataValidation.Valid(current.state, completed)
@@ -360,7 +363,7 @@ internal class CoreGrowingRecordingFileReader(
     private var finalSizeBytes: Long? = null
     private var endOfInput: Boolean = false
     private var closed: Boolean = false
-    private var terminalFailure: RecordingFileFailure? = null
+    private var terminalFailure: TvheadendFailure? = null
 
     override suspend fun read(
         destination: ByteArray,
@@ -377,7 +380,7 @@ internal class CoreGrowingRecordingFileReader(
             "Growing recording read must not exceed $MAX_RECORDING_READ_BYTES bytes"
         }
         ensureReadActive()
-        if (closed) return failed(RecordingFileFailure.FILE_UNAVAILABLE)
+        if (closed) return failed(TvheadendFailure.FILE_UNAVAILABLE)
         terminalFailure?.let { failure -> return failed(failure) }
         if (length == 0) return RecordingFileResult.Ok(0)
         if (endOfInput) return RecordingFileResult.Ok(RECORDING_END_OF_INPUT)
@@ -389,7 +392,7 @@ internal class CoreGrowingRecordingFileReader(
         if (observed.completed && finalStatCompleted) {
             finalSizeBytes?.let { finalSize ->
                 if (position == finalSize) return finishEndOfInput()
-                if (position > finalSize) return terminate(RecordingFileFailure.FILE_UNAVAILABLE)
+                if (position > finalSize) return terminate(TvheadendFailure.FILE_UNAVAILABLE)
             }
         }
         if (!observed.completed || finalStatCompleted) {
@@ -417,7 +420,7 @@ internal class CoreGrowingRecordingFileReader(
             lastStatStartNanos = runtime.nowNanos()
             val extentBeforeStat = metadata.transportExtentBeforeRequest()
             val statResult = withinNoProgressBudget { transport.stat() }
-                ?: return terminate(RecordingFileFailure.TIMEOUT)
+                ?: return terminate(TvheadendFailure.TIMEOUT)
             val stat = when (statResult) {
                 is RecordingFileResult.Failed -> return terminate(statResult.failure)
                 is RecordingFileResult.Ok -> statResult.value
@@ -436,7 +439,7 @@ internal class CoreGrowingRecordingFileReader(
                 finalStatCompleted = true
                 finalSizeBytes = statSize
             }
-            if (isNoProgressTimedOut()) return terminate(RecordingFileFailure.TIMEOUT)
+            if (isNoProgressTimedOut()) return terminate(TvheadendFailure.TIMEOUT)
 
             // Each throttled stat proving bytes beyond the cursor permits one retry.
             val shouldReadAgain = statSize?.let { size -> size > position } == true ||
@@ -454,7 +457,7 @@ internal class CoreGrowingRecordingFileReader(
                 if (isFinalStat) return finalEmptyRead()
             } else if (isFinalStat) {
                 return if (statSize == position) finishEndOfInput()
-                else terminate(RecordingFileFailure.FILE_UNAVAILABLE)
+                else terminate(TvheadendFailure.FILE_UNAVAILABLE)
             }
         }
     }
@@ -471,7 +474,7 @@ internal class CoreGrowingRecordingFileReader(
 
     override suspend fun refreshSize(): RecordingFileResult<Long?> {
         ensureReadActive()
-        if (closed) return failed(RecordingFileFailure.FILE_UNAVAILABLE)
+        if (closed) return failed(TvheadendFailure.FILE_UNAVAILABLE)
         terminalFailure?.let { return failed(it) }
         val before = when (val validation = metadata.validate()) {
             is GrowingMetadataValidation.Failed -> return terminate(validation.failure)
@@ -501,13 +504,13 @@ internal class CoreGrowingRecordingFileReader(
     override suspend fun seek(position: Long): RecordingFileResult<Unit> {
         require(position >= 0L)
         ensureReadActive()
-        if (closed) return failed(RecordingFileFailure.FILE_UNAVAILABLE)
+        if (closed) return failed(TvheadendFailure.FILE_UNAVAILABLE)
         terminalFailure?.let { return failed(it) }
         when (val validation = metadata.validate()) {
             is GrowingMetadataValidation.Failed -> return terminate(validation.failure)
             is GrowingMetadataValidation.Valid -> Unit
         }
-        if (position > maximumProvenSizeBytes) return failed(RecordingFileFailure.FILE_UNAVAILABLE)
+        if (position > maximumProvenSizeBytes) return failed(TvheadendFailure.FILE_UNAVAILABLE)
         this.position = position
         endOfInput = false
         noProgressSinceNanos = null
@@ -523,13 +526,13 @@ internal class CoreGrowingRecordingFileReader(
         ensureReadActive()
         val readResult = withinNoProgressBudget {
             transport.read(position, destination, destinationOffset, length)
-        } ?: return ReadAttempt.Failed(RecordingFileFailure.TIMEOUT)
+        } ?: return ReadAttempt.Failed(TvheadendFailure.TIMEOUT)
         val count = when (readResult) {
             is RecordingFileResult.Failed -> return ReadAttempt.Failed(readResult.failure)
             is RecordingFileResult.Ok -> readResult.value
         }
         ensureReadActive()
-        if (count !in 0..length) return ReadAttempt.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+        if (count !in 0..length) return ReadAttempt.Failed(TvheadendFailure.FILE_UNAVAILABLE)
         if (count == 0 && noProgressSinceNanos == null) {
             noProgressSinceNanos = runtime.nowNanos()
         }
@@ -537,15 +540,15 @@ internal class CoreGrowingRecordingFileReader(
         if (validation is GrowingMetadataValidation.Failed) {
             return ReadAttempt.Failed(validation.failure)
         }
-        if (isNoProgressTimedOut()) return ReadAttempt.Failed(RecordingFileFailure.TIMEOUT)
+        if (isNoProgressTimedOut()) return ReadAttempt.Failed(TvheadendFailure.TIMEOUT)
         if (count == 0) return ReadAttempt.Empty
         if (position > Long.MAX_VALUE - count) {
-            return ReadAttempt.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+            return ReadAttempt.Failed(TvheadendFailure.FILE_UNAVAILABLE)
         }
         val nextPosition = position + count
         val finalSize = finalSizeBytes
         if (finalStatCompleted && finalSize != null && nextPosition > finalSize) {
-            return ReadAttempt.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+            return ReadAttempt.Failed(TvheadendFailure.FILE_UNAVAILABLE)
         }
         metadata.observeTransportExtent(nextPosition)?.let { failure ->
             return ReadAttempt.Failed(failure)
@@ -565,7 +568,7 @@ internal class CoreGrowingRecordingFileReader(
             val now = runtime.nowNanos()
             val noProgressSince = noProgressSinceNanos
             if (noProgressSince != null && now - noProgressSince >= NO_PROGRESS_TIMEOUT_NANOS) {
-                return GrowingMetadataValidation.Failed(RecordingFileFailure.TIMEOUT)
+                return GrowingMetadataValidation.Failed(TvheadendFailure.TIMEOUT)
             }
             val allowedAt = lastStatStartNanos?.let { last -> last + STAT_INTERVAL_NANOS } ?: now
             if (now >= allowedAt) return observed
@@ -584,10 +587,10 @@ internal class CoreGrowingRecordingFileReader(
         val size = stat.sizeBytes
         val modified = stat.modifiedAtUnixSeconds
         if ((size == null) != (modified == null)) {
-            return StatValidation.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+            return StatValidation.Failed(TvheadendFailure.FILE_UNAVAILABLE)
         }
         if (size != null && (size < 0L || size < maximumProvenSizeBytes)) {
-            return StatValidation.Failed(RecordingFileFailure.FILE_UNAVAILABLE)
+            return StatValidation.Failed(TvheadendFailure.FILE_UNAVAILABLE)
         }
         if (size != null) {
             metadata.validateTransportSize(size, extentBeforeRequest)?.let { failure ->
@@ -601,10 +604,10 @@ internal class CoreGrowingRecordingFileReader(
     private fun finalEmptyRead(): RecordingFileResult<Int> {
         val finalSize = finalSizeBytes
         return when {
-            !finalStatCompleted -> terminate(RecordingFileFailure.FILE_UNAVAILABLE)
+            !finalStatCompleted -> terminate(TvheadendFailure.FILE_UNAVAILABLE)
             finalSize == null -> finishEndOfInput()
             finalSize == position -> finishEndOfInput()
-            else -> terminate(RecordingFileFailure.FILE_UNAVAILABLE)
+            else -> terminate(TvheadendFailure.FILE_UNAVAILABLE)
         }
     }
 
@@ -613,7 +616,7 @@ internal class CoreGrowingRecordingFileReader(
         return RecordingFileResult.Ok(RECORDING_END_OF_INPUT)
     }
 
-    private fun terminate(failure: RecordingFileFailure): RecordingFileResult.Failed {
+    private fun terminate(failure: TvheadendFailure): RecordingFileResult.Failed {
         val fenced = metadata.fenceFailure(failure)
         terminalFailure = fenced
         return failed(fenced)
@@ -639,13 +642,13 @@ private sealed interface ReadAttempt {
 
     public data object Empty : ReadAttempt
 
-    public class Failed(internal val failure: RecordingFileFailure) : ReadAttempt
+    public class Failed(internal val failure: TvheadendFailure) : ReadAttempt
 }
 
 private sealed interface StatValidation {
     public class Valid(internal val sizeBytes: Long?) : StatValidation
 
-    public class Failed(internal val failure: RecordingFileFailure) : StatValidation
+    public class Failed(internal val failure: TvheadendFailure) : StatValidation
 }
 
 private suspend fun ensureReadActive() {
@@ -655,10 +658,10 @@ private suspend fun ensureReadActive() {
     }
 }
 
-private fun failed(failure: RecordingFileFailure): RecordingFileResult.Failed =
+private fun failed(failure: TvheadendFailure): RecordingFileResult.Failed =
     RecordingFileResult.Failed(failure)
 
-private val CLOSED_GROWING_HANDLE = failed(RecordingFileFailure.FILE_UNAVAILABLE)
+private val CLOSED_GROWING_HANDLE = failed(TvheadendFailure.FILE_UNAVAILABLE)
 private const val STAT_INTERVAL_NANOS = 500_000_000L
 private const val NO_PROGRESS_TIMEOUT_NANOS = 30_000_000_000L
 private val GROWING_DVR_STATES = setOf(DvrEntryState.RECORDING, DvrEntryState.COMPLETED)

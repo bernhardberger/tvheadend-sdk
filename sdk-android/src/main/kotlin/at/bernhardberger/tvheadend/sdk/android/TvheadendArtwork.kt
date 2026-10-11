@@ -1,11 +1,11 @@
 package at.bernhardberger.tvheadend.sdk.android
 
-import at.bernhardberger.tvheadend.sdk.core.ArtworkFailure
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
 import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
 import at.bernhardberger.tvheadend.sdk.core.SessionGenerationIdentity
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import coil3.ComponentRegistry
 import coil3.ImageLoader
 import coil3.decode.DataSource
@@ -77,7 +77,7 @@ public fun ComponentRegistry.Builder.addTvheadendArtwork(): ComponentRegistry.Bu
 
 /** Typed Coil failure that preserves the SDK artwork classification. */
 public class TvheadendArtworkLoadException(
-    public val failure: ArtworkFailure,
+    public val failure: TvheadendFailure,
 ) : IOException("TVHeadend artwork load failed")
 
 private data object TvheadendArtworkKeyer : Keyer<TvheadendArtwork> {
@@ -117,7 +117,7 @@ internal class TvheadendArtworkFetcher(
     override suspend fun fetch(): FetchResult {
         currentCoroutineContext().ensureActive()
         if (!artwork.session.isCurrent(artwork.currentSession)) {
-            throw TvheadendArtworkLoadException(ArtworkFailure.OBSERVATION_EXPIRED)
+            throw TvheadendArtworkLoadException(TvheadendFailure.OBSERVATION_EXPIRED)
         }
         val content = when (
             val loaded = artwork.session.artwork.loadArtwork(artwork.currentSession, artwork.id)

@@ -3,6 +3,7 @@ package at.bernhardberger.tvheadend.sdk.core
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
@@ -55,32 +56,21 @@ public sealed interface DvrProgressResult {
     /** The command was accepted; later asynchronous metadata remains authoritative. */
     public data object Accepted : DvrProgressResult
 
-    /** The session has not admitted progress reports for a synchronized generation. */
-    public data object NotReady : DvrProgressResult
-
-    /** The originating observation is no longer current for its owning session. */
-    public data object ObservationExpired : DvrProgressResult
-
-    /** The server rejected the command without a safe detailed reason. */
-    public data object ServerRejected : DvrProgressResult
-
-    /** The response was malformed; progress may have been applied. Never blindly retry it. */
-    public data object MalformedResponse : DvrProgressResult
-
-    /** The authenticated session lacks recorder permission. */
-    public data object AccessDenied : DvrProgressResult
-
-    /** The server refused another concurrent operation. */
-    public data object ConnectionLimit : DvrProgressResult
-
-    /** The command was not accepted before its protocol deadline. */
-    public data object Timeout : DvrProgressResult
-
-    /** The bound transport generation is unavailable. */
-    public data object TransportUnavailable : DvrProgressResult
-
-    /** Progress reporting is unavailable for the current connection. */
-    public data object NotSupported : DvrProgressResult
+    /**
+     * Progress reporting failed. Access denial means recorder permission is missing; unsupported
+     * means progress reporting is unavailable on this connection. A malformed reply does not
+     * prove that progress was rejected: never blindly retry it.
+     *
+     * [mayHaveApplied] is false only before dispatch or after explicit server refusal, and true
+     * whenever the command may have reached the server, including a lost reply or generation change.
+     */
+    public data class Failed(
+        public val failure: TvheadendFailure,
+        public val mayHaveApplied: Boolean,
+    ) : DvrProgressResult {
+        override fun toString(): String =
+            "DvrProgressResult.Failed(failure=$failure, mayHaveApplied=$mayHaveApplied)"
+    }
 }
 
 /** Resume decision derived from a DVR entry and progress policy. */
@@ -228,7 +218,7 @@ internal interface DvrProgressCommands {
     public suspend fun reportProgress(
         lease: GrowingRecordingFileLease,
         progress: DvrPlaybackProgress,
-    ): DvrProgressResult = DvrProgressResult.NotReady
+    ): DvrProgressResult = DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
 
     data object None : DvrProgressCommands {
         override suspend fun reportProgress(
@@ -236,6 +226,6 @@ internal interface DvrProgressCommands {
             id: DvrEntryId,
             progress: DvrPlaybackProgress,
             targetIsCurrent: () -> Boolean,
-        ): DvrProgressResult = DvrProgressResult.NotReady
+        ): DvrProgressResult = DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
     }
 }

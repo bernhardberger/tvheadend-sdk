@@ -1,6 +1,7 @@
 package at.bernhardberger.tvheadend.sdk.core
 
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
@@ -265,32 +266,22 @@ public sealed interface DvrMutationResult<out T> {
         override fun toString(): String = "DvrMutationResult.AcceptedButUnconfirmed(<redacted>)"
     }
 
-    /** The session has not admitted mutations for a synchronized generation. */
-    public data object NotReady : DvrMutationResult<Nothing>
-
-    /** The originating observation is no longer current for its owning session. */
-    public data object ObservationExpired : DvrMutationResult<Nothing>
-
-    /** The server rejected the command without a safe detailed reason. */
-    public data object ServerRejected : DvrMutationResult<Nothing>
-
-    /** The response was malformed; the command may have been applied. Never blindly retry it. */
-    public data object MalformedResponse : DvrMutationResult<Nothing>
-
-    /** The authenticated session lacks recorder permission. */
-    public data object AccessDenied : DvrMutationResult<Nothing>
-
-    /** The server refused another concurrent operation. */
-    public data object ConnectionLimit : DvrMutationResult<Nothing>
-
-    /** The command was not accepted before its protocol deadline. */
-    public data object Timeout : DvrMutationResult<Nothing>
-
-    /** The bound transport generation is unavailable. */
-    public data object TransportUnavailable : DvrMutationResult<Nothing>
-
-    /** The connected server does not support the command. */
-    public data object NotSupported : DvrMutationResult<Nothing>
+    /**
+     * The mutation failed with a safe classification. Access denial means recorder permission is
+     * missing; unsupported means the server cannot perform this command. A malformed reply or
+     * lost confirmation may follow server acceptance: never blindly retry a mutation.
+     *
+     * [mayHaveApplied] is false only when the command was never sent or explicitly refused.
+     * It is true whenever the command may have reached the server, including failure after
+     * acceptance while registering or awaiting authoritative metadata confirmation.
+     */
+    public data class Failed(
+        public val failure: TvheadendFailure,
+        public val mayHaveApplied: Boolean,
+    ) : DvrMutationResult<Nothing> {
+        override fun toString(): String =
+            "DvrMutationResult.Failed(failure=$failure, mayHaveApplied=$mayHaveApplied)"
+    }
 }
 
 internal interface DvrMutationCommands {
@@ -348,65 +339,67 @@ internal interface DvrMutationCommands {
             generation: GatewayGeneration,
             request: DvrScheduleRequest,
         ): DvrMutationResult<DvrEntryId> =
-            DvrMutationResult.NotReady
+            DvrMutationResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
 
         override suspend fun updateEntry(
             generation: GatewayGeneration,
             id: DvrEntryId,
             update: DvrEntryUpdate,
-        ): DvrMutationResult<Unit> = DvrMutationResult.NotReady
+        ): DvrMutationResult<Unit> = DvrMutationResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
 
         override suspend fun stopEntry(
             generation: GatewayGeneration,
             id: DvrEntryId,
         ): DvrMutationResult<Unit> =
-            DvrMutationResult.NotReady
+            DvrMutationResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
 
         override suspend fun cancelEntry(
             generation: GatewayGeneration,
             id: DvrEntryId,
         ): DvrMutationResult<Unit> =
-            DvrMutationResult.NotReady
+            DvrMutationResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
 
         override suspend fun deleteEntry(
             generation: GatewayGeneration,
             id: DvrEntryId,
         ): DvrMutationResult<Unit> =
-            DvrMutationResult.NotReady
+            DvrMutationResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
 
         override suspend fun createAutorecRule(
             generation: GatewayGeneration,
             request: AutorecRuleCreate,
-        ): DvrMutationResult<AutorecRuleId> = DvrMutationResult.NotReady
+        ): DvrMutationResult<AutorecRuleId> =
+            DvrMutationResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
 
         override suspend fun updateAutorecRule(
             generation: GatewayGeneration,
             id: AutorecRuleId,
             update: AutorecRuleUpdate,
-        ): DvrMutationResult<Unit> = DvrMutationResult.NotReady
+        ): DvrMutationResult<Unit> = DvrMutationResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
 
         override suspend fun deleteAutorecRule(
             generation: GatewayGeneration,
             id: AutorecRuleId,
         ): DvrMutationResult<Unit> =
-            DvrMutationResult.NotReady
+            DvrMutationResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
 
         override suspend fun createTimerecRule(
             generation: GatewayGeneration,
             request: TimerecRuleCreate,
-        ): DvrMutationResult<TimerecRuleId> = DvrMutationResult.NotReady
+        ): DvrMutationResult<TimerecRuleId> =
+            DvrMutationResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
 
         override suspend fun updateTimerecRule(
             generation: GatewayGeneration,
             id: TimerecRuleId,
             update: TimerecRuleUpdate,
-        ): DvrMutationResult<Unit> = DvrMutationResult.NotReady
+        ): DvrMutationResult<Unit> = DvrMutationResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
 
         override suspend fun deleteTimerecRule(
             generation: GatewayGeneration,
             id: TimerecRuleId,
         ): DvrMutationResult<Unit> =
-            DvrMutationResult.NotReady
+            DvrMutationResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
     }
 }
 

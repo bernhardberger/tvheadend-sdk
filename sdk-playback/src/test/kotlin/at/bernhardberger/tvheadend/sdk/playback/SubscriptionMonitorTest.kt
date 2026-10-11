@@ -58,7 +58,7 @@ class SubscriptionMonitorTest {
             val active = open(manager, connection) { received += it }
             connection.skipAction = {
                 refuse.await()
-                SubscriptionOperationResult.AccessDenied
+                SubscriptionOperationResult.Failed(TvheadendFailure.ACCESS_DENIED)
             }
             val seeking = async { active.seek(SubscriptionSeekTarget.Absolute(30.seconds)) }
             runCurrent()
@@ -193,12 +193,12 @@ class SubscriptionMonitorTest {
                     }
                 }
                 if (delivery == Delivery.FAILED_UNSUBSCRIBE) {
-                    connection.unsubscribeAction = { SubscriptionOperationResult.Timeout }
+                    connection.unsubscribeAction = { SubscriptionOperationResult.Failed(TvheadendFailure.TIMEOUT) }
                 }
                 if (delivery == Delivery.REPLAY) {
                     connection.skipAction = {
                         releaseSkip.await()
-                        SubscriptionOperationResult.AccessDenied
+                        SubscriptionOperationResult.Failed(TvheadendFailure.ACCESS_DENIED)
                     }
                     val seeking = async { active.seek(SubscriptionSeekTarget.Absolute(30.seconds)) }
                     runCurrent()

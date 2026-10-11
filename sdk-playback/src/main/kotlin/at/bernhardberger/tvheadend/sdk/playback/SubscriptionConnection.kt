@@ -482,26 +482,14 @@ public sealed interface SubscriptionOperationResult<out T> {
         override fun toString(): String = "SubscriptionOperationResult.Ok(<redacted>)"
     }
 
-    /** The server rejected the operation without a safe detailed reason. */
-    public data object ServerRejected : SubscriptionOperationResult<Nothing>
-
-    /** Malformed response; the server may have applied the operation. Never blindly retry it. */
-    public data object MalformedResponse : SubscriptionOperationResult<Nothing>
-
-    /** The authenticated session lacks permission. */
-    public data object AccessDenied : SubscriptionOperationResult<Nothing>
-
-    /** The server refused another concurrent operation. */
-    public data object ConnectionLimit : SubscriptionOperationResult<Nothing>
-
-    /** The operation did not complete before its deadline. */
-    public data object Timeout : SubscriptionOperationResult<Nothing>
-
-    /** The bound transport generation is unavailable. */
-    public data object TransportUnavailable : SubscriptionOperationResult<Nothing>
-
-    /** The bound transport cannot support the operation in its current state. */
-    public data object NotSupported : SubscriptionOperationResult<Nothing>
+    /**
+     * Subscription operation failed. A malformed reply may follow server application of the
+     * operation: never blindly retry it. Unsupported means the bound transport cannot perform
+     * the operation in its current state. Access denial means the session lacks permission.
+     */
+    public data class Failed(public val failure: TvheadendFailure) : SubscriptionOperationResult<Nothing> {
+        override fun toString(): String = "SubscriptionOperationResult.Failed(failure=$failure)"
+    }
 }
 
 /**
@@ -590,7 +578,7 @@ public interface SubscriptionConnection {
         if (options.streamProfileUuid == null) {
             subscribe(id, channelId, options.timeshiftPeriod)
         } else {
-            SubscriptionOperationResult.NotSupported
+            SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED)
         }
 
     /**
@@ -608,13 +596,13 @@ public interface SubscriptionConnection {
     public suspend fun speed(
         id: SubscriptionId,
         speed: Int,
-    ): SubscriptionOperationResult<Unit> = SubscriptionOperationResult.NotSupported
+    ): SubscriptionOperationResult<Unit> = SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED)
 
     /** Issues a generation-bound server priority change for [id]. */
     public suspend fun changePriority(
         id: SubscriptionId,
         priority: LiveSubscriptionPriority,
-    ): SubscriptionOperationResult<Unit> = SubscriptionOperationResult.NotSupported
+    ): SubscriptionOperationResult<Unit> = SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED)
 
     /** Issues generation-bound unsubscribe whose success drains and then completes [events]. */
     public suspend fun unsubscribe(id: SubscriptionId): SubscriptionOperationResult<Unit>

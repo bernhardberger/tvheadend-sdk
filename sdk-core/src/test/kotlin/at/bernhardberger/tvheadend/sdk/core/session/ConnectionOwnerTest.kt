@@ -40,7 +40,6 @@ import at.bernhardberger.tvheadend.sdk.core.ServerProfile
 import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
 import at.bernhardberger.tvheadend.sdk.core.SessionFailure
 import at.bernhardberger.tvheadend.sdk.core.SessionRecoveryDisposition
-import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
@@ -75,6 +74,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.util.Collections
 import java.util.IdentityHashMap
 import java.util.concurrent.CancellationException
@@ -669,14 +669,14 @@ internal class ConnectionOwnerTest {
             at.bernhardberger.tvheadend.sdk.core.SessionGenerationIdentity.create(),
         )
 
-        assertSame(
-            DvrMutationResult.ObservationExpired,
+        assertEquals(
+            DvrMutationResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false),
             owner.dvrRepository.scheduleEntry(expired, request),
         )
         owner.connect(ServerProfile("server"))
         runCurrent()
-        assertSame(
-            DvrMutationResult.ObservationExpired,
+        assertEquals(
+            DvrMutationResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false),
             owner.dvrRepository.scheduleEntry(expired, request),
         )
         gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
@@ -688,8 +688,8 @@ internal class ConnectionOwnerTest {
         )
 
         gateway.scheduleDvrBehavior = { _, _ -> GatewayResult.AccessDenied }
-        assertSame(
-            DvrMutationResult.AccessDenied,
+        assertEquals(
+            DvrMutationResult.Failed(TvheadendFailure.ACCESS_DENIED, mayHaveApplied = false),
             owner.dvrRepository.scheduleEntry(currentSession, request),
         )
         assertEquals(
@@ -712,8 +712,8 @@ internal class ConnectionOwnerTest {
         )
 
         owner.disconnect()
-        assertSame(
-            DvrMutationResult.ObservationExpired,
+        assertEquals(
+            DvrMutationResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false),
             owner.dvrRepository.scheduleEntry(currentSession, request),
         )
         owner.shutdown()
@@ -783,8 +783,8 @@ internal class ConnectionOwnerTest {
         val earlierMutation = async { owner.dvrRepository.scheduleEntry(currentSession, request) }
         earlierProofPrepared.await()
 
-        assertSame(
-            DvrProgressResult.AccessDenied,
+        assertEquals(
+            DvrProgressResult.Failed(TvheadendFailure.ACCESS_DENIED, mayHaveApplied = false),
             metadata.reportProgress(generation, DvrEntryId(7), report),
         )
         assertEquals(
@@ -859,8 +859,8 @@ internal class ConnectionOwnerTest {
             RecordingProgressCapability.UNSUPPORTED,
             owner.observation.value.recordingProgressCapability,
         )
-        assertSame(
-            DvrProgressResult.NotSupported,
+        assertEquals(
+            DvrProgressResult.Failed(TvheadendFailure.NOT_SUPPORTED, mayHaveApplied = false),
             metadata.reportProgress(generation, DvrEntryId(7), report),
         )
         assertEquals(0, gateway.progressReportCount)
@@ -882,8 +882,8 @@ internal class ConnectionOwnerTest {
             owner.observation.value.recordingProgressCapability,
         )
         gateway.reportDvrProgressBehavior = { _, _, _ -> GatewayResult.NotSupported }
-        assertSame(
-            DvrProgressResult.NotSupported,
+        assertEquals(
+            DvrProgressResult.Failed(TvheadendFailure.NOT_SUPPORTED, mayHaveApplied = false),
             metadata.reportProgress(next, DvrEntryId(7), report),
         )
         assertEquals(1, gateway.progressReportCount)
@@ -891,8 +891,8 @@ internal class ConnectionOwnerTest {
             RecordingProgressCapability.UNSUPPORTED,
             owner.observation.value.recordingProgressCapability,
         )
-        assertSame(
-            DvrProgressResult.NotSupported,
+        assertEquals(
+            DvrProgressResult.Failed(TvheadendFailure.NOT_SUPPORTED, mayHaveApplied = false),
             metadata.reportProgress(next, DvrEntryId(7), report),
         )
         assertEquals(1, gateway.progressReportCount)
@@ -2332,18 +2332,18 @@ private class FakeProtocolGateway(
         channelId: ChannelId,
         timeshiftPeriod: Duration,
     ): SubscriptionOperationResult<SubscriptionConfirmation> =
-        SubscriptionOperationResult.TransportUnavailable
+        SubscriptionOperationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE)
 
     override suspend fun skipSubscription(
         generation: GatewayGeneration,
         id: SubscriptionId,
         target: SubscriptionSeekTarget,
-    ): SubscriptionOperationResult<Unit> = SubscriptionOperationResult.TransportUnavailable
+    ): SubscriptionOperationResult<Unit> = SubscriptionOperationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE)
 
     override suspend fun unsubscribe(
         generation: GatewayGeneration,
         id: SubscriptionId,
-    ): SubscriptionOperationResult<Unit> = SubscriptionOperationResult.TransportUnavailable
+    ): SubscriptionOperationResult<Unit> = SubscriptionOperationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE)
 
     internal suspend fun emitMetadata(event: MetadataEvent) {
         metadataEvents.emit(event)

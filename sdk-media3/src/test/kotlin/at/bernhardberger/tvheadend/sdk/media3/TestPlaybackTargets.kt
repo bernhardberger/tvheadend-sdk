@@ -7,11 +7,11 @@ import at.bernhardberger.tvheadend.sdk.core.DvrProgressResult
 import at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFile
-import at.bernhardberger.tvheadend.sdk.playback.RecordingFileFailure
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
+import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import kotlin.time.Duration
 
 internal class TestCoordinatorLiveTarget(
@@ -37,9 +37,9 @@ internal class TestCoordinatorRecordingTarget(
         progressCapability = RecordingProgressCapability.SUPPORTED,
     ),
     var recordingResult: RecordingFileResult<RecordingFile> =
-        RecordingFileResult.Failed(RecordingFileFailure.NOT_SUPPORTED),
+        RecordingFileResult.Failed(TvheadendFailure.NOT_SUPPORTED),
     var growingResult: RecordingFileResult<GrowingRecordingFileLease> =
-        RecordingFileResult.Failed(RecordingFileFailure.NOT_SUPPORTED),
+        RecordingFileResult.Failed(TvheadendFailure.NOT_SUPPORTED),
     var reportResult: DvrProgressResult = DvrProgressResult.Accepted,
 ) : CoordinatorRecordingTarget {
     var bindGrowingAction: () -> RecordingFileResult<GrowingRecordingFileLease> = { growingResult }
