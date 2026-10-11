@@ -476,7 +476,7 @@ internal class DvrChangesTest {
         fixture.ready()
         response.complete(GatewayResult.Ok(DvrEntryId(7)))
         assertEquals(
-            DvrMutationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = true),
+            DvrMutationResult.Failed(TvheadendFailure.CONNECTION_CHANGED, mayHaveApplied = true),
             command.await(),
         )
         fixture.accept(MetadataEvent.DvrEntryAdded(fixture.generation, entry()))

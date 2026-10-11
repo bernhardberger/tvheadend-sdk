@@ -85,6 +85,8 @@ public sealed interface DvrCutpointsResult {
      * denial means the selected recording is inaccessible. Unsupported means cutpoint retrieval
      * is unavailable on this connection. A malformed reply implies neither transport loss nor
      * automatic retry. An expired observation must be replaced before another request.
+     * Generation retirement reports [TvheadendFailure.CONNECTION_CHANGED]. Shutdown or revoked
+     * admission reports [TvheadendFailure.NOT_READY] before dispatch, and CONNECTION_CHANGED after dispatch.
      */
     public data class Failed(public val failure: TvheadendFailure) : DvrCutpointsResult {
         override fun toString(): String = "DvrCutpointsResult.Failed(failure=$failure)"

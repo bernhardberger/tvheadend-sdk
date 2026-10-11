@@ -34,6 +34,117 @@ import kotlin.time.Duration.Companion.milliseconds
 @OptIn(ExperimentalCoroutinesApi::class)
 internal class DvrProgressCoordinatorTest {
     @Test
+    fun `all unsent progress and cutpoint fences distinguish retirement from revoked admission`() = runTest {
+        val retirements: List<Pair<TvheadendFailure, (DvrProgressCoordinator) -> Unit>> = listOf(
+            TvheadendFailure.CONNECTION_CHANGED to { it.bindGeneration(GatewayGeneration(), 43) },
+            TvheadendFailure.CONNECTION_CHANGED to { it.stopAdmission(connectionRetired = true) },
+            TvheadendFailure.NOT_READY to { it.stopAdmission() },
+        )
+        for ((expected, retire) in retirements) {
+            for (stage in listOf("readiness-false", "readiness-true", "target-false", "target-true")) {
+                for (kind in listOf("progress", "growing", "cutpoints")) {
+                    val generation = GatewayGeneration()
+                    val gateway = MutationGateway()
+                    var calls = 0
+                    lateinit var coordinator: DvrProgressCoordinator
+                    coordinator = DvrProgressCoordinator(gateway, isSessionReady = {
+                        if (stage.startsWith("readiness")) retire(coordinator)
+                        stage != "readiness-false"
+                    })
+                    coordinator.bindGeneration(generation, 43)
+                    coordinator.startAdmission(generation)
+                    val targetIsCurrent = {
+                        if (stage.startsWith("target")) retire(coordinator)
+                        stage != "target-false"
+                    }
+                    gateway.progressBehavior = { _, _, _ ->
+                        calls += 1
+                        GatewayResult.Ok(Unit)
+                    }
+                    gateway.cutpointsBehavior = { _, _ ->
+                        calls += 1
+                        GatewayResult.Ok(emptyList())
+                    }
+                    val context = "$kind/$stage/$expected"
+                    if (kind == "cutpoints") {
+                        assertEquals(
+                            DvrCutpointsResult.Failed(expected),
+                            coordinator.getCutpoints(generation, DvrEntryId(7), targetIsCurrent),
+                            context,
+                        )
+                    } else {
+                        val result = if (kind == "growing") {
+                            val lease = TestGenerationBoundGrowingLease(generation, DvrEntryId(7))
+                            lease.validate = targetIsCurrent
+                            coordinator.reportProgress(lease, checkpoint())
+                        } else {
+                            coordinator.reportProgress(generation, DvrEntryId(7), checkpoint(), targetIsCurrent)
+                        }
+                        assertEquals(DvrProgressResult.Failed(expected, false), result, context)
+                    }
+                    assertEquals(0, calls, context)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `growing lease admission distinguishes replacement retirement and shutdown before sending`() = runTest {
+        val original = GatewayGeneration()
+        val gateway = MutationGateway()
+        val coordinator = DvrProgressCoordinator(gateway)
+        val lease = TestGenerationBoundGrowingLease(original, DvrEntryId(7))
+        var calls = 0
+        gateway.progressBehavior = { _, _, _ ->
+            calls += 1
+            GatewayResult.Ok(Unit)
+        }
+        coordinator.bindGeneration(GatewayGeneration(), 43)
+        assertEquals(
+            DvrProgressResult.Failed(TvheadendFailure.CONNECTION_CHANGED, false),
+            coordinator.reportProgress(lease, checkpoint()),
+        )
+        coordinator.stopAdmission(connectionRetired = true)
+        assertEquals(
+            DvrProgressResult.Failed(TvheadendFailure.CONNECTION_CHANGED, false),
+            coordinator.reportProgress(lease, checkpoint()),
+        )
+        coordinator.stopAdmission()
+        assertEquals(
+            DvrProgressResult.Failed(TvheadendFailure.NOT_READY, false),
+            coordinator.reportProgress(lease, checkpoint()),
+        )
+        assertEquals(0, calls)
+    }
+
+    @Test
+    fun `growing progress and cutpoint replies cannot survive connection replacement`() = runTest {
+        val generation = GatewayGeneration()
+        val gateway = MutationGateway()
+        val coordinator = DvrProgressCoordinator(gateway)
+        coordinator.bindGeneration(generation, 43)
+        coordinator.startAdmission(generation)
+        gateway.progressBehavior = { _, _, _ ->
+            coordinator.bindGeneration(GatewayGeneration(), 43)
+            GatewayResult.Ok(Unit)
+        }
+        assertEquals(
+            DvrProgressResult.Failed(TvheadendFailure.CONNECTION_CHANGED, true),
+            coordinator.reportProgress(TestGenerationBoundGrowingLease(generation, DvrEntryId(7)), checkpoint()),
+        )
+        coordinator.bindGeneration(generation, 43)
+        coordinator.startAdmission(generation)
+        gateway.cutpointsBehavior = { _, _ ->
+            coordinator.bindGeneration(GatewayGeneration(), 43)
+            GatewayResult.Ok(emptyList())
+        }
+        assertEquals(
+            DvrCutpointsResult.Failed(TvheadendFailure.CONNECTION_CHANGED),
+            coordinator.getCutpoints(generation, DvrEntryId(7)),
+        )
+    }
+
+    @Test
     fun `admission and protocol version gate progress without mutating confirmation state`() = runTest {
         val generation = GatewayGeneration()
         val gateway = MutationGateway()
@@ -184,7 +295,7 @@ internal class DvrProgressCoordinatorTest {
             coordinator.stopAdmission()
             blocked.complete(GatewayResult.NotSupported)
             assertEquals(
-                DvrProgressResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = false),
+                DvrProgressResult.Failed(TvheadendFailure.CONNECTION_CHANGED, mayHaveApplied = false),
                 inFlight.await(),
             )
             assertEquals(emptyList<GatewayGeneration>(), unsupportedGenerations)
@@ -215,7 +326,7 @@ internal class DvrProgressCoordinatorTest {
         }
 
         assertEquals(
-            DvrProgressResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = false),
+            DvrProgressResult.Failed(TvheadendFailure.CONNECTION_CHANGED, mayHaveApplied = false),
             coordinator.reportProgress(lease, checkpoint()),
         )
         assertEquals(1, commandCount)
@@ -323,7 +434,7 @@ internal class DvrProgressCoordinatorTest {
             }
 
             assertEquals(
-                DvrProgressResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied),
+                DvrProgressResult.Failed(TvheadendFailure.CONNECTION_CHANGED, mayHaveApplied),
                 coordinator.reportProgress(generation, DvrEntryId(7), checkpoint()),
             )
         }
@@ -358,7 +469,7 @@ internal class DvrProgressCoordinatorTest {
             coordinator.reportProgress(generation, DvrEntryId(7), checkpoint()),
         )
         assertEquals(
-            DvrProgressResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false),
+            DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false),
             coordinator.reportProgress(generation, DvrEntryId(7), checkpoint()),
         )
     }
@@ -388,14 +499,14 @@ internal class DvrProgressCoordinatorTest {
         coordinator.bindGeneration(generation, protocolVersion = 26)
         assertTrue(coordinator.startAdmission(generation))
         assertEquals(
-            DvrProgressResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false),
+            DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false),
             coordinator.reportProgress(generation, DvrEntryId(7), checkpoint()),
         )
 
         coordinator.bindGeneration(generation, protocolVersion = 11)
         assertTrue(coordinator.startAdmission(generation))
         assertEquals(
-            DvrCutpointsResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED),
+            DvrCutpointsResult.Failed(TvheadendFailure.NOT_READY),
             coordinator.getCutpoints(generation, DvrEntryId(7)),
         )
     }
@@ -491,7 +602,7 @@ internal class DvrProgressCoordinatorTest {
         coordinator.stopAdmission()
         blocked.complete(GatewayResult.Ok(emptyList()))
 
-        assertEquals(DvrCutpointsResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE), inFlight.await())
+        assertEquals(DvrCutpointsResult.Failed(TvheadendFailure.CONNECTION_CHANGED), inFlight.await())
         assertEquals(2, commandCount)
     }
 

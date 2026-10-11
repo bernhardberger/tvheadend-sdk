@@ -27,14 +27,15 @@ internal interface DvrProgressLifecycle {
 
     public fun startAdmission(generation: GatewayGeneration): Boolean
 
-    public fun stopAdmission()
+    /** Distinguishes connection retirement from shutdown or readiness-admission rollback. */
+    public fun stopAdmission(connectionRetired: Boolean = false)
 
     public data object None : DvrProgressLifecycle {
         override fun bindGeneration(generation: GatewayGeneration, protocolVersion: Int?) = Unit
 
         override fun startAdmission(generation: GatewayGeneration): Boolean = true
 
-        override fun stopAdmission() = Unit
+        override fun stopAdmission(connectionRetired: Boolean) = Unit
     }
 }
 
@@ -47,12 +48,14 @@ internal class DvrProgressCoordinator(
     private val lock = Any()
     private var generation: GatewayGeneration? = null
     private var admitted = false
+    private var stoppedFailure: TvheadendFailure? = null
     private var notSupported = false
     private var cutpointsNotSupported = false
 
     override fun bindGeneration(generation: GatewayGeneration, protocolVersion: Int?) {
         synchronized(lock) {
             admitted = false
+            stoppedFailure = null
             this.generation = generation
             notSupported = protocolVersion == null ||
                 protocolVersion < DVR_PROGRESS_MINIMUM_PROTOCOL_VERSION
@@ -70,9 +73,10 @@ internal class DvrProgressCoordinator(
         }
     }
 
-    override fun stopAdmission() {
+    override fun stopAdmission(connectionRetired: Boolean) {
         synchronized(lock) {
             admitted = false
+            stoppedFailure = if (connectionRetired) TvheadendFailure.CONNECTION_CHANGED else TvheadendFailure.NOT_READY
             generation = null
             notSupported = false
             cutpointsNotSupported = false
@@ -88,7 +92,7 @@ internal class DvrProgressCoordinator(
         id = id,
         progress = progress,
         expectedGeneration = generation,
-        admissionExpired = DvrProgressResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false),
+        admissionExpired = TvheadendFailure.OBSERVATION_EXPIRED,
         targetIsCurrent = targetIsCurrent,
     )
 
@@ -102,7 +106,7 @@ internal class DvrProgressCoordinator(
             id = bound.boundRecordingId,
             progress = progress,
             expectedGeneration = bound.boundGeneration,
-            admissionExpired = DvrProgressResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = false),
+            admissionExpired = TvheadendFailure.CONNECTION_CHANGED,
             targetIsCurrent = bound::isProgressBindingCurrent,
         )
     }
@@ -111,25 +115,24 @@ internal class DvrProgressCoordinator(
         id: DvrEntryId,
         progress: DvrPlaybackProgress,
         expectedGeneration: GatewayGeneration,
-        admissionExpired: DvrProgressResult,
+        admissionExpired: TvheadendFailure,
         targetIsCurrent: () -> Boolean,
     ): DvrProgressResult {
         val activeGeneration = synchronized(lock) {
             if (generation !== expectedGeneration) {
-                return admissionExpired
+                return DvrProgressResult.Failed(stoppedFailure ?: admissionExpired, mayHaveApplied = false)
             }
             generation.takeIf { admitted }
         } ?: return DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
         if (!isSessionReady(activeGeneration)) {
-            return DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
+            return DvrProgressResult.Failed(
+                inactiveFailure(activeGeneration) ?: TvheadendFailure.NOT_READY,
+                mayHaveApplied = false,
+            )
         }
         val unsupported = synchronized(lock) {
-            if (!admitted || generation !== activeGeneration) {
-                return if (generation !== expectedGeneration) {
-                    admissionExpired
-                } else {
-                    DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
-                }
+            inactiveFailure(activeGeneration)?.let { failure ->
+                return DvrProgressResult.Failed(failure, mayHaveApplied = false)
             }
             notSupported
         }
@@ -137,11 +140,14 @@ internal class DvrProgressCoordinator(
             return DvrProgressResult.Failed(TvheadendFailure.NOT_SUPPORTED, mayHaveApplied = false)
         }
         if (!targetIsCurrent()) {
-            return DvrProgressResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = false)
+            return DvrProgressResult.Failed(
+                inactiveFailure(activeGeneration) ?: TvheadendFailure.TRANSPORT_UNAVAILABLE,
+                mayHaveApplied = false,
+            )
         }
         synchronized(lock) {
-            if (!admitted || generation !== activeGeneration) {
-                return DvrProgressResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = false)
+            inactiveFailure(activeGeneration)?.let { failure ->
+                return DvrProgressResult.Failed(failure, mayHaveApplied = false)
             }
         }
         val result = try {
@@ -156,7 +162,7 @@ internal class DvrProgressCoordinator(
             if (!admitted || generation !== activeGeneration) {
                 ClassifiedProgress(
                     DvrProgressResult.Failed(
-                        TvheadendFailure.TRANSPORT_UNAVAILABLE,
+                        TvheadendFailure.CONNECTION_CHANGED,
                         mayHaveApplied = result.mayHaveAppliedDvrCommand(),
                     ),
                     proof = null,
@@ -219,29 +225,29 @@ internal class DvrProgressCoordinator(
         targetIsCurrent: () -> Boolean,
     ): DvrCutpointsResult {
         val activeGeneration = synchronized(lock) {
-            if (this.generation !== generation) return DvrCutpointsResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED)
+            if (this.generation !== generation) {
+                return DvrCutpointsResult.Failed(stoppedFailure ?: TvheadendFailure.OBSERVATION_EXPIRED)
+            }
             this.generation.takeIf { admitted }
         } ?: return DvrCutpointsResult.Failed(TvheadendFailure.NOT_READY)
         if (!isSessionReady(activeGeneration)) {
-            return DvrCutpointsResult.Failed(TvheadendFailure.NOT_READY)
+            return DvrCutpointsResult.Failed(inactiveFailure(activeGeneration) ?: TvheadendFailure.NOT_READY)
         }
         val unsupported = synchronized(lock) {
-            if (!admitted || this.generation !== activeGeneration) {
-                return if (this.generation !== generation) {
-                    DvrCutpointsResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED)
-                } else {
-                    DvrCutpointsResult.Failed(TvheadendFailure.NOT_READY)
-                }
+            inactiveFailure(activeGeneration)?.let { failure ->
+                return DvrCutpointsResult.Failed(failure)
             }
             cutpointsNotSupported
         }
         if (unsupported) {
             return DvrCutpointsResult.Failed(TvheadendFailure.NOT_SUPPORTED)
         }
-        if (!targetIsCurrent()) return DvrCutpointsResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE)
+        if (!targetIsCurrent()) {
+            return DvrCutpointsResult.Failed(inactiveFailure(activeGeneration) ?: TvheadendFailure.TRANSPORT_UNAVAILABLE)
+        }
         synchronized(lock) {
-            if (!admitted || this.generation !== activeGeneration) {
-                return DvrCutpointsResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE)
+            inactiveFailure(activeGeneration)?.let { failure ->
+                return DvrCutpointsResult.Failed(failure)
             }
         }
         val result = try {
@@ -254,7 +260,7 @@ internal class DvrProgressCoordinator(
         }
         return synchronized(lock) {
             if (!admitted || this.generation !== activeGeneration) {
-                DvrCutpointsResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE)
+                DvrCutpointsResult.Failed(TvheadendFailure.CONNECTION_CHANGED)
             } else {
                 when (result) {
                     is GatewayResult.Ok -> DvrCutpointsResult.Available.create(result.value)
@@ -271,6 +277,14 @@ internal class DvrProgressCoordinator(
                         DvrCutpointsResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE)
                 }
             }
+        }
+    }
+
+    private fun inactiveFailure(expectedGeneration: GatewayGeneration): TvheadendFailure? = synchronized(lock) {
+        when {
+            generation !== expectedGeneration -> stoppedFailure ?: TvheadendFailure.CONNECTION_CHANGED
+            !admitted -> TvheadendFailure.NOT_READY
+            else -> null
         }
     }
 }

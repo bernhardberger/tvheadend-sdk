@@ -720,6 +720,51 @@ internal class ConnectionOwnerTest {
     }
 
     @Test
+    fun `owner distinguishes connection retirement from disconnect and shutdown for unsent DVR commands`() = runTest {
+        for (action in listOf("failure", "disconnect", "shutdown")) {
+            val gateway = FakeProtocolGateway()
+            val generation = GatewayGeneration()
+            gateway.connectResults += connected(generation)
+            val mutations = DvrMutationCoordinator(gateway)
+            val progress = DvrProgressCoordinator(gateway)
+            val owner = owner(gateway, dvrMutations = mutations, dvrProgress = progress)
+            try {
+                owner.connect(ServerProfile("server"))
+                runCurrent()
+                gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+                runCurrent()
+                when (action) {
+                    "failure" -> {
+                        gateway.emitFailure(
+                            GatewayConnectionFailureEvent(GatewayConnectionFailure.TRANSPORT_UNAVAILABLE, generation),
+                        )
+                        runCurrent()
+                    }
+                    "disconnect" -> owner.disconnect()
+                    else -> owner.shutdown()
+                }
+                val expected = if (action == "failure") {
+                    TvheadendFailure.CONNECTION_CHANGED
+                } else {
+                    TvheadendFailure.NOT_READY
+                }
+                assertEquals(
+                    DvrMutationResult.Failed(expected, false),
+                    mutations.scheduleEntry(generation, DvrScheduleRequest(DvrSchedule.Programme(EventId(1)))),
+                    action,
+                )
+                assertEquals(
+                    DvrProgressResult.Failed(expected, false),
+                    progress.reportProgress(generation, DvrEntryId(7), DvrPlaybackProgress.checkpoint(30.seconds)),
+                    action,
+                )
+            } finally {
+                owner.shutdown()
+            }
+        }
+    }
+
+    @Test
     fun `later progress proof cannot be overwritten by an earlier mutation publication`() = runTest {
         val earlierProofPrepared = CompletableDeferred<Unit>()
         val releaseEarlierProof = CompletableDeferred<Unit>()

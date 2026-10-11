@@ -159,7 +159,7 @@ internal class ConnectionOwner(
                 if (selectedProfile != null || worker != null) {
                     selectedProfile = null
                     retainedProfile = null
-                    tearDownReusableSession(retainPublishedCatalog = false)
+                    tearDownReusableSession(retainPublishedCatalog = false, connectionRetired = true)
                 } else if (retainedProfile?.hasSameConfigurationAs(profile) != true) {
                     retainedProfile = null
                     synchronized(stateLock) {
@@ -190,7 +190,7 @@ internal class ConnectionOwner(
                 -> {
                     withContext(NonCancellable) {
                         selectedProfile = null
-                        tearDownReusableSession(retainPublishedCatalog = true)
+                        tearDownReusableSession(retainPublishedCatalog = true, connectionRetired = true)
                         selectedProfile = profile
                         startWorker(profile)
                     }
@@ -283,8 +283,11 @@ internal class ConnectionOwner(
         }
     }
 
-    private suspend fun tearDownReusableSession(retainPublishedCatalog: Boolean) {
-        val invalidated = invalidateSession(retainPublishedCatalog)
+    private suspend fun tearDownReusableSession(
+        retainPublishedCatalog: Boolean,
+        connectionRetired: Boolean = false,
+    ) {
+        val invalidated = invalidateSession(retainPublishedCatalog, connectionRetired = connectionRetired)
         runOrderedCleanup(
             initialFailure = invalidated.admissionFailure,
             steps = listOf(
@@ -314,6 +317,7 @@ internal class ConnectionOwner(
     private fun invalidateSession(
         retainPublishedCatalog: Boolean,
         terminal: Boolean = false,
+        connectionRetired: Boolean = false,
     ): InvalidatedSession {
         val activeWorker = worker
         worker = null
@@ -325,8 +329,8 @@ internal class ConnectionOwner(
             activeGeneration = null
             latestDvrCapabilityRevision = null
             retryDisposition = null
-            var failure = captureFailure { dvrMutations.stopAdmission() }
-            failure = captureFailure(failure) { dvrProgress.stopAdmission() }
+            var failure = captureFailure { dvrMutations.stopAdmission(connectionRetired) }
+            failure = captureFailure(failure) { dvrProgress.stopAdmission(connectionRetired) }
             failure = captureFailure(failure) { children.stopAdmission() }
             // The cache writer flushes the outgoing publication to the outgoing namespace after
             // this clear, so capture it atomically with the reset.
@@ -664,8 +668,8 @@ internal class ConnectionOwner(
             activeGeneration = null
             latestDvrCapabilityRevision = null
             retryDisposition = disposition
-            var admissionFailure = captureFailure { dvrMutations.stopAdmission() }
-            admissionFailure = captureFailure(admissionFailure) { dvrProgress.stopAdmission() }
+            var admissionFailure = captureFailure { dvrMutations.stopAdmission(connectionRetired = true) }
+            admissionFailure = captureFailure(admissionFailure) { dvrProgress.stopAdmission(connectionRetired = true) }
             admissionFailure = captureFailure(admissionFailure) { children.stopAdmission() }
             metadata.resetWorkingStateRetainingPublishedSnapshot()
             metadata.publishSessionState(
