@@ -86,6 +86,8 @@ public class LivePlaybackOptions(
 /** Closed disposition of target installation without exhaustively defining its exact outcome. */
 public enum class PlaybackTargetDisposition {
     STARTED,
+    /** Installed, but application replacement ended Player ownership during installation. */
+    DEPARTED,
     NOT_STARTED,
 }
 
@@ -124,14 +126,23 @@ public class PlaybackTargetResult private constructor(
     override fun toString(): String = label
 
     public companion object {
-        /**
-         * Installation succeeded. An application listener may already have departed from the item
-         * during installation; in that case it is not prepared and ownership is not reacquired.
-         */
+        /** Installation succeeded and retained Player item ownership through installation. */
         @JvmField
         public val STARTED: PlaybackTargetResult = PlaybackTargetResult(
             "STARTED",
             PlaybackTargetDisposition.STARTED,
+            emptySet(),
+        )
+
+        /**
+         * Installation occurred, but the application left the item during installation. The
+         * coordinator does not prepare the application's item or reacquire ownership. The target
+         * remains installed until stop, replacement or shutdown; explicitly install again to play it.
+         */
+        @JvmField
+        public val DEPARTED: PlaybackTargetResult = PlaybackTargetResult(
+            "DEPARTED",
+            PlaybackTargetDisposition.DEPARTED,
             emptySet(),
         )
 
@@ -221,6 +232,16 @@ public sealed interface LivePlaybackObservation {
     public data object NoTarget : LivePlaybackObservation
 
     /**
+     * The installed live target no longer owns the Player item. Ownership cannot be reacquired;
+     * stop, replacement or shutdown retires the target. Install explicitly to play it again.
+     * Later subscription observations cannot restore [Active].
+     * The separate [TvheadendPlaybackCoordinator.timeshiftState],
+     * [TvheadendPlaybackCoordinator.subscriptionIssue] and [TvheadendPlaybackCoordinator.liveDiagnostics]
+     * flows, and timeshift commands, keep tracking this still-installed target until retirement.
+     */
+    public data object Departed : LivePlaybackObservation
+
+    /**
      * Latest coherent state for the active live target.
      *
      * [serverStopped] is true from a server subscription stop, with or without a
@@ -241,7 +262,9 @@ public sealed interface LivePlaybackObservation {
 public sealed interface PlaybackStopResult {
     /**
      * The installed target was retired and its item removed from the playlist. The player was
-     * stopped only if it still played that item; application-added playlist items are retained.
+     * stopped because the coordinator's item was current, including when the application returned
+     * to it after departure. This does not restore ownership for reporting. Application-added
+     * playlist items are retained.
      *
      * [finalSubscriptionIssue] is the last [SubscriptionIssue] published for the retired live target,
      * so a consumer that stops a failing target can report why without reading
@@ -249,6 +272,16 @@ public sealed interface PlaybackStopResult {
      * when no issue was current for the live target.
      */
     public data class Stopped(
+        public val finalSubscriptionIssue: SubscriptionIssue?,
+    ) : PlaybackStopResult
+
+    /**
+     * The target was retired without stopping the Player: no coordinator item was current, so
+     * application playback was left alone and only any lingering coordinator item was removed.
+     * If the application returned to that item and retirement stopped the Player, the result is
+     * [Stopped] instead. [finalSubscriptionIssue] has the same meaning as in [Stopped].
+     */
+    public data class RetiredAfterDeparture(
         public val finalSubscriptionIssue: SubscriptionIssue?,
     ) : PlaybackStopResult
 
@@ -345,7 +378,7 @@ private class DefaultPlaybackCoordinatorLifetime(
  * snapshot there is no closing report.
  *
  * If an application listener replaces or clears the item during its installation transition,
- * installation returns [PlaybackTargetResult.STARTED] with the target already departed. The
+ * installation returns [PlaybackTargetResult.DEPARTED] with the target already departed. The
  * coordinator neither prepares the application's item nor restores the previous target over it.
  * Recording closing reports retain the admitted resume floor even when no resume helper was started.
  */
@@ -647,11 +680,13 @@ public class TvheadendPlaybackCoordinator internal constructor(
      * Retires the current target and removes only its item, stopping the player only while it plays that target.
      *
      * If the application moved to another item, any lingering target item is removed without
-     * stopping playback or removing application items. The result is still [PlaybackStopResult.Stopped].
+     * stopping playback or removing application items. The result is [PlaybackStopResult.RetiredAfterDeparture].
+     * If it returned to the target's item, retirement stops the Player and returns [PlaybackStopResult.Stopped],
+     * without reclaiming ownership for reporting.
      * If the application replaced or cleared the recording's item, its last observed owned position
      * supplies closing progress without marking it watched, unless a terminal was already captured
-     * or reported. No owned snapshot means no report. While its item is still current, an orderly
-     * stop can mark the recording watched according to the configured progress policy.
+     * or reported. No owned snapshot means no report. While ownership has never been lost and its
+     * item is still current, an orderly stop can mark it watched according to the configured progress policy.
      */
     public suspend fun stop(): PlaybackStopResult {
         val reply = CompletableDeferred<PlaybackStopResult>()
@@ -719,7 +754,8 @@ public class TvheadendPlaybackCoordinator internal constructor(
             mutableTimeshiftState.value = observation.timeshiftState
             mutableSubscriptionIssue.value = observation.subscriptionIssue
             mutableLiveDiagnostics.value = observation.diagnostics
-            mutableLivePlaybackObservation.value = observation
+            mutableLivePlaybackObservation.value = if (token.ownsPlayerItem()) observation
+            else LivePlaybackObservation.Departed
         }
     }
 
@@ -732,11 +768,11 @@ public class TvheadendPlaybackCoordinator internal constructor(
             mutableTimeshiftState.value = LiveTimeshiftState.Unavailable
             mutableSubscriptionIssue.value = null
             mutableLiveDiagnostics.value = null
-            mutableLivePlaybackObservation.value = LivePlaybackObservation.Active(
+            mutableLivePlaybackObservation.value = if (token.ownsPlayerItem()) LivePlaybackObservation.Active(
                 timeshiftState = LiveTimeshiftState.Unavailable,
                 subscriptionIssue = null,
                 diagnostics = null,
-            )
+            ) else LivePlaybackObservation.Departed
         }
         bridge.publishCurrent()
     }
@@ -1010,7 +1046,7 @@ private class CoordinatorActor(
                 timeshiftControls = timeshiftControls,
             )
             applyRetirement(result.retiredTarget, result.retiredRecording)
-            if (result.status == PlaybackPlayerInstallStatus.STARTED) {
+            if (result.status == PlaybackPlayerInstallStatus.STARTED || result.status == PlaybackPlayerInstallStatus.DEPARTED) {
                 ticker?.cancel()
                 activeTarget = ActorTarget.Live(token, timeshiftControls)
                 activateTimeshift(token, timeshiftControls)
@@ -1127,7 +1163,7 @@ private class CoordinatorActor(
                 start = command.start,
             )
             applyRetirement(result.retiredTarget, result.retiredRecording)
-            if (result.status == PlaybackPlayerInstallStatus.STARTED) {
+            if (result.status == PlaybackPlayerInstallStatus.STARTED || result.status == PlaybackPlayerInstallStatus.DEPARTED) {
                 val admission = checkNotNull(result.installedRecording)
                 val target = ActorTarget.Recording(
                     token = token,
@@ -1151,6 +1187,7 @@ private class CoordinatorActor(
                 command.reply.complete(
                     when {
                         !result.playerAvailable -> PlaybackStopResult.PlayerUnavailable(finalSubscriptionIssue)
+                        result.retiredAfterDeparture -> PlaybackStopResult.RetiredAfterDeparture(finalSubscriptionIssue)
                         result.retiredTarget -> PlaybackStopResult.Stopped(finalSubscriptionIssue)
                         else -> PlaybackStopResult.AlreadyStopped
                     },
@@ -1516,10 +1553,10 @@ private class CoordinatorActor(
         }
         // A claim intentionally ends attachment leadership. Failure after claiming is not stale work.
         if (!retirement.retiredTarget && !claimed && !exhaustion.isCurrent()) return false
-        val reason = if (retirement.playerStoppedAndCleared) {
-            PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED
-        } else {
-            PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED_CLEANUP_FAILED
+        val reason = when {
+            !retirement.retiredTarget -> PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED_RETIREMENT_FAILED
+            retirement.playerStoppedAndCleared -> PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED
+            else -> PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED_PLAYER_CLEANUP_FAILED
         }
         try {
             onRecoveryRequired(reason)
@@ -1912,6 +1949,7 @@ private fun SubscriptionOperationFailure.toPublicTimeshiftResult(): TimeshiftCom
 
 private fun PlaybackPlayerInstallStatus.toPublicTargetResult(): PlaybackTargetResult = when (this) {
     PlaybackPlayerInstallStatus.STARTED -> PlaybackTargetResult.STARTED
+    PlaybackPlayerInstallStatus.DEPARTED -> PlaybackTargetResult.DEPARTED
     PlaybackPlayerInstallStatus.NOT_READY -> PlaybackTargetResult.NOT_READY
     PlaybackPlayerInstallStatus.RECORDING_PROGRESS_UNSUPPORTED ->
         PlaybackTargetResult.RECORDING_PROGRESS_UNSUPPORTED

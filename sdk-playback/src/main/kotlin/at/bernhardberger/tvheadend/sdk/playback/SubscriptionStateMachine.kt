@@ -49,7 +49,8 @@ public fun interface SubscriptionEventConsumer {
      * these two waits has its own five-second grace period. When one expires, teardown cancels
      * consumer code still running and skips every later event. That cancellation is not a
      * subscription failure, and neither is a non-cancellation exception the cancelled call throws
-     * afterwards: close keeps its terminal reason, returns [SubscriptionCloseResult.CLEANUP_FAILED],
+     * afterwards: close keeps its terminal reason, returns [SubscriptionCloseResult.CONSUMER_DRAIN_TIMED_OUT]
+     * (or [SubscriptionCloseResult.CLEANUP_FAILED_AND_CONSUMER_DRAIN_TIMED_OUT] if cleanup also failed),
      * and sets [SubscriptionDiagnostics.consumerDrainTimedOut]. Any other cancellation thrown by
      * this callback is still an infrastructure failure that is rethrown to close callers.
      *
@@ -296,7 +297,8 @@ public class SubscriptionDiagnostics internal constructor(
     public val rebaseDiscardedPacketCount: Long,
     /**
      * Teardown cancelled consumer code that was still running when a teardown grace period
-     * expired; the close result then reports cleanup failure. The value is final once
+     * expired. Also observable after lifecycle teardown without an explicit subscription close caller.
+     * The value is final once
      * [ActiveSubscription.close] or [SubscriptionManager.closeAndJoin] returns, which can be after
      * [ActiveSubscription.state] became terminal.
      */
@@ -349,7 +351,16 @@ public sealed interface SubscriptionOpenResult {
 
 /** Result of explicit subscription cleanup. */
 @SubscriptionInfrastructureApi
-public enum class SubscriptionCloseResult { CLOSED, CLEANUP_FAILED }
+public enum class SubscriptionCloseResult {
+    /** Unsubscribe and consumer drain completed. */
+    CLOSED,
+    /** Unsubscribe or collection cleanup failed, without cancelling consumer code after its grace. */
+    CLEANUP_FAILED,
+    /** Other cleanup succeeded, but teardown cancelled consumer code after its grace period. */
+    CONSUMER_DRAIN_TIMED_OUT,
+    /** Cleanup failed and teardown also cancelled consumer code after its grace period. */
+    CLEANUP_FAILED_AND_CONSUMER_DRAIN_TIMED_OUT,
+}
 
 /** Active generation-bound subscription handle. */
 @SubscriptionInfrastructureApi
@@ -787,7 +798,6 @@ private class ActiveSubscriptionImpl(
     /** Set once teardown cancels consumer code that outlasted [TEARDOWN_CONSUMER_GRACE]. */
     private var consumerCancelledByTeardown = false
     /** A grace expiry cancelled live delivery work, even if it had not entered consumer code. */
-    private var deliverySkippedByTeardown = false
 
     /** Carried by every coroutine that runs consumer code, and inherited by the coroutines it starts. */
     private val deliveryContext = ConsumerDelivery(this)
@@ -1056,17 +1066,24 @@ private class ActiveSubscriptionImpl(
                         }
                         drivers.forEach { driver -> driver.cancelAndJoin() }
                         // A committed replay may finish within the grace period before it is cancelled.
-                        if (replaying != null && !joinWithinGrace(replaying)) cancelAfterGrace(replaying)
+                        val replayCancellation = if (replaying != null && !joinWithinGrace(replaying)) {
+                            cancelAfterGrace(replaying)
+                        } else TeardownCancellationOutcome.ALREADY_COMPLETED
                         transition { pendingSeek?.let(::abandonSeekLocked) }
                         val cleanup = cleanUpCollection(collection)
                         closeResult = cleanup.result
                         if (primaryCancellation == null) {
                             primaryCancellation = cleanup.cancellation
                         }
-                        if (synchronized(lock) { deliverySkippedByTeardown }) {
+                        if (replayCancellation == TeardownCancellationOutcome.DELIVERY_CANCELLED) {
                             closeResult = SubscriptionCloseResult.CLEANUP_FAILED
                         }
                         if (synchronized(lock) { consumerCancelledByTeardown }) {
+                            closeResult = if (closeResult == SubscriptionCloseResult.CLOSED) {
+                                SubscriptionCloseResult.CONSUMER_DRAIN_TIMED_OUT
+                            } else {
+                                SubscriptionCloseResult.CLEANUP_FAILED_AND_CONSUMER_DRAIN_TIMED_OUT
+                            }
                             // Every delivery has ended, so the free mutex keeps diagnostics confined to it.
                             deliveryMutex.withLock {
                                 mutableDiagnostics.value = mutableDiagnostics.value.with(consumerDrainTimedOut = true)
@@ -1726,27 +1743,29 @@ private class ActiveSubscriptionImpl(
     /**
      * Cancels [job] after its teardown wait expired. Later deliveries are skipped, and consumer code
      * still running receives a [TeardownCancellation], which never counts as a subscription failure
-     * and is never thrown to close callers.
+     * and is never thrown to close callers. The outcome describes only this wait, not earlier waits.
      */
-    private suspend fun cancelAfterGrace(job: Job) {
+    private suspend fun cancelAfterGrace(job: Job): TeardownCancellationOutcome {
         beforeTeardownCancellation?.invoke()
-        val cancel = synchronized(lock) {
+        val outcome = synchronized(lock) {
             // A completed replay may already have handed delivery to collection. Neither stop that
             // delivery nor attribute its failure to cancellation of the old replay.
             if (job.isActive) {
                 consumerEnabled = false
-                deliverySkippedByTeardown = true
-                consumerCallInFlight?.takeIf { it.owner === job }?.let { call ->
+                val call = consumerCallInFlight?.takeIf { it.owner === job }
+                call?.let {
                     call.cancelledByTeardown = true
                     consumerCancelledByTeardown = true
                 }
                 // The request is committed to this call only. A later call must not inherit it.
-                true
-            } else false
+                if (call != null) TeardownCancellationOutcome.CONSUMER_CANCELLED
+                else TeardownCancellationOutcome.DELIVERY_CANCELLED
+            } else TeardownCancellationOutcome.ALREADY_COMPLETED
         }
         // Cancellation may synchronously invoke consumer-installed handlers. Never hold the monitor.
-        if (cancel) job.cancel(TeardownCancellation())
+        if (outcome != TeardownCancellationOutcome.ALREADY_COMPLETED) job.cancel(TeardownCancellation())
         job.join()
+        return outcome
     }
 
     private suspend fun cleanUpCollection(collection: Deferred<CollectionOutcome>): CleanupOutcome =
@@ -1775,8 +1794,12 @@ private class ActiveSubscriptionImpl(
                     if (joinWithinGrace(collection)) {
                         collection.await()
                     } else {
-                        cancelAfterGrace(collection)
-                        CollectionOutcome.Failed
+                        // Consumer cancellation is reported separately from transport cleanup.
+                        when (cancelAfterGrace(collection)) {
+                            TeardownCancellationOutcome.CONSUMER_CANCELLED -> CollectionOutcome.Completed
+                            TeardownCancellationOutcome.DELIVERY_CANCELLED -> CollectionOutcome.Failed
+                            TeardownCancellationOutcome.ALREADY_COMPLETED -> collection.await()
+                        }
                     }
                 } catch (failure: CancellationException) {
                     if (cancellation == null) cancellation = failure
@@ -1940,6 +1963,8 @@ private sealed interface OwnerOutcome {
     public class Collection(internal val outcome: CollectionOutcome) : OwnerOutcome
     public class Subscribe(internal val outcome: CommandOutcome) : OwnerOutcome
 }
+
+private enum class TeardownCancellationOutcome { ALREADY_COMPLETED, CONSUMER_CANCELLED, DELIVERY_CANCELLED }
 
 private sealed interface CollectionOutcome {
     public data object Completed : CollectionOutcome

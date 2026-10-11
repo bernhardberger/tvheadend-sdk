@@ -81,16 +81,18 @@ public enum class PlaybackRecoveryReason {
     LIVE_BUFFER_EXHAUSTED,
 
     /**
-     * A live target without server timeshift exhausted its bounded queues, but stopping the player
-     * or removing its TVHeadend item could not be confirmed. Unlike [LIVE_BUFFER_EXHAUSTED], this
-     * does not promise buffer release. Only [TvheadendPlaybackCoordinator]
-     * reports this.
-     *
-     * If retirement could not start, the target may still be active: call
+     * A live target exhausted its bounded queues, but retirement could not start. The target may
+     * still be active: call
      * [TvheadendPlaybackCoordinator.stop] or [TvheadendPlaybackCoordinator.setLiveTarget] to retry.
-     * In that case neither subscription closure nor a period error is guaranteed.
-     *
-     * If retirement completed with incomplete player cleanup, the target is already retired and
+     * Neither subscription closure, buffer release nor a period error is guaranteed.
+     * Only [TvheadendPlaybackCoordinator] reports this.
+     */
+    LIVE_BUFFER_EXHAUSTED_RETIREMENT_FAILED,
+
+    /**
+     * A live target exhausted its bounded queues and was retired, but stopping the player or
+     * removing its TVHeadend item could not be confirmed. Buffer release is not guaranteed.
+     * Only [TvheadendPlaybackCoordinator] reports this. The target is already retired and
      * `stop()` returns [PlaybackStopResult.AlreadyStopped] without retrying item removal. The period
      * fails and server delivery ends without another event (`ConsumerFailed` or `Closed`), even if
      * the application never reconciles the player. If the leftover TVHeadend item is still current,
@@ -100,7 +102,7 @@ public enum class PlaybackRecoveryReason {
      * [PlaybackStopResult.PlayerUnavailable] or [PlaybackTargetResult.PLAYER_UNAVAILABLE]; none of
      * these results confirms item removal.
      */
-    LIVE_BUFFER_EXHAUSTED_CLEANUP_FAILED,
+    LIVE_BUFFER_EXHAUSTED_PLAYER_CLEANUP_FAILED,
 }
 
 /**

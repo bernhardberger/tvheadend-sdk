@@ -260,6 +260,7 @@ internal class TvheadendPlaybackCoordinatorTest {
 
         val targetCategories = mapOf(
             PlaybackTargetResult.STARTED to emptySet(),
+            PlaybackTargetResult.DEPARTED to emptySet(),
             PlaybackTargetResult.NOT_RUNNING to setOf(PlaybackOutcomeCategory.TRANSIENT),
             PlaybackTargetResult.SHUT_DOWN to setOf(PlaybackOutcomeCategory.TERMINAL),
             PlaybackTargetResult.NOT_READY to setOf(PlaybackOutcomeCategory.TRANSIENT),
@@ -554,6 +555,7 @@ internal class TvheadendPlaybackCoordinatorTest {
 
         mapOf(
             PlaybackPlayerInstallStatus.STARTED to PlaybackTargetResult.STARTED,
+            PlaybackPlayerInstallStatus.DEPARTED to PlaybackTargetResult.DEPARTED,
             PlaybackPlayerInstallStatus.NOT_READY to PlaybackTargetResult.NOT_READY,
             PlaybackPlayerInstallStatus.TARGET_UNAVAILABLE to PlaybackTargetResult.TARGET_UNAVAILABLE,
             PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE to PlaybackTargetResult.PLAYER_UNAVAILABLE,
@@ -571,7 +573,10 @@ internal class TvheadendPlaybackCoordinatorTest {
 
             assertSame(expected, result.result)
             assertEquals(listOf(FakeSessionCall.BIND_LIVE_PLAYBACK), session.calls)
-            assertEquals(status == PlaybackPlayerInstallStatus.STARTED, fixture.player.hasActiveTarget)
+            assertEquals(
+                status == PlaybackPlayerInstallStatus.STARTED || status == PlaybackPlayerInstallStatus.DEPARTED,
+                fixture.player.hasActiveTarget,
+            )
             lifetime.shutdown(1.seconds)
         }
     }
@@ -3149,7 +3154,7 @@ internal class TvheadendPlaybackCoordinatorTest {
             runCurrent()
 
             val reason = if (stage == "cleanup failed") {
-                PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED_CLEANUP_FAILED
+                PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED_PLAYER_CLEANUP_FAILED
             } else {
                 PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED
             }
@@ -4135,7 +4140,7 @@ private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
         liveInstallRelease?.await()
         liveInstallEntered = null
         liveInstallRelease = null
-        if (liveInstallStatus != PlaybackPlayerInstallStatus.STARTED) {
+        if (liveInstallStatus != PlaybackPlayerInstallStatus.STARTED && liveInstallStatus != PlaybackPlayerInstallStatus.DEPARTED) {
             if (simulateFailedReplacementPeriodTurnover) {
                 val currentControls = checkNotNull(this.timeshiftControls)
                 val replacement = currentControls.beginObservationReplacement()
@@ -4151,6 +4156,7 @@ private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
         }
         val retirement = retire()
         active = FakeTarget.Live(token)
+        if (liveInstallStatus == PlaybackPlayerInstallStatus.DEPARTED) token.releasePlayerItem()
         this.timeshiftControls = timeshiftControls
         timeshiftAttachment = timeshiftControls.newAttachment()
         liveOptions = options
@@ -4158,7 +4164,7 @@ private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
             ?: "live:bound"
         ticket.complete()
         return PlaybackPlayerInstallResult(
-            PlaybackPlayerInstallStatus.STARTED,
+            liveInstallStatus,
             retirement.first,
             retirement.second,
         )
@@ -4407,6 +4413,9 @@ internal class FakeTimeshiftSubscription(
         ))),
     )
     var closeCount = 0
+    var closeAction: suspend () -> at.bernhardberger.tvheadend.sdk.playback.SubscriptionCloseResult = {
+        at.bernhardberger.tvheadend.sdk.playback.SubscriptionCloseResult.CLOSED
+    }
 
     override val state: kotlinx.coroutines.flow.StateFlow<SubscriptionState> = mutableState
     override val diagnostics: kotlinx.coroutines.flow.StateFlow<SubscriptionDiagnostics>
@@ -4438,7 +4447,7 @@ internal class FakeTimeshiftSubscription(
 
     override suspend fun close(): at.bernhardberger.tvheadend.sdk.playback.SubscriptionCloseResult {
         closeCount += 1
-        return at.bernhardberger.tvheadend.sdk.playback.SubscriptionCloseResult.CLOSED
+        return closeAction()
     }
 }
 

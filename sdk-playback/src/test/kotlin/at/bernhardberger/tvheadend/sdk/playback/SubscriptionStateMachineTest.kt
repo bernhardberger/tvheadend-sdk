@@ -971,7 +971,7 @@ class SubscriptionStateMachineTest {
                 assertTrue(closing.isCancelled)
                 caughtCancellation { closing.await() }
             } else {
-                assertSame(SubscriptionCloseResult.CLEANUP_FAILED, closing.await())
+                assertSame(SubscriptionCloseResult.CLEANUP_FAILED_AND_CONSUMER_DRAIN_TIMED_OUT, closing.await())
             }
             assertTrue(consumerCancelled)
             val terminal = active.state.value as SubscriptionState.Terminal
@@ -1035,7 +1035,7 @@ class SubscriptionStateMachineTest {
                 val expectedResult = if (finishesInTime) {
                     SubscriptionCloseResult.CLOSED
                 } else {
-                    SubscriptionCloseResult.CLEANUP_FAILED
+                    SubscriptionCloseResult.CONSUMER_DRAIN_TIMED_OUT
                 }
                 assertSame(expectedResult, closing.await())
                 assertEquals(!finishesInTime, consumerCancelled)
@@ -1086,6 +1086,37 @@ class SubscriptionStateMachineTest {
             assertFalse(active.diagnostics.value.consumerDrainTimedOut)
             val terminal = active.state.value as SubscriptionState.Terminal
             assertSame(SubscriptionTerminalReason.Closed, terminal.reason)
+        } finally {
+            manager.closeAndJoin()
+        }
+    }
+
+    @Test
+    fun `manager teardown exposes consumer timeout without a subscription close caller`() = runTest {
+        val connection = RecordingSubscriptionConnection()
+        val entered = CompletableDeferred<Unit>()
+        val manager = manager(connection)
+        manager.startAdmission()
+        try {
+            val active = openActive(manager, connection, SubscriptionChannelId(38L)) { event ->
+                if (event is SubscriptionEvent.Packet) {
+                    entered.complete(Unit)
+                    awaitCancellation()
+                }
+            }
+            connection.emit(SubscriptionId(0L), packet())
+            entered.await()
+            val closing = async { manager.closeAndJoin() }
+            runCurrent()
+            advanceTimeBy(TEARDOWN_GRACE)
+            runCurrent()
+
+            assertTrue(closing.isCompleted)
+            closing.await()
+            assertTrue(active.diagnostics.value.consumerDrainTimedOut)
+            assertSame(SubscriptionCloseResult.CONSUMER_DRAIN_TIMED_OUT, active.close())
+            assertSame(SubscriptionCloseResult.CONSUMER_DRAIN_TIMED_OUT, active.close())
+            assertEquals(1, connection.unsubscribeCount)
         } finally {
             manager.closeAndJoin()
         }
@@ -1163,7 +1194,7 @@ class SubscriptionStateMachineTest {
             runCurrent()
 
             assertTrue(closing.isCompleted, "Cancelling the waiting consumer must release teardown")
-            assertSame(SubscriptionCloseResult.CLEANUP_FAILED, closing.await())
+            assertSame(SubscriptionCloseResult.CONSUMER_DRAIN_TIMED_OUT, closing.await())
             assertTrue(consumerCancelled)
             val terminal = active.state.value as SubscriptionState.Terminal
             assertSame(SubscriptionTerminalReason.Closed, terminal.reason)
@@ -1238,7 +1269,7 @@ class SubscriptionStateMachineTest {
             runCurrent()
 
             assertTrue(closing.isCompleted, "Close must not wait past the grace period")
-            assertSame(SubscriptionCloseResult.CLEANUP_FAILED, closing.await())
+            assertSame(SubscriptionCloseResult.CONSUMER_DRAIN_TIMED_OUT, closing.await())
             val terminal = active.state.value as SubscriptionState.Terminal
             assertSame(SubscriptionTerminalReason.Closed, terminal.reason)
             assertTrue(active.diagnostics.value.consumerDrainTimedOut)

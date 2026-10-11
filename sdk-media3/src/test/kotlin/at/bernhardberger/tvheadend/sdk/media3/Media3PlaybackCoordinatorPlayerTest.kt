@@ -37,6 +37,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
@@ -105,7 +106,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         assertEquals(playlist, access.playlistKinds)
         assertTrue(access.operations.isEmpty(), "Departed targets must not mutate the player on exhaustion")
         assertTrue(reasons.isEmpty())
-        assertTrue(coordinator.livePlaybackObservation.value is LivePlaybackObservation.Active)
+        assertSame(LivePlaybackObservation.Departed, coordinator.livePlaybackObservation.value)
         val error = assertThrows(IOException::class.java) { period.maybeThrowPrepareError() }
         assertEquals("Live sample buffer limit reached", error.message)
         assertSame(SubscriptionTerminalReason.ConsumerFailed, (harness.subscription.state.value as SubscriptionState.Terminal).reason)
@@ -113,7 +114,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
 
         if (departure == "returned") access.transitionToApplicationItem(Player.MEDIA_ITEM_TRANSITION_REASON_SEEK)
         val applicationItem = access.currentItem
-        assertTrue(coordinator.stop() is PlaybackStopResult.Stopped)
+        assertTrue(coordinator.stop() is PlaybackStopResult.RetiredAfterDeparture)
         assertSame(applicationItem, access.currentItem)
         assertEquals(listOf("application"), access.playlistKinds)
         assertFalse("stop" in access.operations)
@@ -190,7 +191,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             assertTrue(attachment.bufferExhausted())
             runCurrent()
             assertEquals(listOf(if (failure == "callback") PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED
-                else PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED_CLEANUP_FAILED), reasons)
+                else PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED_PLAYER_CLEANUP_FAILED), reasons)
         }
 
         assertTrue(owner.isActive)
@@ -324,7 +325,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         val expected = if (failure == "snapshot") {
             PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED
         } else {
-            PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED_CLEANUP_FAILED
+            PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED_RETIREMENT_FAILED
         }
         assertEquals(listOf(expected), reasons)
         if (failure == "snapshot") {
@@ -377,7 +378,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         runCurrent()
 
         val expected = if (failure == "stop" || failure == "remove") {
-            PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED_CLEANUP_FAILED
+            PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED_PLAYER_CLEANUP_FAILED
         } else {
             PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED
         }
@@ -429,7 +430,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
                 period.maybeThrowPrepareError()
             }.message)
             assertEquals(listOf("live"), access.playlistKinds, "No application cleanup is needed to stop server delivery")
-            assertEquals(if (shutdownFirst) emptyList() else listOf(PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED_CLEANUP_FAILED), reasons)
+            assertEquals(if (shutdownFirst) emptyList() else listOf(PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED_PLAYER_CLEANUP_FAILED), reasons)
         } finally {
             access.looperQueue.current = true
             access.failRemove = false
@@ -1012,7 +1013,11 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             runCurrent()
             assertEquals(if (transition == "auto") 1 else 0, target.reports.size)
 
-            assertEquals(PlaybackStopResult.Stopped(null), coordinator.stop())
+            assertEquals(
+                if (transition == "repeat") PlaybackStopResult.Stopped(null)
+                else PlaybackStopResult.RetiredAfterDeparture(null),
+                coordinator.stop(),
+            )
             runCurrent()
             val report = target.reports.single().second
             assertEquals(
@@ -1171,11 +1176,15 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             access.operations.clear()
             access.setMediaSourceAction = { access.replaceWithApplicationItem() }
 
-            assertSame(PlaybackTargetResult.STARTED, coordinator.setLiveTarget(TestCoordinatorLiveTarget()))
+            val result = coordinator.setLiveTarget(PlaybackBindingTestFactory.currentLive())
+            assertSame(PlaybackTargetResult.DEPARTED, result)
+            assertSame(PlaybackTargetDisposition.DEPARTED, result.disposition)
+            assertSame(LivePlaybackObservation.Departed, coordinator.livePlaybackObservation.value)
             assertEquals("application", access.currentSourceKind)
             assertFalse(access.operations.contains("prepare"))
             assertEquals(listOf("set-live"), access.operations.filter { it.startsWith("set-") })
-            coordinator.stop()
+            assertEquals(PlaybackStopResult.RetiredAfterDeparture(null), coordinator.stop())
+            assertSame(LivePlaybackObservation.NoTarget, coordinator.livePlaybackObservation.value)
             assertEquals("application", access.currentSourceKind)
         } finally {
             coordinator.shutdown(1.seconds)
@@ -1219,15 +1228,115 @@ internal class Media3PlaybackCoordinatorPlayerTest {
                 })
             }
 
-            assertSame(PlaybackTargetResult.STARTED, coordinator.setRecordingTarget(target, RecordingPlaybackStart.RESUME))
+            assertSame(PlaybackTargetResult.DEPARTED, coordinator.setRecordingTarget(target, RecordingPlaybackStart.RESUME))
             assertEquals(if (clear) "none" else "application", access.currentSourceKind)
             assertEquals(listOf("set-recording"), access.operations.filter { it.startsWith("set-") })
             assertFalse(access.operations.contains("create-resume"))
             assertFalse(access.operations.contains("prepare"))
-            coordinator.stop()
+            assertEquals(PlaybackStopResult.RetiredAfterDeparture(null), coordinator.stop())
             runCurrent()
             assertEquals(if (clear) "none" else "application", access.currentSourceKind)
             assertTrue(target.reports.isEmpty())
+        } finally {
+            coordinator.shutdown(1.seconds)
+            owner.join()
+        }
+    }
+
+    @Test
+    fun `returned coordinator item is stopped without reclaiming reporting ownership`() = runTest {
+        val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
+        val events = PlaybackPlayerEventAccumulator()
+        val player = Media3PlaybackCoordinatorPlayer(access, events) { _, _ -> RecordingAdmission.Completed(null) }
+        val coordinator = TvheadendPlaybackCoordinator(
+            player, events, DvrProgressPolicy(), {}, SystemPlaybackCoordinatorTimeSource,
+        )
+        val target = TestCoordinatorRecordingTarget()
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { coordinator.run() }
+        try {
+            coordinator.setRecordingTarget(target, RecordingPlaybackStart.START_OVER)
+            access.snapshot = access.snapshot.copy(position = 30.seconds)
+            access.deliverTimelineChange()
+            access.addApplicationItem(moveToIt = true)
+            access.seekBackToCoordinatorItem()
+            access.snapshot = access.snapshot.copy(position = 90.seconds)
+            access.deliverTimelineChange()
+            access.operations.clear()
+
+            assertEquals(PlaybackStopResult.Stopped(null), coordinator.stop())
+            runCurrent()
+            assertTrue(access.operations.contains("stop"))
+            assertEquals(listOf("application"), access.playlistKinds)
+            assertEquals(30.seconds, target.reports.single().second.position)
+            assertFalse(target.reports.single().second.markWatched)
+        } finally {
+            coordinator.shutdown(1.seconds)
+            owner.join()
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [true, false])
+    fun `departed installation never emits active even when departure races activation`(duringInstall: Boolean) = runTest {
+        val access = FakeCoordinatorPlaybackAccess()
+        val events = PlaybackPlayerEventAccumulator()
+        val player = Media3PlaybackCoordinatorPlayer(access, events) { _, _ -> RecordingAdmission.Completed(null) }
+        val coordinator = TvheadendPlaybackCoordinator(
+            player, events, DvrProgressPolicy(), {}, SystemPlaybackCoordinatorTimeSource,
+        )
+        val observations = mutableListOf<LivePlaybackObservation>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            coordinator.livePlaybackObservation.collect { observations += it }
+        }
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { coordinator.run() }
+        try {
+            if (duringInstall) access.setMediaSourceAction = { access.replaceWithApplicationItem() }
+            val installing = async { coordinator.setLiveTarget(PlaybackBindingTestFactory.currentLive()) }
+            runCurrent()
+            access.looperQueue.runAll()
+            // The looper operation has finished but its actor continuation has not activated the target.
+            access.looperQueue.current = true
+            if (!duringInstall) access.replaceWithApplicationItem()
+            runCurrent()
+            assertSame(if (duringInstall) PlaybackTargetResult.DEPARTED else PlaybackTargetResult.STARTED, installing.await())
+            assertEquals(listOf(LivePlaybackObservation.NoTarget, LivePlaybackObservation.Departed), observations)
+            coordinator.stop()
+            assertEquals(
+                listOf(LivePlaybackObservation.NoTarget, LivePlaybackObservation.Departed, LivePlaybackObservation.NoTarget),
+                observations,
+            )
+        } finally {
+            coordinator.shutdown(1.seconds)
+            owner.join()
+        }
+    }
+
+    @Test
+    fun `departed live observation survives subscription publication and return to the item`() = runTest {
+        val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
+        val events = PlaybackPlayerEventAccumulator()
+        val player = Media3PlaybackCoordinatorPlayer(access, events) { _, _ -> RecordingAdmission.Completed(null) }
+        val coordinator = TvheadendPlaybackCoordinator(
+            player, events, DvrProgressPolicy(), {}, SystemPlaybackCoordinatorTimeSource,
+        )
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { coordinator.run() }
+        try {
+            coordinator.setLiveTarget(PlaybackBindingTestFactory.currentLive())
+            val controls = requireNotNull(access.liveControls)
+            controls.newAttachment().bind(FakeTimeshiftSubscription(null))
+            assertTrue(coordinator.livePlaybackObservation.value is LivePlaybackObservation.Active)
+
+            access.addApplicationItem(moveToIt = true)
+            assertSame(LivePlaybackObservation.Departed, coordinator.livePlaybackObservation.value)
+            controls.publishCurrent()
+            access.seekBackToCoordinatorItem()
+            controls.publishCurrent()
+            runCurrent()
+            assertSame(LivePlaybackObservation.Departed, coordinator.livePlaybackObservation.value)
+
+            access.transitionToApplicationItem(Player.MEDIA_ITEM_TRANSITION_REASON_SEEK)
+            assertEquals(PlaybackStopResult.RetiredAfterDeparture(null), coordinator.stop())
+            assertSame(LivePlaybackObservation.NoTarget, coordinator.livePlaybackObservation.value)
         } finally {
             coordinator.shutdown(1.seconds)
             owner.join()
@@ -1283,7 +1392,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         val owner = launch(start = CoroutineStart.UNDISPATCHED) { coordinator.run() }
         val target = TestCoordinatorRecordingTarget()
         try {
-            assertSame(PlaybackTargetResult.STARTED, coordinator.setRecordingTarget(target, RecordingPlaybackStart.RESUME))
+            assertSame(PlaybackTargetResult.DEPARTED, coordinator.setRecordingTarget(target, RecordingPlaybackStart.RESUME))
             runCurrent()
             if (shutdown) coordinator.shutdown(1.seconds) else coordinator.stop()
             runCurrent()
@@ -1382,7 +1491,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
     fun `retirement cannot report a recording that never had an owned snapshot`() = runTest {
         val access = FakeCoordinatorPlaybackAccess()
         access.setMediaSourceAction = { access.replaceWithApplicationItem() }
-        val player = installedRecordingPlayer(access)
+        val player = installedRecordingPlayer(access, PlaybackPlayerInstallStatus.DEPARTED)
 
         val result = onLooper(access) { player.stop(PlayerOperationTicket()) }
 
@@ -1965,7 +2074,11 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             if (shutdown) {
                 assertSame(PlaybackShutdownResult.DRAINED, coordinator.shutdown(1.seconds))
             } else {
-                assertEquals(PlaybackStopResult.Stopped(null), coordinator.stop())
+                assertEquals(
+                    if (applicationReplaced) PlaybackStopResult.RetiredAfterDeparture(null)
+                    else PlaybackStopResult.Stopped(null),
+                    coordinator.stop(),
+                )
             }
             runCurrent()
 
@@ -2190,7 +2303,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
 
             val retire = async(start = CoroutineStart.LAZY) {
                 when (retirement) {
-                    "stop" -> assertEquals(PlaybackStopResult.Stopped(null), coordinator.stop())
+                    "stop" -> assertEquals(PlaybackStopResult.RetiredAfterDeparture(null), coordinator.stop())
                     "shutdown" -> coordinator.shutdown(1.seconds)
                     "replace" -> assertSame(
                         PlaybackTargetResult.STARTED, coordinator.setLiveTarget(TestCoordinatorLiveTarget()),
@@ -2306,7 +2419,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             runCurrent()
 
             assertEquals(listOf(20.seconds), target.reports.map { it.second.position })
-            assertEquals(PlaybackStopResult.Stopped(null), coordinator.stop())
+            assertEquals(PlaybackStopResult.RetiredAfterDeparture(null), coordinator.stop())
             runCurrent()
             assertEquals(listOf(20.seconds, 30.seconds), target.reports.map { it.second.position })
             assertFalse(target.reports.last().second.markWatched)
@@ -2338,7 +2451,10 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         onLooper(access) { player.stop(PlayerOperationTicket()) }
     }
 
-    private fun TestScope.installedRecordingPlayer(access: FakeCoordinatorPlaybackAccess): Media3PlaybackCoordinatorPlayer {
+    private fun TestScope.installedRecordingPlayer(
+        access: FakeCoordinatorPlaybackAccess,
+        expectedStatus: PlaybackPlayerInstallStatus = PlaybackPlayerInstallStatus.STARTED,
+    ): Media3PlaybackCoordinatorPlayer {
         val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator()) { _, _ ->
             RecordingAdmission.Completed(null)
         }
@@ -2353,7 +2469,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         runCurrent()
         access.looperQueue.runAll()
         runCurrent()
-        assertEquals(PlaybackPlayerInstallStatus.STARTED, install.getCompleted().status)
+        assertEquals(expectedStatus, install.getCompleted().status)
         return player
     }
 

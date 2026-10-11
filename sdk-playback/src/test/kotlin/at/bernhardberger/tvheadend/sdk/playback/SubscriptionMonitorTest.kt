@@ -219,7 +219,14 @@ class SubscriptionMonitorTest {
                 runCurrent()
 
                 assertTrue(closing.isCompleted, "The bounded handler must let close finish")
-                assertSame(SubscriptionCloseResult.CLEANUP_FAILED, closing.await())
+                assertSame(
+                    if (delivery == Delivery.FAILED_UNSUBSCRIBE) {
+                        SubscriptionCloseResult.CLEANUP_FAILED_AND_CONSUMER_DRAIN_TIMED_OUT
+                    } else {
+                        SubscriptionCloseResult.CONSUMER_DRAIN_TIMED_OUT
+                    },
+                    closing.await(),
+                )
                 assertTrue(handlerRan.get())
                 assertTrue(monitorAccessible.get(), "Cancellation handlers must not hold the subscription monitor")
                 assertTrue(active.diagnostics.value.consumerDrainTimedOut)

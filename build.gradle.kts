@@ -90,7 +90,7 @@ val requiredVersions = mapOf(
     "konsist" to "0.18.0",
     "kotlin" to "2.4.10",
     "media3" to "1.11.1",
-    "minSdk" to "24",
+    "minSdk" to "28",
     "okio" to "3.18.2",
     "targetSdk" to "36",
     "tink" to "1.23.0",
@@ -153,7 +153,7 @@ val verifyBuildMatrix = tasks.register("verifyBuildMatrix") {
             }
             check(values.getValue("$moduleName.compileSdk") == 37)
             check(values.getValue("$moduleName.buildTools") == "36.0.0")
-            check(values.getValue("$moduleName.minSdk") == 24)
+            check(values.getValue("$moduleName.minSdk") == 28)
             check(values.getValue("$moduleName.targetSdk") == 36)
             check(
                 values.getValue("$moduleName.testRunner") ==

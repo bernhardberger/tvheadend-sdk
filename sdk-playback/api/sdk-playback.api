@@ -220,7 +220,9 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionChannelI
 
 public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionCloseResult : java/lang/Enum {
 	public static final field CLEANUP_FAILED Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionCloseResult;
+	public static final field CLEANUP_FAILED_AND_CONSUMER_DRAIN_TIMED_OUT Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionCloseResult;
 	public static final field CLOSED Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionCloseResult;
+	public static final field CONSUMER_DRAIN_TIMED_OUT Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionCloseResult;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
 	public static fun valueOf (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionCloseResult;
 	public static fun values ()[Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionCloseResult;

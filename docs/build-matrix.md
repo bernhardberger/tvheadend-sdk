@@ -11,7 +11,7 @@ Android modules use AGP's built-in Kotlin support and never apply
 | JVM target and Java release | 17, class-file major 61 |
 | Kotlin | 2.4.10 |
 | Android Gradle Plugin | 9.4.1 |
-| Android compile / target / minimum SDK | 37 / 36 / 24 |
+| Android compile / target / minimum SDK | 37 / 36 / 28 |
 | Android Build Tools | 36.0.0 |
 | Coroutines | 1.11.0 |
 | Coil core | 3.6.3 |

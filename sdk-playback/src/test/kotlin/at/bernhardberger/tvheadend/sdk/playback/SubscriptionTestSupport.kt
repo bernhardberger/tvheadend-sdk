@@ -10,7 +10,9 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 /** Deterministic single-collector transport shared by the playback state-machine tests. */
-internal class RecordingSubscriptionConnection : SubscriptionConnection {
+internal class RecordingSubscriptionConnection(
+    private val afterEvents: suspend () -> Unit = {},
+) : SubscriptionConnection {
     private val lock = Any()
     private val streams = LinkedHashMap<Long, Channel<SubscriptionEvent>>()
     private val consumed = LinkedHashSet<Long>()
@@ -70,6 +72,7 @@ internal class RecordingSubscriptionConnection : SubscriptionConnection {
         }
         try {
             for (event in stream) emit(event)
+            afterEvents()
         } finally {
             synchronized(lock) { streams.remove(id.value, stream) }
         }

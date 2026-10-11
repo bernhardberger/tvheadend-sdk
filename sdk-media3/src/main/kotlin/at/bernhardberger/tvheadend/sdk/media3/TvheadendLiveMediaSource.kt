@@ -17,6 +17,7 @@ import androidx.media3.exoplayer.upstream.Allocator
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import at.bernhardberger.tvheadend.sdk.playback.ActiveSubscription
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionCloseResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTracks
@@ -46,6 +47,17 @@ internal fun createTvheadendLiveMediaSource(
     timeshiftControls,
     onUnsupportedStream,
 )
+
+/** All close outcomes retire local delivery; none authorizes retry or proves Player item removal. */
+internal suspend fun ActiveSubscription.closeForMedia3() {
+    when (close()) {
+        SubscriptionCloseResult.CLOSED,
+        SubscriptionCloseResult.CLEANUP_FAILED,
+        SubscriptionCloseResult.CONSUMER_DRAIN_TIMED_OUT,
+        SubscriptionCloseResult.CLEANUP_FAILED_AND_CONSUMER_DRAIN_TIMED_OUT,
+        -> Unit
+    }
+}
 
 internal class TvheadendLiveMediaSource(
     private val target: CoordinatorLiveTarget,
@@ -127,7 +139,7 @@ internal class TvheadendLiveMediaSource(
                             }
                         }
                         if (closeLate) {
-                            withContext(NonCancellable) { result.subscription.close() }
+                            withContext(NonCancellable) { result.subscription.closeForMedia3() }
                         } else {
                             timeshiftControls?.subscriptionOpened(result.subscription, openOptions.priority) {
                                 synchronized(lock) { !released && preparation === owner }
@@ -202,7 +214,7 @@ internal class TvheadendLiveMediaSource(
             try {
                 withContext(NonCancellable) {
                     job?.join()
-                    handle?.close()
+                    handle?.closeForMedia3()
                 }
             } finally {
                 ownerScope.cancel()
@@ -302,7 +314,7 @@ internal class TvheadendLiveMediaSource(
                     failLocked()
                     subscription
                 }
-                handle?.close()
+                handle?.closeForMedia3()
             }
         }
     }

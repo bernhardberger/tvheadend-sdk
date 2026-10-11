@@ -18,7 +18,8 @@
   metadata requires compileSdk 37, so the Android modules now compile against
   API 37. Their AAR metadata records that as the minimum, so consumers of
   `sdk-android` or `sdk-media3` must use compileSdk 37 or newer; the JVM modules
-  are unaffected. targetSdk stays 36 and minSdk stays 24.
+  are unaffected. targetSdk stays 36.
+- **BREAKING:** `sdk-android` and `sdk-media3` raise minSdk from 24 to 28.
 - `sdk-android` publishes a dependency constraint that raises Okio to 3.18.2.
   Coil 3.6.3 brings Okio 3.18.1, which encodes base64 without padding for code
   compiled against Okio releases before 3.18, such as HTTP Basic credentials
@@ -38,30 +39,46 @@
   reporting DVR progress, errors and recovery for it and never reclaims it;
   `stop()`, `shutdown()` and the next target retire it without stopping the
   Player or clearing the application's items, and remove only coordinator-owned
-  items from a mixed playlist (`stop()` still returns `Stopped`). Automatic
+  items from a mixed playlist. `stop()` then returns the new
+  `PlaybackStopResult.RetiredAfterDeparture`, so `is Stopped` checks no longer
+  match it. If the application returned to the coordinator's item and it is
+  current, all three paths stop the Player and remove that item, without the
+  coordinator reclaiming reporting; `stop()` then returns `Stopped`. `livePlaybackObservation` reports the new
+  `LivePlaybackObservation.Departed` instead of `Active`, so `as Active` casts can
+  fail; `timeshiftState`, `subscriptionIssue`, `liveDiagnostics` and timeshift
+  commands keep following the departed target until it is retired. Automatic
   advance from a recording to an application item counts as its natural end. A
   recording replaced before `stop()` gets one closing `ORDERLY` report from the
   last position observed while the coordinator owned it, never marking it
   watched and never below a pending saved resume position. An application
-  replacing the item during installation gets `STARTED` without the coordinator
-  preparing its item or restoring the previous target over it.
+  replacing the item during a live or recording installation gets the new
+  `PlaybackTargetResult.DEPARTED` (disposition `PlaybackTargetDisposition.DEPARTED`,
+  also through `LivePlaybackTargetResult.Bound.result`) instead of `STARTED`,
+  without the coordinator preparing its item or restoring the previous target over
+  it. Its `isStarted` is false, but the target stays installed until `stop()`,
+  replacement or `shutdown()`.
   `TvheadendPlaybackRecovery` no longer re-enables audio on every live target; it
   only restores audio it disabled itself and yields when the application changes
   track selection. See
   [ownership and shutdown](docs/consumer-guide.md#ownership-and-shutdown).
-- **BREAKING:** `PlaybackRecoveryReason` gains `LIVE_BUFFER_EXHAUSTED` and
-  `LIVE_BUFFER_EXHAUSTED_CLEANUP_FAILED`; exhaustive `when` expressions need new
+- **BREAKING:** `PlaybackRecoveryReason` gains `LIVE_BUFFER_EXHAUSTED`,
+  `LIVE_BUFFER_EXHAUSTED_RETIREMENT_FAILED` and
+  `LIVE_BUFFER_EXHAUSTED_PLAYER_CLEANUP_FAILED`; exhaustive `when` expressions need new
   branches. When a live target without server timeshift fills its bounded sample
   queues (for example while paused), `TvheadendPlaybackCoordinator` stops the
   Player, removes only its item, retires the target and reports
   `LIVE_BUFFER_EXHAUSTED` instead of failing playback with a player error; call
-  `setLiveTarget()` again to resume at live. `LIVE_BUFFER_EXHAUSTED_CLEANUP_FAILED`
-  reports that stopping or removal could not be confirmed. If the application has
+  `setLiveTarget()` again to resume at live.
+  `LIVE_BUFFER_EXHAUSTED_RETIREMENT_FAILED` reports that retirement could not
+  start, so the target may still be active and `stop()` or `setLiveTarget()`
+  retries it. `LIVE_BUFFER_EXHAUSTED_PLAYER_CLEANUP_FAILED` reports a retired
+  target whose Player stop or item removal could not be confirmed; the
+  application reconciles its Player before retuning. If the application has
   already left the item, the period fails and the subscription closes without a
   recovery reason. See
   [pausing live TV without timeshift](docs/consumer-guide.md#pausing-live-tv-without-timeshift).
 - The HTSP gateway targets the tvheadend-htsp 1.0 API. Until
-  `at.bernhardberger.tvheadend:htsp:1.0.0-rc.1` is published, the SDK builds only
+  `at.bernhardberger.tvheadend:htsp:1.0.0-beta.1` is published, the SDK builds only
   with the opt-in composite build (`-Ptvheadend.htsp.composite=true`). Servers
   older than HTSP 36 fail with the new `SessionFailure.ServerUpgradeRequired`
   (explicit retry) instead of an incompatible-server failure.
@@ -155,8 +172,11 @@
   server termination keeps its reason across restart and seek-acknowledgement
   deadlines. A pending seek completes with `SubscriptionEnded` and packets
   drained during close are discarded. Teardown waits up to 5 s for running
-  consumer code, then cancels it and returns `CLEANUP_FAILED` instead of waiting
-  indefinitely; a nested `close()`, `seek()` or `closeAndJoin()` from consumer
+  consumer code, then cancels it and returns the new
+  `SubscriptionCloseResult.CONSUMER_DRAIN_TIMED_OUT` (or
+  `CLEANUP_FAILED_AND_CONSUMER_DRAIN_TIMED_OUT` when cleanup also failed) instead
+  of waiting indefinitely; exhaustive `when` expressions over
+  `SubscriptionCloseResult` need new branches. A nested `close()`, `seek()` or `closeAndJoin()` from consumer
   delivery throws `IllegalStateException` instead of deadlocking. Stop and
   restart events during the closing drain are fenced, and a stream restarted
   before the subscribe acknowledgement no longer times out.

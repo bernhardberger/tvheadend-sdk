@@ -50,6 +50,25 @@ import org.junit.jupiter.api.Test
 
 internal class TvheadendLiveMediaSourceTest {
     @Test
+    fun `media3 close retires every close outcome once and propagates cancellation`() = runTest {
+        at.bernhardberger.tvheadend.sdk.playback.SubscriptionCloseResult.entries.forEach { outcome ->
+            val subscription = FakeTimeshiftSubscription(null).apply { closeAction = { outcome } }
+            subscription.closeForMedia3()
+            assertEquals(1, subscription.closeCount)
+        }
+        val cancellation = kotlinx.coroutines.CancellationException("Cancelled")
+        val subscription = FakeTimeshiftSubscription(null).apply { closeAction = { throw cancellation } }
+        val caught = try {
+            subscription.closeForMedia3()
+            null
+        } catch (failure: kotlinx.coroutines.CancellationException) {
+            failure
+        }
+        assertSame(cancellation, caught)
+        assertEquals(1, subscription.closeCount)
+    }
+
+    @Test
     fun `packet arrival after accepted seek cannot restore a mapping before usable queued media`() = runTest {
         val bridge = LiveTimeshiftControlBridge(PlaybackTargetToken()) {}
         val attachment = bridge.newAttachment()

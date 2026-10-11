@@ -651,7 +651,7 @@ internal class LiveTimeshiftControlBridge(
     internal suspend fun closeIfOwned(transport: BufferingTransport): Boolean {
         synchronized(lock) { if (!ownsSubscriptionLocked(transport.subscription)) return false }
         subscriptionClosing(transport.subscription)
-        transport.subscription.close()
+        transport.subscription.closeForMedia3()
         return true
     }
 

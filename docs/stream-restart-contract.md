@@ -120,7 +120,8 @@ period, the same bound as the restart deadline, so a cancellation-cooperative co
 hold teardown for at most two grace periods. When a wait expires, teardown cancels consumer
 code still running and skips every later event. That cancellation is not a subscription
 failure, and neither is a non-cancellation exception the cancelled call throws afterwards:
-close keeps its terminal reason and returns `CLEANUP_FAILED`, and
+close keeps its terminal reason and returns `CONSUMER_DRAIN_TIMED_OUT` (or
+`CLEANUP_FAILED_AND_CONSUMER_DRAIN_TIMED_OUT` if transport or collection cleanup also fails), and
 `SubscriptionDiagnostics.consumerDrainTimedOut` records it. Any other cancellation thrown by
 the consumer remains an infrastructure failure that is rethrown to close callers.
 

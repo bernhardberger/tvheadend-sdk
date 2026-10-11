@@ -841,7 +841,7 @@ class SubscriptionSeekGateTest {
             runCurrent()
 
             assertTrue(closing.isCompleted, "Close must not wait past the grace period")
-            assertSame(SubscriptionCloseResult.CLEANUP_FAILED, closing.await())
+            assertSame(SubscriptionCloseResult.CONSUMER_DRAIN_TIMED_OUT, closing.await())
             assertTrue(consumerCancelled)
             assertEquals(listOf("started", "packet:200"), fixture.received)
             val terminal = fixture.subscription.state.value as SubscriptionState.Terminal
@@ -850,6 +850,52 @@ class SubscriptionSeekGateTest {
             assertEquals(1, fixture.connection.unsubscribeCount)
         } finally {
             packetWithheld.complete(Unit)
+            fixture.manager.closeAndJoin()
+        }
+    }
+
+    @Test
+    fun `replay consumer timeout does not hide independently stalled collection cleanup`() = runTest {
+        val replayEntered = CompletableDeferred<Unit>()
+        val collectionStalled = CompletableDeferred<Unit>()
+        val connection = RecordingSubscriptionConnection(afterEvents = {
+            collectionStalled.complete(Unit)
+            awaitCancellation()
+        })
+        val fixture = openSeekable(connection = connection, onEvent = { event ->
+            if (event is SubscriptionEvent.Packet) {
+                replayEntered.complete(Unit)
+                awaitCancellation()
+            }
+        })
+        val packetWithheld = CompletableDeferred<Unit>()
+        connection.skipAction = {
+            packetWithheld.await()
+            SubscriptionOperationResult.AccessDenied
+        }
+        try {
+            val seeking = async { fixture.subscription.seek(absoluteSeek()) }
+            runCurrent()
+            connection.emit(packet(presentationTimeUs = 200L))
+            runCurrent()
+            packetWithheld.complete(Unit)
+            runCurrent()
+            assertTrue(replayEntered.isCompleted)
+            assertTrue(seeking.await() is SubscriptionSeekResult.Refused)
+
+            val closing = async { fixture.subscription.close() }
+            runCurrent()
+            advanceTimeBy(TEARDOWN_GRACE)
+            runCurrent()
+            assertTrue(collectionStalled.isCompleted)
+            assertFalse(closing.isCompleted)
+            assertEquals(1, connection.unsubscribeCount)
+            advanceTimeBy(TEARDOWN_GRACE)
+            runCurrent()
+
+            assertSame(SubscriptionCloseResult.CLEANUP_FAILED_AND_CONSUMER_DRAIN_TIMED_OUT, closing.await())
+            assertTrue(fixture.subscription.diagnostics.value.consumerDrainTimedOut)
+        } finally {
             fixture.manager.closeAndJoin()
         }
     }
@@ -1041,7 +1087,7 @@ class SubscriptionSeekGateTest {
             runCurrent()
 
             assertTrue(closing.isCompleted, "Close must not wait past the drain's grace period")
-            assertSame(SubscriptionCloseResult.CLEANUP_FAILED, closing.await())
+            assertSame(SubscriptionCloseResult.CONSUMER_DRAIN_TIMED_OUT, closing.await())
             assertTrue(drainCancelled)
             assertEquals(listOf("started", "packet:200", "packet:300"), fixture.received)
             assertTrue(fixture.subscription.diagnostics.value.consumerDrainTimedOut)
@@ -1205,9 +1251,9 @@ class SubscriptionSeekGateTest {
         gate: SeekGateSettings = SeekGateSettings(),
         dispatcher: CoroutineDispatcher = StandardTestDispatcher(testScheduler),
         beforeTeardownCancellation: (suspend () -> Unit)? = null,
+        connection: RecordingSubscriptionConnection = RecordingSubscriptionConnection(),
         onEvent: suspend (SubscriptionEvent) -> Unit = {},
     ): SeekFixture {
-        val connection = RecordingSubscriptionConnection()
         connection.subscribeAction = { successfulConfirmation(grantedTimeshiftSeconds) }
         val manager = createSubscriptionManager(
             connection,

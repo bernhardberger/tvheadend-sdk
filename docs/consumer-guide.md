@@ -42,7 +42,7 @@ playback integration that does not use `sdk-core` or `sdk-media3`.
 The raw HTSP library is an implementation dependency of `sdk-core`. It remains
 on the runtime graph but is not exposed on the consumer compile classpath. No
 HTSP type is part of the public SDK API. JVM publications target Java 17;
-Android publications require API 24 or newer.
+Android publications require API 28 or newer.
 
 ## Own one session
 
@@ -511,7 +511,7 @@ The live overload taking `session`, `currentSession`, and `channelId` performs
 exactly one generation-bound bind and, only when binding succeeds, one normal
 coordinator installation. `LivePlaybackTargetResult.ObservationExpired` and
 `TargetUnavailable` preserve binding failures. `LivePlaybackTargetResult.Bound`
-retains the exact `PlaybackTargetResult`, including `STARTED`, coordinator
+retains the exact `PlaybackTargetResult`, including `STARTED`, `DEPARTED`, coordinator
 lifecycle failures, target failures, and `PLAYER_UNAVAILABLE`; it does not imply
 that installation started. This operation never reacquires a generation,
 retries, or retains the channel selection for reconnect.
@@ -525,10 +525,13 @@ semantics. Recording consumers still bind once with
 exact binding to `setRecordingTarget()`.
 
 `setLiveTarget()` and `setRecordingTarget()` return `PlaybackTargetResult`:
-`STARTED`, coordinator lifecycle failures, `NOT_READY`,
+`STARTED`, `DEPARTED`, coordinator lifecycle failures, `NOT_READY`,
 `RECORDING_PROGRESS_UNSUPPORTED`, `TARGET_UNAVAILABLE`, the typed growing
 recording limitation `GROWING_RECORDING_DEFERRED`, or `PLAYER_UNAVAILABLE`. Handle the result before
-assuming Media3 accepted the target. Exact values are SDK-owned singletons, not
+assuming Media3 accepted the target. For either live or recording installation,
+`DEPARTED` has `isStarted == false`: the application replaced the Player item during
+installation, but the target remains installed until `stop()`, replacement, or `shutdown()`.
+Exact values are SDK-owned singletons, not
 an exhaustive enum. Use `isStarted`, `disposition`, or the non-exclusive
 `categories` and retain a fallback when matching an exact value. `isTransient`
 means the condition may change; it does not promise that replay is safe.
@@ -619,7 +622,8 @@ seek can still be terminal when its resumed segment cannot be anchored safely.
 
 `livePlaybackObservation` is the conflated-latest aggregate for consumers that
 need timeshift state, subscription issue, and diagnostics from one target-fenced
-publication. It emits `Active` when any of those components changes and resets
+publication. While the target owns the Player item it emits `Active` when any of
+those components changes. Ownership loss emits `Departed`; retirement resets
 to `NoTarget` as one retirement transition before stale target callbacks can
 publish again. `timeshiftState`, `subscriptionIssue`, and `liveDiagnostics`
 remain available for consumers interested in only one component; independently
@@ -644,8 +648,8 @@ your own items, and do not match media ids or URIs yourself.
 server text is not exposed. The exact no-input status maps to `NO_INPUT` unless
 a conflicting known canonical error is present. The state clears when the
 target or lifecycle no longer owns that issue. `stop()` returns
-`PlaybackStopResult.Stopped` carrying the retired live target's last issue as
-`finalSubscriptionIssue`, so a consumer that gives up on a stuck target can
+`PlaybackStopResult.Stopped` or `PlaybackStopResult.RetiredAfterDeparture`, carrying
+the retired live target's last issue as `finalSubscriptionIssue`, so a consumer that gives up on a stuck target can
 report why without reading the flow first. When the target is retired but player
 cleanup fails, `PlaybackStopResult.PlayerUnavailable` carries the same
 `finalSubscriptionIssue`; it is `null` when the player was unavailable before any
@@ -688,25 +692,24 @@ or outside `TvheadendPlaybackCoordinator`, overflow still fails with
 
 If the application has already replaced or left the live item before exhaustion
 retirement is admitted, exhaustion does not stop the player, remove items, or
-report either exhaustion recovery reason. Instead the period fails with
+report an exhaustion recovery reason. Instead the period fails with
 "Live sample buffer limit reached" and the subscription closes without waiting for
 another event, including when departure races an already queued exhaustion hand-off.
 The subscription ends with `ConsumerFailed`, or with `Closed` when the replay of packets
 buffered before period creation fails first. Returning
 to that item does not restore ownership or resume its closed subscription; the
-period exposes the error rather than buffering forever. As with other departed targets, the observation can remain
-`Active` until the next `stop()`, target change, or shutdown removes any lingering
+period exposes the error rather than buffering forever. As with other departed targets, the observation is
+`Departed` until the next `stop()`, target change, or shutdown removes any lingering
 coordinator-owned item. The application's items are preserved. To play that channel
 again, explicitly install it with `setLiveTarget()` when the application wants it.
 
-If stopping the player or removing the item cannot be confirmed, the callback
-instead reports `PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED_CLEANUP_FAILED`.
-Neither of the following cases guarantees buffer release.
+If retirement or Player cleanup cannot be confirmed, the callback reports exactly one
+of the following distinct reasons. Neither case guarantees buffer release.
 
-- **Retirement never started.** The target may still be active: call the
+- **`LIVE_BUFFER_EXHAUSTED_RETIREMENT_FAILED`: retirement never started.** The target may still be active: call the
   coordinator's `stop()` or `setLiveTarget()` to retry retirement. Subscription
   closure and a period error are not guaranteed.
-- **Retirement completed with incomplete Player cleanup.** The target is already
+- **`LIVE_BUFFER_EXHAUSTED_PLAYER_CLEANUP_FAILED`: retirement completed with incomplete Player cleanup.** The target is already
   retired and `stop()` returns `PlaybackStopResult.AlreadyStopped`; it does not
   retry item removal. The period fails and server delivery ends without another
   event (`ConsumerFailed` or `Closed`), even if the application never reconciles
@@ -879,11 +882,14 @@ Ownership loss is permanent for that target. After its item is replaced,
 cleared, or left behind (including automatic advance), seeking or re-queuing
 back to the item does not resume coordination. Set a new target to coordinate
 playback again. Until the next target, `stop()`, or `shutdown()`,
-`livePlaybackObservation` keeps reporting a departed live target as `Active`;
-that does not mean its item is still playing.
+`livePlaybackObservation` reports `LivePlaybackObservation.Departed` for a departed
+live target. Later subscription updates or returning to its item cannot restore `Active`.
+The separate `timeshiftState`, `subscriptionIssue`, and `liveDiagnostics` flows, and
+timeshift commands, keep tracking the still-installed departed target until it is retired.
 
 An application listener can replace or clear an item during its installation
-transition. The target installation still returns `PlaybackTargetResult.STARTED`,
+transition. The target installation returns `PlaybackTargetResult.DEPARTED`
+(`PlaybackTargetDisposition.DEPARTED`, also carried by `LivePlaybackTargetResult.Bound.result`),
 but the target has already departed: the coordinator does not prepare the
 application's item or restore the previous target over it. The normal closing
 report rules apply, including protection of a pending saved resume position
@@ -891,14 +897,18 @@ even if departure prevented the resume helper from starting.
 
 The next target, `stop()`, or `shutdown()` retires the target and removes only
 its item if it lingers in a mixed playlist, without stopping or removing the
-application's items. If no terminal has already been reported or captured, a
+application's items. `stop()` returns `PlaybackStopResult.RetiredAfterDeparture`
+when retirement leaves application playback alone. If the application returned to the
+lingering coordinator item and it is current at retirement, retirement stops the Player
+and removes that item, and `stop()` returns `PlaybackStopResult.Stopped` instead.
+This does not reclaim ownership for reporting. Both outcomes carry the
+final subscription issue. If no terminal has already been reported or captured, a
 replaced or cleared recording reports one closing `ORDERLY` progress update
 using the last position the coordinator observed while it owned the item. This
 historical position never marks it watched, even near the end; no closing
 update is made if no owned snapshot exists. The application's position is
 never used, and a previously reported terminal is not reported again.
-`stop()` still returns `PlaybackStopResult.Stopped`. Metadata-only recording
-item updates retain ownership through the per-install recording URI; reusing
+Metadata-only recording item updates retain ownership through the per-install recording URI; reusing
 only the media id with another URI does not.
 
 When a live target stays stuck in buffering, recovery may disable the audio
@@ -934,6 +944,15 @@ must handle its typed subscription state machine, generation termination, seek,
 and server-operation outcomes. `sdk-media3` is the supported high-level Android
 boundary; the SDK does not provide URI factories or application-level track
 wrappers.
+
+`ActiveSubscription.close()` returns `SubscriptionCloseResult.CLOSED` for a full
+drain, `CLEANUP_FAILED` for unsubscribe or collection cleanup failure,
+`CONSUMER_DRAIN_TIMED_OUT` when teardown cancelled consumer code after its grace
+period, or `CLEANUP_FAILED_AND_CONSUMER_DRAIN_TIMED_OUT` when both occurred.
+Caller cancellation still propagates. `SubscriptionDiagnostics.consumerDrainTimedOut`
+also exposes that cancellation after lifecycle teardown without a subscription close caller.
+Media3 treats all four outcomes as local delivery retirement, never as proof of
+Player cleanup and never as an instruction to retry a closed subscription.
 
 `SubscriptionTermination.SUBSCRIBE_REJECTED` marks a rejected startup. If it
 arrives before the subscribe result, the state machine waits up to five seconds

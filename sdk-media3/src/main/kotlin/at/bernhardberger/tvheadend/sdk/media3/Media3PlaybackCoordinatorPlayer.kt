@@ -19,6 +19,7 @@ import kotlin.time.Duration.Companion.milliseconds
 
 internal enum class PlaybackPlayerInstallStatus {
     STARTED,
+    DEPARTED,
     NOT_READY,
     RECORDING_PROGRESS_UNSUPPORTED,
     TARGET_UNAVAILABLE,
@@ -41,6 +42,7 @@ internal data class PlaybackPlayerStopResult(
     val retiredRecording: RetiredRecordingTarget? = null,
     /** Required stop and source-specific item removal succeeded, independently of ancillary cleanup. */
     val playerStoppedAndCleared: Boolean = false,
+    val retiredAfterDeparture: Boolean = false,
 )
 
 internal data class RetiredRecordingTarget(
@@ -242,6 +244,7 @@ internal class Media3PlaybackCoordinatorPlayer(
                     retiredTarget = retirement.retiredTarget,
                     retiredRecording = retirement.retiredRecording,
                     playerStoppedAndCleared = retirement.playerStoppedAndCleared,
+                    retiredAfterDeparture = retirement.retiredAfterDeparture,
                 )
             }
         }
@@ -316,7 +319,8 @@ internal class Media3PlaybackCoordinatorPlayer(
                 previous.timeshiftControls.commitObservationReplacement(it)
             }
             PlaybackPlayerInstallResult(
-                status = PlaybackPlayerInstallStatus.STARTED,
+                status = if (installed.ownership == ItemOwnership.LOST) PlaybackPlayerInstallStatus.DEPARTED
+                else PlaybackPlayerInstallStatus.STARTED,
                 retiredTarget = retirement.retiredTarget,
                 retiredRecording = retirement.retiredRecording,
             )
@@ -413,7 +417,8 @@ internal class Media3PlaybackCoordinatorPlayer(
                 previous.timeshiftControls.commitObservationReplacement(it)
             }
             PlaybackPlayerInstallResult(
-                status = PlaybackPlayerInstallStatus.STARTED,
+                status = if (installed.ownership == ItemOwnership.LOST) PlaybackPlayerInstallStatus.DEPARTED
+                else PlaybackPlayerInstallStatus.STARTED,
                 retiredTarget = retirement.retiredTarget,
                 retiredRecording = retirement.retiredRecording,
                 installedRecording = accepted,
@@ -609,6 +614,7 @@ internal class Media3PlaybackCoordinatorPlayer(
         installed.ownership = ItemOwnership.LOST
         installed.token.releasePlayerItem()
         events.fenceItemReplacement(installed.token)
+        (installed as? InstalledPlayerTarget.Live)?.timeshiftControls?.publishCurrent()
     }
 
     /**
@@ -820,7 +826,8 @@ internal class Media3PlaybackCoordinatorPlayer(
                 playerAvailable = false
             }
         }
-        val playerStoppedAndCleared = clearPlayer && removeOwnItems(listOfNotNull(installed, alsoInstalled))
+        val removal = if (clearPlayer) removeOwnItems(listOfNotNull(installed, alsoInstalled)) else null
+        val playerStoppedAndCleared = removal?.available == true
         if (clearPlayer && !playerStoppedAndCleared) playerAvailable = false
         val retirementSnapshot = terminal?.snapshot ?: snapshot ?: installed.lastOwnedSnapshot
         val retiredRecording = if (installed is InstalledPlayerTarget.Recording && retirementSnapshot != null) {
@@ -844,6 +851,7 @@ internal class Media3PlaybackCoordinatorPlayer(
             retiredTarget = true,
             retiredRecording = retiredRecording,
             playerStoppedAndCleared = playerStoppedAndCleared,
+            retiredAfterDeparture = removal?.playerStopped == false,
         )
     }
 
@@ -852,12 +860,13 @@ internal class Media3PlaybackCoordinatorPlayer(
      *
      * Removal locates the items again after stopping, and even after a failed stop: an application
      * listener may react to the stop by setting or adding its own items, which must survive.
-     * Returns false if the player failed.
+     * Reports cleanup availability separately from whether stopping the Player was required.
      */
-    private fun removeOwnItems(owners: List<InstalledPlayerTarget>): Boolean {
+    private fun removeOwnItems(owners: List<InstalledPlayerTarget>): PlayerItemRemoval {
         val installedOwners = owners.filter { it.sourceInstalled }
-        if (installedOwners.isEmpty()) return true
+        if (installedOwners.isEmpty()) return PlayerItemRemoval(available = true, playerStopped = false)
         var available = true
+        var stopped = false
         val current = try {
             installedOwners.any(::playsInstalledSource)
         } catch (_: Exception) {
@@ -867,6 +876,7 @@ internal class Media3PlaybackCoordinatorPlayer(
         if (current) {
             try {
                 access.stop()
+                stopped = true
             } catch (_: Exception) {
                 available = false
             }
@@ -878,8 +888,10 @@ internal class Media3PlaybackCoordinatorPlayer(
                 available = false
             }
         }
-        return available
+        return PlayerItemRemoval(available, stopped)
     }
+
+    private data class PlayerItemRemoval(val available: Boolean, val playerStopped: Boolean)
 
     /** Event-ordered ownership of the player's current item; see [observeOwnership]. */
     private enum class ItemOwnership {
@@ -932,6 +944,7 @@ internal class Media3PlaybackCoordinatorPlayer(
         val retiredTarget: Boolean = false,
         val retiredRecording: RetiredRecordingTarget? = null,
         val playerStoppedAndCleared: Boolean = false,
+        val retiredAfterDeparture: Boolean = false,
     ) {
         fun failedInstall(): PlaybackPlayerInstallResult = PlaybackPlayerInstallResult(
             status = PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE,
