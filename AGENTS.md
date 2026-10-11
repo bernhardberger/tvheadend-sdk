@@ -114,7 +114,7 @@ automatically. CI (`.github/workflows/ci.yml`) is the authoritative gate.
   hand.
 - Local cross-repository HTSP substitution is opt-in
   (`-Ptvheadend.htsp.composite=true`). CI and releases always resolve the pinned
-  `at.bernhardberger.tvheadend:htsp:0.10.0` coordinate.
+  `at.bernhardberger.tvheadend:htsp:1.0.0-beta.1` coordinate.
 - Tests that reach a live server or device are opt-in; see
   `docs/offline-verification.md`. Live-server runs and device operations
   require explicit maintainer authority; loading this guide or a skill grants

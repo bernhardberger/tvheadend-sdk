@@ -102,7 +102,7 @@ missing, and unavailable behavior without Android `Context` or Android runtime
 internals.
 
 The default build resolves
-`at.bernhardberger.tvheadend:htsp:0.10.0` from Maven Central. Maintainers working
+`at.bernhardberger.tvheadend:htsp:1.0.0-beta.1` from Maven Central. Maintainers working
 across adjacent checkouts may explicitly opt into source substitution with
 `-Ptvheadend.htsp.composite=true`; CI and release builds do not use that
 property.

@@ -77,9 +77,10 @@
   already left the item, the period fails and the subscription closes without a
   recovery reason. See
   [pausing live TV without timeshift](docs/consumer-guide.md#pausing-live-tv-without-timeshift).
-- The HTSP gateway targets the tvheadend-htsp 1.0 API. Until
-  `at.bernhardberger.tvheadend:htsp:1.0.0-beta.1` is published, the SDK builds only
-  with the opt-in composite build (`-Ptvheadend.htsp.composite=true`). Servers
+- The `sdk-core` runtime dependency `at.bernhardberger.tvheadend:htsp` moves
+  from 0.10.0 to the 1.0.0-beta.1 pre-release, and the HTSP gateway targets its
+  1.0 API. HTSP types never appear in SDK signatures, but applications that also
+  use the HTSP library directly resolve 1.0.0-beta.1. Servers
   older than HTSP 36 fail with the new `SessionFailure.ServerUpgradeRequired`
   (explicit retry) instead of an incompatible-server failure.
 - **BREAKING:** `ServerCapabilities.apiVersion`, `allLimit`, `dvrLimit`,
