@@ -48,7 +48,7 @@ jobs:
       - name: Verify staged SDK publication
         run: ./tools/check-staged-publication --write-manifest build/staged-publication.json
       - name: Verify staged consumer contract
-        run: ./gradlew --no-daemon -p consumer-contract clean test verifyConsumerDependencyGraph
+        run: ./gradlew --no-daemon -p consumer-contract clean test verifyConsumerDependencyGraph assembleRelease
       - name: Check release setup
         run: ./tools/publish-central-release --check-setup
       - name: Record successful push staging provenance

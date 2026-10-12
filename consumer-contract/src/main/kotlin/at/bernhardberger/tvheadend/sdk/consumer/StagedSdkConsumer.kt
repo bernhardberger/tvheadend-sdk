@@ -9,6 +9,14 @@ package at.bernhardberger.tvheadend.sdk.consumer
 import android.content.Context
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
+import at.bernhardberger.tvheadend.sdk.android.TvheadendConnectivity
+import at.bernhardberger.tvheadend.sdk.android.TvheadendConnectivityStatus
+import at.bernhardberger.tvheadend.sdk.android.TvheadendDiscovery
+import at.bernhardberger.tvheadend.sdk.android.TvheadendDiscoveryState
+import at.bernhardberger.tvheadend.sdk.core.EpgCoveragePolicy
+import at.bernhardberger.tvheadend.sdk.core.MetadataCachePolicy
+import at.bernhardberger.tvheadend.sdk.core.createTvheadendSession
+import at.bernhardberger.tvheadend.sdk.media3.TvheadendAudioOutputProvider
 import at.bernhardberger.tvheadend.sdk.android.TvheadendArtworkLoadException
 import at.bernhardberger.tvheadend.sdk.android.ServerProfileEditReadResult
 import at.bernhardberger.tvheadend.sdk.android.TvheadendServerProfileStore
@@ -89,7 +97,26 @@ import kotlin.time.Instant
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
+
+// These consumer roots retain real implementations and cache serializers under R8, not just fakes.
+public fun stagedConsumer(context: Context): StagedSdkConsumer =
+    StagedSdkConsumer(context, stagedSession(context), ExoPlayer.Builder(context).build())
+
+public fun stagedSession(context: Context): TvheadendSession = createTvheadendSession(
+    EpgCoveragePolicy.create(),
+    MetadataCachePolicy.create(java.io.File(context.cacheDir, "tvheadend")),
+)
+
+public fun stagedDiscovery(context: Context): Flow<TvheadendDiscoveryState> =
+    TvheadendDiscovery(context).state
+
+public fun stagedConnectivity(context: Context): Flow<TvheadendConnectivityStatus> =
+    TvheadendConnectivity(context).status
+
+public fun stagedAudioOutput(context: Context): TvheadendAudioOutputProvider =
+    TvheadendAudioOutputProvider(context)
 
 public fun recordingSnapshotForFake(): DvrSnapshot = DvrSnapshot.create(
     entries = listOf(DvrEntry.create(DvrEntryId(1), files = listOf(DvrRecordingFile.create(fileId = 1)))),

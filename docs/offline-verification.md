@@ -71,3 +71,31 @@ test classes and the existing offline suite rather than mock their activation:
 Inspect only the sanitized run's reports. Preserve prior incident evidence by
 its immutable result reference; do not publish raw live logs or mistake a failure
 before readiness for proof that the server was unaffected.
+
+## Staged consumer and R8
+
+After staging and checking the SDK publication, run the consumer gate locally:
+
+```sh
+./tools/verify stageLocalPublication
+./tools/check-staged-publication --write-manifest build/staged-publication.json
+./tools/verify -p consumer-contract test verifyConsumerDependencyGraph assembleRelease
+```
+
+CI uses `./gradlew --no-daemon -p consumer-contract clean test verifyConsumerDependencyGraph assembleRelease`.
+The unsigned release APK enables R8's default full mode without signing credentials.
+The compile-only app has no manifest entry point, so its three Java/Kotlin fixture
+classes are explicit app-side roots in `consumer-contract/proguard-rules.pro`.
+Only those consumer calls are pinned; the SDK remains shrinkable and obfuscatable.
+They cover the real cached session, discovery, connectivity, audio output, playback
+coordinator, and consumer testing fakes. `sdk-testing` is test-only in real apps.
+
+Inspect `consumer-contract/build/outputs/mapping/release/` (`mapping.txt`,
+`usage.txt`, `seeds.txt`, and `configuration.txt`) for retained SDK call paths and
+merged dependency rules. Cache serializers are statically generated and explicitly
+referenced; kotlinx.serialization supplies its own consumer rules. Legacy NSD
+reflection targets Android framework methods, which R8 does not rename.
+No additional SDK consumer keep rules are currently needed.
+
+This gate verifies compilation and shrinking only. It does not execute the minified
+APK; runtime verification requires separately authorized device testing.

@@ -47,6 +47,14 @@ this seven-day `staged-publication-${{ github.run_id }}` artifact. The retained
 bytes are produced only after the clean build, checks, staging verification,
 real consumer contract, and release setup checks pass.
 
+The staged consumer gate is
+`./gradlew --no-daemon -p consumer-contract clean test verifyConsumerDependencyGraph assembleRelease`.
+It includes an unsigned, R8-minified release APK; no signing credentials are needed.
+On the shared local build host use
+`./tools/verify -p consumer-contract test verifyConsumerDependencyGraph assembleRelease`.
+See [offline verification](offline-verification.md#staged-consumer-and-r8) for the
+consumer roots, R8 outputs, and the separate runtime-testing boundary.
+
 ## Tag Workflow
 
 An annotated tag exactly matching the configured version starts one first-
