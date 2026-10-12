@@ -690,7 +690,9 @@ public class TvheadendPlaybackCoordinator internal constructor(
      * The caller owns recording identity, lost-position capture and retry/play intent.
      *
      * Inputs must be finite whole-millisecond durations: [position] non-negative and a supplied
-     * [previousDuration] positive. Zero uses [fallbackStart]. For completed recordings, a position
+     * [previousDuration] positive. [previousDuration] must come from completed media and must be null
+     * if the lost target was growing: a growing extent would trigger the completed-recording cutoff.
+     * Zero uses [fallbackStart]. For completed recordings, a position
      * at or beyond the configured orderly-completion fraction of a known previous duration also
      * uses that fallback before installation. With no previous duration, recovery starts at zero
      * and drops only the pending seek at that fraction of the new timeline, without a late fallback.
@@ -705,6 +707,9 @@ public class TvheadendPlaybackCoordinator internal constructor(
      * closing reports preserve its position while the existing resume hold lasts (at most 60 seconds
      * for completed playback). [PlaybackTargetResult.STARTED] means installed, not a seek landing.
      * Caller cancellation propagates; once Player work is claimed it may already have installed.
+     *
+     * @throws IllegalArgumentException if either duration is non-finite or not whole milliseconds,
+     * [position] is negative, or a supplied [previousDuration] is not positive.
      */
     @ExperimentalTvheadendApi
     public suspend fun recoverRecordingTarget(

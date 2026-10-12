@@ -2787,7 +2787,34 @@ internal class Media3PlaybackCoordinatorPlayerTest {
     }
 
     @Test
-    fun `repeated recovery carries owed milliseconds and suppresses early closing progress`() = runTest {
+    fun `application seek from source installation prevents recovery from arming`() = runTest {
+        val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
+        val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator(), ::admitRecordingTarget)
+        val token = PlaybackTargetToken()
+        access.addApplicationListener(object : Player.Listener {
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                access.seekWithinCoordinatorItem(12.seconds)
+            }
+        })
+        try {
+            val result = player.installRecording(
+                PlayerOperationTicket(), token, TestCoordinatorRecordingTarget(), RecordingPlaybackStart.RESUME,
+                RecordingRecoveryRequest(80.seconds),
+            )
+            assertEquals(PlaybackPlayerInstallStatus.STARTED, result.status)
+            assertNull(player.pendingRecordingRecoveryPosition.value)
+            assertNull(player.snapshot(token)?.pendingResumePosition)
+            access.deliverResumeMediaState(100_000, true)
+            assertEquals(12.seconds, access.snapshot.position)
+            assertTrue(access.resumeSeeks.isEmpty())
+        } finally {
+            player.abandon()
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["pending", "settled", "expired"])
+    fun `repeated recovery protects early closing progress until settlement or hold expiry`(resume: String) = runTest {
         val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
         val events = PlaybackPlayerEventAccumulator()
         val player = Media3PlaybackCoordinatorPlayer(access, events, ::admitRecordingTarget)
@@ -2811,11 +2838,20 @@ internal class Media3PlaybackCoordinatorPlayerTest {
                 oldCallback(null)
             }
             assertEquals(80_123.milliseconds, coordinator.pendingRecordingRecoveryPosition.value)
+            access.snapshot = access.snapshot.copy(position = 12.seconds, duration = 100.seconds, playbackState = Player.STATE_READY)
+            when (resume) {
+                "settled" -> access.deliverResumeMediaState(100_000, true)
+                "expired" -> access.looperQueue.runOnLooper { access.resumeTimeouts.fireAll() }
+            }
             coordinator.stop()
             runCurrent()
             assertNull(coordinator.pendingRecordingRecoveryPosition.value)
-            assertTrue(target.reports.isEmpty())
-            assertTrue(access.resumeSeeks.isEmpty())
+            when (resume) {
+                "pending" -> assertTrue(target.reports.isEmpty())
+                "settled" -> assertEquals(80.seconds, target.reports.single().second.position)
+                "expired" -> assertEquals(12.seconds, target.reports.single().second.position)
+            }
+            assertEquals(if (resume == "settled") listOf(80_123.milliseconds) else emptyList(), access.resumeSeeks)
         } finally {
             owner.shutdown(1.seconds)
         }
@@ -2919,6 +2955,76 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             assertNull(player.pendingRecordingRecoveryPosition.value)
         }
         player.abandon()
+    }
+
+    @Test
+    fun `failed replacement restores a previous recovery settled during staging`() = runTest {
+        val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
+        val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator(), ::admitRecordingTarget)
+        val previous = PlaybackTargetToken()
+        val growing = TestCoordinatorRecordingTarget(
+            startedGrowing = true,
+            admissionState = CoordinatorRecordingAdmission.Growing(at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability.SUPPORTED),
+            growingResult = RecordingFileResult.Ok(CurrentGrowingLease),
+        )
+        try {
+            player.installRecording(PlayerOperationTicket(), previous, growing, RecordingPlaybackStart.RESUME,
+                RecordingRecoveryRequest(80.seconds))
+            assertEquals(80.seconds, player.pendingRecordingRecoveryPosition.value)
+            val oldTimeout = access.resumeTimeouts.pending.last()
+            access.setMediaSourceAction = {
+                access.setMediaSourceAction = null
+                oldTimeout.action()
+                // Settlement updates the previous target locally without publishing over staging.
+                assertEquals(90.seconds, player.pendingRecordingRecoveryPosition.value)
+            }
+            access.failNextSetMediaSource = true
+            val result = player.installRecording(
+                PlayerOperationTicket(), PlaybackTargetToken(), TestCoordinatorRecordingTarget(), RecordingPlaybackStart.RESUME,
+                RecordingRecoveryRequest(90.seconds),
+            )
+            assertEquals(PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE, result.status)
+            assertFalse(result.retiredTarget)
+            assertTrue(previous.isActive())
+            assertEquals("growing", access.currentSourceKind)
+            assertNull(player.pendingRecordingRecoveryPosition.value)
+            assertNull(player.snapshot(previous)?.pendingResumePosition)
+        } finally {
+            player.abandon()
+        }
+    }
+
+    @Test
+    fun `caller cancellation after looper claim installs the new owed position`() = runTest {
+        val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
+        val events = PlaybackPlayerEventAccumulator()
+        val player = Media3PlaybackCoordinatorPlayer(access, events, ::admitRecordingTarget)
+        val coordinator = TvheadendPlaybackCoordinator(player, events, DvrProgressPolicy(), {}, SystemPlaybackCoordinatorTimeSource)
+        val owner = coordinator.launchIn(this)
+        try {
+            coordinator.recoverRecordingTarget(TestCoordinatorRecordingTarget(), 80.seconds)
+            access.looperQueue.current = false
+            val cancelled = async { coordinator.recoverRecordingTarget(TestCoordinatorRecordingTarget(), 90.seconds) }
+            runCurrent()
+            assertFalse(cancelled.isCompleted)
+            access.operations.clear()
+            access.setMediaSourceAction = {
+                access.setMediaSourceAction = null
+                cancelled.cancel()
+            }
+            access.looperQueue.runAll()
+            runCurrent()
+            assertThrows(CancellationException::class.java) { cancelled.getCompleted() }
+            assertTrue("prepare" in access.operations)
+            assertEquals(90.seconds, coordinator.pendingRecordingRecoveryPosition.value)
+            access.deliverResumeMediaState(100_000, true)
+            assertEquals(listOf(90.seconds), access.resumeSeeks)
+            assertNull(coordinator.pendingRecordingRecoveryPosition.value)
+        } finally {
+            access.looperQueue.current = true
+            access.looperQueue.runAll()
+            owner.shutdown(1.seconds)
+        }
     }
 
     @Test

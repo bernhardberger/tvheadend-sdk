@@ -441,7 +441,7 @@ internal class Media3PlaybackCoordinatorPlayer(
             access.addListener(listener)
             installed.sourceInstalled = true
             access.setMediaSource(source)
-            if (describesTarget(installed)) {
+            if (describesTarget(installed) && !installed.viewerSeekDuringInstall) {
                 // Growing start-over keeps its install sequence without a resume helper.
                 if (accepted is RecordingAdmission.Completed || resumePosition != null) {
                     val mode = if (accepted is RecordingAdmission.Completed) RecordingResumeMode.COMPLETED
@@ -449,7 +449,7 @@ internal class Media3PlaybackCoordinatorPlayer(
                     installed.resume = access.createResume(
                         mediaIdentity, mode, onProgressFloorChanged = { updateResumeFloor(installed, it) },
                         onPendingPositionChanged = { position ->
-                            if (active === installed && installed.token.isActive()) {
+                            if (installed.token.isActive()) {
                                 installed.pendingRecoveryPosition = position.takeIf { accepted.recoveryPosition != null }
                                 publishPendingRecovery()
                             }
@@ -540,6 +540,15 @@ internal class Media3PlaybackCoordinatorPlayer(
             val installed = active?.takeIf { it.token === token && it.ownership == ItemOwnership.OWNED } ?: return
             if (!access.ownsItem(installed.source, oldPosition.mediaItem)) return
             val staysOwned = access.ownsItem(installed.source, newPosition.mediaItem)
+            if (staysOwned && reason == Player.DISCONTINUITY_REASON_SEEK &&
+                installed is InstalledPlayerTarget.Recording && installed.resume == null
+            ) {
+                // Application listeners may seek synchronously inside setMediaSource, before the
+                // resume listener exists. Their choice also cancels the admission progress floor.
+                installed.viewerSeekDuringInstall = true
+                installed.pendingRecoveryPosition = null
+                publishPendingRecovery()
+            }
             val position = if (staysOwned) newPosition else oldPosition
             installed.lastOwnedSnapshot = installed.lastOwnedSnapshot?.let { snapshot ->
                 snapshot.copy(
@@ -1029,11 +1038,13 @@ internal class Media3PlaybackCoordinatorPlayer(
             var pendingRecoveryPosition: Duration?,
         ) : InstalledPlayerTarget(token, listener, source) {
             var resume: CoordinatorRecordingResume? = null
+            var viewerSeekDuringInstall: Boolean = false
 
             // Source installation publishes callbacks before the resume helper can be constructed.
             // Seed their snapshots from admission so cached/terminal snapshots survive helper close.
             val progressFloor: Duration?
-                get() = if (resume == null) initialResumePosition?.takeIf { it > Duration.ZERO }
+                get() = if (viewerSeekDuringInstall) null
+                else if (resume == null) initialResumePosition?.takeIf { it > Duration.ZERO }
                 else resume?.progressFloor
         }
     }

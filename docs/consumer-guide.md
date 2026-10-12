@@ -849,13 +849,16 @@ using a local measurement for that same recording:
 coordinator.recoverRecordingTarget(
     binding = binding,
     position = lostPosition,
-    previousDuration = lostDuration, // null if unknown
+    previousDuration = lostDuration, // null if unknown or the lost target was growing
     fallbackStart = RecordingPlaybackStart.RESUME,
 )
 ```
 
 Positions must be finite, non-negative whole milliseconds; a supplied previous
 duration must be finite, positive whole milliseconds. Zero uses `fallbackStart`.
+`previousDuration` must come from completed media and must be `null` if the lost
+target was growing. Passing a growing extent would trigger the completed-recording
+cutoff if the freshly bound recording is now completed.
 For completed media with a known previous duration, a position at or beyond
 `DvrProgressPolicy.orderlyCompletionFraction` of that duration uses the fallback
 before installation. With unknown duration, playback starts at zero; reaching

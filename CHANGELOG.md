@@ -10,6 +10,9 @@ Unreleased; development target.
   caller-captured recording position through the existing resume machinery.
   `pendingRecordingRecoveryPosition` exposes the owed position for repeated retry
   capture, with target fencing and the existing bounded progress-report hold.
+  Known-duration recovery falls back before installation; unknown-duration recovery
+  drops its seek at the new timeline cutoff. In-install viewer seeks cancel recovery,
+  and failed replacement restores the previous target's settled pending position.
 - Experimental observation-side `MetadataRefreshTimes` and per-channel EPG query
   receipt times distinguish retained content from recent successful acceptance.
   Unchanged replies preserve snapshot identity and hashes; failed or retired
@@ -31,9 +34,6 @@ Unreleased; development target.
 
 ### Changed
 
-- Prepared internal explicit recording-position admission and reuse of the existing
-  completed/growing resume state machine. Known-duration recovery falls back before
-  installation; unknown-duration recovery drops its seek at the new timeline cutoff.
 - Persist refresh times alongside cached channel and EPG content. The EPG cache
   format moves to EPG3; previous EPG caches are discarded and rebuilt automatically.
   The first offline start has no cached guide until it is refetched. Cached catalog
