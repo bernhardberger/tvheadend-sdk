@@ -4,6 +4,27 @@ This guide covers the application-facing API of the independently maintained
 TVHeadend Kotlin SDK. It is not official TVHeadend software. The SDK is GPLv3
 and links the GPLv3 HTSP protocol library.
 
+## Mutable live startup buffer (experimental)
+
+Opt into `ExperimentalTvheadendApi` to use `TvheadendLiveStartBuffer` and the
+SDK-owned `TvheadendLoadControl` handle. These types need no Media3 unstable
+opt-in. Pass an application-created `ExoPlayer.Builder` to `handle.configure`;
+the application still builds and releases its Player. Use one handle per Player.
+
+```kotlin
+val buffer = TvheadendLiveStartBuffer(500.milliseconds)
+val handle = createTvheadendLoadControl(buffer)
+val player = handle.configure(ExoPlayer.Builder(context)).build()
+buffer.duration = learnedDuration
+```
+
+The default is 2 seconds; 500 ms is an explicit application policy. Settings
+and learning remain application-owned. Updates are thread-safe and apply to the
+next live-start decision. Values must be finite, non-negative whole milliseconds
+within `Int.MAX_VALUE`. Recordings (including growing ones) and ordinary
+1.5-second rebuffers retain their existing policy. The zero-argument unstable
+factory remains available with its original behaviour.
+
 ## Choose artifacts
 
 Use one version for every SDK artifact. Replace `<released-version>` with the

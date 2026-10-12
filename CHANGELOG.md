@@ -6,6 +6,10 @@ Unreleased; development target.
 
 ### Added
 
+- Experimental SDK-owned `TvheadendLoadControl` and `TvheadendLiveStartBuffer`
+  configure application-created Player builders without a Media3 unstable opt-in.
+  Live startup thresholds can be updated across threads; the 2 s default,
+  1.5 s ordinary rebuffer and existing recording policy are preserved.
 - Experimental `TvheadendPlaybackCoordinator.recoverRecordingTarget` restores a
   caller-captured recording position through the existing resume machinery.
   `pendingRecordingRecoveryPosition` exposes the owed position for repeated retry
