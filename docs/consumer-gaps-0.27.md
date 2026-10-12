@@ -1,7 +1,7 @@
 # 0.27 consumer gaps: design note
 
-**Status:** draft for the review pair and owner. The signatures below are
-proposals, not implemented API. Items 4 and 8 wait for owner decisions.
+**Status:** design record for the review pair and owner. Item 4 is decided;
+item 8 is deferred and is not implemented in 0.27. Refer to source for landed APIs.
 
 0.27 removes consumer workarounds before 1.0 freezes their replacement. It
 keeps the [0.26 compatibility baseline](api-shape-0.26.md): Kotlin source and
@@ -12,18 +12,18 @@ values, and closed SDK-defined inputs and success shapes.
 every new public surface in items 1–8 is `@ExperimentalTvheadendApi`, including
 properties, overloads, result types and consumer-fake additions. They graduate
 in a later minor; none is stable on arrival. Item 9 is documentation only.
-**D-B (settled):** the two questions below remain open, with these recommendations.
+**D-B (settled):** owner decisions are recorded below.
 
 | Item | Owning module | New API | Tier | Open owner decisions | Proposed slice order |
 |---|---|---|---|---|---|
 | 1. Recover a recording at a position | `sdk-media3` | `recoverRecordingTarget`, pending-position observation | Experimental | No | 5a–5c |
 | 2. Bounded live retune budget | `sdk-playback` | `LiveRetuneBudget`, `LiveRetuneDecision` | Experimental | No | 3 |
 | 3. Live-start buffer and timeshift skips | `sdk-media3` | SDK-owned load-control handle and mutable live-start buffer | Experimental | No | 6a–6c |
-| 4. Watched/unwatched and reset resume | `sdk-core` | `DvrRepository.updateWatchState`, `resetResume` (**BREAKING** for implementors) | Experimental | Yes | 7, decided |
+| 4. Watched/unwatched and reset resume | `sdk-core` | `DvrRepository.updateWatchState`, `resetResume` (**BREAKING** for implementors) | Experimental | No | 7, decided |
 | 5. Metadata refresh times | `sdk-core` | Observation-side domain times and per-channel query times | Experimental | No | 4 |
 | 6. Recording stream information | `sdk-core` | `DvrRecordingFile.streams` | Experimental | No | 2 |
 | 7. Radio/TV classification | `sdk-core` | `Channel.mediaKind`, `ChannelService.mediaKind` | Experimental | No | 1 |
-| 8. Series rule upcoming recordings | `sdk-core` | `SessionObservation.upcomingRecordings` | Experimental | Yes | 8, after decision |
+| 8. Series rule upcoming recordings | `sdk-core` | None in 0.27 | Deferred | No | After 1.0, if a consumer returns |
 | 9. Coordinator multiplicity | `sdk-media3` documentation | Supported-topology documentation; no new declaration | Documentation | No | 0 |
 
 Slice sizes below count production, tests, fakes, consumer-contract and API/docs
@@ -39,15 +39,10 @@ remains a separate 0.27 roadmap item, outside this API note.
     No patch type. **Follow-up decision (2026-10-12):** include standalone
     `resetResume` as a comfort feature, avoiding the watched → unwatched workaround.
     It clears resume and preserves play count. See item 4.
-2. **Does “upcoming matches” mean recordings the server has scheduled, or all
-   EPG events a rule might match?** Recommend **server-scheduled recordings
-   only** for 0.27, named `upcomingRecordings`. The existing rule links are
-   authoritative; local matching cannot promise the server's duplicate,
-   retention, access, scheduling and rule semantics. “Known start” means
-   scheduled `DvrEntry.start` (wire `start`), without subtracting `startExtra`.
-   Recommend excluding in-progress entries (`RECORDING` and `RECORDING_ERROR`),
-   even when their scheduled start lies in the interval; this is an upcoming
-   list, not an “on now” list. See item 8.
+2. **Series-rule upcoming recordings — deferred (2026-10-12).** Player dropped
+   series-rule UX D2–D6 on 2026-10-11. Rules stay in the TVHeadend web UI, so
+   item 8 has no consumer and will not be implemented in 0.27. Reconsider after
+   1.0 only if a consumer returns; retain the wire findings in item 8.
 
 ## Contract rules
 
@@ -869,9 +864,13 @@ replacing that runtime check; no Player deletion is required.
 **Size:** 4–6 files. **Owner decision:** no; the deterministic
 aggregation is documented and introduces no product filtering policy.
 
-## 8. Experimental series-rule upcoming recordings
+## 8. Series-rule upcoming recordings — deferred
 
-### Current state and wire facts
+**Owner decision (2026-10-12):** Player dropped series-rule UX D2–D6 on
+2026-10-11. Rules stay in the TVHeadend web UI. With no consumer, this helper
+is deferred, not implemented in 0.27; reconsider after 1.0 if needed.
+
+### Wire findings for a future revival
 
 TVHeadend includes `autorecId` and `timerecId` when an entry is linked to its
 rule:
@@ -882,69 +881,18 @@ The SDK already exposes `DvrEntry.autorecRuleId` and `timerecRuleId`
 (`sdk-core/src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/DvrRepository.kt:169-177`).
 Observation helpers currently join entries to EPG events, not rules:
 `sdk-core/src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/SessionObservation.kt:102-121`.
-The Player already groups DVR notices by autorec id:
-`/root/projects/tvheadend-player/client/src/main/java/at/bernhardberger/tvhplayer/notices/DvrChangeNoticeSource.kt:16-31`.
-This supplies the planned rules list; the cited notice grouping remains.
 
-### Proposal
-
-In `sdk-core`, under the already decided experimental tier:
-
-```kotlin
-@ExperimentalTvheadendApi
-public fun SessionObservation.upcomingRecordings(
-    ruleId: AutorecRuleId,
-    from: Instant,
-    until: Instant,
-): RuleUpcomingRecordings
-
-@ExperimentalTvheadendApi
-public class RuleUpcomingRecordings internal constructor(/* immutable values */) {
-    public val entries: List<DvrEntry>
-    public val authority: RetainedMetadataAuthority
-    public val rulePresent: Boolean
-}
-```
-
-Require `until > from`. Select the exact observation's enabled (not explicitly
-disabled), `SCHEDULED` entries linked by `autorecRuleId`, with known start in
-`[from, until)`. **Known start** means non-null `DvrEntry.start`, the scheduled
-wire `start`, not `start - startExtra`; upstream emits these separately at
-`/root/.local/share/opencode/repos/github.com/tvheadend/tvheadend/src/htsp_server.c:996-998`.
-Exclude in-progress `RECORDING`/`RECORDING_ERROR` even if their start lies in the
-window, and exclude null starts. Sort by scheduled start then entry id. Do not join on title, regex,
-series link or EPG event id. Keep the server's scheduled entries even when a
-duplicate flag is present; do not second-guess its scheduler.
-
-`authority` is that snapshot's DVR authority, not the EPG's. `rulePresent`
-distinguishes an observed rule with no scheduled entries from a missing rule;
-ABSENT authority means no usable metadata, not an authoritative zero count.
-Retained results are display-only. An orphaned entry may still match its stored
-rule id while `rulePresent=false`; do not silently discard it. Rule mutation
-actions still require a fresh `CurrentSessionObservation`.
-
-This is a local immutable selector: no server round trip or typed failure is
-needed. It reports scheduling results, not all future EPG candidates or the
-reason an event was excluded. A timerec overload can be added later using its
-verified link, once the Player needs it; no common rule-id union is necessary.
-
-**Open/closed and redaction:** additive, value-equal result payload; existing
-closed authority model and open DVR states. The experimental annotation is on
-both helper and result. Result `toString()` is redacted, including nested titles
-and rule identifiers.
-
-**Tests and fakes:** local synthetic snapshots prove rule isolation, missing
-rules, stale/absent authority, bounds, stable ordering, disabled/completed/
-unknown/in-progress states, null starts, nonzero `startExtra` without shifting
-the interval, orphans and absent EPG. Use gateway fakes only for the upstream
-link-preservation integration test. Extend `sdk-testing` with linked rule/entry
-fixtures; no simulated rule matcher or server request.
-
-**Player migration (new helper):** the Recordings rules list calls the selector
-and labels the result “upcoming recordings”. No current filter replacement is
-claimed. Keep the existing notice grouping cited above.
-**Size:** 4–6 files. **Owner decision:** yes; scheduled results versus all
-potential EPG matches is a consequential product/API distinction.
+HTSP `cancelDvrEntry` calls `dvr_entry_cancel`, which destroys `SCHEDULED`
+entries (`/root/.local/share/opencode/repos/github.com/tvheadend/tvheadend/src/htsp_server.c:2268-2280`;
+`/root/.local/share/opencode/repos/github.com/tvheadend/tvheadend/src/dvr/dvr_db.c:5400-5416`).
+Autorec's duplicate guard checks existing entries for the broadcast (or matching
+episode), not a cancellation tombstone
+(`/root/.local/share/opencode/repos/github.com/tvheadend/tvheadend/src/dvr/dvr_db.c:2021-2066`).
+A cancelled autorec episode is therefore likely to be re-created on the next EPG
+match; **this has not been verified on a live server**. Disabling the entry with
+`updateEntry(enabled=false)` keeps it and prevents recording; the retained disabled
+entry also prevents an enabled autorec replacement. A future “skip episode” UX
+must distinguish disabling from cancellation.
 
 ## 9. More than one coordinator per session
 

@@ -197,8 +197,6 @@ stay additive.
 - Recording stream information (resolution, codecs, languages) from the
   recording file metadata HTSP already parses.
 - A typed radio versus TV channel classification.
-- A helper that lists a series rule's upcoming matches, for the player's
-  rules list in Recordings.
 - Verify the SDK under R8: a minified build in the consumer-contract check,
   and consumer keep rules where the SDK needs them.
 - Document whether more than one coordinator per session is supported.
@@ -238,6 +236,11 @@ stay additive.
 - Coordinate the HTSP, SDK, and player release candidates and finals.
 
 ## After 1.0
+
+Deferred by owner decision on 2026-10-12: the series-rule upcoming-recordings
+helper has no consumer after Player dropped series-rule UX D2–D6 on 2026-10-11.
+Rules stay in the TVHeadend web UI. Reconsider only if a consumer returns; see
+[item 8's retained wire findings](consumer-gaps-0.27.md#8-series-rule-upcoming-recordings--deferred).
 
 These additions should fit 1.x minors if the API shape milestone lands as
 planned:
