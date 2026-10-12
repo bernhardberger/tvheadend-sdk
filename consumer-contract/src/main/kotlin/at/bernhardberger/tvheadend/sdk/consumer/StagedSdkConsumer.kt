@@ -399,6 +399,20 @@ public class StagedSdkConsumer(
         }
     }
 
+    public suspend fun recoverRecording(
+        recordingId: DvrEntryId,
+        position: Duration,
+        previousDuration: Duration? = null,
+    ): PlaybackTargetResult {
+        val currentSession = observation.value.currentSession ?: return PlaybackTargetResult.NOT_READY
+        return usePlaybackBinding(session.bindRecordingPlayback(currentSession, recordingId)) { binding ->
+            coordinator.recoverRecordingTarget(binding, position, previousDuration, RecordingPlaybackStart.RESUME)
+        }
+    }
+
+    public val pendingRecordingRecoveryPosition: StateFlow<Duration?>
+        get() = coordinator.pendingRecordingRecoveryPosition
+
     public suspend fun startGrowing(recordingId: DvrEntryId): PlaybackTargetResult {
         val currentSession = observation.value.currentSession ?: return PlaybackTargetResult.NOT_READY
         return usePlaybackBinding(

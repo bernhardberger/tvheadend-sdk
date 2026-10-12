@@ -842,6 +842,42 @@ is unknown or unsupported. `RecordingPlaybackStart.RESUME` uses a positive
 server position only when `recordingProgressCapability` is `SUPPORTED`; normal
 completed-recording playback otherwise starts over and disables reporting.
 
+With `@OptIn(ExperimentalTvheadendApi::class)`, recover a freshly bound recording
+using a local measurement for that same recording:
+
+```kotlin
+coordinator.recoverRecordingTarget(
+    binding = binding,
+    position = lostPosition,
+    previousDuration = lostDuration, // null if unknown
+    fallbackStart = RecordingPlaybackStart.RESUME,
+)
+```
+
+Positions must be finite, non-negative whole milliseconds; a supplied previous
+duration must be finite, positive whole milliseconds. Zero uses `fallbackStart`.
+For completed media with a known previous duration, a position at or beyond
+`DvrProgressPolicy.orderlyCompletionFraction` of that duration uses the fallback
+before installation. With unknown duration, playback starts at zero; reaching
+that cutoff on the new timeline drops only the pending seek, without a late
+bookmark seek. A pending position at or beyond the completed media end is dropped
+in either case. Explicit completed recovery works without server progress
+support, but reporting stays disabled and fallback `RESUME` retains its support
+gate. Growing recovery retains all admission gates and the 3 s / 20 s rule below,
+even if the recording completes during admission; no completion cutoff applies
+to its provisional extent.
+
+Under the application's existing target-command fence, capture
+`coordinator.pendingRecordingRecoveryPosition.value ?: measuredPosition` when
+retrying that installed recording again. The flow is only the owed explicit
+position: it clears on seek issuance, viewer seek, departure, replacement, stop
+or shutdown. It does not confirm a seek landing or expose server-bookmark resumes.
+While the existing progress hold lasts, checkpoints and closing reports cannot
+write an earlier position. Completed recovery can remain pending beyond its
+60-second progress hold. `STARTED` means installed, not seek completed, and caller
+cancellation propagates even when Player work may already have been claimed.
+The application retains identity matching, retry/route choice and play intent.
+
 `RecordingPlaybackAdmission.Growing`, `GrowingRecordingFileReader`, and
 `GrowingRecordingFileLease` require `@OptIn(ExperimentalTvheadendApi::class)` from
 `at.bernhardberger.tvheadend.sdk.playback`. The shared admission type, completed

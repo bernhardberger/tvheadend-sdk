@@ -333,6 +333,7 @@ internal class ModuleBoundaryTest {
             "public suspend fun setLiveTarget( binding: PlaybackBinding.Live, options: LivePlaybackOptions = LivePlaybackOptions(), ): PlaybackTargetResult",
             "public suspend fun setLiveTarget( session: TvheadendSession, currentSession: CurrentSessionObservation, channelId: ChannelId, options: LivePlaybackOptions = LivePlaybackOptions(), ): LivePlaybackTargetResult",
             "public suspend fun setRecordingTarget( binding: PlaybackBinding.Recording, start: RecordingPlaybackStart = RecordingPlaybackStart.RESUME, ): PlaybackTargetResult",
+            "public suspend fun recoverRecordingTarget( binding: PlaybackBinding.Recording, position: Duration, previousDuration: Duration? = null, fallbackStart: RecordingPlaybackStart = RecordingPlaybackStart.RESUME, ): PlaybackTargetResult",
             "public suspend fun seekTimeshiftBy(offset: Duration): TimeshiftContentSeekResult",
             "public suspend fun seekTimeshift(target: TimeshiftContentTarget): TimeshiftContentSeekResult",
             "public suspend fun seekTimeshift(selection: TimeshiftSeekSelection): TimeshiftContentSeekResult",

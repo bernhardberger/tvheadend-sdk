@@ -27,6 +27,7 @@ internal class TvheadendRecordingResume(
     private val mode: RecordingResumeMode = RecordingResumeMode.COMPLETED,
     private val isTargetCurrent: () -> Boolean = { true },
     onProgressFloorChanged: (Duration?) -> Unit = {},
+    onPendingPositionChanged: (Duration?) -> Unit = {},
 ) : AutoCloseable {
     internal constructor(
         player: Player,
@@ -34,12 +35,14 @@ internal class TvheadendRecordingResume(
         mode: RecordingResumeMode,
         isTargetCurrent: () -> Boolean,
         onProgressFloorChanged: (Duration?) -> Unit,
-    ) : this(Media3RecordingResumePlayer(player), identity, mode, isTargetCurrent, onProgressFloorChanged)
+        onPendingPositionChanged: (Duration?) -> Unit,
+    ) : this(Media3RecordingResumePlayer(player), identity, mode, isTargetCurrent, onProgressFloorChanged, onPendingPositionChanged)
 
     private val stateMachine = RecordingResumeStateMachine(
         seekTo = player::seekTo,
         scheduleTimeout = player::postDelayed,
         onProgressFloorChanged = { onProgressFloorChanged(it?.milliseconds) },
+        onPendingPositionChanged = { onPendingPositionChanged(it?.milliseconds) },
     )
     private val listener = object : Player.Listener {
         override fun onTimelineChanged(timeline: Timeline, reason: Int) {
@@ -151,7 +154,10 @@ internal fun createTvheadendRecordingResume(
     mode: RecordingResumeMode = RecordingResumeMode.COMPLETED,
     isTargetCurrent: () -> Boolean = { true },
     onProgressFloorChanged: (Duration?) -> Unit = {},
-): TvheadendRecordingResume = TvheadendRecordingResume(player, identity, mode, isTargetCurrent, onProgressFloorChanged)
+    onPendingPositionChanged: (Duration?) -> Unit = {},
+): TvheadendRecordingResume = TvheadendRecordingResume(
+    player, identity, mode, isTargetCurrent, onProgressFloorChanged, onPendingPositionChanged,
+)
 
 /** Which timeline rule decides when and where a pending resume seeks. */
 internal enum class RecordingResumeMode(
@@ -218,6 +224,7 @@ internal class RecordingResumeStateMachine(
     private val seekTo: (Long) -> Unit,
     private val scheduleTimeout: (Long, () -> Unit) -> AutoCloseable,
     private val onProgressFloorChanged: (Long?) -> Unit = {},
+    private val onPendingPositionChanged: (Long?) -> Unit = {},
 ) {
     private var pending: PendingResume? = null
     private var closed = false
@@ -248,6 +255,7 @@ internal class RecordingResumeStateMachine(
             if (pending === target) onTimeout(target)
         }
         onProgressFloorChanged(progressFloorMillis)
+        onPendingPositionChanged(pendingPositionMillis)
     }
 
     fun onMediaState(
@@ -307,6 +315,7 @@ internal class RecordingResumeStateMachine(
         target.timeout?.close()
         outcome = settled
         onProgressFloorChanged(progressFloorMillis)
+        onPendingPositionChanged(pendingPositionMillis)
     }
 
     private class PendingResume(

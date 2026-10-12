@@ -14,6 +14,7 @@ import androidx.media3.common.Timeline
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.MediaSource
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackExit
+import at.bernhardberger.tvheadend.sdk.core.DvrProgressPolicy
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
@@ -95,6 +96,7 @@ internal sealed interface RecordingAdmission {
 
 internal interface PlaybackCoordinatorPlayer {
     val playerCleanupPending: StateFlow<Boolean>
+    val pendingRecordingRecoveryPosition: StateFlow<Duration?>
 
     suspend fun installLive(
         ticket: PlayerOperationTicket,
@@ -109,6 +111,8 @@ internal interface PlaybackCoordinatorPlayer {
         token: PlaybackTargetToken,
         target: CoordinatorRecordingTarget,
         start: RecordingPlaybackStart,
+        recovery: RecordingRecoveryRequest? = null,
+        orderlyCompletionFraction: Double = DvrProgressPolicy().orderlyCompletionFraction,
     ): PlaybackPlayerInstallResult
 
     /**
@@ -139,7 +143,7 @@ internal interface CoordinatorRecordingResume : AutoCloseable {
     /** The pending saved position that progress reports must not undercut, or null. */
     val progressFloor: Duration?
 
-    fun beginPlaybackTarget(position: Duration?)
+    fun beginPlaybackTarget(position: Duration?, lateCompletionFraction: Double? = null)
 }
 
 internal interface CoordinatorPlaybackAccess {
@@ -180,6 +184,7 @@ internal interface CoordinatorPlaybackAccess {
         identity: RecordingMediaIdentity,
         mode: RecordingResumeMode,
         onProgressFloorChanged: (Duration?) -> Unit,
+        onPendingPositionChanged: (Duration?) -> Unit,
         isTargetCurrent: () -> Boolean,
     ): CoordinatorRecordingResume
 
@@ -202,7 +207,7 @@ internal interface CoordinatorPlaybackAccess {
 internal class Media3PlaybackCoordinatorPlayer(
     private val access: CoordinatorPlaybackAccess,
     private val events: PlaybackPlayerEventAccumulator,
-    private val admitRecording: (CoordinatorRecordingTarget, RecordingPlaybackStart) -> RecordingAdmission,
+    private val admitRecording: (CoordinatorRecordingTarget, RecordingTargetStart) -> RecordingAdmission,
 ) : PlaybackCoordinatorPlayer {
     private val executor = PlayerLooperExecutor(access.looper)
     private var active: InstalledPlayerTarget? = null
@@ -212,6 +217,18 @@ internal class Media3PlaybackCoordinatorPlayer(
     private var pendingCleanup: List<CoordinatorMediaSource> = emptyList()
     private val mutablePlayerCleanupPending = MutableStateFlow(false)
     override val playerCleanupPending: StateFlow<Boolean> = mutablePlayerCleanupPending.asStateFlow()
+    private val mutablePendingRecoveryPosition = MutableStateFlow<Duration?>(null)
+    override val pendingRecordingRecoveryPosition: StateFlow<Duration?> = mutablePendingRecoveryPosition.asStateFlow()
+
+    /** Looper-owned target state; the cleanup lock also fences unjoined late work after abandon. */
+    private fun publishPendingRecovery() {
+        synchronized(cleanupLock) {
+            mutablePendingRecoveryPosition.value = if (cleanupAbandoned) null else
+                (active as? InstalledPlayerTarget.Recording)?.takeIf {
+                    it.token.isActive() && it.ownership != ItemOwnership.LOST
+                }?.pendingRecoveryPosition
+        }
+    }
 
     override suspend fun installLive(
         ticket: PlayerOperationTicket,
@@ -237,10 +254,12 @@ internal class Media3PlaybackCoordinatorPlayer(
         token: PlaybackTargetToken,
         target: CoordinatorRecordingTarget,
         start: RecordingPlaybackStart,
+        recovery: RecordingRecoveryRequest?,
+        orderlyCompletionFraction: Double,
     ): PlaybackPlayerInstallResult = when (
         val operation = executor.execute(ticket) {
             installAfterApplicationReplacementOnLooper {
-                installRecordingOnLooper(token, target, start)
+                installRecordingOnLooper(token, target, RecordingTargetStart(start, recovery, orderlyCompletionFraction))
             }
         }
     ) {
@@ -333,6 +352,7 @@ internal class Media3PlaybackCoordinatorPlayer(
         val listener = targetListener(token, recording = false)
         val installed = InstalledPlayerTarget.Live(token, listener, source, timeshiftControls)
         active = installed
+        publishPendingRecovery()
         return try {
             installed.listenerAttached = true
             access.addListener(listener)
@@ -368,7 +388,7 @@ internal class Media3PlaybackCoordinatorPlayer(
     private fun installRecordingOnLooper(
         token: PlaybackTargetToken,
         target: CoordinatorRecordingTarget,
-        start: RecordingPlaybackStart,
+        start: RecordingTargetStart,
     ): PlaybackPlayerInstallResult {
         access.requireApplicationLooper()
         val admission = admitRecording(target, start)
@@ -413,8 +433,9 @@ internal class Media3PlaybackCoordinatorPlayer(
             is RecordingAdmission.Completed -> accepted.resumePosition
             is RecordingAdmission.Growing -> accepted.resumePosition
         }
-        val installed = InstalledPlayerTarget.Recording(token, listener, source, finality, resumePosition)
+        val installed = InstalledPlayerTarget.Recording(token, listener, source, finality, resumePosition, accepted.recoveryPosition)
         active = installed
+        publishPendingRecovery()
         return try {
             installed.listenerAttached = true
             access.addListener(listener)
@@ -427,8 +448,14 @@ internal class Media3PlaybackCoordinatorPlayer(
                     else RecordingResumeMode.GROWING
                     installed.resume = access.createResume(
                         mediaIdentity, mode, onProgressFloorChanged = { updateResumeFloor(installed, it) },
+                        onPendingPositionChanged = { position ->
+                            if (active === installed && installed.token.isActive()) {
+                                installed.pendingRecoveryPosition = position.takeIf { accepted.recoveryPosition != null }
+                                publishPendingRecovery()
+                            }
+                        },
                     ) { describesTarget(installed) }
-                    installed.resume?.beginPlaybackTarget(resumePosition)
+                    installed.resume?.beginPlaybackTarget(resumePosition, (accepted as? RecordingAdmission.Completed)?.lateCompletionFraction)
                 }
             }
             // Resume may have applied or been abandoned synchronously. Refresh only while owned;
@@ -649,6 +676,7 @@ internal class Media3PlaybackCoordinatorPlayer(
     private fun loseOwnership(installed: InstalledPlayerTarget) {
         installed.ownership = ItemOwnership.LOST
         installed.token.releasePlayerItem()
+        publishPendingRecovery()
         events.fenceItemReplacement(installed.token)
         (installed as? InstalledPlayerTarget.Live)?.timeshiftControls?.publishCurrent()
     }
@@ -686,6 +714,7 @@ internal class Media3PlaybackCoordinatorPlayer(
         }
         if (owned) return null
         active = null
+        publishPendingRecovery()
         return retireInstalledOnLooper(installed, snapshot = null, clearPlayer = true)
     }
 
@@ -738,6 +767,7 @@ internal class Media3PlaybackCoordinatorPlayer(
         }
         val restorablePrevious = previous?.takeIf { it.token.isActive() }
         active = restorablePrevious
+        publishPendingRecovery()
         val stagedRetirement = retireInstalledOnLooper(
             installed = installed,
             snapshot = PlaybackPlayerSnapshot(Duration.ZERO, null, Player.STATE_IDLE, failed = true),
@@ -816,6 +846,7 @@ internal class Media3PlaybackCoordinatorPlayer(
             PlaybackPlayerSnapshot(Duration.ZERO, null, Player.STATE_IDLE, failed = true)
         }
         active = null
+        publishPendingRecovery()
         return retireInstalledOnLooper(
             installed = installed,
             snapshot = snapshot,
@@ -954,6 +985,7 @@ internal class Media3PlaybackCoordinatorPlayer(
             cleanupAbandoned = true
             pendingCleanup = emptyList()
             mutablePlayerCleanupPending.value = false
+            mutablePendingRecoveryPosition.value = null
         }
     }
 
@@ -994,6 +1026,7 @@ internal class Media3PlaybackCoordinatorPlayer(
             source: CoordinatorMediaSource,
             val finality: GrowingFinalitySignal?,
             private val initialResumePosition: Duration?,
+            var pendingRecoveryPosition: Duration?,
         ) : InstalledPlayerTarget(token, listener, source) {
             var resume: CoordinatorRecordingResume? = null
 
@@ -1125,15 +1158,18 @@ internal class ExoPlayerCoordinatorPlaybackAccess(
         identity: RecordingMediaIdentity,
         mode: RecordingResumeMode,
         onProgressFloorChanged: (Duration?) -> Unit,
+        onPendingPositionChanged: (Duration?) -> Unit,
         isTargetCurrent: () -> Boolean,
     ): CoordinatorRecordingResume {
-        val resume = createTvheadendRecordingResume(player, identity, mode, isTargetCurrent, onProgressFloorChanged)
+        val resume = createTvheadendRecordingResume(
+            player, identity, mode, isTargetCurrent, onProgressFloorChanged, onPendingPositionChanged,
+        )
         return object : CoordinatorRecordingResume {
             override val progressFloor: Duration?
                 get() = resume.progressFloor
 
-            override fun beginPlaybackTarget(position: Duration?) {
-                resume.beginPlaybackTarget(position)
+            override fun beginPlaybackTarget(position: Duration?, lateCompletionFraction: Double?) {
+                resume.beginPlaybackTarget(position, lateCompletionFraction)
             }
 
             override fun close() {

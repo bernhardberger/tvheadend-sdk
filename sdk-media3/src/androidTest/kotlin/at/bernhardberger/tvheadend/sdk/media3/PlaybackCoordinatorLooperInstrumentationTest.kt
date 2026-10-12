@@ -149,6 +149,7 @@ private class MainLooperCoordinatorPlaybackAccess : CoordinatorPlaybackAccess {
         identity: RecordingMediaIdentity,
         mode: RecordingResumeMode,
         onProgressFloorChanged: (Duration?) -> Unit,
+        onPendingPositionChanged: (Duration?) -> Unit,
         isTargetCurrent: () -> Boolean,
     ): CoordinatorRecordingResume =
         error("Recording resume is not expected")

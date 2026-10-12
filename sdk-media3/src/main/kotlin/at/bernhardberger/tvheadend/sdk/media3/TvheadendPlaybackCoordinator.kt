@@ -18,6 +18,7 @@ import at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability
 import at.bernhardberger.tvheadend.sdk.core.StreamProfileId
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
+import at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
 import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionDiagnostics
 import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionPriority
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
@@ -497,6 +498,17 @@ public class TvheadendPlaybackCoordinator internal constructor(
     public val playerCleanupPending: StateFlow<Boolean> = player.playerCleanupPending
 
     /**
+     * The explicit recovery position still owed by the installed recording, or null.
+     *
+     * Read this under the application's target-command fence when capturing a lost recording,
+     * falling back to its measured position. Server-bookmark resumes are not exposed here.
+     * Clears on seek issuance (not proof of landing), viewer seek, abandonment, departure or
+     * retirement. Completed recovery can remain pending after its 60-second progress hold expires.
+     */
+    @ExperimentalTvheadendApi
+    public val pendingRecordingRecoveryPosition: StateFlow<Duration?> = player.pendingRecordingRecoveryPosition
+
+    /**
      * Launches this one-shot coordinator immediately as a child of [scope].
      *
      * Prefer [withLifetime] when the full consumer workflow fits in one suspending block.
@@ -660,16 +672,56 @@ public class TvheadendPlaybackCoordinator internal constructor(
     internal suspend fun setRecordingTarget(
         target: CoordinatorRecordingTarget,
         start: RecordingPlaybackStart = RecordingPlaybackStart.RESUME,
+        recovery: RecordingRecoveryRequest? = null,
     ): PlaybackTargetResult {
         val reply = CompletableDeferred<PlaybackTargetResult>()
         val command = CoordinatorCommand.Recording(
             target = target,
             start = start,
+            recovery = recovery,
             ticket = PlayerOperationTicket(),
             reply = reply,
         )
         return submit(command, reply) { state -> state.targetUnavailableResult() }
     }
+
+    /**
+     * Replaces the target using a one-shot local position for this exact freshly bound recording.
+     * The caller owns recording identity, lost-position capture and retry/play intent.
+     *
+     * Inputs must be finite whole-millisecond durations: [position] non-negative and a supplied
+     * [previousDuration] positive. Zero uses [fallbackStart]. For completed recordings, a position
+     * at or beyond the configured orderly-completion fraction of a known previous duration also
+     * uses that fallback before installation. With no previous duration, recovery starts at zero
+     * and drops only the pending seek at that fraction of the new timeline, without a late fallback.
+     * A position at or beyond the installed completed media end is likewise dropped.
+     *
+     * Completed local recovery works even with unknown/unsupported server progress; reporting stays
+     * disabled and fallback RESUME retains its support gate. Growing recovery retains all admission
+     * gates and the three-second edge margin / 20-second timeout of [setRecordingTarget], including
+     * when the recording completes during admission. It applies no completion cutoff to an extent.
+     *
+     * Viewer seek, departure, replacement, stop and shutdown cancel the pending seek. Progress and
+     * closing reports preserve its position while the existing resume hold lasts (at most 60 seconds
+     * for completed playback). [PlaybackTargetResult.STARTED] means installed, not a seek landing.
+     * Caller cancellation propagates; once Player work is claimed it may already have installed.
+     */
+    @ExperimentalTvheadendApi
+    public suspend fun recoverRecordingTarget(
+        binding: PlaybackBinding.Recording,
+        position: Duration,
+        previousDuration: Duration? = null,
+        fallbackStart: RecordingPlaybackStart = RecordingPlaybackStart.RESUME,
+    ): PlaybackTargetResult = recoverRecordingTarget(
+        BoundCoordinatorRecordingTarget(binding), position, previousDuration, fallbackStart,
+    )
+
+    internal suspend fun recoverRecordingTarget(
+        target: CoordinatorRecordingTarget,
+        position: Duration,
+        previousDuration: Duration? = null,
+        fallbackStart: RecordingPlaybackStart = RecordingPlaybackStart.RESUME,
+    ): PlaybackTargetResult = setRecordingTarget(target, fallbackStart, RecordingRecoveryRequest(position, previousDuration))
 
     /** Convenience seek with one client-position anchor and SDK-owned clamping. */
     public suspend fun seekTimeshiftBy(offset: Duration): TimeshiftContentSeekResult {
@@ -930,6 +982,15 @@ internal fun admitRecordingTarget(
     target: CoordinatorRecordingTarget,
     start: RecordingPlaybackStart,
 ): RecordingAdmission = admitRecordingTarget(target, start, null, DvrProgressPolicy().orderlyCompletionFraction)
+
+internal class RecordingTargetStart(
+    val start: RecordingPlaybackStart,
+    val recovery: RecordingRecoveryRequest? = null,
+    val orderlyCompletionFraction: Double = DvrProgressPolicy().orderlyCompletionFraction,
+)
+
+internal fun admitRecordingTarget(target: CoordinatorRecordingTarget, request: RecordingTargetStart): RecordingAdmission =
+    admitRecordingTarget(target, request.start, request.recovery, request.orderlyCompletionFraction)
 
 /** Local measurements for this exact recording; never a server bookmark or a provisional extent. */
 internal class RecordingRecoveryRequest(
@@ -1282,6 +1343,8 @@ private class CoordinatorActor(
                 token = token,
                 target = command.target,
                 start = command.start,
+                recovery = command.recovery,
+                orderlyCompletionFraction = progressPolicy.orderlyCompletionFraction,
             )
             applyRetirement(result.retiredTarget, result.retiredRecording)
             if (result.status == PlaybackPlayerInstallStatus.STARTED || result.status == PlaybackPlayerInstallStatus.DEPARTED) {
@@ -1903,6 +1966,7 @@ private sealed class CoordinatorCommand(
     data class Recording(
         val target: CoordinatorRecordingTarget,
         val start: RecordingPlaybackStart,
+        val recovery: RecordingRecoveryRequest?,
         override val ticket: PlayerOperationTicket,
         val reply: CompletableDeferred<PlaybackTargetResult>,
     ) : CoordinatorCommand(ticket)

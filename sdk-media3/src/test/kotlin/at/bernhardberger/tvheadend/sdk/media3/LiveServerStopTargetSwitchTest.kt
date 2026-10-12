@@ -247,6 +247,7 @@ private class RealLiveSourceAccess(private val dispatcher: CoroutineDispatcher) 
         identity: RecordingMediaIdentity,
         mode: RecordingResumeMode,
         onProgressFloorChanged: (kotlin.time.Duration?) -> Unit,
+        onPendingPositionChanged: (kotlin.time.Duration?) -> Unit,
         isTargetCurrent: () -> Boolean,
     ): CoordinatorRecordingResume =
         error("recordings are not played here")
