@@ -70,6 +70,109 @@ import kotlin.time.Instant
 @OptIn(ExperimentalCoroutinesApi::class)
 internal class PhaseOneSessionMetadataTest {
     @Test
+    fun `capacity rejected EPG pushes do not refresh but accepted no-ops do`() {
+        var now = Instant.fromEpochSeconds(100)
+        val metadata = PhaseOneSessionMetadata(
+            clock = object : Clock { override fun now() = now },
+            epgCoveragePolicy = EpgCoveragePolicy.create(24.hours, maximumRetainedEvents = 1),
+        )
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(1)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(1, 1, 100, 110)))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        val original = metadata.observation.value
+        now += 1.seconds
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(2, 1, 120, 130)))
+        assertSame(original, metadata.observation.value)
+        metadata.acceptMetadataDeferringEpg(MetadataEvent.EventUpdated(generation,
+            GatewayEpgUpdate(id = EventId(2), start = now, stop = now + 10.seconds)))
+        metadata.flushDeferredMetadata()
+        assertSame(original, metadata.observation.value)
+        assertEquals(original.epgRefreshTimes, metadata.publishedSnapshots.value?.epgRefreshTimes)
+        for (event in listOf(
+            MetadataEvent.EventAdded(generation, epgEvent(1, 1, 100, 110)),
+            MetadataEvent.EventUpdated(generation, GatewayEpgUpdate(id = EventId(1))),
+            MetadataEvent.EventDeleted(generation, EventId(99)),
+        )) {
+            now += 1.seconds
+            metadata.acceptMetadata(event)
+            assertEquals(now, metadata.observation.value.epgRefreshTimes.lastUpdatedAt)
+            assertEquals(original.epgSnapshotForDisplay, metadata.observation.value.epgSnapshotForDisplay)
+        }
+    }
+
+    @Test
+    fun `invalid timing EPG pushes do not replace pending accepted refresh time`() {
+        var now = Instant.fromEpochSeconds(100)
+        val metadata = PhaseOneSessionMetadata(clock = object : Clock { override fun now() = now })
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(1)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(1, 1, 100, 110)))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        val original = metadata.observation.value
+        now += 1.seconds
+        val invalid = MetadataEvent.EventUpdated(generation,
+            GatewayEpgUpdate(id = EventId(1), stop = Instant.fromEpochSeconds(99)))
+        metadata.acceptMetadata(invalid)
+        assertSame(original, metadata.observation.value)
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(2, 1, 120, 119)))
+        assertSame(original, metadata.observation.value)
+        metadata.acceptMetadataDeferringEpg(MetadataEvent.EventUpdated(generation,
+            GatewayEpgUpdate(id = EventId(1), title = "Updated")))
+        val acceptedAt = now
+        now += 1.seconds
+        metadata.acceptMetadataDeferringEpg(invalid)
+        metadata.flushDeferredMetadata()
+        assertEquals(acceptedAt, metadata.observation.value.epgRefreshTimes.lastUpdatedAt)
+        assertEquals(Instant.fromEpochSeconds(110), metadata.currentEpgSnapshot().events.single().stop)
+    }
+
+    @Test
+    fun `direct rebind discards pending EPG push time before new sync`() {
+        var now = Instant.fromEpochSeconds(100)
+        val metadata = PhaseOneSessionMetadata(clock = object : Clock { override fun now() = now })
+        val first = GatewayGeneration()
+        metadata.bindGeneration(first)
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(first))
+        val retained = metadata.observation.value
+        now += 1.seconds
+        metadata.acceptMetadataDeferringEpg(MetadataEvent.EventAdded(first, epgEvent(1, 1, 100, 110)))
+        val second = GatewayGeneration()
+        metadata.bindGeneration(second)
+        metadata.flushDeferredMetadata()
+        assertEquals(retained.epgRefreshTimes, metadata.observation.value.epgRefreshTimes)
+        assertSame(retained.epgSnapshotForDisplay, metadata.observation.value.epgSnapshotForDisplay)
+        now += 1.seconds
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(second))
+        assertEquals(MetadataRefreshTimes(now, now), metadata.observation.value.epgRefreshTimes)
+        assertTrue(metadata.currentEpgSnapshot().events.isEmpty())
+    }
+
+    @Test
+    fun `channel deletion publishes removal of only its accepted query time`() {
+        val now = Instant.fromEpochSeconds(100)
+        val metadata = PhaseOneSessionMetadata(clock = object : Clock { override fun now() = now })
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        for (id in 1L..2L) metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(id)))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        for (id in 1L..2L) {
+            val query = checkNotNull(metadata.beginEpgQuery(generation, ChannelId(id)))
+            assertEquals(EpgQueryAcceptance.APPLIED,
+                metadata.applySuccessfulEpgQuery(generation, query, now + 10.seconds, emptyList()))
+        }
+        val retained = metadata.observation.value
+        assertEquals(mapOf(ChannelId(1) to now, ChannelId(2) to now), retained.epgLastQueriedAt)
+        metadata.acceptMetadata(MetadataEvent.ChannelDeleted(generation, ChannelId(1)))
+        val expected = mapOf(ChannelId(2) to now)
+        assertEquals(expected, metadata.observation.value.epgLastQueriedAt)
+        assertEquals(expected, metadata.publishedSnapshots.value?.epgLastQueriedAt)
+        assertEquals(2, retained.epgLastQueriedAt.size)
+    }
+
+    @Test
     fun `rejected and abandoned queries preserve times and deferred push stamps at acceptance`() {
         var now = Instant.fromEpochSeconds(100)
         val metadata = PhaseOneSessionMetadata(
@@ -980,10 +1083,15 @@ internal class PhaseOneSessionMetadataTest {
         metadata.acceptMetadata(MetadataEvent.EventAdded(current, epgEvent(2, 1, 20, 30)))
         metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(current))
 
-        metadata.recordSuccessfulEpgQuery(stale, ChannelId(1), Instant.fromEpochSeconds(100))
+        val query = checkNotNull(metadata.beginEpgQuery(current, ChannelId(1)))
+        assertEquals(EpgQueryAcceptance.STALE,
+            metadata.applySuccessfulEpgQuery(stale, query, Instant.fromEpochSeconds(100), emptyList()))
         metadata.retainEpgEvents(stale, Instant.fromEpochSeconds(20), Instant.fromEpochSeconds(10))
-        metadata.recordSuccessfulEpgQuery(current, ChannelId(1), Instant.fromEpochSeconds(50))
-        metadata.recordSuccessfulEpgQuery(current, ChannelId(1), Instant.fromEpochSeconds(40))
+        assertEquals(EpgQueryAcceptance.APPLIED,
+            metadata.applySuccessfulEpgQuery(current, query, Instant.fromEpochSeconds(50), emptyList()))
+        val nextQuery = checkNotNull(metadata.beginEpgQuery(current, ChannelId(1)))
+        assertEquals(EpgQueryAcceptance.APPLIED,
+            metadata.applySuccessfulEpgQuery(current, nextQuery, Instant.fromEpochSeconds(40), emptyList()))
         metadata.retainEpgEvents(current, Instant.fromEpochSeconds(10), Instant.fromEpochSeconds(20))
 
         var snapshot = metadata.currentEpgSnapshot()

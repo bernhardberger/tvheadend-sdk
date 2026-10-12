@@ -3,6 +3,10 @@
 package at.bernhardberger.tvheadend.sdk.core.cache
 
 import at.bernhardberger.tvheadend.sdk.core.CacheStatistics
+import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
+import at.bernhardberger.tvheadend.sdk.core.ChannelId
+import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
+import at.bernhardberger.tvheadend.sdk.core.MetadataRefreshTimes
 import at.bernhardberger.tvheadend.sdk.core.ArtworkContent
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
@@ -179,8 +183,11 @@ internal class MetadataCacheRuntime(
         val publications: StateFlow<PublishedSnapshots?>,
     ) {
         lateinit var job: Job
-        private var writtenCatalog: PublishedSnapshots? = null
-        private var writtenEpg: PublishedSnapshots? = null
+        private var writtenCatalog: ChannelCatalog? = null
+        private var writtenCatalogTimes: MetadataRefreshTimes? = null
+        private var writtenEpg: EpgSnapshot? = null
+        private var writtenEpgTimes: MetadataRefreshTimes? = null
+        private var writtenQueryTimes: Map<ChannelId, Instant>? = null
         private var lastEpgWrite: Instant = Instant.DISTANT_PAST
 
         suspend fun run() {
@@ -224,20 +231,21 @@ internal class MetadataCacheRuntime(
             isNewCatalog(snapshots) || isNewEpg(snapshots)
 
         private fun isNewCatalog(snapshots: PublishedSnapshots): Boolean =
-            snapshots.catalog !== writtenCatalog?.catalog ||
-                snapshots.channelRefreshTimes != writtenCatalog?.channelRefreshTimes
+            snapshots.catalog !== writtenCatalog ||
+                snapshots.channelRefreshTimes != writtenCatalogTimes
 
         private fun isNewEpg(snapshots: PublishedSnapshots): Boolean =
-            snapshots.epgSnapshot !== writtenEpg?.epgSnapshot ||
-                snapshots.epgRefreshTimes != writtenEpg?.epgRefreshTimes ||
-                snapshots.epgLastQueriedAt != writtenEpg?.epgLastQueriedAt
+            snapshots.epgSnapshot !== writtenEpg ||
+                snapshots.epgRefreshTimes != writtenEpgTimes ||
+                snapshots.epgLastQueriedAt != writtenQueryTimes
 
         private suspend fun writeCatalog(snapshots: PublishedSnapshots) {
             accessStore {
                 store.storeCatalog(namespace, CachedCatalog(snapshots.catalog, snapshots.channelRefreshTimes), clock.now())
                 refreshStatistics()
             }
-            writtenCatalog = snapshots
+            writtenCatalog = snapshots.catalog
+            writtenCatalogTimes = snapshots.channelRefreshTimes
         }
 
         private suspend fun writeEpg(snapshots: PublishedSnapshots) {
@@ -247,7 +255,9 @@ internal class MetadataCacheRuntime(
                     snapshots.epgLastQueriedAt), now)
                 refreshStatistics()
             }
-            writtenEpg = snapshots
+            writtenEpg = snapshots.epgSnapshot
+            writtenEpgTimes = snapshots.epgRefreshTimes
+            writtenQueryTimes = snapshots.epgLastQueriedAt
             lastEpgWrite = now
         }
     }

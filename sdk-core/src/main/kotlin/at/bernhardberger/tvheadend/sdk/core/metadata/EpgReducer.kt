@@ -381,7 +381,8 @@ internal class EpgReducer(
         queriesInvalidAfterRevision = null
     }
 
-    internal fun accept(event: MetadataEvent, serverNow: Instant? = null) {
+    /** Returns whether this reducer accepted the event, including accepted no-ops. */
+    internal fun accept(event: MetadataEvent, serverNow: Instant? = null): Boolean {
         serverNow?.let(::pruneHistory)
         when (event) {
             is MetadataEvent.ChannelAdded -> {
@@ -400,13 +401,12 @@ internal class EpgReducer(
                 removeChannel(event.channelId)
             }
             is MetadataEvent.EventAdded -> {
-                cachedSnapshot = null
                 recordEventAuthority(event.event.id)
-                acceptAdd(event.event)
+                return acceptAdd(event.event)
             }
             is MetadataEvent.EventUpdated -> {
                 recordEventAuthority(event.event.id)
-                acceptUpdate(event.event)
+                return acceptUpdate(event.event)
             }
             is MetadataEvent.EventDeleted -> {
                 cachedSnapshot = null
@@ -444,8 +444,9 @@ internal class EpgReducer(
             is MetadataEvent.TimerecRuleAdded,
             is MetadataEvent.TimerecRuleUpdated,
             is MetadataEvent.TimerecRuleDeleted,
-            -> Unit
+            -> return false
         }
+        return true
     }
 
     internal fun reconcileChannels(validChannelIds: Collection<ChannelId>) {
@@ -605,29 +606,32 @@ internal class EpgReducer(
 
     private class CoverageBounds(var from: Instant, var to: Instant)
 
-    private fun acceptAdd(event: GatewayEpgEvent) {
-        ReducedEpgEvent.fromAdd(event)?.let { candidate ->
-            supersedeHistory(candidate)
-            if (event.id !in events && events.size >= maximumRetainedEvents) {
-                invalidateActiveQueriesAfterCapacityDrop()
-                return
-            }
+    private fun acceptAdd(event: GatewayEpgEvent): Boolean {
+        val candidate = ReducedEpgEvent.fromAdd(event) ?: return false
+        supersedeHistory(candidate)
+        if (event.id !in events && events.size >= maximumRetainedEvents) {
+            invalidateActiveQueriesAfterCapacityDrop()
+            return false
+        }
+        if (events[event.id] != candidate) {
+            cachedSnapshot = null
             events[event.id] = candidate
         }
+        return true
     }
 
-    private fun acceptUpdate(update: GatewayEpgUpdate) {
+    private fun acceptUpdate(update: GatewayEpgUpdate): Boolean {
         val current = events[update.id] ?: history[update.id]
         val candidate = if (current == null) {
             ReducedEpgEvent.fromUpdate(update)
         } else {
             current.merge(update)
-        } ?: return
+        } ?: return false
         supersedeHistory(candidate)
-        if (current == null && candidate.start == null && candidate.stop == null) return
+        if (current == null && candidate.start == null && candidate.stop == null) return false
         if (update.id !in events && events.size >= maximumRetainedEvents) {
             invalidateActiveQueriesAfterCapacityDrop()
-            return
+            return false
         }
         // Identical wire updates still advance query authority and supersede history,
         // but do not require rebuilding an otherwise unchanged immutable snapshot.
@@ -635,6 +639,7 @@ internal class EpgReducer(
             cachedSnapshot = null
             events[update.id] = candidate
         }
+        return true
     }
 
     private fun invalidateActiveQueriesAfterCapacityDrop() {

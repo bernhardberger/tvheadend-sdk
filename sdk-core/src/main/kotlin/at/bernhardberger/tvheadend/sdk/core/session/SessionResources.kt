@@ -248,12 +248,6 @@ internal interface SessionMetadata {
         requester: EpgCoverageRequester,
     )
 
-    public fun recordSuccessfulEpgQuery(
-        generation: GatewayGeneration,
-        channelId: ChannelId,
-        queriedTo: Instant,
-    )
-
     public fun currentEpgSnapshot(generation: GatewayGeneration): EpgSnapshot?
 
     public fun beginEpgQuery(
@@ -661,6 +655,7 @@ internal class PhaseOneSessionMetadata(
             initialSync = CompletableDeferred()
             synchronizedCurrent = false
             epgPublicationDeferred = false
+            pendingEpgUpdatedAt = null
             serverFacts = null
             dvrAccess = CapabilityAccess.UNKNOWN
             capabilityRevision += 1
@@ -861,7 +856,7 @@ internal class PhaseOneSessionMetadata(
                             ?.singleOrNull { entry -> entry.id == id }
                     }
                     reducer.accept(event)
-                    epgReducer.accept(event, estimatedServerTime(event.generation))
+                    val epgEventAccepted = epgReducer.accept(event, estimatedServerTime(event.generation))
                     val dvrEventAccepted = dvrReducer.accept(event)
                     if (dvrEventAccepted && event is MetadataEvent.DvrEntryDeleted) {
                         dvrFailuresReported.remove(event.entryId)
@@ -916,7 +911,7 @@ internal class PhaseOneSessionMetadata(
                             -> channelRefreshTimes = channelRefreshTimes.copy(lastUpdatedAt = now)
                             is MetadataEvent.EventAdded, is MetadataEvent.EventUpdated,
                             is MetadataEvent.EventDeleted,
-                            -> pendingEpgUpdatedAt = now
+                            -> if (epgEventAccepted) pendingEpgUpdatedAt = now
                             else -> if (dvrEventAccepted) {
                                 dvrRefreshTimes = dvrRefreshTimes.copy(lastUpdatedAt = now)
                             }
@@ -1045,27 +1040,6 @@ internal class PhaseOneSessionMetadata(
         synchronized(lock) {
             if (this.generation === generation && epgCoverageRequester === requester) {
                 epgCoverageRequester = null
-            }
-        }
-    }
-
-    override fun recordSuccessfulEpgQuery(
-        generation: GatewayGeneration,
-        channelId: ChannelId,
-        queriedTo: Instant,
-    ) {
-        synchronized(lock) {
-            if (this.generation === generation) {
-                epgReducer.recordSuccessfulQuery(channelId, queriedTo)
-                if (synchronizedCurrent) {
-                    val snapshot = epgReducer.snapshot()
-                    if (snapshot.coverages.any { it.channelId == channelId }) {
-                        val now = acceptanceTime()
-                        pendingEpgUpdatedAt = now
-                        epgLastQueriedAt[channelId] = now
-                    }
-                    publishCurrentEpg(snapshot)
-                }
             }
         }
     }
