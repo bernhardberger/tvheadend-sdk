@@ -86,6 +86,36 @@ import kotlin.time.Instant
 
 internal class FakeTvheadendSessionTest {
     @Test
+    fun `watch and reset retirement after capture preserve application uncertainty`() = runTest {
+        val replies = listOf(
+            DvrProgressResult.Accepted to true,
+            DvrProgressResult.Failed(TvheadendFailure.SERVER_REJECTED, false) to false,
+            DvrProgressResult.Failed(TvheadendFailure.TIMEOUT, true) to true,
+        )
+        for (reset in listOf(false, true)) {
+            for ((reply, mayHaveApplied) in replies) {
+                val fake = FakeTvheadendSession(currentObservation())
+                val proof = fake.captureCurrentSession()
+                val repository = fake.dvrRepository
+                repository.scriptUpdateWatchState(reply)
+                repository.scriptResetResume(reply)
+                fake.afterResult = {
+                    assertEquals(1, repository.watchStateRequests.size + repository.resetResumeRequests.size)
+                    fake.retire()
+                }
+                val result = if (reset) {
+                    repository.resetResume(proof, DvrEntryId(1))
+                } else {
+                    repository.updateWatchState(proof, DvrEntryId(1), true)
+                }
+                assertEquals(DvrProgressResult.Failed(TvheadendFailure.CONNECTION_CHANGED, mayHaveApplied), result)
+                assertEquals(if (reset) 0 else 1, repository.watchStateRequests.size)
+                assertEquals(if (reset) 1 else 0, repository.resetResumeRequests.size)
+            }
+        }
+    }
+
+    @Test
     fun `resume resets script outcomes capture immutable redacted requests and fence expired calls`() = runTest {
         val fake = FakeTvheadendSession(currentObservation())
         val observation = fake.observation.value

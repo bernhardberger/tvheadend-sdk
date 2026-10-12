@@ -277,6 +277,10 @@ public class FakeTvheadendSession(
     @Volatile
     internal var afterAdmission: () -> Unit = {}
 
+    // Test seam after scripted evaluation (including request capture), before retirement mapping.
+    @Volatile
+    internal var afterResult: () -> Unit = {}
+
     // Production looks coverage up in the observation its proof admitted, never a replacement.
     internal fun admittedObservation(currentSession: CurrentSessionObservation): SessionObservation? =
         observation.value.takeIf { current -> current.currentSession === currentSession }
@@ -285,15 +289,18 @@ public class FakeTvheadendSession(
         currentSession: CurrentSessionObservation,
         call: FakeSessionCall,
         expired: T,
+        retired: (T) -> T = { expired },
         result: () -> T,
     ): T {
         currentCoroutineContext().ensureActive()
         record(call)
         if (!isCurrent(currentSession)) return expired
         afterAdmission()
+        if (!isCurrent(currentSession)) return expired
         val value = result()
+        afterResult()
         currentCoroutineContext().ensureActive()
-        return if (isCurrent(currentSession)) value else expired
+        return if (isCurrent(currentSession)) value else retired(value)
     }
 }
 /** Scriptable EPG boundary owned by [FakeTvheadendSession]. */
@@ -552,20 +559,19 @@ public class FakeDvrRepository internal constructor(
         currentSession: CurrentSessionObservation,
         call: FakeSessionCall,
         capture: () -> DvrProgressResult,
-    ): DvrProgressResult {
-        currentCoroutineContext().ensureActive()
-        session.record(call)
-        val expired = DvrProgressResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false)
-        if (!session.isCurrent(currentSession)) return expired
-        session.afterAdmission()
-        if (!session.isCurrent(currentSession)) return expired
-        val result = synchronized(lock) { capture() }
-        currentCoroutineContext().ensureActive()
-        return if (session.isCurrent(currentSession)) result else DvrProgressResult.Failed(
-            TvheadendFailure.CONNECTION_CHANGED,
-            mayHaveApplied = result == DvrProgressResult.Accepted ||
-                (result is DvrProgressResult.Failed && result.mayHaveApplied),
-        )
+    ): DvrProgressResult = session.roundTrip<DvrProgressResult>(
+        currentSession,
+        call,
+        expired = DvrProgressResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false),
+        retired = { result ->
+            DvrProgressResult.Failed(
+                TvheadendFailure.CONNECTION_CHANGED,
+                mayHaveApplied = result == DvrProgressResult.Accepted ||
+                    (result is DvrProgressResult.Failed && result.mayHaveApplied),
+            )
+        },
+    ) {
+        synchronized(lock) { capture() }
     }
 
     /** Scripts the schedule-entry result. */

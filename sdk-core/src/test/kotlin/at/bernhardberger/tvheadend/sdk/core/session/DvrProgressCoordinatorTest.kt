@@ -20,8 +20,12 @@ import java.util.concurrent.CancellationException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -33,6 +37,39 @@ import kotlin.time.Duration.Companion.milliseconds
 
 @OptIn(ExperimentalCoroutinesApi::class)
 internal class DvrProgressCoordinatorTest {
+    @Test
+    fun `progress cancellation after reply propagates with and without a growing lease`() = runTest {
+        for (useLease in listOf(false, true)) {
+            val generation = GatewayGeneration()
+            val gateway = MutationGateway()
+            var commands = 0
+            val proofs = mutableListOf<Boolean>()
+            val coordinator = DvrProgressCoordinator(
+                gateway,
+                onDvrAccessProof = { _, allowed -> proofs += allowed },
+            )
+            coordinator.bindGeneration(generation, 27)
+            coordinator.startAdmission(generation)
+            gateway.progressBehavior = { _, _, _ ->
+                commands++
+                currentCoroutineContext().cancel()
+                GatewayResult.Ok(Unit)
+            }
+            val job = launch(start = CoroutineStart.UNDISPATCHED) {
+                if (useLease) {
+                    coordinator.reportProgress(TestGenerationBoundGrowingLease(generation, DvrEntryId(7)), checkpoint())
+                } else {
+                    coordinator.reportProgress(generation, DvrEntryId(7), checkpoint())
+                }
+                error("Cancelled progress command returned a result")
+            }
+            job.join()
+            assertTrue(job.isCancelled)
+            assertEquals(1, commands)
+            assertTrue(proofs.isEmpty(), "Cancelled reply must not update access proof")
+        }
+    }
+
     @Test
     fun `all unsent progress and cutpoint fences distinguish retirement from revoked admission`() = runTest {
         val retirements: List<Pair<TvheadendFailure, (DvrProgressCoordinator) -> Unit>> = listOf(

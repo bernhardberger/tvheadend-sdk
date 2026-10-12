@@ -29,6 +29,7 @@ import at.bernhardberger.tvheadend.sdk.core.ChannelMediaKind
 import at.bernhardberger.tvheadend.sdk.core.mediaKind
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
+import at.bernhardberger.tvheadend.sdk.core.DvrProgressResult
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult
 import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
@@ -346,14 +347,14 @@ public class StagedSdkConsumer(
     public suspend fun resetResume(
         currentSession: CurrentSessionObservation,
         recordingId: DvrEntryId,
-    ): at.bernhardberger.tvheadend.sdk.core.DvrProgressResult =
+    ): DvrProgressResult =
         session.dvrRepository.resetResume(currentSession, recordingId)
 
     public suspend fun updateWatchState(
-        currentSession: at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation,
+        currentSession: CurrentSessionObservation,
         recordingId: DvrEntryId,
         watched: Boolean,
-    ): at.bernhardberger.tvheadend.sdk.core.DvrProgressResult =
+    ): DvrProgressResult =
         session.dvrRepository.updateWatchState(currentSession, recordingId, watched)
 
     public suspend fun streamProfiles(): StreamProfilesResult = session.getStreamProfiles(
