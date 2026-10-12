@@ -1254,7 +1254,7 @@ private class CoordinatorActor(
                     val seek = attachment?.let(::TimeshiftSeekToken)
                     attachment?.bufferingSeek =
                         (attachment?.availableState() as? LiveTimeshiftState.Available)?.playbackPaused == true
-                    val result = target?.timeshiftControls?.seek(command.target, seek)?.toPublicTimeshiftResult()
+                    val result = target?.timeshiftControls?.seek(command.target, seek, command.ticket)?.toPublicTimeshiftResult()
                         ?: TimeshiftCommandResult.UNAVAILABLE
                     val completed = if (target != null && result.isAccepted && seek != null) {
                         startPausedSeek(
@@ -1299,7 +1299,7 @@ private class CoordinatorActor(
                 try {
                     attachment?.bufferingSeek =
                         (attachment?.availableState() as? LiveTimeshiftState.Available)?.playbackPaused == true
-                    val result = target?.timeshiftControls?.seekContent(command.target, command.selection)
+                    val result = target?.timeshiftControls?.seekContent(command.target, command.selection, command.ticket)
                         ?: TimeshiftContentSeekResult.Replaced
                     val completed = if (target != null && result is TimeshiftContentSeekResult.Completed &&
                         result.command.isAccepted && result.seek != null

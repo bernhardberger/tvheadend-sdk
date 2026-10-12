@@ -85,6 +85,9 @@ import at.bernhardberger.tvheadend.sdk.media3.PlaybackShutdownResult
 import at.bernhardberger.tvheadend.sdk.media3.PlaybackTargetResult
 import at.bernhardberger.tvheadend.sdk.media3.RecordingPlaybackStart
 import at.bernhardberger.tvheadend.sdk.media3.TvheadendPlaybackCoordinator
+import at.bernhardberger.tvheadend.sdk.media3.TvheadendLiveStartBuffer
+import at.bernhardberger.tvheadend.sdk.media3.TvheadendLoadControl
+import at.bernhardberger.tvheadend.sdk.media3.createTvheadendLoadControl
 import at.bernhardberger.tvheadend.sdk.media3.TimeshiftCommandResult
 import at.bernhardberger.tvheadend.sdk.media3.TimeshiftContentTarget
 import at.bernhardberger.tvheadend.sdk.media3.TimeshiftContentSeekResult
@@ -109,8 +112,11 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 
 // These consumer roots retain real implementations and cache serializers under R8, not just fakes.
-public fun stagedConsumer(context: Context): StagedSdkConsumer =
-    StagedSdkConsumer(context, stagedSession(context), ExoPlayer.Builder(context).build())
+public fun stagedConsumer(context: Context): StagedSdkConsumer {
+    val handle = createTvheadendLoadControl(TvheadendLiveStartBuffer())
+    val player = handle.configure(ExoPlayer.Builder(context)).build()
+    return StagedSdkConsumer(context, stagedSession(context), player, handle)
+}
 
 public fun stagedSession(context: Context): TvheadendSession = createTvheadendSession(
     EpgCoveragePolicy.create(),
@@ -180,10 +186,12 @@ public class StagedSdkConsumer(
     context: Context,
     private val session: TvheadendSession,
     player: ExoPlayer,
+    loadControl: TvheadendLoadControl? = null,
 ) {
     private val profileStore: TvheadendServerProfileStore = TvheadendServerProfileStore(context)
     private val coordinator: TvheadendPlaybackCoordinator =
-        createTvheadendPlaybackCoordinator(player)
+        if (loadControl == null) createTvheadendPlaybackCoordinator(player)
+        else createTvheadendPlaybackCoordinator(player, loadControl)
 
     public suspend fun loadServerProfile(): ServerProfileReadResult = profileStore.loadProfile()
 

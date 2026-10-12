@@ -442,6 +442,8 @@ internal class ModuleBoundaryTest {
             "SubscriptionBinaryFixture",
         )
         val expectedMedia3 = setOf(
+            "TvheadendLiveStartBuffer",
+            "TvheadendLoadControl",
             "LivePlaybackObservation",
             "LiveTimeshiftState",
             "TimeshiftContentTarget",
@@ -511,7 +513,8 @@ internal class ModuleBoundaryTest {
             ),
             fakePlaybackFunctions,
         )
-        assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 31)
+        // The load-control and coordinator factories retain stable names with experimental overloads.
+        assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 31, annotatedOverloadCount = 2)
 
         val coordinatorApi = File(
             "../sdk-media3/src/main/kotlin/at/bernhardberger/tvheadend/sdk/media3/" +
@@ -610,6 +613,7 @@ internal class ModuleBoundaryTest {
                         "createTvheadendPlaybackRecovery",
                         "createTvheadendPlaybackCoordinator",
                         "createTvheadendRenderersFactory",
+                        "createTvheadendLoadControl",
                     )
             }
             .forEach { function -> function.referencedPublicTypes().forEach(::enqueue) }
@@ -679,6 +683,7 @@ internal class ModuleBoundaryTest {
         module: String,
         expected: Set<String>,
         unannotatedCount: Int,
+        annotatedOverloadCount: Int = 0,
     ) {
         val source = productionScope(module).files.joinToString("\n") { file -> file.text }
         val declaration = Regex(
@@ -695,7 +700,7 @@ internal class ModuleBoundaryTest {
             .count()
 
         assertEquals(expected, actual)
-        assertEquals(expected.size - unannotatedCount, annotatedCount)
+        assertEquals(expected.size - unannotatedCount + annotatedOverloadCount, annotatedCount)
     }
 
     private fun productionScope(module: String) =

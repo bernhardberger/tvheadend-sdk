@@ -251,6 +251,8 @@ internal class LiveTimeshiftControlBridge(
     ) : this(token, publish, {}, {}, {})
 
     private val lock = Any()
+    /** Installed on the application looper before the source can dispatch a command. */
+    @Volatile internal var skipBuffering: (suspend (Any?, PlayerOperationTicket?, suspend () -> SubscriptionSeekResult) -> SubscriptionSeekResult)? = null
     private var nextAttachmentSequence = 0L
     private var newestBoundSequence = -1L
     private var newestTerminalAttachment: Attachment? = null
@@ -399,9 +401,9 @@ internal class LiveTimeshiftControlBridge(
         }
     }
 
-    suspend fun seek(target: SubscriptionSeekTarget, token: TimeshiftSeekToken? = null): SubscriptionSeekResult? {
+    suspend fun seek(target: SubscriptionSeekTarget, token: TimeshiftSeekToken? = null, ticket: PlayerOperationTicket? = null): SubscriptionSeekResult? {
         val handle = currentHandle() ?: return null
-        val result = performSeek(handle, target, token)
+        val result = performSeek(handle, target, token, ticket)
         if (result is SubscriptionSeekResult.Invalidated ||
             result === SubscriptionSeekResult.SubscriptionEnded
         ) {
@@ -686,7 +688,7 @@ internal class LiveTimeshiftControlBridge(
 
     private class AcknowledgedPause(val subscription: ActiveSubscription, val paused: Boolean)
 
-    suspend fun seekContent(target: TimeshiftContentTarget, selection: TimeshiftSeekSelection? = null): TimeshiftContentSeekResult {
+    suspend fun seekContent(target: TimeshiftContentTarget, selection: TimeshiftSeekSelection? = null, ticket: PlayerOperationTicket? = null): TimeshiftContentSeekResult {
         var resolvedSelection: TimeshiftSeekSelection? = null
         val handle = synchronized(lock) {
             val current = currentHandle() ?: return TimeshiftContentSeekResult.Replaced
@@ -704,7 +706,7 @@ internal class LiveTimeshiftControlBridge(
         val destination = if (resolvedSelection?.boundary == TimeshiftSeekSelection.Boundary.LATEST) {
             SubscriptionSeekTarget.Live
         } else SubscriptionSeekTarget.Absolute(resolvedSelection?.target?.position ?: target.position)
-        val result = performSeek(handle, destination, seek)
+        val result = performSeek(handle, destination, seek, ticket)
         return synchronized(lock) {
             if (currentHandle()?.attachment !== handle.attachment || result === SubscriptionSeekResult.SegmentUnavailable) {
                 return@synchronized TimeshiftContentSeekResult.Replaced
@@ -725,12 +727,14 @@ internal class LiveTimeshiftControlBridge(
         handle: ControlHandle,
         target: SubscriptionSeekTarget,
         token: TimeshiftSeekToken?,
+        ticket: PlayerOperationTicket?,
     ): SubscriptionSeekResult {
         val attempt = SeekAttempt(token)
         synchronized(lock) { handle.attachment.pendingSeeks.addLast(attempt) }
         var orderedAcknowledgement = false
         try {
-            val result = handle.subscription.seek(target, handle.tracks)
+            val dispatch: suspend () -> SubscriptionSeekResult = { handle.subscription.seek(target, handle.tracks) }
+            val result = skipBuffering?.invoke(handle.attachment.periodUid, ticket, dispatch) ?: dispatch()
             orderedAcknowledgement = result === SubscriptionSeekResult.Accepted ||
                 result is SubscriptionSeekResult.AcceptedAt || result === SubscriptionSeekResult.Rejected
             return result

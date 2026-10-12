@@ -125,9 +125,11 @@ internal class PlayerOperationTicket {
     private val state = AtomicReference(OperationState.QUEUED)
     private val cancellationRequested = AtomicBoolean()
     private val cancellationAction = AtomicReference<(() -> Unit)?>(null)
+    private val cancellationRequestAction = AtomicReference<(() -> Unit)?>(null)
 
     fun cancel(): Boolean {
         cancellationRequested.set(true)
+        cancellationRequestAction.get()?.invoke()
         if (!state.compareAndSet(OperationState.QUEUED, OperationState.CANCELLED)) return false
         cancellationAction.get()?.invoke()
         return true
@@ -146,6 +148,12 @@ internal class PlayerOperationTicket {
 
     /** Claimed wire commands still settle; optional post-command buffering may stop early. */
     fun isCancellationRequested(): Boolean = cancellationRequested.get()
+
+    /** Optional in-flight side effect cleanup; does not change claimed command settlement. */
+    fun onCancellationRequest(action: (() -> Unit)?) {
+        cancellationRequestAction.set(action)
+        if (isCancellationRequested()) action?.invoke()
+    }
 
     fun onCancellation(action: () -> Unit) {
         val once = AtomicBoolean()

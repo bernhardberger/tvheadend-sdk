@@ -1,8 +1,11 @@
 package at.bernhardberger.tvheadend.sdk.media3
 
+import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import at.bernhardberger.tvheadend.sdk.core.DvrProgressPolicy
 import at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -47,6 +50,11 @@ public class TvheadendLiveStartBuffer(initial: Duration = 2.seconds) {
  * SDK-owned load-control handle for one application-owned Player/coordinator pair.
  * Sharing a handle across Players is unsupported. The application builds and releases its Player.
  * This handle exposes no Media3 load-control callbacks or allocation internals.
+ *
+ * Coordinator skip marks are published on the Player application looper and atomically consumed
+ * on its playback thread. Target and period fencing prevents late results from rearming a consumed
+ * or replaced mark. Scratch timeline objects belong exclusively to the playback thread; timestamps
+ * use Android elapsed realtime, matching Media3's rebuffer clock.
  */
 @OptIn(UnstableApi::class)
 @ExperimentalTvheadendApi
@@ -68,3 +76,34 @@ public class TvheadendLoadControl internal constructor(internal val delegate: Li
 @ExperimentalTvheadendApi
 public fun createTvheadendLoadControl(liveStartBuffer: TvheadendLiveStartBuffer): TvheadendLoadControl =
     TvheadendLoadControl(LiveStartLoadControl(createTvheadendLoadControl(), liveStartBuffer))
+
+/**
+ * Creates a coordinator using the same [loadControl] handle that configured [player]'s builder.
+ * Actual server skips (including return-to-live) use the live-start buffer for one restart, while
+ * in flight or when that restart begins within 3 s of completion. An existing rebuffer is eligible.
+ * Refusal, cancellation, departure, target replacement and teardown clear the mark. Unconfirmed
+ * dispatched commands retain the bounded grace according to their typed disposition.
+ * The application retains Player ownership, learning, settings and autoplay policy.
+ */
+@OptIn(UnstableApi::class)
+@ExperimentalTvheadendApi
+public fun createTvheadendPlaybackCoordinator(
+    player: ExoPlayer,
+    loadControl: TvheadendLoadControl,
+    progressPolicy: DvrProgressPolicy = DvrProgressPolicy(),
+    recoveryPolicy: PlaybackRecoveryPolicy = PlaybackRecoveryPolicy(),
+    onRecoveryRequired: (PlaybackRecoveryReason) -> Unit = {},
+    onUnsupportedStream: (SubscriptionStreamType) -> Unit = {},
+): TvheadendPlaybackCoordinator {
+    val events = PlaybackPlayerEventAccumulator()
+    return TvheadendPlaybackCoordinator(
+        player = Media3PlaybackCoordinatorPlayer(
+            ExoPlayerCoordinatorPlaybackAccess(player, recoveryPolicy, onUnsupportedStream),
+            events, loadControl.delegate, ::admitRecordingTarget,
+        ),
+        playerEvents = events,
+        progressPolicy = progressPolicy,
+        onRecoveryRequired = onRecoveryRequired,
+        timeSource = SystemPlaybackCoordinatorTimeSource,
+    )
+}

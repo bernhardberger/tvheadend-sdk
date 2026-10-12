@@ -20,6 +20,7 @@ import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFile
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionState
@@ -52,6 +53,126 @@ import org.junit.jupiter.params.provider.ValueSource
 
 internal class Media3PlaybackCoordinatorPlayerTest {
     private var previousBoundsChecks: Boolean? = null
+
+    @ParameterizedTest
+    @CsvSource("relative,false,false", "relative,true,false", "absolute,false,false", "absolute,true,false", "live,false,false", "live,true,false",
+        "relative,true,true", "absolute,true,true", "live,true,true")
+    fun `all coordinator skip entry points publish before dispatch and consume one restart`(path: String, buffering: Boolean, cancel: Boolean) = runTest {
+        val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
+        val events = PlaybackPlayerEventAccumulator()
+        val control = skipLoadControl()
+        val player = Media3PlaybackCoordinatorPlayer(access, events, control) { _, _ -> RecordingAdmission.Completed(null) }
+        val coordinator = TvheadendPlaybackCoordinator(player, events, DvrProgressPolicy(), {}, SystemPlaybackCoordinatorTimeSource)
+        val owner = launch(start = CoroutineStart.UNDISPATCHED) { coordinator.run() }
+        try {
+            coordinator.setLiveTarget(TestCoordinatorLiveTarget())
+            val subscription = FakeTimeshiftSubscription(120.seconds)
+            val attachment = requireNotNull(access.liveControls).newAttachment().also { it.bind(subscription) }
+            val parameters = skipLoadParameters(500, if (buffering) 9_000 else 10_000)
+            attachment.periodUid = parameters.mediaPeriodId.periodUid
+            attachment.packetMapping.accept(0, 50_000_000)
+            attachment.accept(SubscriptionEvent.Timeshift(0, 0, 0, 100_000_000, 100))
+            access.snapshot = PlaybackPlayerSnapshot(Duration.ZERO, null,
+                if (buffering) Player.STATE_BUFFERING else Player.STATE_READY, false, attachment.periodUid)
+            val release = CompletableDeferred<Unit>()
+            subscription.seekAction = {
+                assertFalse(control.shouldStartPlayback(skipLoadParameters(499, if (buffering) 9_000 else 10_000)))
+                if (!cancel) assertTrue(control.shouldStartPlayback(parameters), "Skip must arm before gateway dispatch")
+                release.await()
+                at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekResult.Accepted
+            }
+            val command = async {
+                when (path) {
+                    "relative" -> assertTrue((coordinator.seekTimeshiftBy((-30).seconds) as TimeshiftContentSeekResult.Completed).command.isAccepted)
+                    "absolute" -> assertTrue((coordinator.seekTimeshift(attachment.timeline()!!.select(20.seconds)!!) as TimeshiftContentSeekResult.Completed).command.isAccepted)
+                    "live" -> assertTrue(coordinator.returnToLive().isAccepted)
+                }
+            }
+            runCurrent()
+            assertEquals(1, subscription.seekTargets.size)
+            if (cancel) {
+                command.cancel()
+                runCurrent()
+                assertFalse(control.shouldStartPlayback(parameters), "Caller cancellation clears an in-flight mark")
+            }
+            release.complete(Unit)
+            if (cancel) command.join() else command.await()
+            runCurrent()
+            assertFalse(control.shouldStartPlayback(parameters), "Completion must not resurrect consumed mark")
+        } finally {
+            coordinator.shutdown(1.seconds)
+            owner.join()
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["cancel", "replace", "stop", "close", "depart", "departAtSnapshot", "refuse", "uncertain"])
+    fun `in flight skip marks clear on lifecycle boundaries and late results stay fenced`(mode: String) = runTest {
+        val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
+        val control = skipLoadControl()
+        val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator(), control) { _, _ -> RecordingAdmission.Completed(null) }
+        val token = PlaybackTargetToken()
+        val bridge = controls(token)
+        player.installLive(PlayerOperationTicket(), token, TestCoordinatorLiveTarget(), timeshiftControls = bridge)
+        val subscription = FakeTimeshiftSubscription(120.seconds)
+        val attachment = bridge.newAttachment().also { it.bind(subscription) }
+        val parameters = skipLoadParameters(500)
+        attachment.periodUid = parameters.mediaPeriodId.periodUid
+        access.snapshot = PlaybackPlayerSnapshot(Duration.ZERO, null, Player.STATE_BUFFERING, false, attachment.periodUid)
+        val release = CompletableDeferred<Unit>()
+        subscription.seekAction = {
+            release.await()
+            when (mode) {
+                "refuse" -> at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekResult.Rejected
+                "uncertain" -> at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekResult.Invalidated(
+                    at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekInvalidation.ACKNOWLEDGEMENT_TIMEOUT,
+                )
+                else -> at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekResult.Accepted
+            }
+        }
+        val ticket = PlayerOperationTicket()
+        if (mode == "departAtSnapshot") access.snapshotAction = {
+            access.snapshotAction = null
+            access.replaceWithApplicationItem()
+        }
+        val result = async { bridge.seek(at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget.Live, ticket = ticket) }
+        runCurrent()
+        assertEquals(1, subscription.seekTargets.size)
+        when (mode) {
+            "cancel" -> ticket.cancel()
+            "replace" -> {
+                val replacement = PlaybackTargetToken()
+                player.installLive(PlayerOperationTicket(), replacement, TestCoordinatorLiveTarget(), timeshiftControls = controls(replacement))
+            }
+            "stop" -> player.stop(PlayerOperationTicket())
+            "close" -> player.abandon()
+            "depart" -> access.replaceWithApplicationItem()
+        }
+        if (mode !in listOf("refuse", "uncertain")) assertFalse(control.shouldStartPlayback(parameters))
+        release.complete(Unit)
+        result.await()
+        assertEquals(mode == "uncertain", control.shouldStartPlayback(parameters))
+        assertFalse(control.shouldStartPlayback(parameters))
+        player.abandon()
+    }
+
+    private fun skipLoadControl(): LiveStartLoadControl = LiveStartLoadControl(
+        object : androidx.media3.exoplayer.LoadControl by createTvheadendLoadControl() {
+            override fun shouldStartPlayback(parameters: androidx.media3.exoplayer.LoadControl.Parameters): Boolean = false
+        }, TvheadendLiveStartBuffer(500.milliseconds),
+    ) { 10_000 }
+
+    private fun skipLoadParameters(bufferedMs: Long, rebufferAt: Long = 9_000): androidx.media3.exoplayer.LoadControl.Parameters {
+        val timeline = androidx.media3.exoplayer.source.SinglePeriodTimeline(
+            androidx.media3.common.C.TIME_UNSET, false, false, false, null,
+            MediaItem.Builder().setMediaId(LIVE_MEDIA_ID).build(),
+        )
+        return androidx.media3.exoplayer.LoadControl.Parameters(
+            androidx.media3.exoplayer.analytics.PlayerId("skip-test"), timeline,
+            androidx.media3.exoplayer.source.MediaSource.MediaPeriodId(timeline.getUidOfPeriod(0)),
+            0, bufferedMs * 1_000, 1f, true, true, androidx.media3.common.C.TIME_UNSET, rebufferAt,
+        )
+    }
 
     @org.junit.jupiter.api.BeforeEach
     fun rememberMedia3BoundsChecks() {
@@ -2789,7 +2910,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
     @Test
     fun `application seek from source installation prevents recovery from arming`() = runTest {
         val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
-        val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator(), ::admitRecordingTarget)
+        val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator(), admitRecording = ::admitRecordingTarget)
         val token = PlaybackTargetToken()
         access.addApplicationListener(object : Player.Listener {
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -2817,7 +2938,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
     fun `repeated recovery protects early closing progress until settlement or hold expiry`(resume: String) = runTest {
         val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
         val events = PlaybackPlayerEventAccumulator()
-        val player = Media3PlaybackCoordinatorPlayer(access, events, ::admitRecordingTarget)
+        val player = Media3PlaybackCoordinatorPlayer(access, events, admitRecording = ::admitRecordingTarget)
         val coordinator = TvheadendPlaybackCoordinator(player, events, DvrProgressPolicy(), {}, SystemPlaybackCoordinatorTimeSource)
         val owner = coordinator.launchIn(this)
         val target = TestCoordinatorRecordingTarget()
@@ -2862,7 +2983,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
     fun `pending recovery clears at every ownership boundary and late callbacks stay fenced`(boundary: String) = runTest {
         val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
         val events = PlaybackPlayerEventAccumulator()
-        val player = Media3PlaybackCoordinatorPlayer(access, events, ::admitRecordingTarget)
+        val player = Media3PlaybackCoordinatorPlayer(access, events, admitRecording = ::admitRecordingTarget)
         val coordinator = TvheadendPlaybackCoordinator(player, events, DvrProgressPolicy(), {}, SystemPlaybackCoordinatorTimeSource)
         val owner = launch(start = CoroutineStart.UNDISPATCHED) { coordinator.run() }
         try {
@@ -2894,7 +3015,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
     @Test
     fun `completed recovery observation outlives bounded progress hold then clears on exact seek`() = runTest {
         val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
-        val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator(), ::admitRecordingTarget)
+        val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator(), admitRecording = ::admitRecordingTarget)
         val token = PlaybackTargetToken()
         player.installRecording(PlayerOperationTicket(), token, TestCoordinatorRecordingTarget(), RecordingPlaybackStart.RESUME,
             RecordingRecoveryRequest(80_123.milliseconds))
@@ -2911,7 +3032,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
     fun `coordinator applies configured early fallback and late cutoff without a second bookmark seek`() = runTest {
         val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
         val events = PlaybackPlayerEventAccumulator()
-        val player = Media3PlaybackCoordinatorPlayer(access, events, ::admitRecordingTarget)
+        val player = Media3PlaybackCoordinatorPlayer(access, events, admitRecording = ::admitRecordingTarget)
         val coordinator = TvheadendPlaybackCoordinator(player, events,
             DvrProgressPolicy(orderlyCompletionFraction = 0.8), {}, SystemPlaybackCoordinatorTimeSource)
         val owner = coordinator.launchIn(this)
@@ -2936,7 +3057,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
     @Test
     fun `growing explicit recovery publishes owed position until clamp or timeout`() = runTest {
         val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
-        val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator(), ::admitRecordingTarget)
+        val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator(), admitRecording = ::admitRecordingTarget)
         val target = TestCoordinatorRecordingTarget(
             startedGrowing = true,
             admissionState = CoordinatorRecordingAdmission.Growing(at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability.SUPPORTED),
@@ -2960,7 +3081,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
     @Test
     fun `failed replacement restores a previous recovery settled during staging`() = runTest {
         val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
-        val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator(), ::admitRecordingTarget)
+        val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator(), admitRecording = ::admitRecordingTarget)
         val previous = PlaybackTargetToken()
         val growing = TestCoordinatorRecordingTarget(
             startedGrowing = true,
@@ -2998,7 +3119,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
     fun `caller cancellation after looper claim installs the new owed position`() = runTest {
         val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
         val events = PlaybackPlayerEventAccumulator()
-        val player = Media3PlaybackCoordinatorPlayer(access, events, ::admitRecordingTarget)
+        val player = Media3PlaybackCoordinatorPlayer(access, events, admitRecording = ::admitRecordingTarget)
         val coordinator = TvheadendPlaybackCoordinator(player, events, DvrProgressPolicy(), {}, SystemPlaybackCoordinatorTimeSource)
         val owner = coordinator.launchIn(this)
         try {
@@ -3031,7 +3152,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
     fun `cancelled recovery before looper claim leaves previous pending target untouched`() = runTest {
         val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
         val events = PlaybackPlayerEventAccumulator()
-        val player = Media3PlaybackCoordinatorPlayer(access, events, ::admitRecordingTarget)
+        val player = Media3PlaybackCoordinatorPlayer(access, events, admitRecording = ::admitRecordingTarget)
         val coordinator = TvheadendPlaybackCoordinator(player, events, DvrProgressPolicy(), {}, SystemPlaybackCoordinatorTimeSource)
         val owner = coordinator.launchIn(this)
         try {

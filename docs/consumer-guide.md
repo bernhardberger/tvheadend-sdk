@@ -15,6 +15,7 @@ the application still builds and releases its Player. Use one handle per Player.
 val buffer = TvheadendLiveStartBuffer(500.milliseconds)
 val handle = createTvheadendLoadControl(buffer)
 val player = handle.configure(ExoPlayer.Builder(context)).build()
+val coordinator = createTvheadendPlaybackCoordinator(player, handle)
 buffer.duration = learnedDuration
 ```
 
@@ -24,6 +25,20 @@ next live-start decision. Values must be finite, non-negative whole milliseconds
 within `Int.MAX_VALUE`. Recordings (including growing ones) and ordinary
 1.5-second rebuffers retain their existing policy. The zero-argument unstable
 factory remains available with its original behaviour.
+
+Pass that same handle to the coordinator overload to enable skip-aware restart
+buffering (the coordinator type still has its existing Media3 unstable marker
+until 0.28). Relative/absolute server seeks and return-to-live arm one restart,
+including an already-running rebuffer. A restart begun while the command is in
+flight or within 3 seconds after its completion uses the current live-start
+buffer. Refusal, cancellation, target/period replacement, departure and teardown
+clear the mark; uncertain dispatched outcomes retain the bounded grace.
+
+The coordinator publishes skip marks on the Player application looper, and the
+playback thread atomically consumes them. Neither applications nor their learning
+controllers should signal skips to load control themselves. One handle belongs
+to one Player/coordinator pair. These overloads are the source-compatible bridge
+to 0.28's broader SDK-owned configuration.
 
 ## Choose artifacts
 

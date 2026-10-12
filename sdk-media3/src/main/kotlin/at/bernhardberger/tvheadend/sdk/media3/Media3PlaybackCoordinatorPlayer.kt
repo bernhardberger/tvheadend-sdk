@@ -17,12 +17,15 @@ import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackExit
 import at.bernhardberger.tvheadend.sdk.core.DvrProgressPolicy
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 
 internal enum class PlaybackPlayerInstallStatus {
     STARTED,
@@ -207,6 +210,7 @@ internal interface CoordinatorPlaybackAccess {
 internal class Media3PlaybackCoordinatorPlayer(
     private val access: CoordinatorPlaybackAccess,
     private val events: PlaybackPlayerEventAccumulator,
+    private val loadControl: LiveStartLoadControl? = null,
     private val admitRecording: (CoordinatorRecordingTarget, RecordingTargetStart) -> RecordingAdmission,
 ) : PlaybackCoordinatorPlayer {
     private val executor = PlayerLooperExecutor(access.looper)
@@ -328,6 +332,47 @@ internal class Media3PlaybackCoordinatorPlayer(
         }
     }
 
+    /** Gateway work stays on the actor; publication and state capture stay on the application looper. */
+    private suspend fun withSkipBuffer(
+        token: PlaybackTargetToken,
+        periodUid: Any?,
+        ticket: PlayerOperationTicket?,
+        dispatch: suspend () -> SubscriptionSeekResult,
+    ): SubscriptionSeekResult {
+        val control = loadControl ?: return dispatch()
+        var mark: LiveStartLoadControl.SkipMark? = null
+        var disposition: TimeshiftCommandDisposition? = null
+        try {
+            executor.execute(PlayerOperationTicket()) {
+                access.requireApplicationLooper()
+                val target = ownedTarget(token)?.takeIf { token.isActive() && describesTarget(it) }
+                if (target != null && periodUid != null && ticket?.isCancellationRequested() != true) {
+                    val snapshot = access.snapshot()
+                    if (!snapshot.failed && snapshot.periodUid == periodUid && token.isActive() && describesTarget(target)) {
+                        val started = control.beginSkip(token, periodUid, snapshot.playbackState == Player.STATE_BUFFERING)
+                        mark = started
+                        ticket?.onCancellationRequest {
+                            val cancel = Runnable { control.cancelSkip(started) }
+                            if (access.looper.isCurrent()) cancel.run() else access.looper.post(cancel)
+                        }
+                    }
+                }
+            }
+            return dispatch().also { disposition = it.toPublicTimeshiftResult().disposition }
+        } finally {
+            // Also settles an arm whose executor continuation was cancelled after its runnable claimed.
+            withContext(NonCancellable) {
+                executor.execute(PlayerOperationTicket()) {
+                    access.requireApplicationLooper()
+                    mark?.let { started ->
+                        control.finishSkip(started, disposition.takeUnless { ticket?.isCancellationRequested() == true })
+                    }
+                }
+            }
+            ticket?.onCancellationRequest(null)
+        }
+    }
+
     private fun installLiveOnLooper(
         token: PlaybackTargetToken,
         target: CoordinatorLiveTarget,
@@ -335,6 +380,9 @@ internal class Media3PlaybackCoordinatorPlayer(
         timeshiftControls: LiveTimeshiftControlBridge,
     ): PlaybackPlayerInstallResult {
         access.requireApplicationLooper()
+        timeshiftControls.skipBuffering = { periodUid, ticket, dispatch ->
+            withSkipBuffer(token, periodUid, ticket, dispatch)
+        }
         if (!target.isCurrent) {
             return PlaybackPlayerInstallResult(PlaybackPlayerInstallStatus.NOT_READY)
         }
@@ -683,6 +731,7 @@ internal class Media3PlaybackCoordinatorPlayer(
     }
 
     private fun loseOwnership(installed: InstalledPlayerTarget) {
+        loadControl?.retireTarget(installed.token)
         installed.ownership = ItemOwnership.LOST
         installed.token.releasePlayerItem()
         publishPendingRecovery()
@@ -699,6 +748,7 @@ internal class Media3PlaybackCoordinatorPlayer(
     private inline fun installAfterApplicationReplacementOnLooper(
         install: () -> PlaybackPlayerInstallResult,
     ): PlaybackPlayerInstallResult {
+        active?.let { loadControl?.retireTarget(it.token) }
         // Pending cleanup implies no active target: a new installation cannot pass this barrier
         // until all retired sources are cleaned. Failed rollback retires both candidate targets.
         if (!retryPendingCleanupOnLooper().available) {
@@ -881,6 +931,7 @@ internal class Media3PlaybackCoordinatorPlayer(
         alsoInstalled: InstalledPlayerTarget? = null,
     ): PlayerRetirement {
         var playerAvailable = available
+        loadControl?.retireTarget(installed.token)
         installed.token.retire()
         val terminal = events.retire(installed.token)?.takeIf { it.terminalExit != null }
 

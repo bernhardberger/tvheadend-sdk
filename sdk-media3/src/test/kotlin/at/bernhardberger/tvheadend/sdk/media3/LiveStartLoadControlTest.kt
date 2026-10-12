@@ -25,6 +25,85 @@ internal class LiveStartLoadControlTest {
     private val recording = timeline(MediaItem.EMPTY, true)
 
     @Test
+    fun `skip restart consumes once across playback and application threads and completion cannot resurrect`() {
+        var now = 10_000L
+        val control = LiveStartLoadControl(createTvheadendLoadControl(), TvheadendLiveStartBuffer(500.milliseconds)) { now }
+        control.onPrepared(playerId)
+        val mark = control.beginSkip(PlaybackTargetToken(), live.getUidOfPeriod(0), true)
+        assertFalse(control.shouldStartPlayback(parameters(499, rebuffering = true, rebufferAt = 9_000)))
+        val started = java.util.concurrent.atomic.AtomicBoolean()
+        val playback = Thread { started.set(control.shouldStartPlayback(parameters(500, rebuffering = true, rebufferAt = 9_000))) }
+        playback.start()
+        playback.join()
+        assertTrue(started.get())
+        now += 100
+        control.finishSkip(mark, TimeshiftCommandDisposition.ACCEPTED)
+        assertFalse(control.shouldStartPlayback(parameters(500, rebuffering = true, rebufferAt = now)))
+    }
+
+    @Test
+    fun `grace bounds restart onset not the final readiness decision and preserves unconfirmed skips`() {
+        var now = 10_000L
+        val control = LiveStartLoadControl(createTvheadendLoadControl(), TvheadendLiveStartBuffer(500.milliseconds)) { now }
+        control.onPrepared(playerId)
+        for (disposition in listOf(TimeshiftCommandDisposition.ACCEPTED, TimeshiftCommandDisposition.UNCONFIRMED)) {
+            val mark = control.beginSkip(PlaybackTargetToken(), live.getUidOfPeriod(0), false)
+            now = 11_000
+            control.finishSkip(mark, disposition)
+            now = 20_000
+            assertTrue(control.shouldStartPlayback(parameters(500, rebuffering = true, rebufferAt = 14_000)))
+            val expired = control.beginSkip(PlaybackTargetToken(), live.getUidOfPeriod(0), false)
+            control.finishSkip(expired, disposition)
+            now += 3_001
+            assertFalse(control.shouldStartPlayback(parameters(500, rebuffering = true, rebufferAt = now)))
+            now = 10_000
+        }
+    }
+
+    @Test
+    fun `refusal cancellation retirement and mismatched periods clear marks without late result revival`() {
+        val control = LiveStartLoadControl(createTvheadendLoadControl(), TvheadendLiveStartBuffer(500.milliseconds)) { 10_000 }
+        control.onPrepared(playerId)
+        for (mode in listOf("refused", "cancelled", "retired", "period", "recording")) {
+            val token = PlaybackTargetToken()
+            val mark = control.beginSkip(token, live.getUidOfPeriod(0), true)
+            when (mode) {
+                "refused" -> control.finishSkip(mark, TimeshiftCommandDisposition.NOT_ACCEPTED)
+                "cancelled" -> control.cancelSkip(mark)
+                "retired" -> control.retireTarget(token)
+                "period" -> {
+                    val other = parameters(500, rebuffering = true, periodUid = Any())
+                    // Unknown periods delegate; the fake delegate avoids Media3's own unknown-UID rejection.
+                    val fake = LiveStartLoadControl(object : LoadControl by createTvheadendLoadControl() {
+                        override fun shouldStartPlayback(parameters: LoadControl.Parameters) = false
+                    }, TvheadendLiveStartBuffer(500.milliseconds)) { 10_000 }
+                    val old = fake.beginSkip(token, live.getUidOfPeriod(0), true)
+                    assertFalse(fake.shouldStartPlayback(other))
+                    fake.finishSkip(old, TimeshiftCommandDisposition.ACCEPTED)
+                    assertFalse(fake.shouldStartPlayback(parameters(500, rebuffering = true)))
+                    control.cancelSkip(mark)
+                }
+                "recording" -> assertFalse(control.shouldStartPlayback(parameters(500, timeline = recording, rebuffering = true)))
+            }
+            control.finishSkip(mark, TimeshiftCommandDisposition.ACCEPTED)
+            assertFalse(control.shouldStartPlayback(parameters(500, rebuffering = true)))
+        }
+    }
+
+    @Test
+    fun `old completion and cancellation cannot change an overlapping newer skip`() {
+        val control = LiveStartLoadControl(createTvheadendLoadControl(), TvheadendLiveStartBuffer(500.milliseconds)) { 10_000 }
+        control.onPrepared(playerId)
+        val old = control.beginSkip(PlaybackTargetToken(), live.getUidOfPeriod(0), false)
+        val newer = control.beginSkip(PlaybackTargetToken(), live.getUidOfPeriod(0), true)
+        control.finishSkip(old, TimeshiftCommandDisposition.NOT_ACCEPTED)
+        control.cancelSkip(old)
+        control.finishSkip(newer, TimeshiftCommandDisposition.ACCEPTED)
+        assertTrue(control.shouldStartPlayback(parameters(500, rebuffering = true)))
+        assertFalse(control.shouldStartPlayback(parameters(500, rebuffering = true)))
+    }
+
+    @Test
     fun `defaults preserve two second startup and one and a half second ordinary rebuffer`() {
         val control = prepared(TvheadendLiveStartBuffer())
         assertFalse(control.shouldStartPlayback(parameters(1_999)))
@@ -125,8 +204,10 @@ internal class LiveStartLoadControlTest {
         rebuffering: Boolean = false,
         speed: Float = 1f,
         liveOffset: Long = C.TIME_UNSET,
+        rebufferAt: Long = C.TIME_UNSET,
+        periodUid: Any = if (timeline.isEmpty) Any() else timeline.getUidOfPeriod(0),
     ): LoadControl.Parameters = LoadControl.Parameters(
-        playerId, timeline, MediaPeriodId(if (timeline.isEmpty) Any() else timeline.getUidOfPeriod(0)),
-        0, bufferedMs * 1_000, speed, true, rebuffering, liveOffset, C.TIME_UNSET,
+        playerId, timeline, MediaPeriodId(periodUid),
+        0, bufferedMs * 1_000, speed, true, rebuffering, liveOffset, rebufferAt,
     )
 }

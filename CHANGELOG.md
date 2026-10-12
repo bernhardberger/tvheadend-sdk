@@ -10,6 +10,10 @@ Unreleased; development target.
   configure application-created Player builders without a Media3 unstable opt-in.
   Live startup thresholds can be updated across threads; the 2 s default,
   1.5 s ordinary rebuffer and existing recording policy are preserved.
+- The experimental coordinator overload accepts the same load-control handle
+  used to build its borrowed Player. Server skips use the live-start threshold
+  for one restart, including an existing rebuffer, with a 3 s completion grace
+  and target/period-fenced cancellation and retirement.
 - Experimental `TvheadendPlaybackCoordinator.recoverRecordingTarget` restores a
   caller-captured recording position through the existing resume machinery.
   `pendingRecordingRecoveryPosition` exposes the owed position for repeated retry
