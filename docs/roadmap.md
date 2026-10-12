@@ -52,11 +52,20 @@ coordinator.
 
 ### Media3
 
-4. **Media3 fixes and features must not force SDK majors.** The SDK may use
-   Media3 `@UnstableApi` internally, but stable public SDK signatures expose
-   only stable Media3 types (`ExoPlayer`, `Player`, `MediaItem`).
-5. **Media3 version range.** Each SDK minor declares a supported Media3 range.
-   Media3 upgrades ship in SDK minors.
+4. **`sdk-media3` follows Media3.** `sdk-media3` is the Media3 adapter, and
+   its public API may expose Media3 types, including `@UnstableApi` ones such
+   as `RenderersFactory` and `LoadControl`. When a Media3 upgrade changes such
+   a type, the matching `sdk-media3` signatures may change in an SDK minor,
+   marked `BREAKING` in the changelog. Changes to `sdk-media3` that a Media3
+   upgrade does not require follow the 1.x promise. `sdk-core`,
+   `sdk-playback`, and `sdk-android` get the full 1.x promise. Decided on
+   2026-10-12 instead of hiding Media3 behind SDK-owned types: the player is
+   the only consumer and uses Media3 `@UnstableApi` itself, and an SDK facade
+   over Media3 would grow with every customisation the app needs.
+5. **One Media3 version per SDK release.** Each SDK release names the Media3
+   version it was built and tested with, and applications use that version.
+   SDK internals rely on Media3 internals, so a newer Media3 can fail at
+   runtime. Media3 upgrades ship in SDK minors.
 6. **No repository split.** `sdk-media3` stays in this repository, and all
    five modules share one version.
 
@@ -113,8 +122,6 @@ SDK 1.0 is released when its criteria are met, not by date:
   coordinator.
 - Every stable public declaration is used by the player or marked
   experimental.
-- No stable public `sdk-media3` signature requires a Media3 `@UnstableApi`
-  opt-in.
 - The 1.x compatibility policy and the server compatibility matrix are
   written.
 - A fresh real-server device run covers the playback matrix below.
@@ -182,7 +189,10 @@ stay additive.
 - Resolve the process-wide session factory ignoring policies when an owner
   already exists.
 
-### 0.27: consumer gaps
+### 0.27: consumer gaps (released)
+
+0.27.0 was released on 2026-10-12. Every new API ships behind the
+experimental opt-in; see the [0.27 design note](consumer-gaps-0.27.md).
 
 - Move the player's copied playback policies into the SDK, then delete the
   app copies:
@@ -205,16 +215,17 @@ stay additive.
 
 ### 0.28: Media3 boundary and policy
 
-- Remove Media3 `@UnstableApi` from stable public signatures. Hide
-  `RenderersFactory`, `LoadControl`, and the `ForwardingAudioOutputProvider`
-  subclass behind SDK-owned types or factories. Consumers should no longer
-  need a Media3 unstable opt-in to use the SDK.
+- Document the `sdk-media3` tier (decision 4) in the module KDoc, README, and
+  versioning policy, including which public declarations expose Media3
+  `@UnstableApi` types.
+- Remove the `createTvheadendLoadControl(): LoadControl` overload that the
+  0.27 `TvheadendLoadControl` replaces.
 - Keep the Media3-derived `androidx.media3.extractor.ts` classes as internal
   implementation, and re-sync them on Media3 upgrades.
 - Write the 1.x policy:
   - the compatibility scope, and the status of the opt-in tiers;
   - the deprecation cycle;
-  - the supported Media3 range and the rule for upgrading it;
+  - the Media3 version per release and the rule for upgrading it;
   - the minSdk, compileSdk, JDK and Kotlin rules;
   - the TVHeadend and HTSP server compatibility matrix.
 - Mark every breaking change consistently as `BREAKING` in the changelog.
