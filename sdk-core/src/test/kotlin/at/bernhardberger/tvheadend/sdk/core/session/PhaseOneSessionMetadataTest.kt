@@ -3,6 +3,8 @@
 package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.MetadataRefreshTimes
+import at.bernhardberger.tvheadend.sdk.core.cache.CachedCatalog
+import at.bernhardberger.tvheadend.sdk.core.cache.CachedEpg
 import at.bernhardberger.tvheadend.sdk.core.metadata.EpgReducer
 import at.bernhardberger.tvheadend.sdk.core.metadata.EpgQueryAcceptance
 import kotlin.time.Clock
@@ -1105,8 +1107,9 @@ internal class PhaseOneSessionMetadataTest {
         val seededEpg = EpgSnapshot.create()
 
         assertNull(metadata.publishedSnapshots.value)
-        assertTrue(metadata.seedRetainedSnapshots(seededCatalog, seededEpg))
-        assertFalse(metadata.seedRetainedSnapshots(seededCatalog, seededEpg), "A second seed must be refused")
+        assertTrue(metadata.seedRetainedSnapshots(CachedCatalog(seededCatalog), CachedEpg(seededEpg)))
+        assertFalse(metadata.seedRetainedSnapshots(CachedCatalog(seededCatalog), CachedEpg(seededEpg)),
+            "A second seed must be refused")
 
         val staleChannels = metadata.channelsAndTags.value as ChannelRepositoryState.Stale
         assertSame(seededCatalog, staleChannels.catalog)
@@ -1119,7 +1122,8 @@ internal class PhaseOneSessionMetadataTest {
         metadata.bindGeneration(generation)
         val synchronizing = metadata.channelsAndTags.value as ChannelRepositoryState.Synchronizing
         assertSame(seededCatalog, synchronizing.staleCatalog)
-        assertFalse(metadata.seedRetainedSnapshots(seededCatalog, seededEpg), "A bound generation refuses seeds")
+        assertFalse(metadata.seedRetainedSnapshots(CachedCatalog(seededCatalog), CachedEpg(seededEpg)),
+            "A bound generation refuses seeds")
 
         metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(id = 1)))
         metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
@@ -1145,7 +1149,7 @@ internal class PhaseOneSessionMetadataTest {
         }
 
         metadata.clearAllState()
-        assertTrue(metadata.seedRetainedSnapshots(seededCatalog, null), "A cleared metadata accepts a seed again")
+        assertTrue(metadata.seedRetainedSnapshots(CachedCatalog(seededCatalog), null), "A cleared metadata accepts a seed again")
     }
 
     @Test

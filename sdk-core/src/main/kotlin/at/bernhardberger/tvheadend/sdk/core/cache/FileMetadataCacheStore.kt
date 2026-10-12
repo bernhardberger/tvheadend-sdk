@@ -1,9 +1,11 @@
-@file:OptIn(ExperimentalSerializationApi::class, kotlin.io.path.ExperimentalPathApi::class)
+@file:OptIn(ExperimentalSerializationApi::class, kotlin.io.path.ExperimentalPathApi::class,
+    at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class)
 
 package at.bernhardberger.tvheadend.sdk.core.cache
 
 import at.bernhardberger.tvheadend.sdk.core.CacheStatistics
-import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
+import at.bernhardberger.tvheadend.sdk.core.ChannelId
+import at.bernhardberger.tvheadend.sdk.core.MetadataRefreshTimes
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import java.io.DataInputStream
 import java.io.DataOutputStream
@@ -25,8 +27,8 @@ private const val CATALOG_FILE_NAME = "catalog.bin"
 private const val EPG_FILE_NAME = "epg.bin"
 private const val TMP_FILE_SUFFIX = ".tmp"
 private val LEGACY_NAMESPACE_PATTERN = Regex("[0-9a-f]{32}")
-// EPG2 is the format version: bump this magic for incompatible framing or DTO changes.
-private const val EPG_STREAM_MAGIC = 0x45504732
+// EPG3 is the format version: bump this magic for incompatible framing or DTO changes.
+private const val EPG_STREAM_MAGIC = 0x45504733
 private const val MAX_EPG_CACHE_RECORDS = 250_000
 private const val MAX_EPG_CACHE_RECORD_BYTES = 1_048_576
 
@@ -44,7 +46,7 @@ internal class FileMetadataCacheStore(root: File) : MetadataCacheStore {
 
     private val namespacesRoot: File = File(root, CACHE_ROOT_DIR_NAME)
 
-    override suspend fun loadCatalog(namespace: CacheNamespace, notBefore: Instant): ChannelCatalog? {
+    override suspend fun loadCatalog(namespace: CacheNamespace, notBefore: Instant): CachedCatalog? {
         // Legacy identities cannot be restored safely and would otherwise never age out.
         namespacesRoot.listFiles().orEmpty()
             .filter { LEGACY_NAMESPACE_PATTERN.matches(it.name) }
@@ -62,16 +64,22 @@ internal class FileMetadataCacheStore(root: File) : MetadataCacheStore {
             file.delete()
             return null
         }
-        return decodeModel(file) { envelope.payload.toModel() }
+        return decodeModel(file) {
+            CachedCatalog(envelope.payload.toModel(), MetadataRefreshTimes(
+                envelope.lastSynchronizedAtEpochMillis?.let(Instant::fromEpochMilliseconds),
+                envelope.lastUpdatedAtEpochMillis?.let(Instant::fromEpochMilliseconds),
+            ))
+        }
     }
 
-    override suspend fun loadEpg(namespace: CacheNamespace, notBefore: Instant): EpgSnapshot? {
+    override suspend fun loadEpg(namespace: CacheNamespace, notBefore: Instant): CachedEpg? {
         val file = epgFile(namespace)
         if (!file.isFile) return null
         return try {
             DataInputStream(file.inputStream().buffered()).use { input ->
                 require(input.readInt() == EPG_STREAM_MAGIC)
                 require(Instant.fromEpochMilliseconds(input.readLong()) >= notBefore)
+                val times = input.readRecord(MetadataRefreshTimesDto.serializer()).toModel()
                 val events = List(input.readRecordCount()) {
                     currentCoroutineContext().ensureActive()
                     input.readRecord(EpgEventDto.serializer()).toModel()
@@ -80,8 +88,15 @@ internal class FileMetadataCacheStore(root: File) : MetadataCacheStore {
                     currentCoroutineContext().ensureActive()
                     input.readRecord(EpgCoverageDto.serializer()).toModel()
                 }
+                val queries = LinkedHashMap<ChannelId, Instant>()
+                repeat(input.readRecordCount()) {
+                    currentCoroutineContext().ensureActive()
+                    val record = input.readRecord(EpgQueryTimeDto.serializer())
+                    require(queries.put(ChannelId(record.channelId),
+                        Instant.fromEpochMilliseconds(record.queriedAtEpochMillis)) == null)
+                }
                 require(input.read() == -1)
-                EpgSnapshot.create(events, coverages)
+                CachedEpg(EpgSnapshot.create(events, coverages), times, queries)
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -94,37 +109,47 @@ internal class FileMetadataCacheStore(root: File) : MetadataCacheStore {
         }
     }
 
-    override suspend fun storeCatalog(namespace: CacheNamespace, catalog: ChannelCatalog, storedAt: Instant) {
+    override suspend fun storeCatalog(namespace: CacheNamespace, catalog: CachedCatalog, storedAt: Instant) {
         writeEnvelope(
             file = catalogFile(namespace),
             envelope = CatalogEnvelopeDto(
                 schemaVersion = CATALOG_SCHEMA_VERSION,
                 storedAtEpochMillis = storedAt.toEpochMilliseconds(),
-                payload = catalog.toDto(),
+                payload = catalog.catalog.toDto(),
+                lastSynchronizedAtEpochMillis = catalog.refreshTimes.lastSynchronizedAt?.toEpochMilliseconds(),
+                lastUpdatedAtEpochMillis = catalog.refreshTimes.lastUpdatedAt?.toEpochMilliseconds(),
             ),
             serializer = CatalogEnvelopeDto.serializer(),
         )
     }
 
-    override suspend fun storeEpg(namespace: CacheNamespace, snapshot: EpgSnapshot, storedAt: Instant) {
+    override suspend fun storeEpg(namespace: CacheNamespace, snapshot: CachedEpg, storedAt: Instant) {
         val file = epgFile(namespace)
         val tmp = File(file.parentFile, "${file.name}$TMP_FILE_SUFFIX")
         try {
-            require(snapshot.events.size <= MAX_EPG_CACHE_RECORDS)
-            require(snapshot.coverages.size <= MAX_EPG_CACHE_RECORDS)
+            require(snapshot.snapshot.events.size <= MAX_EPG_CACHE_RECORDS)
+            require(snapshot.snapshot.coverages.size <= MAX_EPG_CACHE_RECORDS)
+            require(snapshot.lastQueriedAt.size <= MAX_EPG_CACHE_RECORDS)
             file.parentFile.mkdirs()
             DataOutputStream(tmp.outputStream().buffered()).use { output ->
                 output.writeInt(EPG_STREAM_MAGIC)
                 output.writeLong(storedAt.toEpochMilliseconds())
-                output.writeInt(snapshot.events.size)
-                for (event in snapshot.events) {
+                output.writeRecord(MetadataRefreshTimesDto.serializer(), snapshot.refreshTimes.toDto())
+                output.writeInt(snapshot.snapshot.events.size)
+                for (event in snapshot.snapshot.events) {
                     currentCoroutineContext().ensureActive()
                     output.writeRecord(EpgEventDto.serializer(), event.toDto())
                 }
-                output.writeInt(snapshot.coverages.size)
-                for (coverage in snapshot.coverages) {
+                output.writeInt(snapshot.snapshot.coverages.size)
+                for (coverage in snapshot.snapshot.coverages) {
                     currentCoroutineContext().ensureActive()
                     output.writeRecord(EpgCoverageDto.serializer(), coverage.toDto())
+                }
+                output.writeInt(snapshot.lastQueriedAt.size)
+                for ((channelId, time) in snapshot.lastQueriedAt) {
+                    currentCoroutineContext().ensureActive()
+                    output.writeRecord(EpgQueryTimeDto.serializer(),
+                        EpgQueryTimeDto(channelId.value, time.toEpochMilliseconds()))
                 }
             }
             currentCoroutineContext().ensureActive()

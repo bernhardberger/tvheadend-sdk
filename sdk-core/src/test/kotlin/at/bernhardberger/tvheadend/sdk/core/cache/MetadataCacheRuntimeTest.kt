@@ -1,3 +1,5 @@
+@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class)
+
 package at.bernhardberger.tvheadend.sdk.core.cache
 
 import at.bernhardberger.tvheadend.sdk.core.CacheStatistics
@@ -6,6 +8,7 @@ import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.MetadataCachePolicy
+import at.bernhardberger.tvheadend.sdk.core.MetadataRefreshTimes
 import at.bernhardberger.tvheadend.sdk.core.session.PublishedSnapshots
 import java.io.File
 import kotlinx.coroutines.CompletableDeferred
@@ -34,6 +37,46 @@ class MetadataCacheRuntimeTest {
     private val namespace = cacheNamespace("server", 9_982, "user")
 
     @Test
+    fun `unchanged content persists new times and retirement flush restores exact freshness`() = runTest {
+        val store = RecordingStore()
+        val runtime = runtime(store, clock = TestClock(this))
+        val catalog = catalog(1)
+        val snapshot = EpgSnapshot.create()
+        val first = MetadataRefreshTimes(START - 1.days, START - 1.days)
+        val publications = MutableStateFlow<PublishedSnapshots?>(
+            PublishedSnapshots(catalog, snapshot, first, first, emptyMap()),
+        )
+        runtime.start(namespace, publications)
+        runCurrent()
+        val updated = first.copy(lastUpdatedAt = START)
+        val queries = mapOf(ChannelId(1) to START)
+        val retired = PublishedSnapshots(catalog, snapshot, updated, updated, queries)
+        publications.value = retired
+        runCurrent()
+        assertEquals(updated, store.catalogTimes)
+        assertEquals(first, store.epgTimes) // still coalescing EPG writes
+        assertEquals(3, store.writes().size)
+        publications.value = null
+        runtime.stop(retired)
+        assertEquals(updated, store.epgTimes)
+        assertEquals(queries, store.queryTimes)
+        assertSame(snapshot, store.epg)
+        val restored = runtime.restore(namespace)
+        val metadata = at.bernhardberger.tvheadend.sdk.core.session.PhaseOneSessionMetadata()
+        assertTrue(metadata.seedRetainedSnapshots(restored.catalog, restored.epgSnapshot))
+        val observed = metadata.observation.value
+        assertSame(snapshot, observed.epgSnapshotForDisplay)
+        assertEquals(updated, observed.channelRefreshTimes)
+        assertEquals(updated, observed.epgRefreshTimes)
+        assertEquals(queries, observed.epgLastQueriedAt)
+        assertEquals(MetadataRefreshTimes(), observed.dvrRefreshTimes)
+        metadata.clearAllState()
+        assertEquals(MetadataRefreshTimes(), metadata.observation.value.epgRefreshTimes)
+        assertTrue(metadata.observation.value.epgLastQueriedAt.isEmpty())
+        runtime.shutdown()
+    }
+
+    @Test
     fun `restore returns snapshots newer than the retention window and refreshes statistics`() = runTest {
         val store = RecordingStore()
         store.catalog = catalog(1)
@@ -42,8 +85,8 @@ class MetadataCacheRuntimeTest {
 
         val restored = runtime.restore(namespace)
 
-        assertSame(store.catalog, restored.catalog)
-        assertSame(store.epg, restored.epgSnapshot)
+        assertSame(store.catalog, restored.catalog?.catalog)
+        assertSame(store.epg, restored.epgSnapshot?.snapshot)
         assertEquals(listOf(Call.Load(START - 7.days)), store.calls.filterIsInstance<Call.Load>())
         assertEquals(CacheStatistics(metadataBytes = 42L, artworkBytes = 0L, artworkEntryCount = 0), runtime.statistics.value)
         runtime.shutdown()
@@ -200,7 +243,7 @@ class MetadataCacheRuntimeTest {
         val release = CompletableDeferred<Unit>()
         var blockWrite = true
         val delayedStore = object : MetadataCacheStore by store {
-            override suspend fun storeCatalog(namespace: CacheNamespace, catalog: ChannelCatalog, storedAt: Instant) {
+            override suspend fun storeCatalog(namespace: CacheNamespace, catalog: CachedCatalog, storedAt: Instant) {
                 if (blockWrite) {
                     blockWrite = false
                     try {
@@ -284,25 +327,32 @@ class MetadataCacheRuntimeTest {
     private class RecordingStore : MetadataCacheStore {
         var catalog: ChannelCatalog? = null
         var epg: EpgSnapshot? = null
+        var catalogTimes = MetadataRefreshTimes()
+        var epgTimes = MetadataRefreshTimes()
+        var queryTimes: Map<ChannelId, Instant> = emptyMap()
         val calls = mutableListOf<Call>()
 
         fun writes(): List<Call> = calls.filter { it is Call.StoreCatalog || it is Call.StoreEpg }
 
-        override suspend fun loadCatalog(namespace: CacheNamespace, notBefore: Instant): ChannelCatalog? {
+        override suspend fun loadCatalog(namespace: CacheNamespace, notBefore: Instant): CachedCatalog? {
             calls += Call.Load(notBefore)
-            return catalog
+            return catalog?.let { CachedCatalog(it, catalogTimes) }
         }
 
-        override suspend fun loadEpg(namespace: CacheNamespace, notBefore: Instant): EpgSnapshot? = epg
+        override suspend fun loadEpg(namespace: CacheNamespace, notBefore: Instant): CachedEpg? =
+            epg?.let { CachedEpg(it, epgTimes, queryTimes) }
 
-        override suspend fun storeCatalog(namespace: CacheNamespace, catalog: ChannelCatalog, storedAt: Instant) {
-            calls += Call.StoreCatalog(catalog)
-            this.catalog = catalog
+        override suspend fun storeCatalog(namespace: CacheNamespace, catalog: CachedCatalog, storedAt: Instant) {
+            calls += Call.StoreCatalog(catalog.catalog)
+            this.catalog = catalog.catalog
+            catalogTimes = catalog.refreshTimes
         }
 
-        override suspend fun storeEpg(namespace: CacheNamespace, snapshot: EpgSnapshot, storedAt: Instant) {
-            calls += Call.StoreEpg(snapshot)
-            epg = snapshot
+        override suspend fun storeEpg(namespace: CacheNamespace, snapshot: CachedEpg, storedAt: Instant) {
+            calls += Call.StoreEpg(snapshot.snapshot)
+            epg = snapshot.snapshot
+            epgTimes = snapshot.refreshTimes
+            queryTimes = snapshot.lastQueriedAt
         }
 
         override suspend fun clear() {

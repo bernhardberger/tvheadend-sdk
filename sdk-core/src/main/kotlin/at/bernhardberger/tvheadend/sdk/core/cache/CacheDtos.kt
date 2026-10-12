@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalSerializationApi::class)
+@file:OptIn(ExperimentalSerializationApi::class, at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class)
 
 package at.bernhardberger.tvheadend.sdk.core.cache
 
@@ -18,6 +18,7 @@ import at.bernhardberger.tvheadend.sdk.core.EpgEvent
 import at.bernhardberger.tvheadend.sdk.core.EpgRating
 import at.bernhardberger.tvheadend.sdk.core.EpgSeriesLinkId
 import at.bernhardberger.tvheadend.sdk.core.EventId
+import at.bernhardberger.tvheadend.sdk.core.MetadataRefreshTimes
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.protobuf.ProtoNumber
@@ -31,6 +32,29 @@ internal data class CatalogEnvelopeDto(
     @ProtoNumber(1) val schemaVersion: Int,
     @ProtoNumber(2) val storedAtEpochMillis: Long,
     @ProtoNumber(3) val payload: ChannelCatalogDto,
+    @ProtoNumber(4) val lastSynchronizedAtEpochMillis: Long? = null,
+    @ProtoNumber(5) val lastUpdatedAtEpochMillis: Long? = null,
+)
+
+@Serializable
+internal data class MetadataRefreshTimesDto(
+    @ProtoNumber(1) val lastSynchronizedAtEpochMillis: Long? = null,
+    @ProtoNumber(2) val lastUpdatedAtEpochMillis: Long? = null,
+)
+
+@Serializable
+internal data class EpgQueryTimeDto(
+    @ProtoNumber(1) val channelId: Long,
+    @ProtoNumber(2) val queriedAtEpochMillis: Long,
+)
+
+internal fun MetadataRefreshTimes.toDto(): MetadataRefreshTimesDto = MetadataRefreshTimesDto(
+    lastSynchronizedAt?.toEpochMilliseconds(), lastUpdatedAt?.toEpochMilliseconds(),
+)
+
+internal fun MetadataRefreshTimesDto.toModel(): MetadataRefreshTimes = MetadataRefreshTimes(
+    lastSynchronizedAtEpochMillis?.let(Instant::fromEpochMilliseconds),
+    lastUpdatedAtEpochMillis?.let(Instant::fromEpochMilliseconds),
 )
 
 @Serializable

@@ -1,11 +1,11 @@
+@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class)
+
 package at.bernhardberger.tvheadend.sdk.core.cache
 
 import at.bernhardberger.tvheadend.sdk.core.CacheStatistics
 import at.bernhardberger.tvheadend.sdk.core.ArtworkContent
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
-import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
-import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.MetadataCachePolicy
 import at.bernhardberger.tvheadend.sdk.core.SessionCache
 import at.bernhardberger.tvheadend.sdk.core.session.PublishedSnapshots
@@ -36,15 +36,15 @@ import kotlin.time.Instant
 
 /** Catalog and EPG snapshot restored from persistence for one namespace. */
 internal class RestoredSnapshots(
-    val catalog: ChannelCatalog?,
-    val epgSnapshot: EpgSnapshot?,
+    val catalog: CachedCatalog?,
+    val epgSnapshot: CachedEpg?,
 )
 
 /**
  * Owns the persistence side of one session: cold-start restore, a coalescing writer, clear.
  *
  * All store access runs on [ioDispatcher]. The writer observes [PublishedSnapshots] and writes
- * the catalog whenever a new instance is published, also while an EPG write waits, and the EPG
+ * the catalog whenever content or receipt times change, also while an EPG write waits, and the EPG
  * at most once per [epgWriteInterval]; [stop] flushes the latest EPG under [NonCancellable],
  * including a publication the session retired before stopping the writer. The store never
  * throws for IO problems, so a failing cache cannot fail the session.
@@ -179,21 +179,21 @@ internal class MetadataCacheRuntime(
         val publications: StateFlow<PublishedSnapshots?>,
     ) {
         lateinit var job: Job
-        private var writtenCatalog: ChannelCatalog? = null
-        private var writtenEpg: EpgSnapshot? = null
+        private var writtenCatalog: PublishedSnapshots? = null
+        private var writtenEpg: PublishedSnapshots? = null
         private var lastEpgWrite: Instant = Instant.DISTANT_PAST
 
         suspend fun run() {
             while (currentCoroutineContext().isActive) {
                 val snapshots = publications.filterNotNull().first(::isNewer)
-                if (snapshots.catalog !== writtenCatalog) {
-                    writeCatalog(snapshots.catalog)
+                if (isNewCatalog(snapshots)) {
+                    writeCatalog(snapshots)
                 }
-                if (snapshots.epgSnapshot !== writtenEpg) {
+                if (isNewEpg(snapshots)) {
                     writeCatalogsUntil(lastEpgWrite + epgWriteInterval)
                     val latest = publications.value ?: snapshots
-                    if (latest.catalog !== writtenCatalog) writeCatalog(latest.catalog)
-                    writeEpg(latest.epgSnapshot)
+                    if (isNewCatalog(latest)) writeCatalog(latest)
+                    writeEpg(latest)
                 }
             }
         }
@@ -205,9 +205,9 @@ internal class MetadataCacheRuntime(
                 if (!remaining.isPositive()) return
                 // Only the wait is bounded; a started catalog write is never cut short.
                 val changed = withTimeoutOrNull(remaining) {
-                    publications.filterNotNull().first { it.catalog !== writtenCatalog }
+                    publications.filterNotNull().first(::isNewCatalog)
                 } ?: return
-                writeCatalog(changed.catalog)
+                writeCatalog(changed)
             }
         }
 
@@ -215,29 +215,39 @@ internal class MetadataCacheRuntime(
             job.cancelAndJoin()
             withContext(NonCancellable + ioDispatcher) {
                 val latest = retiredPublication ?: publications.value ?: return@withContext
-                if (latest.catalog !== writtenCatalog) writeCatalog(latest.catalog)
-                if (latest.epgSnapshot !== writtenEpg) writeEpg(latest.epgSnapshot)
+                if (isNewCatalog(latest)) writeCatalog(latest)
+                if (isNewEpg(latest)) writeEpg(latest)
             }
         }
 
         private fun isNewer(snapshots: PublishedSnapshots): Boolean =
-            snapshots.catalog !== writtenCatalog || snapshots.epgSnapshot !== writtenEpg
+            isNewCatalog(snapshots) || isNewEpg(snapshots)
 
-        private suspend fun writeCatalog(catalog: ChannelCatalog) {
+        private fun isNewCatalog(snapshots: PublishedSnapshots): Boolean =
+            snapshots.catalog !== writtenCatalog?.catalog ||
+                snapshots.channelRefreshTimes != writtenCatalog?.channelRefreshTimes
+
+        private fun isNewEpg(snapshots: PublishedSnapshots): Boolean =
+            snapshots.epgSnapshot !== writtenEpg?.epgSnapshot ||
+                snapshots.epgRefreshTimes != writtenEpg?.epgRefreshTimes ||
+                snapshots.epgLastQueriedAt != writtenEpg?.epgLastQueriedAt
+
+        private suspend fun writeCatalog(snapshots: PublishedSnapshots) {
             accessStore {
-                store.storeCatalog(namespace, catalog, clock.now())
+                store.storeCatalog(namespace, CachedCatalog(snapshots.catalog, snapshots.channelRefreshTimes), clock.now())
                 refreshStatistics()
             }
-            writtenCatalog = catalog
+            writtenCatalog = snapshots
         }
 
-        private suspend fun writeEpg(snapshot: EpgSnapshot) {
+        private suspend fun writeEpg(snapshots: PublishedSnapshots) {
             val now = clock.now()
             accessStore {
-                store.storeEpg(namespace, snapshot, now)
+                store.storeEpg(namespace, CachedEpg(snapshots.epgSnapshot, snapshots.epgRefreshTimes,
+                    snapshots.epgLastQueriedAt), now)
                 refreshStatistics()
             }
-            writtenEpg = snapshot
+            writtenEpg = snapshots
             lastEpgWrite = now
         }
     }

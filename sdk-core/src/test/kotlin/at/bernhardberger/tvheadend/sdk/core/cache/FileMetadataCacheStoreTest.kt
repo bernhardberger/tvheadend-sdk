@@ -1,4 +1,5 @@
-@file:OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+@file:OptIn(kotlinx.serialization.ExperimentalSerializationApi::class,
+    at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class)
 
 package at.bernhardberger.tvheadend.sdk.core.cache
 
@@ -10,6 +11,7 @@ import at.bernhardberger.tvheadend.sdk.core.EpgEvent
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverage
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.EventId
+import at.bernhardberger.tvheadend.sdk.core.MetadataRefreshTimes
 import java.io.File
 import java.io.RandomAccessFile
 import java.nio.file.Files
@@ -34,14 +36,14 @@ internal class FileMetadataCacheStoreTest {
 
     private fun store(): FileMetadataCacheStore = FileMetadataCacheStore(root)
 
-    private fun sampleCatalog(): ChannelCatalog = ChannelCatalog.create(
+    private fun sampleCatalog(): CachedCatalog = CachedCatalog(ChannelCatalog.create(
         channels = listOf(Channel.create(id = ChannelId(1L), name = "Channel One")),
-    )
+    ))
 
-    private fun sampleSnapshot(): EpgSnapshot {
+    private fun sampleSnapshot(): CachedEpg {
         val start = storedAt
         val stop = Instant.fromEpochMilliseconds(storedAt.toEpochMilliseconds() + 3_600_000L)
-        return EpgSnapshot.create(
+        return CachedEpg(EpgSnapshot.create(
             events = listOf(
                 EpgEvent.create(
                     id = EventId(1L),
@@ -56,12 +58,74 @@ internal class FileMetadataCacheStoreTest {
                 EpgCoverage.create(ChannelId(1L), start, stop, stop),
                 EpgCoverage.empty(ChannelId(2L), stop),
             ),
-        )
+        ))
     }
 
     private fun catalogFile(): File = File(File(File(root, "tvheadend-sdk"), namespace.value), "catalog.bin")
 
     private fun epgFile(): File = File(File(File(root, "tvheadend-sdk"), namespace.value), "epg.bin")
+
+    @Test
+    fun `catalog v1 absent optional times remain unknown with usable content`() = runTest {
+        val catalog = sampleCatalog().catalog
+        val legacy = LegacyCatalogEnvelope(1, storedAt.toEpochMilliseconds(), catalog.toDto())
+        catalogFile().parentFile.mkdirs()
+        catalogFile().writeBytes(ProtoBuf.encodeToByteArray(LegacyCatalogEnvelope.serializer(), legacy))
+        val restored = requireNotNull(store().loadCatalog(namespace, storedAt))
+        assertEquals(catalog, restored.catalog)
+        assertEquals(MetadataRefreshTimes(), restored.refreshTimes)
+        assertTrue(catalogFile().isFile)
+    }
+
+    @Test
+    fun `EPG2 is invalidated while catalog remains usable`() = runTest {
+        val cache = store()
+        cache.storeCatalog(namespace, sampleCatalog(), storedAt)
+        java.io.DataOutputStream(epgFile().outputStream()).use {
+            it.writeInt(0x45504732)
+            it.writeLong(storedAt.toEpochMilliseconds())
+            it.writeInt(0) // EPG2 events
+            it.writeInt(0) // EPG2 coverages
+        }
+        assertNull(cache.loadEpg(namespace, storedAt))
+        assertFalse(epgFile().exists())
+        assertEquals(sampleCatalog(), cache.loadCatalog(namespace, storedAt))
+    }
+
+    @Test
+    fun `EPG3 and catalog preserve receipt times independently of storedAt`() = runTest {
+        val times = MetadataRefreshTimes(Instant.fromEpochMilliseconds(100), Instant.fromEpochMilliseconds(234))
+        val queries = mapOf(ChannelId(1) to Instant.fromEpochMilliseconds(234), ChannelId(2) to storedAt)
+        val catalog = sampleCatalog().copy(refreshTimes = times)
+        val epg = sampleSnapshot().copy(refreshTimes = times, lastQueriedAt = queries)
+        val cache = store()
+        cache.storeCatalog(namespace, catalog, storedAt)
+        cache.storeEpg(namespace, epg, storedAt)
+        assertEquals(catalog, cache.loadCatalog(namespace, storedAt))
+        assertEquals(epg, cache.loadEpg(namespace, storedAt))
+        RandomAccessFile(epgFile(), "r").use { assertEquals(0x45504733, it.readInt()) }
+    }
+
+    @Test
+    fun `query time count and record length are bounded before allocation`() = runTest {
+        val payload = CachedEpg(EpgSnapshot.create(), lastQueriedAt = mapOf(ChannelId(1) to storedAt))
+        for (offset in listOf(24L, 28L)) {
+            for (invalid in listOf(-1, Int.MAX_VALUE)) {
+                val cache = store()
+                cache.storeEpg(namespace, payload, storedAt)
+                RandomAccessFile(epgFile(), "rw").use { it.seek(offset); it.writeInt(invalid) }
+                assertNull(cache.loadEpg(namespace, storedAt))
+                assertFalse(epgFile().exists())
+            }
+        }
+    }
+
+    @kotlinx.serialization.Serializable
+    private data class LegacyCatalogEnvelope(
+        @kotlinx.serialization.protobuf.ProtoNumber(1) val schemaVersion: Int,
+        @kotlinx.serialization.protobuf.ProtoNumber(2) val storedAtEpochMillis: Long,
+        @kotlinx.serialization.protobuf.ProtoNumber(3) val payload: ChannelCatalogDto,
+    )
 
     @Test
     fun `large guide round trips through the record stream`() = runTest {
@@ -74,8 +138,8 @@ internal class FileMetadataCacheStoreTest {
             )
         })
         val cache = store()
-        cache.storeEpg(namespace, snapshot, storedAt)
-        val restored = requireNotNull(cache.loadEpg(namespace, storedAt))
+        cache.storeEpg(namespace, CachedEpg(snapshot), storedAt)
+        val restored = requireNotNull(cache.loadEpg(namespace, storedAt)).snapshot
         restored.prepareForObservation()
         assertEquals(snapshot, restored)
         assertEquals(10_000, restored.eventsById.size)
@@ -98,7 +162,8 @@ internal class FileMetadataCacheStoreTest {
 
     @Test
     fun `invalid EPG record counts and lengths are rejected before allocation`() = runTest {
-        for (offset in listOf(12L, 16L)) {
+        // Empty times record occupies a four-byte zero length after the stream header.
+        for (offset in listOf(12L, 16L, 20L)) {
             for (invalid in listOf(-1, Int.MAX_VALUE)) {
                 val cache = store()
                 cache.storeEpg(namespace, sampleSnapshot(), storedAt)
@@ -136,7 +201,7 @@ internal class FileMetadataCacheStoreTest {
             id = EventId(2), start = storedAt, stop = storedAt,
             description = "x".repeat(1_048_577),
         )))
-        cache.storeEpg(namespace, oversized, storedAt)
+        cache.storeEpg(namespace, CachedEpg(oversized), storedAt)
         assertEquals(previous, cache.loadEpg(namespace, storedAt))
         assertFalse(File(epgFile().parentFile, "epg.bin.tmp").exists())
     }
@@ -218,8 +283,8 @@ internal class FileMetadataCacheStoreTest {
         cache.storeEpg(first, epg, storedAt)
         assertNull(cache.loadCatalog(second, storedAt))
         assertNull(cache.loadEpg(second, storedAt))
-        cache.storeCatalog(second, ChannelCatalog.create(), storedAt)
-        cache.storeEpg(second, EpgSnapshot.create(), storedAt)
+        cache.storeCatalog(second, CachedCatalog(ChannelCatalog.create()), storedAt)
+        cache.storeEpg(second, CachedEpg(EpgSnapshot.create()), storedAt)
         assertEquals(catalog, cache.loadCatalog(first, storedAt))
         assertEquals(epg, cache.loadEpg(first, storedAt))
     }
@@ -262,7 +327,7 @@ internal class FileMetadataCacheStoreTest {
         val mismatched = CatalogEnvelopeDto(
             schemaVersion = CATALOG_SCHEMA_VERSION + 1,
             storedAtEpochMillis = storedAt.toEpochMilliseconds(),
-            payload = sampleCatalog().toDto(),
+            payload = sampleCatalog().catalog.toDto(),
         )
         file.writeBytes(ProtoBuf.encodeToByteArray(CatalogEnvelopeDto.serializer(), mismatched))
 
@@ -276,9 +341,9 @@ internal class FileMetadataCacheStoreTest {
         val cache = store()
         val other = cacheNamespace("tvh.example.org", 9982, "bob")
         val catalogA = sampleCatalog()
-        val catalogB = ChannelCatalog.create(
+        val catalogB = CachedCatalog(ChannelCatalog.create(
             channels = listOf(Channel.create(id = ChannelId(2L), name = "Channel Two")),
-        )
+        ))
 
         cache.storeCatalog(namespace, catalogA, storedAt)
         cache.storeCatalog(other, catalogB, storedAt)

@@ -1,4 +1,5 @@
-@file:OptIn(SubscriptionInfrastructureApi::class)
+@file:OptIn(SubscriptionInfrastructureApi::class,
+    at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class)
 
 package at.bernhardberger.tvheadend.sdk.core.session
 
@@ -13,6 +14,8 @@ import java.io.File
 import at.bernhardberger.tvheadend.sdk.core.cache.MetadataCacheStore
 import at.bernhardberger.tvheadend.sdk.core.cache.MetadataCacheRuntime
 import at.bernhardberger.tvheadend.sdk.core.cache.CacheNamespace
+import at.bernhardberger.tvheadend.sdk.core.cache.CachedCatalog
+import at.bernhardberger.tvheadend.sdk.core.cache.CachedEpg
 import at.bernhardberger.tvheadend.sdk.core.MetadataCachePolicy
 import at.bernhardberger.tvheadend.sdk.core.CacheStatistics
 import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
@@ -473,7 +476,7 @@ internal class ConnectionOwnerTest {
         val flushing = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()
         val blockingStore = object : MetadataCacheStore by store {
-            override suspend fun storeEpg(namespace: CacheNamespace, snapshot: EpgSnapshot, storedAt: Instant) {
+            override suspend fun storeEpg(namespace: CacheNamespace, snapshot: CachedEpg, storedAt: Instant) {
                 if (blockEpgWrites) {
                     flushing.complete(Unit)
                     release.await()
@@ -2007,24 +2010,25 @@ private class InMemoryMetadataCacheStore(
     var cleared = false
     var epgLoads = 0
 
-    override suspend fun loadCatalog(namespace: CacheNamespace, notBefore: Instant): ChannelCatalog? = catalog
+    override suspend fun loadCatalog(namespace: CacheNamespace, notBefore: Instant): CachedCatalog? =
+        catalog?.let { CachedCatalog(it) }
 
-    override suspend fun loadEpg(namespace: CacheNamespace, notBefore: Instant): EpgSnapshot? {
+    override suspend fun loadEpg(namespace: CacheNamespace, notBefore: Instant): CachedEpg? {
         epgLoads++
-        return epg
+        return epg?.let { CachedEpg(it) }
     }
 
-    override suspend fun storeCatalog(namespace: CacheNamespace, catalog: ChannelCatalog, storedAt: Instant) {
-        writes += catalog
+    override suspend fun storeCatalog(namespace: CacheNamespace, catalog: CachedCatalog, storedAt: Instant) {
+        writes += catalog.catalog
         writtenNamespaces += namespace
-        this.catalog = catalog
+        this.catalog = catalog.catalog
     }
 
-    override suspend fun storeEpg(namespace: CacheNamespace, snapshot: EpgSnapshot, storedAt: Instant) {
-        writes += snapshot
-        epgWrites += namespace to snapshot
+    override suspend fun storeEpg(namespace: CacheNamespace, snapshot: CachedEpg, storedAt: Instant) {
+        writes += snapshot.snapshot
+        epgWrites += namespace to snapshot.snapshot
         writtenNamespaces += namespace
-        epg = snapshot
+        epg = snapshot.snapshot
     }
 
     override suspend fun clear() {

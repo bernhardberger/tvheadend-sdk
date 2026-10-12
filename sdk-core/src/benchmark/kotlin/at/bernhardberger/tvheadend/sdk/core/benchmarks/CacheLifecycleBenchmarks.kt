@@ -1,7 +1,11 @@
+@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class)
+
 package at.bernhardberger.tvheadend.sdk.core.benchmarks
 
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.cache.FileMetadataCacheStore
+import at.bernhardberger.tvheadend.sdk.core.cache.CachedCatalog
+import at.bernhardberger.tvheadend.sdk.core.cache.CachedEpg
 import at.bernhardberger.tvheadend.sdk.core.cache.cacheNamespace
 import at.bernhardberger.tvheadend.sdk.core.session.PhaseOneSessionMetadata
 import java.lang.management.ManagementFactory
@@ -44,12 +48,14 @@ public open class CacheLifecycleBenchmarks {
         root = Files.createTempDirectory("sdk-cache-benchmark-").toFile()
         store = FileMetadataCacheStore(root)
         val ready = fixture.readyMetadata().observation.value
-        store.storeCatalog(namespace, checkNotNull(ready.channelCatalogForDisplay), fixture.from)
-        store.storeEpg(namespace, checkNotNull(ready.epgSnapshotForDisplay), fixture.from)
+        store.storeCatalog(namespace,
+            CachedCatalog(checkNotNull(ready.channelCatalogForDisplay), ready.channelRefreshTimes), fixture.from)
+        store.storeEpg(namespace, CachedEpg(checkNotNull(ready.epgSnapshotForDisplay), ready.epgRefreshTimes,
+            ready.epgLastQueriedAt), fixture.from)
         checkNotNull(store.loadCatalog(namespace, fixture.from))
-        check(checkNotNull(store.loadEpg(namespace, fixture.from)).events.size == fixture.eventCount)
+        check(checkNotNull(store.loadEpg(namespace, fixture.from)).snapshot.events.size == fixture.eventCount)
         repeat(retainedSnapshots) {
-            val snapshot = checkNotNull(store.loadEpg(namespace, fixture.from))
+            val snapshot = checkNotNull(store.loadEpg(namespace, fixture.from)).snapshot
             snapshot.prepareForObservation()
             retain(snapshot)
         }
@@ -75,12 +81,12 @@ public open class CacheLifecycleBenchmarks {
         val snapshot = checkNotNull(store.loadEpg(namespace, fixture.from))
         check(metadata.seedRetainedSnapshots(catalog, snapshot))
         check(metadata.observation.value.currentSession == null)
-        check(snapshot.events.size == fixture.eventCount)
-        retain(snapshot)
+        check(snapshot.snapshot.events.size == fixture.eventCount)
+        retain(snapshot.snapshot)
         checkpoint("restored")
         fixture.readyMetadata(metadata) { checkpoint("resyncing") }
         fixture.validate(metadata)
-        check(metadata.observation.value.epgSnapshotForDisplay === snapshot)
+        check(metadata.observation.value.epgSnapshotForDisplay === snapshot.snapshot)
         // Keep this reference local to the helper so it cannot retain the guide after clear.
     }
 

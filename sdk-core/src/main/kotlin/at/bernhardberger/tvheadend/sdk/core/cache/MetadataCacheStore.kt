@@ -1,8 +1,12 @@
+@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class)
+
 package at.bernhardberger.tvheadend.sdk.core.cache
 
 import at.bernhardberger.tvheadend.sdk.core.CacheStatistics
 import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
+import at.bernhardberger.tvheadend.sdk.core.ChannelId
+import at.bernhardberger.tvheadend.sdk.core.MetadataRefreshTimes
 import kotlin.time.Instant
 
 /**
@@ -25,6 +29,22 @@ internal value class CacheNamespace(val value: String) {
     }
 }
 
+/** Content and its original local receipt times; disk-write time remains separate. */
+internal data class CachedCatalog(
+    val catalog: ChannelCatalog,
+    val refreshTimes: MetadataRefreshTimes = MetadataRefreshTimes(),
+) {
+    override fun toString(): String = "CachedCatalog(<redacted>)"
+}
+
+internal data class CachedEpg(
+    val snapshot: EpgSnapshot,
+    val refreshTimes: MetadataRefreshTimes = MetadataRefreshTimes(),
+    val lastQueriedAt: Map<ChannelId, Instant> = emptyMap(),
+) {
+    override fun toString(): String = "CachedEpg(<redacted>)"
+}
+
 /**
  * Persistent store for one policy root.
  *
@@ -35,16 +55,16 @@ internal value class CacheNamespace(val value: String) {
  */
 internal interface MetadataCacheStore {
     /** Returns the cached catalog for [namespace] stored no earlier than [notBefore], else `null`. */
-    suspend fun loadCatalog(namespace: CacheNamespace, notBefore: Instant): ChannelCatalog?
+    suspend fun loadCatalog(namespace: CacheNamespace, notBefore: Instant): CachedCatalog?
 
     /** Returns the cached EPG snapshot for [namespace] stored no earlier than [notBefore], else `null`. */
-    suspend fun loadEpg(namespace: CacheNamespace, notBefore: Instant): EpgSnapshot?
+    suspend fun loadEpg(namespace: CacheNamespace, notBefore: Instant): CachedEpg?
 
     /** Atomically replaces the cached catalog for [namespace], recording [storedAt]. */
-    suspend fun storeCatalog(namespace: CacheNamespace, catalog: ChannelCatalog, storedAt: Instant)
+    suspend fun storeCatalog(namespace: CacheNamespace, catalog: CachedCatalog, storedAt: Instant)
 
     /** Atomically replaces the cached EPG snapshot for [namespace], recording [storedAt]. */
-    suspend fun storeEpg(namespace: CacheNamespace, snapshot: EpgSnapshot, storedAt: Instant)
+    suspend fun storeEpg(namespace: CacheNamespace, snapshot: CachedEpg, storedAt: Instant)
 
     /** Deletes every namespace under the root. */
     suspend fun clear()

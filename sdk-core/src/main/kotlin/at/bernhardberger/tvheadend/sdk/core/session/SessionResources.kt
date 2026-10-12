@@ -49,6 +49,8 @@ import at.bernhardberger.tvheadend.sdk.core.SessionObservationStore
 import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.StreamProfilesResult
 import at.bernhardberger.tvheadend.sdk.core.channelCatalogForDisplay
+import at.bernhardberger.tvheadend.sdk.core.cache.CachedCatalog
+import at.bernhardberger.tvheadend.sdk.core.cache.CachedEpg
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
@@ -183,7 +185,7 @@ internal interface SessionMetadata {
      * Publishes them as stale states. Returns `false` without changes when a generation is bound
      * or a snapshot is already retained, so a cached copy never replaces live data.
      */
-    public fun seedRetainedSnapshots(catalog: ChannelCatalog?, epgSnapshot: EpgSnapshot?): Boolean
+    public fun seedRetainedSnapshots(catalog: CachedCatalog?, epgSnapshot: CachedEpg?): Boolean
 
     /** Whether a cache seed is currently eligible, without reading or publishing cache data. */
     public fun canSeedRetainedSnapshots(): Boolean
@@ -580,18 +582,22 @@ internal class PhaseOneSessionMetadata(
         generation == null && publishedCatalog == null && publishedEpgSnapshot == null
     }
 
-    override fun seedRetainedSnapshots(catalog: ChannelCatalog?, epgSnapshot: EpgSnapshot?): Boolean {
+    override fun seedRetainedSnapshots(catalog: CachedCatalog?, epgSnapshot: CachedEpg?): Boolean {
         if (catalog == null && epgSnapshot == null) return false
         synchronized(lock) {
             if (!canSeedRetainedSnapshots()) {
                 return false
             }
-            epgSnapshot?.prepareForObservation()
-            publishedCatalog = catalog
-            publishedEpgSnapshot = epgSnapshot
-            mutableChannelsAndTags.value = catalog?.let { ChannelRepositoryState.Stale(it) }
+            epgSnapshot?.snapshot?.prepareForObservation()
+            publishedCatalog = catalog?.catalog
+            publishedEpgSnapshot = epgSnapshot?.snapshot
+            channelRefreshTimes = catalog?.refreshTimes ?: MetadataRefreshTimes()
+            epgRefreshTimes = epgSnapshot?.refreshTimes ?: MetadataRefreshTimes()
+            epgLastQueriedAt.clear()
+            epgLastQueriedAt.putAll(epgSnapshot?.lastQueriedAt.orEmpty())
+            mutableChannelsAndTags.value = catalog?.let { ChannelRepositoryState.Stale(it.catalog) }
                 ?: ChannelRepositoryState.Empty
-            mutableEpg.value = epgSnapshot?.let(EpgRepositoryState::Stale) ?: EpgRepositoryState.Empty
+            mutableEpg.value = epgSnapshot?.let { EpgRepositoryState.Stale(it.snapshot) } ?: EpgRepositoryState.Empty
             publishMetadataObservation()
         }
         return true
