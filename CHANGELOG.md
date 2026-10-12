@@ -2,7 +2,7 @@
 
 ## [0.27.0]
 
-Unreleased; development target.
+Released 2026-10-12.
 
 ### Added
 
