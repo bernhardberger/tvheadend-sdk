@@ -1,7 +1,10 @@
+@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class)
+
 package at.bernhardberger.tvheadend.sdk.core.metadata
 
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
+import at.bernhardberger.tvheadend.sdk.core.DvrRecordingStream
 import at.bernhardberger.tvheadend.sdk.core.DvrSubscriptionError
 import at.bernhardberger.tvheadend.sdk.core.gateway.AutorecRuleId
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
@@ -27,6 +30,45 @@ import kotlin.time.Instant
 
 internal class DvrReducerTest {
     private val generation = GatewayGeneration()
+
+    @Test
+    fun `recording streams survive omitted updates and completion until files are replaced`() {
+        val reducer = DvrReducer()
+        val stream = DvrRecordingStream(width = 1920, height = 1080)
+        val input = mutableListOf(stream)
+        val file = GatewayDvrRecordingFile(1, null, null, null, null, input)
+        input.clear()
+        assertEquals(listOf(stream), file.streams)
+        assertThrows(UnsupportedOperationException::class.java) {
+            (file.streams as MutableList<DvrRecordingStream>).clear()
+        }
+        reducer.accept(MetadataEvent.DvrEntryAdded(
+            generation, GatewayDvrEntry(id = DvrEntryId(1), files = listOf(file), state = DvrEntryState.RECORDING),
+        ))
+        val retained = reducer.snapshot()
+        for (provenance in GatewayDvrUpdateProvenance.entries) {
+            reducer.accept(MetadataEvent.DvrEntryUpdated(
+                generation, GatewayDvrEntry(id = DvrEntryId(1), state = DvrEntryState.COMPLETED), provenance,
+            ))
+            assertEquals(listOf(stream), reducer.snapshot().entries.single().files?.single()?.streams)
+        }
+        assertThrows(UnsupportedOperationException::class.java) {
+            (retained.entries.single().files?.single()?.streams as MutableList<DvrRecordingStream>).clear()
+        }
+        for (replacement in listOf(null, emptyList(), listOf(DvrRecordingStream()))) {
+            reducer.accept(MetadataEvent.DvrEntryUpdated(
+                generation,
+                GatewayDvrEntry(
+                    id = DvrEntryId(1),
+                    files = listOf(GatewayDvrRecordingFile(1, null, null, null, null, replacement)),
+                ),
+                GatewayDvrUpdateProvenance.FULL,
+            ))
+            assertEquals(replacement, reducer.snapshot().entries.single().files?.single()?.streams)
+        }
+        assertEquals(listOf(stream), retained.entries.single().files?.single()?.streams)
+        assertEquals(DvrEntryState.RECORDING, retained.entries.single().state)
+    }
 
     @Test
     fun `snapshot reconstruction is shared until accepted DVR mutation or clear`() {

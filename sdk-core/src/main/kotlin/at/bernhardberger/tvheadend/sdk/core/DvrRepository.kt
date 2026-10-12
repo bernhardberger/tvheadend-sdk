@@ -1,3 +1,5 @@
+@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class)
+
 package at.bernhardberger.tvheadend.sdk.core
 
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
@@ -143,6 +145,9 @@ public data class DvrRecordingFile internal constructor(
     public val start: Instant?,
     public val stop: Instant?,
     public val sizeBytes: Long?,
+    /** Ordered stream observations; null means absent metadata, while empty means explicitly empty. */
+    @at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
+    public val streams: List<DvrRecordingStream>? = null,
 ) {
     init {
         fileId?.let { requireDvrU32("DvrRecordingFile fileId", it) }
@@ -161,6 +166,18 @@ public data class DvrRecordingFile internal constructor(
             stop: Instant? = null,
             sizeBytes: Long? = null,
         ): DvrRecordingFile = DvrRecordingFile(fileId, null, start, stop, sizeBytes)
+
+        /** Creates a path-free recording-file observation with an immutable stream snapshot. */
+        @at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
+        public fun create(
+            fileId: Long? = null,
+            start: Instant? = null,
+            stop: Instant? = null,
+            sizeBytes: Long? = null,
+            streams: List<DvrRecordingStream>?,
+        ): DvrRecordingFile = DvrRecordingFile(
+            fileId, null, start, stop, sizeBytes, streams?.toDvrImmutableList(),
+        )
     }
 }
 

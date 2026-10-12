@@ -4,6 +4,12 @@ public final class at/bernhardberger/tvheadend/sdk/testing/ChannelCatalogFixture
 	public static synthetic fun create-GQMH6ZU$default (Lat/bernhardberger/tvheadend/sdk/testing/ChannelCatalogFixture;JJJILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/ChannelCatalog;
 }
 
+public final class at/bernhardberger/tvheadend/sdk/testing/DvrRecordingFixture {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/testing/DvrRecordingFixture;
+	public final fun create-bJHDT_Q (JJLjava/util/List;Ljava/util/List;)Lat/bernhardberger/tvheadend/sdk/core/DvrSnapshot;
+	public static synthetic fun create-bJHDT_Q$default (Lat/bernhardberger/tvheadend/sdk/testing/DvrRecordingFixture;JJLjava/util/List;Ljava/util/List;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/DvrSnapshot;
+}
+
 public final class at/bernhardberger/tvheadend/sdk/testing/FakeArtworkLoader : at/bernhardberger/tvheadend/sdk/core/ArtworkLoader {
 	public fun cacheKey-noSgMNw (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;I)Ljava/lang/String;
 	public fun loadArtwork-j_U-F9s (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;ILkotlin/coroutines/Continuation;)Ljava/lang/Object;

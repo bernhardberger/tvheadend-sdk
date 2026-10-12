@@ -34,6 +34,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntry
 import at.bernhardberger.tvheadend.sdk.core.DvrRecordingFile
+import at.bernhardberger.tvheadend.sdk.core.DvrRecordingStream
 import at.bernhardberger.tvheadend.sdk.core.AutorecRule
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleId
 import at.bernhardberger.tvheadend.sdk.core.TimerecRule
@@ -93,6 +94,7 @@ import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionDiagnostics
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionIssue
 import at.bernhardberger.tvheadend.sdk.testing.FakeTvheadendSession
 import at.bernhardberger.tvheadend.sdk.testing.ChannelCatalogFixture
+import at.bernhardberger.tvheadend.sdk.testing.DvrRecordingFixture
 import at.bernhardberger.tvheadend.sdk.testing.FakeServerProfileStore
 import coil3.ComponentRegistry
 import kotlin.time.Duration
@@ -132,6 +134,12 @@ public fun radioCatalogForFake(): List<Channel> = ChannelCatalogFixture.create()
         service.mediaKind == ChannelMediaKind.RADIO
     }
 }
+
+public fun recordingStreamsForFake(): List<DvrRecordingStream> = DvrRecordingFixture.create().entries
+    .flatMap { entry -> entry.files.orEmpty().flatMap { it.streams.orEmpty() } }
+
+public fun recordingFileWithStreams(streams: List<DvrRecordingStream>): DvrRecordingFile =
+    DvrRecordingFile.create(streams = streams)
 
 public fun channelMediaLabel(channel: Channel): String = when (channel.mediaKind) {
     ChannelMediaKind.TV -> "TV"

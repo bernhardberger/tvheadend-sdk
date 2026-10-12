@@ -6,6 +6,11 @@ Unreleased; development target.
 
 ### Added
 
+- Experimental `DvrRecordingFile.streams` exposes per-file codec, language and
+  independent width/height observations without opening playback. Missing and
+  empty metadata remain distinct, and unknown streams retain their positions.
+  Streams participate in recording-file equality and hash codes. `sdk-testing`
+  adds configurable recording fixtures, including audio-only metadata.
 - Experimental `Channel.mediaKind` and `ChannelService.mediaKind` derive the
   open `ChannelMediaKind` classification from service content. TV takes
   precedence over radio; OTHER means the server classified services as neither

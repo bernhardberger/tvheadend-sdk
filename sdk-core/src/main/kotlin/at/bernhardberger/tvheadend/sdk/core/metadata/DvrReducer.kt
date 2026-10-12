@@ -1,3 +1,5 @@
+@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class)
+
 package at.bernhardberger.tvheadend.sdk.core.metadata
 
 import at.bernhardberger.tvheadend.sdk.core.AutorecRule
@@ -605,6 +607,7 @@ private fun GatewayDvrRecordingFile.toPublicOrNull(): DvrRecordingFile? {
         start = start,
         stop = stop,
         sizeBytes = sizeBytes,
+        streams = streams?.toImmutableList(),
     )
 }
 

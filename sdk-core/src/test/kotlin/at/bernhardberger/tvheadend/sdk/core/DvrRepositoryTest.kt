@@ -1,4 +1,7 @@
-@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class)
+@file:OptIn(
+    at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class,
+    at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class,
+)
 
 package at.bernhardberger.tvheadend.sdk.core
 
@@ -15,6 +18,25 @@ import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
 internal class DvrRepositoryTest {
+    @Test
+    fun `recording stream factories snapshot lists distinguish absence and redact text`() {
+        val stream = DvrRecordingStream(language = "private-language", width = 1920)
+        val input = mutableListOf(stream)
+        val file = DvrRecordingFile.create(streams = input)
+        input.clear()
+        assertEquals(listOf(stream), file.streams)
+        assertThrows(UnsupportedOperationException::class.java) {
+            (file.streams as MutableList<DvrRecordingStream>).clear()
+        }
+        assertNull(DvrRecordingFile.create().streams)
+        assertEquals(emptyList<DvrRecordingStream>(), DvrRecordingFile.create(streams = emptyList()).streams)
+        assertEquals(file, DvrRecordingFile.create(streams = listOf(stream.copy())))
+        assertEquals(file.hashCode(), DvrRecordingFile.create(streams = listOf(stream)).hashCode())
+        assertFalse(file == DvrRecordingFile.create(streams = listOf(stream.copy(height = 1080))))
+        assertEquals("DvrRecordingStream(<redacted>)", stream.toString())
+        assertEquals("DvrRecordingFile(<redacted>)", file.toString())
+    }
+
     @Test
     fun `public metadata factories leave server-private fields unset`() {
         val file = DvrRecordingFile.create(fileId = 1, sizeBytes = 4)

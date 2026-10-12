@@ -1,5 +1,6 @@
 @file:OptIn(
     at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class,
+    at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class,
 )
 
 package at.bernhardberger.tvheadend.sdk.core.gateway.htsp
@@ -1614,6 +1615,14 @@ private fun HtspDvrRecordingFile.toGatewayFile(): GatewayDvrRecordingFile = Gate
     start = startEpochSeconds?.let(Instant::fromEpochSeconds),
     stop = stopEpochSeconds?.let(Instant::fromEpochSeconds),
     sizeBytes = sizeBytes,
+    streams = info?.streams?.map { stream ->
+        at.bernhardberger.tvheadend.sdk.core.DvrRecordingStream(
+            type = stream.type?.toGatewayStreamType() ?: SubscriptionStreamType.UNKNOWN,
+            language = stream.language,
+            width = stream.width?.takeIf { it in 1L..Int.MAX_VALUE }?.toInt(),
+            height = stream.height?.takeIf { it in 1L..Int.MAX_VALUE }?.toInt(),
+        )
+    },
 )
 
 private fun HtspAutorecEntryAddMessage.toGatewayAutorecRule(): GatewayAutorecRule = GatewayAutorecRule(

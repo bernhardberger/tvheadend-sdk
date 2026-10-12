@@ -1,4 +1,7 @@
-@file:OptIn(SubscriptionInfrastructureApi::class)
+@file:OptIn(
+    SubscriptionInfrastructureApi::class,
+    at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class,
+)
 
 package at.bernhardberger.tvheadend.sdk.core.gateway.htsp
 
@@ -977,6 +980,60 @@ internal class HtspProtocolGatewayTest {
         assertEquals(30L, updated.nextEventId?.value)
         assertTrue(events.all { it.generation === events.first().generation })
         assertFalse(events.toString().contains("Private"), "Gateway EPG rendering exposed metadata")
+    }
+
+    @Test
+    fun `recording streams map per file preserving placeholders absence and dimension limits`() = runTest {
+        val generation = HtspConnectionGeneration()
+        val fields = mapOf(
+            "id" to 1L,
+            "files" to listOf(
+                mapOf("id" to 1L),
+                mapOf("id" to 2L, "info" to emptyList<Any>()),
+                mapOf("id" to 3L, "info" to listOf(
+                    mapOf("type" to "H264", "width" to 1920L, "height" to 1080L),
+                    mapOf("type" to "AAC", "language" to "private-language"),
+                    mapOf("type" to "future-codec", "width" to 1L, "height" to Int.MAX_VALUE.toLong()),
+                    "malformed",
+                    mapOf("type" to 1L, "language" to 2L, "width" to 0L, "height" to -1L),
+                    mapOf("type" to "H265", "width" to 2_147_483_648L, "height" to 720L),
+                    mapOf("type" to "HEVC", "width" to 1280L, "height" to 0xffff_ffffL),
+                )),
+            ),
+        )
+        // Use the pinned decoder to exercise malformed elements without another SDK parser.
+        val decoder = Class.forName("at.bernhardberger.tvheadend.htsp.messages.HtspServerMessageDecodersKt")
+        val messages = listOf("decodeDvrEntryAdd", "decodeDvrEntryUpdate").map { name ->
+            decoder.getMethod(name, Map::class.java).invoke(null, fields) as HtspServerMessage
+        }
+        val fake = FakeHtspConnection().apply {
+            eventsFlow = flowOf(*messages.mapIndexed { index, message ->
+                HtspTransportEvent.ServerMessage(message, generation, index + 1L)
+            }.toTypedArray())
+        }
+        val events = HtspProtocolGateway(fake).metadata.toList()
+        val entries = listOf(
+            (events[0] as MetadataEvent.DvrEntryAdded).entry,
+            (events[1] as MetadataEvent.DvrEntryUpdated).entry,
+        )
+        for (entry in entries) {
+            val files = requireNotNull(entry.files)
+            assertEquals(listOf(1L, 2L, 3L), files.map { it.fileId })
+            assertEquals(null, files[0].streams)
+            assertEquals(emptyList<Any>(), files[1].streams)
+            val streams = requireNotNull(files[2].streams)
+            assertEquals(
+                listOf(SubscriptionStreamType.H264, SubscriptionStreamType.AAC,
+                    SubscriptionStreamType.UNKNOWN, SubscriptionStreamType.UNKNOWN,
+                    SubscriptionStreamType.UNKNOWN, SubscriptionStreamType.H265, SubscriptionStreamType.H265),
+                streams.map { it.type },
+            )
+            assertEquals(listOf(1920, null, 1, null, null, null, 1280), streams.map { it.width })
+            assertEquals(listOf(1080, null, Int.MAX_VALUE, null, null, 720, null), streams.map { it.height })
+            assertEquals(listOf(null, "private-language", null, null, null, null, null), streams.map { it.language })
+            assertFalse(listOf(entry, files, streams).toString().contains("private"),
+                "Recording metadata rendering exposed server text")
+        }
     }
 
     @Test

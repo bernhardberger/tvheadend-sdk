@@ -1,3 +1,5 @@
+@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class)
+
 package at.bernhardberger.tvheadend.sdk.core.gateway
 
 import kotlin.time.Duration
@@ -394,7 +396,11 @@ internal class GatewayDvrRecordingFile(
     internal val start: Instant?,
     internal val stop: Instant?,
     internal val sizeBytes: Long?,
+    streams: List<at.bernhardberger.tvheadend.sdk.core.DvrRecordingStream>? = null,
 ) {
+    internal val streams: List<at.bernhardberger.tvheadend.sdk.core.DvrRecordingStream>? =
+        streams?.let { java.util.Collections.unmodifiableList(ArrayList(it)) }
+
     override fun toString(): String = "GatewayDvrRecordingFile(<redacted>)"
 }
 

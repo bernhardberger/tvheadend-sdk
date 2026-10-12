@@ -152,6 +152,7 @@ internal class ModuleBoundaryTest {
             "DvrEntryState",
             "DvrSubscriptionError",
             "DvrRecordingFile",
+            "DvrRecordingStream",
             "DvrEntry",
             "AutorecRule",
             "TimerecRule",
@@ -421,6 +422,7 @@ internal class ModuleBoundaryTest {
         val expectedTesting = setOf(
             "FakeArtworkLoader",
             "ChannelCatalogFixture",
+            "DvrRecordingFixture",
             "FakeSessionCache",
             "FakeDvrRepository",
             "FakeEpgRepository",
@@ -487,7 +489,7 @@ internal class ModuleBoundaryTest {
         assertPublicInfrastructure("sdk-android", expectedAndroid, unannotatedCount = expectedAndroid.size)
         // The codec classification and live priority are intentionally stable for sdk-media3 callers.
         assertPublicInfrastructure("sdk-playback", expectedPlayback, unannotatedCount = 12)
-        assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 11)
+        assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 12)
         val fakeSessionSource = File(
             repositoryRoot,
             "sdk-testing/src/main/kotlin/at/bernhardberger/tvheadend/sdk/testing/FakeTvheadendSession.kt",
@@ -631,6 +633,7 @@ internal class ModuleBoundaryTest {
             "at.bernhardberger.tvheadend.sdk.testing.ScriptedSubscriptionConnection",
             "at.bernhardberger.tvheadend.sdk.testing.SubscriptionBinaryFixture",
             "at.bernhardberger.tvheadend.sdk.testing.ChannelCatalogFixture",
+            "at.bernhardberger.tvheadend.sdk.testing.DvrRecordingFixture",
             "at.bernhardberger.tvheadend.sdk.testing.FakeSessionObservation",
             "at.bernhardberger.tvheadend.sdk.testing.FakeTvheadendSession",
             "at.bernhardberger.tvheadend.sdk.testing.FakeServerProfileStore",
