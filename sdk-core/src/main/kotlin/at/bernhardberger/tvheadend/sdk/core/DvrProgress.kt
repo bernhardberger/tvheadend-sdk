@@ -213,6 +213,11 @@ private fun Duration.toPlaybackProgress(markWatched: Boolean): DvrPlaybackProgre
 }
 
 internal interface DvrProgressCommands {
+    public suspend fun resetResume(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+    ): DvrProgressResult = DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
+
     public suspend fun updateWatchState(
         generation: GatewayGeneration,
         id: DvrEntryId,

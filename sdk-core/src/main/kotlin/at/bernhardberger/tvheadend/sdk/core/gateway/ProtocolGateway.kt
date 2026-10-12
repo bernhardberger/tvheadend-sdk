@@ -139,6 +139,11 @@ internal interface ProtocolGateway {
         id: TimerecRuleId,
     ): GatewayResult<Unit>
 
+    public suspend fun resetDvrResume(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+    ): GatewayResult<Unit> = GatewayResult.NotSupported
+
     public suspend fun updateDvrWatchState(
         generation: GatewayGeneration,
         id: DvrEntryId,

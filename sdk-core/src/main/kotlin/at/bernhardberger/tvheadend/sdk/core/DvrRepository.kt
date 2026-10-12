@@ -888,6 +888,17 @@ public interface DvrRepository {
         watched: Boolean,
     ): DvrProgressResult
 
+    /**
+     * Clears resume in one command without changing play count. Uses the same eligibility,
+     * generation checks and failure semantics as [updateWatchState]. A successful reply does not
+     * confirm changed fields; metadata remains authoritative and later playback can overwrite zero.
+     */
+    @at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
+    public suspend fun resetResume(
+        currentSession: CurrentSessionObservation,
+        id: DvrEntryId,
+    ): DvrProgressResult
+
     /** Stops one recording and waits for authoritative stream confirmation. */
     public suspend fun stopEntry(
         currentSession: CurrentSessionObservation,
@@ -958,6 +969,13 @@ internal abstract class CommandBackedDvrRepository(
     private val resolveGeneration: (CurrentSessionObservation) -> GatewayGeneration? = { null },
     private val progressCommands: DvrProgressCommands = DvrProgressCommands.None,
 ) : DvrRepository {
+    final override suspend fun resetResume(
+        currentSession: CurrentSessionObservation,
+        id: DvrEntryId,
+    ): DvrProgressResult = resolveGeneration(currentSession)?.let { generation ->
+        progressCommands.resetResume(generation, id)
+    } ?: DvrProgressResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false)
+
     final override suspend fun updateWatchState(
         currentSession: CurrentSessionObservation,
         id: DvrEntryId,

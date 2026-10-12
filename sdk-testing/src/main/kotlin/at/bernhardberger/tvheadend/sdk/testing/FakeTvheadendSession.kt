@@ -92,6 +92,8 @@ public enum class FakeSessionCall {
     CLEAR_CACHE,
     @ExperimentalTvheadendApi
     DVR_UPDATE_WATCH_STATE,
+    @ExperimentalTvheadendApi
+    DVR_RESET_RESUME,
 }
 /**
  * JVM-only, generation-aware implementation of the complete application session boundary.
@@ -483,6 +485,38 @@ public class FakeDvrRepository internal constructor(
     private var watchStateResult: DvrProgressResult =
         DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
     private val mutableWatchStateRequests = mutableListOf<WatchStateRequest>()
+    private var resetResumeResult: DvrProgressResult =
+        DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
+    private val mutableResetResumeRequests = mutableListOf<ResetResumeRequest>()
+
+    /** A captured resume reset; rendering never includes the entry identifier. */
+    @ExperimentalTvheadendApi
+    public data class ResetResumeRequest(public val id: DvrEntryId) {
+        override fun toString(): String = "ResetResumeRequest(id=<redacted>)"
+    }
+
+    /** Immutable, ordered snapshot of admitted resume resets. Expired calls are not captured. */
+    @ExperimentalTvheadendApi
+    public val resetResumeRequests: List<ResetResumeRequest>
+        get() = synchronized(lock) { Collections.unmodifiableList(mutableResetResumeRequests.toList()) }
+
+    /** Scripts subsequent resume-reset results without changing observed metadata. */
+    @ExperimentalTvheadendApi
+    public fun scriptResetResume(result: DvrProgressResult): Unit {
+        require((result as? DvrProgressResult.Failed)?.failure != TvheadendFailure.OBSERVATION_EXPIRED) {
+            "Scripted resume-reset results require a current observation"
+        }
+        synchronized(lock) { resetResumeResult = result }
+    }
+
+    @ExperimentalTvheadendApi
+    override suspend fun resetResume(
+        currentSession: CurrentSessionObservation,
+        id: DvrEntryId,
+    ): DvrProgressResult = progressResult(currentSession, FakeSessionCall.DVR_RESET_RESUME) {
+        mutableResetResumeRequests += ResetResumeRequest(id)
+        resetResumeResult
+    }
 
     /** A captured watch action; rendering never includes the entry identifier. */
     @ExperimentalTvheadendApi
@@ -509,17 +543,23 @@ public class FakeDvrRepository internal constructor(
         currentSession: CurrentSessionObservation,
         id: DvrEntryId,
         watched: Boolean,
+    ): DvrProgressResult = progressResult(currentSession, FakeSessionCall.DVR_UPDATE_WATCH_STATE) {
+        mutableWatchStateRequests += WatchStateRequest(id, watched)
+        watchStateResult
+    }
+
+    private suspend fun progressResult(
+        currentSession: CurrentSessionObservation,
+        call: FakeSessionCall,
+        capture: () -> DvrProgressResult,
     ): DvrProgressResult {
         currentCoroutineContext().ensureActive()
-        session.record(FakeSessionCall.DVR_UPDATE_WATCH_STATE)
+        session.record(call)
         val expired = DvrProgressResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false)
         if (!session.isCurrent(currentSession)) return expired
         session.afterAdmission()
         if (!session.isCurrent(currentSession)) return expired
-        val result = synchronized(lock) {
-            mutableWatchStateRequests += WatchStateRequest(id, watched)
-            watchStateResult
-        }
+        val result = synchronized(lock) { capture() }
         currentCoroutineContext().ensureActive()
         return if (session.isCurrent(currentSession)) result else DvrProgressResult.Failed(
             TvheadendFailure.CONNECTION_CHANGED,

@@ -19,7 +19,7 @@ in a later minor; none is stable on arrival. Item 9 is documentation only.
 | 1. Recover a recording at a position | `sdk-media3` | `recoverRecordingTarget`, pending-position observation | Experimental | No | 5a–5c |
 | 2. Bounded live retune budget | `sdk-playback` | `LiveRetuneBudget`, `LiveRetuneDecision` | Experimental | No | 3 |
 | 3. Live-start buffer and timeshift skips | `sdk-media3` | SDK-owned load-control handle and mutable live-start buffer | Experimental | No | 6a–6c |
-| 4. Watched/unwatched and reset resume | `sdk-core` | `DvrRepository.updateWatchState` (**BREAKING** for implementors) | Experimental | Yes | 7, after decision |
+| 4. Watched/unwatched and reset resume | `sdk-core` | `DvrRepository.updateWatchState`, `resetResume` (**BREAKING** for implementors) | Experimental | Yes | 7, decided |
 | 5. Metadata refresh times | `sdk-core` | Observation-side domain times and per-channel query times | Experimental | No | 4 |
 | 6. Recording stream information | `sdk-core` | `DvrRecordingFile.streams` | Experimental | No | 2 |
 | 7. Radio/TV classification | `sdk-core` | `Channel.mediaKind`, `ChannelService.mediaKind` | Experimental | No | 1 |
@@ -36,7 +36,9 @@ remains a separate 0.27 roadmap item, outside this API note.
    **Decided: yes, both actions clear resume.** Follow common player practice
    (Plex, Jellyfin/Emby, Kodi): one Boolean watch-state command sets or resets
    the count and sends position zero atomically at the HTSP-command boundary.
-   No patch type or standalone reset-resume API in 0.27. See item 4.
+    No patch type. **Follow-up decision (2026-10-12):** include standalone
+    `resetResume` as a comfort feature, avoiding the watched → unwatched workaround.
+    It clears resume and preserves play count. See item 4.
 2. **Does “upcoming matches” mean recordings the server has scheduled, or all
    EPG events a rule might match?** Recommend **server-scheduled recordings
    only** for 0.27, named `upcomingRecordings`. The existing rule links are
@@ -431,7 +433,7 @@ until 6b is ready, and complete the migration only in 6c.
 **Owner decision:** no; this is the narrow compatibility bridge required by
 the already accepted 0.28 boundary, with existing default behaviour preserved.
 
-## 4. Watched/unwatched outside playback (both clear resume)
+## 4. Watched/unwatched and standalone resume reset outside playback
 
 ### Current state and wire facts
 
@@ -493,12 +495,23 @@ public suspend fun updateWatchState(
     id: DvrEntryId,
     watched: Boolean,
 ): DvrProgressResult
+
+@ExperimentalTvheadendApi
+public suspend fun resetResume(
+    currentSession: CurrentSessionObservation,
+    id: DvrEntryId,
+): DvrProgressResult
 ```
 
 **Owner decision:** `watched=true` maps to SET (1, preserving an existing
 positive count upstream), false to RESET (0). Both send position zero in
-**one** `updateDvrEntry` command. There is no `DvrWatchStateUpdate` patch type
-or standalone reset-resume API; a separate reset can be considered later.
+**one** `updateDvrEntry` command. There is no `DvrWatchStateUpdate` patch type.
+The standalone `resetResume` comfort command sends position zero and omits
+play count, preserving it with the same semantics as `DVR_PROGRESS_KEEP_PLAY_COUNT`.
+The HTSP library omits null `playCount`; upstream leaves the initial -1 (unchanged)
+when `playcount` is absent, just as for KEEP
+(`/root/.local/share/opencode/repos/github.com/tvheadend/tvheadend/src/htsp_server.c:2179,2214-2234`).
+Both commands share the eligibility, result, latch and generation rules below.
 Do not read-modify-write the old count or position and do not fake playback.
 Only these fields and the entry id are sent. Do not synthesize other update
 fields. Do not promise universal preservation by the generic server endpoint:
@@ -545,7 +558,8 @@ the existing result is sealed with open `TvheadendFailure`. Its exact
 failures as safe labels/boolean only.
 
 **Tests and fakes:** gateway tests prove SET/RESET versus INCR, zero resume for
-both actions, protocol/access refusal and exact request fields. With an
+both actions, and standalone reset's zero position with absent play count,
+protocol/access refusal and exact request fields. With an
 injected gateway, prove pre-dispatch expiration, accepted reply followed by
 retirement (`mayHaveApplied=true`), timeout/malformed reply, cancellation,
 no-op acceptance and authoritative async updates. Add scripted results and
@@ -555,8 +569,8 @@ local NOT_SUPPORTED/SERVER_REJECTED; simulate successful no-change replies.
 Prove an explicit per-entry refusal does not disable a later progress command
 for a different entry, while a genuine unsupported-protocol result still does.
 
-**BREAKING:** adding an abstract member to the existing public `DvrRepository`
-requires implementors to change, despite the member's experimental annotation.
+**BREAKING:** adding abstract members to the existing public `DvrRepository`
+requires implementors to change, despite the members' experimental annotations.
 Record the `BREAKING` changelog note and migrate the in-repo implementation and
 `sdk-testing`'s `FakeDvrRepository`
 (`sdk-testing/src/main/kotlin/at/bernhardberger/tvheadend/sdk/testing/FakeTvheadendSession.kt:461-509`),

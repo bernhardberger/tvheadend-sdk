@@ -343,6 +343,12 @@ public class StagedSdkConsumer(
         channelId: ChannelId,
     ): LivePlaybackTargetResult = coordinator.setLiveTarget(session, currentSession, channelId)
 
+    public suspend fun resetResume(
+        currentSession: CurrentSessionObservation,
+        recordingId: DvrEntryId,
+    ): at.bernhardberger.tvheadend.sdk.core.DvrProgressResult =
+        session.dvrRepository.resetResume(currentSession, recordingId)
+
     public suspend fun updateWatchState(
         currentSession: at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation,
         recordingId: DvrEntryId,

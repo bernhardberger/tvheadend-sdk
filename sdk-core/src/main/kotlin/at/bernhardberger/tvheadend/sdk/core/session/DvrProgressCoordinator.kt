@@ -85,6 +85,16 @@ internal class DvrProgressCoordinator(
         }
     }
 
+    override suspend fun resetResume(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+    ): DvrProgressResult = performProgressCommand(
+        expectedGeneration = generation,
+        admissionExpired = TvheadendFailure.OBSERVATION_EXPIRED,
+        targetIsCurrent = { true },
+        command = { gateway.resetDvrResume(it, id) },
+    )
+
     override suspend fun updateWatchState(
         generation: GatewayGeneration,
         id: DvrEntryId,

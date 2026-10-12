@@ -25,7 +25,9 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeDvrRepository : a
 	public fun deleteTimerecRule-m_EujJA (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun emitChange (Lat/bernhardberger/tvheadend/sdk/core/DvrChange;)V
 	public fun getChanges ()Lkotlinx/coroutines/flow/Flow;
+	public final fun getResetResumeRequests ()Ljava/util/List;
 	public final fun getWatchStateRequests ()Ljava/util/List;
+	public fun resetResume-jvmoZCg (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun scheduleEntry (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Lat/bernhardberger/tvheadend/sdk/core/DvrScheduleRequest;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun scriptCancelEntry (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
 	public final fun scriptCreateAutorecRule (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
@@ -33,6 +35,7 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeDvrRepository : a
 	public final fun scriptDeleteAutorecRule (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
 	public final fun scriptDeleteEntry (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
 	public final fun scriptDeleteTimerecRule (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
+	public final fun scriptResetResume (Lat/bernhardberger/tvheadend/sdk/core/DvrProgressResult;)V
 	public final fun scriptScheduleEntry (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
 	public final fun scriptStopEntry (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
 	public final fun scriptUpdateAutorecRule (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult;)V
@@ -44,6 +47,17 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeDvrRepository : a
 	public fun updateEntry-YimeFxE (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;JLat/bernhardberger/tvheadend/sdk/core/DvrEntryUpdate;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun updateTimerecRule-dy4Dx4M (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Ljava/lang/String;Lat/bernhardberger/tvheadend/sdk/core/TimerecRuleUpdate;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun updateWatchState-YimeFxE (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;JZLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/testing/FakeDvrRepository$ResetResumeRequest {
+	public synthetic fun <init> (JLkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1-YcJ-2to ()J
+	public final fun copy-lyT0IZA (J)Lat/bernhardberger/tvheadend/sdk/testing/FakeDvrRepository$ResetResumeRequest;
+	public static synthetic fun copy-lyT0IZA$default (Lat/bernhardberger/tvheadend/sdk/testing/FakeDvrRepository$ResetResumeRequest;JILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/testing/FakeDvrRepository$ResetResumeRequest;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getId-YcJ-2to ()J
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/testing/FakeDvrRepository$WatchStateRequest {
@@ -115,6 +129,7 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeSessionCall : jav
 	public static final field DVR_DELETE_AUTOREC_RULE Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
 	public static final field DVR_DELETE_ENTRY Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
 	public static final field DVR_DELETE_TIMEREC_RULE Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
+	public static final field DVR_RESET_RESUME Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
 	public static final field DVR_SCHEDULE_ENTRY Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
 	public static final field DVR_STOP_ENTRY Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
 	public static final field DVR_UPDATE_AUTOREC_RULE Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;

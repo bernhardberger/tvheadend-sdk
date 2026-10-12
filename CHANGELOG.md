@@ -6,6 +6,8 @@ Unreleased; development target.
 
 ### Added
 
+- Experimental `DvrRepository.resetResume(currentSession, id)` clears resume in
+  one command while preserving play count, sharing watch-state command rules.
 - Experimental `DvrRepository.updateWatchState(currentSession, id, watched)` marks
   watched or unwatched and clears resume in one command. A successful reply is
   accepted, not confirmation of changed fields; asynchronous metadata remains
@@ -48,8 +50,8 @@ Unreleased; development target.
 
 ### Changed
 
-- **BREAKING:** `DvrRepository` has a new abstract `updateWatchState` member.
-  Implementors must implement it despite its experimental annotation.
+- **BREAKING:** `DvrRepository` has new abstract `updateWatchState` and `resetResume` members.
+  Implementors must implement both despite their experimental annotations.
 - Persist refresh times alongside cached channel and EPG content. The EPG cache
   format moves to EPG3; previous EPG caches are discarded and rebuilt automatically.
   The first offline start has no cached guide until it is refetched. Cached catalog

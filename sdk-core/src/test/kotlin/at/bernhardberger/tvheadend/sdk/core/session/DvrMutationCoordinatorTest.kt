@@ -784,6 +784,14 @@ private fun dvrUpdated(
     )
 
 internal class MutationGateway : ProtocolGateway {
+    internal var resetResumeBehavior: suspend (GatewayGeneration, DvrEntryId) -> GatewayResult<Unit> =
+        { _, _ -> GatewayResult.NotSupported }
+
+    override suspend fun resetDvrResume(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+    ): GatewayResult<Unit> = resetResumeBehavior(generation, id)
+
     internal var watchStateBehavior: suspend (
         GatewayGeneration,
         DvrEntryId,

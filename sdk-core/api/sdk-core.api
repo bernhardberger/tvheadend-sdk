@@ -1239,6 +1239,7 @@ public abstract interface class at/bernhardberger/tvheadend/sdk/core/DvrReposito
 	public abstract fun deleteEntry-jvmoZCg (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun deleteTimerecRule-m_EujJA (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun getChanges ()Lkotlinx/coroutines/flow/Flow;
+	public abstract fun resetResume-jvmoZCg (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun scheduleEntry (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Lat/bernhardberger/tvheadend/sdk/core/DvrScheduleRequest;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun stopEntry-jvmoZCg (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun updateAutorecRule-VXX7Pvs (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Ljava/lang/String;Lat/bernhardberger/tvheadend/sdk/core/AutorecRuleUpdate;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;

@@ -86,6 +86,56 @@ import kotlin.time.Instant
 
 internal class FakeTvheadendSessionTest {
     @Test
+    fun `resume resets script outcomes capture immutable redacted requests and fence expired calls`() = runTest {
+        val fake = FakeTvheadendSession(currentObservation())
+        val observation = fake.observation.value
+        val proof = checkNotNull(observation.currentSession)
+        val repository = fake.dvrRepository
+        repository.scriptResetResume(DvrProgressResult.Accepted)
+        assertSame(DvrProgressResult.Accepted, repository.resetResume(proof, DvrEntryId(987654)))
+        val captured = repository.resetResumeRequests
+        assertEquals(listOf(FakeDvrRepository.ResetResumeRequest(DvrEntryId(987654))), captured)
+        assertEquals("ResetResumeRequest(id=<redacted>)", captured.single().toString())
+        val refusal = DvrProgressResult.Failed(TvheadendFailure.SERVER_REJECTED, false)
+        repository.scriptResetResume(refusal)
+        assertEquals(refusal, repository.resetResume(proof, DvrEntryId(2)))
+        assertEquals(2, repository.resetResumeRequests.size)
+        assertEquals(1, captured.size)
+        assertThrows(UnsupportedOperationException::class.java) { (captured as MutableList).clear() }
+        assertSame(observation, fake.observation.value)
+        assertThrows(IllegalArgumentException::class.java) {
+            repository.scriptResetResume(DvrProgressResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, false))
+        }
+        fake.replaceGeneration(currentObservation())
+        assertEquals(DvrProgressResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, false),
+            repository.resetResume(proof, DvrEntryId(3)))
+        assertEquals(2, repository.resetResumeRequests.size)
+        assertEquals(List(3) { FakeSessionCall.DVR_RESET_RESUME }, fake.calls)
+    }
+
+    @Test
+    fun `reset fake checks retirement at admission and propagates cancellation`() = runTest {
+        val fake = FakeTvheadendSession(currentObservation())
+        val proof = checkNotNull(fake.observation.value.currentSession)
+        fake.dvrRepository.scriptResetResume(DvrProgressResult.Accepted)
+        fake.afterAdmission = { fake.retire() }
+        assertEquals(DvrProgressResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, false),
+            fake.dvrRepository.resetResume(proof, DvrEntryId(1)))
+        assertTrue(fake.dvrRepository.resetResumeRequests.isEmpty())
+        val current = FakeTvheadendSession(currentObservation())
+        val cancellation = CancellationException("cancelled")
+        current.afterAdmission = { throw cancellation }
+        var caught: CancellationException? = null
+        try {
+            current.dvrRepository.resetResume(checkNotNull(current.observation.value.currentSession), DvrEntryId(1))
+        } catch (failure: CancellationException) {
+            caught = failure
+        }
+        assertSame(cancellation, caught)
+        assertTrue(current.dvrRepository.resetResumeRequests.isEmpty())
+    }
+
+    @Test
     fun `watch actions script outcomes capture safe immutable requests and expire old proofs`() = runTest {
         val fake = FakeTvheadendSession(currentObservation())
         val observation = fake.observation.value
@@ -382,6 +432,8 @@ internal class FakeTvheadendSessionTest {
         val watchFailure = DvrProgressResult.Failed(TvheadendFailure.CONNECTION_LIMIT, false)
         fake.dvrRepository.scriptUpdateWatchState(watchFailure)
         assertSame(watchFailure, fake.dvrRepository.updateWatchState(current, DvrEntryId(1), true))
+        fake.dvrRepository.scriptResetResume(watchFailure)
+        assertSame(watchFailure, fake.dvrRepository.resetResume(current, DvrEntryId(1)))
         assertEquals(FakeSessionCall.entries.drop(4), fake.calls)
     }
 

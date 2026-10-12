@@ -563,7 +563,10 @@ not confirmed changes: the server may ignore progress on scheduled, missed or
 invalid entries. Observe metadata for actual changes; later playback checkpoints
 can overwrite the reset. An expired observation fails before dispatch with
 `OBSERVATION_EXPIRED` and `mayHaveApplied=false`. A per-entry refusal does not
-disable progress for other entries. There is no standalone reset-resume command.
+disable progress for other entries. Experimental `dvrRepository.resetResume(currentSession, id)`
+clears resume without changing play count: one command sends position zero and omits
+play count (the server's KEEP semantics). It has the same eligibility, generation,
+failure and metadata-confirmation rules as `updateWatchState`.
 `sdk-testing` provides experimental result scripting and immutable, safely
 rendered `watchStateRequests` on `FakeDvrRepository`.
 
