@@ -213,21 +213,36 @@ experimental opt-in; see the [0.27 design note](consumer-gaps-0.27.md).
   Android TV disallows media picture-in-picture, so this is not needed for
   the Android TV 1.0.
 
-### 0.28: Media3 boundary and policy
+### Next 0.x minors: player-driven gaps
 
-- Document the `sdk-media3` tier (decision 4) in the module KDoc, README, and
-  versioning policy, including which public declarations expose Media3
-  `@UnstableApi` types.
+The owner decided on 2026-10-12 not to start the 1.0 track yet. 0.x minors
+continue to close gaps the player finds, with new API behind the experimental
+opt-in.
+
+- Gaps from the player as it approaches its release candidate.
+- Gaps from an optional mobile proof-of-concept app. Mobile is likely to test
+  what Android TV does not: picture-in-picture (a second coordinator per
+  session), background playback from a media service with deep sleep, and
+  network changes between Wi-Fi and mobile data.
 - Remove the `createTvheadendLoadControl(): LoadControl` overload that the
   0.27 `TvheadendLoadControl` replaces.
 - Keep the Media3-derived `androidx.media3.extractor.ts` classes as internal
   implementation, and re-sync them on Media3 upgrades.
-- Write the 1.x policy:
+
+### 1.0 groundwork (parked)
+
+Starts when the player is close to its release candidate and, if it is built,
+the mobile proof of concept has shown no major SDK gaps.
+
+- Review and finish the
+  [draft 1.x compatibility policy](compatibility-policy.md) and answer its
+  open questions. It covers:
   - the compatibility scope, and the status of the opt-in tiers;
+  - the `sdk-media3` tier (decision 4) and the Media3 version per release;
   - the deprecation cycle;
-  - the Media3 version per release and the rule for upgrading it;
   - the minSdk, compileSdk, JDK and Kotlin rules;
   - the TVHeadend and HTSP server compatibility matrix.
+- Document the `sdk-media3` tier in the module KDoc and README.
 - Mark every breaking change consistently as `BREAKING` in the changelog.
 - Add KDoc to public properties and enum entries.
 
