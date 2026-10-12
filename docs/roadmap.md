@@ -88,6 +88,22 @@ coordinator.
     where that is cheap. `java.time` is accepted, because its stability
     outweighs a cheaper Kotlin Multiplatform migration.
 
+### Scope
+
+12. **Growing recordings stay MPEG-TS only for 1.0.** Matroska and MP4
+    recordings that are still being written keep the typed
+    `GROWING_RECORDING_DEFERRED` outcome. Each container would need its own
+    feasibility work (see the
+    [growing-recording evaluation](growing-recording-evaluation.md)), a seek
+    wrapper on Media3 internals, and device
+    acceptance. The decision applies to the SDK and the player alike, and a
+    1.x minor can add support later.
+13. **Raw teletext is out for 1.0.** Live subtitles already cover every
+    teletext subtitle page the channel announces, because TVHeadend extracts
+    them as text subtitle streams. Recordings with only teletext subtitles
+    show none: Media3 has no teletext decoder, and the owner does not use
+    subtitles in recordings. A 1.x minor can add a decoder later.
+
 ## 1.0 readiness criteria
 
 SDK 1.0 is released when its criteria are met, not by date:
@@ -117,8 +133,8 @@ connect the two:
 - The player's physical-TV reliability session also counts as SDK device
   evidence when it records the SDK version and what it covered.
 - R8 verification (0.27) precedes the player's minified release build.
-- The growing-recording decision is made once, for both the SDK and the
-  player.
+- Growing recordings stay MPEG-TS only for both the SDK and the player
+  (decision 12).
 
 ## Milestones
 
@@ -130,9 +146,9 @@ when other work ships first.
 0.25.0 added a benchmark suite and reduced SDK allocations without changing
 public API.
 
-### 0.26: API shape and cleanup
+### 0.26: API shape and cleanup (released)
 
-This is a breaking release. Its changes are grouped so that later releases can
+0.26.0 was released on 2026-10-12. This is a breaking release. Its changes are grouped so that later releases can
 stay additive.
 
 - Introduce the experimental opt-in annotation. Mark areas still in motion,
@@ -185,8 +201,6 @@ stay additive.
   rules list in Recordings.
 - Verify the SDK under R8: a minified build in the consumer-contract check,
   and consumer keep rules where the SDK needs them.
-- Decide on raw live teletext subtitles and on the growing-recording scope
-  for non-TS containers.
 - Document whether more than one coordinator per session is supported.
   Android TV disallows media picture-in-picture, so this is not needed for
   the Android TV 1.0.
@@ -240,9 +254,5 @@ planned:
 
 ## Open questions
 
-- Is the growing-recording scope for non-TS containers (see
-  [growing-recording evaluation](growing-recording-evaluation.md)) in or out
-  for 1.0?
-- Are raw live teletext subtitles needed for Android TV 1.0?
 - If a clean-room HTSP rewrite is still wanted, what drives it? Relicensing
   only needs a rewrite if the current code derives from third-party GPL code.
