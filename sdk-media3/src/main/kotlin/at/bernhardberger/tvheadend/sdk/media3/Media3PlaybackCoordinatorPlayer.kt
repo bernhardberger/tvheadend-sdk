@@ -332,7 +332,7 @@ internal class Media3PlaybackCoordinatorPlayer(
         }
     }
 
-    /** Gateway work stays on the actor; publication and state capture stay on the application looper. */
+    /** Arming/state capture use the application looper; wire settlement publishes atomically on the actor. */
     private suspend fun withSkipBuffer(
         token: PlaybackTargetToken,
         periodUid: Any?,
@@ -341,6 +341,7 @@ internal class Media3PlaybackCoordinatorPlayer(
     ): SubscriptionSeekResult {
         val control = loadControl ?: return dispatch()
         var mark: LiveStartLoadControl.SkipMark? = null
+        var armReturned = false
         var disposition: TimeshiftCommandDisposition? = null
         try {
             executor.execute(PlayerOperationTicket()) {
@@ -357,16 +358,26 @@ internal class Media3PlaybackCoordinatorPlayer(
                     }
                 }
             }
-            return dispatch().also { disposition = it.toPublicTimeshiftResult().disposition }
-        } finally {
-            // Read mark on the looper, after any claimed arm finishes. Never await cleanup on a
-            // looper that may quit with this runnable still queued. Keep attempt-scoped cancellation
-            // registered: an acknowledged paused seek may still be buffering when cancelled.
-            publishSkipUpdate {
+            // A successful executor return orders the arm's mark write before this actor reads it.
+            armReturned = true
+            try {
+                return dispatch().also { disposition = it.toPublicTimeshiftResult().disposition }
+            } finally {
+                // Capture settlement now, not when a busy application looper next runs. The CAS
+                // cannot resurrect a consumed/replaced mark; exceptional wire exits clear it too.
                 mark?.let { started ->
                     control.finishSkip(started, disposition.takeUnless { ticket?.isCancellationRequested() == true })
                 }
             }
+        } finally {
+            if (!armReturned) {
+                // Cancellation can precede completion of a claimed arm. Read its mark only on the
+                // looper, after that arm finishes, without waiting for a potentially quitting looper.
+                publishSkipUpdate {
+                    mark?.let(control::cancelSkip)
+                }
+            }
+            // Retain attempt-scoped cancellation through post-acknowledgement paused buffering.
         }
     }
 

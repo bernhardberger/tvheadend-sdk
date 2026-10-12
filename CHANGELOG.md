@@ -4,6 +4,9 @@
 
 Unreleased; development target.
 
+- Live skip settlement is timestamped and atomically published when the command
+  completes, so delayed application-looper cleanup cannot extend its 3 s grace.
+
 - Live skip restart marks remain cancellable after acknowledgement while a paused
   seek refills. Cleanup no longer waits for a quitting application looper, and
   existing rebuffers remain eligible despite lagging application-thread state.

@@ -57,10 +57,11 @@ public class TvheadendLiveStartBuffer(initial: Duration = 2.seconds) {
  * Sharing a handle across Players is unsupported. The application builds and releases its Player.
  * This handle exposes no Media3 load-control callbacks or allocation internals.
  *
- * Coordinator skip marks are published on the Player application looper and atomically consumed
- * on its playback thread. Target and period fencing prevents late results from rearming a consumed
- * or replaced mark. Scratch timeline objects belong exclusively to the playback thread; timestamps
- * use Android elapsed realtime, matching Media3's rebuffer clock.
+ * Coordinator skip marks are armed on the Player application looper. Wire settlement is timestamped
+ * and atomically published on the coordinator actor immediately, independent of that looper's queue.
+ * Marks are atomically consumed on the playback thread. Target and period fencing prevents late
+ * results from rearming a consumed or replaced mark. Scratch timeline objects belong exclusively
+ * to the playback thread; timestamps use Android elapsed realtime, matching Media3's rebuffer clock.
  */
 @OptIn(UnstableApi::class)
 @ExperimentalTvheadendApi

@@ -29,22 +29,24 @@ internal class LiveStartLoadControl(
     internal fun beginSkip(token: PlaybackTargetToken, periodUid: Any): SkipMark =
         SkipMark(token, periodUid).also { skip.set(it) }
 
+    /** Called synchronously at wire settlement; no application-looper hop may delay this timestamp. */
     internal fun finishSkip(mark: SkipMark, disposition: TimeshiftCommandDisposition?) {
         if (disposition == null || disposition == TimeshiftCommandDisposition.NOT_ACCEPTED) {
             cancelSkip(mark)
         } else {
-            skip.compareAndSet(mark, mark.completed(elapsedRealtimeMs()))
+            val completedAtMs = elapsedRealtimeMs()
+            skip.compareAndSet(mark, mark.completed(completedAtMs))
         }
     }
 
     internal fun cancelSkip(mark: SkipMark) {
-        val current = skip.get() ?: return
-        if (current.attempt === mark.attempt) skip.compareAndSet(current, null)
+        // Settlement may replace the in-flight snapshot concurrently. Retry that same attempt,
+        // but never clear a newer arm if it wins the race instead.
+        skip.updateAndGet { current -> current?.takeUnless { it.attempt === mark.attempt } }
     }
 
     internal fun retireTarget(token: PlaybackTargetToken) {
-        val current = skip.get() ?: return
-        if (current.token === token) skip.compareAndSet(current, null)
+        skip.updateAndGet { current -> current?.takeUnless { it.token === token } }
     }
 
     override fun shouldStartPlayback(parameters: LoadControl.Parameters): Boolean {
@@ -67,7 +69,7 @@ internal class LiveStartLoadControl(
     private fun eligibleSkip(parameters: LoadControl.Parameters, live: Boolean): SkipMark? {
         val mark = skip.get() ?: return null
         if (!live || !mark.token.isActive() || !mark.token.ownsPlayerItem()) {
-            skip.compareAndSet(mark, null)
+            cancelSkip(mark)
             return null
         }
         val periodUid = if (parameters.timeline is AbstractConcatenatedTimeline) {
@@ -83,7 +85,7 @@ internal class LiveStartLoadControl(
                 val now = elapsedRealtimeMs()
                 mark.completedMs == null || now <= mark.completedMs + SKIP_GRACE_MS
             }
-        if (!eligible) skip.compareAndSet(mark, null)
+        if (!eligible) cancelSkip(mark)
         return mark.takeIf { eligible }
     }
 

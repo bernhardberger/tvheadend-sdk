@@ -207,11 +207,44 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         player.abandon()
     }
 
-    private fun skipLoadControl(): LiveStartLoadControl = LiveStartLoadControl(
+    private fun skipLoadControl(clock: () -> Long = { 10_000 }): LiveStartLoadControl = LiveStartLoadControl(
         object : androidx.media3.exoplayer.LoadControl by createTvheadendLoadControl() {
             override fun shouldStartPlayback(parameters: androidx.media3.exoplayer.LoadControl.Parameters): Boolean = false
-        }, TvheadendLiveStartBuffer(500.milliseconds),
-    ) { 10_000 }
+        }, TvheadendLiveStartBuffer(500.milliseconds), clock,
+    )
+
+    @ParameterizedTest
+    @ValueSource(strings = ["beforeDrain", "afterDrain", "withinGrace"])
+    fun `skip settlement grace starts at wire completion despite a delayed application looper`(query: String) = runTest {
+        var now = 10_000L
+        val access = FakeCoordinatorPlaybackAccess()
+        val control = skipLoadControl { now }
+        val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator(), control) { _, _ -> RecordingAdmission.Completed(null) }
+        val token = PlaybackTargetToken()
+        val bridge = controls(token)
+        onLooper(access) { player.installLive(PlayerOperationTicket(), token, TestCoordinatorLiveTarget(), timeshiftControls = bridge) }
+        attachSkip(access, bridge)
+        val seeking = async { bridge.seek(at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget.Live) }
+        runCurrent()
+        access.looperQueue.runAll() // Arm at 10 s.
+        runCurrent() // Wire result at 10 s; leave any completion publication queued.
+        assertTrue(seeking.isCompleted)
+        assertTrue(requireNotNull(seeking.getCompleted()).toPublicTimeshiftResult().isAccepted)
+        now = 15_000
+        try {
+            if (query == "beforeDrain") {
+                assertFalse(control.shouldStartPlayback(skipLoadParameters(500, 15_000)), "Grace expired at 13 s even before the looper drains")
+            }
+            access.looperQueue.runAll() // Busy application looper finally drains at 15 s.
+            now = 16_000
+            val rebufferAt = if (query == "withinGrace") 13_000L else 16_000L
+            assertEquals(query == "withinGrace", control.shouldStartPlayback(skipLoadParameters(500, rebufferAt)),
+                "Delayed publication must not shift the grace deadline from 13 s to 18 s")
+            assertFalse(control.shouldStartPlayback(skipLoadParameters(500, rebufferAt)))
+        } finally {
+            onLooper(access) { player.abandon() }
+        }
+    }
 
     @Test
     fun `cancelling after arm claim before continuation clears without waiting for the looper`() = runTest {
@@ -248,10 +281,10 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         runCurrent()
         access.looperQueue.runAll()
         runCurrent()
-        assertTrue(old.isCompleted, "Wire result settles before the queued completion cleanup")
+        assertTrue(old.isCompleted, "Wire result settles without further application-looper work")
         val newer = async { bridge.seek(at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget.Live, ticket = PlayerOperationTicket()) }
         runCurrent()
-        access.looperQueue.runAll() // Old completion, then new arm.
+        access.looperQueue.runAll() // New arm, after the old wire command has settled.
         assertFalse(access.looperQueue.isCurrent())
         oldTicket.cancel() // Queued off-looper cancellation still references only the old attempt.
         runCurrent()

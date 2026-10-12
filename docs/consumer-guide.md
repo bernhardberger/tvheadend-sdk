@@ -42,8 +42,10 @@ flight or within 3 seconds after its completion uses the current live-start
 buffer. Refusal, cancellation, target/period replacement, departure and teardown
 clear the mark; uncertain dispatched outcomes retain the bounded grace.
 
-The coordinator publishes skip marks on the Player application looper, and the
-playback thread atomically consumes them. Neither applications nor their learning
+The coordinator arms skip marks on the Player application looper and publishes
+wire settlement immediately through the atomic fence on its actor. The 3-second
+grace starts at command settlement, even if the application looper is busy.
+The playback thread atomically consumes marks. Neither applications nor their learning
 controllers should signal skips to load control themselves. One handle belongs
 to one Player/coordinator pair. These overloads are the source-compatible bridge
 to 0.28's broader SDK-owned configuration.
