@@ -16,6 +16,9 @@ import kotlin.time.TimeSource
  *
  * [delays] is defensively copied and must contain only finite, non-negative durations; an empty list
  * admits nothing. [resetAfter] must be finite and positive. [timeSource] must be monotonic.
+ * The default [TimeSource.Monotonic] does not advance while an Android device is in deep sleep, so
+ * refill can arrive later than wall time; supply a source based on `SystemClock.elapsedRealtimeNanos`
+ * if sleep should count toward [resetAfter].
  * Claims and resets are serialized, including reads of the supplied time source.
  */
 @ExperimentalTvheadendApi
