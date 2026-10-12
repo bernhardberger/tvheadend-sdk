@@ -402,6 +402,8 @@ internal class ModuleBoundaryTest {
             "LiveQueueDiagnostics",
             "LiveSubscriptionDiagnostics",
             "LiveSubscriptionPriority",
+            "LiveRetuneBudget",
+            "LiveRetuneDecision",
             "SubscriptionOpenResult",
             "SubscriptionCloseResult",
             "ActiveSubscription",
@@ -489,7 +491,7 @@ internal class ModuleBoundaryTest {
         assertPublicInfrastructure("sdk-android", expectedAndroid, unannotatedCount = expectedAndroid.size)
         // The codec classification and live priority are intentionally stable for sdk-media3 callers.
         assertPublicInfrastructure("sdk-playback", expectedPlayback, unannotatedCount = 12)
-        assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 12)
+        assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 10)
         val fakeSessionSource = File(
             repositoryRoot,
             "sdk-testing/src/main/kotlin/at/bernhardberger/tvheadend/sdk/testing/FakeTvheadendSession.kt",
@@ -617,6 +619,7 @@ internal class ModuleBoundaryTest {
             "at.bernhardberger.tvheadend.sdk.android.TvheadendArtworkLoadException",
             "at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi",
             "at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi",
+            "at.bernhardberger.tvheadend.sdk.playback.LiveRetuneBudget",
             "at.bernhardberger.tvheadend.sdk.media3.PlaybackRecoveryReason",
             "at.bernhardberger.tvheadend.sdk.media3.TvheadendRecordingException",
             "at.bernhardberger.tvheadend.sdk.media3.testing.TimeshiftTestFixture",
@@ -682,7 +685,8 @@ internal class ModuleBoundaryTest {
         )
         val actual = declaration.findAll(source).map { match -> match.groupValues[1] }.toSet()
         val annotatedCount = Regex(
-            "^@(?:SubscriptionInfrastructureApi|FakePlaybackApi|TvheadendTestingApi)(?:\\s+@[^\\n]+)*\\s+public",
+            "^@(?:SubscriptionInfrastructureApi|FakePlaybackApi|TvheadendTestingApi|ExperimentalTvheadendApi)" +
+                "(?:\\s+@[^\\n]+)*\\s+public",
             RegexOption.MULTILINE,
         )
             .findAll(source)

@@ -6,6 +6,10 @@ Unreleased; development target.
 
 ### Added
 
+- Experimental `LiveRetuneBudget` provides optional atomic live-retune admission
+  with the 0/2/5/10/20-second schedule, a 60-second refill since the previous
+  admission, explicit reset and an injectable monotonic time source. Applications
+  retain delay scheduling, target installation and exhaustion policy.
 - Experimental `DvrRecordingFile.streams` exposes per-file codec, language and
   independent width/height observations without opening playback. Missing and
   empty metadata remain distinct, and unknown streams retain their positions.

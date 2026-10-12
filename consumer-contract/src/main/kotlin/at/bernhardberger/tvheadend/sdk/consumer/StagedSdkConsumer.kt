@@ -91,6 +91,8 @@ import at.bernhardberger.tvheadend.sdk.media3.TimeshiftPlaybackPosition
 import at.bernhardberger.tvheadend.sdk.media3.createTvheadendPlaybackCoordinator
 import at.bernhardberger.tvheadend.sdk.media3.isTvheadendLive
 import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionDiagnostics
+import at.bernhardberger.tvheadend.sdk.playback.LiveRetuneBudget
+import at.bernhardberger.tvheadend.sdk.playback.LiveRetuneDecision
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionIssue
 import at.bernhardberger.tvheadend.sdk.testing.FakeTvheadendSession
 import at.bernhardberger.tvheadend.sdk.testing.ChannelCatalogFixture
@@ -122,6 +124,12 @@ public fun stagedConnectivity(context: Context): Flow<TvheadendConnectivityStatu
 
 public fun stagedAudioOutput(context: Context): TvheadendAudioOutputProvider =
     TvheadendAudioOutputProvider(context)
+
+public fun stagedRetuneDelay(budget: LiveRetuneBudget = LiveRetuneBudget()): Duration? =
+    when (val decision = budget.nextAttempt()) {
+        is LiveRetuneDecision.Admitted -> decision.delay
+        LiveRetuneDecision.Exhausted -> null
+    }
 
 public fun recordingSnapshotForFake(): DvrSnapshot = DvrSnapshot.create(
     entries = listOf(DvrEntry.create(DvrEntryId(1), files = listOf(DvrRecordingFile.create(fileId = 1)))),
