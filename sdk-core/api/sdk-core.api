@@ -368,6 +368,23 @@ public final class at/bernhardberger/tvheadend/sdk/core/ChannelId {
 	public final synthetic fun unbox-impl ()J
 }
 
+public final class at/bernhardberger/tvheadend/sdk/core/ChannelMediaKind {
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/ChannelMediaKind$Companion;
+	public static final field OTHER Lat/bernhardberger/tvheadend/sdk/core/ChannelMediaKind;
+	public static final field RADIO Lat/bernhardberger/tvheadend/sdk/core/ChannelMediaKind;
+	public static final field TV Lat/bernhardberger/tvheadend/sdk/core/ChannelMediaKind;
+	public static final field UNKNOWN Lat/bernhardberger/tvheadend/sdk/core/ChannelMediaKind;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ChannelMediaKind$Companion {
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ChannelMediaKindKt {
+	public static final fun getMediaKind (Lat/bernhardberger/tvheadend/sdk/core/Channel;)Lat/bernhardberger/tvheadend/sdk/core/ChannelMediaKind;
+	public static final fun getMediaKind (Lat/bernhardberger/tvheadend/sdk/core/ChannelService;)Lat/bernhardberger/tvheadend/sdk/core/ChannelMediaKind;
+}
+
 public final class at/bernhardberger/tvheadend/sdk/core/ChannelOrderingKt {
 	public static final fun channelComparator ()Ljava/util/Comparator;
 	public static final fun channelComparator (Ljava/text/Collator;)Ljava/util/Comparator;

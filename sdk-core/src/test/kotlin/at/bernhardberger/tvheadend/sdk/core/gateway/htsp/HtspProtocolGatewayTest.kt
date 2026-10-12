@@ -822,6 +822,49 @@ internal class HtspProtocolGatewayTest {
     }
 
     @Test
+    fun `service classification content survives gateway mapping without defaulting missing services`() = runTest {
+        val generation = HtspConnectionGeneration()
+        val contents = listOf(0L, 1L, 2L, 3L, 0xffff_ffffL)
+        val messages = contents.map { content ->
+            decodeChannelAdd(
+                mapOf(
+                    "channelId" to 1L,
+                    "services" to listOf(mapOf("name" to "Service", "type" to "", "content" to content)),
+                ),
+            )
+        } + decodeChannelAdd(mapOf("channelId" to 2L))
+        val fake = FakeHtspConnection().apply {
+            eventsFlow = flowOf(
+                *messages.mapIndexed { index, message ->
+                    HtspTransportEvent.ServerMessage(message, generation, index + 1L)
+                }.toTypedArray(),
+            )
+        }
+
+        val events = HtspProtocolGateway(fake).metadata.toList().map { it as MetadataEvent.ChannelAdded }
+
+        assertEquals(contents, events.dropLast(1).map { it.channel.services?.single()?.content })
+        assertEquals(null, events.last().channel.services)
+    }
+
+    @Test
+    fun `pinned decoder rejects a service missing required content rather than inventing other`() {
+        val failure = org.junit.jupiter.api.Assertions.assertThrows(java.lang.reflect.InvocationTargetException::class.java) {
+            decodeChannelAdd(
+                mapOf("channelId" to 1L, "services" to listOf(mapOf("name" to "Service", "type" to ""))),
+            )
+        }
+        assertTrue(failure.cause is IllegalArgumentException)
+    }
+
+    // Exercise the pinned library's internal decoder, not a second SDK decoder. Reflection stays
+    // inside gateway tests and makes a dependency change to required-field handling visible.
+    private fun decodeChannelAdd(fields: Map<String, Any>): HtspServerMessage =
+        Class.forName("at.bernhardberger.tvheadend.htsp.messages.HtspServerMessageDecodersKt")
+            .getMethod("decodeChannelAdd", Map::class.java)
+            .invoke(null, fields) as HtspServerMessage
+
+    @Test
     fun `metadata maps complete event adds and nullable updates without losing wall clock semantics`() = runTest {
         val generation = HtspConnectionGeneration()
         val add = HtspEventAddMessage(

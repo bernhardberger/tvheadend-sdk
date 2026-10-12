@@ -1,3 +1,9 @@
+public final class at/bernhardberger/tvheadend/sdk/testing/ChannelCatalogFixture {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/testing/ChannelCatalogFixture;
+	public final fun create-GQMH6ZU (JJJ)Lat/bernhardberger/tvheadend/sdk/core/ChannelCatalog;
+	public static synthetic fun create-GQMH6ZU$default (Lat/bernhardberger/tvheadend/sdk/testing/ChannelCatalogFixture;JJJILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/ChannelCatalog;
+}
+
 public final class at/bernhardberger/tvheadend/sdk/testing/FakeArtworkLoader : at/bernhardberger/tvheadend/sdk/core/ArtworkLoader {
 	public fun cacheKey-noSgMNw (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;I)Ljava/lang/String;
 	public fun loadArtwork-j_U-F9s (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;ILkotlin/coroutines/Continuation;)Ljava/lang/Object;

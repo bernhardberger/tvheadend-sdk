@@ -204,6 +204,7 @@ internal class ModuleBoundaryTest {
             "Available",
             "Failed",
             "ChannelService",
+            "ChannelMediaKind",
             "Channel",
             "ChannelTag",
             "ChannelCatalog",
@@ -419,6 +420,7 @@ internal class ModuleBoundaryTest {
         )
         val expectedTesting = setOf(
             "FakeArtworkLoader",
+            "ChannelCatalogFixture",
             "FakeSessionCache",
             "FakeDvrRepository",
             "FakeEpgRepository",
@@ -485,7 +487,7 @@ internal class ModuleBoundaryTest {
         assertPublicInfrastructure("sdk-android", expectedAndroid, unannotatedCount = expectedAndroid.size)
         // The codec classification and live priority are intentionally stable for sdk-media3 callers.
         assertPublicInfrastructure("sdk-playback", expectedPlayback, unannotatedCount = 12)
-        assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 10)
+        assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 11)
         val fakeSessionSource = File(
             repositoryRoot,
             "sdk-testing/src/main/kotlin/at/bernhardberger/tvheadend/sdk/testing/FakeTvheadendSession.kt",
@@ -620,12 +622,15 @@ internal class ModuleBoundaryTest {
             "at.bernhardberger.tvheadend.sdk.core.EpgRepository",
             "at.bernhardberger.tvheadend.sdk.core.DvrRepository",
             "at.bernhardberger.tvheadend.sdk.core.ChannelService",
+            // Public extension-property results are not traversed from their receiver by this walk.
+            "at.bernhardberger.tvheadend.sdk.core.ChannelMediaKind",
             "at.bernhardberger.tvheadend.sdk.core.DvrRecordingFile",
             "at.bernhardberger.tvheadend.sdk.core.DvrProgressPolicy",
             // Konsist does not resolve this nullable sealed-interface parameter from DVR rule types.
             "at.bernhardberger.tvheadend.sdk.core.AutorecTime",
             "at.bernhardberger.tvheadend.sdk.testing.ScriptedSubscriptionConnection",
             "at.bernhardberger.tvheadend.sdk.testing.SubscriptionBinaryFixture",
+            "at.bernhardberger.tvheadend.sdk.testing.ChannelCatalogFixture",
             "at.bernhardberger.tvheadend.sdk.testing.FakeSessionObservation",
             "at.bernhardberger.tvheadend.sdk.testing.FakeTvheadendSession",
             "at.bernhardberger.tvheadend.sdk.testing.FakeServerProfileStore",

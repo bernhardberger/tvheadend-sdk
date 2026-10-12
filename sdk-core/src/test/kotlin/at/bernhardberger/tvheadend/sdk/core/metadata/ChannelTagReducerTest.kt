@@ -1,8 +1,13 @@
+@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class)
+
 package at.bernhardberger.tvheadend.sdk.core.metadata
 
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
+import at.bernhardberger.tvheadend.sdk.core.ChannelMediaKind
+import at.bernhardberger.tvheadend.sdk.core.mediaKind
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelMetadata
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelService
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayTagMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
@@ -44,16 +49,54 @@ internal class ChannelTagReducerTest {
         assertEquals(ArtworkId(7), reducer.snapshot().channels.single().icon)
     }
 
-    private fun channel(id: Long, icon: String?): GatewayChannelMetadata = GatewayChannelMetadata(
+    @Test
+    fun `partial updates retain services while replacements reclassify immutable snapshots`() {
+        val generation = GatewayGeneration()
+        val reducer = ChannelTagReducer()
+        reducer.accept(MetadataEvent.ChannelAdded(generation, channel(1, null)))
+        assertEquals(ChannelMediaKind.UNKNOWN, reducer.snapshot().channels.single().mediaKind)
+
+        val services = mutableListOf(service(2), service(1))
+        reducer.accept(MetadataEvent.ChannelUpdated(generation, channel(1, null, services = services)))
+        val television = reducer.snapshot()
+        services.clear()
+        reducer.accept(MetadataEvent.ChannelUpdated(generation, channel(1, null, name = "Updated")))
+        assertEquals(ChannelMediaKind.TV, reducer.snapshot().channels.single().mediaKind)
+
+        reducer.accept(MetadataEvent.ChannelUpdated(generation, channel(1, null, services = listOf(service(2)))))
+        assertEquals(ChannelMediaKind.RADIO, reducer.snapshot().channels.single().mediaKind)
+        reducer.accept(MetadataEvent.ChannelUpdated(generation, channel(1, null, services = listOf(service(0)))))
+        assertEquals(ChannelMediaKind.OTHER, reducer.snapshot().channels.single().mediaKind)
+        reducer.accept(MetadataEvent.ChannelUpdated(generation, channel(1, null, services = emptyList())))
+        assertEquals(ChannelMediaKind.UNKNOWN, reducer.snapshot().channels.single().mediaKind)
+        assertEquals(ChannelMediaKind.TV, television.channels.single().mediaKind)
+        assertEquals(listOf(2L, 1L), television.channels.single().services?.map { it.content })
+    }
+
+    private fun service(content: Long): GatewayChannelService = GatewayChannelService(
+        name = "Service",
+        type = "",
+        content = content,
+        conditionalAccessId = null,
+        conditionalAccessName = null,
+        providerName = null,
+    )
+
+    private fun channel(
+        id: Long,
+        icon: String?,
+        name: String? = null,
+        services: List<GatewayChannelService>? = null,
+    ): GatewayChannelMetadata = GatewayChannelMetadata(
         id = ChannelId(id),
-        name = null,
+        name = name,
         uuid = null,
         number = null,
         numberMinor = null,
         icon = icon,
         currentEventId = null,
         nextEventId = null,
-        services = null,
+        services = services,
         tagIds = null,
     )
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.27.0]
+
+Unreleased; development target.
+
+### Added
+
+- Experimental `Channel.mediaKind` and `ChannelService.mediaKind` derive the
+  open `ChannelMediaKind` classification from service content. TV takes
+  precedence over radio; OTHER means the server classified services as neither
+  (possibly unscanned), while UNKNOWN means insufficient or unrecognized
+  evidence. `sdk-testing` adds TV/radio/unknown catalog fixtures.
+
 ## [0.26.0]
 
 Released 2026-10-12.

@@ -24,6 +24,8 @@ import at.bernhardberger.tvheadend.sdk.android.addTvheadendArtwork
 import at.bernhardberger.tvheadend.sdk.core.Channel
 import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
+import at.bernhardberger.tvheadend.sdk.core.ChannelMediaKind
+import at.bernhardberger.tvheadend.sdk.core.mediaKind
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
@@ -90,6 +92,7 @@ import at.bernhardberger.tvheadend.sdk.media3.isTvheadendLive
 import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionDiagnostics
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionIssue
 import at.bernhardberger.tvheadend.sdk.testing.FakeTvheadendSession
+import at.bernhardberger.tvheadend.sdk.testing.ChannelCatalogFixture
 import at.bernhardberger.tvheadend.sdk.testing.FakeServerProfileStore
 import coil3.ComponentRegistry
 import kotlin.time.Duration
@@ -123,6 +126,19 @@ public fun recordingSnapshotForFake(): DvrSnapshot = DvrSnapshot.create(
     autorecRules = listOf(AutorecRule.create(AutorecRuleId("autorec"))),
     timerecRules = listOf(TimerecRule.create(TimerecRuleId("timerec"))),
 )
+
+public fun radioCatalogForFake(): List<Channel> = ChannelCatalogFixture.create().channels.filter {
+    it.mediaKind == ChannelMediaKind.RADIO && it.services.orEmpty().any { service ->
+        service.mediaKind == ChannelMediaKind.RADIO
+    }
+}
+
+public fun channelMediaLabel(channel: Channel): String = when (channel.mediaKind) {
+    ChannelMediaKind.TV -> "TV"
+    ChannelMediaKind.RADIO -> "Radio"
+    ChannelMediaKind.OTHER -> "Other"
+    else -> "Unknown"
+}
 
 public fun typedAutorecUpdate(): AutorecRuleUpdate = AutorecRuleUpdate(
     daysOfWeekMask = setOf(DayOfWeek.MONDAY),
