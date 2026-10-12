@@ -79,10 +79,10 @@ After staging and checking the SDK publication, run the consumer gate locally:
 ```sh
 ./tools/verify stageLocalPublication
 ./tools/check-staged-publication --write-manifest build/staged-publication.json
-./tools/verify -p consumer-contract test verifyConsumerDependencyGraph assembleRelease
+./tools/verify -p consumer-contract test verifyConsumerDependencyGraph assembleRelease lintDebug
 ```
 
-CI uses `./gradlew --no-daemon -p consumer-contract clean test verifyConsumerDependencyGraph assembleRelease`.
+CI uses `./gradlew --no-daemon -p consumer-contract clean test verifyConsumerDependencyGraph assembleRelease lintDebug`.
 The unsigned release APK enables R8's default full mode without signing credentials.
 The compile-only app has no manifest entry point, so its three Java/Kotlin fixture
 classes are explicit app-side roots in `consumer-contract/proguard-rules.pro`.
@@ -97,5 +97,10 @@ referenced; kotlinx.serialization supplies its own consumer rules. Legacy NSD
 reflection targets Android framework methods, which R8 does not rename.
 No additional SDK consumer keep rules are currently needed.
 
-This gate verifies compilation and shrinking only. It does not execute the minified
+Lint enforces AndroidX opt-in requirements that Kotlin compilation does not check.
+`StableLoadControlConsumer.kt` deliberately has no Media3 unstable opt-in, proving
+the SDK-owned load-control boundary remains usable without it. Java fixtures opt
+into their SDK Kotlin markers at the methods that use them; no lint baseline is used.
+
+This gate verifies compilation, lint and shrinking only. It does not execute the minified
 APK; runtime verification requires separately authorized device testing.

@@ -48,10 +48,12 @@ bytes are produced only after the clean build, checks, staging verification,
 real consumer contract, and release setup checks pass.
 
 The staged consumer gate is
-`./gradlew --no-daemon -p consumer-contract clean test verifyConsumerDependencyGraph assembleRelease`.
+`./gradlew --no-daemon -p consumer-contract clean test verifyConsumerDependencyGraph assembleRelease lintDebug`.
 It includes an unsigned, R8-minified release APK; no signing credentials are needed.
 On the shared local build host use
-`./tools/verify -p consumer-contract test verifyConsumerDependencyGraph assembleRelease`.
+`./tools/verify -p consumer-contract test verifyConsumerDependencyGraph assembleRelease lintDebug`.
+Lint checks consumer opt-in requirements, including the load-control fixture's
+absence of a Media3 unstable opt-in.
 See [offline verification](offline-verification.md#staged-consumer-and-r8) for the
 consumer roots, R8 outputs, and the separate runtime-testing boundary.
 

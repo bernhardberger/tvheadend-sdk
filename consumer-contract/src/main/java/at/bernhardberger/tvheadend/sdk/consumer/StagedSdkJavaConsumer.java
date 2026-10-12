@@ -36,6 +36,7 @@ import at.bernhardberger.tvheadend.sdk.core.SessionFailure;
 import at.bernhardberger.tvheadend.sdk.core.SessionGenerationIdentity;
 import at.bernhardberger.tvheadend.sdk.core.SessionObservation;
 import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure;
+import at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi;
 import at.bernhardberger.tvheadend.sdk.core.SessionRecoveryDisposition;
 import at.bernhardberger.tvheadend.sdk.core.StreamProfilesResult;
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession;
@@ -59,6 +60,7 @@ import at.bernhardberger.tvheadend.sdk.playback.LiveSubscriptionSource;
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionIssue;
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionIssueCategory;
 import at.bernhardberger.tvheadend.sdk.testing.FakeTvheadendSession;
+import at.bernhardberger.tvheadend.sdk.testing.FakePlaybackApi;
 import at.bernhardberger.tvheadend.sdk.testing.FakeServerProfileStore;
 import coil3.ComponentRegistry;
 import kotlin.Unit;
@@ -82,6 +84,7 @@ public final class StagedSdkJavaConsumer {
                 && rule.getDaysOfWeekMask() != null && rule.getDaysOfWeekMask().contains(DayOfWeek.MONDAY);
     }
 
+    @kotlin.OptIn(markerClass = FakePlaybackApi.class)
     public static FakeTvheadendSession stagedTestingFake(
             SessionObservation readyObservation,
             SessionObservation retiredObservation) {
@@ -176,6 +179,7 @@ public final class StagedSdkJavaConsumer {
         return result.getSettlements().size();
     }
 
+    @kotlin.OptIn(markerClass = ExperimentalTvheadendApi.class)
     public static boolean isGrowingRecording(RecordingPlaybackAdmission admission) {
         return admission instanceof RecordingPlaybackAdmission.Growing;
     }
