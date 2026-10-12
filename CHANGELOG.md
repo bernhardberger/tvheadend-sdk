@@ -17,6 +17,11 @@ Unreleased; development target.
   (possibly unscanned), while UNKNOWN means insufficient or unrecognized
   evidence. `sdk-testing` adds TV/radio/unknown catalog fixtures.
 
+### Documentation
+
+- Clarified that multiple coordinators can share one session, with separate
+  application-owned Players and independent coordinator lifetimes.
+
 ## [0.26.0]
 
 Released 2026-10-12.

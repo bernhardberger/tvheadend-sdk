@@ -838,6 +838,15 @@ completed-recording playback otherwise starts over and disables reporting.
 `at.bernhardberger.tvheadend.sdk.playback`. The shared admission type, completed
 playback, and `DvrRepository.changes` remain stable.
 
+The 0.27 additions `Channel.mediaKind`, `ChannelService.mediaKind`, and
+`DvrRecordingFile.streams` also require `@OptIn(ExperimentalTvheadendApi::class)`.
+Keep a fallback for future `ChannelMediaKind` and `SubscriptionStreamType` values.
+`mediaKind` is a catalog hint, not a check of the selected playback tracks:
+OTHER means classified as neither TV nor radio (possibly unscanned), whereas
+UNKNOWN means insufficient or unrecognized evidence. Per-file `streams == null`
+means metadata was absent; an empty list means the server explicitly supplied
+no stream observations.
+
 Growing playback is deliberately bounded, and its admission gates are the same
 for `START_OVER` and `RESUME`: unknown progress support returns `NOT_READY`,
 unsupported progress returns `RECORDING_PROGRESS_UNSUPPORTED`, an active

@@ -2,20 +2,20 @@ package at.bernhardberger.tvheadend.sdk.core
 
 import at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
 
-/** Server service classification. Consumers must retain a fallback for future values. */
+/** Service or derived channel catalog classification. Consumers must retain a fallback for future values. */
 @ExperimentalTvheadendApi
 public class ChannelMediaKind private constructor(private val label: String) {
     override fun toString(): String = label
 
-    /** Known service classifications. */
+    /** Known service and channel classifications. */
     public companion object {
-        /** The service can deliver television video. */
+        /** A service can deliver television video, or a channel has at least one TV service. */
         @JvmField
         public val TV: ChannelMediaKind = ChannelMediaKind("TV")
-        /** The server classifies the service as radio. */
+        /** A service is radio, or a channel has a radio service and no TV service. */
         @JvmField
         public val RADIO: ChannelMediaKind = ChannelMediaKind("RADIO")
-        /** The server classifies the service as neither TV nor radio, possibly because it is unscanned. */
+        /** A service is neither TV nor radio (possibly unscanned), or all known channel services are OTHER. */
         @JvmField
         public val OTHER: ChannelMediaKind = ChannelMediaKind("OTHER")
         /** Classification evidence is insufficient or unrecognized. */
