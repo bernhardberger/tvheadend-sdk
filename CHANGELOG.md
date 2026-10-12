@@ -4,13 +4,6 @@
 
 Unreleased; development target.
 
-- Live skip settlement is timestamped and atomically published when the command
-  completes, so delayed application-looper cleanup cannot extend its 3 s grace.
-
-- Live skip restart marks remain cancellable after acknowledgement while a paused
-  seek refills. Cleanup no longer waits for a quitting application looper, and
-  existing rebuffers remain eligible despite lagging application-thread state.
-
 ### Added
 
 - Experimental SDK-owned `TvheadendLoadControl` and `TvheadendLiveStartBuffer`
@@ -19,8 +12,10 @@ Unreleased; development target.
   1.5 s ordinary rebuffer and existing recording policy are preserved.
 - The experimental coordinator overload accepts the same load-control handle
   used to build its borrowed Player. Server skips use the live-start threshold
-  for one restart, including an existing rebuffer, with a 3 s completion grace
-  and target/period-fenced cancellation and retirement.
+  for one restart, including an existing rebuffer, with a 3 s grace measured
+  from command completion and target/period-fenced cancellation and retirement.
+  A restart mark stays cancellable after acknowledgement while a paused seek
+  refills.
 - Experimental `TvheadendPlaybackCoordinator.recoverRecordingTarget` restores a
   caller-captured recording position through the existing resume machinery.
   `pendingRecordingRecoveryPosition` exposes the owed position for repeated retry
