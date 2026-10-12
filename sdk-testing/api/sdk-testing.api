@@ -118,6 +118,8 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeSessionCall : jav
 
 public final class at/bernhardberger/tvheadend/sdk/testing/FakeSessionObservation {
 	public fun <init> ()V
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/MetadataRefreshTimes;Lat/bernhardberger/tvheadend/sdk/core/MetadataRefreshTimes;Lat/bernhardberger/tvheadend/sdk/core/MetadataRefreshTimes;Ljava/util/Map;Lat/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState;Lat/bernhardberger/tvheadend/sdk/core/EpgRepositoryState;Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState;)V
+	public synthetic fun <init> (Lat/bernhardberger/tvheadend/sdk/core/MetadataRefreshTimes;Lat/bernhardberger/tvheadend/sdk/core/MetadataRefreshTimes;Lat/bernhardberger/tvheadend/sdk/core/MetadataRefreshTimes;Ljava/util/Map;Lat/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState;Lat/bernhardberger/tvheadend/sdk/core/EpgRepositoryState;Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;)V
 	public synthetic fun <init> (Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun captureCurrentSession ()Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;

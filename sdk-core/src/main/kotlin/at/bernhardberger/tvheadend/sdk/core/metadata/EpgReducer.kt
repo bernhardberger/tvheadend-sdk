@@ -521,10 +521,12 @@ internal class EpgReducer(
                         stagedEvents[event.id] = candidate
                     }
                 }
-                if (stagedEvents.isNotEmpty()) cachedSnapshot = null
                 stagedEvents.forEach { (eventId, event) ->
                     supersedeHistory(event)
-                    events[eventId] = event
+                    if (events[eventId] != event) {
+                        cachedSnapshot = null
+                        events[eventId] = event
+                    }
                 }
                 recordSuccessfulQuery(query.channelId, queriedTo)
                 EpgQueryAcceptance.APPLIED

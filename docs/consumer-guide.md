@@ -102,6 +102,15 @@ generation. A retained observation can still provide stale selectors for
 display or comparison, but it cannot authorize a server round trip or a new
 playback binding.
 
+With `ExperimentalTvheadendApi` opt-in, `channelRefreshTimes`, `epgRefreshTimes`
+and `dvrRefreshTimes` report local receipt times beside that observation's
+content. `epgLastQueriedAt[channelId]` records successful accepted queries,
+including empty or unchanged replies. Pair it with authority and coverage for
+the displayed range; no one time proves the entire guide fresh. Null/absent
+means unknown. Cached times retain their original receipt values, not disk
+write/load times. Applications choose age thresholds and clamp negative ages
+after wall-clock corrections; freshness never authorizes server actions.
+
 Pass the captured `currentSession` to operations selected from the same
 observation. If a disconnect, reconnect, or profile switch wins the race, the
 operation returns a typed expiration or connection-change result instead of

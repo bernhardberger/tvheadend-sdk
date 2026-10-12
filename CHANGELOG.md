@@ -6,6 +6,10 @@ Unreleased; development target.
 
 ### Added
 
+- Experimental observation-side `MetadataRefreshTimes` and per-channel EPG query
+  receipt times distinguish retained content from recent successful acceptance.
+  Unchanged replies preserve snapshot identity and hashes; failed or retired
+  queries do not advance freshness. Observation factories and fakes accept times.
 - Experimental `LiveRetuneBudget` provides optional atomic live-retune admission
   with the 0/2/5/10/20-second schedule, a 60-second refill since the previous
   admission, explicit reset and an injectable monotonic time source. Applications

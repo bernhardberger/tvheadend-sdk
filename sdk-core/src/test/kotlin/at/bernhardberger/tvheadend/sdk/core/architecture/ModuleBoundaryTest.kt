@@ -206,6 +206,7 @@ internal class ModuleBoundaryTest {
             "Failed",
             "ChannelService",
             "ChannelMediaKind",
+            "MetadataRefreshTimes",
             "Channel",
             "ChannelTag",
             "ChannelCatalog",

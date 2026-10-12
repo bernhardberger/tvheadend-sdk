@@ -15,6 +15,7 @@ import at.bernhardberger.tvheadend.sdk.android.TvheadendDiscovery
 import at.bernhardberger.tvheadend.sdk.android.TvheadendDiscoveryState
 import at.bernhardberger.tvheadend.sdk.core.EpgCoveragePolicy
 import at.bernhardberger.tvheadend.sdk.core.MetadataCachePolicy
+import at.bernhardberger.tvheadend.sdk.core.MetadataRefreshTimes
 import at.bernhardberger.tvheadend.sdk.core.createTvheadendSession
 import at.bernhardberger.tvheadend.sdk.media3.TvheadendAudioOutputProvider
 import at.bernhardberger.tvheadend.sdk.android.TvheadendArtworkLoadException
@@ -142,6 +143,15 @@ public fun radioCatalogForFake(): List<Channel> = ChannelCatalogFixture.create()
         service.mediaKind == ChannelMediaKind.RADIO
     }
 }
+
+public fun freshnessForFake(acceptedAt: kotlin.time.Instant): SessionObservation = SessionObservation.create(
+    channelRefreshTimes = MetadataRefreshTimes(lastUpdatedAt = acceptedAt),
+    epgRefreshTimes = MetadataRefreshTimes(acceptedAt, acceptedAt),
+    epgLastQueriedAt = mapOf(ChannelId(1) to acceptedAt),
+)
+
+public fun channelQueryTime(observed: SessionObservation, channelId: ChannelId): kotlin.time.Instant? =
+    observed.epgLastQueriedAt[channelId]
 
 public fun recordingStreamsForFake(): List<DvrRecordingStream> = DvrRecordingFixture.create().entries
     .flatMap { entry -> entry.files.orEmpty().flatMap { it.streams.orEmpty() } }

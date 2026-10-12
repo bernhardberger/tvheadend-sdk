@@ -1,4 +1,11 @@
+@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class)
+
 package at.bernhardberger.tvheadend.sdk.testing
+
+import at.bernhardberger.tvheadend.sdk.core.MetadataRefreshTimes
+import at.bernhardberger.tvheadend.sdk.core.ChannelId
+import kotlin.time.Instant
+import org.junit.jupiter.api.Assertions.assertEquals
 
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
@@ -15,6 +22,25 @@ import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 
 internal class FakeSessionObservationTest {
+    @Test
+    fun `freshness fixture copies query times and defaults remain unknown`() {
+        val now = Instant.fromEpochSeconds(123)
+        val times = MetadataRefreshTimes(now, now)
+        val queries = mutableMapOf(ChannelId(1) to now)
+        val fake = FakeSessionObservation(times, times, times, queries)
+        queries.clear()
+        val observed = fake.observation.value
+        assertEquals(times, observed.channelRefreshTimes)
+        assertEquals(times, observed.epgRefreshTimes)
+        assertEquals(times, observed.dvrRefreshTimes)
+        assertEquals(mapOf(ChannelId(1) to now), observed.epgLastQueriedAt)
+        assertThrows(UnsupportedOperationException::class.java) {
+            (observed.epgLastQueriedAt as MutableMap).clear()
+        }
+        assertEquals(MetadataRefreshTimes(), FakeSessionObservation().observation.value.epgRefreshTimes)
+        assertEquals(SessionObservation.create(), SessionObservation.create(channelRefreshTimes = MetadataRefreshTimes()))
+    }
+
     @Test
     fun `publishes and retires complete aggregate observations`() {
         val fake = FakeSessionObservation()

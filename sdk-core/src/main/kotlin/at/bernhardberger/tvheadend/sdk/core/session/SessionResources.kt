@@ -80,12 +80,20 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlin.time.Instant
+import kotlin.time.Clock
+import at.bernhardberger.tvheadend.sdk.core.MetadataRefreshTimes
 
 /** Catalog and EPG snapshot published together with current authority. */
 internal class PublishedSnapshots(
     val catalog: ChannelCatalog,
     val epgSnapshot: EpgSnapshot,
-)
+    val channelRefreshTimes: MetadataRefreshTimes,
+    val epgRefreshTimes: MetadataRefreshTimes,
+    val epgLastQueriedAt: Map<ChannelId, Instant>,
+) {
+    constructor(catalog: ChannelCatalog, epgSnapshot: EpgSnapshot) :
+        this(catalog, epgSnapshot, MetadataRefreshTimes(), MetadataRefreshTimes(), emptyMap())
+}
 
 internal interface SessionMetadata {
     public val observation: StateFlow<SessionObservation>
@@ -378,8 +386,14 @@ internal class PhaseOneSessionMetadata(
     epgCoveragePolicy: EpgCoveragePolicy = EpgCoveragePolicy.create(),
     private val estimatedServerTime: (GatewayGeneration) -> Instant? = { null },
     private val dvrIntents: DvrIntentLedger? = null,
+    private val clock: Clock = Clock.System,
 ) : SessionMetadata {
     private val lock = Any()
+    private var channelRefreshTimes = MetadataRefreshTimes()
+    private var epgRefreshTimes = MetadataRefreshTimes()
+    private var dvrRefreshTimes = MetadataRefreshTimes()
+    private var pendingEpgUpdatedAt: Instant? = null
+    private val epgLastQueriedAt = linkedMapOf<ChannelId, Instant>()
     private val reducer = ChannelTagReducer()
     private val epgReducer = EpgReducer(epgCoveragePolicy.maximumRetainedEvents)
     private val dvrReducer = DvrReducer()
@@ -595,6 +609,7 @@ internal class PhaseOneSessionMetadata(
             synchronizedCurrent = false
             epgPublicationDeferred = false
             serverFacts = null
+            pendingEpgUpdatedAt = null
             dvrAccess = CapabilityAccess.UNKNOWN
             capabilityRevision += 1
             epgCoverageRequester = null
@@ -604,6 +619,10 @@ internal class PhaseOneSessionMetadata(
             dvrFailuresReported.clear()
             dvrEntryIncarnations.clear()
             if (!retainPublishedCatalog) {
+                channelRefreshTimes = MetadataRefreshTimes()
+                epgRefreshTimes = MetadataRefreshTimes()
+                dvrRefreshTimes = MetadataRefreshTimes()
+                epgLastQueriedAt.clear()
                 publishedCatalog = null
                 publishedEpgSnapshot = null
                 publishedDvrSnapshot = null
@@ -793,6 +812,11 @@ internal class PhaseOneSessionMetadata(
                         val epgSnapshot = epgReducer.snapshot()
                         val dvrSnapshot = dvrReducer.snapshot()
                         synchronizedCurrent = true
+                        val now = acceptanceTime()
+                        channelRefreshTimes = MetadataRefreshTimes(now, now)
+                        epgRefreshTimes = MetadataRefreshTimes(now, now)
+                        dvrRefreshTimes = MetadataRefreshTimes(now, now)
+                        epgLastQueriedAt.clear()
                         publishCurrent(channelSnapshot, epgSnapshot, dvrSnapshot)
                         initialSync
                     }
@@ -878,6 +902,20 @@ internal class PhaseOneSessionMetadata(
                         }
                     }
                     if (synchronizedCurrent) {
+                        val now = acceptanceTime()
+                        when (event) {
+                            is MetadataEvent.ChannelAdded, is MetadataEvent.ChannelUpdated,
+                            is MetadataEvent.ChannelDeleted, is MetadataEvent.TagAdded,
+                            is MetadataEvent.TagUpdated, is MetadataEvent.TagDeleted,
+                            -> channelRefreshTimes = channelRefreshTimes.copy(lastUpdatedAt = now)
+                            is MetadataEvent.EventAdded, is MetadataEvent.EventUpdated,
+                            is MetadataEvent.EventDeleted,
+                            -> pendingEpgUpdatedAt = now
+                            else -> if (dvrEventAccepted) {
+                                dvrRefreshTimes = dvrRefreshTimes.copy(lastUpdatedAt = now)
+                            }
+                        }
+                        if (event is MetadataEvent.ChannelDeleted) epgLastQueriedAt.remove(event.channelId)
                         if (deferEpgPublication && event.isEpgEvent()) {
                             epgPublicationDeferred = true
                         } else {
@@ -1013,7 +1051,15 @@ internal class PhaseOneSessionMetadata(
         synchronized(lock) {
             if (this.generation === generation) {
                 epgReducer.recordSuccessfulQuery(channelId, queriedTo)
-                if (synchronizedCurrent) publishCurrentEpg(epgReducer.snapshot())
+                if (synchronizedCurrent) {
+                    val snapshot = epgReducer.snapshot()
+                    if (snapshot.coverages.any { it.channelId == channelId }) {
+                        val now = acceptanceTime()
+                        pendingEpgUpdatedAt = now
+                        epgLastQueriedAt[channelId] = now
+                    }
+                    publishCurrentEpg(snapshot)
+                }
             }
         }
     }
@@ -1052,6 +1098,9 @@ internal class PhaseOneSessionMetadata(
         if (this.generation === generation && synchronizedCurrent) {
             epgReducer.acceptSuccessfulQuery(query, queriedTo, events).also { acceptance ->
                 if (acceptance == EpgQueryAcceptance.APPLIED) {
+                    val now = acceptanceTime()
+                    pendingEpgUpdatedAt = now
+                    epgLastQueriedAt[query.channelId] = now
                     publishCurrentEpg(epgReducer.snapshot())
                 }
             }
@@ -1128,7 +1177,7 @@ internal class PhaseOneSessionMetadata(
         publishedEpgSnapshot = (mutableEpg.value as EpgRepositoryState.Current).snapshot
         mutableDvr.value = DvrRepositoryState.Current(dvrSnapshot)
         publishedDvrSnapshot = (mutableDvr.value as DvrRepositoryState.Current).snapshot
-        mutablePublishedSnapshots.value = PublishedSnapshots(catalog, preparedEpg)
+        publishCachedSnapshots(catalog, preparedEpg)
         publishMetadataObservation()
     }
 
@@ -1137,12 +1186,14 @@ internal class PhaseOneSessionMetadata(
         mutableEpg.value = EpgRepositoryState.Current(preparedEpg)
         publishedEpgSnapshot = (mutableEpg.value as EpgRepositoryState.Current).snapshot
         publishedCatalog?.let { catalog ->
-            mutablePublishedSnapshots.value = PublishedSnapshots(catalog, preparedEpg)
+            publishCachedSnapshots(catalog, preparedEpg)
         }
         publishMetadataObservation()
     }
 
     private fun prepareEpgForPublication(candidate: EpgSnapshot): EpgSnapshot {
+        pendingEpgUpdatedAt?.let { epgRefreshTimes = epgRefreshTimes.copy(lastUpdatedAt = it) }
+        pendingEpgUpdatedAt = null
         // Match StateFlow conflation before allocating indexes, including no-op EPG updates.
         val snapshot = publishedEpgSnapshot?.takeIf { it == candidate } ?: candidate
         snapshot.prepareForObservation()
@@ -1156,6 +1207,18 @@ internal class PhaseOneSessionMetadata(
             dvrState = mutableDvr.value,
             configurationsState = mutableConfigurations.value,
             diskSpaceState = mutableDiskSpace.value,
+            channelRefreshTimes = channelRefreshTimes,
+            epgRefreshTimes = epgRefreshTimes,
+            dvrRefreshTimes = dvrRefreshTimes,
+            epgLastQueriedAt = epgLastQueriedAt,
+        )
+    }
+
+    private fun acceptanceTime(): Instant = Instant.fromEpochMilliseconds(clock.now().toEpochMilliseconds())
+
+    private fun publishCachedSnapshots(catalog: ChannelCatalog, snapshot: EpgSnapshot) {
+        mutablePublishedSnapshots.value = PublishedSnapshots(
+            catalog, snapshot, channelRefreshTimes, epgRefreshTimes, epgLastQueriedAt.toMap(),
         )
     }
 

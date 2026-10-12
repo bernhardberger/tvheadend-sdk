@@ -1,4 +1,12 @@
+@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class)
+
 package at.bernhardberger.tvheadend.sdk.core.session
+
+import at.bernhardberger.tvheadend.sdk.core.MetadataRefreshTimes
+import at.bernhardberger.tvheadend.sdk.core.metadata.EpgReducer
+import at.bernhardberger.tvheadend.sdk.core.metadata.EpgQueryAcceptance
+import kotlin.time.Clock
+import kotlin.time.Duration.Companion.seconds
 
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
@@ -59,6 +67,121 @@ import kotlin.time.Instant
 
 @OptIn(ExperimentalCoroutinesApi::class)
 internal class PhaseOneSessionMetadataTest {
+    @Test
+    fun `rejected and abandoned queries preserve times and deferred push stamps at acceptance`() {
+        var now = Instant.fromEpochSeconds(100)
+        val metadata = PhaseOneSessionMetadata(
+            clock = object : Clock { override fun now() = now },
+            epgCoveragePolicy = EpgCoveragePolicy.create(futureHorizon = 24.hours, maximumRetainedEvents = 1),
+        )
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(1)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(1, 1, 100, 110)))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        val original = metadata.observation.value
+        val abandoned = checkNotNull(metadata.beginEpgQuery(generation, ChannelId(1)))
+        metadata.abandonEpgQuery(generation, abandoned)
+        now += 1.seconds
+        assertEquals(EpgQueryAcceptance.STALE,
+            metadata.applySuccessfulEpgQuery(generation, abandoned, now, emptyList()))
+        val query = checkNotNull(metadata.beginEpgQuery(generation, ChannelId(1)))
+        assertEquals(EpgQueryAcceptance.CAPACITY_REJECTED, metadata.applySuccessfulEpgQuery(
+            generation, query, now, listOf(GatewayEpgQueryEvent(
+                id = EventId(2), channelId = ChannelId(1), start = now, stop = now + 10.seconds,
+            )),
+        ))
+        assertSame(original, metadata.observation.value)
+        metadata.acceptMetadataDeferringEpg(MetadataEvent.EventUpdated(generation,
+            GatewayEpgUpdate(id = EventId(1), title = "Updated")))
+        assertSame(original, metadata.observation.value)
+        val acceptedAt = now
+        now += 1.seconds
+        metadata.flushDeferredMetadata()
+        assertEquals(acceptedAt, metadata.observation.value.epgRefreshTimes.lastUpdatedAt)
+        assertEquals(original.channelRefreshTimes, metadata.observation.value.channelRefreshTimes)
+        assertEquals(original.dvrRefreshTimes, metadata.observation.value.dvrRefreshTimes)
+    }
+
+    @Test
+    fun `empty sync stamps local millisecond times and retirement retains until profile clear`() {
+        var now = Instant.parse("2026-01-01T00:00:00.123456Z")
+        val metadata = PhaseOneSessionMetadata(clock = object : Clock { override fun now() = now })
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        assertEquals(MetadataRefreshTimes(), metadata.observation.value.epgRefreshTimes)
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        val expected = MetadataRefreshTimes(Instant.fromEpochMilliseconds(now.toEpochMilliseconds()),
+            Instant.fromEpochMilliseconds(now.toEpochMilliseconds()))
+        val synced = metadata.observation.value
+        assertEquals(expected, synced.channelRefreshTimes)
+        assertEquals(expected, synced.epgRefreshTimes)
+        assertEquals(expected, synced.dvrRefreshTimes)
+        now += 10.seconds
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(1)))
+        assertEquals(expected, metadata.observation.value.epgRefreshTimes)
+        assertEquals(expected, metadata.observation.value.dvrRefreshTimes)
+        assertEquals(Instant.fromEpochMilliseconds(now.toEpochMilliseconds()),
+            metadata.observation.value.channelRefreshTimes.lastUpdatedAt)
+        val retained = metadata.observation.value
+        metadata.resetWorkingStateRetainingPublishedSnapshot()
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(2)))
+        assertEquals(retained.channelRefreshTimes, metadata.observation.value.channelRefreshTimes)
+        assertSame(retained.epgSnapshotForDisplay, metadata.observation.value.epgSnapshotForDisplay)
+        metadata.bindGeneration(GatewayGeneration())
+        assertEquals(retained.epgRefreshTimes, metadata.observation.value.epgRefreshTimes)
+        metadata.clearAllState()
+        assertEquals(MetadataRefreshTimes(), metadata.observation.value.channelRefreshTimes)
+        assertEquals(MetadataRefreshTimes(), metadata.observation.value.epgRefreshTimes)
+        assertEquals(MetadataRefreshTimes(), metadata.observation.value.dvrRefreshTimes)
+        assertTrue(metadata.observation.value.epgLastQueriedAt.isEmpty())
+    }
+
+    @Test
+    fun `unchanged and empty queries emit freshness without rebuilding reducer snapshot`() {
+        var now = Instant.fromEpochSeconds(100)
+        val metadata = PhaseOneSessionMetadata(clock = object : Clock { override fun now() = now })
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(1)))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        val event = GatewayEpgQueryEvent(id = EventId(1), channelId = ChannelId(1),
+            start = now, stop = now + 10.seconds)
+        val reducer = EpgReducer()
+        reducer.accept(MetadataEvent.ChannelAdded(generation, channel(1)))
+        for (events in listOf(emptyList(), listOf(event))) {
+            val horizon = now + 30.seconds
+            reducer.acceptSuccessfulQuery(checkNotNull(reducer.beginQuery(ChannelId(1))), horizon, events)
+            val original = reducer.snapshot()
+            metadata.applySuccessfulEpgQuery(generation, checkNotNull(metadata.beginEpgQuery(generation, ChannelId(1))),
+                horizon, events)
+            val before = metadata.observation.value
+            val query = checkNotNull(metadata.beginEpgQuery(generation, ChannelId(1)))
+            assertSame(before, metadata.observation.value)
+            now += 1.seconds
+            assertEquals(EpgQueryAcceptance.APPLIED, metadata.applySuccessfulEpgQuery(generation, query, horizon, events))
+            reducer.acceptSuccessfulQuery(checkNotNull(reducer.beginQuery(ChannelId(1))), horizon, events)
+            assertSame(original, reducer.snapshot())
+            assertEquals(original.hashCode(), reducer.snapshot().hashCode())
+            val after = metadata.observation.value
+            assertNotSame(before, after)
+            assertFalse(before == after)
+            assertSame(before.epgSnapshotForDisplay, after.epgSnapshotForDisplay)
+            assertEquals(now, after.epgRefreshTimes.lastUpdatedAt)
+            assertEquals(now, after.epgLastQueriedAt[ChannelId(1)])
+            assertEquals(before.channelRefreshTimes, after.channelRefreshTimes)
+            assertEquals(before.dvrRefreshTimes, after.dvrRefreshTimes)
+            metadata.retainEpgEvents(generation, Instant.DISTANT_PAST, Instant.DISTANT_FUTURE)
+            assertEquals(after.epgRefreshTimes, metadata.observation.value.epgRefreshTimes)
+        }
+        val query = checkNotNull(metadata.beginEpgQuery(generation, ChannelId(1)))
+        val before = metadata.observation.value
+        metadata.resetWorkingStateRetainingPublishedSnapshot()
+        now += 1.seconds
+        assertEquals(EpgQueryAcceptance.STALE, metadata.applySuccessfulEpgQuery(generation, query, now, emptyList()))
+        assertEquals(before.epgLastQueriedAt, metadata.observation.value.epgLastQueriedAt)
+    }
+
     @Test
     fun `complete channel add clears current link while update omission preserves successor evidence`() {
         for (completeAdd in listOf(false, true)) {

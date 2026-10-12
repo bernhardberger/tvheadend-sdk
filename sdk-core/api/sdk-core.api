@@ -1825,6 +1825,21 @@ public final class at/bernhardberger/tvheadend/sdk/core/MetadataCachePolicy$Comp
 	public static synthetic fun create-vLdBGDU$default (Lat/bernhardberger/tvheadend/sdk/core/MetadataCachePolicy$Companion;Ljava/io/File;JJJILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/MetadataCachePolicy;
 }
 
+public final class at/bernhardberger/tvheadend/sdk/core/MetadataRefreshTimes {
+	public fun <init> ()V
+	public fun <init> (Lkotlin/time/Instant;Lkotlin/time/Instant;)V
+	public synthetic fun <init> (Lkotlin/time/Instant;Lkotlin/time/Instant;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Lkotlin/time/Instant;
+	public final fun component2 ()Lkotlin/time/Instant;
+	public final fun copy (Lkotlin/time/Instant;Lkotlin/time/Instant;)Lat/bernhardberger/tvheadend/sdk/core/MetadataRefreshTimes;
+	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/MetadataRefreshTimes;Lkotlin/time/Instant;Lkotlin/time/Instant;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/MetadataRefreshTimes;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getLastSynchronizedAt ()Lkotlin/time/Instant;
+	public final fun getLastUpdatedAt ()Lkotlin/time/Instant;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public abstract class at/bernhardberger/tvheadend/sdk/core/PlaybackBinding {
 }
 
@@ -2153,13 +2168,17 @@ public final class at/bernhardberger/tvheadend/sdk/core/SessionObservation {
 	public final fun eventAt-RL2hoTo (JLkotlin/time/Instant;)Lat/bernhardberger/tvheadend/sdk/core/EpgEvent;
 	public final fun getChannelCatalogAuthority ()Lat/bernhardberger/tvheadend/sdk/core/RetainedMetadataAuthority;
 	public final fun getChannelCatalogForDisplay ()Lat/bernhardberger/tvheadend/sdk/core/ChannelCatalog;
+	public final fun getChannelRefreshTimes ()Lat/bernhardberger/tvheadend/sdk/core/MetadataRefreshTimes;
 	public final fun getChannelState ()Lat/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState;
 	public final fun getCurrentSession ()Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;
 	public final fun getDvrConfigurationsState ()Lat/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState;
 	public final fun getDvrDiskSpaceState ()Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpaceState;
+	public final fun getDvrRefreshTimes ()Lat/bernhardberger/tvheadend/sdk/core/MetadataRefreshTimes;
 	public final fun getDvrSnapshotAuthority ()Lat/bernhardberger/tvheadend/sdk/core/RetainedMetadataAuthority;
 	public final fun getDvrSnapshotForDisplay ()Lat/bernhardberger/tvheadend/sdk/core/DvrSnapshot;
 	public final fun getDvrState ()Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState;
+	public final fun getEpgLastQueriedAt ()Ljava/util/Map;
+	public final fun getEpgRefreshTimes ()Lat/bernhardberger/tvheadend/sdk/core/MetadataRefreshTimes;
 	public final fun getEpgSnapshotAuthority ()Lat/bernhardberger/tvheadend/sdk/core/RetainedMetadataAuthority;
 	public final fun getEpgSnapshotForDisplay ()Lat/bernhardberger/tvheadend/sdk/core/EpgSnapshot;
 	public final fun getEpgState ()Lat/bernhardberger/tvheadend/sdk/core/EpgRepositoryState;
@@ -2171,7 +2190,9 @@ public final class at/bernhardberger/tvheadend/sdk/core/SessionObservation {
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/SessionObservation$Companion {
+	public final fun create (Lat/bernhardberger/tvheadend/sdk/core/MetadataRefreshTimes;Lat/bernhardberger/tvheadend/sdk/core/MetadataRefreshTimes;Lat/bernhardberger/tvheadend/sdk/core/MetadataRefreshTimes;Ljava/util/Map;Lat/bernhardberger/tvheadend/sdk/core/SessionState;Lat/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState;Lat/bernhardberger/tvheadend/sdk/core/EpgRepositoryState;Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState;Lat/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState;Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpaceState;Lat/bernhardberger/tvheadend/sdk/core/RecordingProgressCapability;)Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;
 	public final fun create (Lat/bernhardberger/tvheadend/sdk/core/SessionState;Lat/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState;Lat/bernhardberger/tvheadend/sdk/core/EpgRepositoryState;Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState;Lat/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState;Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpaceState;Lat/bernhardberger/tvheadend/sdk/core/RecordingProgressCapability;)Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;
+	public static synthetic fun create$default (Lat/bernhardberger/tvheadend/sdk/core/SessionObservation$Companion;Lat/bernhardberger/tvheadend/sdk/core/MetadataRefreshTimes;Lat/bernhardberger/tvheadend/sdk/core/MetadataRefreshTimes;Lat/bernhardberger/tvheadend/sdk/core/MetadataRefreshTimes;Ljava/util/Map;Lat/bernhardberger/tvheadend/sdk/core/SessionState;Lat/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState;Lat/bernhardberger/tvheadend/sdk/core/EpgRepositoryState;Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState;Lat/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState;Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpaceState;Lat/bernhardberger/tvheadend/sdk/core/RecordingProgressCapability;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;
 	public static synthetic fun create$default (Lat/bernhardberger/tvheadend/sdk/core/SessionObservation$Companion;Lat/bernhardberger/tvheadend/sdk/core/SessionState;Lat/bernhardberger/tvheadend/sdk/core/ChannelRepositoryState;Lat/bernhardberger/tvheadend/sdk/core/EpgRepositoryState;Lat/bernhardberger/tvheadend/sdk/core/DvrRepositoryState;Lat/bernhardberger/tvheadend/sdk/core/DvrConfigurationsState;Lat/bernhardberger/tvheadend/sdk/core/DvrDiskSpaceState;Lat/bernhardberger/tvheadend/sdk/core/RecordingProgressCapability;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;
 }
 

@@ -1,3 +1,5 @@
+@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class)
+
 package at.bernhardberger.tvheadend.sdk.core.testing
 
 import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
@@ -75,6 +77,10 @@ private class ProductionSessionGenerationSubject : SessionGenerationConformanceS
             observation.dvrState,
             observation.dvrConfigurationsState,
             observation.dvrDiskSpaceState,
+            observation.channelRefreshTimes,
+            observation.epgRefreshTimes,
+            observation.dvrRefreshTimes,
+            observation.epgLastQueriedAt,
         )
     }
 }

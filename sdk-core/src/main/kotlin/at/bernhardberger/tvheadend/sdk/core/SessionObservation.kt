@@ -1,4 +1,8 @@
+@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class)
+
 package at.bernhardberger.tvheadend.sdk.core
+
+import at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
 
 import java.util.Collections
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,7 +20,16 @@ public class SessionObservation private constructor(
     public val dvrDiskSpaceState: DvrDiskSpaceState,
     public val recordingProgressCapability: RecordingProgressCapability,
     public val currentSession: CurrentSessionObservation?,
+    @ExperimentalTvheadendApi public val channelRefreshTimes: MetadataRefreshTimes,
+    @ExperimentalTvheadendApi public val epgRefreshTimes: MetadataRefreshTimes,
+    @ExperimentalTvheadendApi public val dvrRefreshTimes: MetadataRefreshTimes,
+    queryTimes: Map<ChannelId, Instant>,
 ) {
+    /** Last locally accepted successful query per channel; absence means unknown. */
+    @ExperimentalTvheadendApi
+    public val epgLastQueriedAt: Map<ChannelId, Instant> =
+        Collections.unmodifiableMap(LinkedHashMap(queryTimes))
+
     /** Current or retained channel catalog available for display, without copying. */
     public val channelCatalogForDisplay: ChannelCatalog?
         get() = channelState.channelCatalogForDisplay
@@ -131,6 +144,10 @@ public class SessionObservation private constructor(
             dvrConfigurationsState == other.dvrConfigurationsState &&
             dvrDiskSpaceState == other.dvrDiskSpaceState &&
             recordingProgressCapability == other.recordingProgressCapability &&
+            channelRefreshTimes == other.channelRefreshTimes &&
+            epgRefreshTimes == other.epgRefreshTimes &&
+            dvrRefreshTimes == other.dvrRefreshTimes &&
+            epgLastQueriedAt == other.epgLastQueriedAt &&
             currentSession === other.currentSession
 
     override fun hashCode(): Int {
@@ -141,6 +158,10 @@ public class SessionObservation private constructor(
         result = 31 * result + dvrConfigurationsState.hashCode()
         result = 31 * result + dvrDiskSpaceState.hashCode()
         result = 31 * result + recordingProgressCapability.hashCode()
+        result = 31 * result + channelRefreshTimes.hashCode()
+        result = 31 * result + epgRefreshTimes.hashCode()
+        result = 31 * result + dvrRefreshTimes.hashCode()
+        result = 31 * result + epgLastQueriedAt.hashCode()
         result = 31 * result + (currentSession?.let(System::identityHashCode) ?: 0)
         return result
     }
@@ -162,6 +183,31 @@ public class SessionObservation private constructor(
             dvrConfigurationsState: DvrConfigurationsState = DvrConfigurationsState.Unknown,
             dvrDiskSpaceState: DvrDiskSpaceState = DvrDiskSpaceState.Unknown,
             recordingProgressCapability: RecordingProgressCapability = RecordingProgressCapability.UNKNOWN,
+        ): SessionObservation = create(
+            channelRefreshTimes = MetadataRefreshTimes(),
+            sessionState = sessionState,
+            channelState = channelState,
+            epgState = epgState,
+            dvrState = dvrState,
+            dvrConfigurationsState = dvrConfigurationsState,
+            dvrDiskSpaceState = dvrDiskSpaceState,
+            recordingProgressCapability = recordingProgressCapability,
+        )
+
+        /** Creates an immutable observation with explicit local refresh bookkeeping. */
+        @ExperimentalTvheadendApi
+        public fun create(
+            channelRefreshTimes: MetadataRefreshTimes,
+            epgRefreshTimes: MetadataRefreshTimes = MetadataRefreshTimes(),
+            dvrRefreshTimes: MetadataRefreshTimes = MetadataRefreshTimes(),
+            epgLastQueriedAt: Map<ChannelId, Instant> = emptyMap(),
+            sessionState: SessionState = SessionState.Disconnected,
+            channelState: ChannelRepositoryState = ChannelRepositoryState.Empty,
+            epgState: EpgRepositoryState = EpgRepositoryState.Empty,
+            dvrState: DvrRepositoryState = DvrRepositoryState.Empty,
+            dvrConfigurationsState: DvrConfigurationsState = DvrConfigurationsState.Unknown,
+            dvrDiskSpaceState: DvrDiskSpaceState = DvrDiskSpaceState.Unknown,
+            recordingProgressCapability: RecordingProgressCapability = RecordingProgressCapability.UNKNOWN,
         ): SessionObservation {
             val standaloneOwner = Any()
             return createOwned(
@@ -176,6 +222,10 @@ public class SessionObservation private constructor(
                 generation = standaloneOwner,
                 generationIdentity = SessionGenerationIdentity.create(),
                 previousCurrent = null,
+                channelRefreshTimes = channelRefreshTimes,
+                epgRefreshTimes = epgRefreshTimes,
+                dvrRefreshTimes = dvrRefreshTimes,
+                epgLastQueriedAt = epgLastQueriedAt,
             )
         }
 
@@ -191,6 +241,10 @@ public class SessionObservation private constructor(
             generation: Any?,
             generationIdentity: SessionGenerationIdentity?,
             previousCurrent: CurrentSessionObservation?,
+            channelRefreshTimes: MetadataRefreshTimes = MetadataRefreshTimes(),
+            epgRefreshTimes: MetadataRefreshTimes = MetadataRefreshTimes(),
+            dvrRefreshTimes: MetadataRefreshTimes = MetadataRefreshTimes(),
+            epgLastQueriedAt: Map<ChannelId, Instant> = emptyMap(),
         ): SessionObservation {
             val current = if (
                 generation != null &&
@@ -218,6 +272,10 @@ public class SessionObservation private constructor(
                 dvrDiskSpaceState = dvrDiskSpaceState,
                 recordingProgressCapability = recordingProgressCapability,
                 currentSession = current,
+                channelRefreshTimes = channelRefreshTimes,
+                epgRefreshTimes = epgRefreshTimes,
+                dvrRefreshTimes = dvrRefreshTimes,
+                queryTimes = epgLastQueriedAt,
             )
         }
     }
@@ -316,6 +374,10 @@ internal class SessionObservationStore {
         dvrState: DvrRepositoryState,
         configurationsState: DvrConfigurationsState,
         diskSpaceState: DvrDiskSpaceState,
+        channelRefreshTimes: MetadataRefreshTimes = MetadataRefreshTimes(),
+        epgRefreshTimes: MetadataRefreshTimes = MetadataRefreshTimes(),
+        dvrRefreshTimes: MetadataRefreshTimes = MetadataRefreshTimes(),
+        epgLastQueriedAt: Map<ChannelId, Instant> = emptyMap(),
     ) {
         synchronized(lock) {
             publishLocked(
@@ -324,6 +386,10 @@ internal class SessionObservationStore {
                 dvrState = dvrState,
                 dvrConfigurationsState = configurationsState,
                 dvrDiskSpaceState = diskSpaceState,
+                channelRefreshTimes = channelRefreshTimes,
+                epgRefreshTimes = epgRefreshTimes,
+                dvrRefreshTimes = dvrRefreshTimes,
+                epgLastQueriedAt = epgLastQueriedAt,
             )
         }
     }
@@ -353,11 +419,19 @@ internal class SessionObservationStore {
                 dvrConfigurationsState = observation.dvrConfigurationsState,
                 dvrDiskSpaceState = observation.dvrDiskSpaceState,
                 recordingProgressCapability = observation.recordingProgressCapability,
+                channelRefreshTimes = observation.channelRefreshTimes,
+                epgRefreshTimes = observation.epgRefreshTimes,
+                dvrRefreshTimes = observation.dvrRefreshTimes,
+                epgLastQueriedAt = observation.epgLastQueriedAt,
             )
         }
     }
 
     private fun publishLocked(
+        channelRefreshTimes: MetadataRefreshTimes = mutableObservation.value.channelRefreshTimes,
+        epgRefreshTimes: MetadataRefreshTimes = mutableObservation.value.epgRefreshTimes,
+        dvrRefreshTimes: MetadataRefreshTimes = mutableObservation.value.dvrRefreshTimes,
+        epgLastQueriedAt: Map<ChannelId, Instant> = mutableObservation.value.epgLastQueriedAt,
         sessionState: SessionState = mutableObservation.value.sessionState,
         channelState: ChannelRepositoryState = mutableObservation.value.channelState,
         epgState: EpgRepositoryState = mutableObservation.value.epgState,
@@ -381,6 +455,10 @@ internal class SessionObservationStore {
             generation = readyGeneration,
             generationIdentity = readyGenerationIdentity,
             previousCurrent = previous.currentSession,
+            channelRefreshTimes = channelRefreshTimes,
+            epgRefreshTimes = epgRefreshTimes,
+            dvrRefreshTimes = dvrRefreshTimes,
+            epgLastQueriedAt = epgLastQueriedAt,
         )
     }
 }
