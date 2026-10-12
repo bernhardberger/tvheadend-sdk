@@ -24,6 +24,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
+import at.bernhardberger.tvheadend.sdk.core.DvrProgressResult
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.DvrSchedule
 import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
@@ -84,6 +85,60 @@ import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
 internal class FakeTvheadendSessionTest {
+    @Test
+    fun `watch actions script outcomes capture safe immutable requests and expire old proofs`() = runTest {
+        val fake = FakeTvheadendSession(currentObservation())
+        val observation = fake.observation.value
+        val proof = checkNotNull(observation.currentSession)
+        val repository = fake.dvrRepository
+        repository.scriptUpdateWatchState(DvrProgressResult.Accepted)
+        assertSame(DvrProgressResult.Accepted, repository.updateWatchState(proof, DvrEntryId(987654), true))
+        val captured = repository.watchStateRequests
+        assertEquals(listOf(FakeDvrRepository.WatchStateRequest(DvrEntryId(987654), true)), captured)
+        assertEquals("WatchStateRequest(id=<redacted>, watched=true)", captured.single().toString())
+        val refusal = DvrProgressResult.Failed(TvheadendFailure.SERVER_REJECTED, false)
+        repository.scriptUpdateWatchState(refusal)
+        assertEquals(refusal, repository.updateWatchState(proof, DvrEntryId(2), false))
+        assertEquals(listOf(true, false), repository.watchStateRequests.map { it.watched })
+        assertEquals(1, captured.size)
+        assertThrows(UnsupportedOperationException::class.java) {
+            (captured as MutableList).clear()
+        }
+        assertSame(observation, fake.observation.value)
+        assertThrows(IllegalArgumentException::class.java) {
+            repository.scriptUpdateWatchState(DvrProgressResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, false))
+        }
+        fake.replaceGeneration(currentObservation())
+        assertEquals(DvrProgressResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, false),
+            repository.updateWatchState(proof, DvrEntryId(3), true))
+        assertEquals(2, repository.watchStateRequests.size)
+        assertEquals(List(3) { FakeSessionCall.DVR_UPDATE_WATCH_STATE }, fake.calls)
+    }
+
+    @Test
+    fun `watch fake checks retirement at admission and propagates cancellation`() = runTest {
+        val fake = FakeTvheadendSession(currentObservation())
+        val proof = checkNotNull(fake.observation.value.currentSession)
+        fake.dvrRepository.scriptUpdateWatchState(DvrProgressResult.Accepted)
+        fake.afterAdmission = { fake.retire() }
+        assertEquals(DvrProgressResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, false),
+            fake.dvrRepository.updateWatchState(proof, DvrEntryId(1), false))
+        assertTrue(fake.dvrRepository.watchStateRequests.isEmpty())
+
+        val current = FakeTvheadendSession(currentObservation())
+        val cancellation = CancellationException("cancelled")
+        current.afterAdmission = { throw cancellation }
+        var caught: CancellationException? = null
+        try {
+            current.dvrRepository.updateWatchState(checkNotNull(current.observation.value.currentSession),
+                DvrEntryId(1), true)
+        } catch (failure: CancellationException) {
+            caught = failure
+        }
+        assertSame(cancellation, caught)
+        assertTrue(current.dvrRepository.watchStateRequests.isEmpty())
+    }
+
     @Test
     fun `fake DVR changes are hot non replaying and independent from snapshots`() = runTest {
         val fake = FakeTvheadendSession(currentObservation())
@@ -324,6 +379,9 @@ internal class FakeTvheadendSessionTest {
         fake.cache.scriptStatistics(CacheStatistics(metadataBytes = 10, artworkBytes = 20, artworkEntryCount = 2))
         fake.cache.clear()
         assertEquals(CacheStatistics.EMPTY, fake.cache.statistics.value)
+        val watchFailure = DvrProgressResult.Failed(TvheadendFailure.CONNECTION_LIMIT, false)
+        fake.dvrRepository.scriptUpdateWatchState(watchFailure)
+        assertSame(watchFailure, fake.dvrRepository.updateWatchState(current, DvrEntryId(1), true))
         assertEquals(FakeSessionCall.entries.drop(4), fake.calls)
     }
 

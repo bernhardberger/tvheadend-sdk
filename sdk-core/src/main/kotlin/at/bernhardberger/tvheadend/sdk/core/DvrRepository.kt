@@ -873,6 +873,21 @@ public interface DvrRepository {
         update: DvrEntryUpdate,
     ): DvrMutationResult<Unit>
 
+    /**
+     * Marks an entry watched or unwatched and clears its resume position in one command.
+     * Watched sets a zero count to one, preserving an existing positive count; unwatched resets it.
+     * Dispatch does not depend on cached entry membership or state. [DvrProgressResult.Accepted]
+     * means a successful reply, not confirmed changes: some server states ignore progress fields.
+     * Snapshots change only through authoritative metadata. Later playback reports can overwrite
+     * the reset position. An expired observation fails before dispatch with `mayHaveApplied=false`.
+     */
+    @at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
+    public suspend fun updateWatchState(
+        currentSession: CurrentSessionObservation,
+        id: DvrEntryId,
+        watched: Boolean,
+    ): DvrProgressResult
+
     /** Stops one recording and waits for authoritative stream confirmation. */
     public suspend fun stopEntry(
         currentSession: CurrentSessionObservation,
@@ -941,7 +956,16 @@ public interface DvrRepository {
 internal abstract class CommandBackedDvrRepository(
     private val mutations: DvrMutationCommands = DvrMutationCommands.None,
     private val resolveGeneration: (CurrentSessionObservation) -> GatewayGeneration? = { null },
+    private val progressCommands: DvrProgressCommands = DvrProgressCommands.None,
 ) : DvrRepository {
+    final override suspend fun updateWatchState(
+        currentSession: CurrentSessionObservation,
+        id: DvrEntryId,
+        watched: Boolean,
+    ): DvrProgressResult = resolveGeneration(currentSession)?.let { generation ->
+        progressCommands.updateWatchState(generation, id, watched)
+    } ?: DvrProgressResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false)
+
     final override suspend fun scheduleEntry(
         currentSession: CurrentSessionObservation,
         request: DvrScheduleRequest,

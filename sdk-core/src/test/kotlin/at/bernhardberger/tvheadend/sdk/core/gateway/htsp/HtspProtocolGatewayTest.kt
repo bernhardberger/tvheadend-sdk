@@ -1960,6 +1960,39 @@ internal class HtspProtocolGatewayTest {
     }
 
     @Test
+    fun `watch actions send exactly SET or RESET and zero resume in one fenced request`() = runTest {
+        val sourceGeneration = HtspConnectionGeneration()
+        val fake = FakeHtspConnection().apply {
+            liveConnectionValue.value = liveConnection(sourceGeneration)
+            connectOutcome = HtspConnectOutcome.Connected(requireNotNull(liveConnectionValue.value))
+            executeResult = HtspResult.Ok(UpdateDvrEntryResponse)
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+        for (watched in listOf(true, false)) {
+            val before = fake.expectedGenerations.size
+            assertTrue(gateway.updateDvrWatchState(generation, DvrEntryId(7), watched) is GatewayResult.Ok)
+            assertEquals(UpdateDvrEntryRequest(entryId = 7, playCount = if (watched) 1L else 0L,
+                playPositionSeconds = 0), fake.lastRequest)
+            assertEquals(before + 1, fake.expectedGenerations.size)
+            assertSame(sourceGeneration, fake.lastExpectedGeneration)
+            assertEquals(27, fake.lastRequest?.minimumProtocolVersion)
+            assertEquals(at.bernhardberger.tvheadend.htsp.requests.HtspAccess.ACCESS_HTSP_RECORDER,
+                fake.lastRequest?.access)
+        }
+        for ((reply, expected) in listOf(
+            HtspResult.ServerError("private refusal") to GatewayResult.ServerRejected,
+            HtspResult.AccessDenied to GatewayResult.AccessDenied,
+            HtspResult.NotSupported to GatewayResult.NotSupported,
+            HtspResult.Timeout to GatewayResult.Timeout,
+        )) {
+            fake.executeResult = reply
+            assertSame(expected, gateway.updateDvrWatchState(generation, DvrEntryId(7), true))
+        }
+    }
+
+    @Test
     fun `DVR progress maps keep and increment playcount without metadata fields`() = runTest {
         val sourceGeneration = HtspConnectionGeneration()
         val fake = FakeHtspConnection().apply {

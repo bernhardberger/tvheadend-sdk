@@ -449,6 +449,7 @@ internal class PhaseOneSessionMetadata(
     private val stateBackedDvrRepository = object : CommandBackedDvrRepository(
         mutations = mutationCommands,
         resolveGeneration = ::resolveGeneration,
+        progressCommands = progressCommands,
     ) {
         override val changes = mutableDvrChanges.asSharedFlow()
     }

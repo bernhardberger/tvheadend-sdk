@@ -53,9 +53,9 @@ public enum class DvrPlaybackExit {
     ERROR,
 }
 
-/** Typed outcome of one generation-bound DVR progress report. */
+/** Typed outcome of one generation-bound DVR progress or watch-state command. */
 public sealed interface DvrProgressResult {
-    /** The command was accepted; later asynchronous metadata remains authoritative. */
+    /** A successful reply, not confirmation of changed fields; asynchronous metadata is authoritative. */
     public data object Accepted : DvrProgressResult
 
     /**
@@ -213,6 +213,12 @@ private fun Duration.toPlaybackProgress(markWatched: Boolean): DvrPlaybackProgre
 }
 
 internal interface DvrProgressCommands {
+    public suspend fun updateWatchState(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+        watched: Boolean,
+    ): DvrProgressResult = DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
+
     public suspend fun reportProgress(
         generation: GatewayGeneration,
         id: DvrEntryId,

@@ -784,6 +784,18 @@ private fun dvrUpdated(
     )
 
 internal class MutationGateway : ProtocolGateway {
+    internal var watchStateBehavior: suspend (
+        GatewayGeneration,
+        DvrEntryId,
+        Boolean,
+    ) -> GatewayResult<Unit> = { _, _, _ -> GatewayResult.NotSupported }
+
+    override suspend fun updateDvrWatchState(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+        watched: Boolean,
+    ): GatewayResult<Unit> = watchStateBehavior(generation, id, watched)
+
     internal var scheduleBehavior: suspend (
         GatewayGeneration,
         DvrScheduleRequest,

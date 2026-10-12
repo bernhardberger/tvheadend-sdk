@@ -2,6 +2,7 @@
     at.bernhardberger.tvheadend.sdk.core.TvheadendTestingApi::class,
     at.bernhardberger.tvheadend.sdk.testing.FakePlaybackApi::class,
     at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class,
+    at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class,
 )
 
 package at.bernhardberger.tvheadend.sdk.testing
@@ -19,6 +20,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrChange
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult
+import at.bernhardberger.tvheadend.sdk.core.DvrProgressResult
 import at.bernhardberger.tvheadend.sdk.core.DvrRepository
 import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverageAcquisitionResult
@@ -43,6 +45,7 @@ import at.bernhardberger.tvheadend.sdk.core.TimerecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
 import at.bernhardberger.tvheadend.sdk.core.TvheadendTestResultFactory
 import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
+import at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
 import java.util.Collections
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.currentCoroutineContext
@@ -87,6 +90,8 @@ public enum class FakeSessionCall {
     DVR_DELETE_TIMEREC_RULE,
     LOAD_ARTWORK,
     CLEAR_CACHE,
+    @ExperimentalTvheadendApi
+    DVR_UPDATE_WATCH_STATE,
 }
 /**
  * JVM-only, generation-aware implementation of the complete application session boundary.
@@ -475,6 +480,54 @@ public class FakeDvrRepository internal constructor(
 
     private val lock = Any()
     private val results = HashMap<FakeSessionCall, DvrMutationResult<*>>()
+    private var watchStateResult: DvrProgressResult =
+        DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
+    private val mutableWatchStateRequests = mutableListOf<WatchStateRequest>()
+
+    /** A captured watch action; rendering never includes the entry identifier. */
+    @ExperimentalTvheadendApi
+    public data class WatchStateRequest(public val id: DvrEntryId, public val watched: Boolean) {
+        override fun toString(): String = "WatchStateRequest(id=<redacted>, watched=$watched)"
+    }
+
+    /** Immutable, ordered snapshot of admitted watch requests. Expired calls are not captured. */
+    @ExperimentalTvheadendApi
+    public val watchStateRequests: List<WatchStateRequest>
+        get() = synchronized(lock) { Collections.unmodifiableList(mutableWatchStateRequests.toList()) }
+
+    /** Scripts the next and subsequent watch-state result without changing observed metadata. */
+    @ExperimentalTvheadendApi
+    public fun scriptUpdateWatchState(result: DvrProgressResult): Unit {
+        require((result as? DvrProgressResult.Failed)?.failure != TvheadendFailure.OBSERVATION_EXPIRED) {
+            "Scripted watch-state results require a current observation"
+        }
+        synchronized(lock) { watchStateResult = result }
+    }
+
+    @ExperimentalTvheadendApi
+    override suspend fun updateWatchState(
+        currentSession: CurrentSessionObservation,
+        id: DvrEntryId,
+        watched: Boolean,
+    ): DvrProgressResult {
+        currentCoroutineContext().ensureActive()
+        session.record(FakeSessionCall.DVR_UPDATE_WATCH_STATE)
+        val expired = DvrProgressResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false)
+        if (!session.isCurrent(currentSession)) return expired
+        session.afterAdmission()
+        if (!session.isCurrent(currentSession)) return expired
+        val result = synchronized(lock) {
+            mutableWatchStateRequests += WatchStateRequest(id, watched)
+            watchStateResult
+        }
+        currentCoroutineContext().ensureActive()
+        return if (session.isCurrent(currentSession)) result else DvrProgressResult.Failed(
+            TvheadendFailure.CONNECTION_CHANGED,
+            mayHaveApplied = result == DvrProgressResult.Accepted ||
+                (result is DvrProgressResult.Failed && result.mayHaveApplied),
+        )
+    }
+
     /** Scripts the schedule-entry result. */
     public fun scriptScheduleEntry(result: DvrMutationResult<DvrEntryId>): Unit =
         script(FakeSessionCall.DVR_SCHEDULE_ENTRY, result)

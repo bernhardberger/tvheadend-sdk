@@ -85,17 +85,27 @@ internal class DvrProgressCoordinator(
         }
     }
 
+    override suspend fun updateWatchState(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+        watched: Boolean,
+    ): DvrProgressResult = performProgressCommand(
+        expectedGeneration = generation,
+        admissionExpired = TvheadendFailure.OBSERVATION_EXPIRED,
+        targetIsCurrent = { true },
+        command = { gateway.updateDvrWatchState(it, id, watched) },
+    )
+
     override suspend fun reportProgress(
         generation: GatewayGeneration,
         id: DvrEntryId,
         progress: DvrPlaybackProgress,
         targetIsCurrent: () -> Boolean,
-    ): DvrProgressResult = reportProgress(
-        id = id,
-        progress = progress,
+    ): DvrProgressResult = performProgressCommand(
         expectedGeneration = generation,
         admissionExpired = TvheadendFailure.OBSERVATION_EXPIRED,
         targetIsCurrent = targetIsCurrent,
+        command = { gateway.reportDvrProgress(it, id, progress) },
     )
 
     override suspend fun reportProgress(
@@ -104,22 +114,21 @@ internal class DvrProgressCoordinator(
     ): DvrProgressResult {
         val bound = lease as? GenerationBoundGrowingRecordingFileLease
             ?: return DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
-        return reportProgress(
-            id = bound.boundRecordingId,
-            progress = progress,
+        return performProgressCommand(
             expectedGeneration = bound.boundGeneration,
             admissionExpired = TvheadendFailure.CONNECTION_CHANGED,
             targetIsCurrent = bound::isProgressBindingCurrent,
+            command = { gateway.reportDvrProgress(it, bound.boundRecordingId, progress) },
         )
     }
 
-    private suspend fun reportProgress(
-        id: DvrEntryId,
-        progress: DvrPlaybackProgress,
+    private suspend fun performProgressCommand(
         expectedGeneration: GatewayGeneration,
         admissionExpired: TvheadendFailure,
         targetIsCurrent: () -> Boolean,
+        command: suspend (GatewayGeneration) -> GatewayResult<Unit>,
     ): DvrProgressResult {
+        currentCoroutineContext().ensureActive()
         val activeGeneration = synchronized(lock) {
             if (latestBoundGeneration !== expectedGeneration) {
                 return DvrProgressResult.Failed(admissionExpired, mayHaveApplied = false)
@@ -156,13 +165,14 @@ internal class DvrProgressCoordinator(
             }
         }
         val result = try {
-            gateway.reportDvrProgress(activeGeneration, id, progress)
+            command(activeGeneration)
         } catch (cancellation: CancellationException) {
             currentCoroutineContext().ensureActive()
             throw cancellation
         } catch (_: Exception) {
             GatewayResult.TransportUnavailable
         }
+        currentCoroutineContext().ensureActive()
         val classified = synchronized(lock) {
             if (!admitted || generation !== activeGeneration) {
                 ClassifiedProgress(

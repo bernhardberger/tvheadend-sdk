@@ -33,10 +33,10 @@ remains a separate 0.27 roadmap item, outside this API note.
 ## Owner decisions
 
 1. **Should marking watched or unwatched also clear resume by default?**
-   Recommend **no**: change only the requested field. Allow an explicit reset
-   in the same request, so the Player can implement either action atomically
-   at the HTSP-command boundary. This is visible product behaviour, not a wire
-   limitation. See item 4.
+   **Decided: yes, both actions clear resume.** Follow common player practice
+   (Plex, Jellyfin/Emby, Kodi): one Boolean watch-state command sets or resets
+   the count and sends position zero atomically at the HTSP-command boundary.
+   No patch type or standalone reset-resume API in 0.27. See item 4.
 2. **Does “upcoming matches” mean recordings the server has scheduled, or all
    EPG events a rule might match?** Recommend **server-scheduled recordings
    only** for 0.27, named `upcomingRecordings`. The existing rule links are
@@ -431,15 +431,15 @@ until 6b is ready, and complete the migration only in 6c.
 **Owner decision:** no; this is the narrow compatibility bridge required by
 the already accepted 0.28 boundary, with existing default behaviour preserved.
 
-## 4. Watched/unwatched and reset resume outside playback
+## 4. Watched/unwatched outside playback (both clear resume)
 
 ### Current state and wire facts
 
-The SDK exposes `playCount` and `playPosition`, but its progress input requires
+The existing playback API exposes `playCount` and `playPosition`, but its progress input requires
 a position and treats `markWatched` as an **increment**, not an idempotent set:
 `sdk-core/src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/DvrProgress.kt:13-40`;
 `sdk-core/src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/gateway/htsp/HtspProtocolGateway.kt:679-692`.
-`DvrRepository` has no watch-state command
+Before this slice, `DvrRepository` had no watch-state command
 (`sdk-core/src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/DvrRepository.kt:838-922`).
 The Player shows play count and offers resume/start-over, but not a watch-state
 mutation:
@@ -486,24 +486,19 @@ Verified upstream:
 In `sdk-core`:
 
 ```kotlin
-@ExperimentalTvheadendApi
-public data class DvrWatchStateUpdate(
-    public val watched: Boolean? = null,
-    public val resetResume: Boolean = false,
-)
-
 // Member of DvrRepository:
 @ExperimentalTvheadendApi
 public suspend fun updateWatchState(
     currentSession: CurrentSessionObservation,
     id: DvrEntryId,
-    update: DvrWatchStateUpdate,
+    watched: Boolean,
 ): DvrProgressResult
 ```
 
-Require at least one requested change. `watched=true` maps to SET, false to
-RESET, null to omission; `resetResume=true` sends position zero, false omits
-position. Both changes, when requested, use **one** `updateDvrEntry` command.
+**Owner decision:** `watched=true` maps to SET (1, preserving an existing
+positive count upstream), false to RESET (0). Both send position zero in
+**one** `updateDvrEntry` command. There is no `DvrWatchStateUpdate` patch type
+or standalone reset-resume API; a separate reset can be considered later.
 Do not read-modify-write the old count or position and do not fake playback.
 Only these fields and the entry id are sent. Do not synthesize other update
 fields. Do not promise universal preservation by the generic server endpoint:
@@ -544,13 +539,13 @@ must not be presented as a confirmed change. A later playback checkpoint can
 overwrite a reset position; this command establishes no suppression of other
 clients or active playback reporting.
 
-**Open/closed and redaction:** input fields are a closed patch vocabulary;
+**Open/closed and redaction:** input is a Boolean watch action;
 the existing result is sealed with open `TvheadendFailure`. Its exact
-`mayHaveApplied` contract is unchanged. Render the update as redacted and
+`mayHaveApplied` contract is unchanged. Render captured requests as redacted and
 failures as safe labels/boolean only.
 
-**Tests and fakes:** gateway tests prove SET versus INCR, independent omission,
-combined reset, protocol/access refusal and exact request fields. With an
+**Tests and fakes:** gateway tests prove SET/RESET versus INCR, zero resume for
+both actions, protocol/access refusal and exact request fields. With an
 injected gateway, prove pre-dispatch expiration, accepted reply followed by
 retirement (`mayHaveApplied=true`), timeout/malformed reply, cancellation,
 no-op acceptance and authoritative async updates. Add scripted results and
@@ -576,8 +571,7 @@ Update that SDK-testing dependency and the Player's watch-action tests together.
 **Player migration:** add Recordings actions using this command; delete no
 existing playback-progress logic. Starting from the beginning is not a reset
 command and must not silently acquire that meaning.
-**Size:** 8–11 files. **Owner decision:** yes, whether watched/unwatched also
-resets resume implicitly. The proposed independent fields recommend it does not.
+**Owner decision:** settled: both watched and unwatched clear resume implicitly.
 
 ## 5. Metadata refresh times
 

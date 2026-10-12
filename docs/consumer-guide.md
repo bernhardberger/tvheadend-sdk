@@ -554,7 +554,20 @@ programme schedules can omit it. Supplied start/stop minutes for time-based
 rule creation and updates must be in `0..1439`. Automatic-recording rule windows
 retain their separate `1440` sentinel semantics.
 
-Cutpoints and progress belong to an observation-bound
+The experimental `dvrRepository.updateWatchState(currentSession, id, watched)`
+marks watched (`true`) or unwatched (`false`) and **always clears resume** in one
+command. Watched sets a zero play count to one and preserves a positive count;
+unwatched resets it to zero. It sends for every entry state, including ids absent
+from the local snapshot. `DvrProgressResult.Accepted` means a successful reply,
+not confirmed changes: the server may ignore progress on scheduled, missed or
+invalid entries. Observe metadata for actual changes; later playback checkpoints
+can overwrite the reset. An expired observation fails before dispatch with
+`OBSERVATION_EXPIRED` and `mayHaveApplied=false`. A per-entry refusal does not
+disable progress for other entries. There is no standalone reset-resume command.
+`sdk-testing` provides experimental result scripting and immutable, safely
+rendered `watchStateRequests` on `FakeDvrRepository`.
+
+Cutpoints and playback progress belong to an observation-bound
 `PlaybackBinding.Recording`, not to the mutation repository. `cutpoints()`
 returns `DvrCutpointsResult.Available` or `Failed(failure: TvheadendFailure)`.
 Cutpoint actions are metadata;

@@ -677,6 +677,17 @@ internal class HtspProtocolGateway internal constructor(
         expectedGeneration = htspGenerationFor(generation),
     ).toGatewayResult {}
 
+    override suspend fun updateDvrWatchState(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+        watched: Boolean,
+    ): GatewayResult<Unit> = connection.updateDvrEntry(
+        entryId = id.value,
+        playCount = if (watched) 1L else 0L,
+        playPositionSeconds = 0L,
+        expectedGeneration = htspGenerationFor(generation),
+    ).toGatewayResult {}
+
     override suspend fun reportDvrProgress(
         generation: GatewayGeneration,
         id: DvrEntryId,

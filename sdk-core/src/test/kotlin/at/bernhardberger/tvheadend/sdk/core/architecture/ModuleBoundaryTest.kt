@@ -315,6 +315,7 @@ internal class ModuleBoundaryTest {
             "public suspend fun clearProfile(): ServerProfileReadResult",
             "public suspend fun scheduleEntry( currentSession: CurrentSessionObservation, request: DvrScheduleRequest, ): DvrMutationResult<DvrEntryId>",
             "public suspend fun updateEntry( currentSession: CurrentSessionObservation, id: DvrEntryId, update: DvrEntryUpdate, ): DvrMutationResult<Unit>",
+            "public suspend fun updateWatchState( currentSession: CurrentSessionObservation, id: DvrEntryId, watched: Boolean, ): DvrProgressResult",
             "public suspend fun stopEntry( currentSession: CurrentSessionObservation, id: DvrEntryId, ): DvrMutationResult<Unit>",
             "public suspend fun cancelEntry( currentSession: CurrentSessionObservation, id: DvrEntryId, ): DvrMutationResult<Unit>",
             "public suspend fun deleteEntry( currentSession: CurrentSessionObservation, id: DvrEntryId, ): DvrMutationResult<Unit>",
