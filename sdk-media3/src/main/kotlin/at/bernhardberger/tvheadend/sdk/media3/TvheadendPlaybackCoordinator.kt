@@ -427,6 +427,13 @@ private class DefaultPlaybackCoordinatorLifetime(
  * the player's application looper, and cancellation before that work is claimed prevents player
  * mutation.
  *
+ * The supported Android TV 1.0 topology is one active coordinator/Player pair per session.
+ * Multiple distinct-Player pairs are not blocked, but are not a supported concurrent-playback
+ * guarantee; server, tuner and account limits still apply. Connection or profile teardown retires
+ * all generation-bound work. Sharing one Player between active coordinators is unsupported:
+ * playlist changes, progress writes and recovery are not arbitrated. Constructing a second
+ * coordinator neither throws for multiplicity nor evicts the first.
+ *
  * Player state belongs to a target only while the player's current item is the one this
  * coordinator installed for it. Once the application replaces or clears that item, the coordinator
  * reads no further position, end, error or recovery state from the player for the target. Pending

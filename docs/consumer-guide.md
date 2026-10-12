@@ -914,6 +914,15 @@ player's application looper. It does not construct or release the player and
 does not own a `MediaSession`, service, audio focus, notifications, surfaces,
 autoplay, navigation, UI, or presentation policy.
 
+The supported Android TV 1.0 topology is one active coordinator/Player pair per
+session. Multiple pairs with distinct Players are not blocked, but concurrent
+playback is not a support guarantee and remains subject to server, tuner and
+account limits. Connection or profile teardown retires all generation-bound
+work. Sharing one Player between active coordinators is unsupported: they do
+not arbitrate playlist changes, progress writes or recovery. Constructing a
+second coordinator neither throws for multiplicity nor evicts the first.
+Android TV media picture-in-picture does not require expanding this topology.
+
 Player state belongs to a coordinator target only while the player's current
 item is the one the coordinator installed for it. If the application replaces or
 clears that item, for example to play its own media, the coordinator stops
