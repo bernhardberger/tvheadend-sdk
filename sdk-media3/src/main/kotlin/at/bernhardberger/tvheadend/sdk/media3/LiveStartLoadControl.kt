@@ -26,8 +26,8 @@ internal class LiveStartLoadControl(
     private val skip = AtomicReference<SkipMark?>(null)
 
     /** Application-looper publication; the playback thread consumes with CAS only on a restart. */
-    internal fun beginSkip(token: PlaybackTargetToken, periodUid: Any, buffering: Boolean): SkipMark =
-        SkipMark(token, periodUid, elapsedRealtimeMs(), buffering).also { skip.set(it) }
+    internal fun beginSkip(token: PlaybackTargetToken, periodUid: Any): SkipMark =
+        SkipMark(token, periodUid).also { skip.set(it) }
 
     internal fun finishSkip(mark: SkipMark, disposition: TimeshiftCommandDisposition?) {
         if (disposition == null || disposition == TimeshiftCommandDisposition.NOT_ACCEPTED) {
@@ -76,9 +76,13 @@ internal class LiveStartLoadControl(
         val started = parameters.lastRebufferRealtimeMs
         val eligible = mark.periodUid == periodUid &&
             if (parameters.rebuffering && started != C.TIME_UNSET) {
-                (mark.alreadyBuffering || started >= mark.startedMs) &&
-                    (mark.completedMs == null || started <= mark.completedMs + SKIP_GRACE_MS)
-            } else mark.completedMs == null || elapsedRealtimeMs() <= mark.completedMs + SKIP_GRACE_MS
+                // The application-thread buffering snapshot can lag Media3. Every in-flight
+                // rebuffer is eligible, including one that started before the skip was requested.
+                mark.completedMs == null || started <= mark.completedMs + SKIP_GRACE_MS
+            } else {
+                val now = elapsedRealtimeMs()
+                mark.completedMs == null || now <= mark.completedMs + SKIP_GRACE_MS
+            }
         if (!eligible) skip.compareAndSet(mark, null)
         return mark.takeIf { eligible }
     }
@@ -113,12 +117,10 @@ internal class LiveStartLoadControl(
     internal class SkipMark(
         val token: PlaybackTargetToken,
         val periodUid: Any,
-        val startedMs: Long,
-        val alreadyBuffering: Boolean,
         val completedMs: Long? = null,
         val attempt: Any = Any(),
     ) {
-        fun completed(at: Long): SkipMark = SkipMark(token, periodUid, startedMs, alreadyBuffering, at, attempt)
+        fun completed(at: Long): SkipMark = SkipMark(token, periodUid, at, attempt)
         override fun toString(): String = "LiveSkipMark"
     }
 

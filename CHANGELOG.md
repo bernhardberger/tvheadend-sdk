@@ -4,6 +4,10 @@
 
 Unreleased; development target.
 
+- Live skip restart marks remain cancellable after acknowledgement while a paused
+  seek refills. Cleanup no longer waits for a quitting application looper, and
+  existing rebuffers remain eligible despite lagging application-thread state.
+
 ### Added
 
 - Experimental SDK-owned `TvheadendLoadControl` and `TvheadendLiveStartBuffer`

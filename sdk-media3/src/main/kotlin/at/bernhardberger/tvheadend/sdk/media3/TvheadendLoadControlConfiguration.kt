@@ -17,6 +17,12 @@ import kotlin.time.Duration.Companion.seconds
  * makes the new value visible to the next playback-thread decision. The SDK does not learn values.
  * The default is 2 s; applications migrating a 500 ms initial policy can pass `500.milliseconds`.
  *
+ * Live startup uses a time threshold, without the delegate's byte-target startup escape. Loading
+ * decisions remain delegated, but its 15 s / 30 s recording buffer limits are not backpressure on
+ * pushed live subscriptions. Prefer small, seconds-scale thresholds: large values can prolong
+ * startup or prevent it if the stream cannot accumulate enough buffered media. Reduce [duration]
+ * to recover without rebuilding the Player; the allowed integer range is not a practical buffer budget.
+ *
  * @throws IllegalArgumentException if [initial] is not finite, non-negative, whole milliseconds
  * fitting the Media3 integer millisecond range.
  */

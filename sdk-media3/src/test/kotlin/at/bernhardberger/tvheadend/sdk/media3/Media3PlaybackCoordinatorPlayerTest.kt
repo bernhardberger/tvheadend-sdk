@@ -54,6 +54,57 @@ import org.junit.jupiter.params.provider.ValueSource
 internal class Media3PlaybackCoordinatorPlayerTest {
     private var previousBoundsChecks: Boolean? = null
 
+    @Test
+    fun `acknowledged paused seek cancellation clears its unconsumed restart mark`() = runTest {
+        val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
+        val events = PlaybackPlayerEventAccumulator()
+        val control = skipLoadControl()
+        val player = Media3PlaybackCoordinatorPlayer(access, events, control) { _, _ -> RecordingAdmission.Completed(null) }
+        val coordinator = TvheadendPlaybackCoordinator(player, events, DvrProgressPolicy(), {}, SystemPlaybackCoordinatorTimeSource)
+        val owner = coordinator.launchIn(this)
+        try {
+            coordinator.setLiveTarget(TestCoordinatorLiveTarget())
+            val subscription = FakeTimeshiftSubscription(120.seconds)
+            val attachment = requireNotNull(access.liveControls).newAttachment().also { it.bind(subscription) }
+            attachment.periodUid = skipLoadParameters(500).mediaPeriodId.periodUid
+            attachment.packetMapping.accept(0, 0)
+            attachment.accept(SubscriptionEvent.Timeshift(0, 0, 0, 100_000_000, 100))
+            access.snapshot = PlaybackPlayerSnapshot(Duration.ZERO, null, Player.STATE_BUFFERING, false, attachment.periodUid)
+            subscription.speedAction = { speed ->
+                attachment.accept(SubscriptionEvent.Speed(speed))
+                at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult.Ok(Unit)
+            }
+            coordinator.pauseTimeshift()
+            subscription.seekAction = {
+                attachment.accept(SubscriptionEvent.Skipped(
+                    true, at.bernhardberger.tvheadend.sdk.playback.SkipOutcome.ACCEPTED, 5_000_000, null,
+                ))
+                at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekResult.AcceptedAt(5.seconds)
+            }
+            access.looperQueue.current = false
+            val seeking = async { coordinator.seekTimeshift(attachment.timeline()!!.select(5.seconds)!!) }
+            runCurrent()
+            access.looperQueue.runAll() // Actor's initial position sample.
+            runCurrent()
+            access.looperQueue.runAll() // Skip arm before wire dispatch.
+            runCurrent()
+            access.looperQueue.runAll() // Completion and paused-readiness sample.
+            runCurrent()
+            assertFalse(seeking.isCompleted)
+            assertEquals(listOf(0, 100), subscription.speeds, "Acknowledged seek is still refilling")
+            assertFalse(control.shouldStartPlayback(skipLoadParameters(499)))
+            seeking.cancel()
+            runCurrent()
+            access.looperQueue.runAll()
+            runCurrent()
+            assertFalse(control.shouldStartPlayback(skipLoadParameters(500)), "Cancellation after acknowledgement must clear the mark")
+        } finally {
+            access.looperQueue.current = true
+            access.looperQueue.runAll()
+            owner.shutdown(1.seconds)
+        }
+    }
+
     @ParameterizedTest
     @CsvSource("relative,false,false", "relative,true,false", "absolute,false,false", "absolute,true,false", "live,false,false", "live,true,false",
         "relative,true,true", "absolute,true,true", "live,true,true")
@@ -161,6 +212,90 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             override fun shouldStartPlayback(parameters: androidx.media3.exoplayer.LoadControl.Parameters): Boolean = false
         }, TvheadendLiveStartBuffer(500.milliseconds),
     ) { 10_000 }
+
+    @Test
+    fun `cancelling after arm claim before continuation clears without waiting for the looper`() = runTest {
+        val access = FakeCoordinatorPlaybackAccess()
+        val control = skipLoadControl()
+        val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator(), control) { _, _ -> RecordingAdmission.Completed(null) }
+        val token = PlaybackTargetToken()
+        val bridge = controls(token)
+        onLooper(access) { player.installLive(PlayerOperationTicket(), token, TestCoordinatorLiveTarget(), timeshiftControls = bridge) }
+        val subscription = attachSkip(access, bridge)
+        val seeking = async { bridge.seek(at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget.Live, ticket = PlayerOperationTicket()) }
+        runCurrent() // Arm queued, not claimed.
+        access.looperQueue.runAll() // Arm claimed and published; actor continuation has not resumed.
+        seeking.cancel()
+        runCurrent()
+        assertTrue(seeking.isCompleted, "Cleanup cannot await an application looper that may have quit")
+        assertTrue(subscription.seekTargets.isEmpty(), "Cancellation won before gateway dispatch")
+        access.looperQueue.runAll()
+        assertFalse(control.shouldStartPlayback(skipLoadParameters(500)))
+        onLooper(access) { player.abandon() }
+    }
+
+    @Test
+    fun `late off looper cancellation cannot clear a newer armed skip`() = runTest {
+        val access = FakeCoordinatorPlaybackAccess()
+        val control = skipLoadControl()
+        val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator(), control) { _, _ -> RecordingAdmission.Completed(null) }
+        val token = PlaybackTargetToken()
+        val bridge = controls(token)
+        onLooper(access) { player.installLive(PlayerOperationTicket(), token, TestCoordinatorLiveTarget(), timeshiftControls = bridge) }
+        attachSkip(access, bridge)
+        val oldTicket = PlayerOperationTicket()
+        val old = async { bridge.seek(at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget.Live, ticket = oldTicket) }
+        runCurrent()
+        access.looperQueue.runAll()
+        runCurrent()
+        assertTrue(old.isCompleted, "Wire result settles before the queued completion cleanup")
+        val newer = async { bridge.seek(at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget.Live, ticket = PlayerOperationTicket()) }
+        runCurrent()
+        access.looperQueue.runAll() // Old completion, then new arm.
+        assertFalse(access.looperQueue.isCurrent())
+        oldTicket.cancel() // Queued off-looper cancellation still references only the old attempt.
+        runCurrent()
+        assertTrue(newer.isCompleted)
+        access.looperQueue.runAll()
+        assertTrue(control.shouldStartPlayback(skipLoadParameters(500)))
+        assertFalse(control.shouldStartPlayback(skipLoadParameters(500)))
+        onLooper(access) { player.abandon() }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["queued", "rejected", "throws"])
+    fun `wire result does not await completion cleanup on a quitting looper`(mode: String) = runTest {
+        val access = FakeCoordinatorPlaybackAccess()
+        val control = skipLoadControl()
+        val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator(), control) { _, _ -> RecordingAdmission.Completed(null) }
+        val token = PlaybackTargetToken()
+        val bridge = controls(token)
+        onLooper(access) { player.installLive(PlayerOperationTicket(), token, TestCoordinatorLiveTarget(), timeshiftControls = bridge) }
+        attachSkip(access, bridge)
+        val seeking = async { bridge.seek(at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget.Live) }
+        runCurrent()
+        access.looperQueue.runAll()
+        access.looperQueue.rejectPosts = mode == "rejected"
+        access.looperQueue.throwOnPost = mode == "throws"
+        runCurrent()
+        assertTrue(seeking.isCompleted)
+        assertTrue(requireNotNull(seeking.getCompleted()).toPublicTimeshiftResult().isAccepted)
+        token.retire()
+        assertFalse(control.shouldStartPlayback(skipLoadParameters(500)))
+        access.looperQueue.rejectPosts = false
+        access.looperQueue.throwOnPost = false
+        access.looperQueue.runAll()
+        onLooper(access) { player.abandon() }
+    }
+
+    private fun attachSkip(access: FakeCoordinatorPlaybackAccess, bridge: LiveTimeshiftControlBridge): FakeTimeshiftSubscription {
+        val subscription = FakeTimeshiftSubscription(120.seconds)
+        val attachment = bridge.newAttachment().also { it.bind(subscription) }
+        attachment.periodUid = skipLoadParameters(500).mediaPeriodId.periodUid
+        // A lagging READY snapshot must not exclude a rebuffer already running on the playback thread.
+        access.snapshot = PlaybackPlayerSnapshot(Duration.ZERO, null, Player.STATE_READY, false, attachment.periodUid)
+        return subscription
+    }
 
     private fun skipLoadParameters(bufferedMs: Long, rebufferAt: Long = 9_000): androidx.media3.exoplayer.LoadControl.Parameters {
         val timeline = androidx.media3.exoplayer.source.SinglePeriodTimeline(

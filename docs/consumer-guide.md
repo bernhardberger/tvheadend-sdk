@@ -26,6 +26,14 @@ within `Int.MAX_VALUE`. Recordings (including growing ones) and ordinary
 1.5-second rebuffers retain their existing policy. The zero-argument unstable
 factory remains available with its original behaviour.
 
+Live startup uses the configured time threshold without the delegate's byte-target
+startup escape. Loading decisions remain delegated; its 15/30-second recording
+limits are not backpressure on pushed live subscriptions. Prefer small,
+seconds-scale thresholds: large values can prolong startup or prevent it if the
+stream cannot accumulate enough buffered media. Lowering `buffer.duration`
+allows the next decision to recover without rebuilding the Player. The accepted
+integer range is not a practical buffer budget.
+
 Pass that same handle to the coordinator overload to enable skip-aware restart
 buffering (the coordinator type still has its existing Media3 unstable marker
 until 0.28). Relative/absolute server seeks and return-to-live arm one restart,

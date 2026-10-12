@@ -349,27 +349,34 @@ internal class Media3PlaybackCoordinatorPlayer(
                 if (target != null && periodUid != null && ticket?.isCancellationRequested() != true) {
                     val snapshot = access.snapshot()
                     if (!snapshot.failed && snapshot.periodUid == periodUid && token.isActive() && describesTarget(target)) {
-                        val started = control.beginSkip(token, periodUid, snapshot.playbackState == Player.STATE_BUFFERING)
+                        val started = control.beginSkip(token, periodUid)
                         mark = started
                         ticket?.onCancellationRequest {
-                            val cancel = Runnable { control.cancelSkip(started) }
-                            if (access.looper.isCurrent()) cancel.run() else access.looper.post(cancel)
+                            publishSkipUpdate { control.cancelSkip(started) }
                         }
                     }
                 }
             }
             return dispatch().also { disposition = it.toPublicTimeshiftResult().disposition }
         } finally {
-            // Also settles an arm whose executor continuation was cancelled after its runnable claimed.
-            withContext(NonCancellable) {
-                executor.execute(PlayerOperationTicket()) {
-                    access.requireApplicationLooper()
-                    mark?.let { started ->
-                        control.finishSkip(started, disposition.takeUnless { ticket?.isCancellationRequested() == true })
-                    }
+            // Read mark on the looper, after any claimed arm finishes. Never await cleanup on a
+            // looper that may quit with this runnable still queued. Keep attempt-scoped cancellation
+            // registered: an acknowledged paused seek may still be buffering when cancelled.
+            publishSkipUpdate {
+                mark?.let { started ->
+                    control.finishSkip(started, disposition.takeUnless { ticket?.isCancellationRequested() == true })
                 }
             }
-            ticket?.onCancellationRequest(null)
+        }
+    }
+
+    private fun publishSkipUpdate(update: () -> Unit) {
+        try {
+            val runnable = Runnable { update() }
+            if (access.looper.isCurrent()) runnable.run() else access.looper.post(runnable)
+        } catch (_: Exception) {
+            // As with an unavailable executor, a failed post cannot publish; target retirement
+            // still fences the mark. Cleanup must not prevent the wire command from settling.
         }
     }
 

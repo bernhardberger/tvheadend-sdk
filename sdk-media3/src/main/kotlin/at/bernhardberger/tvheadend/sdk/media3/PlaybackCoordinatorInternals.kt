@@ -149,7 +149,7 @@ internal class PlayerOperationTicket {
     /** Claimed wire commands still settle; optional post-command buffering may stop early. */
     fun isCancellationRequested(): Boolean = cancellationRequested.get()
 
-    /** Optional in-flight side effect cleanup; does not change claimed command settlement. */
+    /** Attempt-scoped cleanup, including post-acknowledgement buffering; does not change settlement. */
     fun onCancellationRequest(action: (() -> Unit)?) {
         cancellationRequestAction.set(action)
         if (isCancellationRequested()) action?.invoke()
