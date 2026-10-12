@@ -27,6 +27,10 @@ Unreleased; development target.
 
 ### Changed
 
+- Prepared internal explicit recording-position admission and reuse of the existing
+  completed/growing resume state machine. Known-duration recovery falls back before
+  installation; unknown-duration recovery drops its seek at the new timeline cutoff.
+  The public recovery entry point follows in a separate slice.
 - Persist refresh times alongside cached channel and EPG content. The EPG cache
   format moves to EPG3; previous EPG caches are discarded and rebuilt automatically.
   The first offline start has no cached guide until it is refetched. Cached catalog

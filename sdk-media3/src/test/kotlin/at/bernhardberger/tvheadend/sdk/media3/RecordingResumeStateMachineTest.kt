@@ -195,6 +195,64 @@ internal class RecordingResumeStateMachineTest {
         assertEquals(listOf(8_000L), seeks)
         assertEquals(RecordingResumeOutcome.APPLIED, resume.outcome)
     }
+
+    @Test
+    fun `unknown duration completed recovery drops at exact cutoff even before seekability`() {
+        listOf(95_000L, 95_001L, 100_000L).forEach { position ->
+            resume.beginPlaybackTarget(position, RecordingResumeMode.COMPLETED, lateCompletionFraction = 0.95)
+            resume.onMediaState(true, null, false)
+            assertEquals(position, resume.pendingPositionMillis)
+            resume.onMediaState(true, 100_000, false)
+            assertEquals(RecordingResumeOutcome.ABANDONED, resume.outcome)
+            assertNull(resume.pendingPositionMillis)
+            assertNull(resume.progressFloorMillis)
+            resume.onMediaState(true, 100_000, true)
+        }
+        assertEquals(emptyList<Long>(), seeks)
+    }
+
+    @Test
+    fun `completed recovery below late cutoff waits and preserves exact milliseconds`() {
+        resume.beginPlaybackTarget(94_999, RecordingResumeMode.COMPLETED, lateCompletionFraction = 0.95)
+        resume.onMediaState(true, 100_000, false)
+        assertEquals(94_999L, resume.progressFloorMillis)
+        timeouts.fireAll()
+        assertNull(resume.progressFloorMillis)
+        assertEquals(94_999L, resume.pendingPositionMillis)
+        resume.onMediaState(true, 100_000, true)
+        assertEquals(listOf(94_999L), seeks)
+    }
+
+    @Test
+    fun `known duration recovery does not apply a second cutoff but drops beyond media end`() {
+        resume.beginPlaybackTarget(95_000, RecordingResumeMode.COMPLETED)
+        resume.onMediaState(true, 100_000, true)
+        assertEquals(listOf(95_000L), seeks)
+        resume.beginPlaybackTarget(100_000, RecordingResumeMode.COMPLETED)
+        resume.onMediaState(true, 100_000, true)
+        assertEquals(RecordingResumeOutcome.ABANDONED, resume.outcome)
+        assertEquals(listOf(95_000L), seeks)
+    }
+
+    @Test
+    fun `late cutoff recovery cannot survive viewer seek replacement or close`() {
+        resume.beginPlaybackTarget(95_000, RecordingResumeMode.COMPLETED, 0.95)
+        val oldTimeout = timeouts.pending.last()
+        resume.onViewerSeek()
+        assertNull(resume.pendingPositionMillis)
+        resume.beginPlaybackTarget(80_123, RecordingResumeMode.COMPLETED, 0.95)
+        oldTimeout.action()
+        assertEquals(80_123L, resume.progressFloorMillis)
+        resume.onMediaState(false, 10_000, true)
+        assertEquals(80_123L, resume.pendingPositionMillis)
+        val closingTimeout = timeouts.pending.last()
+        resume.close()
+        closingTimeout.action()
+        resume.onMediaState(true, 100_000, true)
+        assertNull(resume.pendingPositionMillis)
+        assertNull(resume.progressFloorMillis)
+        assertEquals(emptyList<Long>(), seeks)
+    }
 }
 
 internal class FakeResumeTimeouts {

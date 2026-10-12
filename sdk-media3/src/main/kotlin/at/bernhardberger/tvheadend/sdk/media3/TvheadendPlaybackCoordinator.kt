@@ -929,20 +929,57 @@ public fun createTvheadendPlaybackCoordinator(
 internal fun admitRecordingTarget(
     target: CoordinatorRecordingTarget,
     start: RecordingPlaybackStart,
+): RecordingAdmission = admitRecordingTarget(target, start, null, DvrProgressPolicy().orderlyCompletionFraction)
+
+/** Local measurements for this exact recording; never a server bookmark or a provisional extent. */
+internal class RecordingRecoveryRequest(
+    val position: Duration,
+    val previousDuration: Duration? = null,
+) {
+    init {
+        require(position.isFinite() && !position.isNegative() &&
+            position == position.inWholeMilliseconds.milliseconds) {
+            "Recording recovery position must be a finite non-negative whole-millisecond duration"
+        }
+        require(previousDuration == null || (previousDuration.isFinite() && previousDuration.isPositive() &&
+            previousDuration == previousDuration.inWholeMilliseconds.milliseconds)) {
+            "Recording recovery previous duration must be a finite positive whole-millisecond duration"
+        }
+    }
+
+    override fun toString(): String = "RecordingRecoveryRequest(<redacted>)"
+}
+
+/** Chooses the explicit position before installation; only an unknown old duration defers the cutoff. */
+internal fun admitRecordingTarget(
+    target: CoordinatorRecordingTarget,
+    start: RecordingPlaybackStart,
+    recovery: RecordingRecoveryRequest?,
+    orderlyCompletionFraction: Double,
 ): RecordingAdmission {
+    val explicit = recovery?.takeIf { it.position.isPositive() }
     return when (val initial = target.admission) {
-        is CoordinatorRecordingAdmission.Completed -> RecordingAdmission.Completed(
-            resumePosition = initial.resumePosition.takeIf {
-                start == RecordingPlaybackStart.RESUME &&
-                    initial.progressCapability == RecordingProgressCapability.SUPPORTED
-            },
-            progressReportingSupported =
-                initial.progressCapability == RecordingProgressCapability.SUPPORTED,
-        )
+        is CoordinatorRecordingAdmission.Completed -> {
+            val chosen = explicit?.takeUnless {
+                it.previousDuration != null && it.position >= it.previousDuration * orderlyCompletionFraction
+            }
+            RecordingAdmission.Completed(
+                resumePosition = chosen?.position ?: initial.resumePosition.takeIf {
+                    start == RecordingPlaybackStart.RESUME &&
+                        initial.progressCapability == RecordingProgressCapability.SUPPORTED
+                },
+                progressReportingSupported = initial.progressCapability == RecordingProgressCapability.SUPPORTED,
+                recoveryPosition = chosen?.position,
+                lateCompletionFraction = orderlyCompletionFraction.takeIf {
+                    chosen != null && chosen.previousDuration == null
+                },
+            )
+        }
         is CoordinatorRecordingAdmission.Growing -> admitGrowingRecording(
             target = target,
             initial = initial,
             start = start,
+            recovery = explicit,
         )
         CoordinatorRecordingAdmission.GrowingDeferred -> RecordingAdmission.GrowingRecordingDeferred
         CoordinatorRecordingAdmission.TargetUnavailable -> RecordingAdmission.TargetUnavailable
@@ -954,6 +991,7 @@ private fun admitGrowingRecording(
     target: CoordinatorRecordingTarget,
     initial: CoordinatorRecordingAdmission.Growing,
     start: RecordingPlaybackStart,
+    recovery: RecordingRecoveryRequest?,
 ): RecordingAdmission {
     when (initial.progressCapability) {
         RecordingProgressCapability.UNKNOWN -> return RecordingAdmission.NotReady
@@ -977,7 +1015,8 @@ private fun admitGrowingRecording(
             RecordingAdmission.Growing(
                 lease = lease,
                 progressReportingSupported = true,
-                resumePosition = current.resumePosition.takeIf { start == RecordingPlaybackStart.RESUME },
+                resumePosition = recovery?.position ?: current.resumePosition.takeIf { start == RecordingPlaybackStart.RESUME },
+                recoveryPosition = recovery?.position,
             )
         } else {
             RecordingAdmission.NotReady
@@ -988,7 +1027,8 @@ private fun admitGrowingRecording(
             RecordingProgressCapability.SUPPORTED -> RecordingAdmission.Growing(
                 lease = lease,
                 progressReportingSupported = true,
-                resumePosition = current.resumePosition.takeIf { start == RecordingPlaybackStart.RESUME },
+                resumePosition = recovery?.position ?: current.resumePosition.takeIf { start == RecordingPlaybackStart.RESUME },
+                recoveryPosition = recovery?.position,
             )
         }
         CoordinatorRecordingAdmission.GrowingDeferred -> RecordingAdmission.GrowingRecordingDeferred

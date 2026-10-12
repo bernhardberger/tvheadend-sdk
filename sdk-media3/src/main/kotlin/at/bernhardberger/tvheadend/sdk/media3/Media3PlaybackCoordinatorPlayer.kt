@@ -63,17 +63,23 @@ internal data class RetiredRecordingTarget(
 internal sealed interface RecordingAdmission {
     sealed interface Accepted : RecordingAdmission {
         val progressReportingSupported: Boolean
+        /** Explicit recovery owed by this installation, distinct from a server resume. */
+        val recoveryPosition: Duration?
     }
 
     data class Completed(
         val resumePosition: Duration?,
         override val progressReportingSupported: Boolean = true,
+        override val recoveryPosition: Duration? = null,
+        /** Unknown previous duration: abandon at this fraction of the new timeline, without fallback. */
+        val lateCompletionFraction: Double? = null,
     ) : Accepted
 
     class Growing(
         val lease: GrowingRecordingFileLease,
         override val progressReportingSupported: Boolean = true,
         val resumePosition: Duration? = null,
+        override val recoveryPosition: Duration? = null,
     ) : Accepted {
         override fun toString(): String = "RecordingAdmission.Growing(<redacted>)"
     }

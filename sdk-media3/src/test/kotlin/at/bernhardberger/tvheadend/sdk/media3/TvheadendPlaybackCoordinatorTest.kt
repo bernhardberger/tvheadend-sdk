@@ -96,6 +96,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNull
@@ -471,6 +472,106 @@ internal class TvheadendPlaybackCoordinatorTest {
             RecordingFileResult.Ok(lease)
         }
         assertSame(RecordingAdmission.NotReady, admitRecordingTarget(target, RecordingPlaybackStart.RESUME))
+    }
+
+    @Test
+    fun `explicit completed recovery uses local position for every progress capability`() {
+        listOf(RecordingProgressCapability.SUPPORTED, RecordingProgressCapability.UNKNOWN,
+            RecordingProgressCapability.UNSUPPORTED).forEach { capability ->
+            RecordingPlaybackStart.entries.forEach { fallback ->
+                val target = TestCoordinatorRecordingTarget(
+                    admissionState = completedCoordinatorAdmission(30.seconds, capability),
+                )
+                val admitted = admitRecordingTarget(
+                    target, fallback, RecordingRecoveryRequest(40_123.milliseconds, 100.seconds), 0.95,
+                ) as RecordingAdmission.Completed
+                assertEquals(40_123.milliseconds, admitted.resumePosition)
+                assertEquals(admitted.resumePosition, admitted.recoveryPosition)
+                assertNull(admitted.lateCompletionFraction)
+                assertEquals(capability == RecordingProgressCapability.SUPPORTED, admitted.progressReportingSupported)
+            }
+        }
+    }
+
+    @Test
+    fun `known duration cutoff and zero recovery use the requested support-gated fallback`() {
+        listOf(RecordingProgressCapability.SUPPORTED, RecordingProgressCapability.UNKNOWN,
+            RecordingProgressCapability.UNSUPPORTED).forEach { capability ->
+            RecordingPlaybackStart.entries.forEach { fallback ->
+                val target = TestCoordinatorRecordingTarget(
+                    admissionState = completedCoordinatorAdmission(30.seconds, capability),
+                )
+                listOf(Duration.ZERO, 95.seconds, 96.seconds).forEach { position ->
+                    val admitted = admitRecordingTarget(
+                        target, fallback, RecordingRecoveryRequest(position, 100.seconds), 0.95,
+                    ) as RecordingAdmission.Completed
+                    assertEquals(30.seconds.takeIf {
+                        fallback == RecordingPlaybackStart.RESUME && capability == RecordingProgressCapability.SUPPORTED
+                    }, admitted.resumePosition)
+                    assertNull(admitted.recoveryPosition)
+                    assertNull(admitted.lateCompletionFraction)
+                }
+                val below = admitRecordingTarget(
+                    target, fallback, RecordingRecoveryRequest(94_999.milliseconds, 100.seconds), 0.95,
+                ) as RecordingAdmission.Completed
+                assertEquals(94_999.milliseconds, below.resumePosition)
+            }
+        }
+    }
+
+    @Test
+    fun `unknown duration recovery defers cutoff without selecting a server fallback`() {
+        RecordingPlaybackStart.entries.forEach { fallback ->
+            val admitted = admitRecordingTarget(
+                TestCoordinatorRecordingTarget(admissionState = completedCoordinatorAdmission(30.seconds)),
+                fallback, RecordingRecoveryRequest(95.seconds), 0.95,
+            ) as RecordingAdmission.Completed
+            assertEquals(95.seconds, admitted.resumePosition)
+            assertEquals(95.seconds, admitted.recoveryPosition)
+            assertEquals(0.95, admitted.lateCompletionFraction)
+        }
+    }
+
+    @Test
+    fun `explicit growing recovery keeps capability gates and survives completion re-read`() {
+        val lease = MutableGrowingLease()
+        val target = TestCoordinatorRecordingTarget(startedGrowing = true, growingResult = RecordingFileResult.Ok(lease))
+        RecordingPlaybackStart.entries.forEach { fallback ->
+            listOf(
+                RecordingProgressCapability.UNKNOWN to RecordingAdmission.NotReady,
+                RecordingProgressCapability.UNSUPPORTED to RecordingAdmission.ProgressUnsupported,
+            ).forEach { (capability, expected) ->
+                target.admissionState = CoordinatorRecordingAdmission.Growing(capability)
+                assertSame(expected, admitRecordingTarget(target, fallback, RecordingRecoveryRequest(95.seconds), 0.95))
+            }
+            target.admissionState = CoordinatorRecordingAdmission.Growing(RecordingProgressCapability.SUPPORTED)
+            target.bindGrowingAction = {
+                target.admissionState = completedCoordinatorAdmission(30.seconds)
+                RecordingFileResult.Ok(lease)
+            }
+            val admitted = admitRecordingTarget(
+                target, fallback, RecordingRecoveryRequest(95.seconds, 100.seconds), 0.95,
+            ) as RecordingAdmission.Growing
+            assertSame(lease, admitted.lease)
+            assertEquals(95.seconds, admitted.resumePosition)
+            assertEquals(95.seconds, admitted.recoveryPosition)
+            target.admissionState = CoordinatorRecordingAdmission.Growing(RecordingProgressCapability.SUPPORTED)
+            val zero = admitRecordingTarget(
+                target, fallback, RecordingRecoveryRequest(Duration.ZERO), 0.95,
+            ) as RecordingAdmission.Growing
+            assertEquals(30.seconds.takeIf { fallback == RecordingPlaybackStart.RESUME }, zero.resumePosition)
+            assertNull(zero.recoveryPosition)
+        }
+    }
+
+    @Test
+    fun `recovery measurements reject invalid durations without rendering them`() {
+        listOf((-1).milliseconds, Duration.INFINITE, 0.5.milliseconds).forEach { invalid ->
+            assertThrows(IllegalArgumentException::class.java) { RecordingRecoveryRequest(invalid) }
+            assertThrows(IllegalArgumentException::class.java) { RecordingRecoveryRequest(1.seconds, invalid) }
+        }
+        assertThrows(IllegalArgumentException::class.java) { RecordingRecoveryRequest(1.seconds, Duration.ZERO) }
+        assertEquals("RecordingRecoveryRequest(<redacted>)", RecordingRecoveryRequest(1.seconds).toString())
     }
 
     @Test
