@@ -144,6 +144,8 @@ internal class ModuleBoundaryTest {
             "ChannelTagId",
             "EventId",
             "EpgEpisodeId",
+            "EpgCredit",
+            "EpgCreditRole",
             "EpgSeriesLinkId",
             "DvrEntryId",
             "AutorecRuleId",

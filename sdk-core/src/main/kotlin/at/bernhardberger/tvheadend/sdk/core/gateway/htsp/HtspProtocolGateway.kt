@@ -5,6 +5,9 @@
 
 package at.bernhardberger.tvheadend.sdk.core.gateway.htsp
 
+import at.bernhardberger.tvheadend.sdk.core.EpgCredit
+import at.bernhardberger.tvheadend.sdk.core.EpgCreditRole
+
 import at.bernhardberger.tvheadend.htsp.connection.HtspConnectOutcome
 import at.bernhardberger.tvheadend.htsp.connection.HtspConnection
 import at.bernhardberger.tvheadend.htsp.connection.HtspConnectionGeneration
@@ -1362,6 +1365,7 @@ private fun HtspEvent.toGatewayEpgEvent(
     genre = genre,
     categories = categories,
     keywords = keywords,
+    credits = credits?.entries?.map { EpgCredit(it.name, EpgCreditRole.of(it.role)) },
     seriesLinkUri = seriesLinkUri,
     episodeUri = episodeUri,
     contentType = contentType,
@@ -1399,6 +1403,7 @@ private fun HtspEvent.toGatewayEpgQueryEvent(): GatewayEpgQueryEvent = GatewayEp
     description = description,
     categories = categories,
     keywords = keywords,
+    credits = credits?.entries?.map { EpgCredit(it.name, EpgCreditRole.of(it.role)) },
     seriesLinkUri = seriesLinkUri,
     episodeUri = episodeUri,
     contentType = contentType,
@@ -1435,6 +1440,7 @@ private fun HtspEventUpdateMessage.toGatewayEpgUpdate(): GatewayEpgUpdate = Gate
     genre = genre,
     categories = categories,
     keywords = keywords,
+    credits = credits?.entries?.map { EpgCredit(it.name, EpgCreditRole.of(it.role)) },
     seriesLinkUri = seriesLinkUri,
     episodeUri = episodeUri,
     contentType = contentType,

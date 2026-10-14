@@ -1,3 +1,5 @@
+@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class)
+
 package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.ChannelId

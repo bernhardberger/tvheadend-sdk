@@ -2,6 +2,7 @@
 
 package at.bernhardberger.tvheadend.sdk.core.gateway
 
+import at.bernhardberger.tvheadend.sdk.core.EpgCredit
 import kotlin.time.Duration
 import kotlin.time.Instant
 
@@ -178,6 +179,7 @@ internal class GatewayEpgEvent(
     internal val genre: String? = null,
     categories: List<String>? = null,
     keywords: List<String>? = null,
+    credits: List<EpgCredit>? = null,
     internal val seriesLinkUri: String? = null,
     internal val episodeUri: String? = null,
     internal val contentType: Long? = null,
@@ -205,6 +207,7 @@ internal class GatewayEpgEvent(
 ) {
     internal val categories: List<String>? = categories?.toList()
     internal val keywords: List<String>? = keywords?.toList()
+    internal val credits: List<EpgCredit>? = credits?.toList()
 
     override fun toString(): String = "GatewayEpgEvent(<redacted>)"
 }
@@ -221,6 +224,7 @@ internal class GatewayEpgUpdate(
     internal val genre: String? = null,
     categories: List<String>? = null,
     keywords: List<String>? = null,
+    credits: List<EpgCredit>? = null,
     internal val seriesLinkUri: String? = null,
     internal val episodeUri: String? = null,
     internal val contentType: Long? = null,
@@ -248,6 +252,7 @@ internal class GatewayEpgUpdate(
 ) {
     internal val categories: List<String>? = categories?.toList()
     internal val keywords: List<String>? = keywords?.toList()
+    internal val credits: List<EpgCredit>? = credits?.toList()
 
     override fun toString(): String = "GatewayEpgUpdate(<redacted>)"
 }
@@ -263,6 +268,7 @@ internal class GatewayEpgQueryEvent(
     internal val description: String? = null,
     categories: List<String>? = null,
     keywords: List<String>? = null,
+    credits: List<EpgCredit>? = null,
     internal val seriesLinkUri: String? = null,
     internal val episodeUri: String? = null,
     internal val contentType: Long? = null,
@@ -288,6 +294,7 @@ internal class GatewayEpgQueryEvent(
 ) {
     internal val categories: List<String>? = categories?.toList()
     internal val keywords: List<String>? = keywords?.toList()
+    internal val credits: List<EpgCredit>? = credits?.toList()
 
     override fun toString(): String = "GatewayEpgQueryEvent(<redacted>)"
 }

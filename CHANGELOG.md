@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.28.0]
+
+Unreleased; development target.
+
+### Added
+
+- Experimental `EpgEvent.credits`, `EpgCredit` and open-set `EpgCreditRole` expose
+  cast and crew in server order, retaining unknown roles. Missing credits stay
+  null; absent updates preserve prior credits. XMLTV requires "scrape extra";
+  DVB EIT and basic HTSP output normally omit credits. The pinned HTSP library
+  retains only the last role per name. Credits persist in the compatible EPG3
+  cache; older records restore with null credits until server synchronization.
+  Factory callable references now require an expected type to select the overload.
+
 ## [0.27.0]
 
 Released 2026-10-12.

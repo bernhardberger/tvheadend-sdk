@@ -19,6 +19,9 @@ import at.bernhardberger.tvheadend.sdk.core.DvrPriority;
 import java.time.DayOfWeek;
 import java.time.LocalTime;
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryKt;
+import at.bernhardberger.tvheadend.sdk.core.EpgCredit;
+import at.bernhardberger.tvheadend.sdk.core.EpgCreditRole;
+import at.bernhardberger.tvheadend.sdk.core.EpgEvent;
 import at.bernhardberger.tvheadend.sdk.core.EpgRepository;
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverageBatchResult;
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState;
@@ -70,6 +73,23 @@ import kotlinx.coroutines.CoroutineScope;
 
 public final class StagedSdkJavaConsumer {
     private StagedSdkJavaConsumer() {}
+
+    // No opt-in: Kotlin bridges the existing JVM-mangled value-class factory.
+    public static EpgEvent stableEpgEvent(Instant start, Instant stop) {
+        EpgEvent event = StableEpgConsumerKt.stableEpgEvent(start, stop);
+        if (!event.equals(StableEpgConsumerKt.stablePositionalEpgEvent(start, stop))) {
+            throw new AssertionError("Stable EPG factories disagree");
+        }
+        return event;
+    }
+
+    @kotlin.OptIn(markerClass = ExperimentalTvheadendApi.class)
+    public static String firstCreditRole(EpgEvent event) {
+        if (event.getCredits() == null || event.getCredits().isEmpty()) return null;
+        EpgCredit credit = event.getCredits().get(0);
+        EpgCredit copy = new EpgCredit(credit.getName(), EpgCreditRole.of(credit.getRole().getRaw()));
+        return copy.getRole().equals(EpgCreditRole.ACTOR) ? "Cast" : copy.getRole().getRaw();
+    }
 
     public static DvrRecordingFile recordingFileForFake() {
         return DvrRecordingFile.Companion.create(1L, null, null, 4L);

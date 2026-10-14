@@ -8,6 +8,8 @@ import at.bernhardberger.tvheadend.sdk.core.Channel
 import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.EpgEvent
+import at.bernhardberger.tvheadend.sdk.core.EpgCredit
+import at.bernhardberger.tvheadend.sdk.core.EpgCreditRole
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverage
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.EventId
@@ -64,6 +66,65 @@ internal class FileMetadataCacheStoreTest {
     private fun catalogFile(): File = File(File(File(root, "tvheadend-sdk"), namespace.value), "catalog.bin")
 
     private fun epgFile(): File = File(File(File(root, "tvheadend-sdk"), namespace.value), "epg.bin")
+
+    @Test
+    fun `credits round trip with unknown roles order absence and explicit empty preserved`() = runTest {
+        val credits = listOf(EpgCredit("Writer", EpgCreditRole.WRITER),
+            EpgCredit("Composer", EpgCreditRole.of("composer")))
+        val snapshot = EpgSnapshot.create(events = listOf(credits, null, emptyList()).mapIndexed { index, value ->
+            EpgEvent.create(EventId(index.toLong() + 1), start = storedAt, stop = storedAt, credits = value)
+        })
+        val cache = store()
+        cache.storeEpg(namespace, CachedEpg(snapshot), storedAt)
+        val restored = requireNotNull(cache.loadEpg(namespace, storedAt)).snapshot
+        assertEquals(snapshot, restored)
+        assertEquals(listOf(credits, null, emptyList()), restored.events.map { it.credits })
+        org.junit.jupiter.api.Assertions.assertSame(EpgCreditRole.WRITER, restored.events[0].credits!![0].role)
+    }
+
+    @Test
+    fun `EPG3 record written before credits existed restores with absent credits`() = runTest {
+        // Independent old schema: field 23 does not exist in this writer.
+        val record = ProtoBuf.encodeToByteArray(LegacyEpgEvent.serializer(), LegacyEpgEvent(
+            1, storedAt.toEpochMilliseconds(), storedAt.toEpochMilliseconds(), "Legacy title",
+        ))
+        epgFile().parentFile.mkdirs()
+        java.io.DataOutputStream(epgFile().outputStream()).use {
+            it.writeInt(0x45504733)
+            it.writeLong(storedAt.toEpochMilliseconds())
+            it.writeInt(0) // Empty refresh-times protobuf record.
+            it.writeInt(1)
+            it.writeInt(record.size)
+            it.write(record)
+            it.writeInt(0) // Coverages.
+            it.writeInt(0) // Query times.
+        }
+        val restored = requireNotNull(store().loadEpg(namespace, storedAt)).snapshot.events.single()
+        assertEquals(EpgEvent.create(EventId(1), start = storedAt, stop = storedAt, title = "Legacy title"), restored)
+        assertNull(restored.credits)
+        assertTrue(epgFile().exists())
+    }
+
+    @Test
+    fun `legacy EPG3 schema skips credits when decoding a new record`() {
+        val event = EpgEvent.create(
+            EventId(1), start = storedAt, stop = storedAt, title = "Credited title",
+            credits = listOf(EpgCredit("Actor", EpgCreditRole.ACTOR)),
+        )
+        val record = ProtoBuf.encodeToByteArray(EpgEventDto.serializer(), event.toDto())
+        val restored = ProtoBuf.decodeFromByteArray(LegacyEpgEvent.serializer(), record)
+        assertEquals(LegacyEpgEvent(
+            1, storedAt.toEpochMilliseconds(), storedAt.toEpochMilliseconds(), "Credited title",
+        ), restored)
+    }
+
+    @kotlinx.serialization.Serializable
+    private data class LegacyEpgEvent(
+        @kotlinx.serialization.protobuf.ProtoNumber(1) val id: Long,
+        @kotlinx.serialization.protobuf.ProtoNumber(3) val start: Long,
+        @kotlinx.serialization.protobuf.ProtoNumber(4) val stop: Long,
+        @kotlinx.serialization.protobuf.ProtoNumber(5) val title: String,
+    )
 
     @Test
     fun `catalog v1 absent optional times remain unknown with usable content`() = runTest {

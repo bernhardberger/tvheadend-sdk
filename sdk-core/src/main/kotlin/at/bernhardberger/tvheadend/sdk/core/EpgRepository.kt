@@ -1,3 +1,5 @@
+@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class)
+
 package at.bernhardberger.tvheadend.sdk.core
 
 import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
@@ -110,6 +112,21 @@ public data class EpgEvent private constructor(
     public val image: ArtworkId?,
     public val dvrEntryId: DvrEntryId?,
     public val nextEventId: EventId?,
+    /**
+     * Cast and crew in server order, or null when no credits were sent. Absence is normal:
+     * TVHeadend emits these only for XMLTV with "scrape extra" enabled, not DVB EIT or basic
+     * HTSP output (src/htsp_server.c:1373-1374; src/epggrab/module/xmltv.c:705-709,793,884).
+     * HTSP 1.0.0-beta.1 decodes a name-to-role map: only the last role for a name survives,
+     * so a person who is both director and writer appears once. The SDK preserves that result.
+     *
+     * Estimated incremental retention on a compressed-reference JVM with 20-character Latin-1
+     * names: about 96 bytes per credit (including name and list slots), plus about 128 bytes
+     * per credited event for reducer/public list containers. Known roles are shared constants.
+     * At 6,340 events, five credits each is about 3.7 MiB; twenty each is about 12.4 MiB.
+     * These are estimates, not measurements; string encoding and VM layout affect actual use.
+     */
+    @at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
+    public val credits: List<EpgCredit>? = null,
 ) {
     // Events are immutable and shared by successive snapshots. Preserve the data-class hash,
     // but compute it only once rather than rehashing every field on each guide publication.
@@ -135,7 +152,8 @@ public data class EpgEvent private constructor(
         result = 31 * result + episode.hashCode()
         result = 31 * result + image.hashCode()
         result = 31 * result + dvrEntryId.hashCode()
-        31 * result + nextEventId.hashCode()
+        result = 31 * result + nextEventId.hashCode()
+        31 * result + credits.hashCode()
     }
 
     override fun hashCode(): Int = contentHash
@@ -167,6 +185,39 @@ public data class EpgEvent private constructor(
             image: ArtworkId? = null,
             dvrEntryId: DvrEntryId? = null,
             nextEventId: EventId? = null,
+        ): EpgEvent = create(
+            id, channelId, start, stop, title, subtitle, summary, description, genre,
+            categories, keywords, seriesLinkUri, episodeUri, contentGenre, rating,
+            copyrightYear, firstAired, isNew, episode, image, dvrEntryId, nextEventId,
+            credits = null,
+        )
+
+        /** Creates an event with explicitly supplied credits, defensively copying collections. */
+        @at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
+        public fun create(
+            id: EventId,
+            channelId: ChannelId? = null,
+            start: Instant,
+            stop: Instant,
+            title: String? = null,
+            subtitle: String? = null,
+            summary: String? = null,
+            description: String? = null,
+            genre: String? = null,
+            categories: List<String>? = null,
+            keywords: List<String>? = null,
+            seriesLinkUri: String? = null,
+            episodeUri: String? = null,
+            contentGenre: ContentGenre? = null,
+            rating: EpgRating? = null,
+            copyrightYear: Long? = null,
+            firstAired: Instant? = null,
+            isNew: Boolean? = null,
+            episode: EpgEpisode? = null,
+            image: ArtworkId? = null,
+            dvrEntryId: DvrEntryId? = null,
+            nextEventId: EventId? = null,
+            credits: List<EpgCredit>?,
         ): EpgEvent {
             require(stop >= start) { "EpgEvent stop must not precede start" }
             copyrightYear?.let { requireEpgU32("EpgEvent copyrightYear", it) }
@@ -193,6 +244,7 @@ public data class EpgEvent private constructor(
                 image = image,
                 dvrEntryId = dvrEntryId,
                 nextEventId = nextEventId,
+                credits = credits?.toEpgImmutableList(),
             )
         }
     }

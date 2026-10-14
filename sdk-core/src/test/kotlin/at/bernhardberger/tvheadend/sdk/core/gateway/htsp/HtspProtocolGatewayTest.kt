@@ -5,6 +5,12 @@
 
 package at.bernhardberger.tvheadend.sdk.core.gateway.htsp
 
+import at.bernhardberger.tvheadend.htsp.requests.HtspProgrammeCredit
+import at.bernhardberger.tvheadend.htsp.requests.HtspProgrammeCredits
+import kotlinx.coroutines.flow.map
+import at.bernhardberger.tvheadend.sdk.core.EpgCredit
+import at.bernhardberger.tvheadend.sdk.core.EpgCreditRole
+
 import at.bernhardberger.tvheadend.htsp.connection.HtspConnectOptions
 import at.bernhardberger.tvheadend.htsp.connection.HtspConnectOutcome
 import at.bernhardberger.tvheadend.htsp.connection.HtspConnection
@@ -868,6 +874,39 @@ internal class HtspProtocolGatewayTest {
             .invoke(null, fields) as HtspServerMessage
 
     @Test
+    fun `credits map known and unknown roles in order and preserve absent and empty updates`() = runTest {
+        val generation = HtspConnectionGeneration()
+        val roles = listOf("actor", "director", "guest", "presenter", "writer", "composer")
+        val credits = HtspProgrammeCredits(roles.mapIndexed { index, role -> HtspProgrammeCredit("Person $index", role) })
+        val expected = roles.mapIndexed { index, role -> EpgCredit("Person $index", EpgCreditRole.of(role)) }
+        fun added(credits: HtspProgrammeCredits? = null): HtspEventAddMessage = HtspEventAddMessage(HtspEvent(
+            eventId = 1, channelId = 2, startEpochSeconds = 10, stopEpochSeconds = 20,
+            title = null, subtitle = null, summary = null, description = null,
+            categories = null, keywords = null, seriesLinkUri = null, episodeUri = null,
+            contentType = null, ageRating = null, ratingLabel = null, ratingIcon = null,
+            ratingAuthority = null, ratingCountry = null, starRating = null, copyrightYear = null,
+            firstAiredEpochSeconds = null, isNew = null, seasonNumber = null, seasonCount = null,
+            episodeNumber = null, episodeCount = null, partNumber = null, partCount = null,
+            episodeOnscreen = null, image = null, dvrId = null, nextEventId = null, credits = credits,
+        ))
+        val fake = FakeHtspConnection().apply {
+            eventsFlow = flowOf(
+                added(credits),
+                added(),
+                HtspEventUpdateMessage(eventId = 1, credits = credits),
+                HtspEventUpdateMessage(eventId = 1),
+                HtspEventUpdateMessage(eventId = 1, credits = HtspProgrammeCredits(emptyList())),
+            ).map { HtspTransportEvent.ServerMessage(it, generation, 1) }
+        }
+        val events = HtspProtocolGateway(fake).metadata.toList()
+        assertEquals(expected, (events[0] as MetadataEvent.EventAdded).event.credits)
+        assertEquals(null, (events[1] as MetadataEvent.EventAdded).event.credits)
+        assertEquals(expected, (events[2] as MetadataEvent.EventUpdated).event.credits)
+        assertEquals(null, (events[3] as MetadataEvent.EventUpdated).event.credits)
+        assertEquals(emptyList<EpgCredit>(), (events[4] as MetadataEvent.EventUpdated).event.credits)
+    }
+
+    @Test
     fun `metadata maps complete event adds and nullable updates without losing wall clock semantics`() = runTest {
         val generation = HtspConnectionGeneration()
         val add = HtspEventAddMessage(
@@ -1350,6 +1389,7 @@ internal class HtspProtocolGatewayTest {
                             description = "Private description",
                             categories = listOf("category"),
                             keywords = emptyList(),
+                            credits = HtspProgrammeCredits(listOf(HtspProgrammeCredit("Guest", "guest"))),
                             seriesLinkUri = "private-series",
                             episodeUri = "private-episode",
                             contentType = 4,
@@ -1396,6 +1436,7 @@ internal class HtspProtocolGatewayTest {
         assertEquals(Instant.fromEpochSeconds(2_147_483_648), event.stop)
         assertEquals(false, event.isNew)
         assertEquals(emptyList<String>(), event.keywords)
+        assertEquals(listOf(EpgCredit("Guest", EpgCreditRole.GUEST)), event.credits)
         assertEquals(13L, event.dvrEntryId?.value)
         assertEquals("GatewayEpgQueryEvent(<redacted>)", event.toString())
         assertFalse(result.value.toString().contains("Private"))

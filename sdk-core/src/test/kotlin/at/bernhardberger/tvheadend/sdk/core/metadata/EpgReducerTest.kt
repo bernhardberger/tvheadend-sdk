@@ -1,4 +1,9 @@
+@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class)
+
 package at.bernhardberger.tvheadend.sdk.core.metadata
+
+import at.bernhardberger.tvheadend.sdk.core.EpgCredit
+import at.bernhardberger.tvheadend.sdk.core.EpgCreditRole
 
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
@@ -23,6 +28,47 @@ import kotlin.time.Instant
 
 internal class EpgReducerTest {
     private val generation = GatewayGeneration()
+
+    @Test
+    fun `credits merge absent unchanged replace and clear without mutating retained snapshots`() {
+        val reducer = EpgReducer()
+        addChannel(reducer, 1)
+        val actor = EpgCredit("Actor", EpgCreditRole.ACTOR)
+        val writer = EpgCredit("Writer", EpgCreditRole.WRITER)
+        val input = mutableListOf(actor)
+        val added = GatewayEpgEvent(EventId(1), ChannelId(1), instant(10), instant(20), credits = input)
+        input.clear()
+        reducer.accept(MetadataEvent.EventAdded(generation, added))
+        val retained = reducer.snapshot()
+        assertEquals(listOf(actor), retained.events.single().credits)
+        reducer.accept(MetadataEvent.EventUpdated(generation, GatewayEpgUpdate(EventId(1))))
+        assertSame(retained, reducer.snapshot())
+        reducer.accept(MetadataEvent.EventUpdated(generation, GatewayEpgUpdate(EventId(1), credits = listOf(actor))))
+        assertSame(retained, reducer.snapshot())
+
+        input.addAll(listOf(writer, actor))
+        val updated = GatewayEpgUpdate(EventId(1), credits = input)
+        input.clear()
+        reducer.accept(MetadataEvent.EventUpdated(generation, updated))
+        assertEquals(listOf(writer, actor), reducer.snapshot().events.single().credits)
+        reducer.accept(MetadataEvent.EventUpdated(generation, GatewayEpgUpdate(EventId(1), credits = emptyList())))
+        assertEquals(emptyList<EpgCredit>(), reducer.snapshot().events.single().credits)
+        assertEquals(listOf(actor), retained.events.single().credits)
+    }
+
+    @Test
+    fun `query credits replace previous metadata including absence like keywords`() {
+        val reducer = EpgReducer()
+        addChannel(reducer, 1)
+        val credits = listOf(EpgCredit("Guest", EpgCreditRole.GUEST))
+        for (value in listOf(credits, null, emptyList())) {
+            val query = requireNotNull(reducer.beginQuery(ChannelId(1)))
+            reducer.acceptSuccessfulQuery(query, instant(30), listOf(
+                GatewayEpgQueryEvent(EventId(1), ChannelId(1), instant(10), instant(20), credits = value),
+            ))
+            assertEquals(value, reducer.snapshot().events.single().credits)
+        }
+    }
 
     @Test
     fun `event images expose only supported artwork identifiers`() {

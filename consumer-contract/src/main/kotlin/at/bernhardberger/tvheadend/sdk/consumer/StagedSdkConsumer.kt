@@ -50,6 +50,9 @@ import java.time.DayOfWeek
 import java.time.LocalTime
 import kotlin.time.Duration.Companion.minutes
 import at.bernhardberger.tvheadend.sdk.core.EpgEvent
+import at.bernhardberger.tvheadend.sdk.core.EpgCredit
+import at.bernhardberger.tvheadend.sdk.core.EpgCreditRole
+import at.bernhardberger.tvheadend.sdk.core.EventId
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverageBatchResult
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverageBatchSettlement
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
@@ -149,6 +152,20 @@ public fun radioCatalogForFake(): List<Channel> = ChannelCatalogFixture.create()
     it.mediaKind == ChannelMediaKind.RADIO && it.services.orEmpty().any { service ->
         service.mediaKind == ChannelMediaKind.RADIO
     }
+}
+
+public fun creditedEventForFake(start: Instant, stop: Instant): EpgEvent = EpgEvent.create(
+    id = EventId(1), start = start, stop = stop,
+    credits = listOf(EpgCredit("Cast member", EpgCreditRole.of("actor"))),
+)
+
+public fun programmeCreditLabels(event: EpgEvent): List<String>? = event.credits?.map { credit ->
+    val role = when (credit.role) {
+        EpgCreditRole.ACTOR -> "Cast"
+        EpgCreditRole.DIRECTOR -> "Director"
+        else -> credit.role.raw
+    }
+    "${credit.name}: $role"
 }
 
 public fun freshnessForFake(acceptedAt: kotlin.time.Instant): SessionObservation = SessionObservation.create(

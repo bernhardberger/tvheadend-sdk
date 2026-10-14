@@ -15,6 +15,8 @@ import at.bernhardberger.tvheadend.sdk.core.EpgCoverage
 import at.bernhardberger.tvheadend.sdk.core.EpgEpisode
 import at.bernhardberger.tvheadend.sdk.core.EpgEpisodeId
 import at.bernhardberger.tvheadend.sdk.core.EpgEvent
+import at.bernhardberger.tvheadend.sdk.core.EpgCredit
+import at.bernhardberger.tvheadend.sdk.core.EpgCreditRole
 import at.bernhardberger.tvheadend.sdk.core.EpgRating
 import at.bernhardberger.tvheadend.sdk.core.EpgSeriesLinkId
 import at.bernhardberger.tvheadend.sdk.core.EventId
@@ -126,8 +128,25 @@ internal data class EpgEventDto(
     @ProtoNumber(20) val image: String? = null,
     @ProtoNumber(21) val dvrEntryId: Long? = null,
     @ProtoNumber(22) val nextEventId: Long? = null,
+    @ProtoNumber(23) val credits: EpgCreditsDto? = null,
 ) {
     override fun toString(): String = "EpgEventDto(<redacted>)"
+}
+
+@Serializable
+internal data class EpgCreditsDto(
+    // A present wrapper preserves an explicitly empty list; protobuf repeated fields alone cannot.
+    @ProtoNumber(1) val entries: List<EpgCreditDto> = emptyList(),
+) {
+    override fun toString(): String = "EpgCreditsDto(<redacted>)"
+}
+
+@Serializable
+internal data class EpgCreditDto(
+    @ProtoNumber(1) val name: String,
+    @ProtoNumber(2) val role: String,
+) {
+    override fun toString(): String = "EpgCreditDto(<redacted>)"
 }
 
 @Serializable
@@ -304,6 +323,7 @@ internal fun EpgEvent.toDto(): EpgEventDto = EpgEventDto(
     image = image?.let { "imagecache/${it.value}" },
     dvrEntryId = dvrEntryId?.value,
     nextEventId = nextEventId?.value,
+    credits = credits?.let { entries -> EpgCreditsDto(entries.map { EpgCreditDto(it.name, it.role.raw) }) },
 )
 
 internal fun EpgEventDto.toModel(): EpgEvent = EpgEvent.create(
@@ -329,6 +349,7 @@ internal fun EpgEventDto.toModel(): EpgEvent = EpgEvent.create(
     image = ArtworkId.parse(image),
     dvrEntryId = dvrEntryId?.let(::DvrEntryId),
     nextEventId = nextEventId?.let(::EventId),
+    credits = credits?.entries?.map { EpgCredit(it.name, EpgCreditRole.of(it.role)) },
 )
 
 /**

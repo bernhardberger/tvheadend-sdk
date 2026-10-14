@@ -220,6 +220,7 @@ continue to close gaps the player finds, with new API behind the experimental
 opt-in.
 
 - Gaps from the player as it approaches its release candidate.
+- Programme credits (cast and crew) ship in 0.28 as experimental EPG metadata.
 - Gaps from an optional mobile proof-of-concept app. Mobile is likely to test
   what Android TV does not: picture-in-picture (a second coordinator per
   session), background playback from a media service with deep sleep, and
@@ -273,7 +274,6 @@ planned:
 
 - single-event EPG lookup;
 - stream tickets for casting or external players;
-- cast and crew;
 - CEA-608/708 captions;
 - descrambling diagnostics;
 - trick-play speeds;

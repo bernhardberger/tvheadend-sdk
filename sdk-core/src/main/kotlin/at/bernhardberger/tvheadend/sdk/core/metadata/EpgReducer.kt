@@ -1,8 +1,11 @@
+@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class)
+
 package at.bernhardberger.tvheadend.sdk.core.metadata
 
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.ContentGenre
+import at.bernhardberger.tvheadend.sdk.core.EpgCredit
 import at.bernhardberger.tvheadend.sdk.core.EpgCoverage
 import at.bernhardberger.tvheadend.sdk.core.EpgCoveragePolicy
 import at.bernhardberger.tvheadend.sdk.core.EpgEpisode
@@ -34,6 +37,7 @@ internal data class ReducedEpgEvent private constructor(
     internal val genre: String?,
     internal val categories: List<String>?,
     internal val keywords: List<String>?,
+    internal val credits: List<EpgCredit>?,
     internal val seriesLinkUri: String?,
     internal val episodeUri: String?,
     internal val contentType: Long?,
@@ -78,6 +82,7 @@ internal data class ReducedEpgEvent private constructor(
             genre = update.genre ?: genre,
             categories = update.categories?.toImmutableList() ?: categories,
             keywords = update.keywords?.toImmutableList() ?: keywords,
+            credits = update.credits?.toImmutableList() ?: credits,
             seriesLinkUri = update.seriesLinkUri ?: seriesLinkUri,
             episodeUri = update.episodeUri ?: episodeUri,
             contentType = update.contentType ?: contentType,
@@ -131,6 +136,7 @@ internal data class ReducedEpgEvent private constructor(
             genre = genre,
             categories = categories,
             keywords = keywords,
+            credits = credits,
             seriesLinkUri = seriesLinkUri,
             episodeUri = episodeUri,
             contentGenre = ContentGenre.fromContentType(contentType),
@@ -219,6 +225,7 @@ internal data class ReducedEpgEvent private constructor(
                 genre = event.genre,
                 categories = event.categories?.toImmutableList(),
                 keywords = event.keywords?.toImmutableList(),
+                credits = event.credits?.toImmutableList(),
                 seriesLinkUri = event.seriesLinkUri,
                 episodeUri = event.episodeUri,
                 contentType = event.contentType,
@@ -258,6 +265,7 @@ internal data class ReducedEpgEvent private constructor(
             genre = null,
             categories = null,
             keywords = null,
+            credits = null,
             seriesLinkUri = null,
             episodeUri = null,
             contentType = null,
@@ -303,6 +311,7 @@ internal data class ReducedEpgEvent private constructor(
                 genre = genre,
                 categories = event.categories?.toImmutableList(),
                 keywords = event.keywords?.toImmutableList(),
+                credits = event.credits?.toImmutableList(),
                 seriesLinkUri = event.seriesLinkUri,
                 episodeUri = event.episodeUri,
                 contentType = event.contentType,

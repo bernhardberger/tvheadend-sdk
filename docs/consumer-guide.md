@@ -290,6 +290,18 @@ the level-two `ContentSubgenre`, or `null` for a category's general, user-define
 or unassigned value. Show `category` alone or both. The duplicated raw
 `contentType` property is no longer exposed.
 
+With `@OptIn(ExperimentalTvheadendApi::class)`, `EpgEvent.credits` supplies an
+immutable, ordered list of `EpgCredit(name, role)` for a cast-and-crew section.
+Null means the server sent no credits (normal for DVB EIT and basic HTSP output;
+XMLTV needs "scrape extra"). Events restored from a pre-0.28 cache also have null
+credits until the next sync. Compare `EpgCreditRole.ACTOR`, `DIRECTOR`, `GUEST`,
+`PRESENTER`, or `WRITER`, and keep a fallback using `role.raw` for unknown roles.
+The pinned HTSP decoder retains only the last role per name. An absent update
+preserves existing credits; an explicit empty list clears them. DVR entries do
+not carry credits; use the associated EPG event when available.
+The stable `EpgEvent.create` factory remains available without opt-in. Its
+experimental overload requires an explicit `credits` argument (including null).
+
 ## Search and extend EPG coverage
 
 The retained `EpgRepositoryState` follows the same `Empty`, `Synchronizing`,
