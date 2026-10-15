@@ -2509,6 +2509,28 @@ internal class HtspProtocolGatewayTest {
         }
     }
 
+    @ParameterizedTest
+    @CsvSource("false", "true")
+    fun `successful explicit rule update seeds following unchanged channel without metadata`(timerec: Boolean) = runTest {
+        val fake = connectedFake().apply {
+            executeResult = if (timerec) HtspResult.Ok(UpdateTimerecEntryResponse)
+                else HtspResult.Ok(UpdateAutorecEntryResponse)
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982)) as GatewayConnectResult.Connected).connection.generation
+        suspend fun update(channel: RecordingRuleChannel?): GatewayResult<Unit> = if (timerec) {
+            gateway.updateTimerecRule(generation, TimerecRuleId("time"), TimerecRuleUpdate(title = "next", channel = channel))
+        } else {
+            gateway.updateAutorecRule(generation, AutorecRuleId("auto"), AutorecRuleUpdate(title = "next", channel = channel))
+        }
+        assertTrue(update(RecordingRuleChannel.SpecificChannel(ChannelId(7))) is GatewayResult.Ok)
+        fake.lastRequest = null
+        assertTrue(update(null) is GatewayResult.Ok)
+        val channel = if (timerec) (fake.lastRequest as UpdateTimerecEntryRequest).channel
+            else (fake.lastRequest as UpdateAutorecEntryRequest).channel
+        assertEquals(HtspRecordingRuleChannel.Id(7), channel)
+    }
+
     @Test
     fun `recording rule mutations map SDK fields identifiers and any-channel selection`() = runTest {
         val sourceGeneration = HtspConnectionGeneration()

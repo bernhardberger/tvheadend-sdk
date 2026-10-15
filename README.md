@@ -102,10 +102,11 @@ missing, and unavailable behavior without Android `Context` or Android runtime
 internals.
 
 This branch pins `at.bernhardberger.tvheadend:htsp:1.0.0-beta.2-entity-model-SNAPSHOT`.
-Maintainers working across adjacent checkouts may explicitly opt into source
-substitution with `-Ptvheadend.htsp.composite=true`. To resolve the staged candidate
-instead, pass `-Ptvheadend.htsp.candidateRepository=/absolute/path/to/candidate-maven`.
-That repository is exclusive to the HTSP module and is enabled only by the property;
+The main build uses source substitution with `-Ptvheadend.htsp.composite=true`
+across adjacent checkouts. For the `consumer-contract` build, resolve the staged
+candidate with `-Ptvheadend.htsp.candidateRepository=/absolute/path/to/candidate-maven`.
+The main build's dependency-verification trust is not configured for this candidate.
+The candidate repository is exclusive to HTSP and enabled only by the property;
 CI and release resolution do not add it automatically. See
 [staged consumer verification](docs/offline-verification.md#staged-consumer-and-r8).
 
