@@ -83,6 +83,13 @@ After staging and checking the SDK publication, run the consumer gate locally:
 ```
 
 CI uses `./gradlew --no-daemon -p consumer-contract clean test verifyConsumerDependencyGraph assembleRelease lintDebug`.
+On the entity-model candidate branch, stage with
+`./tools/verify -Ptvheadend.htsp.composite=true stageLocalPublication`, then add
+`-Ptvheadend.htsp.candidateRepository=/absolute/path/to/candidate-maven` to the
+consumer command. The consumer resolves the pinned HTSP binary from that opt-in,
+HTSP-only repository; it does not substitute the sibling source checkout. Use
+`--refresh-dependencies` when the same named SNAPSHOT has been restaged.
+
 The unsigned release APK enables R8's default full mode without signing credentials.
 The compile-only app has no manifest entry point, so its three Java/Kotlin fixture
 classes are explicit app-side roots in `consumer-contract/proguard-rules.pro`.

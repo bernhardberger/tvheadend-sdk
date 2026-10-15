@@ -115,8 +115,11 @@ automatically. CI (`.github/workflows/ci.yml`) is the authoritative gate.
 - Update ABI dumps only through the Gradle ABI validation workflow, never by
   hand.
 - Local cross-repository HTSP substitution is opt-in
-  (`-Ptvheadend.htsp.composite=true`). CI and releases always resolve the pinned
-  `at.bernhardberger.tvheadend:htsp:1.0.0-beta.1` coordinate.
+  (`-Ptvheadend.htsp.composite=true`). This branch pins
+  `at.bernhardberger.tvheadend:htsp:1.0.0-beta.2-entity-model-SNAPSHOT`.
+  Local binary verification opts into the HTSP-only candidate repository with
+  `-Ptvheadend.htsp.candidateRepository=/absolute/path/to/candidate-maven`;
+  CI and releases do not add that repository automatically.
 - Tests that reach a live server or device are opt-in; see
   `docs/offline-verification.md`. Live-server runs and device operations
   require explicit maintainer authority; loading this guide or a skill grants

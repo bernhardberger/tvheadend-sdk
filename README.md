@@ -101,11 +101,13 @@ session readiness. JVM tests can use `FakeServerProfileStore` to script stored,
 missing, and unavailable behavior without Android `Context` or Android runtime
 internals.
 
-The default build resolves
-`at.bernhardberger.tvheadend:htsp:1.0.0-beta.1` from Maven Central. Maintainers working
-across adjacent checkouts may explicitly opt into source substitution with
-`-Ptvheadend.htsp.composite=true`; CI and release builds do not use that
-property.
+This branch pins `at.bernhardberger.tvheadend:htsp:1.0.0-beta.2-entity-model-SNAPSHOT`.
+Maintainers working across adjacent checkouts may explicitly opt into source
+substitution with `-Ptvheadend.htsp.composite=true`. To resolve the staged candidate
+instead, pass `-Ptvheadend.htsp.candidateRepository=/absolute/path/to/candidate-maven`.
+That repository is exclusive to the HTSP module and is enabled only by the property;
+CI and release resolution do not add it automatically. See
+[staged consumer verification](docs/offline-verification.md#staged-consumer-and-r8).
 
 ## Live stream profiles
 

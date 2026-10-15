@@ -13,6 +13,19 @@ plugins {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
+        providers.gradleProperty("tvheadend.htsp.candidateRepository").orNull?.let { repositoryPath ->
+            val candidateRepository = file(repositoryPath)
+            check(candidateRepository.isDirectory) { "The opt-in HTSP candidate repository is unavailable" }
+            exclusiveContent {
+                forRepository {
+                    maven {
+                        name = "htspCandidate"
+                        url = candidateRepository.toURI()
+                    }
+                }
+                filter { includeModule("at.bernhardberger.tvheadend", "htsp") }
+            }
+        }
         google()
         mavenCentral()
     }
