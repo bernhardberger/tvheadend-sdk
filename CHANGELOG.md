@@ -13,7 +13,7 @@ Unreleased; development target.
   Authentication rejection remains `AUTHENTICATION_REJECTED`; synchronization
   refusal remains `SYNCHRONIZATION_FAILED` with `ACCESS_DENIED`. A successful sync
   with an empty channel catalog reaches Ready.
-- BREAKING: migrate the gateway to the unreleased HTSP entity model. Remove
+- BREAKING: migrate the gateway to the HTSP 1.0.0-beta.2 entity model. Remove
   `SubscriptionEvent.Started.condition` / `issue` and per-stream
   `SubscriptionStream.codecMetadata`, which have no corresponding server fields.
   Subscription status events still carry issues; top-level start codec metadata

@@ -120,7 +120,10 @@
          <trusted-key id="DF25D3C4868FEC177182FAD64D176DC503FB4267" group="io.coil-kt.coil3"/>
          <trusted-key id="E77417AC194160A3FABD04969A259C7EE636C5ED" group="com.google.errorprone"/>
          <trusted-key id="E7DC75FC24FB3C8DFE8086AD3D5839A2262CBBFB" group="org.jetbrains.kotlinx"/>
-         <trusted-key id="EAB02E488E7B944EAA6D65814BF0412FD2A3B741" group="at.bernhardberger.tvheadend" name="htsp" version="1.0.0-beta.1"/>
+         <trusted-key id="EAB02E488E7B944EAA6D65814BF0412FD2A3B741">
+            <trusting group="at.bernhardberger.tvheadend" name="htsp" version="1.0.0-beta.1"/>
+            <trusting group="at.bernhardberger.tvheadend" name="htsp" version="1.0.0-beta.2"/>
+         </trusted-key>
          <trusted-key id="EB1B3DE71713C9EC2E87CC26EE92349AD86DE446" group="com.google.j2objc" name="j2objc-annotations" version="2.8"/>
          <trusted-key id="EE0CA873074092F806F59B65D364ABAA39A47320" group="com.google.errorprone"/>
          <trusted-key id="F3184BCD55F4D016E30D4C9BF42E87F9665015C9" group="org.jsoup" name="jsoup" version="1.16.1"/>
@@ -2443,7 +2446,7 @@
       </component>
       <component group="org.ow2" name="ow2" version="1.5">
          <artifact name="ow2-1.5.pom">
-            <sha256 value="0f8a1b116e760b8fe6389c51b84e4b07a70fc11082d4f936e453b583dd50b43b" origin="Verified against Maven Central"/>
+            <sha256 value="0f8a1b116e760b8fe6389c51b84e4b07a70fc11082d4f936e453b583dd50b43b" origin="Verified against Maven Central" reason="Artifact is not signed"/>
          </artifact>
       </component>
       <component group="org.ow2" name="ow2" version="1.5.1">
