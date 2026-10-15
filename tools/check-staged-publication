@@ -9,6 +9,7 @@ import json
 import re
 import stat
 import sys
+import tempfile
 import zipfile
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -449,6 +450,8 @@ def expect_error(errors: list[str], label: str, action: Callable[[], object]) ->
 
 
 def self_test() -> list[str]:
+    from unittest.mock import patch
+
     errors: list[str] = []
     # Exercise both formats independently, including managed dependencies/constraints,
     # across all five modules. Release status of the SDK itself is not sufficient.
@@ -623,10 +626,9 @@ def self_test() -> list[str]:
                 target.writestr(name, data)
         return output.getvalue()
 
-    def integrated_fixture(version: str) -> dict[str, bytes]:
+    def integrated_fixture(version: str, module: str = "sdk-testing") -> dict[str, bytes]:
         # Internal SDK edges use the supplied version, independently of the HTSP pin.
         # The SNAPSHOT case must fail specifically on a dependency, not archive shape.
-        module = "sdk-testing"
         pom = ET.fromstring(ET.tostring(core_pom))
         pom.find("artifactId").text = module
         pom.find("version").text = version
@@ -637,9 +639,15 @@ def self_test() -> list[str]:
             dependency = ET.SubElement(dependencies, "dependency")
             for name, value in zip(("groupId", "artifactId", "version", "scope"), coordinate):
                 ET.SubElement(dependency, name).text = value
+        if dependency_constraints(module):
+            managed = ET.SubElement(ET.SubElement(pom, "dependencyManagement"), "dependencies")
+            for coordinate in sorted(dependency_constraints(module)):
+                dependency = ET.SubElement(managed, "dependency")
+                for name, value in zip(("groupId", "artifactId", "version"), coordinate):
+                    ET.SubElement(dependency, name).text = value
         artifacts = {
             "pom": ET.tostring(pom),
-            "main": archive(legal),
+            "main": archive({"classes.jar": archive(legal)}) if MODULES[module].android else archive(legal),
             "sources": archive({**legal, "example/Test.kt": b"class Test"}),
             "javadoc": archive({**legal, "index.html": b"Fixture"}),
         }
@@ -648,12 +656,18 @@ def self_test() -> list[str]:
             filename = artifact_names(module, version)[label]
             attributes = ({"org.gradle.category": "documentation", "org.gradle.docstype": label}
                           if label in ("sources", "javadoc") else
-                          {"org.gradle.category": "library", "org.gradle.libraryelements": "jar", "org.gradle.jvm.version": 17})
+                          {"org.gradle.category": "library", "org.gradle.libraryelements": MODULES[module].main_extension,
+                           "org.gradle.jvm.version": 17})
             variants.append({"name": name, "attributes": attributes,
                              "dependencies": [{"group": group, "module": artifact, "version": {"requires": required}}
                                               for group, artifact, required in sorted(dependencies)],
                              "files": [{"name": filename, "url": filename, "size": len(artifacts[label]),
                                         "sha256": sha256(artifacts[label])}]})
+            if label == "main" and dependency_constraints(module):
+                variants[-1]["dependencyConstraints"] = [
+                    {"group": group, "module": artifact, "version": {"requires": required}, "reason": "fixture"}
+                    for group, artifact, required in sorted(dependency_constraints(module))
+                ]
         artifacts["module"] = json.dumps({"formatVersion": "1.1", "component": {
             "group": GROUP, "module": module, "version": version, "attributes": {"org.gradle.status": "release"}},
             "variants": variants}).encode()
@@ -670,6 +684,43 @@ def self_test() -> list[str]:
             errors.append(f"self-test rejected integrated snapshot fixture for the wrong reason: {error}")
     else:
         errors.append("self-test accepted integrated SNAPSHOT dependency fixture")
+
+    # Exercise the real repository walk and all 25 originals. Substitute only the
+    # expected dependency pins so this regression survives an HTSP re-pin; all
+    # repository, metadata, archive and release-version validators remain real.
+    version = configured_version()
+    fixture_dependencies = {
+        module: {(group, artifact, "1.0.0-beta.2" if (group, artifact) == (GROUP, "htsp") else required, scope)
+                 for group, artifact, required, scope in pom_dependencies(module, version)}
+        for module in MODULES
+    }
+    with tempfile.TemporaryDirectory(prefix="staged-publication-self-test-") as temporary:
+        repository = Path(temporary)
+        with patch.dict(globals(), pom_dependencies=lambda module, version: fixture_dependencies[module]):
+            for snapshot in (False, True):
+                if snapshot:
+                    fixture_dependencies["sdk-core"].remove((GROUP, "htsp", "1.0.0-beta.2", "runtime"))
+                    fixture_dependencies["sdk-core"].add((GROUP, "htsp", "1.0.0-SNAPSHOT", "runtime"))
+                expected_manifest = {}
+                for module in MODULES:
+                    artifacts = integrated_fixture(version, module)
+                    directory = repository.joinpath(*GROUP.split("."), module, version)
+                    directory.mkdir(parents=True, exist_ok=True)
+                    for label, name in artifact_names(module, version).items():
+                        path = directory / name
+                        path.write_bytes(artifacts[label])
+                        expected_manifest[path.relative_to(repository).as_posix()] = sha256(artifacts[label])
+                try:
+                    manifest = verify(repository)
+                except VerificationError as error:
+                    expected_error = f"sdk-core POM dependency {GROUP}:htsp has non-release version 1.0.0-SNAPSHOT"
+                    if not snapshot or str(error) != expected_error:
+                        errors.append(f"self-test rejected staged repository fixture for the wrong reason: {error}")
+                else:
+                    if snapshot:
+                        errors.append("self-test accepted staged repository SNAPSHOT dependency fixture")
+                    elif manifest != expected_manifest:
+                        errors.append("self-test staged repository manifest differs from its 25 originals")
 
     try:
         verify_jar(archive(legal), "main", "synthetic JAR")
