@@ -579,7 +579,7 @@ internal class ConnectionOwner(
                     GatewayConnectionFailure.TRANSPORT_UNAVAILABLE,
                 )
             }
-            GatewayResult.ServerRejected -> GatewayResult.ServerRejected.toSynchronizationFailure()
+            is GatewayResult.ServerRejected -> result.toSynchronizationFailure()
             GatewayResult.AccessDenied -> GatewayResult.AccessDenied.toSynchronizationFailure()
             GatewayResult.ConnectionLimit -> GatewayResult.ConnectionLimit.toSynchronizationFailure()
             GatewayResult.Timeout -> GatewayResult.Timeout.toSynchronizationFailure()
@@ -858,7 +858,7 @@ private fun GatewayConnectionFailure.toAttemptOutcome(
 
 private fun GatewayResult<*>.toSynchronizationFailure(): SynchronizationOutcome.Failed = when (this) {
     is GatewayResult.Ok -> error("A successful result is not a synchronization failure")
-    GatewayResult.ServerRejected -> synchronizationFailure(TvheadendFailure.SERVER_REJECTED)
+    is GatewayResult.ServerRejected -> synchronizationFailure(TvheadendFailure.SERVER_REJECTED)
     GatewayResult.AccessDenied -> synchronizationFailure(TvheadendFailure.ACCESS_DENIED)
     GatewayResult.ConnectionLimit -> synchronizationFailure(TvheadendFailure.CONNECTION_LIMIT)
     GatewayResult.Timeout -> synchronizationFailure(TvheadendFailure.TIMEOUT)

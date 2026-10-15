@@ -207,7 +207,7 @@ internal class DvrProgressCoordinator(
                             proof = null,
                         )
                     }
-                    GatewayResult.ServerRejected ->
+                    is GatewayResult.ServerRejected ->
                         ClassifiedProgress(
                             DvrProgressResult.Failed(TvheadendFailure.SERVER_REJECTED, mayHaveApplied = false),
                             proof = null,
@@ -297,7 +297,7 @@ internal class DvrProgressCoordinator(
                         cutpointsNotSupported = true
                         DvrCutpointsResult.Failed(TvheadendFailure.NOT_SUPPORTED)
                     }
-                    GatewayResult.ServerRejected -> DvrCutpointsResult.Failed(TvheadendFailure.SERVER_REJECTED)
+                    is GatewayResult.ServerRejected -> DvrCutpointsResult.Failed(TvheadendFailure.SERVER_REJECTED)
                     GatewayResult.MalformedReply -> DvrCutpointsResult.Failed(TvheadendFailure.MALFORMED_RESPONSE)
                     GatewayResult.ConnectionLimit -> DvrCutpointsResult.Failed(TvheadendFailure.CONNECTION_LIMIT)
                     GatewayResult.Timeout -> DvrCutpointsResult.Failed(TvheadendFailure.TIMEOUT)

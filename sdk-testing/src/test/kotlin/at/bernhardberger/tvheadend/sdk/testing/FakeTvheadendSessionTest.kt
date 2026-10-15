@@ -403,7 +403,7 @@ internal class FakeTvheadendSessionTest {
     fun `scripts every failure and DVR command without provenance bypass`() = runTest {
         val fake = FakeTvheadendSession(currentObservation())
         val current = fake.captureCurrentSession()
-        val dvrFailure = DvrMutationResult.Failed(TvheadendFailure.CONNECTION_LIMIT, mayHaveApplied = false)
+        val dvrFailure = DvrMutationResult.Failed(TvheadendFailure.SERVER_REJECTED, false, "Access denied")
         fake.scriptStreamProfilesFailure(StreamProfilesResult.Failed(TvheadendFailure.NOT_SUPPORTED))
         fake.epgRepository.scriptSearchFailure(EpgSearchResult.Failed(TvheadendFailure.NOT_SUPPORTED))
         fake.epgRepository.scriptCoverage(EpgCoverageAcquisitionResult.Ineligible)

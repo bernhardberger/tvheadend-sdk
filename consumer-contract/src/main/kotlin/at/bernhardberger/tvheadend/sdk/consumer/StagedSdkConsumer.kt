@@ -159,6 +159,11 @@ public fun creditedEventForFake(start: Instant, stop: Instant): EpgEvent = EpgEv
     credits = listOf(EpgCredit("Cast member", EpgCreditRole.of("actor"))),
 )
 
+public fun dvrRejectionForFake(): DvrMutationResult.Failed =
+    DvrMutationResult.Failed(TvheadendFailure.SERVER_REJECTED, false, "Access denied")
+
+public fun dvrRejectionText(result: DvrMutationResult.Failed): String? = result.serverMessage
+
 public fun programmeCreditLabels(event: EpgEvent): List<String>? = event.credits?.map { credit ->
     val role = when (credit.role) {
         EpgCreditRole.ACTOR -> "Cast"

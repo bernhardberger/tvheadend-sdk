@@ -1082,13 +1082,11 @@ public final class at/bernhardberger/tvheadend/sdk/core/DvrMutationResult$Confir
 
 public final class at/bernhardberger/tvheadend/sdk/core/DvrMutationResult$Failed : at/bernhardberger/tvheadend/sdk/core/DvrMutationResult {
 	public fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;Z)V
-	public final fun component1 ()Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;
-	public final fun component2 ()Z
-	public final fun copy (Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;Z)Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult$Failed;
-	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult$Failed;Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;ZILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/DvrMutationResult$Failed;
+	public fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;ZLjava/lang/String;)V
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getFailure ()Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;
 	public final fun getMayHaveApplied ()Z
+	public final fun getServerMessage ()Ljava/lang/String;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }

@@ -620,7 +620,7 @@ internal class PhaseOneSessionMetadataTest {
         )
 
         metadata.applyDvrConfigurations(current, GatewayResult.Timeout)
-        metadata.applyDvrConfigurations(current, GatewayResult.ServerRejected)
+        metadata.applyDvrConfigurations(current, GatewayResult.ServerRejected())
         metadata.applyDvrConfigurations(current, GatewayResult.ConnectionLimit)
         metadata.applyDvrConfigurations(current, GatewayResult.TransportUnavailable)
         metadata.applyDvrConfigurations(current, GatewayResult.NotSupported)

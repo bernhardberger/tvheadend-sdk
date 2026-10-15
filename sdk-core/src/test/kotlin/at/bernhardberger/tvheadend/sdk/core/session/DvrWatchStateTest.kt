@@ -88,7 +88,7 @@ internal class DvrWatchStateTest {
     fun `watch failures preserve dispatch uncertainty even across retirement and propagate cancellation`() = runTest {
         val outcomes = listOf(
             Triple(GatewayResult.Ok(Unit), null, true),
-            Triple(GatewayResult.ServerRejected, TvheadendFailure.SERVER_REJECTED, false),
+            Triple(GatewayResult.ServerRejected(), TvheadendFailure.SERVER_REJECTED, false),
             Triple(GatewayResult.AccessDenied, TvheadendFailure.ACCESS_DENIED, false),
             Triple(GatewayResult.NotSupported, TvheadendFailure.NOT_SUPPORTED, false),
             Triple(GatewayResult.ConnectionLimit, TvheadendFailure.CONNECTION_LIMIT, false),
@@ -145,7 +145,7 @@ internal class DvrWatchStateTest {
             onDvrAccessProof = { _, allowed -> proofs += allowed })
         coordinator.bindGeneration(generation, 27)
         coordinator.startAdmission(generation)
-        gateway.watchStateBehavior = { _, _, _ -> GatewayResult.ServerRejected }
+        gateway.watchStateBehavior = { _, _, _ -> GatewayResult.ServerRejected() }
         assertEquals(DvrProgressResult.Failed(TvheadendFailure.SERVER_REJECTED, false),
             coordinator.updateWatchState(generation, DvrEntryId(1), false))
         var progressCalls = 0

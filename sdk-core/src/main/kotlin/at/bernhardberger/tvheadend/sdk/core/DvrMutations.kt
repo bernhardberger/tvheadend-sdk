@@ -286,13 +286,78 @@ public sealed interface DvrMutationResult<out T> {
      * older observations still report [TvheadendFailure.OBSERVATION_EXPIRED]. It reports CONNECTION_CHANGED after
      * dispatch. This classification does not override explicit refusal evidence in [mayHaveApplied].
      */
-    public data class Failed(
+    public class Failed private constructor(
+        private val displayMessage: String?,
         public val failure: TvheadendFailure,
         public val mayHaveApplied: Boolean,
     ) : DvrMutationResult<Nothing> {
+        public constructor(failure: TvheadendFailure, mayHaveApplied: Boolean) : this(null, failure, mayHaveApplied)
+
+        /**
+         * Untrusted, display-only server text, sanitized and bounded to 256 UTF-16 code units.
+         * Only the first 1024 UTF-16 code units are processed; neither bound splits surrogate pairs.
+         * Control, format and line/paragraph separator code points are replaced with spaces.
+         * TVHeadend translates fixed catalogue errors into the connection/account language;
+         * never match this text for control flow. Null unless [failure] is SERVER_REJECTED.
+         * Never include it in logs or diagnostics. Equality and hashing ignore this message.
+         */
+        @at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
+        public val serverMessage: String? get() = displayMessage
+
+        /** Creates a failure with optional display-only text, including for consumer fakes. */
+        @at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
+        public constructor(
+            failure: TvheadendFailure,
+            mayHaveApplied: Boolean,
+            serverMessage: String?,
+        ) : this(
+            if (failure == TvheadendFailure.SERVER_REJECTED) {
+                sanitizeDvrServerMessage(serverMessage)
+            } else {
+                null
+            },
+            failure,
+            mayHaveApplied,
+        )
+
+        override fun equals(other: Any?): Boolean =
+            other is Failed && failure == other.failure && mayHaveApplied == other.mayHaveApplied
+
+        override fun hashCode(): Int = 31 * failure.hashCode() + mayHaveApplied.hashCode()
+
         override fun toString(): String =
             "DvrMutationResult.Failed(failure=$failure, mayHaveApplied=$mayHaveApplied)"
     }
+}
+
+private fun sanitizeDvrServerMessage(message: String?): String? {
+    val prefix = (message ?: return null).boundedUtf16Prefix(1024)
+    val normalized = java.text.Normalizer.normalize(prefix, java.text.Normalizer.Form.NFC)
+    val sanitized = buildString {
+        var offset = 0
+        while (offset < normalized.length) {
+            val codePoint = normalized.codePointAt(offset)
+            val type = Character.getType(codePoint)
+            if (Character.isISOControl(codePoint) || type == Character.FORMAT.toInt() ||
+                type == Character.LINE_SEPARATOR.toInt() || type == Character.PARAGRAPH_SEPARATOR.toInt()
+            ) {
+                append(' ')
+            } else {
+                appendCodePoint(codePoint)
+            }
+            offset += Character.charCount(codePoint)
+        }
+    }.trim()
+    return sanitized.boundedUtf16Prefix(256).trim().takeIf { it.isNotEmpty() }
+}
+
+private fun String.boundedUtf16Prefix(limit: Int): String {
+    val end = if (length > limit && this[limit - 1].isHighSurrogate() && this[limit].isLowSurrogate()) {
+        limit - 1
+    } else {
+        minOf(limit, length)
+    }
+    return take(end)
 }
 
 internal interface DvrMutationCommands {

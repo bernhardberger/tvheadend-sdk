@@ -457,7 +457,7 @@ internal class DvrProgressCoordinatorTest {
     fun `progress uncertainty follows dispatch and refusal even when the generation retires`() = runTest {
         val replies = listOf(
             GatewayResult.Ok(Unit) to true,
-            GatewayResult.ServerRejected to false,
+            GatewayResult.ServerRejected() to false,
             GatewayResult.AccessDenied to false,
             GatewayResult.ConnectionLimit to false,
             GatewayResult.NotSupported to false,
@@ -662,7 +662,7 @@ internal class DvrProgressCoordinatorTest {
         coordinator.startAdmission(generation)
 
         val failures = listOf(
-            GatewayResult.ServerRejected to DvrCutpointsResult.Failed(TvheadendFailure.SERVER_REJECTED),
+            GatewayResult.ServerRejected() to DvrCutpointsResult.Failed(TvheadendFailure.SERVER_REJECTED),
             GatewayResult.MalformedReply to DvrCutpointsResult.Failed(TvheadendFailure.MALFORMED_RESPONSE),
             GatewayResult.AccessDenied to DvrCutpointsResult.Failed(TvheadendFailure.ACCESS_DENIED),
             GatewayResult.ConnectionLimit to DvrCutpointsResult.Failed(TvheadendFailure.CONNECTION_LIMIT),

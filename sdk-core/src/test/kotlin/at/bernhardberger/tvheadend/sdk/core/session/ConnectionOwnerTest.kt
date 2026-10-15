@@ -1559,7 +1559,7 @@ internal class ConnectionOwnerTest {
     fun `synchronization outcomes keep safe policy and payload-free failures`() = runTest {
         val cases = listOf(
             SynchronizationFailureCase(
-                GatewayResult.ServerRejected,
+                GatewayResult.ServerRejected(),
                 TvheadendFailure.SERVER_REJECTED,
                 SessionCommandResult.STARTED,
             ),

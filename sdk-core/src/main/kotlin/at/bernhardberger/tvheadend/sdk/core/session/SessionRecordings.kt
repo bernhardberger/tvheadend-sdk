@@ -63,7 +63,7 @@ internal inline fun <T, R> GatewayResult<T>.toRecordingFileResult(
     transform: (T) -> R,
 ): RecordingFileResult<R> = when (this) {
     is GatewayResult.Ok -> RecordingFileResult.Ok(transform(value))
-    GatewayResult.ServerRejected -> RecordingFileResult.Failed(TvheadendFailure.FILE_UNAVAILABLE)
+    is GatewayResult.ServerRejected -> RecordingFileResult.Failed(TvheadendFailure.FILE_UNAVAILABLE)
     GatewayResult.AccessDenied -> RecordingFileResult.Failed(TvheadendFailure.ACCESS_DENIED)
     GatewayResult.ConnectionLimit ->
         RecordingFileResult.Failed(TvheadendFailure.CONNECTION_LIMIT)

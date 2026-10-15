@@ -80,7 +80,9 @@ notices, and do not describe this project as official TVHeadend software.
   value.
 - Errors, diagnostics, cache keys, logs, test failures, and `toString()` output
   must not expose credentials, tickets, paths, endpoints, hostnames, usernames,
-  raw server errors, or subscription ids.
+  raw server errors, or subscription ids. The sole exception is experimental,
+  display-only DVR mutation `serverMessage`: sanitized and bounded, never in
+  `toString()`, logs, equality, or diagnostics.
 - Exactly one server profile and protocol connection may be active. Switching
   profiles performs full teardown, repository reset, reconnect, and sync.
 - Applications fake the SDK boundary. SDK tests above the gateway fake the

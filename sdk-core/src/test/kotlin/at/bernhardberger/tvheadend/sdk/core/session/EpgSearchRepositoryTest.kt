@@ -106,7 +106,7 @@ internal class EpgSearchRepositoryTest {
 
     @Test
     fun `search maps gateway failures and rejects expired observations before dispatch`() = runTest {
-        var result: GatewayResult<List<GatewayEpgQueryEvent>> = GatewayResult.ServerRejected
+        var result: GatewayResult<List<GatewayEpgQueryEvent>> = GatewayResult.ServerRejected()
         var calls = 0
         val metadata = PhaseOneSessionMetadata(
             searchCommands = EpgSearchCommands { _, _ ->
@@ -121,7 +121,7 @@ internal class EpgSearchRepositoryTest {
         val currentSession = requireNotNull(metadata.observation.value.currentSession)
         val request = EpgSearchRequest.create("query")
         val mappings = listOf(
-            GatewayResult.ServerRejected to EpgSearchResult.Failed(TvheadendFailure.SERVER_REJECTED),
+            GatewayResult.ServerRejected() to EpgSearchResult.Failed(TvheadendFailure.SERVER_REJECTED),
             GatewayResult.MalformedReply to EpgSearchResult.Failed(TvheadendFailure.MALFORMED_RESPONSE),
             GatewayResult.AccessDenied to EpgSearchResult.Failed(TvheadendFailure.ACCESS_DENIED),
             GatewayResult.ConnectionLimit to EpgSearchResult.Failed(TvheadendFailure.CONNECTION_LIMIT),

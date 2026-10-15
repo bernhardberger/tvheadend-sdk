@@ -295,7 +295,7 @@ internal class DvrMutationCoordinator(
                         }
                     }
                     GatewayResult.AccessDenied -> denied(operation)
-                    GatewayResult.ServerRejected,
+                    is GatewayResult.ServerRejected,
                     GatewayResult.ConnectionLimit,
                     GatewayResult.Timeout,
                     GatewayResult.TransportUnavailable,
@@ -335,7 +335,7 @@ internal class DvrMutationCoordinator(
                         }
                     }
                     GatewayResult.AccessDenied -> denied(operation)
-                    GatewayResult.ServerRejected,
+                    is GatewayResult.ServerRejected,
                     GatewayResult.ConnectionLimit,
                     GatewayResult.Timeout,
                     GatewayResult.TransportUnavailable,
@@ -452,6 +452,7 @@ internal class DvrMutationCoordinator(
             DvrMutationResult.Failed(TvheadendFailure.CONNECTION_CHANGED, mayHaveApplied = false)
         }
 
+    @OptIn(at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class)
     private fun failure(
         operation: PendingMutation,
         result: GatewayResult<*>,
@@ -464,8 +465,8 @@ internal class DvrMutationCoordinator(
         }
         return when (result) {
             is GatewayResult.Ok -> error("A successful result is not a DVR mutation failure")
-            GatewayResult.ServerRejected ->
-                DvrMutationResult.Failed(TvheadendFailure.SERVER_REJECTED, mayHaveApplied = false)
+            is GatewayResult.ServerRejected ->
+                DvrMutationResult.Failed(TvheadendFailure.SERVER_REJECTED, false, result.serverMessage)
             GatewayResult.AccessDenied -> error("Access denial must update DVR proof")
             GatewayResult.ConnectionLimit ->
                 DvrMutationResult.Failed(TvheadendFailure.CONNECTION_LIMIT, mayHaveApplied = false)
@@ -513,7 +514,7 @@ internal class DvrMutationCoordinator(
 
 /** Called only after dispatch; an explicit refusal proves that the command did not take effect. */
 internal fun GatewayResult<*>.mayHaveAppliedDvrCommand(): Boolean = when (this) {
-    GatewayResult.ServerRejected,
+    is GatewayResult.ServerRejected,
     GatewayResult.AccessDenied,
     GatewayResult.ConnectionLimit,
     GatewayResult.NotSupported,

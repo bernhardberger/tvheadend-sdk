@@ -396,7 +396,9 @@ internal sealed interface GatewayResult<out T> {
         override fun toString(): String = "GatewayResult.Ok(<redacted>)"
     }
 
-    public data object ServerRejected : GatewayResult<Nothing>
+    public data class ServerRejected(internal val serverMessage: String? = null) : GatewayResult<Nothing> {
+        override fun toString(): String = "GatewayResult.ServerRejected"
+    }
     public data object MalformedReply : GatewayResult<Nothing>
     public data object AccessDenied : GatewayResult<Nothing>
     public data object ConnectionLimit : GatewayResult<Nothing>

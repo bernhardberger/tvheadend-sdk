@@ -64,7 +64,7 @@ import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlinx.coroutines.delay
 
-@OptIn(ExperimentalCoroutinesApi::class)
+@OptIn(ExperimentalCoroutinesApi::class, at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class)
 internal class DvrMutationCoordinatorTest {
     @Test
     fun `retirement during registration distinguishes connection loss from unsent shutdown`() = runTest {
@@ -255,7 +255,7 @@ internal class DvrMutationCoordinatorTest {
         coordinator.startAdmission(generation)
         gateway.scheduleBehavior = { _, _ ->
             coordinator.acceptMetadata(dvrAdded(generation, 7))
-            GatewayResult.ServerRejected
+            GatewayResult.ServerRejected()
         }
 
         assertEquals(
@@ -290,7 +290,7 @@ internal class DvrMutationCoordinatorTest {
         val cases = listOf(
             GatewayResult.AccessDenied to
                 DvrMutationResult.Failed(TvheadendFailure.ACCESS_DENIED, mayHaveApplied = false),
-            GatewayResult.ServerRejected to
+            GatewayResult.ServerRejected(" Access denied\n") to
                 DvrMutationResult.Failed(TvheadendFailure.SERVER_REJECTED, mayHaveApplied = false),
             GatewayResult.MalformedReply to
                 DvrMutationResult.Failed(TvheadendFailure.MALFORMED_RESPONSE, mayHaveApplied = true),
@@ -304,7 +304,10 @@ internal class DvrMutationCoordinatorTest {
         )
         cases.forEach { (gatewayResult, expected) ->
             gateway.scheduleBehavior = { _, _ -> gatewayResult }
-            assertEquals(expected, coordinator.scheduleEntry(generation, scheduleRequest()))
+            val actual = coordinator.scheduleEntry(generation, scheduleRequest()) as DvrMutationResult.Failed
+            assertEquals(expected, actual)
+            assertEquals(if (gatewayResult is GatewayResult.ServerRejected) "Access denied" else null,
+                actual.serverMessage)
         }
         assertEquals(listOf(false), proofs)
 
@@ -322,7 +325,7 @@ internal class DvrMutationCoordinatorTest {
     @Test
     fun `mutation uncertainty follows dispatch and refusal even when the generation retires`() = runTest {
         val replies = listOf(
-            GatewayResult.ServerRejected to false,
+            GatewayResult.ServerRejected() to false,
             GatewayResult.ConnectionLimit to false,
             GatewayResult.NotSupported to false,
             GatewayResult.MalformedReply to true,

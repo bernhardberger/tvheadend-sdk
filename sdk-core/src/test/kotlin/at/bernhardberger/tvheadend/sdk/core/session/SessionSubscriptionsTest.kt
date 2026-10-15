@@ -1063,7 +1063,7 @@ class SessionSubscriptionsTest {
 
         listOf(
             GatewayResult.TransportUnavailable to TvheadendFailure.CONNECTION_CHANGED,
-            GatewayResult.ServerRejected to TvheadendFailure.FILE_UNAVAILABLE,
+            GatewayResult.ServerRejected() to TvheadendFailure.FILE_UNAVAILABLE,
             GatewayResult.MalformedReply to TvheadendFailure.MALFORMED_RESPONSE,
             GatewayResult.AccessDenied to TvheadendFailure.ACCESS_DENIED,
             GatewayResult.ConnectionLimit to TvheadendFailure.CONNECTION_LIMIT,
@@ -1354,7 +1354,7 @@ class SessionSubscriptionsTest {
         assertEquals("ArtworkLoadResult.Available(<redacted>)", available.toString())
 
         listOf(
-            GatewayResult.ServerRejected to TvheadendFailure.FILE_UNAVAILABLE,
+            GatewayResult.ServerRejected() to TvheadendFailure.FILE_UNAVAILABLE,
             GatewayResult.MalformedReply to TvheadendFailure.MALFORMED_RESPONSE,
             GatewayResult.AccessDenied to TvheadendFailure.ACCESS_DENIED,
             GatewayResult.ConnectionLimit to TvheadendFailure.CONNECTION_LIMIT,

@@ -726,7 +726,7 @@ internal class PhaseOneSessionMetadata(
                     publishedConfigurations = null
                     mutableConfigurations.value = DvrConfigurationsState.Denied
                 }
-                GatewayResult.ServerRejected,
+                is GatewayResult.ServerRejected,
                 GatewayResult.ConnectionLimit,
                 GatewayResult.Timeout,
                 GatewayResult.TransportUnavailable,
@@ -756,7 +756,7 @@ internal class PhaseOneSessionMetadata(
                     mutableDiskSpace.value = DvrDiskSpaceState.Current(result.value)
                 }
                 GatewayResult.AccessDenied,
-                GatewayResult.ServerRejected,
+                is GatewayResult.ServerRejected,
                 GatewayResult.ConnectionLimit,
                 GatewayResult.Timeout,
                 GatewayResult.TransportUnavailable,
@@ -1260,7 +1260,7 @@ private fun GatewayResult<List<GatewayEpgQueryEvent>>.toEpgSearchResult(
             }
             EpgSearchResult.Available.create(events, originatingSession)
         }
-        GatewayResult.ServerRejected -> EpgSearchResult.Failed(TvheadendFailure.SERVER_REJECTED)
+        is GatewayResult.ServerRejected -> EpgSearchResult.Failed(TvheadendFailure.SERVER_REJECTED)
         GatewayResult.AccessDenied -> EpgSearchResult.Failed(TvheadendFailure.ACCESS_DENIED)
         GatewayResult.ConnectionLimit -> EpgSearchResult.Failed(TvheadendFailure.CONNECTION_LIMIT)
         GatewayResult.Timeout -> EpgSearchResult.Failed(TvheadendFailure.TIMEOUT)

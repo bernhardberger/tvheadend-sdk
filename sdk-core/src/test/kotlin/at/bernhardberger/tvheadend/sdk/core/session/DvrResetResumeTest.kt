@@ -76,7 +76,7 @@ internal class DvrResetResumeTest {
     fun `reset shares progress failure uncertainty and retirement classification`() = runTest {
         val outcomes = listOf(
             Triple(GatewayResult.Ok(Unit), null, true),
-            Triple(GatewayResult.ServerRejected, TvheadendFailure.SERVER_REJECTED, false),
+            Triple(GatewayResult.ServerRejected(), TvheadendFailure.SERVER_REJECTED, false),
             Triple(GatewayResult.AccessDenied, TvheadendFailure.ACCESS_DENIED, false),
             Triple(GatewayResult.NotSupported, TvheadendFailure.NOT_SUPPORTED, false),
             Triple(GatewayResult.ConnectionLimit, TvheadendFailure.CONNECTION_LIMIT, false),
@@ -113,7 +113,7 @@ internal class DvrResetResumeTest {
         val coordinator = DvrProgressCoordinator(gateway, onProgressNotSupported = { unsupported++ })
         coordinator.bindGeneration(generation, 27)
         coordinator.startAdmission(generation)
-        gateway.resetResumeBehavior = { _, _ -> GatewayResult.ServerRejected }
+        gateway.resetResumeBehavior = { _, _ -> GatewayResult.ServerRejected() }
         assertEquals(DvrProgressResult.Failed(TvheadendFailure.SERVER_REJECTED, false),
             coordinator.resetResume(generation, DvrEntryId(1)))
         var progressCalls = 0

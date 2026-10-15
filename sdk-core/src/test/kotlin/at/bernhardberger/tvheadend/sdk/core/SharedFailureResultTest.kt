@@ -55,7 +55,7 @@ class SharedFailureResultTest {
     fun `application uncertainty remains part of failure equality`() {
         val mutation = DvrMutationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = false)
         val progress = DvrProgressResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = false)
-        assertNotEquals(mutation, mutation.copy(mayHaveApplied = true))
+        assertNotEquals(mutation, DvrMutationResult.Failed(mutation.failure, mayHaveApplied = true))
         assertNotEquals(progress, progress.copy(mayHaveApplied = true))
     }
 }

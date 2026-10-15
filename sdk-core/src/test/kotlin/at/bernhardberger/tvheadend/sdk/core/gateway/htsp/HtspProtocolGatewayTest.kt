@@ -512,8 +512,8 @@ internal class HtspProtocolGatewayTest {
         )
         assertEquals(true, gateway.commitIfLive(generation) { true })
         fake.executeResult = HtspResult.ServerError(null)
-        assertSame(GatewayResult.ServerRejected, gateway.getDiskSpace(generation))
-        assertSame(GatewayResult.ServerRejected, gateway.getDvrCutpoints(generation, DvrEntryId(7)))
+        assertEquals(GatewayResult.ServerRejected(), gateway.getDiskSpace(generation))
+        assertEquals(GatewayResult.ServerRejected(), gateway.getDvrCutpoints(generation, DvrEntryId(7)))
     }
 
     @Test
@@ -1445,7 +1445,7 @@ internal class HtspProtocolGatewayTest {
         }
 
         val failures = listOf(
-            HtspResult.ServerError("private error") to GatewayResult.ServerRejected,
+            HtspResult.ServerError("private error") to GatewayResult.ServerRejected("private error"),
             HtspResult.AccessDenied to GatewayResult.AccessDenied,
             HtspResult.ConnectionLimit to GatewayResult.ConnectionLimit,
             HtspResult.Timeout to GatewayResult.Timeout,
@@ -1454,7 +1454,7 @@ internal class HtspProtocolGatewayTest {
         )
         failures.forEach { (source, expected) ->
             fake.executeResult = source
-            assertSame(expected, gateway.queryEpg(generation, ChannelId(2), maxTime))
+            assertEquals(expected, gateway.queryEpg(generation, ChannelId(2), maxTime))
         }
 
         val cancellation = CancellationException("private cancellation")
@@ -1553,7 +1553,7 @@ internal class HtspProtocolGatewayTest {
         assertSame(GatewayResult.MalformedReply, gateway.searchEpg(generation, search))
 
         val failures = listOf(
-            HtspResult.ServerError("private error") to GatewayResult.ServerRejected,
+            HtspResult.ServerError("private error") to GatewayResult.ServerRejected("private error"),
             HtspResult.AccessDenied to GatewayResult.AccessDenied,
             HtspResult.ConnectionLimit to GatewayResult.ConnectionLimit,
             HtspResult.Timeout to GatewayResult.Timeout,
@@ -1562,7 +1562,7 @@ internal class HtspProtocolGatewayTest {
         )
         failures.forEach { (source, expected) ->
             fake.executeResult = source
-            assertSame(expected, gateway.searchEpg(generation, search))
+            assertEquals(expected, gateway.searchEpg(generation, search))
         }
 
         val cancellation = CancellationException("private cancellation")
@@ -1769,7 +1769,7 @@ internal class HtspProtocolGatewayTest {
         assertEquals("DvrDiskSpace(freeBytes=8, usedBytes=null, totalBytes=16)", disk.value.toString())
 
         val failures = listOf(
-            HtspResult.ServerError("private error") to GatewayResult.ServerRejected,
+            HtspResult.ServerError("private error") to GatewayResult.ServerRejected("private error"),
             HtspResult.AccessDenied to GatewayResult.AccessDenied,
             HtspResult.ConnectionLimit to GatewayResult.ConnectionLimit,
             HtspResult.Timeout to GatewayResult.Timeout,
@@ -1778,8 +1778,8 @@ internal class HtspProtocolGatewayTest {
         )
         failures.forEach { (source, expected) ->
             fake.executeResult = source
-            assertSame(expected, gateway.getDvrConfigs(generation))
-            assertSame(expected, gateway.getDiskSpace(generation))
+            assertEquals(expected, gateway.getDvrConfigs(generation))
+            assertEquals(expected, gateway.getDiskSpace(generation))
         }
 
         val cancellation = CancellationException("private cancellation")
@@ -1852,7 +1852,7 @@ internal class HtspProtocolGatewayTest {
         assertSame(GatewayResult.MalformedReply, gateway.getStreamProfiles(generation))
 
         val failures = listOf(
-            HtspResult.ServerError("private error") to GatewayResult.ServerRejected,
+            HtspResult.ServerError("private error") to GatewayResult.ServerRejected("private error"),
             HtspResult.AccessDenied to GatewayResult.AccessDenied,
             HtspResult.ConnectionLimit to GatewayResult.ConnectionLimit,
             HtspResult.Timeout to GatewayResult.Timeout,
@@ -1861,7 +1861,7 @@ internal class HtspProtocolGatewayTest {
         )
         failures.forEach { (source, expected) ->
             fake.executeResult = source
-            assertSame(expected, gateway.getStreamProfiles(generation))
+            assertEquals(expected, gateway.getStreamProfiles(generation))
         }
 
         val cancellation = CancellationException("private cancellation")
@@ -1971,13 +1971,13 @@ internal class HtspProtocolGatewayTest {
         assertTrue(gateway.deleteDvrEntry(generation, DvrEntryId(7)) is GatewayResult.Ok)
         assertTrue(fake.lastRequest is DeleteDvrEntryRequest)
         fake.executeResult = HtspResult.ServerError("private rejected")
-        assertSame(
-            GatewayResult.ServerRejected,
+        assertEquals(
+            GatewayResult.ServerRejected("private rejected"),
             gateway.updateDvrEntry(generation, DvrEntryId(7), DvrEntryUpdate()),
         )
 
         val failures = listOf(
-            HtspResult.ServerError("private error") to GatewayResult.ServerRejected,
+            HtspResult.ServerError("private error") to GatewayResult.ServerRejected("private error"),
             HtspResult.AccessDenied to GatewayResult.AccessDenied,
             HtspResult.ConnectionLimit to GatewayResult.ConnectionLimit,
             HtspResult.Timeout to GatewayResult.Timeout,
@@ -1986,7 +1986,7 @@ internal class HtspProtocolGatewayTest {
         )
         failures.forEach { (source, expected) ->
             fake.executeResult = source
-            assertSame(expected, gateway.scheduleDvrEntry(generation, schedule))
+            assertEquals(expected, gateway.scheduleDvrEntry(generation, schedule))
         }
 
         val cancellation = CancellationException("private cancellation")
@@ -2023,13 +2023,13 @@ internal class HtspProtocolGatewayTest {
                 fake.lastRequest?.access)
         }
         for ((reply, expected) in listOf(
-            HtspResult.ServerError("private refusal") to GatewayResult.ServerRejected,
+            HtspResult.ServerError("private refusal") to GatewayResult.ServerRejected("private refusal"),
             HtspResult.AccessDenied to GatewayResult.AccessDenied,
             HtspResult.NotSupported to GatewayResult.NotSupported,
             HtspResult.Timeout to GatewayResult.Timeout,
         )) {
             fake.executeResult = reply
-            assertSame(expected, gateway.updateDvrWatchState(generation, DvrEntryId(7), true))
+            assertEquals(expected, gateway.updateDvrWatchState(generation, DvrEntryId(7), true))
         }
     }
 
@@ -2054,13 +2054,13 @@ internal class HtspProtocolGatewayTest {
         assertEquals(at.bernhardberger.tvheadend.htsp.requests.HtspAccess.ACCESS_HTSP_RECORDER,
             fake.lastRequest?.access)
         for ((reply, expected) in listOf(
-            HtspResult.ServerError("private refusal") to GatewayResult.ServerRejected,
+            HtspResult.ServerError("private refusal") to GatewayResult.ServerRejected("private refusal"),
             HtspResult.AccessDenied to GatewayResult.AccessDenied,
             HtspResult.NotSupported to GatewayResult.NotSupported,
             HtspResult.Timeout to GatewayResult.Timeout,
         )) {
             fake.executeResult = reply
-            assertSame(expected, gateway.resetDvrResume(generation, DvrEntryId(7)))
+            assertEquals(expected, gateway.resetDvrResume(generation, DvrEntryId(7)))
         }
     }
 
@@ -2102,8 +2102,8 @@ internal class HtspProtocolGatewayTest {
         assertEquals(DVR_PROGRESS_INCR_PLAY_COUNT, increment.playCount)
 
         fake.executeResult = HtspResult.ServerError("private rejected")
-        assertSame(
-            GatewayResult.ServerRejected,
+        assertEquals(
+            GatewayResult.ServerRejected("private rejected"),
             gateway.reportDvrProgress(
                 generation,
                 DvrEntryId(7),
@@ -2111,7 +2111,7 @@ internal class HtspProtocolGatewayTest {
             ),
         )
         val failures = listOf(
-            HtspResult.ServerError("private error") to GatewayResult.ServerRejected,
+            HtspResult.ServerError("private error") to GatewayResult.ServerRejected("private error"),
             HtspResult.AccessDenied to GatewayResult.AccessDenied,
             HtspResult.ConnectionLimit to GatewayResult.ConnectionLimit,
             HtspResult.Timeout to GatewayResult.Timeout,
@@ -2120,7 +2120,7 @@ internal class HtspProtocolGatewayTest {
         )
         failures.forEach { (source, expected) ->
             fake.executeResult = source
-            assertSame(
+            assertEquals(
                 expected,
                 gateway.reportDvrProgress(
                     generation,
@@ -2201,7 +2201,7 @@ internal class HtspProtocolGatewayTest {
         )
 
         listOf(
-            HtspResult.ServerError("private error") to GatewayResult.ServerRejected,
+            HtspResult.ServerError("private error") to GatewayResult.ServerRejected("private error"),
             HtspResult.AccessDenied to GatewayResult.AccessDenied,
             HtspResult.ConnectionLimit to GatewayResult.ConnectionLimit,
             HtspResult.Timeout to GatewayResult.Timeout,
@@ -2209,7 +2209,7 @@ internal class HtspProtocolGatewayTest {
             HtspResult.NotSupported to GatewayResult.NotSupported,
         ).forEach { (source, expected) ->
             fake.executeResult = source
-            assertSame(expected, gateway.getDvrCutpoints(generation, DvrEntryId(7)))
+            assertEquals(expected, gateway.getDvrCutpoints(generation, DvrEntryId(7)))
         }
 
         val cancellation = CancellationException("private cancellation")
@@ -2907,7 +2907,7 @@ internal class HtspProtocolGatewayTest {
         assertSame(sourceGeneration, fake.lastExpectedGeneration)
 
         listOf(
-            HtspResult.ServerError("private error") to GatewayResult.ServerRejected,
+            HtspResult.ServerError("private error") to GatewayResult.ServerRejected("private error"),
             HtspResult.AccessDenied to GatewayResult.AccessDenied,
             HtspResult.ConnectionLimit to GatewayResult.ConnectionLimit,
             HtspResult.Timeout to GatewayResult.Timeout,
@@ -2915,11 +2915,11 @@ internal class HtspProtocolGatewayTest {
             HtspResult.NotSupported to GatewayResult.NotSupported,
         ).forEach { (source, expected) ->
             fake.executeResult = source
-            assertSame(expected, gateway.openRecordingFile(generation, DvrEntryId(7)))
-            assertSame(expected, gateway.seekRecordingFile(generation, file, 0))
-            assertSame(expected, gateway.readRecordingFile(generation, file, 0, destination, 0, 4))
-            assertSame(expected, gateway.statRecordingFile(generation, file))
-            assertSame(expected, gateway.closeRecordingFile(generation, file))
+            assertEquals(expected, gateway.openRecordingFile(generation, DvrEntryId(7)))
+            assertEquals(expected, gateway.seekRecordingFile(generation, file, 0))
+            assertEquals(expected, gateway.readRecordingFile(generation, file, 0, destination, 0, 4))
+            assertEquals(expected, gateway.statRecordingFile(generation, file))
+            assertEquals(expected, gateway.closeRecordingFile(generation, file))
         }
 
         assertRejects("negative read position") {
@@ -3151,7 +3151,7 @@ internal class HtspProtocolGatewayTest {
         val generation = (gateway.connect(ServerConfiguration("host", 9_982))
             as GatewayConnectResult.Connected).connection.generation
 
-        assertSame(GatewayResult.ServerRejected, gateway.loadArtwork(generation, ArtworkId(83)))
+        assertEquals(GatewayResult.ServerRejected(), gateway.loadArtwork(generation, ArtworkId(83)))
 
         val reads = requests.filterIsInstance<FileReadRequest>()
         assertEquals(16L * 1024 * 1024, reads.last().offsetBytes)
@@ -3191,7 +3191,7 @@ internal class HtspProtocolGatewayTest {
         val generation = (gateway.connect(ServerConfiguration("host", 9_982))
             as GatewayConnectResult.Connected).connection.generation
 
-        assertSame(GatewayResult.ServerRejected, gateway.loadArtwork(generation, ArtworkId(7)))
+        assertEquals(GatewayResult.ServerRejected(), gateway.loadArtwork(generation, ArtworkId(7)))
         assertTrue(requests.none { it is FileReadRequest })
         assertTrue(requests.last() is FileCloseRequest)
 

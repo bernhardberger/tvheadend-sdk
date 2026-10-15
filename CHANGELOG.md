@@ -4,6 +4,14 @@
 
 Unreleased; development target.
 
+### Changed
+
+- BREAKING: `DvrMutationResult.Failed` is now a regular class with explicit
+  equality and hashing; generated data-class `copy` and destructuring are removed.
+  Experimental `serverMessage` exposes sanitized, bounded, untrusted display-only
+  text for server rejections. It is excluded from equality, hashing and `toString()`;
+  other failures have no message. TVHeadend localizes this text; never match it.
+
 ## [0.28.0]
 
 Released 2026-10-14.

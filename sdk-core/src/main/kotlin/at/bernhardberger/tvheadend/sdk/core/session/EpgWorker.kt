@@ -347,7 +347,7 @@ internal class EpgWorker(
                             GatewayResult.NotSupported,
                             GatewayResult.MalformedReply,
                             -> settleIneligible(plan.channelId)
-                            GatewayResult.ServerRejected,
+                            is GatewayResult.ServerRejected,
                             GatewayResult.ConnectionLimit,
                             GatewayResult.Timeout,
                             GatewayResult.TransportUnavailable,

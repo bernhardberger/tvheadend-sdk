@@ -142,6 +142,12 @@ public final class StagedSdkJavaConsumer {
         return fake;
     }
 
+    @kotlin.OptIn(markerClass = ExperimentalTvheadendApi.class)
+    public static String dvrRejectionText() {
+        return new DvrMutationResult.Failed(TvheadendFailure.SERVER_REJECTED, false, "Access denied")
+                .getServerMessage();
+    }
+
     @SuppressWarnings("unchecked")
     private static <T> DvrMutationResult<T> notReady() {
         return (DvrMutationResult<T>) new DvrMutationResult.Failed(TvheadendFailure.NOT_READY, false);

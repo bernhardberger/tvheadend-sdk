@@ -429,6 +429,21 @@ that a programme remains in the server's seekable buffer.
 
 ## Read and mutate DVR state
 
+### Display a mutation rejection
+
+With `@OptIn(ExperimentalTvheadendApi::class)`, `DvrMutationResult.Failed.serverMessage`
+provides optional untrusted, display-only text for `SERVER_REJECTED`. TVHeadend
+translates its catalogue errors into the connection/account language: never match
+strings to infer permission, state or retry policy. The SDK first bounds input to
+1024 UTF-16 code units, NFC-normalizes, replaces control, format and line/paragraph
+separator code points, trims and bounds display text to 256 UTF-16 code units
+(without splitting surrogate pairs);
+blank text and non-server failures return null. Render as plain text, never markup,
+and never put it in logs or diagnostics. Equality, hashing and `toString()` ignore
+the message; `failure` and `mayHaveApplied` keep their existing meaning.
+Consumer fakes can script the three-argument `Failed(failure, mayHaveApplied, serverMessage)`
+constructor through `FakeDvrRepository`.
+
 ### Observe DVR changes
 
 `DvrRepository.changes: Flow<DvrChange>` carries server-observed lifecycle changes,

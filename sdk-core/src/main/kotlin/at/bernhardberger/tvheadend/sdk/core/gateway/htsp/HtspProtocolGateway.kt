@@ -735,7 +735,7 @@ internal class HtspProtocolGateway internal constructor(
             ).toGatewayResult { response -> response }
         ) {
             is GatewayResult.Ok -> opening.value
-            GatewayResult.ServerRejected -> return GatewayResult.ServerRejected
+            is GatewayResult.ServerRejected -> return opening
             GatewayResult.AccessDenied -> return GatewayResult.AccessDenied
             GatewayResult.ConnectionLimit -> return GatewayResult.ConnectionLimit
             GatewayResult.Timeout -> return GatewayResult.Timeout
@@ -746,7 +746,7 @@ internal class HtspProtocolGateway internal constructor(
 
         val outcome = try {
             if (opened.sizeBytes != null && opened.sizeBytes !in 0L..MAX_ARTWORK_BYTES.toLong()) {
-                GatewayResult.ServerRejected
+                GatewayResult.ServerRejected()
             } else {
                 readArtwork(opened.id, opened.sizeBytes?.toInt(), htspGeneration)
             }
@@ -786,7 +786,7 @@ internal class HtspProtocolGateway internal constructor(
                         data.copyInto(destination, offset)
                         offset += data.size
                     }
-                    GatewayResult.ServerRejected -> return GatewayResult.ServerRejected
+                    is GatewayResult.ServerRejected -> return reading
                     GatewayResult.AccessDenied -> return GatewayResult.AccessDenied
                     GatewayResult.ConnectionLimit -> return GatewayResult.ConnectionLimit
                     GatewayResult.Timeout -> return GatewayResult.Timeout
@@ -815,7 +815,7 @@ internal class HtspProtocolGateway internal constructor(
                 ).toGatewayResult { response -> response.data }
             ) {
                 is GatewayResult.Ok -> reading.value
-                GatewayResult.ServerRejected -> return GatewayResult.ServerRejected
+                is GatewayResult.ServerRejected -> return reading
                 GatewayResult.AccessDenied -> return GatewayResult.AccessDenied
                 GatewayResult.ConnectionLimit -> return GatewayResult.ConnectionLimit
                 GatewayResult.Timeout -> return GatewayResult.Timeout
@@ -825,7 +825,7 @@ internal class HtspProtocolGateway internal constructor(
             }
             if (data.size > requested) return GatewayResult.MalformedReply
             if (data.size == 0) return GatewayResult.Ok(output.toByteArray())
-            if (output.size() + data.size > MAX_ARTWORK_BYTES) return GatewayResult.ServerRejected
+            if (output.size() + data.size > MAX_ARTWORK_BYTES) return GatewayResult.ServerRejected()
             data.copyInto(chunk)
             output.write(chunk, 0, data.size)
             offset += data.size
@@ -1210,7 +1210,7 @@ private inline fun <T, R> HtspResult<T>.toGatewayResult(
     transform: (T) -> R,
 ): GatewayResult<R> = when (this) {
     is HtspResult.Ok -> GatewayResult.Ok(transform(value))
-    is HtspResult.ServerError -> GatewayResult.ServerRejected
+    is HtspResult.ServerError -> GatewayResult.ServerRejected(serverMessage)
     HtspResult.MalformedReply -> GatewayResult.MalformedReply
     HtspResult.AccessDenied -> GatewayResult.AccessDenied
     HtspResult.ConnectionLimit -> GatewayResult.ConnectionLimit
@@ -1225,7 +1225,7 @@ private inline fun <T, R : Any> HtspResult<T>.toCheckedGatewayResult(
 ): GatewayResult<R> = when (this) {
     is HtspResult.Ok -> transform(value)?.let { transformed -> GatewayResult.Ok(transformed) }
         ?: GatewayResult.MalformedReply
-    is HtspResult.ServerError -> GatewayResult.ServerRejected
+    is HtspResult.ServerError -> GatewayResult.ServerRejected(serverMessage)
     HtspResult.MalformedReply -> GatewayResult.MalformedReply
     HtspResult.AccessDenied -> GatewayResult.AccessDenied
     HtspResult.ConnectionLimit -> GatewayResult.ConnectionLimit

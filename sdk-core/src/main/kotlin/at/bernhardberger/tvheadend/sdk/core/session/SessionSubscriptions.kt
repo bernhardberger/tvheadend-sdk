@@ -593,7 +593,7 @@ private const val RETURN_TO_LIVE_MARGIN_SECONDS = 3L
 
 private fun GatewayResult<ByteArray>.toArtworkLoadResult(): ArtworkLoadResult = when (this) {
     is GatewayResult.Ok -> ArtworkLoadResult.Available(ArtworkContent(value))
-    GatewayResult.ServerRejected -> ArtworkLoadResult.Unavailable(TvheadendFailure.FILE_UNAVAILABLE)
+    is GatewayResult.ServerRejected -> ArtworkLoadResult.Unavailable(TvheadendFailure.FILE_UNAVAILABLE)
     GatewayResult.AccessDenied -> ArtworkLoadResult.Unavailable(TvheadendFailure.ACCESS_DENIED)
     GatewayResult.ConnectionLimit -> ArtworkLoadResult.Unavailable(TvheadendFailure.CONNECTION_LIMIT)
     GatewayResult.Timeout -> ArtworkLoadResult.Unavailable(TvheadendFailure.TIMEOUT)
@@ -607,7 +607,7 @@ private fun GatewayResult<List<at.bernhardberger.tvheadend.sdk.core.StreamProfil
     originatingSession: CurrentSessionObservation,
 ): StreamProfilesResult = when (this) {
     is GatewayResult.Ok -> StreamProfilesResult.Available.create(value, originatingSession)
-    GatewayResult.ServerRejected -> StreamProfilesResult.Failed(TvheadendFailure.SERVER_REJECTED)
+    is GatewayResult.ServerRejected -> StreamProfilesResult.Failed(TvheadendFailure.SERVER_REJECTED)
     GatewayResult.AccessDenied -> StreamProfilesResult.Failed(TvheadendFailure.ACCESS_DENIED)
     GatewayResult.ConnectionLimit -> StreamProfilesResult.Failed(TvheadendFailure.CONNECTION_LIMIT)
     GatewayResult.Timeout -> StreamProfilesResult.Failed(TvheadendFailure.TIMEOUT)
