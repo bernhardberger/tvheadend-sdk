@@ -35,6 +35,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult
 import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntry
+import at.bernhardberger.tvheadend.sdk.core.DvrEventEntries
 import at.bernhardberger.tvheadend.sdk.core.DvrRecordingFile
 import at.bernhardberger.tvheadend.sdk.core.DvrRecordingStream
 import at.bernhardberger.tvheadend.sdk.core.AutorecRule
@@ -163,6 +164,12 @@ public fun dvrRejectionForFake(): DvrMutationResult.Failed =
     DvrMutationResult.Failed(TvheadendFailure.SERVER_REJECTED, false, "Access denied")
 
 public fun dvrRejectionText(result: DvrMutationResult.Failed): String? = result.serverMessage
+
+public fun programmeRecordings(observation: SessionObservation, eventId: Long): DvrEventEntries? =
+    observation.dvrEntriesForEvent(EventId(eventId))
+
+public fun programmeRecordingTargets(observation: SessionObservation, eventId: Long): List<DvrEntry> =
+    programmeRecordings(observation, eventId)?.let { listOf(it.selected) + it.otherActive }.orEmpty()
 
 public fun timerecWithRemovalForFake(): TimerecRule = TimerecRule.create(TimerecRuleId("timerec"), removalDays = 30)
 

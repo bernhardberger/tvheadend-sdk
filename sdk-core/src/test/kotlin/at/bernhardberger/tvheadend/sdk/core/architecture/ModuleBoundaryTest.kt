@@ -156,6 +156,7 @@ internal class ModuleBoundaryTest {
             "DvrRecordingFile",
             "DvrRecordingStream",
             "DvrEntry",
+            "DvrEventEntries",
             "AutorecRule",
             "TimerecRule",
             "DvrSnapshot",

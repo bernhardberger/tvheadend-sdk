@@ -8,11 +8,96 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.metadata.DvrReducer
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertSame
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 import kotlin.time.Instant
 
 internal class DvrEventRankingTest {
+    @Test
+    fun `other active entries preserve link and stop tie breaks within each state tier`() {
+        val scheduledOlder = entry(1, DvrEntryState.SCHEDULED, stop = 20, owner = "test-account")
+        val scheduledNewer = entry(2, DvrEntryState.SCHEDULED, stop = 30, owner = "test-account")
+        val recordingOlder = entry(3, DvrEntryState.RECORDING, stop = 20, owner = "test-account")
+        val recordingNewer = entry(4, DvrEntryState.RECORDING, stop = 30, owner = "test-account")
+        val cases = listOf(
+            recordingOlder.id to listOf(recordingOlder, recordingNewer, scheduledNewer, scheduledOlder),
+            scheduledOlder.id to listOf(recordingNewer, recordingOlder, scheduledOlder, scheduledNewer),
+            null to listOf(recordingNewer, recordingOlder, scheduledNewer, scheduledOlder),
+        )
+        val entries = listOf(scheduledOlder, scheduledNewer, recordingOlder, recordingNewer)
+        for ((link, expected) in cases) {
+            for (ordered in listOf(entries, entries.reversed())) {
+                val observed = observation(ordered, link = link, username = "test-account")
+                assertSame(expected.first(), observed.dvrEntryForEvent(EventId(10)))
+                val result = requireNotNull(observed.dvrEntriesForEvent(EventId(10)))
+                assertSame(expected.first(), result.selected)
+                assertEquals(expected.drop(1), result.otherActive)
+            }
+        }
+    }
+
+    @Test
+    fun `ranked result includes only remaining active matches in rank order`() {
+        val own = entry(9, DvrEntryState.COMPLETED, owner = "test-account")
+        val recording = entry(2, DvrEntryState.RECORDING)
+        val recordingError = entry(3, DvrEntryState.RECORDING_ERROR)
+        val scheduled = entry(1, DvrEntryState.SCHEDULED)
+        val completed = entry(4, DvrEntryState.COMPLETED)
+        val unlinked = DvrEntry.create(DvrEntryId(5), state = DvrEntryState.RECORDING)
+        val entries = listOf(scheduled, recordingError, completed, own, recording, unlinked)
+        for (username in listOf(null, "test-account")) {
+            val observed = observation(entries, username = username)
+            val ranked = requireNotNull(observed.dvrEntriesForEvent(EventId(10)))
+            assertSame(observed.dvrEntryForEvent(EventId(10)), ranked.selected)
+            assertEquals(
+                if (username == null) listOf(recordingError, scheduled) else listOf(recording, recordingError, scheduled),
+                ranked.otherActive,
+            )
+        }
+    }
+
+    @Test
+    fun `ranked result is null for unknown duplicate or unmatched events and supports a single finished match`() {
+        val duplicate = EpgEvent.create(
+            EventId(10), start = Instant.fromEpochSeconds(10), stop = Instant.fromEpochSeconds(20),
+        )
+        val finished = entry(1, DvrEntryState.COMPLETED)
+        val observations = listOf(
+            SessionObservation.create(),
+            observation(emptyList()),
+            SessionObservation.create(
+                epgState = EpgRepositoryState.Current(EpgSnapshot.create(listOf(duplicate, duplicate))),
+                dvrState = DvrRepositoryState.Current(DvrSnapshot.create(listOf(finished))),
+            ),
+        )
+        for (observed in observations) {
+            assertNull(observed.dvrEntryForEvent(EventId(10)))
+            assertNull(observed.dvrEntriesForEvent(EventId(10)))
+        }
+        val result = requireNotNull(observation(listOf(finished)).dvrEntriesForEvent(EventId(10)))
+        assertSame(finished, result.selected)
+        assertEquals(emptyList<DvrEntry>(), result.otherActive)
+    }
+
+    @Test
+    fun `ranked values defensively copy active entries compare by value and redact rendering`() {
+        val selected = entry(1, DvrEntryState.RECORDING, owner = "test-account")
+        val other = entry(2, DvrEntryState.SCHEDULED, owner = "other-account")
+        val source = mutableListOf(other)
+        val value = DvrEventEntries.create(selected, source)
+        source.clear()
+        assertEquals(listOf(other), value.otherActive)
+        assertThrows(UnsupportedOperationException::class.java) { (value.otherActive as MutableList<DvrEntry>).clear() }
+        val equivalent = requireNotNull(observation(listOf(other, selected)).dvrEntriesForEvent(EventId(10)))
+        assertEquals(value, equivalent)
+        assertEquals(value.hashCode(), equivalent.hashCode())
+        assertNotEquals(value, DvrEventEntries.create(selected, emptyList()))
+        assertNotEquals(value, DvrEventEntries.create(other, listOf(selected)))
+        assertEquals("DvrEventEntries(<redacted>)", value.toString())
+    }
+
     @Test
     fun `record stop record selects the new recording over the linked completed entry`() {
         val completed = entry(1, DvrEntryState.COMPLETED)
@@ -77,6 +162,12 @@ internal class DvrEventRankingTest {
                 val unlinked = observation(entries, username = "test-account")
                 assertSame(older, linked.dvrEntryForEvent(EventId(10)))
                 assertSame(newer, unlinked.dvrEntryForEvent(EventId(10)))
+                val linkedResult = requireNotNull(linked.dvrEntriesForEvent(EventId(10)))
+                assertSame(older, linkedResult.selected)
+                assertEquals(listOf(newer), linkedResult.otherActive)
+                val unlinkedResult = requireNotNull(unlinked.dvrEntriesForEvent(EventId(10)))
+                assertSame(newer, unlinkedResult.selected)
+                assertEquals(listOf(older), unlinkedResult.otherActive)
             }
         }
     }
@@ -92,6 +183,7 @@ internal class DvrEventRankingTest {
                 val observed = observation(ordered, link = recording.id)
                 assertNull(observed.dvrEntry(DvrEntryId(2)))
                 assertNull(observed.dvrEntryForEvent(EventId(10)))
+                assertNull(observed.dvrEntriesForEvent(EventId(10)))
             }
         }
     }

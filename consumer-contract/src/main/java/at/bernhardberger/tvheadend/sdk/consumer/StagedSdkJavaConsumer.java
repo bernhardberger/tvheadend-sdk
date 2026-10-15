@@ -11,6 +11,8 @@ import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation;
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryKt;
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState;
 import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult;
+import at.bernhardberger.tvheadend.sdk.core.DvrEntry;
+import at.bernhardberger.tvheadend.sdk.core.DvrEventEntries;
 import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot;
 import at.bernhardberger.tvheadend.sdk.core.DvrRecordingFile;
 import at.bernhardberger.tvheadend.sdk.core.AutorecRule;
@@ -146,6 +148,17 @@ public final class StagedSdkJavaConsumer {
     public static String dvrRejectionText() {
         return new DvrMutationResult.Failed(TvheadendFailure.SERVER_REJECTED, false, "Access denied")
                 .getServerMessage();
+    }
+
+    @kotlin.OptIn(markerClass = ExperimentalTvheadendApi.class)
+    public static java.util.List<DvrEntry> programmeRecordingTargets(SessionObservation observation, long eventId) {
+        // Kotlin bridges the value-class EventId parameter, as for other selectors.
+        DvrEventEntries entries = StagedSdkConsumerKt.programmeRecordings(observation, eventId);
+        if (entries == null) return java.util.List.of();
+        java.util.List<DvrEntry> targets = new java.util.ArrayList<>();
+        targets.add(entries.getSelected());
+        targets.addAll(entries.getOtherActive());
+        return targets;
     }
 
     @kotlin.OptIn(markerClass = ExperimentalTvheadendApi.class)

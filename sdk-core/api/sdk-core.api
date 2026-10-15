@@ -1062,6 +1062,14 @@ public final class at/bernhardberger/tvheadend/sdk/core/DvrEntryUpdate {
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class at/bernhardberger/tvheadend/sdk/core/DvrEventEntries {
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getOtherActive ()Ljava/util/List;
+	public final fun getSelected ()Lat/bernhardberger/tvheadend/sdk/core/DvrEntry;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class at/bernhardberger/tvheadend/sdk/core/DvrMutationKind : java/lang/Enum {
 	public static final field CANCEL Lat/bernhardberger/tvheadend/sdk/core/DvrMutationKind;
 	public static final field DELETE Lat/bernhardberger/tvheadend/sdk/core/DvrMutationKind;
@@ -2203,6 +2211,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/SessionObservation {
 	public final fun channel-9w0kQQ0 (J)Lat/bernhardberger/tvheadend/sdk/core/Channel;
 	public final fun channels (Ljava/util/Set;)Ljava/util/List;
 	public final fun coverage-9w0kQQ0 (J)Lat/bernhardberger/tvheadend/sdk/core/EpgCoverage;
+	public final fun dvrEntriesForEvent-eg3kBS8 (J)Lat/bernhardberger/tvheadend/sdk/core/DvrEventEntries;
 	public final fun dvrEntry-lyT0IZA (J)Lat/bernhardberger/tvheadend/sdk/core/DvrEntry;
 	public final fun dvrEntryForEvent-eg3kBS8 (J)Lat/bernhardberger/tvheadend/sdk/core/DvrEntry;
 	public final fun epgEventForDvrEntry-lyT0IZA (J)Lat/bernhardberger/tvheadend/sdk/core/EpgEvent;

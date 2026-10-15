@@ -129,6 +129,21 @@ public class SessionObservation private constructor(
      */
     public fun dvrEntryForEvent(eventId: EventId): DvrEntry? = rankedDvrEntriesForEvent(eventId).firstOrNull()
 
+    /**
+     * Returns the [dvrEntryForEvent] selection and the remaining linked scheduled or recording
+     * entries, including recording errors, in the same rank order. Null has the same meaning as
+     * for [dvrEntryForEvent]. Only explicit event/entry links participate, not time-window matches.
+     */
+    @ExperimentalTvheadendApi
+    public fun dvrEntriesForEvent(eventId: EventId): DvrEventEntries? {
+        val ranked = rankedDvrEntriesForEvent(eventId)
+        val selected = ranked.firstOrNull() ?: return null
+        return DvrEventEntries.create(selected, ranked.drop(1).filter { entry ->
+            entry.state == DvrEntryState.SCHEDULED || entry.state == DvrEntryState.RECORDING ||
+                entry.state == DvrEntryState.RECORDING_ERROR
+        })
+    }
+
     private fun rankedDvrEntriesForEvent(eventId: EventId): List<DvrEntry> {
         val entries = dvrSnapshotForDisplay?.entries ?: return emptyList()
         val event = event(eventId) ?: return emptyList()

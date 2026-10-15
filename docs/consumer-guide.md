@@ -283,6 +283,12 @@ the event ID is unknown or ambiguous, no linked entries exist, or matched entrie
 are ambiguous because they contain duplicate DVR entry IDs. Unlinked time-window
 matches are not considered. Standalone observations and testing factories have no own account.
 
+With `@OptIn(ExperimentalTvheadendApi::class)`, `dvrEntriesForEvent(eventId)` returns
+`DvrEventEntries` with the same `selected` entry and an immutable `otherActive`
+list of remaining SCHEDULED/RECORDING/RECORDING_ERROR matches in rank order.
+It returns null exactly when `dvrEntryForEvent` does. This lets consumers identify
+the selected target and any other active entries before a mutation.
+
 `Channel.tagIds` and `ChannelTag.channelIds` expose catalog membership. Entity
 lists are immutable and preserve SDK catalog order. Presentation filtering,
 grouping, and UI policy are not SDK APIs.

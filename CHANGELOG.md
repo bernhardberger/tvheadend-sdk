@@ -4,6 +4,13 @@
 
 Unreleased; development target.
 
+### Added
+
+- Experimental `SessionObservation.dvrEntriesForEvent` returns `DvrEventEntries`:
+  the same ranked `selected` entry as `dvrEntryForEvent`, plus an immutable
+  `otherActive` list of remaining scheduled/recording entries (including recording
+  errors) in rank order. Only explicit event/entry links are considered.
+
 ### Changed
 
 - BREAKING: `SessionObservation.dvrEntryForEvent` now ranks multiple linked entries
