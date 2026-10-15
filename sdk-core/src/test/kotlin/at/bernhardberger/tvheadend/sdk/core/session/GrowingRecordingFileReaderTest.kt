@@ -11,6 +11,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.SessionObservation
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrRecordingFile
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrStats
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayRecordingFileStat
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
@@ -38,6 +39,26 @@ import org.junit.jupiter.api.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class GrowingRecordingFileReaderTest {
+    @Test
+    fun `stats shrink then recovery before read permanently retires reader`() = runTest {
+        val fixture = GrowingFixture(fileSizeBytes = 100L, readCounts = listOf(1))
+        assertOk(100L, fixture.reader.refreshSize())
+        fun stats(size: Long) = fixture.metadata.acceptMetadata(
+            MetadataEvent.DvrEntryStatsUpdated(
+                fixture.generation,
+                GatewayDvrStats(RECORDING_ID, "recording-uuid", DvrEntryState.RECORDING, dataSizeBytes = size),
+            ),
+        )
+        stats(50L)
+        stats(100L)
+
+        assertFailed(TvheadendFailure.FILE_UNAVAILABLE, fixture.reader.read(ByteArray(1), 0, 1))
+        assertFailed(TvheadendFailure.FILE_UNAVAILABLE, fixture.reader.refreshSize())
+        assertFailed(TvheadendFailure.FILE_UNAVAILABLE, fixture.reader.seek(0L))
+        assertFailed(TvheadendFailure.FILE_UNAVAILABLE, fixture.reader.read(ByteArray(1), 0, 1))
+        assertTrue(fixture.transport.readPositions.isEmpty())
+    }
+
     @Test
     fun `retained reader stats and repositions with absolute reads and confirmed finality`() = runTest {
         val fixture = GrowingFixture(fileSizeBytes = 64L, statSizeBytes = 64L, readCounts = listOf(2))

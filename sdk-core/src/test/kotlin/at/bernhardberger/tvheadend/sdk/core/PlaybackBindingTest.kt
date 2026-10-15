@@ -10,6 +10,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.DvrEntryId as GatewayDvrEntr
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrRecordingFile
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrStats
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.session.GenerationBoundGrowingRecordingFileLease
@@ -35,6 +36,28 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 internal class PlaybackBindingTest {
+    @Test
+    fun `stats shrink invalidates a recording playback target`() {
+        val generation = GatewayGeneration()
+        val fixture = BindingFixture().apply {
+            publishReady(generation, recordingState = DvrEntryState.RECORDING)
+        }
+        fun stats(size: Long) = fixture.metadata.acceptMetadata(
+            MetadataEvent.DvrEntryStatsUpdated(
+                generation,
+                GatewayDvrStats(DvrEntryId(7), "colliding-recording", DvrEntryState.RECORDING, dataSizeBytes = size),
+            ),
+        )
+        stats(100L)
+        val binding = fixture.factory.bindRecording(fixture.currentSession, DvrEntryId(7)).requireBound()
+        assertTrue(binding.admission is RecordingPlaybackAdmission.Growing)
+
+        stats(50L)
+        assertSame(RecordingPlaybackAdmission.TargetUnavailable, binding.admission)
+        stats(100L)
+        assertSame(RecordingPlaybackAdmission.TargetUnavailable, binding.admission)
+    }
+
     @Test
     fun `binding rejects stale foreign and unavailable target authority`() {
         val fixture = BindingFixture().apply { publishReady(GatewayGeneration()) }

@@ -868,7 +868,11 @@ internal class PhaseOneSessionMetadata(
                         else -> null
                     }
                     val previousReducedEntry = changedEntryId?.let(dvrReducer::entry)
-                    val updatedDvrEntry = (event as? MetadataEvent.DvrEntryUpdated)?.entry?.id
+                    val updatedDvrEntry = when (event) {
+                        is MetadataEvent.DvrEntryUpdated -> event.entry.id
+                        is MetadataEvent.DvrEntryStatsUpdated -> event.stats.id
+                        else -> null
+                    }
                     val previousDvrEntry = updatedDvrEntry?.let { id ->
                         (mutableDvr.value as? DvrRepositoryState.Current)
                             ?.snapshot
@@ -905,8 +909,10 @@ internal class PhaseOneSessionMetadata(
                             is MetadataEvent.DvrEntryDeleted -> {
                                 dvrEntryIncarnations[event.entryId] = DvrEntryIncarnation()
                             }
-                            is MetadataEvent.DvrEntryUpdated -> {
-                                val id = event.entry.id
+                            is MetadataEvent.DvrEntryUpdated,
+                            is MetadataEvent.DvrEntryStatsUpdated,
+                            -> {
+                                val id = checkNotNull(updatedDvrEntry)
                                 val previous = previousDvrEntry
                                 val current = dvrSnapshot
                                     ?.entries
