@@ -38,6 +38,8 @@ if (useHtspComposite) {
         "The opt-in HTSP composite checkout is unavailable"
     }
     includeBuild(htspCheckout) {
+        // Keep the dependency allowlist stable for symlinked or differently named worktrees.
+        name = "tvheadend-htsp"
         dependencySubstitution {
             substitute(module("at.bernhardberger.tvheadend:htsp"))
                 .using(project(":"))
