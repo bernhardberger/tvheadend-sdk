@@ -16,8 +16,13 @@
 - Preserve rule-update null-as-unchanged channel semantics using the current
   generation's observed restriction. Updates with an unknown restriction return
   not-supported rather than silently clearing it. Explicit all-channels clears it.
-- Keep existing reducer merges and sparse now/next and DVR-statistics paths for
-  this migration slice. Malformed-metadata recovery policy remains pending.
+- Full channel, tag, EPG, DVR-entry and recording-rule notifications now replace
+  stored entities, including inserting previously unseen IDs. Optional server
+  values that are cleared now also clear in SDK snapshots. Omitted tag membership
+  alone retains known members; an empty member list clears them.
+- Channel now/next and DVR-statistics notifications explicitly patch only their
+  own fields; patches for unknown IDs are ignored. Malformed-metadata recovery
+  policy remains pending.
 
 ## [0.29.0]
 

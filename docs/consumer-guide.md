@@ -321,8 +321,9 @@ Null means the server sent no credits (normal for DVB EIT and basic HTSP output;
 XMLTV needs "scrape extra"). Events restored from a pre-0.28 cache also have null
 credits until the next sync. Compare `EpgCreditRole.ACTOR`, `DIRECTOR`, `GUEST`,
 `PRESENTER`, or `WRITER`, and keep a fallback using `role.raw` for unknown roles.
-The pinned HTSP decoder retains only the last role per name. An absent update
-preserves existing credits; an explicit empty list clears them. DVR entries do
+The pinned HTSP decoder retains only the last role per name. Omitted credits in
+a full update clear existing credits to null; an explicit empty list replaces
+them with an empty list. DVR entries do
 not carry credits; use the associated EPG event when available.
 The stable `EpgEvent.create` factory remains available without opt-in. Its
 experimental overload requires an explicit `credits` argument (including null).
@@ -557,7 +558,17 @@ throw `IllegalArgumentException`; signed whole-minute padding is supported.
 `ArtworkId`; unsupported image references are omitted. Genre uses `contentGenre` only.
 
 `DvrEntry.episode` includes `seasonCount` and `onscreen` when supplied by the
-server; omitted entry-update fields retain their last observed values. With
+server. Full add/update notifications replace channel, tag, EPG, DVR-entry and
+recording-rule entities, inserting unseen IDs and clearing omitted optional
+values. The exception is omitted tag membership, which retains known members;
+an empty list clears membership. Channel now/next and DVR-statistics messages
+patch only their own fields, including clearing omitted optional statistics.
+Patches for unknown IDs are ignored until a full entity arrives. Cached snapshots
+are display-only during synchronization and do not fill omissions in fresh entities.
+`DvrEntry.folder` is recomputed from the current server paths; application-supplied
+folders belong to application-created entries, not the live reducer.
+
+With
 `@OptIn(ExperimentalTvheadendApi::class)`, time-based rules expose `removalDays`
 as a nullable `Long`, matching `AutorecRule.removalDays` (unsigned 32-bit server
 policy domain, `null` means unknown). Fakes can use
