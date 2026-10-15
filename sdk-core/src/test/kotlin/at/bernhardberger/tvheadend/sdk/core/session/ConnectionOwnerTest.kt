@@ -122,6 +122,26 @@ import org.junit.jupiter.api.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 internal class ConnectionOwnerTest {
     @Test
+    fun `successful initial sync with no channels still reaches ready`() = runTest {
+        val generation = GatewayGeneration()
+        val gateway = FakeProtocolGateway().apply { defaultConnectResult = connected(generation) }
+        val owner = owner(gateway)
+        try {
+            owner.connect(ServerProfile("server"))
+            runCurrent()
+            gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+            runCurrent()
+            assertTrue(owner.observation.value.sessionState is SessionState.Ready)
+            assertTrue(owner.currentCatalog().channels.isEmpty())
+            advanceTimeBy(60.seconds)
+            runCurrent()
+            assertEquals(1, gateway.connectCalls)
+        } finally {
+            owner.shutdown()
+        }
+    }
+
+    @Test
     fun `DVR ranking uses normalized account and replaces it on profile switch`() = runTest {
         val gateway = FakeProtocolGateway()
         val owner = owner(gateway)
@@ -1568,11 +1588,6 @@ internal class ConnectionOwnerTest {
                 SessionCommandResult.RETRY_NOT_ALLOWED,
             ),
             ConnectionFailureCase(
-                GatewayConnectionFailure.PERMISSION_DENIED,
-                SessionFailure.PERMISSION_DENIED,
-                SessionCommandResult.RETRY_NOT_ALLOWED,
-            ),
-            ConnectionFailureCase(
                 GatewayConnectionFailure.SERVER_UNREACHABLE,
                 SessionFailure.SERVER_UNREACHABLE,
                 SessionCommandResult.STARTED,
@@ -1595,11 +1610,6 @@ internal class ConnectionOwnerTest {
             ConnectionFailureCase(
                 GatewayConnectionFailure.METADATA_OVERFLOW,
                 SessionFailure.METADATA_OVERFLOW,
-                SessionCommandResult.STARTED,
-            ),
-            ConnectionFailureCase(
-                GatewayConnectionFailure.NO_CHANNELS,
-                SessionFailure.NO_CHANNELS,
                 SessionCommandResult.STARTED,
             ),
             ConnectionFailureCase(
@@ -1734,7 +1744,7 @@ internal class ConnectionOwnerTest {
                 firstStarted.complete(Unit)
                 awaitCancellation()
             }
-            failed(GatewayConnectionFailure.NO_CHANNELS)
+            failed(GatewayConnectionFailure.UNSUPPORTED_SERVER_VERSION)
         }
         val owner = owner(gateway)
 
@@ -1759,9 +1769,9 @@ internal class ConnectionOwnerTest {
         val firstGeneration = GatewayGeneration()
         val secondGeneration = GatewayGeneration()
         gateway.connectResults += connected(firstGeneration)
-        gateway.connectResults += failed(GatewayConnectionFailure.NO_CHANNELS)
+        gateway.connectResults += failed(GatewayConnectionFailure.UNSUPPORTED_SERVER_VERSION)
         gateway.connectResults += connected(secondGeneration)
-        gateway.connectResults += failed(GatewayConnectionFailure.NO_CHANNELS)
+        gateway.connectResults += failed(GatewayConnectionFailure.UNSUPPORTED_SERVER_VERSION)
         val owner = owner(gateway)
 
         owner.connect(ServerProfile("first"))
@@ -1781,7 +1791,7 @@ internal class ConnectionOwnerTest {
         owner.connect(ServerProfile("second"))
         runCurrent()
         assertEquals(
-            SessionState.Unavailable(SessionFailure.NO_CHANNELS),
+            SessionState.Unavailable(SessionFailure.SERVER_UPGRADE_REQUIRED),
             owner.observation.value.sessionState,
         )
         assertEquals(ChannelRepositoryState.Empty, owner.observation.value.channelState)
@@ -1808,7 +1818,7 @@ internal class ConnectionOwnerTest {
         owner.connect(ServerProfile("third"))
         runCurrent()
         assertEquals(
-            SessionState.Unavailable(SessionFailure.NO_CHANNELS),
+            SessionState.Unavailable(SessionFailure.SERVER_UPGRADE_REQUIRED),
             owner.observation.value.sessionState,
         )
         assertEquals(ChannelRepositoryState.Empty, owner.observation.value.channelState)
@@ -1885,7 +1895,7 @@ internal class ConnectionOwnerTest {
         val gateway = FakeProtocolGateway()
         val generation = GatewayGeneration()
         gateway.connectResults += connected(generation)
-        gateway.connectResults += failed(GatewayConnectionFailure.NO_CHANNELS)
+        gateway.connectResults += failed(GatewayConnectionFailure.UNSUPPORTED_SERVER_VERSION)
         val owner = owner(gateway)
         val original = ServerProfile(
             host = "server",
@@ -1913,7 +1923,7 @@ internal class ConnectionOwnerTest {
         runCurrent()
 
         assertEquals(
-            SessionState.Unavailable(SessionFailure.NO_CHANNELS),
+            SessionState.Unavailable(SessionFailure.SERVER_UPGRADE_REQUIRED),
             owner.observation.value.sessionState,
         )
         assertEquals(ChannelRepositoryState.Empty, owner.observation.value.channelState)
@@ -1927,7 +1937,7 @@ internal class ConnectionOwnerTest {
     @Test
     fun `same normalized profile is a no-op while credential changes replace it`() = runTest {
         val gateway = FakeProtocolGateway().apply {
-            defaultConnectResult = failed(GatewayConnectionFailure.NO_CHANNELS)
+            defaultConnectResult = failed(GatewayConnectionFailure.UNSUPPORTED_SERVER_VERSION)
         }
         val owner = owner(gateway)
         val original = ServerProfile(
@@ -1964,7 +1974,7 @@ internal class ConnectionOwnerTest {
     fun `disconnect is reusable and shutdown is exactly ordered and idempotent`() = runTest {
         val order = mutableListOf<String>()
         val gateway = FakeProtocolGateway(order).apply {
-            defaultConnectResult = failed(GatewayConnectionFailure.NO_CHANNELS)
+            defaultConnectResult = failed(GatewayConnectionFailure.UNSUPPORTED_SERVER_VERSION)
         }
         val owner = owner(gateway, RecordingSessionChildren(order))
 
@@ -1996,7 +2006,7 @@ internal class ConnectionOwnerTest {
         val cleanupStarted = CompletableDeferred<Unit>()
         val children = BlockingSessionChildren(order, cleanupStarted, releaseCleanup)
         val gateway = FakeProtocolGateway(order).apply {
-            defaultConnectResult = failed(GatewayConnectionFailure.NO_CHANNELS)
+            defaultConnectResult = failed(GatewayConnectionFailure.UNSUPPORTED_SERVER_VERSION)
         }
         val owner = owner(gateway, children)
         owner.connect(ServerProfile("server"))

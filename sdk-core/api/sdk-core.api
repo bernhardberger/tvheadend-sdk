@@ -2157,8 +2157,6 @@ public final class at/bernhardberger/tvheadend/sdk/core/SessionFailure {
 	public static final field INCOMPATIBLE_SERVER Lat/bernhardberger/tvheadend/sdk/core/SessionFailure;
 	public static final field METADATA_OVERFLOW Lat/bernhardberger/tvheadend/sdk/core/SessionFailure;
 	public static final field NETWORK_UNAVAILABLE Lat/bernhardberger/tvheadend/sdk/core/SessionFailure;
-	public static final field NO_CHANNELS Lat/bernhardberger/tvheadend/sdk/core/SessionFailure;
-	public static final field PERMISSION_DENIED Lat/bernhardberger/tvheadend/sdk/core/SessionFailure;
 	public static final field SERVER_UNREACHABLE Lat/bernhardberger/tvheadend/sdk/core/SessionFailure;
 	public static final field SERVER_UPGRADE_REQUIRED Lat/bernhardberger/tvheadend/sdk/core/SessionFailure;
 	public static final field TRANSPORT_UNAVAILABLE Lat/bernhardberger/tvheadend/sdk/core/SessionFailure;
@@ -2182,8 +2180,6 @@ public final class at/bernhardberger/tvheadend/sdk/core/SessionFailureKind {
 	public static final field INCOMPATIBLE_SERVER Lat/bernhardberger/tvheadend/sdk/core/SessionFailureKind;
 	public static final field METADATA_OVERFLOW Lat/bernhardberger/tvheadend/sdk/core/SessionFailureKind;
 	public static final field NETWORK_UNAVAILABLE Lat/bernhardberger/tvheadend/sdk/core/SessionFailureKind;
-	public static final field NO_CHANNELS Lat/bernhardberger/tvheadend/sdk/core/SessionFailureKind;
-	public static final field PERMISSION_DENIED Lat/bernhardberger/tvheadend/sdk/core/SessionFailureKind;
 	public static final field SERVER_UNREACHABLE Lat/bernhardberger/tvheadend/sdk/core/SessionFailureKind;
 	public static final field SERVER_UPGRADE_REQUIRED Lat/bernhardberger/tvheadend/sdk/core/SessionFailureKind;
 	public static final field SYNCHRONIZATION_FAILED Lat/bernhardberger/tvheadend/sdk/core/SessionFailureKind;

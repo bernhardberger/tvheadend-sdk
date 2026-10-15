@@ -26,20 +26,18 @@ internal class SessionRecoveryDispositionTest {
         state.value = SessionState.Unavailable(equal)
         assertSame(initial, state.value)
         assertEquals("SessionFailure(kind=SYNCHRONIZATION_FAILED, operationFailure=TIMEOUT)", first.toString())
-        assertEquals("SessionFailure(kind=NO_CHANNELS, operationFailure=null)", SessionFailure.NO_CHANNELS.toString())
+        assertEquals("SessionFailure(kind=SERVER_UPGRADE_REQUIRED, operationFailure=null)", SessionFailure.SERVER_UPGRADE_REQUIRED.toString())
     }
 
     @Test
     fun `every session failure exposes SDK-authored recovery guidance`() {
         val cases = listOf(
             SessionFailure.AUTHENTICATION_REJECTED to SessionRecoveryDisposition.PROFILE_CHANGE_REQUIRED,
-            SessionFailure.PERMISSION_DENIED to SessionRecoveryDisposition.PROFILE_CHANGE_REQUIRED,
             SessionFailure.SERVER_UNREACHABLE to SessionRecoveryDisposition.AUTOMATIC_BACKOFF,
             SessionFailure.NETWORK_UNAVAILABLE to SessionRecoveryDisposition.AUTOMATIC_BACKOFF,
             SessionFailure.INCOMPATIBLE_SERVER to SessionRecoveryDisposition.PROFILE_CHANGE_REQUIRED,
             SessionFailure.SERVER_UPGRADE_REQUIRED to SessionRecoveryDisposition.EXPLICIT_RETRY,
             SessionFailure.METADATA_OVERFLOW to SessionRecoveryDisposition.AUTOMATIC_BACKOFF,
-            SessionFailure.NO_CHANNELS to SessionRecoveryDisposition.EXPLICIT_RETRY,
             SessionFailure.TRANSPORT_UNAVAILABLE to SessionRecoveryDisposition.AUTOMATIC_BACKOFF,
             SessionFailure.UNEXPECTED_FAILURE to SessionRecoveryDisposition.EXPLICIT_RETRY,
         )

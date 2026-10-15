@@ -1336,7 +1336,6 @@ private fun HtspConnectionState.toGatewayState(): GatewayState = when (this) {
 private fun HtspTransportFailureKind.toGatewayFailure(): GatewayConnectionFailure = when (this) {
     HtspTransportFailureKind.AUTHENTICATION_REJECTED ->
         GatewayConnectionFailure.AUTHENTICATION_REJECTED
-    HtspTransportFailureKind.PERMISSION_DENIED -> GatewayConnectionFailure.PERMISSION_DENIED
     HtspTransportFailureKind.HOST_NOT_FOUND,
     HtspTransportFailureKind.CONNECTION_REFUSED,
     HtspTransportFailureKind.CONNECTION_TIMEOUT,
@@ -1344,7 +1343,6 @@ private fun HtspTransportFailureKind.toGatewayFailure(): GatewayConnectionFailur
     HtspTransportFailureKind.NETWORK_UNREACHABLE -> GatewayConnectionFailure.NETWORK_UNAVAILABLE
     HtspTransportFailureKind.INCOMPATIBLE_SERVER -> GatewayConnectionFailure.INCOMPATIBLE_SERVER
     HtspTransportFailureKind.UNSUPPORTED_SERVER_VERSION -> GatewayConnectionFailure.UNSUPPORTED_SERVER_VERSION
-    HtspTransportFailureKind.ZERO_CHANNELS -> GatewayConnectionFailure.NO_CHANNELS
     HtspTransportFailureKind.TRANSPORT_UNAVAILABLE,
     HtspTransportFailureKind.SUPERSEDED,
     HtspTransportFailureKind.CLOSED,

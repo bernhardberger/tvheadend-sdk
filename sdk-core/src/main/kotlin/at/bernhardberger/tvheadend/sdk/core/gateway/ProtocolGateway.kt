@@ -372,13 +372,11 @@ internal sealed interface GatewayConnectResult {
 
 internal enum class GatewayConnectionFailure {
     AUTHENTICATION_REJECTED,
-    PERMISSION_DENIED,
     SERVER_UNREACHABLE,
     NETWORK_UNAVAILABLE,
     INCOMPATIBLE_SERVER,
     UNSUPPORTED_SERVER_VERSION,
     METADATA_OVERFLOW,
-    NO_CHANNELS,
     TRANSPORT_UNAVAILABLE,
 }
 

@@ -418,7 +418,6 @@ public class SessionFailure private constructor(
     public val recoveryDisposition: SessionRecoveryDisposition
         get() = when (kind) {
             SessionFailureKind.AUTHENTICATION_REJECTED,
-            SessionFailureKind.PERMISSION_DENIED,
             SessionFailureKind.INCOMPATIBLE_SERVER -> SessionRecoveryDisposition.PROFILE_CHANGE_REQUIRED
             SessionFailureKind.SERVER_UNREACHABLE,
             SessionFailureKind.NETWORK_UNAVAILABLE,
@@ -440,9 +439,6 @@ public class SessionFailure private constructor(
         /** Authentication was rejected; recovery requires a changed profile. */
         @JvmField
         public val AUTHENTICATION_REJECTED: SessionFailure = SessionFailure(SessionFailureKind.AUTHENTICATION_REJECTED)
-        /** Permission was denied; recovery requires a changed profile. */
-        @JvmField
-        public val PERMISSION_DENIED: SessionFailure = SessionFailure(SessionFailureKind.PERMISSION_DENIED)
         /** The server could not be reached; the SDK retries with backoff. */
         @JvmField
         public val SERVER_UNREACHABLE: SessionFailure = SessionFailure(SessionFailureKind.SERVER_UNREACHABLE)
@@ -458,9 +454,6 @@ public class SessionFailure private constructor(
         /** Metadata overflow requires a full resync with backoff. */
         @JvmField
         public val METADATA_OVERFLOW: SessionFailure = SessionFailure(SessionFailureKind.METADATA_OVERFLOW)
-        /** No channels were synchronized; only explicit retry is permitted. */
-        @JvmField
-        public val NO_CHANNELS: SessionFailure = SessionFailure(SessionFailureKind.NO_CHANNELS)
         /** The active transport is unavailable; the SDK retries with backoff. */
         @JvmField
         public val TRANSPORT_UNAVAILABLE: SessionFailure = SessionFailure(SessionFailureKind.TRANSPORT_UNAVAILABLE)
@@ -484,9 +477,6 @@ public class SessionFailureKind private constructor(private val label: String) {
         /** Authentication was rejected. */
         @JvmField
         public val AUTHENTICATION_REJECTED: SessionFailureKind = SessionFailureKind("AUTHENTICATION_REJECTED")
-        /** Permission was denied. */
-        @JvmField
-        public val PERMISSION_DENIED: SessionFailureKind = SessionFailureKind("PERMISSION_DENIED")
         /** The server could not be reached. */
         @JvmField
         public val SERVER_UNREACHABLE: SessionFailureKind = SessionFailureKind("SERVER_UNREACHABLE")
@@ -502,9 +492,6 @@ public class SessionFailureKind private constructor(private val label: String) {
         /** Metadata delivery overflowed. */
         @JvmField
         public val METADATA_OVERFLOW: SessionFailureKind = SessionFailureKind("METADATA_OVERFLOW")
-        /** No channels were synchronized. */
-        @JvmField
-        public val NO_CHANNELS: SessionFailureKind = SessionFailureKind("NO_CHANNELS")
         /** The active transport is unavailable. */
         @JvmField
         public val TRANSPORT_UNAVAILABLE: SessionFailureKind = SessionFailureKind("TRANSPORT_UNAVAILABLE")

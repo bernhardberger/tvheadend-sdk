@@ -4,6 +4,11 @@
 
 ### Changed
 
+- BREAKING: remove unreachable `SessionFailure.PERMISSION_DENIED` and
+  `SessionFailure.NO_CHANNELS`, and both corresponding `SessionFailureKind` values.
+  Authentication rejection remains `AUTHENTICATION_REJECTED`; synchronization
+  refusal remains `SYNCHRONIZATION_FAILED` with `ACCESS_DENIED`. A successful sync
+  with an empty channel catalog reaches Ready.
 - BREAKING: migrate the gateway to the unreleased HTSP entity model. Remove
   `SubscriptionEvent.Started.condition` / `issue` and per-stream
   `SubscriptionStream.codecMetadata`, which have no corresponding server fields.

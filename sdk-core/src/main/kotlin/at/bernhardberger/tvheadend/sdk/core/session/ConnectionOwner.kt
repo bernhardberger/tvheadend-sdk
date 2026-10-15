@@ -845,13 +845,11 @@ private fun GatewayConnectionFailure.toAttemptOutcome(
 ): AttemptOutcome {
     val failure = when (this) {
         GatewayConnectionFailure.AUTHENTICATION_REJECTED -> SessionFailure.AUTHENTICATION_REJECTED
-        GatewayConnectionFailure.PERMISSION_DENIED -> SessionFailure.PERMISSION_DENIED
         GatewayConnectionFailure.SERVER_UNREACHABLE -> SessionFailure.SERVER_UNREACHABLE
         GatewayConnectionFailure.NETWORK_UNAVAILABLE -> SessionFailure.NETWORK_UNAVAILABLE
         GatewayConnectionFailure.INCOMPATIBLE_SERVER -> SessionFailure.INCOMPATIBLE_SERVER
         GatewayConnectionFailure.UNSUPPORTED_SERVER_VERSION -> SessionFailure.SERVER_UPGRADE_REQUIRED
         GatewayConnectionFailure.METADATA_OVERFLOW -> SessionFailure.METADATA_OVERFLOW
-        GatewayConnectionFailure.NO_CHANNELS -> SessionFailure.NO_CHANNELS
         GatewayConnectionFailure.TRANSPORT_UNAVAILABLE -> SessionFailure.TRANSPORT_UNAVAILABLE
     }
     return AttemptOutcome(

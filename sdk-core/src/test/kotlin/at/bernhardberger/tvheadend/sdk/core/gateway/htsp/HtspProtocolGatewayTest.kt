@@ -859,13 +859,11 @@ internal class HtspProtocolGatewayTest {
 
         val expectedFailures = listOf(
             GatewayConnectionFailure.AUTHENTICATION_REJECTED,
-            GatewayConnectionFailure.PERMISSION_DENIED,
             GatewayConnectionFailure.SERVER_UNREACHABLE,
             GatewayConnectionFailure.SERVER_UNREACHABLE,
             GatewayConnectionFailure.SERVER_UNREACHABLE,
             GatewayConnectionFailure.NETWORK_UNAVAILABLE,
             GatewayConnectionFailure.INCOMPATIBLE_SERVER,
-            GatewayConnectionFailure.NO_CHANNELS,
             GatewayConnectionFailure.TRANSPORT_UNAVAILABLE,
             GatewayConnectionFailure.TRANSPORT_UNAVAILABLE,
             GatewayConnectionFailure.TRANSPORT_UNAVAILABLE,
