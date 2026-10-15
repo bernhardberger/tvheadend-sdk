@@ -63,7 +63,7 @@ internal class TvheadendSessionFactoryTest {
             )
             conflictingCalls.forEach { acquire ->
                 val error = assertThrows(IllegalStateException::class.java) { acquire() }
-                assertEquals("The active TVHeadend session has different policies", error.message)
+                assertEquals("The active Tvheadend session has different policies", error.message)
                 assertFalse(error.message.orEmpty().contains(cacheRoot.path))
                 assertSame(first, createTvheadendSession())
             }

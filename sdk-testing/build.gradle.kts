@@ -14,7 +14,7 @@ plugins {
 
 dokka {
     dokkaPublications.html {
-        moduleName.set("TVHeadend Kotlin SDK: Testing")
+        moduleName.set("Tvheadend Kotlin SDK: Testing")
     }
 }
 

@@ -184,7 +184,7 @@ internal class TvheadendArtworkTest {
         }
 
         assertSame(TvheadendFailure.OBSERVATION_EXPIRED, failure.failure)
-        assertEquals("TVHeadend artwork load failed", failure.message)
+        assertEquals("Tvheadend artwork load failed", failure.message)
         assertNull(loader.lastCurrentSession)
     }
 
@@ -205,7 +205,7 @@ internal class TvheadendArtworkTest {
             runTest { TvheadendArtworkFetcher(artwork).fetch() }
         }
         assertSame(TvheadendFailure.ACCESS_DENIED, failure.failure)
-        assertEquals("TVHeadend artwork load failed", failure.message)
+        assertEquals("Tvheadend artwork load failed", failure.message)
         assertFalse(failure.toString().contains("imagecache"))
         assertFalse(failure.toString().contains("27"))
 

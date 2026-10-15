@@ -78,7 +78,7 @@ public fun ComponentRegistry.Builder.addTvheadendArtwork(): ComponentRegistry.Bu
 /** Typed Coil failure that preserves the SDK artwork classification. */
 public class TvheadendArtworkLoadException(
     public val failure: TvheadendFailure,
-) : IOException("TVHeadend artwork load failed")
+) : IOException("Tvheadend artwork load failed")
 
 private data object TvheadendArtworkKeyer : Keyer<TvheadendArtwork> {
     override fun key(data: TvheadendArtwork, options: Options): String? = data.memoryCacheKey()

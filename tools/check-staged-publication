@@ -47,11 +47,11 @@ MODULES = {
     "sdk-testing": Module("jar"),
 }
 PUBLICATION_NAMES = {
-    "sdk-android": "TVHeadend Kotlin SDK: Android",
-    "sdk-core": "TVHeadend Kotlin SDK: Core",
-    "sdk-media3": "TVHeadend Kotlin SDK: Media3",
-    "sdk-playback": "TVHeadend Kotlin SDK: Playback",
-    "sdk-testing": "TVHeadend Kotlin SDK: Testing",
+    "sdk-android": "Tvheadend Kotlin SDK: Android",
+    "sdk-core": "Tvheadend Kotlin SDK: Core",
+    "sdk-media3": "Tvheadend Kotlin SDK: Media3",
+    "sdk-playback": "Tvheadend Kotlin SDK: Playback",
+    "sdk-testing": "Tvheadend Kotlin SDK: Testing",
 }
 
 
@@ -486,11 +486,11 @@ def self_test() -> list[str]:
     if configured_version(build) != "0.4.0" or len(expected_originals("0.4.0")) != 25:
         errors.append("self-test rejected the exact five-module release identity")
     expected_publication_names = {
-        "sdk-android": "TVHeadend Kotlin SDK: Android",
-        "sdk-core": "TVHeadend Kotlin SDK: Core",
-        "sdk-media3": "TVHeadend Kotlin SDK: Media3",
-        "sdk-playback": "TVHeadend Kotlin SDK: Playback",
-        "sdk-testing": "TVHeadend Kotlin SDK: Testing",
+        "sdk-android": "Tvheadend Kotlin SDK: Android",
+        "sdk-core": "Tvheadend Kotlin SDK: Core",
+        "sdk-media3": "Tvheadend Kotlin SDK: Media3",
+        "sdk-playback": "Tvheadend Kotlin SDK: Playback",
+        "sdk-testing": "Tvheadend Kotlin SDK: Testing",
     }
     if PUBLICATION_NAMES != expected_publication_names:
         errors.append("self-test rejected the configured human-readable publication names")

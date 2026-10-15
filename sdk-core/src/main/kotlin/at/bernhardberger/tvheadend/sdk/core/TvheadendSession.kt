@@ -181,7 +181,7 @@ internal object SessionRegistry {
             check(
                 epgCoveragePolicy == null ||
                     (existing.epgCoveragePolicy == epgCoveragePolicy && existing.cachePolicy == cachePolicy)
-            ) { "The active TVHeadend session has different policies" }
+            ) { "The active Tvheadend session has different policies" }
             existing.owner
         } else {
             val policy = epgCoveragePolicy ?: EpgCoveragePolicy.create()

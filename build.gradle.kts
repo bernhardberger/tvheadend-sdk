@@ -49,18 +49,18 @@ val sdkModules = setOf(
 )
 val androidModules = setOf("sdk-android", "sdk-media3")
 val publicationNames = mapOf(
-    "sdk-android" to "TVHeadend Kotlin SDK: Android",
-    "sdk-core" to "TVHeadend Kotlin SDK: Core",
-    "sdk-media3" to "TVHeadend Kotlin SDK: Media3",
-    "sdk-playback" to "TVHeadend Kotlin SDK: Playback",
-    "sdk-testing" to "TVHeadend Kotlin SDK: Testing",
+    "sdk-android" to "Tvheadend Kotlin SDK: Android",
+    "sdk-core" to "Tvheadend Kotlin SDK: Core",
+    "sdk-media3" to "Tvheadend Kotlin SDK: Media3",
+    "sdk-playback" to "Tvheadend Kotlin SDK: Playback",
+    "sdk-testing" to "Tvheadend Kotlin SDK: Testing",
 )
 val publicationDescriptions = mapOf(
-    "sdk-android" to "Android discovery, connectivity, atomic server-profile storage, and authenticated artwork for TVHeadend applications.",
-    "sdk-core" to "Kotlin/JVM protocol integration, session lifecycle, metadata, EPG, and DVR workflows for TVHeadend applications.",
-    "sdk-media3" to "Android Media3 sources, stream readers, and playback coordination for TVHeadend applications.",
-    "sdk-playback" to "Kotlin/JVM subscription, seek, timeshift, and timestamp state machines for TVHeadend playback.",
-    "sdk-testing" to "Kotlin/JVM aggregate observation fakes, scripted events, and packet fixtures for testing TVHeadend SDK integrations.",
+    "sdk-android" to "Android discovery, connectivity, atomic server-profile storage, and authenticated artwork for Tvheadend applications.",
+    "sdk-core" to "Kotlin/JVM protocol integration, session lifecycle, metadata, EPG, and DVR workflows for Tvheadend applications.",
+    "sdk-media3" to "Android Media3 sources, stream readers, and playback coordination for Tvheadend applications.",
+    "sdk-playback" to "Kotlin/JVM subscription, seek, timeshift, and timestamp state machines for Tvheadend playback.",
+    "sdk-testing" to "Kotlin/JVM aggregate observation fakes, scripted events, and packet fixtures for testing Tvheadend SDK integrations.",
 )
 
 check(subprojects.map(Project::getName).toSet() == sdkModules) {

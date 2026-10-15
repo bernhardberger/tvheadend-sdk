@@ -98,8 +98,8 @@ internal class TvheadendDiscoveryTest {
         val platform = FakeNsdPlatform()
         val events = RecordingNsdDiscoveryListener()
         val registration = registration(platform, events)
-        val first = serviceRecord("TVHeadend")
-        val second = serviceRecord("TVHeadend")
+        val first = serviceRecord("Tvheadend")
+        val second = serviceRecord("Tvheadend")
 
         registration.start()
         platform.started()
@@ -110,9 +110,9 @@ internal class TvheadendDiscoveryTest {
 
         assertEquals(3, platform.resolutions.size)
         platform.resolutions.last().listener.onServiceResolved(
-            ResolvedNsdService("TVHeadend", "192.0.2.20", 9_982),
+            ResolvedNsdService("Tvheadend", "192.0.2.20", 9_982),
         )
-        assertEquals(listOf("TVHeadend"), events.resolvedKeys)
+        assertEquals(listOf("Tvheadend"), events.resolvedKeys)
     }
 
     @Test
@@ -120,20 +120,20 @@ internal class TvheadendDiscoveryTest {
         val platform = FakeNsdPlatform()
         val events = RecordingNsdDiscoveryListener()
         val registration = registration(platform, events)
-        val first = serviceRecord("TVHeadend")
+        val first = serviceRecord("Tvheadend")
 
         registration.start()
         platform.started()
         platform.found(first)
         platform.resolutions.single().listener.onServiceResolved(
-            ResolvedNsdService("TVHeadend", null, 9_982),
+            ResolvedNsdService("Tvheadend", null, 9_982),
         )
 
         assertEquals(2, platform.resolutions.size)
         platform.resolutions.last().listener.onServiceResolved(
-            ResolvedNsdService("TVHeadend", "192.0.2.20", 9_982),
+            ResolvedNsdService("Tvheadend", "192.0.2.20", 9_982),
         )
-        assertEquals(listOf("TVHeadend"), events.resolvedKeys)
+        assertEquals(listOf("Tvheadend"), events.resolvedKeys)
     }
 
     @Test
@@ -141,8 +141,8 @@ internal class TvheadendDiscoveryTest {
         val platform = FakeNsdPlatform()
         val events = RecordingNsdDiscoveryListener()
         val registration = registration(platform, events)
-        val old = serviceRecord("TVHeadend")
-        val replacement = serviceRecord("TVHeadend")
+        val old = serviceRecord("Tvheadend")
+        val replacement = serviceRecord("Tvheadend")
 
         registration.start()
         platform.started()
@@ -158,7 +158,7 @@ internal class TvheadendDiscoveryTest {
         platform.resolutions.last().listener.onServiceResolved(
             ResolvedNsdService("Replacement", "192.0.2.11", 9_982),
         )
-        assertEquals(listOf("TVHeadend"), events.resolvedKeys)
+        assertEquals(listOf("Tvheadend"), events.resolvedKeys)
         assertEquals("Replacement", events.resolvedServers.single().name)
     }
 
@@ -210,9 +210,9 @@ internal class TvheadendDiscoveryTest {
 
         registration.start()
         platform.started()
-        platform.found(serviceRecord("TVHeadend", serviceType = "_HTSP._TCP.local."))
+        platform.found(serviceRecord("Tvheadend", serviceType = "_HTSP._TCP.local."))
 
-        assertEquals(listOf("TVHeadend"), platform.resolutions.map { it.service.key })
+        assertEquals(listOf("Tvheadend"), platform.resolutions.map { it.service.key })
     }
 
     @Test
@@ -262,13 +262,13 @@ internal class TvheadendDiscoveryTest {
             override fun toString(): String = "secret.invalid:9982"
         }
         val record = NsdServiceRecord(
-            key = "TVHeadend on secret.invalid",
+            key = "Tvheadend on secret.invalid",
             serviceType = "_htsp._tcp",
             platformValue = platformValue,
         )
         val rendered = listOf(
             record.toString(),
-            ResolvedNsdService("TVHeadend on secret.invalid", "192.0.2.20", 9_982).toString(),
+            ResolvedNsdService("Tvheadend on secret.invalid", "192.0.2.20", 9_982).toString(),
             PendingResolution(record.key, record).toString(),
         )
 

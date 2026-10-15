@@ -19,7 +19,7 @@ plugins {
 
 dokka {
     dokkaPublications.html {
-        moduleName.set("TVHeadend Kotlin SDK: Core")
+        moduleName.set("Tvheadend Kotlin SDK: Core")
     }
 }
 

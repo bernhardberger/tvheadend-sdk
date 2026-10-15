@@ -14,7 +14,7 @@ plugins {
 
 dokka {
     dokkaPublications.html {
-        moduleName.set("TVHeadend Kotlin SDK: Media3")
+        moduleName.set("Tvheadend Kotlin SDK: Media3")
     }
 }
 
