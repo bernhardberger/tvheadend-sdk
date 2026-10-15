@@ -187,7 +187,7 @@ def canonical_json(value: object) -> bytes:
     return (json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
 
-def extract_release_notes(changelog: str, version: str) -> str:
+def extract_release_notes(changelog: str, version: str, *, for_release: bool = True) -> str:
     heading = re.compile(rf"(?m)^## \[{re.escape(version)}\]\s*$")
     matches = list(heading.finditer(changelog))
     require(len(matches) == 1, f"CHANGELOG must contain exactly one section for {version}")
@@ -195,6 +195,9 @@ def extract_release_notes(changelog: str, version: str) -> str:
     end = matches[0].end() + following.start() if following else len(changelog)
     section = changelog[matches[0].start():end].strip()
     require(bool(section[len(matches[0].group(0)):].strip()), f"CHANGELOG section for {version} is empty")
+    if for_release:
+        require(re.search(r"\bunreleased\b", section, re.IGNORECASE) is None,
+                f"CHANGELOG section for {version} is still Unreleased")
     return section + "\n"
 
 
@@ -913,7 +916,8 @@ def check_setup() -> list[str]:
     errors: list[str] = []
     try:
         identity = configured_identity()
-        extract_release_notes(read_regular(ROOT / "CHANGELOG.md", "CHANGELOG").decode("utf-8"), identity.version)
+        # Setup checks structure during development; release paths require released notes.
+        extract_release_notes(read_regular(ROOT / "CHANGELOG.md", "CHANGELOG").decode("utf-8"), identity.version, for_release=False)
         fingerprint = read_regular(ROOT / "release/openpgp/primary-fingerprint.txt", "tracked fingerprint")
         require(fingerprint == (FINGERPRINT + "\n").encode("ascii"), "tracked fingerprint differs")
         inspect_public_key(read_regular(ROOT / "release/openpgp/public-key.asc", "tracked public key"))
@@ -946,6 +950,19 @@ def self_test() -> list[str]:
     expect_error(errors, "major-one version", lambda: configured_identity(build.replace("0.1.2", "1.0.0")))
     expect_error(errors, "wrong group", lambda: configured_identity(build.replace(GROUP, "invalid.example")))
     expect_error(errors, "wrong tag", lambda: configured_identity(build, "v0.1.3"))
+    released = "## [0.1.2]\n\nReleased 2026-10-15.\n\n### Changed\n\n- Fixture.\n"
+    try:
+        # Other sections must not determine the selected version's release status.
+        changelog = "## [Unreleased]\n\nNext cycle.\n\n" + released + "\n## [0.1.1]\n\nUnreleased.\n"
+        if extract_release_notes(changelog, "0.1.2") != released:
+            errors.append("self-test extracted the wrong release notes")
+        extract_release_notes(released.replace("Released 2026-10-15.", "Unreleased; development target."),
+                              "0.1.2", for_release=False)
+    except ReleaseError as error:
+        errors.append(f"self-test rejected released notes or development setup: {error}")
+    for status in ("Unreleased; development target.", "UNRELEASED", "unreleased"):
+        expect_error(errors, "unreleased release notes",
+                     lambda: extract_release_notes(released.replace("Released 2026-10-15.", status), "0.1.2"))
     token = base64.b64encode(b"user:password").decode("ascii")
     try:
         validate_portal_token(token)
@@ -1210,6 +1227,7 @@ def self_test() -> list[str]:
 
 def prepare() -> None:
     identity = configured_identity(tag=os.environ.get("GITHUB_REF_NAME", ""))
+    notes = release_notes(identity)
     commit = require_publish_context(identity)
     originals = staged_originals(identity)
     require_central_absent(originals, stdlib_http)
@@ -1222,7 +1240,7 @@ def prepare() -> None:
         signatures, verifier = sign_originals(temporary, originals, private_key_text.encode("utf-8"), passphrase, public_key)
         bundle = zip_bytes(release_assets(originals, signatures))
         verify_bundle(bundle, originals, verifier)
-        write_outputs(identity, commit, originals, bundle, release_notes(identity))
+        write_outputs(identity, commit, originals, bundle, notes)
     finally:
         terminate_gpg_agents(temporary)
         shutil.rmtree(temporary)

@@ -387,6 +387,18 @@ def verify_release_dependencies(pom: bytes, metadata: bytes, module: str) -> Non
                 check(dependency["group"], dependency["module"], dependency["version"]["requires"], "Gradle metadata")
 
 
+def verify_module_artifacts(artifacts: dict[str, bytes], module: str, version: str) -> None:
+    verify_pom(artifacts["pom"], module, version)
+    verify_module_metadata(artifacts["module"], module, version, artifacts)
+    verify_release_dependencies(artifacts["pom"], artifacts["module"], module)
+    if MODULES[module].android:
+        verify_aar(artifacts["main"], module)
+    else:
+        verify_jar(artifacts["main"], "main", f"{module} main JAR")
+    verify_jar(artifacts["sources"], "sources", f"{module} sources JAR")
+    verify_jar(artifacts["javadoc"], "javadoc", f"{module} Javadoc JAR")
+
+
 def verify(repository: Path = REPOSITORY) -> dict[str, str]:
     version = configured_version()
     require(repository.is_dir() and not repository.is_symlink(), "staged Maven repository is missing or unsafe")
@@ -410,15 +422,7 @@ def verify(repository: Path = REPOSITORY) -> dict[str, str]:
         require(set(names.values()) <= actual, f"{module} staged publication omits a required original")
         require(actual <= allowed and all(entry.is_file() and not entry.is_symlink() for entry in entries), f"{module} staged publication contains an unexpected entry")
         artifacts = {label: read_regular(directory / name, f"{module} {label}") for label, name in names.items()}
-        verify_pom(artifacts["pom"], module, version)
-        verify_module_metadata(artifacts["module"], module, version, artifacts)
-        verify_release_dependencies(artifacts["pom"], artifacts["module"], module)
-        if MODULES[module].android:
-            verify_aar(artifacts["main"], module)
-        else:
-            verify_jar(artifacts["main"], "main", f"{module} main JAR")
-        verify_jar(artifacts["sources"], "sources", f"{module} sources JAR")
-        verify_jar(artifacts["javadoc"], "javadoc", f"{module} Javadoc JAR")
+        verify_module_artifacts(artifacts, module, version)
         for label, name in names.items():
             relative = f"{GROUP.replace('.', '/')}/{module}/{version}/{name}"
             require(expected.get(relative) == (module, label), "internal staged inventory differs")
@@ -618,6 +622,54 @@ def self_test() -> list[str]:
             for name, data in entries.items():
                 target.writestr(name, data)
         return output.getvalue()
+
+    def integrated_fixture(version: str) -> dict[str, bytes]:
+        # Internal SDK edges use the supplied version, independently of the HTSP pin.
+        # The SNAPSHOT case must fail specifically on a dependency, not archive shape.
+        module = "sdk-testing"
+        pom = ET.fromstring(ET.tostring(core_pom))
+        pom.find("artifactId").text = module
+        pom.find("version").text = version
+        pom.find("name").text = PUBLICATION_NAMES[module]
+        dependencies = pom.find("dependencies")
+        dependencies.clear()
+        for coordinate in sorted(pom_dependencies(module, version)):
+            dependency = ET.SubElement(dependencies, "dependency")
+            for name, value in zip(("groupId", "artifactId", "version", "scope"), coordinate):
+                ET.SubElement(dependency, name).text = value
+        artifacts = {
+            "pom": ET.tostring(pom),
+            "main": archive(legal),
+            "sources": archive({**legal, "example/Test.kt": b"class Test"}),
+            "javadoc": archive({**legal, "index.html": b"Fixture"}),
+        }
+        variants = []
+        for name, (label, dependencies) in module_variants(module, version).items():
+            filename = artifact_names(module, version)[label]
+            attributes = ({"org.gradle.category": "documentation", "org.gradle.docstype": label}
+                          if label in ("sources", "javadoc") else
+                          {"org.gradle.category": "library", "org.gradle.libraryelements": "jar", "org.gradle.jvm.version": 17})
+            variants.append({"name": name, "attributes": attributes,
+                             "dependencies": [{"group": group, "module": artifact, "version": {"requires": required}}
+                                              for group, artifact, required in sorted(dependencies)],
+                             "files": [{"name": filename, "url": filename, "size": len(artifacts[label]),
+                                        "sha256": sha256(artifacts[label])}]})
+        artifacts["module"] = json.dumps({"formatVersion": "1.1", "component": {
+            "group": GROUP, "module": module, "version": version, "attributes": {"org.gradle.status": "release"}},
+            "variants": variants}).encode()
+        return artifacts
+
+    try:
+        verify_module_artifacts(integrated_fixture("0.8.0"), "sdk-testing", "0.8.0")
+    except VerificationError as error:
+        errors.append(f"self-test rejected integrated release fixture: {error}")
+    try:
+        verify_module_artifacts(integrated_fixture("0.8.0-SNAPSHOT"), "sdk-testing", "0.8.0-SNAPSHOT")
+    except VerificationError as error:
+        if "dependency" not in str(error) or "has non-release version 0.8.0-SNAPSHOT" not in str(error):
+            errors.append(f"self-test rejected integrated snapshot fixture for the wrong reason: {error}")
+    else:
+        errors.append("self-test accepted integrated SNAPSHOT dependency fixture")
 
     try:
         verify_jar(archive(legal), "main", "synthetic JAR")

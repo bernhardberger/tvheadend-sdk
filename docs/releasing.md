@@ -27,6 +27,7 @@ One authorized owner performs preparation, CI/tagging, publication and completio
 in the same task. No planner, model review, convergence package or verification
 package is required for an ordinary release through this existing path. Obtain
 the exact publication/GitHub authorization first and retain the checks below.
+The release-prep commit replaces “Unreleased; development target.” with “Released YYYY-MM-DD.”; release-note extraction rejects an Unreleased section before signing, while `--check-setup` remains a development-safe structural check.
 
 ## Protected Setup
 
