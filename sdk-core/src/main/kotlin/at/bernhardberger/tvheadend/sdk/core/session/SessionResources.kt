@@ -154,6 +154,8 @@ internal interface SessionMetadata {
         generation: GatewayGeneration?,
     )
 
+    public fun selectAccount(username: String?)
+
     /**
      * Resets working state but keeps [publishedSnapshots].
      *
@@ -570,6 +572,10 @@ internal class PhaseOneSessionMetadata(
         observationStore.publishSessionState(state, progressCapability, generation)
     }
 
+    override fun selectAccount(username: String?) {
+        observationStore.selectAccount(username)
+    }
+
     override fun resetWorkingStateRetainingPublishedSnapshot(): PublishedSnapshots? =
         resetState(retainPublishedCatalog = true)
 
@@ -620,6 +626,7 @@ internal class PhaseOneSessionMetadata(
             dvrFailuresReported.clear()
             dvrEntryIncarnations.clear()
             if (!retainPublishedCatalog) {
+                observationStore.selectAccount(null)
                 channelRefreshTimes = MetadataRefreshTimes()
                 epgRefreshTimes = MetadataRefreshTimes()
                 dvrRefreshTimes = MetadataRefreshTimes()

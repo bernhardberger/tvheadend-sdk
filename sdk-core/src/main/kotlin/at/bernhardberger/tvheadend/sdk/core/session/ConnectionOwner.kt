@@ -17,6 +17,7 @@ import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.PlaybackBinding
 import at.bernhardberger.tvheadend.sdk.core.PlaybackBindingResult
 import at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability
+import at.bernhardberger.tvheadend.sdk.core.ServerAuthentication
 import at.bernhardberger.tvheadend.sdk.core.ServerProfile
 import at.bernhardberger.tvheadend.sdk.core.SessionCache
 import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
@@ -353,6 +354,10 @@ internal class ConnectionOwner(
         val token = SessionToken()
         synchronized(stateLock) {
             activeToken = token
+            // connect clears DVR state before changing accounts: observation equality ignores
+            // username, so an account change alone cannot replace an equal StateFlow value.
+            // Same-profile reconnect/retry retains both the account and its published snapshot.
+            metadata.selectAccount((profile.authentication as? ServerAuthentication.Password)?.username)
             artworkNamespace = if (cacheRuntime != null) profile.cacheNamespace() else null
             latestDvrCapabilityRevision = null
             retryDisposition = null

@@ -6,6 +6,10 @@ Unreleased; development target.
 
 ### Changed
 
+- BREAKING: `SessionObservation.dvrEntryForEvent` now ranks multiple linked entries
+  instead of returning null: own account, recording (including recording errors),
+  scheduled, event DVR link, latest stop, then lowest entry ID. Unknown or ambiguous
+  event IDs still return null. The event's DVR link is not authoritative.
 - BREAKING: `DvrMutationResult.Failed` is now a regular class with explicit
   equality and hashing; generated data-class `copy` and destructuring are removed.
   Experimental `serverMessage` exposes sanitized, bounded, untrusted display-only

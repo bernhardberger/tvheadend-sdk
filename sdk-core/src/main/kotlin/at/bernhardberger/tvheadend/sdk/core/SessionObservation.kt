@@ -24,6 +24,7 @@ public class SessionObservation private constructor(
     @ExperimentalTvheadendApi public val epgRefreshTimes: MetadataRefreshTimes,
     @ExperimentalTvheadendApi public val dvrRefreshTimes: MetadataRefreshTimes,
     queryTimes: Map<ChannelId, Instant>,
+    private val ownAccountUsername: String?,
 ) {
     /** Last locally accepted successful query per channel; absence means unknown. */
     @ExperimentalTvheadendApi
@@ -116,14 +117,37 @@ public class SessionObservation private constructor(
     public fun dvrEntry(id: DvrEntryId): DvrEntry? =
         dvrSnapshotForDisplay?.entries?.singleOrNull { entry -> entry.id == id }
 
-    /** Selects the unique DVR entry related to [eventId] within this aggregate observation. */
-    public fun dvrEntryForEvent(eventId: EventId): DvrEntry? {
-        val entries = dvrSnapshotForDisplay?.entries ?: return null
-        if (entries.isEmpty()) return null
-        val event = event(eventId) ?: return null
-        return entries.singleOrNull { entry ->
+    /**
+     * Selects the highest-ranked linked DVR entry: own account, recording (including recording
+     * error), scheduled, event's DVR link, latest stop, then lowest entry ID, in that order.
+     * Ownership uses exact comparison with the normalized session username; anonymous sessions
+     * and absent owners receive no ownership preference. Unknown stops rank last.
+     * TVHeadend's event DVR link is only the first visible broadcast match, not an authority
+     * (`src/htsp_server.c`, event serialization). Multiple entries per broadcast are normal.
+     * Returns null for an unknown or ambiguous event ID, when no linked entry exists,
+     * or when matched entries are ambiguous because they contain duplicate DVR entry IDs.
+     */
+    public fun dvrEntryForEvent(eventId: EventId): DvrEntry? = rankedDvrEntriesForEvent(eventId).firstOrNull()
+
+    private fun rankedDvrEntriesForEvent(eventId: EventId): List<DvrEntry> {
+        val entries = dvrSnapshotForDisplay?.entries ?: return emptyList()
+        val event = event(eventId) ?: return emptyList()
+        val matched = entries.filter { entry ->
             entry.eventId == eventId || event.dvrEntryId == entry.id
         }
+        if (matched.map { it.id }.toSet().size != matched.size) return emptyList()
+        val ranking = compareByDescending<DvrEntry> { entry ->
+            ownAccountUsername != null && entry.owner == ownAccountUsername
+        }.thenBy { entry ->
+            when (entry.state) {
+                DvrEntryState.RECORDING, DvrEntryState.RECORDING_ERROR -> 0
+                DvrEntryState.SCHEDULED -> 1
+                else -> 2
+            }
+        }.thenByDescending { entry -> entry.id == event.dvrEntryId }
+            .thenByDescending { entry -> entry.stop }
+            .thenBy { entry -> entry.id.value }
+        return matched.sortedWith(ranking)
     }
 
     /** Selects the unique EPG event related to [entryId] within this aggregate observation. */
@@ -245,6 +269,7 @@ public class SessionObservation private constructor(
             epgRefreshTimes: MetadataRefreshTimes = MetadataRefreshTimes(),
             dvrRefreshTimes: MetadataRefreshTimes = MetadataRefreshTimes(),
             epgLastQueriedAt: Map<ChannelId, Instant> = emptyMap(),
+            ownAccountUsername: String? = null,
         ): SessionObservation {
             val current = if (
                 generation != null &&
@@ -276,6 +301,7 @@ public class SessionObservation private constructor(
                 epgRefreshTimes = epgRefreshTimes,
                 dvrRefreshTimes = dvrRefreshTimes,
                 queryTimes = epgLastQueriedAt,
+                ownAccountUsername = ownAccountUsername,
             )
         }
     }
@@ -316,6 +342,15 @@ internal class SessionObservationStore {
     private val mutableObservation = MutableStateFlow(SessionObservation.create())
     private var readyGeneration: Any? = null
     private var readyGenerationIdentity: SessionGenerationIdentity? = null
+    private var ownAccountUsername: String? = null
+
+    // Account changes require a reset that clears DVR state before publishing new metadata.
+    // Username is excluded from equality, so MutableStateFlow may retain an equal old instance;
+    // the reset prevents carrying that instance's account into a new account's DVR snapshot.
+    // Same-profile reconnects retain both the account and the published snapshot.
+    internal fun selectAccount(username: String?) = synchronized(lock) {
+        ownAccountUsername = username
+    }
 
     internal val observation: StateFlow<SessionObservation> = mutableObservation.asStateFlow()
 
@@ -455,6 +490,7 @@ internal class SessionObservationStore {
             generation = readyGeneration,
             generationIdentity = readyGenerationIdentity,
             previousCurrent = previous.currentSession,
+            ownAccountUsername = ownAccountUsername,
             channelRefreshTimes = channelRefreshTimes,
             epgRefreshTimes = epgRefreshTimes,
             dvrRefreshTimes = dvrRefreshTimes,

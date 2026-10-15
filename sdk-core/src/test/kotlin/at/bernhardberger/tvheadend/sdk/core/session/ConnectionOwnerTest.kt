@@ -122,6 +122,91 @@ import org.junit.jupiter.api.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 internal class ConnectionOwnerTest {
     @Test
+    fun `DVR ranking uses normalized account and replaces it on profile switch`() = runTest {
+        val gateway = FakeProtocolGateway()
+        val owner = owner(gateway)
+        val profiles = listOf(
+            ServerProfile("test-server", authentication = ServerAuthentication.Password(" test-account ", "test-password")),
+            ServerProfile("test-server"),
+        )
+        for ((index, profile) in profiles.withIndex()) {
+            val generation = GatewayGeneration()
+            gateway.connectResults += connected(generation)
+            owner.connect(profile)
+            runCurrent()
+            gateway.emitMetadata(MetadataEvent.ChannelAdded(generation, channelMetadata(1)))
+            gateway.emitMetadata(MetadataEvent.EventAdded(generation, epgMetadata(1, 1)))
+            gateway.emitMetadata(MetadataEvent.DvrEntryAdded(generation, GatewayDvrEntry(
+                DvrEntryId(1), eventId = EventId(1), owner = "test-account",
+                state = at.bernhardberger.tvheadend.sdk.core.DvrEntryState.SCHEDULED,
+            )))
+            gateway.emitMetadata(MetadataEvent.DvrEntryAdded(generation, GatewayDvrEntry(
+                DvrEntryId(2), eventId = EventId(1), owner = "other-account",
+                state = at.bernhardberger.tvheadend.sdk.core.DvrEntryState.RECORDING,
+            )))
+            gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+            runCurrent()
+            val observed = owner.observation.value
+            val eventId = at.bernhardberger.tvheadend.sdk.core.EventId(1)
+            assertEquals((index + 1).toLong(), observed.dvrEntryForEvent(eventId)?.id?.value)
+            owner.disconnect()
+            assertEquals((index + 1).toLong(), owner.observation.value.dvrEntryForEvent(eventId)?.id?.value)
+            // Already published observations retain their original ranking account.
+            assertEquals((index + 1).toLong(), observed.dvrEntryForEvent(eventId)?.id?.value)
+        }
+        owner.shutdown()
+    }
+
+    @Test
+    fun `direct account switch resets DVR ranking while old observations and same profile reconnect retain it`() = runTest {
+        val gateway = FakeProtocolGateway()
+        val owner = owner(gateway)
+        val firstProfile = ServerProfile(
+            "test-server", authentication = ServerAuthentication.Password("account-a", "test-password"),
+        )
+        val secondProfile = ServerProfile(
+            "test-server", authentication = ServerAuthentication.Password("account-b", "test-password"),
+        )
+        val eventId = at.bernhardberger.tvheadend.sdk.core.EventId(1)
+        val observations = listOf(firstProfile, secondProfile).map { profile ->
+            val generation = GatewayGeneration()
+            gateway.connectResults += connected(generation)
+            assertEquals(SessionCommandResult.STARTED, owner.connect(profile))
+            runCurrent()
+            assertEquals(SessionState.Synchronizing, owner.observation.value.sessionState)
+            assertNull(owner.observation.value.dvrEntryForEvent(eventId))
+            gateway.emitMetadata(MetadataEvent.ChannelAdded(generation, channelMetadata(1)))
+            gateway.emitMetadata(MetadataEvent.EventAdded(generation, epgMetadata(1, 1)))
+            for ((index, account) in listOf("account-a", "account-b").withIndex()) {
+                gateway.emitMetadata(MetadataEvent.DvrEntryAdded(generation, GatewayDvrEntry(
+                    DvrEntryId((index + 1).toLong()), eventId = EventId(1), owner = account,
+                    state = at.bernhardberger.tvheadend.sdk.core.DvrEntryState.SCHEDULED,
+                )))
+            }
+            gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+            runCurrent()
+            owner.observation.value.also {
+                assertTrue(it.sessionState is SessionState.Ready)
+                assertEquals(if (profile === firstProfile) 1L else 2L, it.dvrEntryForEvent(eventId)?.id?.value)
+            }
+        }
+        // Equal DVR snapshots must still use each observation's captured account after a direct switch.
+        assertEquals(observations[0].dvrState, observations[1].dvrState)
+        assertEquals(1L, observations[0].dvrEntryForEvent(eventId)?.id?.value)
+        assertEquals(2L, owner.observation.value.dvrEntryForEvent(eventId)?.id?.value)
+
+        owner.disconnect()
+        gateway.connectResults += connected(GatewayGeneration())
+        assertEquals(SessionCommandResult.STARTED, owner.connect(secondProfile))
+        runCurrent()
+        assertEquals(SessionState.Synchronizing, owner.observation.value.sessionState)
+        assertNull(owner.observation.value.currentSession)
+        assertEquals(2L, owner.observation.value.dvrEntryForEvent(eventId)?.id?.value)
+        assertEquals(1L, observations[0].dvrEntryForEvent(eventId)?.id?.value)
+        owner.shutdown()
+    }
+
+    @Test
     fun `construction is idle and readiness waits for the SDK metadata fence`() = runTest {
         val order = mutableListOf<String>()
         val gateway = FakeProtocolGateway(order)

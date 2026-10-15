@@ -270,8 +270,18 @@ Use observation point selectors when selecting related entities:
 | `eventAt(channelId, instant)` | The event active at the closed-start, open-stop instant |
 | `nextEvent(channelId, instant)` | The linked or deterministically timed next event |
 | `dvrEntry(id)` | One current or retained DVR entry |
-| `dvrEntryForEvent(eventId)` | The unique recording linked to an event |
+| `dvrEntryForEvent(eventId)` | The highest-ranked recording linked to an event |
 | `epgEventForDvrEntry(entryId)` | The unique event linked to a recording |
+
+`dvrEntryForEvent` ranks matches lexicographically: entries owned by the session's
+account first, then RECORDING/RECORDING_ERROR, then SCHEDULED, then the event's
+`dvrEntryId` link, latest stop (unknown last), and lowest entry ID. Owner comparison
+is exact after the SDK's username normalization; anonymous sessions and missing
+owners receive no ownership preference. TVHeadend's event `dvrId` is just its first
+visible broadcast match and is not authoritative. The selector returns null when
+the event ID is unknown or ambiguous, no linked entries exist, or matched entries
+are ambiguous because they contain duplicate DVR entry IDs. Unlinked time-window
+matches are not considered. Standalone observations and testing factories have no own account.
 
 `Channel.tagIds` and `ChannelTag.channelIds` expose catalog membership. Entity
 lists are immutable and preserve SDK catalog order. Presentation filtering,

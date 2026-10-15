@@ -236,7 +236,7 @@ internal class SessionObservationTest {
             ))),
         )
         assertEquals(EventId(12), ambiguous.nextEvent(ChannelId(1), instant(10))?.id)
-        assertNull(ambiguous.dvrEntryForEvent(EventId(10)))
+        assertEquals(DvrEntryId(100), ambiguous.dvrEntryForEvent(EventId(10))?.id)
         assertSame(linked, observation.event(EventId(11)))
     }
 
