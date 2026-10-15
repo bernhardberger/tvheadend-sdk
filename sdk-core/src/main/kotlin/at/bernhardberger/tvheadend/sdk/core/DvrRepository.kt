@@ -208,8 +208,12 @@ public data class DvrEntry private constructor(
     public val description: String?,
     public val summary: String?,
     public val subtitle: String?,
-    internal val owner: String?,
-    internal val creator: String?,
+    /** Server-reported owner; private account metadata, never for diagnostics. */
+    @at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
+    public val owner: String?,
+    /** Server-reported creator; private account metadata, never for diagnostics. */
+    @at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
+    public val creator: String?,
     public val comment: String?,
     public val image: ArtworkId?,
     public val fanartImage: ArtworkId?,
@@ -469,8 +473,12 @@ public data class AutorecRule private constructor(
     public val mergeText: Boolean?,
     public val name: String?,
     public val directory: String?,
-    internal val owner: String?,
-    internal val creator: String?,
+    /** Server-reported owner; private account metadata, never for diagnostics. */
+    @at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
+    public val owner: String?,
+    /** Server-reported creator; private account metadata, never for diagnostics. */
+    @at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
+    public val creator: String?,
     public val channelId: ChannelId?,
     public val seriesLinkUri: String?,
     public val configId: DvrConfigId?,
@@ -618,10 +626,17 @@ public data class TimerecRule private constructor(
     public val priority: DvrPriority?,
     public val retentionDays: Long?,
     public val directory: String?,
-    internal val owner: String?,
-    internal val creator: String?,
+    /** Server-reported owner; private account metadata, never for diagnostics. */
+    @at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
+    public val owner: String?,
+    /** Server-reported creator; private account metadata, never for diagnostics. */
+    @at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
+    public val creator: String?,
     public val configId: DvrConfigId?,
     public val comment: String?,
+    /** Server removal policy in days, using the same wire domain as [AutorecRule.removalDays]. */
+    @at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
+    public val removalDays: Long?,
 ) {
     override fun toString(): String = "TimerecRule(<redacted>)"
 
@@ -659,6 +674,42 @@ public data class TimerecRule private constructor(
             creator = null,
         )
 
+        /** Creates a time-based rule with its experimental removal policy, including for fakes. */
+        @at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
+        public fun create(
+            id: TimerecRuleId,
+            enabled: Boolean? = null,
+            name: String? = null,
+            title: String? = null,
+            channelId: ChannelId? = null,
+            startMinutesSinceMidnight: LocalTime? = null,
+            stopMinutesSinceMidnight: LocalTime? = null,
+            daysOfWeekMask: Set<DayOfWeek>? = null,
+            priority: DvrPriority? = null,
+            retentionDays: Long? = null,
+            directory: String? = null,
+            configId: DvrConfigId? = null,
+            comment: String? = null,
+            removalDays: Long?,
+        ): TimerecRule = create(
+            id = id,
+            enabled = enabled,
+            name = name,
+            title = title,
+            channelId = channelId,
+            startMinutesSinceMidnight = startMinutesSinceMidnight,
+            stopMinutesSinceMidnight = stopMinutesSinceMidnight,
+            daysOfWeekMask = daysOfWeekMask,
+            priority = priority,
+            retentionDays = retentionDays,
+            directory = directory,
+            configId = configId,
+            comment = comment,
+            owner = null,
+            creator = null,
+            removalDays = removalDays,
+        )
+
         internal fun create(
             id: TimerecRuleId,
             enabled: Boolean? = null,
@@ -675,10 +726,12 @@ public data class TimerecRule private constructor(
             creator: String? = null,
             configId: DvrConfigId? = null,
             comment: String? = null,
+            removalDays: Long? = null,
         ): TimerecRule {
             startMinutesSinceMidnight?.requireDvrWholeMinute()
             stopMinutesSinceMidnight?.requireDvrWholeMinute()
             retentionDays?.let { requireDvrU32("TimerecRule retentionDays", it) }
+            removalDays?.let { requireDvrU32("TimerecRule removalDays", it) }
             return TimerecRule(
                 id = id,
                 enabled = enabled,
@@ -695,6 +748,7 @@ public data class TimerecRule private constructor(
                 creator = creator,
                 configId = configId,
                 comment = comment,
+                removalDays = removalDays,
             )
         }
     }

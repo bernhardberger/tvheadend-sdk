@@ -511,6 +511,19 @@ throw `IllegalArgumentException`; signed whole-minute padding is supported.
 `DvrEntry.duplicate` is nullable Boolean. Entry images, fanart and EPG images use
 `ArtworkId`; unsupported image references are omitted. Genre uses `contentGenre` only.
 
+`DvrEntry.episode` includes `seasonCount` and `onscreen` when supplied by the
+server; omitted entry-update fields retain their last observed values. With
+`@OptIn(ExperimentalTvheadendApi::class)`, time-based rules expose `removalDays`
+as a nullable `Long`, matching `AutorecRule.removalDays` (unsigned 32-bit server
+policy domain, `null` means unknown). Fakes can use
+`TimerecRule.create(id, removalDays = 30)`. Rule updates replace their snapshots,
+so omitted rule fields become unknown rather than retaining an old policy.
+
+The same opt-in exposes nullable, read-only `owner` and `creator` on entries and
+both rule types. These are server-reported account metadata for application
+display; keep them out of logs and diagnostics. Model `toString()` remains
+redacted. Public create factories leave ownership unset.
+
 `DvrPriority`, `DuplicateDetection` and `BroadcastType` are open sets: retain an
 `else` when comparing values. Unrecognized server values map to each type's `UNKNOWN`.
 `UNKNOWN` has no wire value and every create/update request rejects it with

@@ -19,6 +19,18 @@ import kotlin.time.Instant
 
 internal class DvrRepositoryTest {
     @Test
+    fun `timerec removal factory preserves unknown zero and unsigned policy values`() {
+        val id = TimerecRuleId("rule")
+        assertNull(TimerecRule.create(id).removalDays)
+        for (days in listOf(null, 0L, 30L, 0xffff_ffffL)) {
+            assertEquals(days, TimerecRule.create(id, removalDays = days).removalDays)
+        }
+        for (days in listOf(-1L, 0x1_0000_0000L)) {
+            assertThrows(IllegalArgumentException::class.java) { TimerecRule.create(id, removalDays = days) }
+        }
+    }
+
+    @Test
     fun `recording stream factories snapshot lists distinguish absence and redact text`() {
         val stream = DvrRecordingStream(language = "private-language", width = 1920)
         val input = mutableListOf(stream)

@@ -32,6 +32,86 @@ internal class DvrReducerTest {
     private val generation = GatewayGeneration()
 
     @Test
+    fun `DVR episode grouping and ownership survive omissions and accept explicit updates`() {
+        val reducer = DvrReducer()
+        val id = DvrEntryId(1)
+        reducer.accept(MetadataEvent.DvrEntryAdded(
+            generation, GatewayDvrEntry(
+                id, seasonCount = 8, episodeOnscreen = "S2 E3", owner = "test-owner", creator = "test-creator",
+            ),
+        ))
+        val retained = reducer.snapshot().entries.single()
+        assertEquals(8L, retained.episode?.seasonCount)
+        assertEquals("S2 E3", retained.episode?.onscreen)
+        assertEquals("test-owner", retained.owner)
+        assertEquals("test-creator", retained.creator)
+        assertEquals("DvrEntry(<redacted>)", retained.toString())
+        for (provenance in GatewayDvrUpdateProvenance.entries) {
+            reducer.accept(MetadataEvent.DvrEntryUpdated(generation, GatewayDvrEntry(id), provenance))
+            assertEquals(retained, reducer.snapshot().entries.single())
+        }
+        reducer.accept(MetadataEvent.DvrEntryUpdated(
+            generation, GatewayDvrEntry(id, seasonCount = 0, episodeOnscreen = "", owner = "", creator = "updated"),
+            GatewayDvrUpdateProvenance.FULL,
+        ))
+        val updated = reducer.snapshot().entries.single()
+        assertEquals(0L, updated.episode?.seasonCount)
+        assertEquals("", updated.episode?.onscreen)
+        assertEquals("", updated.owner)
+        assertEquals("updated", updated.creator)
+        assertEquals(8L, retained.episode?.seasonCount)
+        // Either newly mapped field alone must produce an episode grouping.
+        reducer.accept(MetadataEvent.DvrEntryAdded(generation, GatewayDvrEntry(DvrEntryId(2), seasonCount = 3)))
+        reducer.accept(MetadataEvent.DvrEntryUpdated(
+            generation, GatewayDvrEntry(DvrEntryId(3), episodeOnscreen = "Special"), GatewayDvrUpdateProvenance.FULL,
+        ))
+        assertEquals(3L, reducer.snapshot().entries[1].episode?.seasonCount)
+        assertEquals("Special", reducer.snapshot().entries[2].episode?.onscreen)
+    }
+
+    @Test
+    fun `rule ownership and timerec removal follow full replacement semantics`() {
+        val reducer = DvrReducer()
+        val autoId = AutorecRuleId("auto")
+        val timeId = TimerecRuleId("time")
+        reducer.accept(MetadataEvent.AutorecRuleAdded(
+            generation, GatewayAutorecRule(autoId, owner = "test-owner", creator = "test-creator"),
+        ))
+        reducer.accept(MetadataEvent.TimerecRuleAdded(
+            generation, GatewayTimerecRule(
+                timeId, removalDays = 0xffff_ffffL, owner = "test-owner", creator = "test-creator",
+            ),
+        ))
+        val retained = reducer.snapshot()
+        assertEquals("test-owner", retained.autorecRules.single().owner)
+        assertEquals("test-creator", retained.autorecRules.single().creator)
+        assertEquals("test-owner", retained.timerecRules.single().owner)
+        assertEquals("test-creator", retained.timerecRules.single().creator)
+        assertEquals(0xffff_ffffL, retained.timerecRules.single().removalDays)
+        assertEquals("AutorecRule(<redacted>)", retained.autorecRules.single().toString())
+        assertEquals("TimerecRule(<redacted>)", retained.timerecRules.single().toString())
+        reducer.accept(MetadataEvent.AutorecRuleUpdated(
+            generation, GatewayAutorecRule(autoId, owner = "updated-owner", creator = "updated-creator"),
+        ))
+        reducer.accept(MetadataEvent.TimerecRuleUpdated(
+            generation, GatewayTimerecRule(timeId, removalDays = 0, owner = "updated-owner", creator = "updated-creator"),
+        ))
+        assertEquals("updated-owner", reducer.snapshot().autorecRules.single().owner)
+        assertEquals("updated-creator", reducer.snapshot().autorecRules.single().creator)
+        assertEquals("updated-owner", reducer.snapshot().timerecRules.single().owner)
+        assertEquals("updated-creator", reducer.snapshot().timerecRules.single().creator)
+        assertEquals(0L, reducer.snapshot().timerecRules.single().removalDays)
+        reducer.accept(MetadataEvent.AutorecRuleUpdated(generation, GatewayAutorecRule(autoId)))
+        reducer.accept(MetadataEvent.TimerecRuleUpdated(generation, GatewayTimerecRule(timeId)))
+        assertEquals(null, reducer.snapshot().autorecRules.single().owner)
+        assertEquals(null, reducer.snapshot().autorecRules.single().creator)
+        assertEquals(null, reducer.snapshot().timerecRules.single().owner)
+        assertEquals(null, reducer.snapshot().timerecRules.single().creator)
+        assertEquals(null, reducer.snapshot().timerecRules.single().removalDays)
+        assertEquals(0xffff_ffffL, retained.timerecRules.single().removalDays)
+    }
+
+    @Test
     fun `recording streams survive omitted updates and completion until files are replaced`() {
         val reducer = DvrReducer()
         val stream = DvrRecordingStream(width = 1920, height = 1080)

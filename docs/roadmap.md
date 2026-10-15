@@ -177,7 +177,8 @@ stay additive.
   - image fields become `ArtworkId`;
   - duplicate detection, broadcast type, and priority become enums.
 - Make server internals non-public: `DvrEntry.path`, `DvrRecordingFile.path`,
-  `owner`, and `creator`.
+  `owner`, and `creator`. Reversed for `owner` and `creator` in 0.29 at the
+  owner's request: experimental, read-only properties on entries and both rule types.
 - Move test helpers out of production API, or behind the testing opt-in:
   - `TimeshiftTestFixture` in `sdk-media3`;
   - `SessionGenerationTestAuthority` and `TvheadendTestResultFactory` in

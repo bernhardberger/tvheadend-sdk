@@ -1100,6 +1100,10 @@ internal class HtspProtocolGatewayTest {
             playCount = 8,
             playPositionSeconds = 9,
             title = "Private title",
+            seasonCount = 8,
+            episodeOnscreen = "S2 E3",
+            owner = "test-owner",
+            creator = "test-creator",
             files = files,
             path = "/private/path.ts",
             dvrConfigUuid = "private-config",
@@ -1115,6 +1119,10 @@ internal class HtspProtocolGatewayTest {
             state = "completed",
             error = "File missing",
             subscriptionError = "invalidTarget",
+            seasonCount = 9,
+            episodeOnscreen = "S2 E4",
+            owner = "updated-owner",
+            creator = "updated-creator",
         )
         val autorecAdd = HtspAutorecEntryAddMessage(
             id = "private-auto",
@@ -1134,6 +1142,8 @@ internal class HtspProtocolGatewayTest {
             maximumRecordingCount = 10,
             broadcastType = 11,
             title = "Private autorec",
+            owner = "test-owner",
+            creator = "test-creator",
             channelId = 12,
             configId = "private-auto-config",
         )
@@ -1142,7 +1152,10 @@ internal class HtspProtocolGatewayTest {
             update,
             HtspDvrEntryDeleteMessage(1),
             autorecAdd,
-            HtspAutorecEntryUpdateMessage(id = "private-auto", title = null, enabled = false),
+            HtspAutorecEntryUpdateMessage(
+                id = "private-auto", title = null, enabled = false,
+                owner = "updated-owner", creator = "updated-creator",
+            ),
             HtspAutorecEntryDeleteMessage("private-auto"),
             HtspTimerecEntryAddMessage(
                 id = "private-time",
@@ -1151,10 +1164,16 @@ internal class HtspProtocolGatewayTest {
                 startMinutesSinceMidnight = null,
                 stopMinutesSinceMidnight = null,
                 configId = "private-time-config",
+                removalDays = 0xffff_ffffL,
+                owner = "test-owner",
+                creator = "test-creator",
             ),
             HtspTimerecEntryUpdateMessage(
                 id = "private-time",
                 enabled = false,
+                removalDays = 0,
+                owner = "updated-owner",
+                creator = "updated-creator",
                 channelId = null,
                 startMinutesSinceMidnight = null,
                 stopMinutesSinceMidnight = null,
@@ -1193,12 +1212,20 @@ internal class HtspProtocolGatewayTest {
         assertEquals(Instant.fromEpochSeconds(-4), added.start)
         assertEquals(Instant.fromEpochSeconds(2_147_483_648), added.stop)
         assertEquals(9.seconds, added.playPosition)
+        assertEquals(8L, added.seasonCount)
+        assertEquals("S2 E3", added.episodeOnscreen)
+        assertEquals("test-owner", added.owner)
+        assertEquals("test-creator", added.creator)
         assertEquals("/private/recording.ts", added.files?.single()?.path)
         assertEquals(DvrEntryState.RECORDING, added.state)
         assertEquals(GatewayDvrFailure.PRESENT, added.failure)
         assertEquals(DvrSubscriptionError.SCRAMBLED, added.subscriptionError)
         val updated = (events[1] as MetadataEvent.DvrEntryUpdated).entry
         assertEquals(false, updated.enabled)
+        assertEquals(9L, updated.seasonCount)
+        assertEquals("S2 E4", updated.episodeOnscreen)
+        assertEquals("updated-owner", updated.owner)
+        assertEquals("updated-creator", updated.creator)
         assertEquals("", updated.title)
         assertEquals(emptyList<Any>(), updated.files)
         assertEquals(DvrEntryState.COMPLETED, updated.state)
@@ -1206,13 +1233,23 @@ internal class HtspProtocolGatewayTest {
         assertEquals(DvrSubscriptionError.INVALID_TARGET, updated.subscriptionError)
         assertEquals(GatewayDvrUpdateProvenance.FULL, (events[1] as MetadataEvent.DvrEntryUpdated).provenance)
         assertEquals("private-auto", (events[3] as MetadataEvent.AutorecRuleAdded).rule.id.value)
+        assertEquals("test-owner", (events[3] as MetadataEvent.AutorecRuleAdded).rule.owner)
+        assertEquals("test-creator", (events[3] as MetadataEvent.AutorecRuleAdded).rule.creator)
+        assertEquals("updated-owner", (events[4] as MetadataEvent.AutorecRuleUpdated).rule.owner)
+        assertEquals("updated-creator", (events[4] as MetadataEvent.AutorecRuleUpdated).rule.creator)
         assertEquals(false, (events[4] as MetadataEvent.AutorecRuleUpdated).rule.enabled)
         assertEquals(null, (events[4] as MetadataEvent.AutorecRuleUpdated).rule.title)
         val timerecAdded = (events[6] as MetadataEvent.TimerecRuleAdded).rule
+        assertEquals(0xffff_ffffL, timerecAdded.removalDays)
+        assertEquals("test-owner", timerecAdded.owner)
+        assertEquals("test-creator", timerecAdded.creator)
         assertEquals(null, timerecAdded.channelId)
         assertEquals(null, timerecAdded.startMinutesSinceMidnight)
         assertEquals(null, timerecAdded.stopMinutesSinceMidnight)
         val timerecUpdated = (events[7] as MetadataEvent.TimerecRuleUpdated).rule
+        assertEquals(0L, timerecUpdated.removalDays)
+        assertEquals("updated-owner", timerecUpdated.owner)
+        assertEquals("updated-creator", timerecUpdated.creator)
         assertEquals(false, timerecUpdated.enabled)
         assertEquals(null, timerecUpdated.channelId)
         assertEquals(null, timerecUpdated.startMinutesSinceMidnight)

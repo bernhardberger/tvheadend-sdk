@@ -63,6 +63,8 @@ internal data class ReducedDvrEntry private constructor(
     internal val playCount: Long?,
     internal val playPosition: Duration?,
     internal val seasonNumber: Long?,
+    internal val seasonCount: Long?,
+    internal val episodeOnscreen: String?,
     internal val episodeNumber: Long?,
     internal val episodeCount: Long?,
     internal val partNumber: Long?,
@@ -188,6 +190,8 @@ internal data class ReducedDvrEntry private constructor(
             playCount = entry.playCount ?: playCount,
             playPosition = entry.playPosition ?: playPosition,
             seasonNumber = entry.seasonNumber ?: seasonNumber,
+            seasonCount = entry.seasonCount ?: seasonCount,
+            episodeOnscreen = entry.episodeOnscreen ?: episodeOnscreen,
             episodeNumber = entry.episodeNumber ?: episodeNumber,
             episodeCount = entry.episodeCount ?: episodeCount,
             partNumber = entry.partNumber ?: partNumber,
@@ -256,6 +260,8 @@ internal data class ReducedDvrEntry private constructor(
     private fun episodeOrNull(): EpgEpisode? {
         if (
             seasonNumber == null &&
+            seasonCount == null &&
+            episodeOnscreen == null &&
             episodeNumber == null &&
             episodeCount == null &&
             partNumber == null &&
@@ -267,12 +273,12 @@ internal data class ReducedDvrEntry private constructor(
             id = null,
             seriesLinkId = null,
             seasonNumber = seasonNumber,
-            seasonCount = null,
+            seasonCount = seasonCount,
             episodeNumber = episodeNumber,
             episodeCount = episodeCount,
             partNumber = partNumber,
             partCount = partCount,
-            onscreen = null,
+            onscreen = episodeOnscreen,
         )
     }
 
@@ -302,6 +308,8 @@ internal data class ReducedDvrEntry private constructor(
             playCount = entry.playCount,
             playPosition = entry.playPosition,
             seasonNumber = entry.seasonNumber,
+            seasonCount = entry.seasonCount,
+            episodeOnscreen = entry.episodeOnscreen,
             episodeNumber = entry.episodeNumber,
             episodeCount = entry.episodeCount,
             partNumber = entry.partNumber,
@@ -443,6 +451,7 @@ internal data class ReducedTimerecRule private constructor(
     internal val daysOfWeekMask: Long?,
     internal val priority: Long?,
     internal val retentionDays: Long?,
+    internal val removalDays: Long?,
     internal val directory: String?,
     internal val owner: String?,
     internal val creator: String?,
@@ -463,6 +472,7 @@ internal data class ReducedTimerecRule private constructor(
             daysOfWeekMask = daysOfWeekMask?.toDvrDays(),
             priority = priority?.let(DvrPriority::fromWire),
             retentionDays = retentionDays,
+            removalDays = removalDays,
             directory = directory,
             owner = owner,
             creator = creator,
@@ -483,6 +493,7 @@ internal data class ReducedTimerecRule private constructor(
             daysOfWeekMask = rule.daysOfWeekMask,
             priority = rule.priority,
             retentionDays = rule.retentionDays,
+            removalDays = rule.removalDays,
             directory = rule.directory,
             owner = rule.owner,
             creator = rule.creator,

@@ -164,6 +164,13 @@ public fun dvrRejectionForFake(): DvrMutationResult.Failed =
 
 public fun dvrRejectionText(result: DvrMutationResult.Failed): String? = result.serverMessage
 
+public fun timerecWithRemovalForFake(): TimerecRule = TimerecRule.create(TimerecRuleId("timerec"), removalDays = 30)
+
+public fun timerecRemovalDays(rule: TimerecRule): Long? = rule.removalDays
+
+public fun dvrAccountLabels(entry: DvrEntry, autorec: AutorecRule, timerec: TimerecRule): List<String?> =
+    listOf(entry.owner, entry.creator, autorec.owner, autorec.creator, timerec.owner, timerec.creator)
+
 public fun programmeCreditLabels(event: EpgEvent): List<String>? = event.credits?.map { credit ->
     val role = when (credit.role) {
         EpgCreditRole.ACTOR -> "Cast"

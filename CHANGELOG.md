@@ -11,6 +11,12 @@ Unreleased; development target.
   Experimental `serverMessage` exposes sanitized, bounded, untrusted display-only
   text for server rejections. It is excluded from equality, hashing and `toString()`;
   other failures have no message. TVHeadend localizes this text; never match it.
+- DVR episode grouping now retains the server's season count and on-screen episode text.
+- Experimental `TimerecRule.removalDays` mirrors the nullable unsigned-day policy
+  already exposed by `AutorecRule`, including an opt-in factory overload for fakes.
+- At the owner's request, 0.29 reverses the 0.26 non-public ownership decision:
+  `DvrEntry`, `AutorecRule` and `TimerecRule` expose experimental read-only `owner`
+  and `creator`. Their `toString()` output remains redacted.
 
 ## [0.28.0]
 

@@ -148,6 +148,20 @@ public final class StagedSdkJavaConsumer {
                 .getServerMessage();
     }
 
+    @kotlin.OptIn(markerClass = ExperimentalTvheadendApi.class)
+    public static Long timerecRemovalDays(at.bernhardberger.tvheadend.sdk.core.TimerecRule rule) {
+        return rule.getRemovalDays();
+    }
+
+    @kotlin.OptIn(markerClass = ExperimentalTvheadendApi.class)
+    public static String[] dvrAccountLabels(
+            at.bernhardberger.tvheadend.sdk.core.DvrEntry entry,
+            at.bernhardberger.tvheadend.sdk.core.AutorecRule autorec,
+            at.bernhardberger.tvheadend.sdk.core.TimerecRule timerec) {
+        return new String[] { entry.getOwner(), entry.getCreator(), autorec.getOwner(), autorec.getCreator(),
+                timerec.getOwner(), timerec.getCreator() };
+    }
+
     @SuppressWarnings("unchecked")
     private static <T> DvrMutationResult<T> notReady() {
         return (DvrMutationResult<T>) new DvrMutationResult.Failed(TvheadendFailure.NOT_READY, false);
