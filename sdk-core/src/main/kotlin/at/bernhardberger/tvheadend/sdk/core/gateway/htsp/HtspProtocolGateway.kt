@@ -275,8 +275,8 @@ internal class HtspProtocolGateway internal constructor(
                 rememberRuleChannel(event.generation, event.message)
                 event.message.toGatewayMetadata(generationFor(event.generation))?.let { emit(it) }
             }
-            // The initial-sync waiter rejects a report before its marker as MalformedReply.
-            // Afterwards keep the usable snapshot and accept later metadata: retrying a
+            // Before and after the sync marker, keep usable metadata and accept later updates:
+            // the initial-sync waiter accepts skipped metadata, and retrying a
             // deterministic decode failure would repeat it. The next reconnect replaces all
             // reduced state. Ignore retired reports too; never retain or render their tokens.
             is HtspTransportEvent.MalformedMetadata -> Unit

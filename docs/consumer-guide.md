@@ -568,13 +568,15 @@ are display-only during synchronization and do not fill omissions in fresh entit
 `DvrEntry.folder` is recomputed from the current server paths; application-supplied
 folders belong to application-created entries, not the live reducer.
 
-Malformed metadata after initial synchronization is skipped: the session stays
-`Ready` and connected, and later messages continue to apply without reconnecting
-or resynchronizing. Snapshots may remain incomplete for that generation; the next
+Malformed metadata is skipped before and after initial synchronization: a successful
+acknowledgement and sync marker let the session reach `Ready`, and later messages
+continue to apply without reconnecting or resynchronizing. Snapshots may remain
+incomplete for that generation; the next
 reconnect performs a full sync and replaces reduced state and cached snapshots.
-Reports for retired generations are ignored. Before the initial-sync marker, even
-one malformed message fails synchronization with `MALFORMED_RESPONSE`; the existing
-recovery policy requires explicit retry, avoiding a deterministic retry loop.
+Reports for retired generations are ignored. A malformed synchronization
+acknowledgement still fails with `MALFORMED_RESPONSE` and requires explicit retry.
+Metadata delivery overflow still retires the generation and reconnects with backoff
+for a full resync.
 
 With
 `@OptIn(ExperimentalTvheadendApi::class)`, time-based rules expose `removalDays`

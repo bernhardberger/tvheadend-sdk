@@ -23,9 +23,11 @@
   alone retains known members; an empty member list clears them.
 - Channel now/next and DVR-statistics notifications explicitly patch only their
   own fields; patches for unknown IDs are ignored.
-- Pin malformed-metadata policy: post-sync reports leave the session Ready and
-  later updates continue; pre-sync reports fail with `MALFORMED_RESPONSE` and
-  require explicit retry. Reconnects replace potentially incomplete snapshots.
+- Skipped malformed metadata no longer prevents initial synchronization from
+  reaching Ready; pre-sync and post-sync reports both allow later updates to
+  continue without resync. Malformed acknowledgements still fail with
+  `MALFORMED_RESPONSE` and require explicit retry; metadata overflow still
+  reconnects with backoff. Reconnects replace potentially incomplete snapshots.
 
 ### Fixed
 

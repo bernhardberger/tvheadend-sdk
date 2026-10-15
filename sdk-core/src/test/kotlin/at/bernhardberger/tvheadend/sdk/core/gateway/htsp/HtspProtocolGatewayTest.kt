@@ -288,12 +288,19 @@ internal class HtspProtocolGatewayTest {
     }
 
     @ParameterizedTest
-    @CsvSource("false", "true")
+    @CsvSource("false,false", "true,false", "false,true")
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    fun `pre sync malformed metadata fails safely with explicit retry while foreign reports are ignored`(foreign: Boolean) = runTest {
+    fun `pre sync skipped metadata reaches ready but malformed acknowledgement requires explicit retry`(
+        foreign: Boolean,
+        malformedAcknowledgement: Boolean,
+    ) = runTest {
         val source = HtspConnectionGeneration()
         val messages = MutableSharedFlow<HtspTransportEvent>()
-        val fake = metadataConnection(source, messages, if (foreign) HtspConnectionGeneration() else source)
+        val fake = metadataConnection(
+            source, messages,
+            reportBeforeSync = HtspTransportEvent.MalformedMetadata(if (foreign) HtspConnectionGeneration() else source, 1),
+            malformedAcknowledgement = malformedAcknowledgement,
+        )
         val owner = ConnectionOwner(
             HtspProtocolGateway(fake), PhaseOneSessionMetadata(), SessionChildren.None,
             defaultDispatcher = StandardTestDispatcher(testScheduler),
@@ -302,8 +309,23 @@ internal class HtspProtocolGatewayTest {
         try {
             owner.connect(ServerProfile("host"))
             runCurrent()
-            if (foreign) {
-                assertTrue(owner.observation.value.sessionState is SessionState.Ready)
+            if (!malformedAcknowledgement) {
+                val ready = owner.observation.value
+                assertTrue(ready.sessionState is SessionState.Ready)
+                val requests = fake.expectedGenerations.size
+                val disconnects = fake.disconnectCalls
+                advanceTimeBy(60_000)
+                runCurrent()
+                assertSame(ready, owner.observation.value)
+                assertEquals(requests, fake.expectedGenerations.size)
+                assertEquals(disconnects, fake.disconnectCalls)
+                messages.emit(HtspTransportEvent.ServerMessage(
+                    HtspChannelUpdateMessage(channelFixture().copy(channelName = "later")), source, 3,
+                ))
+                runCurrent()
+                assertEquals(ready.sessionState, owner.observation.value.sessionState)
+                val catalog = (owner.observation.value.channelState as ChannelRepositoryState.Current).catalog
+                assertEquals("later", catalog.channels.single().name)
             } else {
                 val failure = SessionFailure.synchronizationFailed(TvheadendFailure.MALFORMED_RESPONSE)
                 assertEquals(SessionState.Unavailable(failure), owner.observation.value.sessionState)
@@ -325,10 +347,40 @@ internal class HtspProtocolGatewayTest {
         }
     }
 
+    @Test
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun `pre sync metadata overflow still retires the generation and schedules backoff`() = runTest {
+        val source = HtspConnectionGeneration()
+        val messages = MutableSharedFlow<HtspTransportEvent>()
+        val fake = metadataConnection(source, messages, HtspTransportEvent.MetadataOverflow(source, 1))
+        val gateway = HtspProtocolGateway(fake)
+        val retries = mutableListOf<Int>()
+        val owner = ConnectionOwner(
+            gateway, PhaseOneSessionMetadata(), SessionChildren.None,
+            defaultDispatcher = StandardTestDispatcher(testScheduler),
+            backoff = ReconnectBackoff { retries += it; 1.seconds },
+        )
+        try {
+            owner.connect(ServerProfile("host"))
+            runCurrent()
+            assertEquals(SessionState.Unavailable(SessionFailure.METADATA_OVERFLOW), owner.observation.value.sessionState)
+            assertEquals(listOf(0), retries)
+            assertSame(HtspConnectionState.Disconnected, fake.connectionState.value)
+            val requests = fake.expectedGenerations.size
+            advanceTimeBy(999)
+            runCurrent()
+            assertEquals(requests, fake.expectedGenerations.size)
+            assertEquals(listOf(0), retries)
+        } finally {
+            owner.shutdown()
+        }
+    }
+
     private fun metadataConnection(
         source: HtspConnectionGeneration,
         messages: MutableSharedFlow<HtspTransportEvent>,
-        malformedBeforeSync: HtspConnectionGeneration? = null,
+        reportBeforeSync: HtspTransportEvent? = null,
+        malformedAcknowledgement: Boolean = false,
     ): FakeHtspConnection = FakeHtspConnection().apply {
         connectOutcome = HtspConnectOutcome.Connected(liveConnection(source))
         eventsFlow = messages
@@ -336,9 +388,9 @@ internal class HtspProtocolGatewayTest {
             when (request) {
                 is GetSysTimeRequest -> executeResult = HtspResult.Ok(GetSysTimeResponse(1_000_000, 0, 0))
                 is EnableAsyncMetadataRequest -> {
-                    executeResult = HtspResult.Ok(HtspEmptyResponse)
+                    executeResult = if (malformedAcknowledgement) HtspResult.MalformedReply else HtspResult.Ok(HtspEmptyResponse)
                     messages.emit(HtspTransportEvent.ServerMessage(HtspChannelAddMessage(channelFixture()), source, 1))
-                    malformedBeforeSync?.let { messages.emit(HtspTransportEvent.MalformedMetadata(it, 1)) }
+                    reportBeforeSync?.let { messages.emit(it) }
                     messages.emit(HtspTransportEvent.ServerMessage(HtspInitialSyncCompletedMessage, source, 2))
                 }
                 else -> error("Unexpected metadata request")
