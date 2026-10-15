@@ -1,6 +1,6 @@
 # Versioning and compatibility
 
-The source targets the unreleased provisional `0.30.0` release under these
+The source is configured for the provisional `0.30.0` release under these
 coordinates:
 
 - `at.bernhardberger.tvheadend:sdk-android:0.30.0`
@@ -13,10 +13,10 @@ Source, local staging, and CI
 do not establish that the configured `0.30.0` coordinates are publicly available;
 check Maven Central before selecting them.
 
-The development baseline is `v0.29.0`. Local prerelease builds may use
+The development baseline is `v0.29.0`. Local candidate verification may use
 `-PsdkCandidateVersion=0.30.0-htsp-model-SNAPSHOT`; the existing release checks
-require a plain major-zero version in source. This development target is not a
-release or publication claim. See [releasing](releasing.md).
+require a plain major-zero version in source. Candidate staging is not a
+publication claim. See [releasing](releasing.md).
 
 The signed `v0.3.3` tag is retained as development-release evidence after its
 Central deployment failed. No `0.3.3` Maven artifacts or GitHub release became
@@ -36,7 +36,7 @@ While the major version is zero, the public API and behavior are provisional.
 No source, binary, or behavioral compatibility is promised for the provisional
 0.x line. A known breaking change requires the next minor version, not a patch
 version. Patch versions are reserved for backward-compatible fixes. The `0.30.0`
-development cycle adopts the HTSP entity model; the current HTSP pin is recorded in
+minor adopts the HTSP entity model; the current HTSP pin is recorded in
 [`gradle/libs.versions.toml`](../gradle/libs.versions.toml). Local verification of
 an unreleased HTSP candidate uses the opt-in repository described in
 [offline verification](offline-verification.md#staged-consumer-and-r8).
