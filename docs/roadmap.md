@@ -213,6 +213,11 @@ experimental opt-in; see the [0.27 design note](consumer-gaps-0.27.md).
   Android TV disallows media picture-in-picture, so this is not needed for
   the Android TV 1.0.
 
+### 0.28: programme credits (released)
+
+0.28.0 was released on 2026-10-14. Programme credits (cast and crew) ship
+as experimental EPG metadata.
+
 ### Next 0.x minors: player-driven gaps
 
 The owner decided on 2026-10-12 not to start the 1.0 track yet. 0.x minors
@@ -220,7 +225,6 @@ continue to close gaps the player finds, with new API behind the experimental
 opt-in.
 
 - Gaps from the player as it approaches its release candidate.
-- Programme credits (cast and crew) ship in 0.28 as experimental EPG metadata.
 - Gaps from an optional mobile proof-of-concept app. Mobile is likely to test
   what Android TV does not: picture-in-picture (a second coordinator per
   session), background playback from a media service with deep sleep, and

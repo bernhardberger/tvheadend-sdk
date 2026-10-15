@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.29.0]
+
+Unreleased; development target.
+
 ## [0.28.0]
 
 Released 2026-10-14.
