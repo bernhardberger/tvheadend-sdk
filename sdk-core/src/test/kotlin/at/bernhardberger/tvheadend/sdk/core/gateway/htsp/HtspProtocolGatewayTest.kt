@@ -162,6 +162,16 @@ import at.bernhardberger.tvheadend.sdk.core.AutorecRuleId
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.RecordingRuleChannel
+import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.ServerProfile
+import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
+import at.bernhardberger.tvheadend.sdk.core.SessionFailure
+import at.bernhardberger.tvheadend.sdk.core.SessionRecoveryDisposition
+import at.bernhardberger.tvheadend.sdk.core.SessionState
+import at.bernhardberger.tvheadend.sdk.core.session.ConnectionOwner
+import at.bernhardberger.tvheadend.sdk.core.session.PhaseOneSessionMetadata
+import at.bernhardberger.tvheadend.sdk.core.session.ReconnectBackoff
+import at.bernhardberger.tvheadend.sdk.core.session.SessionChildren
 import at.bernhardberger.tvheadend.sdk.core.StreamProfile
 import at.bernhardberger.tvheadend.sdk.core.StreamProfileId
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleCreate
@@ -206,6 +216,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.yield
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -228,6 +240,112 @@ import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
 internal class HtspProtocolGatewayTest {
+    @ParameterizedTest
+    @CsvSource("false", "true")
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun `post sync malformed metadata preserves ready and later updates including retired reports`(retired: Boolean) = runTest {
+        val source = HtspConnectionGeneration()
+        val messages = MutableSharedFlow<HtspTransportEvent>()
+        val fake = metadataConnection(source, messages)
+        val gateway = HtspProtocolGateway(fake)
+        val oldSource = HtspConnectionGeneration()
+        fake.connectOutcome = HtspConnectOutcome.Connected(liveConnection(oldSource))
+        gateway.connect(ServerConfiguration("host", 9_982))
+        gateway.disconnect()
+        fake.connectOutcome = HtspConnectOutcome.Connected(liveConnection(source))
+        val owner = ConnectionOwner(
+            gateway, PhaseOneSessionMetadata(), SessionChildren.None,
+            defaultDispatcher = StandardTestDispatcher(testScheduler),
+            backoff = ReconnectBackoff { error("Malformed metadata must not schedule recovery") },
+        )
+        try {
+            owner.connect(ServerProfile("host"))
+            runCurrent()
+            val ready = owner.observation.value
+            assertTrue(ready.sessionState is SessionState.Ready)
+            val disconnects = fake.disconnectCalls
+            val requests = fake.expectedGenerations.size
+            val report = HtspTransportEvent.MalformedMetadata(if (retired) oldSource else source, 3)
+            assertEquals("MalformedMetadata(generation=<redacted>, count=3)", report.toString())
+            messages.emit(report)
+            runCurrent()
+            advanceTimeBy(60_000)
+            runCurrent()
+            assertSame(ready, owner.observation.value)
+            assertEquals(disconnects, fake.disconnectCalls)
+            assertEquals(requests, fake.expectedGenerations.size)
+            assertSame(source, (fake.connectionState.value as HtspConnectionState.Connected).connection.generation)
+            messages.emit(HtspTransportEvent.ServerMessage(
+                HtspChannelUpdateMessage(channelFixture().copy(channelName = "later")), source, 3,
+            ))
+            runCurrent()
+            assertEquals(ready.sessionState, owner.observation.value.sessionState)
+            val catalog = (owner.observation.value.channelState as ChannelRepositoryState.Current).catalog
+            assertEquals("later", catalog.channels.single().name)
+        } finally {
+            owner.shutdown()
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource("false", "true")
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun `pre sync malformed metadata fails safely with explicit retry while foreign reports are ignored`(foreign: Boolean) = runTest {
+        val source = HtspConnectionGeneration()
+        val messages = MutableSharedFlow<HtspTransportEvent>()
+        val fake = metadataConnection(source, messages, if (foreign) HtspConnectionGeneration() else source)
+        val owner = ConnectionOwner(
+            HtspProtocolGateway(fake), PhaseOneSessionMetadata(), SessionChildren.None,
+            defaultDispatcher = StandardTestDispatcher(testScheduler),
+            backoff = ReconnectBackoff { error("Malformed response requires explicit retry") },
+        )
+        try {
+            owner.connect(ServerProfile("host"))
+            runCurrent()
+            if (foreign) {
+                assertTrue(owner.observation.value.sessionState is SessionState.Ready)
+            } else {
+                val failure = SessionFailure.synchronizationFailed(TvheadendFailure.MALFORMED_RESPONSE)
+                assertEquals(SessionState.Unavailable(failure), owner.observation.value.sessionState)
+                assertEquals(SessionRecoveryDisposition.EXPLICIT_RETRY, failure.recoveryDisposition)
+                assertEquals(
+                    "SessionFailure(kind=SYNCHRONIZATION_FAILED, operationFailure=MALFORMED_RESPONSE)",
+                    failure.toString(),
+                )
+                val requests = fake.expectedGenerations.size
+                val disconnects = fake.disconnectCalls
+                advanceTimeBy(60_000)
+                runCurrent()
+                assertEquals(requests, fake.expectedGenerations.size)
+                assertEquals(disconnects, fake.disconnectCalls)
+                assertEquals(SessionCommandResult.STARTED, owner.retry())
+            }
+        } finally {
+            owner.shutdown()
+        }
+    }
+
+    private fun metadataConnection(
+        source: HtspConnectionGeneration,
+        messages: MutableSharedFlow<HtspTransportEvent>,
+        malformedBeforeSync: HtspConnectionGeneration? = null,
+    ): FakeHtspConnection = FakeHtspConnection().apply {
+        connectOutcome = HtspConnectOutcome.Connected(liveConnection(source))
+        eventsFlow = messages
+        beforeExecute = { request ->
+            when (request) {
+                is GetSysTimeRequest -> executeResult = HtspResult.Ok(GetSysTimeResponse(1_000_000, 0, 0))
+                is EnableAsyncMetadataRequest -> {
+                    executeResult = HtspResult.Ok(HtspEmptyResponse)
+                    messages.emit(HtspTransportEvent.ServerMessage(HtspChannelAddMessage(channelFixture()), source, 1))
+                    malformedBeforeSync?.let { messages.emit(HtspTransportEvent.MalformedMetadata(it, 1)) }
+                    messages.emit(HtspTransportEvent.ServerMessage(HtspInitialSyncCompletedMessage, source, 2))
+                }
+                else -> error("Unexpected metadata request")
+            }
+        }
+    }
+
     @Test
     fun `live admission and retirement share one atomic boundary`() = runTest {
         val fake = connectedFake()

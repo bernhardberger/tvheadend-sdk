@@ -22,8 +22,10 @@
   values that are cleared now also clear in SDK snapshots. Omitted tag membership
   alone retains known members; an empty member list clears them.
 - Channel now/next and DVR-statistics notifications explicitly patch only their
-  own fields; patches for unknown IDs are ignored. Malformed-metadata recovery
-  policy remains pending.
+  own fields; patches for unknown IDs are ignored.
+- Pin malformed-metadata policy: post-sync reports leave the session Ready and
+  later updates continue; pre-sync reports fail with `MALFORMED_RESPONSE` and
+  require explicit retry. Reconnects replace potentially incomplete snapshots.
 
 ### Fixed
 
