@@ -4,9 +4,8 @@
 [![Maven Central](https://img.shields.io/maven-central/v/at.bernhardberger.tvheadend/sdk-core)](https://central.sonatype.com/artifact/at.bernhardberger.tvheadend/sdk-core)
 [![License: GPLv3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 
-This independently maintained GPLv3 Kotlin SDK provides JVM and Android
-libraries for applications that connect to Tvheadend. It is not official
-Tvheadend software.
+This unofficial, independently maintained GPLv3 Kotlin SDK provides JVM and
+Android libraries for applications that connect to Tvheadend.
 
 The SDK is split into five libraries:
 
