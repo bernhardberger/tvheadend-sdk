@@ -6,6 +6,8 @@ Unreleased; development target.
 
 ### Changed
 
+- Experimental `EpgEvent.credits` now carries one entry per wire name/role pair in
+  server order; repeated names are possible when a person has several roles.
 - BREAKING: remove unreachable `SessionFailure.PERMISSION_DENIED` and
   `SessionFailure.NO_CHANNELS`, and both corresponding `SessionFailureKind` values.
   Authentication rejection remains `AUTHENTICATION_REJECTED`; synchronization

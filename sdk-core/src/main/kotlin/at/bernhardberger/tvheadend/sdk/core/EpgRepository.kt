@@ -116,8 +116,8 @@ public data class EpgEvent private constructor(
      * Cast and crew in server order, or null when no credits were sent. Absence is normal:
      * TVHeadend emits these only for XMLTV with "scrape extra" enabled, not DVB EIT or basic
      * HTSP output (src/htsp_server.c:1373-1374; src/epggrab/module/xmltv.c:705-709,793,884).
-     * HTSP 1.0.0-beta.1 decodes a name-to-role map: only the last role for a name survives,
-     * so a person who is both director and writer appears once. The SDK preserves that result.
+     * Each wire name/role pair is retained in server order. Names can repeat, for example
+     * when the same person is both director and writer; the SDK preserves both entries.
      *
      * Estimated incremental retention on a compressed-reference JVM with 20-character Latin-1
      * names: about 96 bytes per credit (including name and list slots), plus about 128 bytes

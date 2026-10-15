@@ -1078,6 +1078,29 @@ internal class HtspProtocolGatewayTest {
             ) + fields, 44L) as HtspMetadataMessage
 
     @Test
+    fun `credits retain repeated names with distinct roles in server order`() = runTest {
+        val generation = HtspConnectionGeneration()
+        val event = HtspEvent(
+            eventId = 1, channelId = 2, startEpochSeconds = 10, stopEpochSeconds = 20,
+            credits = HtspProgrammeCredits(listOf(
+                HtspProgrammeCredit("Same person", "writer"),
+                HtspProgrammeCredit("Same person", "director"),
+            )),
+        )
+        val fake = FakeHtspConnection().apply {
+            eventsFlow = flowOf(HtspEventAddMessage(event), HtspEventUpdateMessage(event))
+                .map { HtspTransportEvent.ServerMessage(it, generation, 1) }
+        }
+        val events = HtspProtocolGateway(fake).metadata.toList()
+        val expected = listOf(
+            EpgCredit("Same person", EpgCreditRole.WRITER),
+            EpgCredit("Same person", EpgCreditRole.DIRECTOR),
+        )
+        assertEquals(expected, (events[0] as MetadataEvent.EventAdded).event.credits)
+        assertEquals(expected, (events[1] as MetadataEvent.EventUpdated).event.credits)
+    }
+
+    @Test
     fun `credits map known and unknown roles in order and preserve absent and empty updates`() = runTest {
         val generation = HtspConnectionGeneration()
         val roles = listOf("actor", "director", "guest", "presenter", "writer", "composer")

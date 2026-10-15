@@ -321,7 +321,8 @@ Null means the server sent no credits (normal for DVB EIT and basic HTSP output;
 XMLTV needs "scrape extra"). Events restored from a pre-0.28 cache also have null
 credits until the next sync. Compare `EpgCreditRole.ACTOR`, `DIRECTOR`, `GUEST`,
 `PRESENTER`, or `WRITER`, and keep a fallback using `role.raw` for unknown roles.
-The pinned HTSP decoder retains only the last role per name. Omitted credits in
+Each wire name/role pair is retained in server order, so the same name can appear
+with several roles. Do not key the list by name alone. Omitted credits in
 a full update clear existing credits to null; an explicit empty list replaces
 them with an empty list. DVR entries do
 not carry credits; use the associated EPG event when available.
