@@ -573,6 +573,15 @@ public data class ServerCapabilities private constructor(
     public val streaming: CapabilityAccess,
     public val dvrWrite: CapabilityAccess,
     public val protocolDvr: CapabilityAccess,
+    /**
+     * Access to failed recordings. When [CapabilityAccess.DENIED], TVHeadend stops sending
+     * `dvrEntryUpdate` once an entry counts as failed, without sending `dvrEntryDelete`.
+     * The SDK retains its last observed state (possibly scheduled or recording) until reconnect
+     * removes the now-hidden entry. Mutations return [TvheadendFailure.SERVER_REJECTED] with an
+     * access message; the same rejection can mean owner mismatch, so the SDK does not infer failure.
+     * Consumers may label a still-scheduled/recording entry as possibly failed when this right is
+     * denied and the current time exceeds its stop plus post padding and an application grace period.
+     */
     public val failedDvr: CapabilityAccess,
     public val admin: CapabilityAccess,
     public val anonymous: CapabilityAccess,

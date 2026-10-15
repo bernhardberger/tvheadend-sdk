@@ -501,6 +501,26 @@ Application tests can use `DvrChange.create(...)` and
 `FakeDvrRepository.emitChange(change)`. Emission does not update the fake snapshot;
 publish observation state separately when a test needs both.
 
+### Failed-recording visibility
+
+When `ServerCapabilities.failedDvr == CapabilityAccess.DENIED`, the account lacks
+TVHeadend's failed-recordings right. Once an entry counts as failed, TVHeadend
+stops sending `dvrEntryUpdate` for it and sends no `dvrEntryDelete`. The SDK keeps
+the last observed state, which may still be `SCHEDULED` or `RECORDING`; a reconnect
+removes the now-hidden entry from the synchronized snapshot.
+
+Mutations on that entry return `SERVER_REJECTED` with an access message (available
+through the experimental display-only `serverMessage`). The SDK does not infer a
+recording failure from rejection: owner mismatch can produce the same response.
+Do not match the localized message text.
+
+A consumer can present an entry as **possibly failed** when `failedDvr` is `DENIED`,
+its last observed state is `SCHEDULED` or `RECORDING`, and the current time is past
+its `stop` plus post padding and an application-chosen grace period. This is a
+presentation heuristic, not a confirmed state transition or `RECORDING_FAILED`
+event. TVHeadend implements this visibility filtering in `dvr_entry_verify`
+(`src/dvr/dvr_db.c`) and its HTSP DVR update delivery (`src/htsp_server.c`).
+
 ### Snapshots and commands
 
 DVR fields use `java.time.DayOfWeek`, whole-minute `java.time.LocalTime` and
