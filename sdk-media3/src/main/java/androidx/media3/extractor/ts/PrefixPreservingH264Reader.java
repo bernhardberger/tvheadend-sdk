@@ -410,7 +410,7 @@ public final class PrefixPreservingH264Reader implements ElementaryStreamReader 
         prefixStartsPicture = false;
       }
       if (vcl && readingSample && !sampleHasVcl && sampleTimeUs == C.TIME_UNSET) {
-        // TVHeadend can send AUD/SPS/PPS untimed ahead of the timed PES carrying the first slice.
+        // Tvheadend can send AUD/SPS/PPS untimed ahead of the timed PES carrying the first slice.
         sampleTimeUs = nalUnitTimeUs;
       }
       if (vcl && readingSample) sampleHasVcl = true;

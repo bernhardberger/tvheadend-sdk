@@ -1,6 +1,6 @@
 # SDK acceptance
 
-Phase 6 SDK acceptance was run on 2026-08-25 against TVHeadend
+Phase 6 SDK acceptance was run on 2026-08-25 against Tvheadend
 `4.3-2735~gfcd987f0b` using the G10 Smart TV Pro on Android API 31. The run used
 one physical device. The independent-process checks below do not claim
 verification on two physical devices.

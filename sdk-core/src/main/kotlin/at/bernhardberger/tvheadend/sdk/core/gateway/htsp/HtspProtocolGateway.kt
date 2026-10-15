@@ -971,7 +971,7 @@ internal class HtspProtocolGateway internal constructor(
     }
 
     /**
-     * Opens the stored file of one DVR entry using TVHeadend's `dvr/<id>` selector.
+     * Opens the stored file of one DVR entry using Tvheadend's `dvr/<id>` selector.
      *
      * The negotiated protocol version is snapshotted from the same live generation that opens the
      * handle, because only that version decides whether the matching close may keep the entry's
@@ -1066,7 +1066,7 @@ internal class HtspProtocolGateway internal constructor(
     /**
      * Closes one recording handle without inflating the entry's play count.
      *
-     * TVHeadend increments the play count on every close whose `playcount` field is absent, so a
+     * Tvheadend increments the play count on every close whose `playcount` field is absent, so a
      * plain close would count each extractor reopen as another play. The keep sentinel suppresses
      * that, but the field only exists from protocol 27, so an older server falls back to a plain
      * close rather than a request the transport would refuse. A DataSource close may be only an

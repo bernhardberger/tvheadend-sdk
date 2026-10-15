@@ -308,7 +308,7 @@ public sealed interface DvrMutationResult<out T> {
          * Untrusted, display-only server text, sanitized and bounded to 256 UTF-16 code units.
          * Only the first 1024 UTF-16 code units are processed; neither bound splits surrogate pairs.
          * Control, format and line/paragraph separator code points are replaced with spaces.
-         * TVHeadend translates fixed catalogue errors into the connection/account language;
+         * Tvheadend translates fixed catalogue errors into the connection/account language;
          * never match this text for control flow. Null unless [failure] is SERVER_REJECTED.
          * Never include it in logs or diagnostics. Equality and hashing ignore this message.
          */

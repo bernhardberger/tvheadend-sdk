@@ -165,7 +165,7 @@ internal class SubscriptionTimestampRebaser(private val settings: TimestampRebas
      * packet budget releases streams that never report a frame type. Before a track set is
      * committed the stream classification is unknown, so any I frame may anchor.
      *
-     * An unclassified stream stays a candidate on purpose. TVHeadend reports a frame type only
+     * An unclassified stream stays a candidate on purpose. Tvheadend reports a frame type only
      * for video packets, so an I frame on a stream this SDK cannot classify is positive evidence
      * that the stream carries video, and waiting for it is the accurate reading of the resumed
      * segment. A stream that is not video simply never reports one and the budget releases it.

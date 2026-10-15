@@ -299,7 +299,7 @@ internal class TvheadendLiveMediaSourceTest {
         bridge.subscriptionOpened(subscription, LiveSubscriptionPriority.NORMAL)
         assertTrue(subscription.priorities.isEmpty())
 
-        // TVHeadend applied YIELD but its reply was lost.
+        // Tvheadend applied YIELD but its reply was lost.
         subscription.priorityAction = { SubscriptionOperationResult.Failed(TvheadendFailure.TIMEOUT) }
         assertEquals(
             SubscriptionOperationResult.Failed(TvheadendFailure.TIMEOUT),

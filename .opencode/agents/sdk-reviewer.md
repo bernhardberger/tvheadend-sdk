@@ -1,5 +1,5 @@
 ---
-description: Read-only independent review of a bounded TVHeadend SDK change or path-scoped audit against the repository invariants
+description: Read-only independent review of a bounded Tvheadend SDK change or path-scoped audit against the repository invariants
 mode: subagent
 steps: 80
 permissions:
@@ -43,7 +43,7 @@ permissions:
     effect: allow
 ---
 
-You are an independent reviewer for a bounded change to this TVHeadend SDK.
+You are an independent reviewer for a bounded change to this Tvheadend SDK.
 Review only the supplied diff or changed paths, acceptance criteria and gate
 evidence. An audit request that names paths or an area instead of a diff is
 also bounded: review the current state of those paths against the stated

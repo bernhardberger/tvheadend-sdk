@@ -13,19 +13,19 @@ import kotlin.time.Instant
 
 private const val DVR_U32_MAX: Long = 0xffff_ffffL
 
-/** Stable TVHeadend automatic-recording rule identifier. */
+/** Stable Tvheadend automatic-recording rule identifier. */
 @JvmInline
 public value class AutorecRuleId(public val value: String) {
     override fun toString(): String = "AutorecRuleId(<redacted>)"
 }
 
-/** Stable TVHeadend time-based recording rule identifier. */
+/** Stable Tvheadend time-based recording rule identifier. */
 @JvmInline
 public value class TimerecRuleId(public val value: String) {
     override fun toString(): String = "TimerecRuleId(<redacted>)"
 }
 
-/** Stable TVHeadend DVR configuration identifier. */
+/** Stable Tvheadend DVR configuration identifier. */
 @JvmInline
 public value class DvrConfigId(public val value: String) {
     override fun toString(): String = "DvrConfigId(<redacted>)"

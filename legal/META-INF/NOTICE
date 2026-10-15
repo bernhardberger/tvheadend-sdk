@@ -1,6 +1,6 @@
 # Notices and attribution
 
-This TVHeadend SDK is independently maintained GPLv3 software. It is not
+This Tvheadend SDK is independently maintained GPLv3 software. It is not
 affiliated with, endorsed by, or sponsored by the
 [Tvheadend project](https://github.com/tvheadend/tvheadend).
 

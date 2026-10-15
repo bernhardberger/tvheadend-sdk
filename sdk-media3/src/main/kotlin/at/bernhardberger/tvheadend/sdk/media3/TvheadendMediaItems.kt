@@ -2,7 +2,7 @@ package at.bernhardberger.tvheadend.sdk.media3
 
 import androidx.media3.common.MediaItem
 
-/** Reserved media id of every item installed by the TVHeadend live source. */
+/** Reserved media id of every item installed by the Tvheadend live source. */
 internal const val LIVE_MEDIA_ID: String = "tvheadend-live"
 
 /**

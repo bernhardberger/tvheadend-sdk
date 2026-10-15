@@ -1,7 +1,7 @@
 # Consumer API guide
 
 This guide covers the application-facing API of the independently maintained
-TVHeadend Kotlin SDK. It is not official TVHeadend software. The SDK is GPLv3
+Tvheadend Kotlin SDK. It is not official Tvheadend software. The SDK is GPLv3
 and links the GPLv3 HTSP protocol library.
 
 ## Mutable live startup buffer (experimental)
@@ -278,7 +278,7 @@ Use observation point selectors when selecting related entities:
 account first, then RECORDING/RECORDING_ERROR, then SCHEDULED, then the event's
 `dvrEntryId` link, latest stop (unknown last), and lowest entry ID. Owner comparison
 is exact after the SDK's username normalization; anonymous sessions and missing
-owners receive no ownership preference. TVHeadend's event `dvrId` is just its first
+owners receive no ownership preference. Tvheadend's event `dvrId` is just its first
 visible broadcast match and is not authoritative. The selector returns null when
 the event ID is unknown or ambiguous, no linked entries exist, or matched entries
 are ambiguous because they contain duplicate DVR entry IDs. Unlinked time-window
@@ -302,11 +302,11 @@ held search or history results when the profile changes.
 lists are immutable and preserve SDK catalog order. Presentation filtering,
 grouping, and UI policy are not SDK APIs.
 
-`channelComparator()` returns the standard TVHeadend channel order: numbered
+`channelComparator()` returns the standard Tvheadend channel order: numbered
 channels by major number, minor number (absent first) and name, then unnumbered
 channels by name, with missing or blank names last and `ChannelId` as the final
 tie-break. Pass a `java.text.Collator` to choose the name locale; the default
-uses the JVM default locale. TVHeadend reports `0` for an unnumbered channel, so
+uses the JVM default locale. Tvheadend reports `0` for an unnumbered channel, so
 use `Channel.hasChannelNumber` before displaying or dialling `number`.
 
 `EpgEvent.contentGenre` and `DvrEntry.contentGenre` decode the raw ETSI EN 300 468
@@ -459,7 +459,7 @@ that a programme remains in the server's seekable buffer.
 ### Display a mutation rejection
 
 With `@OptIn(ExperimentalTvheadendApi::class)`, `DvrMutationResult.Failed.serverMessage`
-provides optional untrusted, display-only text for `SERVER_REJECTED`. TVHeadend
+provides optional untrusted, display-only text for `SERVER_REJECTED`. Tvheadend
 translates its catalogue errors into the connection/account language: never match
 strings to infer permission, state or retry policy. The SDK first bounds input to
 1024 UTF-16 code units, NFC-normalizes, replaces control, format and line/paragraph
@@ -520,7 +520,7 @@ otherwise the generation's estimated server time at acceptance, must be more tha
 60 seconds before the entry's scheduled `stop` to classify `RECORDING_STOPPED`.
 This tolerance allows for server-time estimate skew. Padding is not subtracted or
 added. Within that tolerance, at/after the stop, or without enough timing evidence, the
-change is `RECORDING_COMPLETED`. TVHeadend sends no distinct external-stop marker;
+change is `RECORDING_COMPLETED`. Tvheadend sends no distinct external-stop marker;
 early completion therefore remains a timing inference, and late external stops are
 indistinguishable from natural completion.
 
@@ -531,7 +531,7 @@ publish observation state separately when a test needs both.
 ### Failed-recording visibility
 
 When `ServerCapabilities.failedDvr == CapabilityAccess.DENIED`, the account lacks
-TVHeadend's failed-recordings right. Once an entry counts as failed, TVHeadend
+Tvheadend's failed-recordings right. Once an entry counts as failed, Tvheadend
 stops sending `dvrEntryUpdate` for it and sends no `dvrEntryDelete`. The SDK keeps
 the last observed state, which may still be `SCHEDULED` or `RECORDING`; a reconnect
 removes the now-hidden entry from the synchronized snapshot.
@@ -545,7 +545,7 @@ A consumer can present an entry as **possibly failed** when `failedDvr` is `DENI
 its last observed state is `SCHEDULED` or `RECORDING`, and the current time is past
 its `stop` plus post padding and an application-chosen grace period. This is a
 presentation heuristic, not a confirmed state transition or `RECORDING_FAILED`
-event. TVHeadend implements this visibility filtering in `dvr_entry_verify`
+event. Tvheadend implements this visibility filtering in `dvr_entry_verify`
 (`src/dvr/dvr_db.c`) and its HTSP DVR update delivery (`src/htsp_server.c`).
 
 ### Snapshots and commands
@@ -667,7 +667,7 @@ propagate with `mayHaveApplied=false`; access denial updates DVR write-access pr
 like a refused write. Other entry states without an explicit config, watch-state
 changes, resume reset, and playback progress do not gain this lookup.
 
-**Known server limitations:** with an ACL config list, TVHeadend can translate
+**Known server limitations:** with an ACL config list, Tvheadend can translate
 the name back to a UUID before the entry update's name-only lookup, silently
 selecting the default profile. The client cannot detect this from the config
 list. A config rename in the small interval between lookup and update can also
@@ -914,7 +914,7 @@ the byte bound, and a low-bitrate one reaches the sample bound.
 
 When the queues fill while the live item still belongs to the target, the
 coordinator stops the player and removes only the
-TVHeadend item, which closes the subscription and releases the buffers. It
+Tvheadend item, which closes the subscription and releases the buffers. It
 then retires the target and reports `PlaybackRecoveryReason.LIVE_BUFFER_EXHAUSTED`
 through the `onRecoveryRequired` callback of `createTvheadendPlaybackCoordinator`.
 This is not a player error, and the player stays application-owned. Resuming
@@ -951,7 +951,7 @@ of the following distinct reasons. Neither case guarantees buffer release.
   retired, with cleanup pending. `stop()` or the next `setLiveTarget()` /
   `setRecordingTarget()` retries cleanup. The period fails and server delivery ends without another
   event (`ConsumerFailed` or `Closed`), even while cleanup remains pending.
-  If the leftover TVHeadend item is still current, the Player may also
+  If the leftover Tvheadend item is still current, the Player may also
   report "Live sample buffer limit reached" as a player error; it needs no
   handling beyond the callback.
 
@@ -1159,7 +1159,7 @@ audio track or tell the user that the format cannot be played on this device.
 
 ### Ownership and shutdown
 
-The coordinator may install and retire TVHeadend sources and listeners on the
+The coordinator may install and retire Tvheadend sources and listeners on the
 player's application looper. It does not construct or release the player and
 does not own a `MediaSession`, service, audio focus, notifications, surfaces,
 autoplay, navigation, UI, or presentation policy.
@@ -1391,7 +1391,7 @@ already drops external URLs and malformed selectors. For other image-cache
 selector strings, such as `EpgEvent.image`, use `ArtworkId.parse`, which accepts
 only positive `imagecache/<id>` selectors (a leading `/` is tolerated) and
 returns `null` for absent, external, malformed, or unsupported values. The opaque model
-binds the authenticated load to the captured session generation. TVHeadend
+binds the authenticated load to the captured session generation. Tvheadend
 requires recorder access for this file API; denied loads fail safely.
 
 With a cache policy, the model captures `ArtworkLoader.cacheKey`, an opaque

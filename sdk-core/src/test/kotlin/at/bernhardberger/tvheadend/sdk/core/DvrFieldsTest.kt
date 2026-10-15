@@ -21,7 +21,7 @@ import kotlin.time.Duration.Companion.seconds
 internal class DvrFieldsTest {
     @Test
     fun `known open values round trip and unknown values use documented fallbacks`() {
-        // TVHeadend src/dvr/dvr.h priority, autorec-record and broadcast enums.
+        // Tvheadend src/dvr/dvr.h priority, autorec-record and broadcast enums.
         val priorities = listOf(
             DvrPriority.IMPORTANT, DvrPriority.HIGH, DvrPriority.NORMAL, DvrPriority.LOW,
             DvrPriority.UNIMPORTANT, DvrPriority.NOT_SET, DvrPriority.DEFAULT,

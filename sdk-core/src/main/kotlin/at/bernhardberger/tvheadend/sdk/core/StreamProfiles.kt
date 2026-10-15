@@ -3,7 +3,7 @@ package at.bernhardberger.tvheadend.sdk.core
 import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.util.Collections
 
-/** Canonical lowercase 128-bit TVHeadend stream-profile UUID. */
+/** Canonical lowercase 128-bit Tvheadend stream-profile UUID. */
 @JvmInline
 public value class StreamProfileId(public val value: String) {
     init {

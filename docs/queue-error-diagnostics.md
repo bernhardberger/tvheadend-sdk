@@ -29,7 +29,7 @@ Producer P36-H1 verified all signed Central members and GitHub assets:
 - Sources JAR SHA-256: `f4a2b3b3ce3a09cb9d268f7d1d98a712773fd6755300fbdce58af71ab33cc13b`
 - Release manifest SHA-256: `bfa2f116907bdf72106c543921204c95014da94434d41bd8b62790dc9f0a7ec3`
 
-Upstream TVHeadend pins `27295c5a48f2c575678bb224014cb9a26a773083` and
+Upstream Tvheadend pins `27295c5a48f2c575678bb224014cb9a26a773083` and
 `9a6f78d37c1db9ca68df62512efb410a207885ec` share `src/htsp_server.c` blob
 `2837efd3b41ae0ba7f82de2853d8a1d4a1ea88e1`: lines 4159-4160 accumulate
 packet errors; lines 4225-4226 emit optional u32 `errors`.

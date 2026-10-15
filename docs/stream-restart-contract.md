@@ -153,7 +153,7 @@ queued-media fencing, pending seek/late acknowledgement, retained targets and pl
 handoff bounds, rapid epochs, missing restart, generation loss, late open/release, source
 re-preparation, and continuing large-clock A/V timestamps mapped near zero.
 
-`LiveStreamRestartInstrumentationTest` uses real ExoPlayer and maintained TVHeadend
+`LiveStreamRestartInstrumentationTest` uses real ExoPlayer and maintained Tvheadend
 renderers with recorded fixtures. It checks actual timeline replacement and selected
 tracks for both playing and paused intent. Both tests passed on the configured Android
 device on 2026-09-08 through `tools/sdk-device`, using unchanged MPEG-audio followed

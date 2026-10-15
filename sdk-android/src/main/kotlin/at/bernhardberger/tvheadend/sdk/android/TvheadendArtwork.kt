@@ -24,7 +24,7 @@ import okio.FileSystem
 import okio.buffer
 import okio.source
 
-/** Opaque Coil model for one authenticated TVHeadend image-cache entry. */
+/** Opaque Coil model for one authenticated Tvheadend image-cache entry. */
 public class TvheadendArtwork private constructor(
     internal val session: TvheadendSession,
     internal val currentSession: CurrentSessionObservation,

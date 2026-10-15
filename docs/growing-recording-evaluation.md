@@ -120,7 +120,7 @@ authored synthetic transport-stream fixture, and this evidence amendment. It
 makes no production source, public API, build, dependency, or ABI change.
 
 SDK source paths below are relative to the repository root. HTSP and pinned
-TVHeadend paths refer to maintainer-local sibling checkouts used for
+Tvheadend paths refer to maintainer-local sibling checkouts used for
 exact-version evidence; those checkouts are not shipped with this repository.
 
 Evidence was taken from:
@@ -130,7 +130,7 @@ Evidence was taken from:
 - the P7-F1 test prototype based on committed P7-1 result
   `95ba0368c499f9425ebd29b848aaad9af68995a0`;
 - `tvheadend-htsp` 0.7.0 source and tests;
-- pinned TVHeadend source revision
+- pinned Tvheadend source revision
   `27295c5a48f2c575678bb224014cb9a26a773083`;
 - official AndroidX Media3 1.11.0 source at commit
   `2bc207851df311340767e913931ca7b28cab1794`; and
@@ -261,13 +261,13 @@ hidden rather than being misreported as EOF.
 ### Stock active-recording seek is not available
 
 The stock progressive extractors do not create a growing seek map for the
-TVHeadend output forms evaluated here.
+Tvheadend output forms evaluated here.
 
 | Container | Active-file behavior in Media3 1.11.0 | Exact evidence |
 |---|---|---|
-| Built-in Matroska | The first Cluster without already advertised Cues emits `SeekMap.Unseekable`; `sentSeekMap` makes that decision final. TVHeadend writes Cues and final duration at close. | [MatroskaExtractor 834-865](https://github.com/androidx/media/blob/2bc207851df311340767e913931ca7b28cab1794/libraries/extractor/src/main/java/androidx/media3/extractor/mkv/MatroskaExtractor.java#L834-L865), [925-950](https://github.com/androidx/media/blob/2bc207851df311340767e913931ca7b28cab1794/libraries/extractor/src/main/java/androidx/media3/extractor/mkv/MatroskaExtractor.java#L925-L950), `../tvheadend-upstream/src/muxer/muxer_mkv.c:1306-1347` |
-| MPEG-TS with unknown length | Unknown input length skips duration scanning and emits a permanent unseekable map. Later PCR-bearing packets do not enlarge it. TVHeadend's pass muxer appends packets without a final index. | [TsExtractor 441-448](https://github.com/androidx/media/blob/2bc207851df311340767e913931ca7b28cab1794/libraries/extractor/src/main/java/androidx/media3/extractor/ts/TsExtractor.java#L441-L448), [551-569](https://github.com/androidx/media/blob/2bc207851df311340767e913931ca7b28cab1794/libraries/extractor/src/main/java/androidx/media3/extractor/ts/TsExtractor.java#L551-L569), `../tvheadend-upstream/src/muxer/muxer_pass.c:548-617,624-752` |
-| av-lib MP4 with extractor/index unresolved | If Media3 selects `FragmentedMp4Extractor` without a proven `sidx`/`mfra`, the first `moof`/`mdat` emits an unseekable map and appended fragments do not themselves build one. TVHeadend requests fragmentation, but the evaluated source proves neither a usable growing index nor which extractor `DefaultExtractorsFactory` selects from a partial active file. | [FragmentedMp4Extractor 220-225](https://github.com/androidx/media/blob/2bc207851df311340767e913931ca7b28cab1794/libraries/extractor/src/main/java/androidx/media3/extractor/mp4/FragmentedMp4Extractor.java#L220-L225), [697-715](https://github.com/androidx/media/blob/2bc207851df311340767e913931ca7b28cab1794/libraries/extractor/src/main/java/androidx/media3/extractor/mp4/FragmentedMp4Extractor.java#L697-L715), `../tvheadend-upstream/src/muxer/muxer_libav.c:350-452,509-527,597-733` |
+| Built-in Matroska | The first Cluster without already advertised Cues emits `SeekMap.Unseekable`; `sentSeekMap` makes that decision final. Tvheadend writes Cues and final duration at close. | [MatroskaExtractor 834-865](https://github.com/androidx/media/blob/2bc207851df311340767e913931ca7b28cab1794/libraries/extractor/src/main/java/androidx/media3/extractor/mkv/MatroskaExtractor.java#L834-L865), [925-950](https://github.com/androidx/media/blob/2bc207851df311340767e913931ca7b28cab1794/libraries/extractor/src/main/java/androidx/media3/extractor/mkv/MatroskaExtractor.java#L925-L950), `../tvheadend-upstream/src/muxer/muxer_mkv.c:1306-1347` |
+| MPEG-TS with unknown length | Unknown input length skips duration scanning and emits a permanent unseekable map. Later PCR-bearing packets do not enlarge it. Tvheadend's pass muxer appends packets without a final index. | [TsExtractor 441-448](https://github.com/androidx/media/blob/2bc207851df311340767e913931ca7b28cab1794/libraries/extractor/src/main/java/androidx/media3/extractor/ts/TsExtractor.java#L441-L448), [551-569](https://github.com/androidx/media/blob/2bc207851df311340767e913931ca7b28cab1794/libraries/extractor/src/main/java/androidx/media3/extractor/ts/TsExtractor.java#L551-L569), `../tvheadend-upstream/src/muxer/muxer_pass.c:548-617,624-752` |
+| av-lib MP4 with extractor/index unresolved | If Media3 selects `FragmentedMp4Extractor` without a proven `sidx`/`mfra`, the first `moof`/`mdat` emits an unseekable map and appended fragments do not themselves build one. Tvheadend requests fragmentation, but the evaluated source proves neither a usable growing index nor which extractor `DefaultExtractorsFactory` selects from a partial active file. | [FragmentedMp4Extractor 220-225](https://github.com/androidx/media/blob/2bc207851df311340767e913931ca7b28cab1794/libraries/extractor/src/main/java/androidx/media3/extractor/mp4/FragmentedMp4Extractor.java#L220-L225), [697-715](https://github.com/androidx/media/blob/2bc207851df311340767e913931ca7b28cab1794/libraries/extractor/src/main/java/androidx/media3/extractor/mp4/FragmentedMp4Extractor.java#L697-L715), `../tvheadend-upstream/src/muxer/muxer_libav.c:350-452,509-527,597-733` |
 
 P7-F1 confirmed that `ProgressiveMediaPeriod` receives later extractor seek maps
 and uses them for a reopen and seek cycle, but the stock inputs do not produce
@@ -278,7 +278,7 @@ Even already buffered media therefore does not satisfy the approved nonzero
 seek requirement through the existing source.
 
 The SDK constructs the source with `DefaultExtractorsFactory`; extractor
-sniffing from a partial active file remains unproven for every other TVHeadend
+sniffing from a partial active file remains unproven for every other Tvheadend
 profile. P7-F1 explicitly selected `TsExtractor` for one pass-through MPEG-TS
 fixture and proved the wrapper path only for that profile. No other container or
 codec configuration is supported by inference.
@@ -404,7 +404,7 @@ MPEG-2 aligned). For the 8 s target the first rendered source frame was 8.78 s
 (H.264) and 9.76 s (MPEG-2); for the clamped edge targets 10.78 s (H.264,
 target 8.76 s, extent 11.76 s) and 9.76 s (MPEG-2, target 9 s, extent 12 s).
 Prepare to the first post-seek frame took 311-409 ms, except 957-1016 ms for
-the ordinary MPEG-2 landing. Through the TVHeadend Player on the same TV
+the ordinary MPEG-2 landing. Through the Tvheadend Player on the same TV
 against a real server, resumed in-progress recordings reached their saved
 positions about 2 s (HD) and 3 s (SD) after start. Sustained real-server
 timing with network file reads, HEVC, and physical-TV behaviour remain open
@@ -453,7 +453,7 @@ otherwise progress remains fail-closed.
 
 ## Rollover And Identity Risk
 
-A DVR entry can own more than one physical file. TVHeadend appends file entries
+A DVR entry can own more than one physical file. Tvheadend appends file entries
 when creating a new recording file
 (`../tvheadend-upstream/src/dvr/dvr_rec.c:1230-1312`) and can close one muxer and
 start another after a failed stream reconfiguration
@@ -557,7 +557,7 @@ complete that gate.
 
 | Package | Scope | Effort | Estimate |
 |---|---|---|---|
-| P7-F1 | Test-only seek feasibility for one named TVHeadend container and Media3 1.11.0. | `max` | Complete; wrapper path proven |
+| P7-F1 | Test-only seek feasibility for one named Tvheadend container and Media3 1.11.0. | `max` | Complete; wrapper path proven |
 | P7-F2 | Dynamic stat transport and temporary/final EOF state machine. | `max` | 4-6 engineer-days |
 | P7-F3 | Implement and harden the thin TS wrapper, bounded index, conservative seek points, and growth source integration for the selected container. | `max` | 6-10 engineer-days |
 | P7-F4 | Coordinator admission, reconnect, completion, watched/progress, docs, ABI, and publication integration. | `max` | 5-8 engineer-days |

@@ -5,14 +5,14 @@ import java.text.Collator
 /**
  * Whether this channel has a user-visible channel number.
  *
- * TVHeadend reports `0` for a channel without a number, so only a major [Channel.number] greater
+ * Tvheadend reports `0` for a channel without a number, so only a major [Channel.number] greater
  * than zero is displayable or dialable.
  */
 public val Channel.hasChannelNumber: Boolean
     get() = (number ?: 0L) > 0L
 
 /**
- * Returns the standard TVHeadend channel order, comparing names with the default-locale collator.
+ * Returns the standard Tvheadend channel order, comparing names with the default-locale collator.
  *
  * See [channelComparator] with an explicit collator for the ordering rules. The default locale is
  * captured when this function is called, so a retained comparator does not follow later locale
@@ -22,10 +22,10 @@ public val Channel.hasChannelNumber: Boolean
 public fun channelComparator(): Comparator<Channel> = channelComparator(Collator.getInstance())
 
 /**
- * Returns the standard TVHeadend channel order, comparing names with [collator].
+ * Returns the standard Tvheadend channel order, comparing names with [collator].
  *
  * Channels with a [hasChannelNumber] number come first, ascending by major number, then minor
- * number with an absent minor first, then name. Unnumbered channels, including those TVHeadend
+ * number with an absent minor first, then name. Unnumbered channels, including those Tvheadend
  * reports with number `0`, follow ascending by name. Missing or blank names sort after named
  * channels. [Channel.id] breaks remaining ties, so the order is total.
  *

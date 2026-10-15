@@ -202,18 +202,18 @@ Do not infer support for 2.2 or earlier, or use skipped metadata checks as proof
 Lower `languageVersion`/`apiVersion` settings can preserve older consumer
 compatibility, but require explicit configuration and verification.
 
-## TVHeadend server compatibility
+## Tvheadend server compatibility
 
 | Server / protocol | Current evidence and scope |
 |---|---|
 | HTSP below 36 | Below the documented connection floor. Reported as `SessionFailure.SERVER_UPGRADE_REQUIRED`; upgrade before explicit retry (`docs/consumer-guide.md:128-130`). |
 | HTSP 36 or newer | Meets the documented floor. This is not proof that every server build, permission set or playback format works. |
-| TVHeadend `4.3-2735~gfcd987f0b` | Historical device acceptance on 2026-08-24 and 2026-08-25: live H.264/audio, timeshift, completed-recording resume, session/repository and cross-process progress checks (`docs/playback-device-verification.md:3-19`; `docs/sdk-acceptance.md:3-6`, `docs/sdk-acceptance.md:46-87`). Not fresh 1.0 evidence. |
+| Tvheadend `4.3-2735~gfcd987f0b` | Historical device acceptance on 2026-08-24 and 2026-08-25: live H.264/audio, timeshift, completed-recording resume, session/repository and cross-process progress checks (`docs/playback-device-verification.md:3-19`; `docs/sdk-acceptance.md:3-6`, `docs/sdk-acceptance.md:46-87`). Not fresh 1.0 evidence. |
 | Upstream revision `a87be591fa5f1b0ec9223abe2c52269bcbf31156` | Source advertises HTSP 44 and negotiates the lower client/server version. Source inspection only, not SDK runtime acceptance. |
 
 For the last row, see upstream [`src/htsp_server.c:54`](https://github.com/tvheadend/tvheadend/blob/a87be591fa5f1b0ec9223abe2c52269bcbf31156/src/htsp_server.c#L54)
 and [`src/htsp_server.c:1487-1502`](https://github.com/tvheadend/tvheadend/blob/a87be591fa5f1b0ec9223abe2c52269bcbf31156/src/htsp_server.c#L1487-L1502).
-Do not infer a supported TVHeadend release number from the protocol number.
+Do not infer a supported Tvheadend release number from the protocol number.
 
 The SDK delegates connection negotiation to the HTSP dependency
 (`sdk-core/src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/gateway/htsp/HtspProtocolGateway.kt:206-212`).

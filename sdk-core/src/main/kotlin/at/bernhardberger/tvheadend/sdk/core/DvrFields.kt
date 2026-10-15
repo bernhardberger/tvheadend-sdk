@@ -7,8 +7,8 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 
 /**
- * Automatic-recording time selection. TVHeadend encodes any time as -1; negative values and values
- * at least 1440 are read as [AnyTime]. When creating a rule, TVHeadend sets both start and window end
+ * Automatic-recording time selection. Tvheadend encodes any time as -1; negative values and values
+ * at least 1440 are read as [AnyTime]. When creating a rule, Tvheadend sets both start and window end
  * to any time if either is any time.
  */
 public sealed interface AutorecTime {
@@ -190,7 +190,7 @@ internal fun AutorecTime.toDvrMinute(): Int = when (this) {
 internal fun Int.toAutorecTime(): AutorecTime =
     toDvrLocalTime()?.let(AutorecTime::At) ?: AutorecTime.AnyTime
 
-// TVHeadend numbers Monday as 1 and Sunday as 7; bit zero therefore means Monday.
+// Tvheadend numbers Monday as 1 and Sunday as 7; bit zero therefore means Monday.
 internal fun Long.toDvrDays(): Set<DayOfWeek> =
     DayOfWeek.values().filterTo(linkedSetOf()) { this and (1L shl (it.value - 1)) != 0L }
 

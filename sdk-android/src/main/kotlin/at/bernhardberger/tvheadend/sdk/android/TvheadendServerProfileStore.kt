@@ -9,7 +9,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlin.jvm.JvmSynthetic
 
 /**
- * Atomically persists the single TVHeadend server profile selected by an application.
+ * Atomically persists the single Tvheadend server profile selected by an application.
  *
  * Use this store from one application process; it does not coordinate Android multi-process access.
  */

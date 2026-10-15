@@ -11,11 +11,11 @@ private const val BUFFER_FOR_PLAYBACK_MS = 2_000
 private const val BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS = 1_500
 
 /**
- * Creates the recommended [LoadControl] for players that host TVHeadend sources.
+ * Creates the recommended [LoadControl] for players that host Tvheadend sources.
  *
  * The values are tuned together with the [PlaybackRecoveryPolicy] defaults:
  *
- * - A live TVHeadend subscription is pushed at 1× real time and cannot be pulled ahead, so the
+ * - A live Tvheadend subscription is pushed at 1× real time and cannot be pulled ahead, so the
  *   2 s buffer required to start playback is visible tuning delay. It absorbs start-up jitter
  *   where 1 s stalled on hardware.
  * - After a rebuffer, Media3's 5 s default is spent waiting for real time on a live target and

@@ -3,7 +3,7 @@ package at.bernhardberger.tvheadend.sdk.core
 /**
  * Level-1 content class of an ETSI EN 300 468 content descriptor (Table 28).
  *
- * [code] is the high nibble of the descriptor byte that TVHeadend reports as `contentType`.
+ * [code] is the high nibble of the descriptor byte that Tvheadend reports as `contentType`.
  */
 public enum class ContentCategory(public val code: Int) {
     /** Movie/drama (`0x1`). */
@@ -267,7 +267,7 @@ public enum class ContentSubgenre(public val category: ContentCategory, public v
 }
 
 /**
- * ETSI EN 300 468 content classification decoded from a raw TVHeadend `contentType`.
+ * ETSI EN 300 468 content classification decoded from a raw Tvheadend `contentType`.
  *
  * [subgenre] is `null` for a class's "general" or "user defined" byte and for level-2 values that
  * Table 28 leaves unassigned; [category] is still known in those cases.
@@ -279,7 +279,7 @@ public data class ContentGenre private constructor(
 ) {
     public companion object {
         /**
-         * Decodes a raw TVHeadend content type, or returns `null` when it is absent, outside one
+         * Decodes a raw Tvheadend content type, or returns `null` when it is absent, outside one
          * descriptor byte, or uses the undefined (`0x0`) or reserved (`0xC`–`0xE`) class nibble.
          */
         @JvmStatic

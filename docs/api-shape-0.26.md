@@ -134,7 +134,7 @@ the failure.** So it is not a failure predicate:
   malformed reply implies neither transport loss nor automatic retry.
 
 **Operation-specific meaning moves to each result's `Failed` KDoc.** For
-example, TVHeadend answers an inaccessible channel or tag filter in an EPG
+example, Tvheadend answers an inaccessible channel or tag filter in an EPG
 search with its generic rejection, so `EpgSearchResult.Failed` documents
 `SERVER_REJECTED` for that case.
 
@@ -264,7 +264,7 @@ payloads move to `TvheadendFailure`.
 ```kotlin
 @RequiresOptIn(
     level = RequiresOptIn.Level.ERROR,
-    message = "This TVHeadend SDK API is experimental and may change in any minor release.",
+    message = "This Tvheadend SDK API is experimental and may change in any minor release.",
 )
 @Retention(AnnotationRetention.BINARY)
 @Target(
@@ -319,7 +319,7 @@ the SDK types. The brief therefore does not block 0.26.
 Update requests keep every field nullable:
 
 - `null` means "leave unchanged", as today.
-- An explicit value, including a server-default value where TVHeadend has
+- An explicit value, including a server-default value where Tvheadend has
   one, means "set".
 - Title-only updates must keep preserving all other settings, with
   regression tests.
@@ -328,10 +328,10 @@ Update requests keep every field nullable:
 |---|---|---|
 | `daysOfWeekMask` | `Long?` | `Set<java.time.DayOfWeek>?` |
 | Timerec start and stop (`*MinutesSinceMidnight`, 0–1439) | `Int?` | `java.time.LocalTime?` |
-| Autorec window bounds (`*MinutesSinceMidnight`, -1 or 0–1439) | `Int?` | `AutorecTime?`, a closed type with `AnyTime` (TVHeadend's -1) and `At(time: LocalTime)` |
+| Autorec window bounds (`*MinutesSinceMidnight`, -1 or 0–1439) | `Int?` | `AutorecTime?`, a closed type with `AnyTime` (Tvheadend's -1) and `At(time: LocalTime)` |
 | `startExtraMinutes`, `stopExtraMinutes` | `Long?` | `Duration?` |
-| `priority` | `Long?` | `DvrPriority?` (open set of TVHeadend priorities, including its default value) |
-| `duplicateDetection` | `Long?` | `DuplicateDetection?` (open set, TVHeadend modes) |
+| `priority` | `Long?` | `DvrPriority?` (open set of Tvheadend priorities, including its default value) |
+| `duplicateDetection` | `Long?` | `DuplicateDetection?` (open set, Tvheadend modes) |
 | `broadcastType` | `Long?` | `BroadcastType?` (open set) |
 | `DvrEntry.duplicate` | `Long?` | `Boolean?`. HTSP sends a 0/1 flag (`htsp_server.c:1188`), which the HTSP library already exposes as `Boolean?` |
 | `DvrEntry.image`, `fanartImage`, `EpgEvent.image` | `String?` | `ArtworkId?` |
@@ -349,7 +349,7 @@ Decided (maintainer, 2026-10-11): use `java.time`, not `kotlinx-datetime`.
   expensive. That trade-off is accepted. Roadmap decision 11 is relaxed
   accordingly.
 
-Time values must use whole minutes. TVHeadend encodes autorec "any time"
+Time values must use whole minutes. Tvheadend encodes autorec "any time"
 as -1. It sends -1 (`htsp_server.c` `htsp_build_autorecentry`), and when
 it stores a time it turns blank values and values of 1440 or more into -1
 (`dvr_autorec.c` `dvr_autorec_entry_class_time_set`). An earlier draft of
@@ -358,7 +358,7 @@ clamps. `AutorecTime.AnyTime` reads every negative value and every value of
 1440 or more, and is written as -1. Mapping it to midnight would change its
 meaning, and mapping it to `null` would collide with "leave unchanged".
 
-Timerec times have no "any time" value. TVHeadend uses -1 for a time that
+Timerec times have no "any time" value. Tvheadend uses -1 for a time that
 is not set, and such a rule never fires. A timerec time outside 0–1439
 reads as `null` on that field; the rule itself is kept.
 

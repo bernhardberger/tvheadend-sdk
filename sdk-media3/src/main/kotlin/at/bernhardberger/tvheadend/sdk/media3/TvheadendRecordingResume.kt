@@ -15,7 +15,7 @@ import kotlin.time.Duration.Companion.milliseconds
 /**
  * Applies one recording resume position to an application-owned [Player].
  *
- * Call [beginPlaybackTarget] after installing a TVHeadend recording media item and before preparing
+ * Call [beginPlaybackTarget] after installing a Tvheadend recording media item and before preparing
  * it. Resume remains pending until the selected recording exposes a known, seekable timeline, which
  * keeps progressive MP4 and MKV playback from losing an early seek while their extractors discover
  * the seek map, and keeps growing MPEG-TS playback from seeking before its PCR extent is probed.

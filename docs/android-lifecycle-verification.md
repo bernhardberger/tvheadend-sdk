@@ -36,10 +36,10 @@ independent collection lifecycles without an entered endpoint. The fixture then
 unregistered successfully through its app-private stop marker.
 
 A separate bounded platform probe found no `_htsp._tcp` advertisement from the
-established TVHeadend instance, although the same device immediately discovered
+established Tvheadend instance, although the same device immediately discovered
 and resolved generic DNS-SD services from the LAN. The fixture therefore proves
 the SDK's Android NSD client path for the exact HTSP service type; interoperability
-with a TVHeadend or Avahi advertisement remains unproven. The authenticated
+with a Tvheadend or Avahi advertisement remains unproven. The authenticated
 real-server connection is a separate credential-lifecycle proof and is not
 described as a discovered endpoint.
 

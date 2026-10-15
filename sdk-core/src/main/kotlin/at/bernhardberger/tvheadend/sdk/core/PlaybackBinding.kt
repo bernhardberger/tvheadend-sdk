@@ -114,7 +114,7 @@ public sealed interface RecordingPlaybackAdmission {
     }
 
     /**
-     * An active single-file MPEG-TS target may play while TVHeadend is still appending to it.
+     * An active single-file MPEG-TS target may play while Tvheadend is still appending to it.
      *
      * [resumePosition] is the positive saved server position and is present only when [progressCapability] is
      * supported, exactly as for [Completed]. The Media3 coordinator plays this target only with

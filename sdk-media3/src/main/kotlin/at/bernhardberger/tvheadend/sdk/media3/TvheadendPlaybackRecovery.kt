@@ -67,7 +67,7 @@ public class PlaybackRecoveryReason private constructor(private val label: Strin
          * This can follow a pause or playback suppression, for example transient audio-focus loss or
          * an unsuitable audio output. Retirement occurs even if playback has since resumed. Timeshift
          * was unavailable, so it could not hold the live stream. Before reporting this, the coordinator
-         * has stopped the player and removed the TVHeadend item, which closes the subscription and
+         * has stopped the player and removed the Tvheadend item, which closes the subscription and
          * releases its buffers, and has retired the target. The player stays application-owned.
          *
          * If the application already left the target's item before retirement is admitted, neither
@@ -103,11 +103,11 @@ public class PlaybackRecoveryReason private constructor(private val label: Strin
 
         /**
          * A live target exhausted its bounded queues and was retired, but stopping the player or
-         * removing its TVHeadend item could not be confirmed. Buffer release is not guaranteed.
+         * removing its Tvheadend item could not be confirmed. Buffer release is not guaranteed.
          * Only [TvheadendPlaybackCoordinator] reports this. The target is already retired; cleanup is
          * pending and retried by [TvheadendPlaybackCoordinator.stop] or the next target installation. The period
          * fails and server delivery ends without another event (`ConsumerFailed` or `Closed`), even if
-         * cleanup remains pending. If the leftover TVHeadend item is still current,
+         * cleanup remains pending. If the leftover Tvheadend item is still current,
          * the player may also report "Live sample buffer limit reached" as a player error; it needs no
          * handling beyond this callback. Observe [TvheadendPlaybackCoordinator.playerCleanupPending]
          * and retry stop or installation once the Player fault clears. The same applies after
@@ -124,7 +124,7 @@ public class PlaybackRecoveryReason private constructor(private val label: Strin
  * Coordinates recovery for one application-owned [Player].
  *
  * Call [beginPlaybackTarget] on the player's application looper immediately before installing
- * each new TVHeadend live source. The recovery callback must promptly retire or replace that
+ * each new Tvheadend live source. The recovery callback must promptly retire or replace that
  * source. Closing this coordinator never releases the player.
  *
  * The audio track type in the player's track selection parameters stays application-owned.

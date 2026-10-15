@@ -11,7 +11,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.conflate
 
-/** Discovers LAN TVHeadend servers through Android Network Service Discovery. */
+/** Discovers LAN Tvheadend servers through Android Network Service Discovery. */
 public class TvheadendDiscovery internal constructor(
     private val backend: NsdDiscoveryBackend,
 ) {
@@ -80,7 +80,7 @@ public class TvheadendDiscovery internal constructor(
     }.conflate()
 }
 
-/** A resolved TVHeadend endpoint. String rendering is always redacted. */
+/** A resolved Tvheadend endpoint. String rendering is always redacted. */
 public data class DiscoveredTvheadendServer(
     public val name: String,
     public val host: String,

@@ -64,7 +64,7 @@ internal fun createTvheadendGrowingRecordingMediaSource(
 /**
  * Unknown-length Media3 source over P7-F2's target-scoped growing-file continuity lease.
  *
- * A transport read may stop in the middle of a packet while TVHeadend is appending it. Those
+ * A transport read may stop in the middle of a packet while Tvheadend is appending it. Those
  * bytes remain private until the complete 188-byte packet is available, so temporary file
  * boundaries never reach Media3's maintained TS parser as malformed input. Every reopen uses the
  * same lease, so Media3 retry and seek cannot rebind to a new generation or physical file.

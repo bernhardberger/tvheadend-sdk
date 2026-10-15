@@ -118,7 +118,7 @@ private class HtspDvbSubtitleReader(
             }
             packetAccepted = true
             delegate.packetStarted(packetTimeUs, packetFlags)
-            // TVHeadend strips these PES bytes before publishing HTSP DVB subtitle segments.
+            // Tvheadend strips these PES bytes before publishing HTSP DVB subtitle segments.
             delegate.consume(ParsableByteArray(DVB_PES_PREFIX))
         }
         if (packetAccepted) {

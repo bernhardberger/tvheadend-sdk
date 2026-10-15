@@ -14,7 +14,7 @@ import kotlin.time.Instant
 
 private const val EPG_U32_MAX: Long = 0xffff_ffffL
 
-/** Stable TVHeadend EPG episode identifier. */
+/** Stable Tvheadend EPG episode identifier. */
 @JvmInline
 public value class EpgEpisodeId(public val value: Long) {
     init {
@@ -24,7 +24,7 @@ public value class EpgEpisodeId(public val value: Long) {
     override fun toString(): String = "EpgEpisodeId(<redacted>)"
 }
 
-/** Stable TVHeadend EPG series-link identifier. */
+/** Stable Tvheadend EPG series-link identifier. */
 @JvmInline
 public value class EpgSeriesLinkId(public val value: Long) {
     init {
@@ -34,7 +34,7 @@ public value class EpgSeriesLinkId(public val value: Long) {
     override fun toString(): String = "EpgSeriesLinkId(<redacted>)"
 }
 
-/** Stable TVHeadend DVR entry identifier referenced by EPG metadata. */
+/** Stable Tvheadend DVR entry identifier referenced by EPG metadata. */
 @JvmInline
 public value class DvrEntryId(public val value: Long) {
     init {
@@ -114,7 +114,7 @@ public data class EpgEvent private constructor(
     public val nextEventId: EventId?,
     /**
      * Cast and crew in server order, or null when no credits were sent. Absence is normal:
-     * TVHeadend emits these only for XMLTV with "scrape extra" enabled, not DVB EIT or basic
+     * Tvheadend emits these only for XMLTV with "scrape extra" enabled, not DVB EIT or basic
      * HTSP output (src/htsp_server.c:1373-1374; src/epggrab/module/xmltv.c:705-709,793,884).
      * Each wire name/role pair is retained in server order. Names can repeat, for example
      * when the same person is both director and writer; the SDK preserves both entries.
@@ -565,7 +565,7 @@ public data class EpgCoverageBatchResult private constructor(
 /**
  * Immutable filters for one explicit server-backed EPG text search.
  *
- * [contentType] is an unsigned eight-bit genre code. TVHeadend servers using HTSP before version
+ * [contentType] is an unsigned eight-bit genre code. Tvheadend servers using HTSP before version
  * 6 reinterpret values `0..15` as legacy major categories, so only those inputs are distinct on
  * such servers. Durations use finite whole seconds within the server's signed 32-bit storage.
  */
@@ -668,7 +668,7 @@ public sealed interface EpgSearchResult {
     }
 
     /**
-     * EPG search failed. TVHeadend answers inaccessible channel or tag filters with its generic
+     * EPG search failed. Tvheadend answers inaccessible channel or tag filters with its generic
      * rejection, [TvheadendFailure.SERVER_REJECTED]; [TvheadendFailure.ACCESS_DENIED] means the
      * protocol explicitly denied EPG search permission. Unsupported means the requested filters
      * are unavailable. A malformed reply implies neither transport loss nor automatic retry.

@@ -1,12 +1,12 @@
-# TVHeadend Kotlin SDK
+# Tvheadend Kotlin SDK
 
 [![CI](https://github.com/bernhardberger/tvheadend-sdk/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/bernhardberger/tvheadend-sdk/actions/workflows/ci.yml)
 [![Maven Central](https://img.shields.io/maven-central/v/at.bernhardberger.tvheadend/sdk-core)](https://central.sonatype.com/artifact/at.bernhardberger.tvheadend/sdk-core)
 [![License: GPLv3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 
 This independently maintained GPLv3 Kotlin SDK provides JVM and Android
-libraries for applications that connect to TVHeadend. It is not official
-TVHeadend software.
+libraries for applications that connect to Tvheadend. It is not official
+Tvheadend software.
 
 The SDK is split into five libraries:
 
@@ -148,7 +148,7 @@ if (selected != null) {
 The listed name and comment are presentation metadata. Profile IDs are opaque
 and redacted from string rendering. A canonical ID does not require a prior
 discovery-cache lookup; the exact admitted generation validates selection.
-Omitting the profile keeps TVHeadend's default selection.
+Omitting the profile keeps Tvheadend's default selection.
 
 ## Atomic session observation
 
@@ -377,7 +377,7 @@ outcome. See the [stream restart contract](docs/stream-restart-contract.md) for
 interruption bounds, seek safety, and the outstanding device evidence.
 
 `TvheadendPlaybackCoordinator.subscriptionIssue` reports only the current live
-target's canonical TVHeadend issue. Known server codes map to safe non-exhaustive
+target's canonical Tvheadend issue. Known server codes map to safe non-exhaustive
 `SubscriptionIssue` values; unknown or localized values become `UNKNOWN`, and raw
 server text is never exposed. The exact no-input status maps to `NO_INPUT`
 unless a conflicting known canonical error is present. The state clears on
@@ -399,8 +399,8 @@ otherwise ordinary human-assigned names. Raw server text and logs are not
 exposed. Recording replacement and every live subscription or
 coordinator termination clear the state; stale generations cannot republish it.
 
-Direct live playback feeds TVHeadend's packet-level `AAC` stream to Media3's
-maintained `AdtsReader`. TVHeadend normalizes AAC-LATM packets to ADTS before
+Direct live playback feeds Tvheadend's packet-level `AAC` stream to Media3's
+maintained `AdtsReader`. Tvheadend normalizes AAC-LATM packets to ADTS before
 HTSP delivery, so the SDK does not infer the source transport framing or expose
 a separate LATM codec type. This path has deterministic packet-fixture coverage;
 the current acceptance server has no AAC service, so it is not a live-server AAC

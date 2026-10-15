@@ -108,7 +108,7 @@ coordinator.
     acceptance. The decision applies to the SDK and the player alike, and a
     1.x minor can add support later.
 13. **Raw teletext is out for 1.0.** Live subtitles already cover every
-    teletext subtitle page the channel announces, because TVHeadend extracts
+    teletext subtitle page the channel announces, because Tvheadend extracts
     them as text subtitle streams. Recordings with only teletext subtitles
     show none: Media3 has no teletext decoder, and the owner does not use
     subtitles in recordings. A 1.x minor can add a decoder later.
@@ -258,7 +258,7 @@ the mobile proof of concept has shown no major SDK gaps.
   - the `sdk-media3` tier (decision 4) and the Media3 version per release;
   - the deprecation cycle;
   - the minSdk, compileSdk, JDK and Kotlin rules;
-  - the TVHeadend and HTSP server compatibility matrix.
+  - the Tvheadend and HTSP server compatibility matrix.
 - Document the `sdk-media3` tier in the module KDoc and README.
 - Mark every breaking change consistently as `BREAKING` in the changelog.
 - Add KDoc to public properties and enum entries.
@@ -282,7 +282,7 @@ the mobile proof of concept has shown no major SDK gaps.
 
 Deferred by owner decision on 2026-10-12: the series-rule upcoming-recordings
 helper has no consumer after Player dropped series-rule UX D2–D6 on 2026-10-11.
-Rules stay in the TVHeadend web UI. Reconsider only if a consumer returns; see
+Rules stay in the Tvheadend web UI. Reconsider only if a consumer returns; see
 [item 8's retained wire findings](consumer-gaps-0.27.md#8-series-rule-upcoming-recordings--deferred).
 
 These additions should fit 1.x minors if the API shape milestone lands as

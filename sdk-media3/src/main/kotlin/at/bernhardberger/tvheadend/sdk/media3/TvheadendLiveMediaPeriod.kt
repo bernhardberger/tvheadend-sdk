@@ -275,7 +275,7 @@ internal class TvheadendLiveMediaPeriod(
                 val binding = adapterFor(event.streamIndex) ?: return false
                 check(event.payload.size <= MAX_PACKET_BYTES) { "Media3 packet size limit reached" }
                 if (sampleOriginUs == null) {
-                    // TVHeadend stamps text pages from the PCR, usually ahead of audio and video.
+                    // Tvheadend stamps text pages from the PCR, usually ahead of audio and video.
                     // Such an early page cannot anchor the timeline; the next page replaces it.
                     if (binding.type == SubscriptionStreamType.TEXT_SUBTITLE) return false
                     val origin = event.presentationTimeUs?.takeUnless { it == C.TIME_UNSET || it == Long.MIN_VALUE }

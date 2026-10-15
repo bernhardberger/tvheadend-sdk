@@ -65,7 +65,7 @@ minor adds `MediaItem.isTvheadendLive()` and
 `LivePlaybackObservation.Active.serverStopped`; `Active` gains
 `component4()`, and its `equals`, `hashCode` and `toString` now include the new
 property. The `0.20.0`
-minor exposes live TVHeadend text subtitle streams as Media3 text tracks without
+minor exposes live Tvheadend text subtitle streams as Media3 text tracks without
 a public API change; applications that list or select text tracks see the new
 tracks. The `0.19.0`
 minor adds a defaulted `priority` parameter to `SubscriptionOptions`, which is
@@ -73,7 +73,7 @@ source compatible but a binary break for subscription infrastructure adapters,
 and appends `ScriptedSubscriptionCall.PRIORITY`. It adds `channelComparator`,
 `Channel.hasChannelNumber`, `LiveSubscriptionPriority` and
 `TvheadendPlaybackCoordinator.setLivePriority`; live audio tracks carry Media3
-role flags for TVHeadend's `audio_type`, and a server stop reason stays
+role flags for Tvheadend's `audio_type`, and a server stop reason stays
 observable as the live subscription issue until the stream starts again.
 Recompile consumers and adapters. The `0.18.0`
 minor turns `PlaybackStopResult.PlayerUnavailable` into a data class whose

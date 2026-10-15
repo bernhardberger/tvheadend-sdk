@@ -69,7 +69,7 @@ public interface SubscriptionBinary {
 /** Complete ordered event family emitted for one subscription. */
 @SubscriptionInfrastructureApi
 public sealed interface SubscriptionEvent {
-    /** Stream description supplied by TVHeadend. */
+    /** Stream description supplied by Tvheadend. */
     public class Started(
         streams: List<SubscriptionStream>?,
         public val codecMetadata: SubscriptionBinary?,
@@ -312,7 +312,7 @@ public enum class SubscriptionIssueCategory {
 }
 
 /**
- * Canonical safe issue reported for a live TVHeadend subscription.
+ * Canonical safe issue reported for a live Tvheadend subscription.
  *
  * Exact values are SDK-owned singletons rather than an exhaustive enum. Applications may compare
  * a known value or use [category], but must retain a fallback for future exact issues. Retry and
@@ -399,7 +399,7 @@ public enum class SubscriptionCondition {
     STATUS_AND_ERROR_REPORTED,
 }
 
-/** Frame classification supplied by TVHeadend. */
+/** Frame classification supplied by Tvheadend. */
 @SubscriptionInfrastructureApi
 public enum class MuxFrameType { UNKNOWN, I, P, B }
 

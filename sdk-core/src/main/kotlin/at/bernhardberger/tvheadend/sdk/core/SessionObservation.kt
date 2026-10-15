@@ -122,7 +122,7 @@ public class SessionObservation private constructor(
      * error), scheduled, event's DVR link, latest stop, then lowest entry ID, in that order.
      * Ownership uses exact comparison with the normalized session username; anonymous sessions
      * and absent owners receive no ownership preference. Unknown stops rank last.
-     * TVHeadend's event DVR link is only the first visible broadcast match, not an authority
+     * Tvheadend's event DVR link is only the first visible broadcast match, not an authority
      * (`src/htsp_server.c`, event serialization). Multiple entries per broadcast are normal.
      * Returns null for an unknown or ambiguous event ID, when no linked entry exists,
      * or when matched entries are ambiguous because they contain duplicate DVR entry IDs.

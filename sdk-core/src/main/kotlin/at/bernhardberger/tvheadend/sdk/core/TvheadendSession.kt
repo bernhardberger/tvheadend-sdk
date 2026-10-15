@@ -31,7 +31,7 @@ import kotlin.jvm.JvmSynthetic
 import kotlin.random.Random
 import kotlin.time.Clock
 
-/** Owns one TVHeadend connection lifecycle. */
+/** Owns one Tvheadend connection lifecycle. */
 public interface TvheadendSession {
     /** Atomic lifecycle, metadata, storage, and capability state for the selected server profile. */
     public val observation: StateFlow<SessionObservation>
@@ -122,7 +122,7 @@ public interface TvheadendSession {
 }
 
 /**
- * Returns the process-wide TVHeadend session owner.
+ * Returns the process-wide Tvheadend session owner.
  *
  * Repeated calls return the same instance until its terminal [TvheadendSession.shutdown] completes.
  * A newly created owner uses the default 24-hour EPG coverage policy. Shutdown affects every holder
@@ -133,7 +133,7 @@ public fun createTvheadendSession(): TvheadendSession =
     SessionRegistry.acquire()
 
 /**
- * Returns the process-wide TVHeadend session owner with [epgCoveragePolicy].
+ * Returns the process-wide Tvheadend session owner with [epgCoveragePolicy].
  *
  * Requests [epgCoveragePolicy] with caching disabled. An existing owner is returned only when its
  * configuration equals this request. Comparison and acquisition are atomic.
@@ -145,7 +145,7 @@ public fun createTvheadendSession(epgCoveragePolicy: EpgCoveragePolicy): Tvheade
     SessionRegistry.acquire(epgCoveragePolicy, cachePolicy = null)
 
 /**
- * Returns the process-wide TVHeadend session owner with [epgCoveragePolicy] and [cachePolicy].
+ * Returns the process-wide Tvheadend session owner with [epgCoveragePolicy] and [cachePolicy].
  *
  * With a cache policy the owner restores the last channel catalog and programme guide of a
  * profile as stale metadata before connecting, and persists published metadata under
@@ -276,7 +276,7 @@ internal object SessionRegistry {
     }
 }
 
-/** Default TVHeadend HTSP port used when a server profile does not specify one. */
+/** Default Tvheadend HTSP port used when a server profile does not specify one. */
 public const val DEFAULT_HTSP_PORT: Int = 9_982
 
 /** A normalized server profile selected for a session. */
@@ -373,7 +373,7 @@ public enum class SessionCommandResult {
     SHUT_DOWN,
 }
 
-/** Durable state of a TVHeadend session. */
+/** Durable state of a Tvheadend session. */
 public sealed interface SessionState {
     /** No connection lifecycle is active. */
     public data object Disconnected : SessionState
@@ -565,7 +565,7 @@ public data class ServerCapabilities private constructor(
     public val dvrWrite: CapabilityAccess,
     public val protocolDvr: CapabilityAccess,
     /**
-     * Access to failed recordings. When [CapabilityAccess.DENIED], TVHeadend stops sending
+     * Access to failed recordings. When [CapabilityAccess.DENIED], Tvheadend stops sending
      * `dvrEntryUpdate` once an entry counts as failed, without sending `dvrEntryDelete`.
      * The SDK retains its last observed state (possibly scheduled or recording) until reconnect
      * removes the now-hidden entry. Mutations return [TvheadendFailure.SERVER_REJECTED] with an

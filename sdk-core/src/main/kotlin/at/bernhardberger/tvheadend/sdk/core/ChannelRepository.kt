@@ -4,7 +4,7 @@ import java.util.Collections
 
 private const val U32_MAX: Long = 0xffff_ffffL
 
-/** Stable TVHeadend channel identifier. */
+/** Stable Tvheadend channel identifier. */
 @JvmInline
 public value class ChannelId(public val value: Long) {
     init {
@@ -14,7 +14,7 @@ public value class ChannelId(public val value: Long) {
     override fun toString(): String = "ChannelId(<redacted>)"
 }
 
-/** Stable TVHeadend channel-tag identifier. */
+/** Stable Tvheadend channel-tag identifier. */
 @JvmInline
 public value class ChannelTagId(public val value: Long) {
     init {
@@ -24,7 +24,7 @@ public value class ChannelTagId(public val value: Long) {
     override fun toString(): String = "ChannelTagId(<redacted>)"
 }
 
-/** Stable TVHeadend programme-event identifier. */
+/** Stable Tvheadend programme-event identifier. */
 @JvmInline
 public value class EventId(public val value: Long) {
     init {
@@ -54,7 +54,7 @@ public data class ChannelService(
 /**
  * Immutable channel metadata.
  *
- * [icon] is the channel's TVHeadend image-cache artwork; external icon URLs and malformed
+ * [icon] is the channel's Tvheadend image-cache artwork; external icon URLs and malformed
  * selectors are not exposed.
  */
 @ConsistentCopyVisibility
@@ -107,7 +107,7 @@ public data class Channel private constructor(
 /**
  * Immutable channel-tag metadata.
  *
- * [icon] is the tag's TVHeadend image-cache artwork; external icon URLs and malformed
+ * [icon] is the tag's Tvheadend image-cache artwork; external icon URLs and malformed
  * selectors are not exposed.
  */
 @ConsistentCopyVisibility

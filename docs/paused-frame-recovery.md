@@ -68,7 +68,7 @@ this path. Normal decoder validation still owns malformed media.
 The real scripted connection, subscription manager/rebaser, source/period,
 elementary readers, SampleQueues, SDK renderer factory and asynchronous ExoPlayer
 run on the standard identity-verified LXC119 API 36 Android TV emulator. No G10,
-TVHeadend server, Player repository, harness or credential provisioning was used.
+Tvheadend server, Player repository, harness or credential provisioning was used.
 
 The finite regression first establishes a playing clock, pauses, accepts a seek,
 then sends exactly the first recorded raw video packet without following video or

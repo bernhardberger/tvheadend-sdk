@@ -8,7 +8,7 @@ packet. The normative app contract is in `consumer-guide.md`, Timeshift.
 
 ## Source Evidence
 
-Read-only TVHeadend source inspection found the existing absolute primitive in
+Read-only Tvheadend source inspection found the existing absolute primitive in
 `src/htsp_server.c:2824-2829`. `src/timeshift/timeshift_reader.c:478-505`
 reports the observed seekable endpoints and reader shift; lines 815-831 emit
 the absolute reached reader coordinate, not displayed content.

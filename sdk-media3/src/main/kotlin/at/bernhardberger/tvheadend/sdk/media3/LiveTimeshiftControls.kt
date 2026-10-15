@@ -570,7 +570,7 @@ internal class LiveTimeshiftControlBridge(
                 is SubscriptionOperationResult.Ok -> desired
                 // No request was sent, so the server keeps the previous weight.
                 SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED) -> appliedPriority
-                // TVHeadend may apply a change before its reply is lost or rejected.
+                // Tvheadend may apply a change before its reply is lost or rejected.
                 else -> null
             }
         }

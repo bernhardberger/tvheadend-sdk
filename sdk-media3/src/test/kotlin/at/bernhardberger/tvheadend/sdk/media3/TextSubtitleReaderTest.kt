@@ -132,7 +132,7 @@ class TextSubtitleReaderTest {
     }
 
     @Test
-    fun `every TVHeadend palette tag maps to its colour`() {
+    fun `every Tvheadend palette tag maps to its colour`() {
         mapOf(
             "#888888" to 0xff888888.toInt(),
             "#ff0000" to 0xffff0000.toInt(),

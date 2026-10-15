@@ -4,7 +4,7 @@ import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.io.ByteArrayInputStream
 import java.io.InputStream
 
-/** Positive TVHeadend image-cache identifier. */
+/** Positive Tvheadend image-cache identifier. */
 @JvmInline
 public value class ArtworkId(public val value: Int) {
     init {
@@ -15,7 +15,7 @@ public value class ArtworkId(public val value: Int) {
 
     public companion object {
         /**
-         * Parses a TVHeadend image-cache selector such as `imagecache/12`; a leading `/` is tolerated.
+         * Parses a Tvheadend image-cache selector such as `imagecache/12`; a leading `/` is tolerated.
          *
          * Returns null for absent, external (for example `http://` or `https://`), non-image-cache,
          * non-decimal, zero, or out-of-range selectors.
@@ -76,7 +76,7 @@ public sealed interface ArtworkLoadResult {
 /**
  * Loads encoded image-cache artwork on the currently bound connection generation.
  *
- * TVHeadend requires recorder access for authenticated image-cache files and reports
+ * Tvheadend requires recorder access for authenticated image-cache files and reports
  * [TvheadendFailure.ACCESS_DENIED] when that permission is unavailable.
  */
 public interface ArtworkLoader {

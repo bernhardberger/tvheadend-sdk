@@ -27,7 +27,7 @@ import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.runBlocking
 
-/** Scheme of the opaque URI that identifies one TVHeadend recording to Media3. */
+/** Scheme of the opaque URI that identifies one Tvheadend recording to Media3. */
 internal const val RECORDING_URI_SCHEME: String = "tvheadend-recording"
 
 /**
@@ -85,7 +85,7 @@ internal fun createTvheadendRecordingDataSourceFactory(
  *
  * Playback uses the standard progressive pipeline, so the stored MKV, MP4, or TS container is
  * parsed by Media3's own extractors. Each extractor reopen performs a fresh transport open and
- * seek rather than reusing a stale server handle. Below HTSP v27, TVHeadend increments play count
+ * seek rather than reusing a stale server handle. Below HTSP v27, Tvheadend increments play count
  * on a plain file close. The coordinator still permits completed playback there, but starts over
  * and disables explicit resume and progress reporting.
  */

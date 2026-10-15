@@ -18,7 +18,7 @@ import androidx.media3.extractor.ts.TsPayloadReader
 import java.io.ByteArrayOutputStream
 
 /**
- * Reads TVHeadend text subtitle pages, which its teletext parser publishes as whole
+ * Reads Tvheadend text subtitle pages, which its teletext parser publishes as whole
  * NUL-terminated UTF-8 pages with `<font color>` runs. Each page replaces the previous one.
  */
 internal class TextSubtitleReader(
@@ -98,8 +98,8 @@ internal data class TextSubtitleColourRun(
 )
 
 /**
- * Returns `null` for a blank page. Only TVHeadend's exact colour tags are markup; any other
- * text, including `<`, `&` and unknown tags, is shown literally because TVHeadend does not escape.
+ * Returns `null` for a blank page. Only Tvheadend's exact colour tags are markup; any other
+ * text, including `<`, `&` and unknown tags, is shown literally because Tvheadend does not escape.
  */
 internal fun parseTextSubtitlePage(payload: ByteArray): TextSubtitlePage? {
     val terminator = payload.indexOf(0.toByte()).takeIf { it >= 0 } ?: payload.size
@@ -135,7 +135,7 @@ internal fun parseTextSubtitlePage(payload: ByteArray): TextSubtitlePage? {
         index++
     }
     closeRun()
-    // TVHeadend keeps leading spaces only on colour-tagged rows, which would shift centred rows.
+    // Tvheadend keeps leading spaces only on colour-tagged rows, which would shift centred rows.
     val kept = BooleanArray(text.length)
     var rowStart = 0
     while (rowStart <= text.length) {
@@ -176,7 +176,7 @@ private fun TextSubtitlePage?.toCues(): List<Cue> {
 
 private const val FONT_CLOSE_TAG = "</font>"
 
-// The complete palette emitted by TVHeadend's parser_teletext.c; teletext black is sent as grey.
+// The complete palette emitted by Tvheadend's parser_teletext.c; teletext black is sent as grey.
 private val FONT_COLOUR_TAGS: Map<String, Int> = mapOf(
     "<font color=\"#888888\">" to 0xff888888.toInt(),
     "<font color=\"#ff0000\">" to 0xffff0000.toInt(),

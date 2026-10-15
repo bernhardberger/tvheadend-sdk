@@ -40,7 +40,7 @@ remains a separate 0.27 roadmap item, outside this API note.
     `resetResume` as a comfort feature, avoiding the watched → unwatched workaround.
     It clears resume and preserves play count. See item 4.
 2. **Series-rule upcoming recordings — deferred (2026-10-12).** Player dropped
-   series-rule UX D2–D6 on 2026-10-11. Rules stay in the TVHeadend web UI, so
+   series-rule UX D2–D6 on 2026-10-11. Rules stay in the Tvheadend web UI, so
    item 8 has no consumer and will not be implemented in 0.27. Reconsider after
    1.0 only if a consumer returns; retain the wire findings in item 8.
 
@@ -701,7 +701,7 @@ with the app.
 
 ### Current state and wire facts
 
-TVHeadend writes an ordered `files[].info` list containing codec `type`,
+Tvheadend writes an ordered `files[].info` list containing codec `type`,
 optional language, audio type/version, width/height, frame duration, aspect
 ratio and subtitle ids:
 `/root/.local/share/opencode/repos/github.com/tvheadend/tvheadend/src/dvr/dvr_rec.c:1458-1534`.
@@ -867,12 +867,12 @@ aggregation is documented and introduces no product filtering policy.
 ## 8. Series-rule upcoming recordings — deferred
 
 **Owner decision (2026-10-12):** Player dropped series-rule UX D2–D6 on
-2026-10-11. Rules stay in the TVHeadend web UI. With no consumer, this helper
+2026-10-11. Rules stay in the Tvheadend web UI. With no consumer, this helper
 is deferred, not implemented in 0.27; reconsider after 1.0 if needed.
 
 ### Wire findings for a future revival
 
-TVHeadend includes `autorecId` and `timerecId` when an entry is linked to its
+Tvheadend includes `autorecId` and `timerecId` when an entry is linked to its
 rule:
 `/root/.local/share/opencode/repos/github.com/tvheadend/tvheadend/src/htsp_server.c:987-994`.
 HTSP parses both on add/update:
@@ -941,7 +941,7 @@ implementation limits without promising new concurrency support.
 ## Verification and remaining uncertainty
 
 The citations above were checked against the local SDK, Player, HTSP and
-TVHeadend source checkouts. They establish wire shape and implementation paths,
+Tvheadend source checkouts. They establish wire shape and implementation paths,
 not an acceptance run against a deployed server.
 
 - **Dependency evidence limit:** the cached pinned HTSP artifact exposes the
@@ -950,7 +950,7 @@ not an acceptance run against a deployed server.
   the pinned artifact's decoder behaviour before accepting item 6.
 - **Unverified compatibility range:** the upstream checkout confirms the
   fields and semantics above. It does not establish the oldest deployed
-  TVHeadend version that emits recording `info`, service content or rule links.
+  Tvheadend version that emits recording `info`, service content or rule links.
   Missing optional metadata must retain the documented unknown/null behaviour;
   missing required service `content` is a mapping failure as described in item 7. HTSP's
   request gate verifies protocol 27 for watch-state writes, not a complete

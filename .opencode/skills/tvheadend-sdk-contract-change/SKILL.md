@@ -1,6 +1,6 @@
 ---
 name: tvheadend-sdk-contract-change
-description: Use when changing observable TVHeadend SDK public API, repository observation, profile lifecycle, playback state-machine, gateway mapping, or consumer contracts. Routes implementation and verification across SDK modules. Do not load for unrelated documentation, instruction-harness maintenance, or release ceremony alone.
+description: Use when changing observable Tvheadend SDK public API, repository observation, profile lifecycle, playback state-machine, gateway mapping, or consumer contracts. Routes implementation and verification across SDK modules. Do not load for unrelated documentation, instruction-harness maintenance, or release ceremony alone.
 ---
 
 # SDK contract changes

@@ -418,7 +418,7 @@ private class DefaultPlaybackCoordinatorLifetime(
 }
 
 /**
- * Serializes TVHeadend source changes on an application-owned [ExoPlayer].
+ * Serializes Tvheadend source changes on an application-owned [ExoPlayer].
  *
  * The application retains ownership of the player and may use [withLifetime] for a structured
  * lifetime or [launchIn] when its owner cannot be expressed as one suspending block. This

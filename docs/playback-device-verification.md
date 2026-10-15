@@ -1,6 +1,6 @@
 # Playback device verification
 
-Phase 4 playback acceptance was rerun on 2026-08-24 against TVHeadend
+Phase 4 playback acceptance was rerun on 2026-08-24 against Tvheadend
 `4.3-2735~gfcd987f0b` using a TCL Smart TV Pro on Android API 31, firmware
 increment `AS50`.
 
