@@ -648,18 +648,23 @@ did not arrive before the deadline; later observation data remains
 authoritative. Mutations and progress are admitted only for a ready generation.
 Cancellation remains caller-owned and is not converted into a failure result.
 
-When `updateEntry` targets a last-observed `SCHEDULED` entry, the SDK resolves
-`DvrEntryUpdate.configId` (or the entry's current config UUID when null) with a
-same-generation `getDvrConfigs` request. It sends the matching enabled,
+For `updateEntry`, the SDK always resolves an explicit `DvrEntryUpdate.configId`
+with a same-generation `getDvrConfigs` request, regardless of observed state or
+whether the entry has been observed. When null, it resolves only a last-observed
+`SCHEDULED` entry's current config UUID. It sends the matching enabled,
 account-visible config's **name**, including `""` for the default config. This
-preserves the profile on edits such as changing the title. If neither UUID is
-known, the config field remains omitted. The UUID must match exactly one returned
+preserves the profile on edits such as changing the title. Without an explicit
+UUID or an observed scheduled entry's config UUID, the field remains omitted.
+An unobserved entry that is scheduled server-side may then move to the default
+profile. The UUID must match exactly one returned
 config, and its name must be unique in that list. Missing or ambiguous matches,
 or a changed entry identity/state/config during resolution, fail with
-`OBSERVATION_EXPIRED` and `mayHaveApplied=false`; refresh the observation before
-retrying. Lookup failures propagate with `mayHaveApplied=false` and do not change
-DVR write-access proof. Other entry states, watch-state changes, resume reset,
-and playback progress retain their existing requests without this lookup.
+`OBSERVATION_EXPIRED` and `mayHaveApplied=false`. Missing/ambiguous config failures
+persist until the caller selects an explicit visible, unambiguous config or the
+server-side config changes; refreshing alone does not clear them. Lookup failures
+propagate with `mayHaveApplied=false`; access denial updates DVR write-access proof
+like a refused write. Other entry states without an explicit config, watch-state
+changes, resume reset, and playback progress do not gain this lookup.
 
 **Known server limitations:** with an ACL config list, TVHeadend can translate
 the name back to a UUID before the entry update's name-only lookup, silently
@@ -1433,7 +1438,7 @@ already have applied the command. Never blindly retry non-idempotent requests
 
 | API | Malformed-response result |
 |---|---|
-| DVR mutations | `DvrMutationResult.Failed(TvheadendFailure.MALFORMED_RESPONSE, mayHaveApplied = true)` after write dispatch; `false` for the scheduled-entry config lookup |
+| DVR mutations | `DvrMutationResult.Failed(TvheadendFailure.MALFORMED_RESPONSE, mayHaveApplied = true)` after write dispatch; `false` for the entry config lookup |
 | DVR progress | `DvrProgressResult.Failed(TvheadendFailure.MALFORMED_RESPONSE, mayHaveApplied = true)` |
 | Cutpoints, EPG search, stream-profile discovery | Each result's `Failed(TvheadendFailure.MALFORMED_RESPONSE)` |
 | Artwork | `ArtworkLoadResult.Unavailable(TvheadendFailure.MALFORMED_RESPONSE)` |

@@ -446,7 +446,7 @@ internal class PhaseOneSessionMetadataTest {
     @Test
     fun `mutation confirmation is delivered only after authoritative DVR publication`() = runTest {
         val gateway = MutationGateway()
-        val coordinator = DvrMutationCoordinator(gateway)
+        val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> null })
         val metadata = PhaseOneSessionMetadata(
             mutationCommands = coordinator,
             onDvrMetadataAccepted = coordinator::acceptMetadata,
@@ -487,7 +487,7 @@ internal class PhaseOneSessionMetadataTest {
     @Test
     fun `reducer-rejected DVR metadata cannot confirm a mutation`() = runTest {
         val gateway = MutationGateway()
-        val coordinator = DvrMutationCoordinator(gateway)
+        val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> null })
         val metadata = PhaseOneSessionMetadata(
             mutationCommands = coordinator,
             onDvrMetadataAccepted = coordinator::acceptMetadata,

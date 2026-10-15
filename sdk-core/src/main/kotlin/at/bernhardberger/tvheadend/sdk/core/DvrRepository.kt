@@ -1010,12 +1010,16 @@ public interface DvrRepository {
     /**
      * Changes one DVR entry and waits for authoritative stream confirmation.
      *
-     * For a last-observed [DvrEntryState.SCHEDULED] entry, resolves [DvrEntryUpdate.configId]
-     * or the observed config UUID through a same-generation config lookup and sends its unique
-     * name, preserving the config on title-only and similar edits. No lookup is needed if both
-     * UUIDs are absent. Missing/ambiguous configs or changed entry identity/state/config fail with
-     * `OBSERVATION_EXPIRED`; lookup failures retain their typed failure. These failures have
-     * `mayHaveApplied=false`. Other entry states retain their existing request shape.
+     * Resolves an explicit [DvrEntryUpdate.configId] through a same-generation config lookup and
+     * sends its unique visible name, regardless of observed entry state or whether the entry is
+     * observed. When null, resolves only a last-observed [DvrEntryState.SCHEDULED] entry's config,
+     * preserving it on title-only edits. Otherwise omits the field without a lookup: an unobserved
+     * entry that is scheduled server-side may therefore move to the default config.
+     * Missing/ambiguous configs or changed entry identity/state/config fail with `OBSERVATION_EXPIRED`;
+     * lookup failures retain their typed failure. These failures have `mayHaveApplied=false`.
+     * Missing/ambiguous config failures persist until the caller selects an explicit visible,
+     * unambiguous config or the server-side config changes; refreshing alone does not clear them.
+     * A lookup access denial updates the DVR write-access proof like a refused write.
      *
      * Known server limitations: accounts with an ACL config list can have the name converted
      * back to a UUID and silently fall back to the default config; this is not detectable by the

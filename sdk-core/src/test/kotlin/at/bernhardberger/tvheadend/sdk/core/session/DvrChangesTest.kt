@@ -512,7 +512,7 @@ internal class DvrChangesTest {
     ) {
         var generation = GatewayGeneration()
         val gateway = MutationGateway()
-        val coordinator = DvrMutationCoordinator(gateway, intents = ledger)
+        val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> null }, intents = ledger)
         val metadata = PhaseOneSessionMetadata(
             onDvrMetadataAccepted = coordinator::acceptMetadata,
             estimatedServerTime = { serverTime },

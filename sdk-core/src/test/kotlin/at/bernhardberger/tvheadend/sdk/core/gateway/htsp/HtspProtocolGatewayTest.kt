@@ -2180,11 +2180,11 @@ internal class HtspProtocolGatewayTest {
             priority = DvrPriority.HIGH,
             ageRating = 13,
         )
-        assertTrue(gateway.updateDvrEntry(generation, DvrEntryId(7), update) is GatewayResult.Ok)
+        assertTrue(gateway.updateDvrEntry(generation, DvrEntryId(7), update, configName = "chosen name") is GatewayResult.Ok)
         val updateRequest = fake.lastRequest as UpdateDvrEntryRequest
         assertEquals(7L, updateRequest.entryId)
         assertEquals(3L, updateRequest.channelId)
-        assertEquals("private-next-config", updateRequest.configName)
+        assertTrue(updateRequest.configName == "chosen name", "Resolved name must override the UUID")
         assertEquals("private-next-title", updateRequest.title)
         assertEquals("private-next-subtitle", updateRequest.subtitle)
         assertEquals("private-next-summary", updateRequest.summary)
@@ -2215,7 +2215,7 @@ internal class HtspProtocolGatewayTest {
         fake.executeResult = HtspResult.ServerError("private rejected")
         assertEquals(
             GatewayResult.ServerRejected("private rejected"),
-            gateway.updateDvrEntry(generation, DvrEntryId(7), DvrEntryUpdate()),
+            gateway.updateDvrEntry(generation, DvrEntryId(7), DvrEntryUpdate(), configName = null),
         )
 
         val failures = listOf(
@@ -2507,7 +2507,7 @@ internal class HtspProtocolGatewayTest {
         val generation = (gateway.connect(ServerConfiguration("host", 9_982))
             as GatewayConnectResult.Connected).connection.generation
         fake.executeResult = HtspResult.Ok(UpdateDvrEntryResponse)
-        gateway.updateDvrEntry(generation, DvrEntryId(7), DvrEntryUpdate(title = "new"))
+        gateway.updateDvrEntry(generation, DvrEntryId(7), DvrEntryUpdate(title = "new"), configName = null)
         assertEquals(UpdateDvrEntryRequest(entryId = 7, title = "new"), fake.lastRequest)
         fake.executeResult = HtspResult.Ok(UpdateAutorecEntryResponse)
         gateway.metadata.toList()

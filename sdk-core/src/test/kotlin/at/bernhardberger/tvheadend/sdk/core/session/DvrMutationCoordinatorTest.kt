@@ -98,50 +98,82 @@ internal class DvrMutationCoordinatorTest {
     }
 
     @Test
-    fun `scheduled update refuses missing or ambiguous config without dispatch`() = runTest {
+    fun `implicit scheduled and explicit unobserved updates refuse missing or ambiguous config`() = runTest {
         val target = DvrConfigId("target")
         for (configs in listOf(
             emptyList(),
             listOf(DvrConfiguration(target, "same", ""), DvrConfiguration(DvrConfigId("other"), "same", "")),
             listOf(DvrConfiguration(target, "first", ""), DvrConfiguration(target, "second", "")),
         )) {
-            val generation = GatewayGeneration()
-            val gateway = MutationGateway()
-            gateway.configsBehavior = { GatewayResult.Ok(configs) }
-            val current = DvrEntry.create(DvrEntryId(7), state = DvrEntryState.SCHEDULED, configId = target)
-            val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> current })
-            coordinator.bindGeneration(generation)
-            coordinator.startAdmission(generation)
-            assertEquals(
-                DvrMutationResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, false),
-                coordinator.updateEntry(generation, current.id, DvrEntryUpdate(title = "changed")),
-            )
-            assertTrue(gateway.sentConfigNames.isEmpty())
-        }
-    }
-
-    @Test
-    fun `non scheduled and unconfigured updates retain request shape without lookup`() = runTest {
-        for (state in listOf(null, DvrEntryState.RECORDING, DvrEntryState.COMPLETED, DvrEntryState.MISSED, DvrEntryState.SCHEDULED)) {
-            for (explicit in listOf(null, DvrConfigId("chosen"))) {
-                if (state == DvrEntryState.SCHEDULED && explicit != null) continue
+            for (explicit in listOf(false, true)) {
                 val generation = GatewayGeneration()
                 val gateway = MutationGateway()
-                gateway.configsBehavior = { error("Unexpected config lookup") }
-                val current = DvrEntry.create(DvrEntryId(7), state = state,
-                    configId = DvrConfigId("observed").takeUnless { state == DvrEntryState.SCHEDULED })
-                val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> current })
+                gateway.configsBehavior = { GatewayResult.Ok(configs) }
+                val current = DvrEntry.create(DvrEntryId(7), state = DvrEntryState.SCHEDULED, configId = target)
+                val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> current.takeUnless { explicit } })
                 coordinator.bindGeneration(generation)
                 coordinator.startAdmission(generation)
-                gateway.updateBehavior = { _, _, _ -> GatewayResult.Ok(Unit) }
-                assertTrue(coordinator.updateEntry(generation, current.id, DvrEntryUpdate(configId = explicit)) is DvrMutationResult.AcceptedButUnconfirmed)
-                assertTrue(gateway.sentConfigNames.single() == explicit?.value, "Legacy config field must be preserved")
+                assertEquals(
+                    DvrMutationResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, false),
+                    coordinator.updateEntry(generation, current.id, DvrEntryUpdate(configId = target.takeIf { explicit }, title = "changed")),
+                )
+                assertTrue(gateway.sentConfigNames.isEmpty())
             }
         }
     }
 
     @Test
-    fun `config lookup failures are unsent failures without write proof or server text`() = runTest {
+    fun `explicit config resolves for every state including an unobserved entry`() = runTest {
+        val target = DvrConfigId("chosen")
+        val observations = listOf(null) + listOf(null, DvrEntryState.SCHEDULED, DvrEntryState.RECORDING,
+            DvrEntryState.COMPLETED, DvrEntryState.MISSED).map { state ->
+            DvrEntry.create(DvrEntryId(7), state = state, configId = DvrConfigId("observed"))
+        }
+        for (current in observations) {
+            val generation = GatewayGeneration()
+            val gateway = MutationGateway()
+            var lookups = 0
+            gateway.configsBehavior = {
+                assertSame(generation, it)
+                lookups++
+                GatewayResult.Ok(listOf(DvrConfiguration(target, "chosen name", "")))
+            }
+            val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> current })
+            coordinator.bindGeneration(generation)
+            coordinator.startAdmission(generation)
+            gateway.updateBehavior = { _, _, _ -> GatewayResult.Ok(Unit) }
+            assertTrue(coordinator.updateEntry(generation, DvrEntryId(7), DvrEntryUpdate(configId = target)) is DvrMutationResult.AcceptedButUnconfirmed)
+            assertEquals(1, lookups)
+            assertTrue(gateway.sentConfigNames.single() == "chosen name", "Explicit config must be resolved")
+            gateway.updateBehavior = { _, _, _ -> GatewayResult.ServerRejected("chosen name chosen") }
+            val rejected = coordinator.updateEntry(generation, DvrEntryId(7), DvrEntryUpdate(configId = target)) as DvrMutationResult.Failed
+            assertEquals(DvrMutationResult.Failed(TvheadendFailure.SERVER_REJECTED, false), rejected)
+            assertEquals(null, rejected.serverMessage)
+            assertFalse(rejected.toString().contains("chosen"))
+        }
+    }
+
+    @Test
+    fun `implicit non scheduled unobserved and unconfigured updates omit config without lookup`() = runTest {
+        for (state in listOf(null, DvrEntryState.RECORDING, DvrEntryState.COMPLETED, DvrEntryState.MISSED, DvrEntryState.SCHEDULED)) {
+            for (unobserved in listOf(false, true)) {
+                val generation = GatewayGeneration()
+                val gateway = MutationGateway()
+                gateway.configsBehavior = { error("Unexpected config lookup") }
+                val current = DvrEntry.create(DvrEntryId(7), state = state,
+                    configId = DvrConfigId("observed").takeUnless { state == DvrEntryState.SCHEDULED })
+                val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> current.takeUnless { unobserved } })
+                coordinator.bindGeneration(generation)
+                coordinator.startAdmission(generation)
+                gateway.updateBehavior = { _, _, _ -> GatewayResult.Ok(Unit) }
+                assertTrue(coordinator.updateEntry(generation, current.id, DvrEntryUpdate()) is DvrMutationResult.AcceptedButUnconfirmed)
+                assertEquals(null, gateway.sentConfigNames.single())
+            }
+        }
+    }
+
+    @Test
+    fun `config lookup failures are unsent and only access denial updates write proof`() = runTest {
         val failures = listOf(
             GatewayResult.AccessDenied to TvheadendFailure.ACCESS_DENIED,
             GatewayResult.ConnectionLimit to TvheadendFailure.CONNECTION_LIMIT,
@@ -166,7 +198,7 @@ internal class DvrMutationCoordinatorTest {
             assertEquals(null, result.serverMessage)
             assertFalse(result.toString().contains("private"))
             assertTrue(gateway.sentConfigNames.isEmpty())
-            assertTrue(proofs.isEmpty())
+            assertEquals(if (response == GatewayResult.AccessDenied) listOf(false) else emptyList<Boolean>(), proofs)
         }
     }
 
@@ -285,7 +317,7 @@ internal class DvrMutationCoordinatorTest {
                 val gateway = MutationGateway()
                 var calls = 0
                 lateinit var coordinator: DvrMutationCoordinator
-                coordinator = DvrMutationCoordinator(gateway, isSessionReady = {
+                coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> null }, isSessionReady = {
                     retire(coordinator)
                     ready
                 })
@@ -311,7 +343,7 @@ internal class DvrMutationCoordinatorTest {
             val generation = GatewayGeneration()
             val gateway = MutationGateway()
             val proofs = mutableListOf<Boolean>()
-            val coordinator = DvrMutationCoordinator(gateway, onDvrAccessProof = { _, allowed -> proofs += allowed })
+            val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> null }, onDvrAccessProof = { _, allowed -> proofs += allowed })
             coordinator.bindGeneration(generation)
             coordinator.startAdmission(generation)
             gateway.scheduleBehavior = { _, _ ->
@@ -337,7 +369,7 @@ internal class DvrMutationCoordinatorTest {
     fun `shutdown retires a dispatched create but rejects a subsequent unsent create as not ready`() = runTest {
         val generation = GatewayGeneration()
         val gateway = MutationGateway()
-        val coordinator = DvrMutationCoordinator(gateway)
+        val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> null })
         coordinator.bindGeneration(generation)
         coordinator.startAdmission(generation)
         gateway.scheduleBehavior = { _, _ -> awaitCancellation() }
@@ -357,7 +389,7 @@ internal class DvrMutationCoordinatorTest {
         val generation = GatewayGeneration()
         val gateway = MutationGateway()
         lateinit var coordinator: DvrMutationCoordinator
-        coordinator = DvrMutationCoordinator(gateway, onDvrAccessProof = { _, _ ->
+        coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> null }, onDvrAccessProof = { _, _ ->
             coordinator.acceptMetadata(dvrUpdated(generation, 7))
             coordinator.bindGeneration(GatewayGeneration())
         })
@@ -375,7 +407,7 @@ internal class DvrMutationCoordinatorTest {
     fun `confirmation timeout racing generation replacement cannot return accepted but unconfirmed`() = runTest {
         val generation = GatewayGeneration()
         val gateway = MutationGateway()
-        val coordinator = DvrMutationCoordinator(gateway, DvrMutationSettings(confirmationTimeout = 1.seconds))
+        val coordinator = DvrMutationCoordinator(gateway, DvrMutationSettings(confirmationTimeout = 1.seconds), currentEntry = { _, _ -> null })
         coordinator.bindGeneration(generation)
         coordinator.startAdmission(generation)
         gateway.updateBehavior = { _, _, _ -> GatewayResult.Ok(Unit) }
@@ -400,6 +432,7 @@ internal class DvrMutationCoordinatorTest {
         var commandCount = 0
         val coordinator = DvrMutationCoordinator(
             gateway = gateway,
+            currentEntry = { _, _ -> null },
             isSessionReady = { candidate -> candidate === generation && ready },
         )
         gateway.scheduleBehavior = { _, _ ->
@@ -431,6 +464,7 @@ internal class DvrMutationCoordinatorTest {
         val proofs = mutableListOf<Boolean>()
         val coordinator = DvrMutationCoordinator(
             gateway = gateway,
+            currentEntry = { _, _ -> null },
             onDvrAccessProof = { _, allowed -> proofs += allowed },
         )
         gateway.scheduleBehavior = { _, _ -> acknowledgement.await() }
@@ -455,6 +489,7 @@ internal class DvrMutationCoordinatorTest {
         val gateway = MutationGateway()
         val coordinator = DvrMutationCoordinator(
             gateway = gateway,
+            currentEntry = { _, _ -> null },
             settings = DvrMutationSettings(1.seconds),
         )
         coordinator.bindGeneration(generation)
@@ -486,6 +521,7 @@ internal class DvrMutationCoordinatorTest {
         val proofs = mutableListOf<Boolean>()
         val coordinator = DvrMutationCoordinator(
             gateway = gateway,
+            currentEntry = { _, _ -> null },
             onDvrAccessProof = { proofGeneration, allowed ->
                 assertSame(generation, proofGeneration)
                 proofs += allowed
@@ -544,7 +580,7 @@ internal class DvrMutationCoordinatorTest {
         for ((reply, mayHaveApplied) in replies) {
             val generation = GatewayGeneration()
             val gateway = MutationGateway()
-            val coordinator = DvrMutationCoordinator(gateway)
+            val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> null })
             coordinator.bindGeneration(generation)
             coordinator.startAdmission(generation)
             gateway.updateBehavior = { _, _, _ ->
@@ -566,6 +602,7 @@ internal class DvrMutationCoordinatorTest {
         val proofs = mutableListOf<Boolean>()
         val coordinator = DvrMutationCoordinator(
             gateway = gateway,
+            currentEntry = { _, _ -> null },
             onDvrAccessProof = { _, allowed -> proofs += allowed },
         )
         coordinator.bindGeneration(generation)
@@ -589,7 +626,7 @@ internal class DvrMutationCoordinatorTest {
     fun `malformed add reply is reported without retrying an uncertain command`() = runTest {
         val generation = GatewayGeneration()
         val gateway = MutationGateway()
-        val coordinator = DvrMutationCoordinator(gateway)
+        val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> null })
         coordinator.bindGeneration(generation)
         coordinator.startAdmission(generation)
         var calls = 0
@@ -613,7 +650,7 @@ internal class DvrMutationCoordinatorTest {
         val generation = GatewayGeneration()
         val gateway = MutationGateway()
         val commandStarted = CompletableDeferred<Unit>()
-        val coordinator = DvrMutationCoordinator(gateway)
+        val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> null })
         coordinator.bindGeneration(generation)
         coordinator.startAdmission(generation)
         gateway.updateBehavior = { _, _, _ ->
@@ -645,7 +682,7 @@ internal class DvrMutationCoordinatorTest {
         val generationB = GatewayGeneration()
         val gateway = MutationGateway()
         val dispatched = mutableListOf<GatewayGeneration>()
-        val coordinator = DvrMutationCoordinator(gateway)
+        val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> null })
         coordinator.bindGeneration(generationA)
         coordinator.startAdmission(generationA)
         gateway.updateBehavior = { generation, _, _ ->
@@ -686,6 +723,7 @@ internal class DvrMutationCoordinatorTest {
         lateinit var coordinator: DvrMutationCoordinator
         coordinator = DvrMutationCoordinator(
             gateway = gateway,
+            currentEntry = { _, _ -> null },
             onDvrAccessProof = { _, allowed ->
                 assertTrue(allowed)
                 coordinator.stopAdmission()
@@ -705,7 +743,7 @@ internal class DvrMutationCoordinatorTest {
     fun `one metadata event confirms only one globally serialized operation`() = runTest {
         val generation = GatewayGeneration()
         val gateway = MutationGateway()
-        val coordinator = DvrMutationCoordinator(gateway)
+        val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> null })
         var commandCount = 0
         gateway.updateBehavior = { _, _, _ ->
             commandCount += 1
@@ -742,7 +780,7 @@ internal class DvrMutationCoordinatorTest {
         for (beforeReply in listOf(false, true)) {
             val generation = GatewayGeneration()
             val gateway = MutationGateway()
-            val coordinator = DvrMutationCoordinator(gateway)
+            val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> null })
             val update = dvrUpdated(generation, 1, DvrEntryState.COMPLETED,
                 failure = GatewayDvrFailure.FILE_MISSING)
             gateway.deleteBehavior = { _, _ ->
@@ -767,7 +805,7 @@ internal class DvrMutationCoordinatorTest {
     fun `delete ignores stats-only file-missing and unrelated full updates`() = runTest {
         val generation = GatewayGeneration()
         val gateway = MutationGateway().apply { deleteBehavior = { _, _ -> GatewayResult.Ok(Unit) } }
-        val coordinator = DvrMutationCoordinator(gateway)
+        val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> null })
         coordinator.bindGeneration(generation)
         coordinator.startAdmission(generation)
         // An event observed before command registration cannot confirm a later command.
@@ -792,7 +830,7 @@ internal class DvrMutationCoordinatorTest {
         for (cancel in listOf(false, true)) {
             val generation = GatewayGeneration()
             val gateway = MutationGateway()
-            val coordinator = DvrMutationCoordinator(gateway)
+            val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> null })
             gateway.stopBehavior = { _, _ -> GatewayResult.Ok(Unit) }
             gateway.cancelBehavior = { _, _ -> GatewayResult.Ok(Unit) }
             coordinator.bindGeneration(generation)
@@ -844,7 +882,7 @@ internal class DvrMutationCoordinatorTest {
         for (case in cases) {
             val generation = GatewayGeneration()
             val gateway = MutationGateway()
-            val coordinator = DvrMutationCoordinator(gateway)
+            val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> null })
             gateway.updateBehavior = { _, _, _ -> GatewayResult.Ok(Unit) }
             gateway.stopBehavior = { _, _ -> GatewayResult.Ok(Unit) }
             gateway.cancelBehavior = { _, _ -> GatewayResult.Ok(Unit) }
@@ -885,7 +923,7 @@ internal class DvrMutationCoordinatorTest {
     fun `stats-only updates never confirm a pending entry update`() = runTest {
         val generation = GatewayGeneration()
         val gateway = MutationGateway()
-        val coordinator = DvrMutationCoordinator(gateway)
+        val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> null })
         gateway.updateBehavior = { _, _, _ -> GatewayResult.Ok(Unit) }
         coordinator.bindGeneration(generation)
         coordinator.startAdmission(generation)
@@ -906,7 +944,7 @@ internal class DvrMutationCoordinatorTest {
     fun `rule creation ignores ordinary DVR side effects and matches its own rule stream`() = runTest {
         val generation = GatewayGeneration()
         val gateway = MutationGateway()
-        val coordinator = DvrMutationCoordinator(gateway)
+        val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> null })
         val acknowledgement = CompletableDeferred<GatewayResult<AutorecRuleId>>()
         gateway.createAutorecBehavior = { _, _ -> acknowledgement.await() }
         coordinator.bindGeneration(generation)
@@ -943,7 +981,7 @@ internal class DvrMutationCoordinatorTest {
         val generation = GatewayGeneration()
         val gateway = MutationGateway()
         val acknowledgement = CompletableDeferred<GatewayResult<TimerecRuleId>>()
-        val coordinator = DvrMutationCoordinator(gateway)
+        val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> null })
         gateway.createTimerecBehavior = { _, request ->
             assertEquals(null, request.channel)
             acknowledgement.await()

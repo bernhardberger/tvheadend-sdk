@@ -70,7 +70,7 @@ internal class DvrMutationCoordinator(
     private val isSessionReady: (GatewayGeneration) -> Boolean = { true },
     private val onDvrAccessProof: suspend (GatewayGeneration, Boolean) -> Unit = { _, _ -> },
     internal val intents: DvrIntentLedger = DvrIntentLedger(),
-    private val currentEntry: (GatewayGeneration, DvrEntryId) -> DvrEntry? = { _, _ -> null },
+    private val currentEntry: (GatewayGeneration, DvrEntryId) -> DvrEntry?,
 ) : DvrMutationCommands, DvrMutationLifecycle {
     private val lock = Any()
     private val operationMutex = Mutex()
@@ -146,22 +146,22 @@ internal class DvrMutationCoordinator(
         id: DvrEntryId,
         update: DvrEntryUpdate,
     ): DvrMutationResult<Unit> {
-        var configName = update.configId?.value
+        var configName: String? = null
         var resolvedEntry: DvrEntry? = null
         return mutate(
             expectedGeneration = generation,
             confirmations = setOf(ConfirmationKey(ConfirmationKind.ENTRY_UPDATED, id)),
             prepare = { currentGeneration ->
                 val observed = currentEntry(currentGeneration, id)
-                val target = update.configId ?: observed?.configId
-                if (observed?.state != DvrEntryState.SCHEDULED || target == null) {
+                val target = update.configId ?: observed?.configId?.takeIf { observed.state == DvrEntryState.SCHEDULED }
+                if (target == null) {
                     GatewayResult.Ok(Unit)
                 } else {
                     when (val result = gateway.getDvrConfigs(currentGeneration)) {
                         is GatewayResult.Ok -> {
                             val config = result.value.singleOrNull { it.id == target }
                             if (config == null || result.value.count { it.name == config.name } != 1 ||
-                                !matchesConfigObservation(currentGeneration, id, observed)
+                                (observed != null && !matchesConfigObservation(currentGeneration, id, observed))
                             ) {
                                 GatewayResult.ObservationExpired
                             } else {
@@ -188,7 +188,7 @@ internal class DvrMutationCoordinator(
                     GatewayResult.ObservationExpired
                 } else {
                     val result = gateway.updateDvrEntry(currentGeneration, id, update, configName)
-                    if (resolvedEntry != null && result is GatewayResult.ServerRejected) GatewayResult.ServerRejected() else result
+                    if (configName != null && result is GatewayResult.ServerRejected) GatewayResult.ServerRejected() else result
                 }
             },
         )
@@ -526,7 +526,7 @@ internal class DvrMutationCoordinator(
         }
 
     @OptIn(at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class)
-    private fun failure(
+    private suspend fun failure(
         operation: PendingMutation,
         result: GatewayResult<*>,
         mayHaveApplied: Boolean = result.mayHaveAppliedDvrCommand(),
@@ -541,7 +541,7 @@ internal class DvrMutationCoordinator(
             is GatewayResult.Ok -> error("A successful result is not a DVR mutation failure")
             is GatewayResult.ServerRejected ->
                 DvrMutationResult.Failed(TvheadendFailure.SERVER_REJECTED, false, result.serverMessage)
-            GatewayResult.AccessDenied -> DvrMutationResult.Failed(TvheadendFailure.ACCESS_DENIED, false)
+            GatewayResult.AccessDenied -> denied(operation)
             GatewayResult.ConnectionLimit ->
                 DvrMutationResult.Failed(TvheadendFailure.CONNECTION_LIMIT, mayHaveApplied = false)
             GatewayResult.Timeout -> DvrMutationResult.Failed(TvheadendFailure.TIMEOUT, mayHaveApplied)

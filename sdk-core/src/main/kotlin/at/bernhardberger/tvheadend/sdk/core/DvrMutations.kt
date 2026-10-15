@@ -61,10 +61,13 @@ public data class DvrScheduleRequest(
 public data class DvrEntryUpdate(
     public val channelId: ChannelId? = null,
     /**
-     * Configuration UUID to select. For a last-observed scheduled entry, null preserves its
-     * observed configuration: the SDK resolves that UUID (or this explicit UUID) to a unique
-     * enabled, account-visible name before updating. If neither UUID exists, the field is omitted.
+     * Configuration UUID to select, always resolved to a unique enabled, account-visible name,
+     * even for an unobserved or non-scheduled entry. Null preserves only a last-observed scheduled
+     * entry's configuration by resolving its observed UUID. Otherwise the field is omitted;
+     * an unobserved entry that is scheduled server-side may move to the default configuration.
      * Missing or ambiguous configs fail with `OBSERVATION_EXPIRED` before sending the update.
+     * This persists until an explicit visible, unambiguous config is selected or the server-side
+     * config changes; refreshing alone does not clear it.
      * A server-side ACL config list can still redirect the name to the default configuration;
      * a rename between lookup and update can do the same. See [DvrRepository.updateEntry].
      */

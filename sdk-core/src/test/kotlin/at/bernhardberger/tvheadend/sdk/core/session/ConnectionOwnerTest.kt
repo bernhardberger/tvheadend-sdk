@@ -19,6 +19,7 @@ import at.bernhardberger.tvheadend.sdk.core.cache.CachedEpg
 import at.bernhardberger.tvheadend.sdk.core.MetadataCachePolicy
 import at.bernhardberger.tvheadend.sdk.core.CacheStatistics
 import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
+import at.bernhardberger.tvheadend.sdk.core.DvrConfigId
 import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
 import at.bernhardberger.tvheadend.sdk.core.DvrConfigurationsState
 import at.bernhardberger.tvheadend.sdk.core.DvrCutpoint
@@ -26,6 +27,10 @@ import at.bernhardberger.tvheadend.sdk.core.DvrCutpointsResult
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpaceState
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
+import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
+import at.bernhardberger.tvheadend.sdk.core.EpgCoveragePolicy
+import at.bernhardberger.tvheadend.sdk.core.SessionRegistry
+import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
 import at.bernhardberger.tvheadend.sdk.core.DvrMutationResult
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
 import at.bernhardberger.tvheadend.sdk.core.DvrProgressResult
@@ -121,6 +126,60 @@ import org.junit.jupiter.api.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 internal class ConnectionOwnerTest {
+    @Test
+    fun `session title only update resolves observed scheduled config through production wiring`() = runTest {
+        withContext(Dispatchers.Default) {
+            val generation = GatewayGeneration()
+            val configId = DvrConfigId("current")
+            val entry = GatewayDvrEntry(id = DvrEntryId(7), state = DvrEntryState.SCHEDULED, configId = configId)
+            val gateway = FakeProtocolGateway().apply {
+                defaultConnectResult = connected(generation, dvrAccess = true)
+                enableBehavior = {
+                    emitMetadata(MetadataEvent.DvrEntryAdded(generation, entry))
+                    emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+                    GatewayResult.Ok(Unit)
+                }
+            }
+            var lookups = 0
+            gateway.dvrConfigsBehavior = {
+                assertSame(generation, it)
+                lookups++
+                GatewayResult.Ok(listOf(DvrConfiguration(configId, "current name", "")))
+            }
+            val sentNames = mutableListOf<String?>()
+            gateway.updateDvrBehavior = { commandGeneration, id, update, configName ->
+                assertSame(generation, commandGeneration)
+                assertEquals(entry.id, id)
+                assertEquals(null, update.configId)
+                assertEquals("edited", update.title)
+                sentNames += configName
+                gateway.emitMetadata(MetadataEvent.DvrEntryUpdated(generation,
+                    GatewayDvrEntry(id = id, state = DvrEntryState.SCHEDULED, configId = configId, title = update.title)))
+                GatewayResult.Ok(Unit)
+            }
+            val session: TvheadendSession = SessionRegistry.createOwner(
+                EpgCoveragePolicy.create(),
+                gatewayFactory = { gateway },
+                childrenFactory = { _, _, _ -> RecordingSessionChildren(mutableListOf()) },
+            )
+            try {
+                session.connect(ServerProfile("server"))
+                val ready = withTimeout(5.seconds) {
+                    session.observation.first { it.currentSession != null }
+                }
+                val result = withTimeout(5.seconds) {
+                    session.dvrRepository.updateEntry(requireNotNull(ready.currentSession), entry.id, DvrEntryUpdate(title = "edited"))
+                }
+                assertTrue(result is DvrMutationResult.Confirmed)
+                assertEquals(1, lookups)
+                assertEquals(1, sentNames.size)
+                assertTrue(sentNames.single() == "current name", "Session must preserve the observed config by name")
+            } finally {
+                session.shutdown()
+            }
+        }
+    }
+
     @Test
     fun `successful initial sync with no channels still reaches ready`() = runTest {
         val generation = GatewayGeneration()
@@ -755,6 +814,7 @@ internal class ConnectionOwnerTest {
         lateinit var metadata: PhaseOneSessionMetadata
         val coordinator = DvrMutationCoordinator(
             gateway = gateway,
+            currentEntry = { _, _ -> null },
             isSessionReady = { commandGeneration ->
                 owner.isDvrMutationReady(commandGeneration)
             },
@@ -834,7 +894,7 @@ internal class ConnectionOwnerTest {
             val gateway = FakeProtocolGateway()
             val generation = GatewayGeneration()
             gateway.connectResults += connected(generation)
-            val mutations = DvrMutationCoordinator(gateway)
+            val mutations = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> null })
             val progress = DvrProgressCoordinator(gateway)
             val previous = GatewayGeneration()
             mutations.bindGeneration(previous)
@@ -906,6 +966,7 @@ internal class ConnectionOwnerTest {
         }
         val mutations = DvrMutationCoordinator(
             gateway = gateway,
+            currentEntry = { _, _ -> null },
             isSessionReady = { commandGeneration -> owner.isDvrMutationReady(commandGeneration) },
             onDvrAccessProof = onProof,
         )
@@ -986,6 +1047,7 @@ internal class ConnectionOwnerTest {
         }
         val mutations = DvrMutationCoordinator(
             gateway = gateway,
+            currentEntry = { _, _ -> null },
             isSessionReady = { commandGeneration -> owner.isDvrMutationReady(commandGeneration) },
             onDvrAccessProof = onProof,
         )
@@ -2275,6 +2337,12 @@ private class FakeProtocolGateway(
         GatewayGeneration,
         DvrScheduleRequest,
     ) -> GatewayResult<DvrEntryId> = { _, _ -> GatewayResult.NotSupported }
+    internal var updateDvrBehavior: suspend (
+        GatewayGeneration,
+        DvrEntryId,
+        DvrEntryUpdate,
+        String?,
+    ) -> GatewayResult<Unit> = { _, _, _, _ -> GatewayResult.NotSupported }
     internal var reportDvrProgressBehavior: suspend (
         GatewayGeneration,
         DvrEntryId,
@@ -2402,7 +2470,7 @@ private class FakeProtocolGateway(
         id: DvrEntryId,
         update: DvrEntryUpdate,
         configName: String?,
-    ): GatewayResult<Unit> = GatewayResult.NotSupported
+    ): GatewayResult<Unit> = updateDvrBehavior(generation, id, update, configName)
 
     override suspend fun stopDvrEntry(
         generation: GatewayGeneration,

@@ -36,9 +36,11 @@
 
 ### Fixed
 
-- Scheduled DVR-entry edits now resolve explicit or observed config UUIDs to unique
-  visible config names, preserving the profile instead of silently selecting the
-  default. Missing/ambiguous configs and failed lookups stop before the update.
+- DVR-entry edits now resolve explicit config UUIDs in every state, and implicit
+  observed config UUIDs for scheduled entries, to unique visible config names.
+  `updateEntry` can now fail with `OBSERVATION_EXPIRED` or a config-lookup failure
+  where it previously sent the update and the server silently moved the recording
+  to the default config. These failures stop before the update with `mayHaveApplied=false`.
   Server ACL config-list rewriting and a rename between lookup and update can
   still cause default fallback; these server limitations are documented.
 - DVR statistics now clear omitted failure, subscriptionError, streamErrors and
