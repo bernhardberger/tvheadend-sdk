@@ -14,6 +14,15 @@ The repository is `build/local-maven`; consumers must pin that same candidate fo
 all SDK modules. The property accepts named `-SNAPSHOT` versions only and does
 not authorize remote publication or release tooling.
 
+`tools/check-staged-publication` is the shared CI and release-path validator.
+It rejects non-release dependency versions in all five POMs and Gradle module
+metadata, including dependency management and constraints, even when the SDK's
+own version is a plain release. Fixed numeric versions and numbered alpha, beta,
+RC or milestone releases are accepted; snapshots (including timestamped snapshots),
+development labels, dynamic selectors and ranges are not. An unreleased HTSP
+candidate can be used for local build/consumer verification, but its staged SDK
+artifacts cannot pass this release gate or produce a verified manifest.
+
 One authorized owner performs preparation, CI/tagging, publication and completion
 in the same task. No planner, model review, convergence package or verification
 package is required for an ordinary release through this existing path. Obtain
