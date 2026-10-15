@@ -165,6 +165,9 @@ public fun dvrRejectionForFake(): DvrMutationResult.Failed =
 
 public fun dvrRejectionText(result: DvrMutationResult.Failed): String? = result.serverMessage
 
+public fun dvrWithAccountLabelsForFake(): DvrEntry =
+    DvrEntry.create(DvrEntryId(1), owner = "fixture-owner", creator = "fixture-creator")
+
 public fun programmeRecordings(observation: SessionObservation, eventId: Long): DvrEventEntries? =
     observation.dvrEntriesForEvent(EventId(eventId))
 

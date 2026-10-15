@@ -178,6 +178,13 @@ public final class StagedSdkJavaConsumer {
     }
 
     @kotlin.OptIn(markerClass = ExperimentalTvheadendApi.class)
+    public static String[] dvrFakeAccountLabels() {
+        // Kotlin bridges the factory's value-class DvrEntryId parameter.
+        DvrEntry entry = StagedSdkConsumerKt.dvrWithAccountLabelsForFake();
+        return new String[] { entry.getOwner(), entry.getCreator() };
+    }
+
+    @kotlin.OptIn(markerClass = ExperimentalTvheadendApi.class)
     public static String[] dvrAccountLabels(
             at.bernhardberger.tvheadend.sdk.core.DvrEntry entry,
             at.bernhardberger.tvheadend.sdk.core.AutorecRule autorec,

@@ -6,6 +6,8 @@ Unreleased; development target.
 
 ### Added
 
+- Experimental `DvrEntry.create` overload accepts explicit nullable `owner` and
+  `creator` labels for application fakes, preserving validation and redacted rendering.
 - Experimental held-`EpgEvent` overloads of `dvrEntryForEvent` and `dvrEntriesForEvent`
   rank explicit recording links for search results and historical programmes outside
   the observation's EPG snapshot, using the held event's potentially stale DVR link.
