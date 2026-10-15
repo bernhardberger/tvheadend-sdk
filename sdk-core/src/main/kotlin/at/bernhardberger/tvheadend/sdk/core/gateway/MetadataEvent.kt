@@ -91,7 +91,7 @@ internal sealed interface MetadataEvent {
 
     public class EventUpdated(
         override val generation: GatewayGeneration,
-        internal val event: GatewayEpgUpdate,
+        internal val event: GatewayEpgEvent,
     ) : MetadataEvent {
         override fun toString(): String = "MetadataEvent.EventUpdated(<redacted>)"
     }
@@ -224,51 +224,6 @@ internal class GatewayEpgEvent(
     internal val credits: List<EpgCredit>? = credits?.toList()
 
     override fun toString(): String = "GatewayEpgEvent(<redacted>)"
-}
-
-internal class GatewayEpgUpdate(
-    internal val id: EventId,
-    internal val channelId: ChannelId? = null,
-    internal val start: Instant? = null,
-    internal val stop: Instant? = null,
-    internal val title: String? = null,
-    internal val subtitle: String? = null,
-    internal val summary: String? = null,
-    internal val description: String? = null,
-    internal val genre: String? = null,
-    categories: List<String>? = null,
-    keywords: List<String>? = null,
-    credits: List<EpgCredit>? = null,
-    internal val seriesLinkUri: String? = null,
-    internal val episodeUri: String? = null,
-    internal val contentType: Long? = null,
-    internal val ageRating: Long? = null,
-    internal val ratingLabel: String? = null,
-    internal val ratingIcon: String? = null,
-    internal val ratingAuthority: String? = null,
-    internal val ratingCountry: String? = null,
-    internal val starRating: Long? = null,
-    internal val copyrightYear: Long? = null,
-    internal val firstAired: Instant? = null,
-    internal val isNew: Boolean? = null,
-    internal val seasonNumber: Long? = null,
-    internal val seasonCount: Long? = null,
-    internal val episodeNumber: Long? = null,
-    internal val episodeCount: Long? = null,
-    internal val partNumber: Long? = null,
-    internal val partCount: Long? = null,
-    internal val episodeOnscreen: String? = null,
-    internal val episodeId: EpgEpisodeId? = null,
-    internal val seriesLinkId: EpgSeriesLinkId? = null,
-    internal val image: String? = null,
-    internal val dvrEntryId: DvrEntryId? = null,
-    internal val nextEventId: EventId? = null,
-) {
-    internal val categories: List<String>? = categories?.toList()
-    internal val keywords: List<String>? = keywords?.toList()
-    internal val credits: List<EpgCredit>? = credits?.toList()
-
-    override fun toString(): String = "GatewayEpgUpdate(<redacted>)"
 }
 
 internal class GatewayEpgQueryEvent(

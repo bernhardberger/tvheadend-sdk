@@ -14,7 +14,6 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrStats
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
-import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgUpdate
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayTagMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayTimerecRule
@@ -72,7 +71,7 @@ internal class EntityReplacementTest {
         )))
         val retained = reducer.snapshot()
         val query = checkNotNull(reducer.beginQuery(ChannelId(1)))
-        reducer.accept(MetadataEvent.EventUpdated(generation, GatewayEpgUpdate(
+        reducer.accept(MetadataEvent.EventUpdated(generation, GatewayEpgEvent(
             EventId(1), ChannelId(1), start, stop,
         )))
         assertNull(reducer.snapshot().events.single().subtitle)
@@ -119,7 +118,7 @@ internal class EntityReplacementTest {
         channels.accept(MetadataEvent.ChannelUpdated(generation, channel()))
         assertEquals(ChannelId(1), channels.snapshot().channels.single().id)
         val epg = EpgReducer()
-        assertTrue(epg.accept(MetadataEvent.EventUpdated(generation, GatewayEpgUpdate(EventId(1), start = start, stop = stop))))
+        assertTrue(epg.accept(MetadataEvent.EventUpdated(generation, GatewayEpgEvent(EventId(1), start = start, stop = stop))))
         assertEquals(EventId(1), epg.snapshot().events.single().id)
         val dvr = DvrReducer()
         assertTrue(dvr.accept(MetadataEvent.DvrEntryUpdated(generation, GatewayDvrEntry(DvrEntryId(1)))))

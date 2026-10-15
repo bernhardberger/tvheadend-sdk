@@ -7,7 +7,6 @@ import at.bernhardberger.tvheadend.sdk.core.SessionObservation
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.gateway.EventId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
-import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgUpdate
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.session.PhaseOneSessionMetadata
 import org.openjdk.jmh.annotations.Benchmark
@@ -69,8 +68,7 @@ public class MixedEpgBenchmarks {
         ))
         changed = fixture.updates.map { it.take(50) }
         unchanged = (50 until 100).map { index ->
-            MetadataEvent.EventUpdated(fixture.generation,
-                GatewayEpgUpdate(EventId(index.toLong()), title = "Programme $index"))
+            MetadataEvent.EventUpdated(fixture.generation, fixture.event(index))
         }
         additions = List(4) { index ->
             MetadataEvent.EventAdded(fixture.generation, GatewayEpgEvent(

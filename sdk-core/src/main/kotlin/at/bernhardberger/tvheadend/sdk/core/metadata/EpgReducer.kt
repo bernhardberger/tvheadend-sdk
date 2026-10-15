@@ -18,7 +18,6 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.gateway.EventId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
-import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgUpdate
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import java.util.Collections
 import kotlin.time.Instant
@@ -28,8 +27,8 @@ import kotlin.time.Duration.Companion.hours
 internal data class ReducedEpgEvent private constructor(
     internal val id: EventId,
     internal val channelId: ChannelId?,
-    internal val start: Instant?,
-    internal val stop: Instant?,
+    internal val start: Instant,
+    internal val stop: Instant,
     internal val title: String?,
     internal val subtitle: String?,
     internal val summary: String?,
@@ -71,8 +70,6 @@ internal data class ReducedEpgEvent private constructor(
 
     internal fun toPublicOrNull(): EpgEvent? {
         publicEvent?.let { return it }
-        val start = start ?: return null
-        val stop = stop ?: return null
         if (stop < start) return null
         return EpgEvent.create(
             id = id,
@@ -101,16 +98,7 @@ internal data class ReducedEpgEvent private constructor(
         ).also { publicEvent = it }
     }
 
-    private fun hasInvalidTiming(): Boolean = start != null && stop != null && stop < start
-
-    internal fun shouldRetain(from: Instant, to: Instant): Boolean {
-        val start = start
-        val stop = stop
-        if (start != null && stop != null) return stop >= from && start <= to
-        if (start != null) return start <= to
-        if (stop != null) return stop >= from
-        return false
-    }
+    internal fun shouldRetain(from: Instant, to: Instant): Boolean = stop >= from && start <= to
 
     private fun ratingOrNull(): EpgRating? {
         if (
@@ -161,7 +149,7 @@ internal data class ReducedEpgEvent private constructor(
     }
 
     internal companion object {
-        internal fun fromAdd(event: GatewayEpgEvent): ReducedEpgEvent? {
+        internal fun fromEvent(event: GatewayEpgEvent): ReducedEpgEvent? {
             if (event.stop < event.start) return null
             return ReducedEpgEvent(
                 id = event.id,
@@ -202,45 +190,6 @@ internal data class ReducedEpgEvent private constructor(
                 nextEventId = event.nextEventId,
             )
         }
-
-        internal fun fromUpdate(update: GatewayEpgUpdate): ReducedEpgEvent? = ReducedEpgEvent(
-            id = update.id,
-            channelId = update.channelId,
-            start = update.start,
-            stop = update.stop,
-            title = update.title,
-            subtitle = update.subtitle,
-            summary = update.summary,
-            description = update.description,
-            genre = update.genre,
-            categories = update.categories?.toImmutableList(),
-            keywords = update.keywords?.toImmutableList(),
-            credits = update.credits?.toImmutableList(),
-            seriesLinkUri = update.seriesLinkUri,
-            episodeUri = update.episodeUri,
-            contentType = update.contentType,
-            ageRating = update.ageRating,
-            ratingLabel = update.ratingLabel,
-            ratingIcon = update.ratingIcon,
-            ratingAuthority = update.ratingAuthority,
-            ratingCountry = update.ratingCountry,
-            starRating = update.starRating,
-            copyrightYear = update.copyrightYear,
-            firstAired = update.firstAired,
-            isNew = update.isNew,
-            seasonNumber = update.seasonNumber,
-            seasonCount = update.seasonCount,
-            episodeNumber = update.episodeNumber,
-            episodeCount = update.episodeCount,
-            partNumber = update.partNumber,
-            partCount = update.partCount,
-            episodeOnscreen = update.episodeOnscreen,
-            episodeId = update.episodeId,
-            seriesLinkId = update.seriesLinkId,
-            image = update.image,
-            dvrEntryId = update.dvrEntryId,
-            nextEventId = update.nextEventId,
-        ).takeUnless { it.start == null || it.stop == null || it.hasInvalidTiming() }
 
         internal fun fromQuery(event: GatewayEpgQueryEvent): ReducedEpgEvent? {
             if (event.stop < event.start) return null
@@ -362,11 +311,11 @@ internal class EpgReducer(
             }
             is MetadataEvent.EventAdded -> {
                 recordEventAuthority(event.event.id)
-                return acceptAdd(event.event)
+                return acceptEvent(event.event)
             }
             is MetadataEvent.EventUpdated -> {
                 recordEventAuthority(event.event.id)
-                return acceptUpdate(event.event)
+                return acceptEvent(event.event)
             }
             is MetadataEvent.EventDeleted -> {
                 cachedSnapshot = null
@@ -505,7 +454,7 @@ internal class EpgReducer(
 
     internal fun pruneHistory(serverNow: Instant) {
         if (history.entries.removeIf { (_, event) ->
-                event.stop?.let { it <= serverNow - 6.hours } != false
+                event.stop <= serverNow - 6.hours
             }
         ) cachedSnapshot = null
     }
@@ -519,7 +468,6 @@ internal class EpgReducer(
 
     private fun overlaps(left: ReducedEpgEvent, right: ReducedEpgEvent): Boolean =
         left.channelId != null && left.channelId == right.channelId &&
-            left.start != null && left.stop != null && right.start != null && right.stop != null &&
             left.start < right.stop && right.start < left.stop
 
     private fun supersedeHistory(event: ReducedEpgEvent) {
@@ -565,32 +513,17 @@ internal class EpgReducer(
 
     private class CoverageBounds(var from: Instant, var to: Instant)
 
-    private fun acceptAdd(event: GatewayEpgEvent): Boolean {
-        val candidate = ReducedEpgEvent.fromAdd(event) ?: return false
+    private fun acceptEvent(event: GatewayEpgEvent): Boolean {
+        val candidate = ReducedEpgEvent.fromEvent(event) ?: return false
         supersedeHistory(candidate)
         if (event.id !in events && events.size >= maximumRetainedEvents) {
             invalidateActiveQueriesAfterCapacityDrop()
             return false
         }
+        // Identical full entities still supersede history without rebuilding an unchanged snapshot.
         if (events[event.id] != candidate) {
             cachedSnapshot = null
             events[event.id] = candidate
-        }
-        return true
-    }
-
-    private fun acceptUpdate(update: GatewayEpgUpdate): Boolean {
-        val candidate = ReducedEpgEvent.fromUpdate(update) ?: return false
-        supersedeHistory(candidate)
-        if (update.id !in events && events.size >= maximumRetainedEvents) {
-            invalidateActiveQueriesAfterCapacityDrop()
-            return false
-        }
-        // Identical wire updates still advance query authority and supersede history,
-        // but do not require rebuilding an otherwise unchanged immutable snapshot.
-        if (events[update.id] != candidate) {
-            cachedSnapshot = null
-            events[update.id] = candidate
         }
         return true
     }

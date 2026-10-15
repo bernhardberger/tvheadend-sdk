@@ -27,6 +27,10 @@
 
 ### Fixed
 
+- DVR statistics now clear omitted failure, subscriptionError, streamErrors and
+  dataErrors; EPG updates without timing are no longer assembled into events;
+  playPosition and playCount clear when the server omits them.
+
 - Rule mutation replies no longer overwrite newer server channel restrictions or
   resurrect deleted rules in the connection-local cache. Immediate follow-up
   updates still preserve successful local changes before metadata arrives.

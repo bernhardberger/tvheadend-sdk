@@ -14,7 +14,6 @@ import at.bernhardberger.tvheadend.sdk.core.EventId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
-import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgUpdate
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -41,18 +40,18 @@ internal class EpgReducerTest {
         reducer.accept(MetadataEvent.EventAdded(generation, added))
         val retained = reducer.snapshot()
         assertEquals(listOf(actor), retained.events.single().credits)
-        reducer.accept(MetadataEvent.EventUpdated(generation, GatewayEpgUpdate(EventId(1), ChannelId(1), instant(10), instant(20), credits = listOf(actor))))
+        reducer.accept(MetadataEvent.EventUpdated(generation, GatewayEpgEvent(EventId(1), ChannelId(1), instant(10), instant(20), credits = listOf(actor))))
         assertSame(retained, reducer.snapshot())
 
-        reducer.accept(MetadataEvent.EventUpdated(generation, update(1)))
+        reducer.accept(MetadataEvent.EventUpdated(generation, event(1)))
         assertEquals(null, reducer.snapshot().events.single().credits)
 
         input.addAll(listOf(writer, actor))
-        val updated = GatewayEpgUpdate(EventId(1), ChannelId(1), instant(10), instant(20), credits = input)
+        val updated = GatewayEpgEvent(EventId(1), ChannelId(1), instant(10), instant(20), credits = input)
         input.clear()
         reducer.accept(MetadataEvent.EventUpdated(generation, updated))
         assertEquals(listOf(writer, actor), reducer.snapshot().events.single().credits)
-        reducer.accept(MetadataEvent.EventUpdated(generation, GatewayEpgUpdate(EventId(1), ChannelId(1), instant(10), instant(20), credits = emptyList())))
+        reducer.accept(MetadataEvent.EventUpdated(generation, GatewayEpgEvent(EventId(1), ChannelId(1), instant(10), instant(20), credits = emptyList())))
         assertEquals(emptyList<EpgCredit>(), reducer.snapshot().events.single().credits)
         assertEquals(listOf(actor), retained.events.single().credits)
     }
@@ -122,7 +121,7 @@ internal class EpgReducerTest {
             GatewayEpgQueryEvent(EventId(1), ChannelId(1), Instant.fromEpochSeconds(10), Instant.fromEpochSeconds(20)),
         ))
         assertTrue(reducer.snapshot().events.isEmpty())
-        reducer.accept(MetadataEvent.EventUpdated(generation, update(1, title = "corrected")))
+        reducer.accept(MetadataEvent.EventUpdated(generation, event(1, title = "corrected")))
         assertTrue(reducer.snapshot().historicalEvents.isEmpty())
         assertEquals("corrected", reducer.snapshot().events.single().title)
         reducer.accept(MetadataEvent.EventDeleted(generation, EventId(1)), Instant.fromEpochSeconds(20))
@@ -140,7 +139,7 @@ internal class EpgReducerTest {
                 event(index.toLong() + 1, 1, 10, 20, title = "original")))
         }
         val retained = reducer.snapshot()
-        reducer.accept(MetadataEvent.EventUpdated(generation, update(1, title = "updated")))
+        reducer.accept(MetadataEvent.EventUpdated(generation, event(1, title = "updated")))
         val current = reducer.snapshot()
 
         assertNotSame(retained.events.first(), current.events.first())
@@ -161,12 +160,12 @@ internal class EpgReducerTest {
         val query = requireNotNull(reducer.beginQuery(ChannelId(1)))
 
         repeat(3) {
-            reducer.accept(MetadataEvent.EventUpdated(generation, update(1, title = "current")))
+            reducer.accept(MetadataEvent.EventUpdated(generation, event(1, title = "current")))
             assertSame(retained, reducer.snapshot())
         }
         reducer.acceptSuccessfulQuery(query, instant(30), listOf(queryEvent(1, 1, 10, 20, title = "stale")))
         assertEquals("current", reducer.snapshot().events.single().title)
-        reducer.accept(MetadataEvent.EventUpdated(generation, update(1, title = "changed")))
+        reducer.accept(MetadataEvent.EventUpdated(generation, event(1, title = "changed")))
         assertEquals("changed", reducer.snapshot().events.single().title)
         assertEquals("current", retained.events.single().title)
     }
@@ -182,7 +181,7 @@ internal class EpgReducerTest {
         val keywords = mutableListOf("keyword")
 
         reducer.accept(MetadataEvent.EventUpdated(generation,
-            GatewayEpgUpdate(EventId(1), ChannelId(1), instant(10), instant(20), categories = categories, keywords = keywords)))
+            GatewayEpgEvent(EventId(1), ChannelId(1), instant(10), instant(20), categories = categories, keywords = keywords)))
         assertSame(retained, reducer.snapshot())
         categories.clear()
         keywords.clear()
@@ -190,7 +189,7 @@ internal class EpgReducerTest {
         assertEquals(listOf("keyword"), reducer.snapshot().events.single().keywords)
 
         reducer.accept(MetadataEvent.EventUpdated(generation,
-            GatewayEpgUpdate(EventId(1), ChannelId(1), instant(10), instant(20), categories = categories, keywords = keywords)))
+            GatewayEpgEvent(EventId(1), ChannelId(1), instant(10), instant(20), categories = categories, keywords = keywords)))
         assertNotSame(retained, reducer.snapshot())
         assertEquals(emptyList<String>(), reducer.snapshot().events.single().categories)
         assertEquals(emptyList<String>(), reducer.snapshot().events.single().keywords)
@@ -210,7 +209,7 @@ internal class EpgReducerTest {
             assertEquals(1, retained.historicalEvents.size)
 
             reducer.accept(MetadataEvent.EventUpdated(generation,
-                update(3, channelId = 1, start = 10, stop = 20, title = "ended")))
+                event(3, channelId = 1, start = 10, stop = 20, title = "ended")))
             val current = reducer.snapshot()
             assertNotSame(retained, current)
             assertTrue(current.historicalEvents.isEmpty())
@@ -227,7 +226,7 @@ internal class EpgReducerTest {
         reducer.accept(MetadataEvent.EventDeleted(generation, EventId(1)), instant(20))
         val retained = reducer.snapshot()
 
-        reducer.accept(MetadataEvent.EventUpdated(generation, update(1, title = "ended")))
+        reducer.accept(MetadataEvent.EventUpdated(generation, event(1, title = "ended")))
         assertTrue(reducer.snapshot().historicalEvents.isEmpty())
         assertEquals("ended", reducer.snapshot().events.single().title)
         assertTrue(retained.events.isEmpty())
@@ -242,7 +241,7 @@ internal class EpgReducerTest {
         reducer.accept(MetadataEvent.EventAdded(generation, event(2, 1, 30, 40, title = "current")))
         val retained = reducer.snapshot()
 
-        reducer.accept(MetadataEvent.EventUpdated(generation, update(2, start = 30, stop = 40, title = "current")), instant(21_620))
+        reducer.accept(MetadataEvent.EventUpdated(generation, event(2, start = 30, stop = 40, title = "current")), instant(21_620))
         assertTrue(reducer.snapshot().historicalEvents.isEmpty())
         assertEquals(1, retained.historicalEvents.size)
     }
@@ -296,7 +295,7 @@ internal class EpgReducerTest {
         reducer.accept(
             MetadataEvent.EventUpdated(
                 generation,
-                update(id = 10, title = "new", categories = emptyList()),
+                event(id = 10, title = "new", categories = emptyList()),
             ),
         )
 
@@ -319,49 +318,13 @@ internal class EpgReducerTest {
     }
 
     @Test
-    fun `incomplete unknown updates are rejected and a complete update inserts`() {
+    fun `complete update for an unknown event inserts`() {
         val reducer = EpgReducer()
         addChannel(reducer, 1)
-        reducer.accept(MetadataEvent.EventUpdated(generation, update(10, start = null, stop = null, title = "draft")))
-        assertEquals(emptyList<Any>(), reducer.snapshot().events)
-
-        reducer.accept(MetadataEvent.EventUpdated(generation, update(10, channelId = 1, start = 10, stop = null)))
-        assertEquals(emptyList<Any>(), reducer.snapshot().events)
-
-        reducer.accept(MetadataEvent.EventUpdated(generation, update(10, stop = 20)))
+        reducer.accept(MetadataEvent.EventUpdated(generation, event(10, stop = 20)))
         val event = reducer.snapshot().events.single()
         assertEquals(null, event.title)
         assertEquals(ChannelId(1), event.channelId)
-        assertEquals(instant(10), event.start)
-        assertEquals(instant(20), event.stop)
-    }
-
-    @Test
-    fun `retention does not assemble an event from separate incomplete updates`() {
-        val reducer = EpgReducer()
-        addChannel(reducer, 1)
-        reducer.accept(MetadataEvent.EventUpdated(generation, update(10, channelId = 1, start = 10, stop = null)))
-
-        reducer.retainOverlapping(instant(0), instant(20))
-        reducer.accept(MetadataEvent.EventUpdated(generation, update(10, start = null, stop = 20)))
-        assertTrue(reducer.snapshot().events.isEmpty())
-    }
-
-    @Test
-    fun `untimed unknown updates are not retained as drafts`() {
-        val reducer = EpgReducer()
-        addChannel(reducer, 1)
-        reducer.accept(MetadataEvent.EventUpdated(generation, update(10, start = null, stop = null, title = "draft")))
-        reducer.retainOverlapping(instant(0), instant(20))
-        reducer.accept(
-            MetadataEvent.EventUpdated(
-                generation,
-                update(10, channelId = 1, start = 10, stop = 20),
-            ),
-        )
-
-        val event = reducer.snapshot().events.single()
-        assertEquals(null, event.title)
         assertEquals(instant(10), event.start)
         assertEquals(instant(20), event.stop)
     }
@@ -373,7 +336,7 @@ internal class EpgReducerTest {
         reducer.accept(MetadataEvent.EventAdded(generation, event(10, 1, 10, 20, title = "valid")))
         val original = reducer.snapshot().events.single()
 
-        reducer.accept(MetadataEvent.EventUpdated(generation, update(10, stop = 9, title = "invalid")))
+        reducer.accept(MetadataEvent.EventUpdated(generation, event(10, stop = 9, title = "invalid")))
         assertEquals(original, reducer.snapshot().events.single())
 
         reducer.accept(MetadataEvent.EventAdded(generation, event(10, 1, 30, 29, title = "invalid-add")))
@@ -387,7 +350,7 @@ internal class EpgReducerTest {
         reducer.accept(
             MetadataEvent.EventUpdated(
                 generation,
-                update(id = 2, channelId = 1, start = 20, stop = 10),
+                event(id = 2, channelId = 1, start = 20, stop = 10),
             ),
         )
         reducer.accept(MetadataEvent.EventAdded(generation, event(3, 1, 30, 40)))
@@ -395,7 +358,7 @@ internal class EpgReducerTest {
         reducer.accept(
             MetadataEvent.EventUpdated(
                 generation,
-                update(id = 2, channelId = 1, start = 50, stop = 60),
+                event(id = 2, channelId = 1, start = 50, stop = 60),
             ),
         )
 
@@ -411,7 +374,7 @@ internal class EpgReducerTest {
         reducer.accept(MetadataEvent.EventAdded(generation, event(3, 1, 30, 40)))
 
         assertEquals(listOf(1L, 2L), reducer.snapshot().events.map { it.id.value })
-        reducer.accept(MetadataEvent.EventUpdated(generation, update(1, title = "updated")))
+        reducer.accept(MetadataEvent.EventUpdated(generation, event(1, title = "updated")))
         assertEquals("updated", reducer.snapshot().events.first().title)
 
         reducer.accept(MetadataEvent.EventDeleted(generation, EventId(1)))
@@ -516,7 +479,7 @@ internal class EpgReducerTest {
         assertFalse(snapshot.coverages.first { it.channelId == ChannelId(1) }.isEmpty)
         assertTrue(snapshot.coverages.first { it.channelId == ChannelId(2) }.isEmpty)
 
-        reducer.accept(MetadataEvent.EventUpdated(generation, update(10, channelId = 2)))
+        reducer.accept(MetadataEvent.EventUpdated(generation, event(10, channelId = 2)))
         snapshot = reducer.snapshot()
         assertEquals(ChannelId(2), snapshot.events.single().channelId)
         assertTrue(snapshot.coverages.first { it.channelId == ChannelId(1) }.isEmpty)
@@ -599,7 +562,7 @@ internal class EpgReducerTest {
         reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20, title = "old")))
 
         val older = requireNotNull(reducer.beginQuery(ChannelId(1)))
-        reducer.accept(MetadataEvent.EventUpdated(generation, update(1, title = "async")))
+        reducer.accept(MetadataEvent.EventUpdated(generation, event(1, title = "async")))
         val newer = requireNotNull(reducer.beginQuery(ChannelId(1)))
 
         assertEquals(
@@ -645,10 +608,9 @@ internal class EpgReducerTest {
     }
 
     @Test
-    fun `reconciliation removes incomplete and orphaned events`() {
+    fun `reconciliation removes orphaned events`() {
         val reducer = EpgReducer()
         addChannel(reducer, 1)
-        reducer.accept(MetadataEvent.EventUpdated(generation, update(10, start = null, stop = null, title = "incomplete")))
         reducer.accept(MetadataEvent.EventAdded(generation, event(11, 2, 10, 20)))
         reducer.accept(MetadataEvent.EventAdded(generation, event(12, null, 20, 30)))
 
@@ -708,7 +670,7 @@ internal class EpgReducerTest {
         )
         val historical = reducer.snapshot()
         categories.clear()
-        reducer.accept(MetadataEvent.EventUpdated(generation, update(1, start = 0, stop = 10, categories = listOf("two"))))
+        reducer.accept(MetadataEvent.EventUpdated(generation, event(1, start = 0, stop = 10, categories = listOf("two"))))
 
         assertEquals(listOf("one"), historical.events.single().categories)
         assertEquals(listOf("two"), reducer.snapshot().events.single().categories)
@@ -743,9 +705,9 @@ internal class EpgReducerTest {
 
     private fun event(
         id: Long,
-        channelId: Long?,
-        start: Long,
-        stop: Long,
+        channelId: Long? = 1,
+        start: Long = 10,
+        stop: Long = 20,
         title: String? = null,
         categories: List<String>? = null,
         keywords: List<String>? = null,
@@ -765,22 +727,6 @@ internal class EpgReducerTest {
         episodeId = episodeId,
         seriesLinkId = seriesLinkId,
         image = image,
-    )
-
-    private fun update(
-        id: Long,
-        channelId: Long? = 1,
-        start: Long? = 10,
-        stop: Long? = 20,
-        title: String? = null,
-        categories: List<String>? = null,
-    ): GatewayEpgUpdate = GatewayEpgUpdate(
-        id = EventId(id),
-        channelId = channelId?.let(::ChannelId),
-        start = start?.let(::instant),
-        stop = stop?.let(::instant),
-        title = title,
-        categories = categories,
     )
 
     private fun queryEvent(

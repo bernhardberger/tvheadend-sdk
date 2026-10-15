@@ -14,7 +14,6 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.EventId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
-import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgUpdate
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.metadata.EpgQueryAcceptance
@@ -87,7 +86,7 @@ internal class PhaseOneSessionMetadataContentionTest {
             assertEquals("initial", before.event(EventId(0))?.title)
             assertEquals("query", metadata.currentObservation(generation, current)?.event(EventId(0))?.title)
             metadata.acceptMetadata(MetadataEvent.EventUpdated(generation,
-                GatewayEpgUpdate(EventId(0), ChannelId(0), instant(0), instant(1800), title = "live")))
+                GatewayEpgEvent(EventId(0), ChannelId(0), instant(0), instant(1800), title = "live")))
             assertEquals("live", metadata.currentObservation(generation, current)?.event(EventId(0))?.title)
             metadata.retainEpgEvents(generation, instant(1801), instant(10_000))
             val after = requireNotNull(metadata.currentObservation(generation, current))

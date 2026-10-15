@@ -19,7 +19,6 @@ import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
-import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgUpdate
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
@@ -922,7 +921,7 @@ internal class EpgWorkerTest {
         metadata.acceptMetadata(
             MetadataEvent.EventUpdated(
                 generation,
-                GatewayEpgUpdate(EventId(1), ChannelId(1), instant(10), instant(20), title = "new"),
+                GatewayEpgEvent(EventId(1), ChannelId(1), instant(10), instant(20), title = "new"),
             ),
         )
         release.complete(Unit)

@@ -11,14 +11,13 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.EventId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
-import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgUpdate
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.session.PhaseOneSessionMetadata
 import kotlin.time.Instant
 
 /** Already-decoded synthetic inputs: transport, string construction and I/O are not measured. */
-internal class EpgFixture(channelCount: Int) {
+internal class EpgFixture(private val channelCount: Int) {
     val generation = GatewayGeneration()
     val eventCount = channelCount * 200
     val from: Instant = Instant.fromEpochSeconds(0)
@@ -30,19 +29,18 @@ internal class EpgFixture(channelCount: Int) {
             nextEventId = null, services = null, tagIds = null,
         ))
     }
+    fun event(index: Int, title: String = "Programme $index"): GatewayEpgEvent = GatewayEpgEvent(
+        EventId(index.toLong()), ChannelId((index % channelCount).toLong()),
+        Instant.fromEpochSeconds(index / channelCount * 1800L),
+        Instant.fromEpochSeconds(index / channelCount * 1800L + 1800),
+        title = title, summary = "Synthetic programme summary",
+    )
     private val events = List(eventCount) { index ->
-        MetadataEvent.EventAdded(generation, GatewayEpgEvent(
-            EventId(index.toLong()), ChannelId((index % channelCount).toLong()),
-            Instant.fromEpochSeconds(index / channelCount * 1800L),
-            Instant.fromEpochSeconds(index / channelCount * 1800L + 1800),
-            title = "Programme $index", summary = "Synthetic programme summary",
-        ))
+        MetadataEvent.EventAdded(generation, event(index))
     }
     val updates: List<List<MetadataEvent.EventUpdated>> = List(2) { revision ->
         List(100) { index ->
-            MetadataEvent.EventUpdated(generation, GatewayEpgUpdate(
-                EventId(index.toLong()), title = "Updated $revision",
-            ))
+            MetadataEvent.EventUpdated(generation, event(index, title = "Updated $revision"))
         }
     }
     val queries: List<List<GatewayEpgQueryEvent>> = List(2) { revision ->

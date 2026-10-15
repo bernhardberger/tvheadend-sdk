@@ -42,7 +42,6 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrStats
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
-import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgUpdate
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayServerFacts
@@ -88,7 +87,7 @@ internal class PhaseOneSessionMetadataTest {
             GatewayDvrStats(DvrEntryId(1), null, DvrEntryState.RECORDING)))
         assertSame(synchronizing, metadata.observation.value)
         metadata.acceptMetadata(MetadataEvent.ChannelUpdated(generation, channel(1, name = "Fresh")))
-        metadata.acceptMetadata(MetadataEvent.EventUpdated(generation, epgUpdate(1, "Fresh")))
+        metadata.acceptMetadata(MetadataEvent.EventUpdated(generation, epgEvent(1, 1, 0, 10, "Fresh")))
         metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
         assertEquals("Fresh", metadata.currentSnapshot().channels.single().name)
         assertNull(metadata.currentSnapshot().channels.single().icon)
@@ -148,13 +147,13 @@ internal class PhaseOneSessionMetadataTest {
         metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(2, 1, 120, 130)))
         assertSame(original, metadata.observation.value)
         metadata.acceptMetadataDeferringEpg(MetadataEvent.EventUpdated(generation,
-            GatewayEpgUpdate(id = EventId(2), start = now, stop = now + 10.seconds)))
+            GatewayEpgEvent(id = EventId(2), start = now, stop = now + 10.seconds)))
         metadata.flushDeferredMetadata()
         assertSame(original, metadata.observation.value)
         assertEquals(original.epgRefreshTimes, metadata.publishedSnapshots.value?.epgRefreshTimes)
         for (event in listOf(
             MetadataEvent.EventAdded(generation, epgEvent(1, 1, 100, 110)),
-            MetadataEvent.EventUpdated(generation, GatewayEpgUpdate(id = EventId(1), channelId = ChannelId(1),
+            MetadataEvent.EventUpdated(generation, GatewayEpgEvent(id = EventId(1), channelId = ChannelId(1),
                 start = Instant.fromEpochSeconds(100), stop = Instant.fromEpochSeconds(110))),
             MetadataEvent.EventDeleted(generation, EventId(99)),
         )) {
@@ -177,14 +176,14 @@ internal class PhaseOneSessionMetadataTest {
         val original = metadata.observation.value
         now += 1.seconds
         val invalid = MetadataEvent.EventUpdated(generation,
-            GatewayEpgUpdate(id = EventId(1), channelId = ChannelId(1), start = Instant.fromEpochSeconds(100),
+            GatewayEpgEvent(id = EventId(1), channelId = ChannelId(1), start = Instant.fromEpochSeconds(100),
                 stop = Instant.fromEpochSeconds(99)))
         metadata.acceptMetadata(invalid)
         assertSame(original, metadata.observation.value)
         metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(2, 1, 120, 119)))
         assertSame(original, metadata.observation.value)
         metadata.acceptMetadataDeferringEpg(MetadataEvent.EventUpdated(generation,
-            GatewayEpgUpdate(id = EventId(1), channelId = ChannelId(1), start = Instant.fromEpochSeconds(100),
+            GatewayEpgEvent(id = EventId(1), channelId = ChannelId(1), start = Instant.fromEpochSeconds(100),
                 stop = Instant.fromEpochSeconds(110), title = "Updated")))
         val acceptedAt = now
         now += 1.seconds
@@ -263,7 +262,7 @@ internal class PhaseOneSessionMetadataTest {
         ))
         assertSame(original, metadata.observation.value)
         metadata.acceptMetadataDeferringEpg(MetadataEvent.EventUpdated(generation,
-            GatewayEpgUpdate(id = EventId(1), channelId = ChannelId(1), start = Instant.fromEpochSeconds(100),
+            GatewayEpgEvent(id = EventId(1), channelId = ChannelId(1), start = Instant.fromEpochSeconds(100),
                 stop = Instant.fromEpochSeconds(110), title = "Updated")))
         assertSame(original, metadata.observation.value)
         val acceptedAt = now
@@ -1489,7 +1488,7 @@ internal class PhaseOneSessionMetadataTest {
         metadata.acceptMetadata(MetadataEvent.DvrEntryAdded(generation, dvrEntry(8, "one")))
         assertSame(epg, metadata.currentEpgSnapshot())
 
-        metadata.acceptMetadata(MetadataEvent.EventUpdated(generation, epgUpdate(4, title = "changed")))
+        metadata.acceptMetadata(MetadataEvent.EventUpdated(generation, epgEvent(4, 1, 0, 10, "changed")))
         assertNotSame(epg, metadata.currentEpgSnapshot())
         assertEquals("changed", metadata.currentEpgSnapshot().events.single().title)
     }
@@ -1595,10 +1594,6 @@ internal class PhaseOneSessionMetadataTest {
         stop = Instant.fromEpochSeconds(stop),
         title = title,
     )
-
-    private fun epgUpdate(id: Long, title: String): GatewayEpgUpdate =
-        GatewayEpgUpdate(id = EventId(id), channelId = ChannelId(1), start = Instant.fromEpochSeconds(0),
-            stop = Instant.fromEpochSeconds(10), title = title)
 
     private fun service(name: String): GatewayChannelService = GatewayChannelService(
         name = name,

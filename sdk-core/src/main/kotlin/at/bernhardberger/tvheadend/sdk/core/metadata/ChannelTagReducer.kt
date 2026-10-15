@@ -124,6 +124,8 @@ internal data class ReducedChannelTag private constructor(
         icon = metadata.icon,
         titledIcon = metadata.titledIcon,
         // Initial-sync tagAdd omits members; an empty list explicitly clears them.
+        // Deliberately preserve on tagUpdate too: upstream sends members after sync,
+        // but a hypothetical omission must not wipe known membership.
         channelIds = metadata.channelIds?.toImmutableList() ?: channelIds,
     )
 

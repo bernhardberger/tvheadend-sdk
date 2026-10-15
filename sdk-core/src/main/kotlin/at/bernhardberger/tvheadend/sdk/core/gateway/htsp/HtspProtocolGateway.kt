@@ -149,7 +149,6 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailureEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
-import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgUpdate
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayRecordingFile
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayRecordingFileStat
@@ -1459,7 +1458,7 @@ private fun HtspMetadataMessage.toGatewayMetadata(
     )
     HtspInitialSyncCompletedMessage -> MetadataEvent.InitialSyncCompleted(generation)
     is HtspEventAddMessage -> MetadataEvent.EventAdded(generation, event.toGatewayEpgEvent())
-    is HtspEventUpdateMessage -> MetadataEvent.EventUpdated(generation, event.toGatewayEpgEvent().toGatewayEpgUpdate())
+    is HtspEventUpdateMessage -> MetadataEvent.EventUpdated(generation, event.toGatewayEpgEvent())
     is HtspEventDeleteMessage -> MetadataEvent.EventDeleted(generation, EventId(eventId))
     is HtspDvrEntryAddMessage -> MetadataEvent.DvrEntryAdded(generation, entry.toGatewayDvrEntry())
     is HtspDvrEntryUpdateMessage -> MetadataEvent.DvrEntryUpdated(
@@ -1469,7 +1468,7 @@ private fun HtspMetadataMessage.toGatewayMetadata(
     is HtspDvrEntryStatsMessage -> MetadataEvent.DvrEntryStatsUpdated(
         generation,
         GatewayDvrStats(
-            id = DvrEntryId(entryId), uuid = entryUuid, state = checkNotNull(state.toDvrEntryState()),
+            id = DvrEntryId(entryId), uuid = entryUuid, state = state.toDvrEntryState(),
             duplicate = duplicate?.toWireFlag(), failure = error.toDvrFailure(),
             subscriptionError = subscriptionError.toDvrSubscriptionError(),
             streamErrors = streamErrors, dataErrors = dataErrors, dataSizeBytes = dataSizeBytes,
@@ -1559,45 +1558,6 @@ private fun GatewayEpgEvent.toGatewayEpgQueryEvent(): GatewayEpgQueryEvent = Gat
     partNumber = partNumber,
     partCount = partCount,
     episodeOnscreen = episodeOnscreen,
-    image = image,
-    dvrEntryId = dvrEntryId,
-    nextEventId = nextEventId,
-)
-
-private fun GatewayEpgEvent.toGatewayEpgUpdate(): GatewayEpgUpdate = GatewayEpgUpdate(
-    id = id,
-    channelId = channelId,
-    start = start,
-    stop = stop,
-    title = title,
-    subtitle = subtitle,
-    summary = summary,
-    description = description,
-    genre = genre,
-    categories = categories,
-    keywords = keywords,
-    credits = credits,
-    seriesLinkUri = seriesLinkUri,
-    episodeUri = episodeUri,
-    contentType = contentType,
-    ageRating = ageRating,
-    ratingLabel = ratingLabel,
-    ratingIcon = ratingIcon,
-    ratingAuthority = ratingAuthority,
-    ratingCountry = ratingCountry,
-    starRating = starRating,
-    copyrightYear = copyrightYear,
-    firstAired = firstAired,
-    isNew = isNew,
-    seasonNumber = seasonNumber,
-    seasonCount = seasonCount,
-    episodeNumber = episodeNumber,
-    episodeCount = episodeCount,
-    partNumber = partNumber,
-    partCount = partCount,
-    episodeOnscreen = episodeOnscreen,
-    episodeId = episodeId,
-    seriesLinkId = seriesLinkId,
     image = image,
     dvrEntryId = dvrEntryId,
     nextEventId = nextEventId,
@@ -1755,8 +1715,7 @@ private fun HtspTimerecEntry.toGatewayTimerecRule(): GatewayTimerecRule = Gatewa
     comment = comment,
 )
 
-private fun String?.toDvrEntryState(): DvrEntryState? = when (this) {
-    null -> null
+private fun String.toDvrEntryState(): DvrEntryState = when (this) {
     "scheduled" -> DvrEntryState.SCHEDULED
     "recording" -> DvrEntryState.RECORDING
     "completed" -> DvrEntryState.COMPLETED
