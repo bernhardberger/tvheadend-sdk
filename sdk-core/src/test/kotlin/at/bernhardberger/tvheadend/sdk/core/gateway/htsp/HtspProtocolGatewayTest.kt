@@ -2243,6 +2243,28 @@ internal class HtspProtocolGatewayTest {
     }
 
     @Test
+    fun `DVR update sends resolved config name verbatim including empty default name`() = runTest {
+        val sourceGeneration = HtspConnectionGeneration()
+        val fake = FakeHtspConnection().apply {
+            connectOutcome = HtspConnectOutcome.Connected(liveConnection(sourceGeneration))
+            executeResult = HtspResult.Ok(UpdateDvrEntryResponse)
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+        for (name in listOf("custom config", "")) {
+            val before = fake.expectedGenerations.size
+            assertTrue(gateway.updateDvrEntry(generation, DvrEntryId(7),
+                DvrEntryUpdate(configId = DvrConfigId("uuid"), title = "changed"), configName = name) is GatewayResult.Ok)
+            val request = fake.lastRequest as UpdateDvrEntryRequest
+            assertTrue(request.configName == name, "Resolved config must be sent unchanged")
+            assertEquals("changed", request.title)
+            assertEquals(before + 1, fake.expectedGenerations.size)
+            assertSame(sourceGeneration, fake.lastExpectedGeneration)
+        }
+    }
+
+    @Test
     fun `watch actions send exactly SET or RESET and zero resume in one fenced request`() = runTest {
         val sourceGeneration = HtspConnectionGeneration()
         val fake = FakeHtspConnection().apply {
@@ -2317,6 +2339,7 @@ internal class HtspProtocolGatewayTest {
         val gateway = HtspProtocolGateway(fake)
         val generation = (gateway.connect(ServerConfiguration("host", 9_982))
             as GatewayConnectResult.Connected).connection.generation
+        val before = fake.expectedGenerations.size
 
         assertTrue(
             gateway.reportDvrProgress(
@@ -2326,6 +2349,8 @@ internal class HtspProtocolGatewayTest {
             ) is GatewayResult.Ok,
         )
         val keep = fake.lastRequest as UpdateDvrEntryRequest
+        assertEquals(before + 1, fake.expectedGenerations.size)
+        assertEquals(null, keep.configName)
         assertEquals(7L, keep.entryId)
         assertEquals(90L, keep.playPositionSeconds)
         assertEquals(DVR_PROGRESS_KEEP_PLAY_COUNT, keep.playCount)
@@ -2340,6 +2365,8 @@ internal class HtspProtocolGatewayTest {
             ) is GatewayResult.Ok,
         )
         val increment = fake.lastRequest as UpdateDvrEntryRequest
+        assertEquals(before + 2, fake.expectedGenerations.size)
+        assertEquals(null, increment.configName)
         assertEquals(120L, increment.playPositionSeconds)
         assertEquals(DVR_PROGRESS_INCR_PLAY_COUNT, increment.playCount)
 
@@ -4092,11 +4119,11 @@ internal class HtspProtocolGatewayTest {
 
     private fun liveConnection(
         generation: HtspConnectionGeneration,
-        protocolVersion: Int? = 43,
+        protocolVersion: Int = 43,
     ): HtspLiveConnection =
         HtspLiveConnection(
             generation = generation,
-            protocolVersion = protocolVersion?.toLong(),
+            protocolVersion = protocolVersion.toLong(),
             dvrAccess = true,
             serverFacts = HtspServerFacts(),
         )

@@ -7,6 +7,8 @@ import at.bernhardberger.tvheadend.sdk.core.AutorecRuleId
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
+import at.bernhardberger.tvheadend.sdk.core.DvrConfigId
+import at.bernhardberger.tvheadend.sdk.core.DvrEntry
 import at.bernhardberger.tvheadend.sdk.core.DvrCutpoint
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
@@ -66,6 +68,210 @@ import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalCoroutinesApi::class, at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class)
 internal class DvrMutationCoordinatorTest {
+    @Test
+    fun `scheduled update resolves explicit or observed config including empty default name`() = runTest {
+        for (explicit in listOf(false, true)) {
+            for (name in listOf("custom", "")) {
+                val generation = GatewayGeneration()
+                val gateway = MutationGateway()
+                val current = DvrEntry.create(DvrEntryId(7), state = DvrEntryState.SCHEDULED, configId = DvrConfigId("current"))
+                val target = if (explicit) DvrConfigId("chosen") else current.configId!!
+                var lookups = 0
+                gateway.configsBehavior = {
+                    assertSame(generation, it)
+                    lookups++
+                    GatewayResult.Ok(listOf(DvrConfiguration(target, name, "")))
+                }
+                val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> current })
+                coordinator.bindGeneration(generation)
+                coordinator.startAdmission(generation)
+                gateway.updateBehavior = { _, _, _ -> GatewayResult.Ok(Unit) }
+
+                val result = coordinator.updateEntry(generation, current.id, DvrEntryUpdate(configId = target.takeIf { explicit }))
+
+                assertTrue(result is DvrMutationResult.AcceptedButUnconfirmed)
+                assertEquals(1, lookups)
+                assertEquals(1, gateway.sentConfigNames.size)
+                assertTrue(gateway.sentConfigNames.single() == name, "Resolved config name must reach the request")
+            }
+        }
+    }
+
+    @Test
+    fun `scheduled update refuses missing or ambiguous config without dispatch`() = runTest {
+        val target = DvrConfigId("target")
+        for (configs in listOf(
+            emptyList(),
+            listOf(DvrConfiguration(target, "same", ""), DvrConfiguration(DvrConfigId("other"), "same", "")),
+            listOf(DvrConfiguration(target, "first", ""), DvrConfiguration(target, "second", "")),
+        )) {
+            val generation = GatewayGeneration()
+            val gateway = MutationGateway()
+            gateway.configsBehavior = { GatewayResult.Ok(configs) }
+            val current = DvrEntry.create(DvrEntryId(7), state = DvrEntryState.SCHEDULED, configId = target)
+            val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> current })
+            coordinator.bindGeneration(generation)
+            coordinator.startAdmission(generation)
+            assertEquals(
+                DvrMutationResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, false),
+                coordinator.updateEntry(generation, current.id, DvrEntryUpdate(title = "changed")),
+            )
+            assertTrue(gateway.sentConfigNames.isEmpty())
+        }
+    }
+
+    @Test
+    fun `non scheduled and unconfigured updates retain request shape without lookup`() = runTest {
+        for (state in listOf(null, DvrEntryState.RECORDING, DvrEntryState.COMPLETED, DvrEntryState.MISSED, DvrEntryState.SCHEDULED)) {
+            for (explicit in listOf(null, DvrConfigId("chosen"))) {
+                if (state == DvrEntryState.SCHEDULED && explicit != null) continue
+                val generation = GatewayGeneration()
+                val gateway = MutationGateway()
+                gateway.configsBehavior = { error("Unexpected config lookup") }
+                val current = DvrEntry.create(DvrEntryId(7), state = state,
+                    configId = DvrConfigId("observed").takeUnless { state == DvrEntryState.SCHEDULED })
+                val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> current })
+                coordinator.bindGeneration(generation)
+                coordinator.startAdmission(generation)
+                gateway.updateBehavior = { _, _, _ -> GatewayResult.Ok(Unit) }
+                assertTrue(coordinator.updateEntry(generation, current.id, DvrEntryUpdate(configId = explicit)) is DvrMutationResult.AcceptedButUnconfirmed)
+                assertTrue(gateway.sentConfigNames.single() == explicit?.value, "Legacy config field must be preserved")
+            }
+        }
+    }
+
+    @Test
+    fun `config lookup failures are unsent failures without write proof or server text`() = runTest {
+        val failures = listOf(
+            GatewayResult.AccessDenied to TvheadendFailure.ACCESS_DENIED,
+            GatewayResult.ConnectionLimit to TvheadendFailure.CONNECTION_LIMIT,
+            GatewayResult.Timeout to TvheadendFailure.TIMEOUT,
+            GatewayResult.TransportUnavailable to TvheadendFailure.TRANSPORT_UNAVAILABLE,
+            GatewayResult.NotSupported to TvheadendFailure.NOT_SUPPORTED,
+            GatewayResult.ObservationExpired to TvheadendFailure.OBSERVATION_EXPIRED,
+            GatewayResult.MalformedReply to TvheadendFailure.MALFORMED_RESPONSE,
+            GatewayResult.ServerRejected("private config name and uuid") to TvheadendFailure.SERVER_REJECTED,
+        )
+        for ((response, expected) in failures) {
+            val generation = GatewayGeneration()
+            val gateway = MutationGateway()
+            val proofs = mutableListOf<Boolean>()
+            val current = DvrEntry.create(DvrEntryId(7), state = DvrEntryState.SCHEDULED, configId = DvrConfigId("target"))
+            val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> current }, onDvrAccessProof = { _, allowed -> proofs += allowed })
+            coordinator.bindGeneration(generation)
+            coordinator.startAdmission(generation)
+            gateway.configsBehavior = { response }
+            val result = coordinator.updateEntry(generation, current.id, DvrEntryUpdate()) as DvrMutationResult.Failed
+            assertEquals(DvrMutationResult.Failed(expected, false), result)
+            assertEquals(null, result.serverMessage)
+            assertFalse(result.toString().contains("private"))
+            assertTrue(gateway.sentConfigNames.isEmpty())
+            assertTrue(proofs.isEmpty())
+        }
+    }
+
+    @Test
+    fun `config lookup revalidates observation and generation before dispatch`() = runTest {
+        for (change in listOf("config", "state", "delete", "generation")) {
+            val generation = GatewayGeneration()
+            val gateway = MutationGateway()
+            val configId = DvrConfigId("target")
+            var current: DvrEntry? = DvrEntry.create(DvrEntryId(7), state = DvrEntryState.SCHEDULED, configId = configId)
+            val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> current })
+            coordinator.bindGeneration(generation)
+            coordinator.startAdmission(generation)
+            gateway.configsBehavior = {
+                when (change) {
+                    "config" -> current = DvrEntry.create(DvrEntryId(7), state = DvrEntryState.SCHEDULED, configId = DvrConfigId("other"))
+                    "state" -> current = DvrEntry.create(DvrEntryId(7), state = DvrEntryState.RECORDING, configId = configId)
+                    "delete" -> current = null
+                    "generation" -> coordinator.bindGeneration(GatewayGeneration())
+                }
+                GatewayResult.Ok(listOf(DvrConfiguration(configId, "name", "")))
+            }
+            assertEquals(
+                DvrMutationResult.Failed(if (change == "generation") TvheadendFailure.CONNECTION_CHANGED else TvheadendFailure.OBSERVATION_EXPIRED, false),
+                coordinator.updateEntry(generation, DvrEntryId(7), DvrEntryUpdate()),
+            )
+            assertTrue(gateway.sentConfigNames.isEmpty())
+        }
+    }
+
+    @Test
+    fun `config lookup retirement cancels read and caller cancellation propagates`() = runTest {
+        for (retire in listOf(false, true)) {
+            val generation = GatewayGeneration()
+            val gateway = MutationGateway()
+            val current = DvrEntry.create(DvrEntryId(7), state = DvrEntryState.SCHEDULED, configId = DvrConfigId("target"))
+            val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> current })
+            coordinator.bindGeneration(generation)
+            coordinator.startAdmission(generation)
+            var cancelled = false
+            gateway.configsBehavior = { try { awaitCancellation() } finally { cancelled = true } }
+            val operation = async { coordinator.updateEntry(generation, current.id, DvrEntryUpdate()) }
+            runCurrent()
+            if (retire) {
+                coordinator.stopAdmission(connectionRetired = true)
+                assertEquals(DvrMutationResult.Failed(TvheadendFailure.CONNECTION_CHANGED, false), operation.await())
+            } else {
+                operation.cancel()
+                operation.join()
+                assertTrue(operation.isCancelled)
+            }
+            assertTrue(cancelled)
+            assertTrue(gateway.sentConfigNames.isEmpty())
+        }
+    }
+
+    @Test
+    fun `config lookup thrown cancellation propagates unchanged`() = runTest {
+        val generation = GatewayGeneration()
+        val gateway = MutationGateway()
+        val current = DvrEntry.create(DvrEntryId(7), state = DvrEntryState.SCHEDULED, configId = DvrConfigId("target"))
+        val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> current })
+        coordinator.bindGeneration(generation)
+        coordinator.startAdmission(generation)
+        val cancellation = CancellationException("cancelled")
+        gateway.configsBehavior = { throw cancellation }
+        var caught: CancellationException? = null
+        try {
+            coordinator.updateEntry(generation, current.id, DvrEntryUpdate())
+        } catch (exception: CancellationException) {
+            caught = exception
+        }
+        assertSame(cancellation, caught)
+        assertTrue(gateway.sentConfigNames.isEmpty())
+    }
+
+    @Test
+    fun `metadata during config lookup cannot confirm unsent write and write errors redact config`() = runTest {
+        for (reject in listOf(false, true)) {
+            val generation = GatewayGeneration()
+            val gateway = MutationGateway()
+            val configId = DvrConfigId("private-id")
+            var current = DvrEntry.create(DvrEntryId(7), state = DvrEntryState.SCHEDULED, configId = configId)
+            val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> current })
+            coordinator.bindGeneration(generation)
+            coordinator.startAdmission(generation)
+            gateway.configsBehavior = {
+                current = DvrEntry.create(current.id, state = DvrEntryState.SCHEDULED, configId = configId, title = "fresh")
+                coordinator.acceptMetadata(MetadataEvent.DvrEntryUpdated(generation, GatewayDvrEntry(id = current.id, state = DvrEntryState.SCHEDULED)))
+                GatewayResult.Ok(listOf(DvrConfiguration(configId, "private-name", "")))
+            }
+            gateway.updateBehavior = { _, _, _ ->
+                if (reject) GatewayResult.ServerRejected("private-name private-id") else GatewayResult.Ok(Unit)
+            }
+            val result = coordinator.updateEntry(generation, current.id, DvrEntryUpdate())
+            if (reject) {
+                assertEquals(DvrMutationResult.Failed(TvheadendFailure.SERVER_REJECTED, false), result)
+                assertEquals(null, (result as DvrMutationResult.Failed).serverMessage)
+                assertFalse(result.toString().contains("private"))
+            } else {
+                assertTrue(result is DvrMutationResult.AcceptedButUnconfirmed)
+            }
+        }
+    }
+
     @Test
     fun `retirement during registration distinguishes connection loss from unsent shutdown`() = runTest {
         val retirements: List<Pair<TvheadendFailure, (DvrMutationCoordinator) -> Unit>> = listOf(
@@ -792,6 +998,10 @@ private fun dvrUpdated(
 }
 
 internal class MutationGateway : ProtocolGateway {
+    internal val sentConfigNames = mutableListOf<String?>()
+    internal var configsBehavior: suspend (GatewayGeneration) -> GatewayResult<List<DvrConfiguration>> = {
+        GatewayResult.NotSupported
+    }
     internal var resetResumeBehavior: suspend (GatewayGeneration, DvrEntryId) -> GatewayResult<Unit> =
         { _, _ -> GatewayResult.NotSupported }
 
@@ -894,7 +1104,7 @@ internal class MutationGateway : ProtocolGateway {
 
     override suspend fun getDvrConfigs(
         generation: GatewayGeneration,
-    ): GatewayResult<List<DvrConfiguration>> = GatewayResult.NotSupported
+    ): GatewayResult<List<DvrConfiguration>> = configsBehavior(generation)
 
     override suspend fun getDiskSpace(
         generation: GatewayGeneration,
@@ -914,7 +1124,11 @@ internal class MutationGateway : ProtocolGateway {
         generation: GatewayGeneration,
         id: DvrEntryId,
         update: DvrEntryUpdate,
-    ): GatewayResult<Unit> = updateBehavior(generation, id, update)
+        configName: String?,
+    ): GatewayResult<Unit> {
+        sentConfigNames += configName
+        return updateBehavior(generation, id, update)
+    }
 
     override suspend fun stopDvrEntry(
         generation: GatewayGeneration,

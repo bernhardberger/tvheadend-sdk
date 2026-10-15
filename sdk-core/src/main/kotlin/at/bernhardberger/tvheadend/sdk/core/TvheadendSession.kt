@@ -10,6 +10,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.ServerAuthentication as Gate
 import at.bernhardberger.tvheadend.sdk.core.gateway.ServerConfiguration
 import at.bernhardberger.tvheadend.sdk.core.gateway.htsp.HtspProtocolGateway
 import at.bernhardberger.tvheadend.sdk.core.session.ConnectionOwner
+import at.bernhardberger.tvheadend.sdk.core.session.CurrentDvrEntryLookup
 import at.bernhardberger.tvheadend.sdk.core.session.DvrMutationCoordinator
 import at.bernhardberger.tvheadend.sdk.core.session.DvrProgressCoordinator
 import at.bernhardberger.tvheadend.sdk.core.session.EpgSearchCommands
@@ -228,6 +229,9 @@ internal object SessionRegistry {
             gateway = gateway,
             isSessionReady = { generation -> owner.isDvrMutationReady(generation) },
             onDvrAccessProof = onDvrAccessProof,
+            currentEntry = { generation, id ->
+                (metadata.currentDvrEntry(generation, id) as? CurrentDvrEntryLookup.Current)?.entry
+            },
         )
         val dvrProgress = DvrProgressCoordinator(
             gateway = gateway,

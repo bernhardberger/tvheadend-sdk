@@ -1554,6 +1554,7 @@ private class SubscriptionGateway : ProtocolGateway {
         generation: GatewayGeneration,
         id: DvrEntryId,
         update: DvrEntryUpdate,
+        configName: String?,
     ): GatewayResult<Unit> = GatewayResult.NotSupported
 
     override suspend fun stopDvrEntry(

@@ -3,6 +3,7 @@ package at.bernhardberger.tvheadend.sdk.core.session
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleId
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
+import at.bernhardberger.tvheadend.sdk.core.DvrEntry
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
@@ -69,6 +70,7 @@ internal class DvrMutationCoordinator(
     private val isSessionReady: (GatewayGeneration) -> Boolean = { true },
     private val onDvrAccessProof: suspend (GatewayGeneration, Boolean) -> Unit = { _, _ -> },
     internal val intents: DvrIntentLedger = DvrIntentLedger(),
+    private val currentEntry: (GatewayGeneration, DvrEntryId) -> DvrEntry? = { _, _ -> null },
 ) : DvrMutationCommands, DvrMutationLifecycle {
     private val lock = Any()
     private val operationMutex = Mutex()
@@ -143,11 +145,65 @@ internal class DvrMutationCoordinator(
         generation: GatewayGeneration,
         id: DvrEntryId,
         update: DvrEntryUpdate,
-    ): DvrMutationResult<Unit> = mutate(
-        expectedGeneration = generation,
-        confirmations = setOf(ConfirmationKey(ConfirmationKind.ENTRY_UPDATED, id)),
-        command = { generation -> gateway.updateDvrEntry(generation, id, update) },
-    )
+    ): DvrMutationResult<Unit> {
+        var configName = update.configId?.value
+        var resolvedEntry: DvrEntry? = null
+        return mutate(
+            expectedGeneration = generation,
+            confirmations = setOf(ConfirmationKey(ConfirmationKind.ENTRY_UPDATED, id)),
+            prepare = { currentGeneration ->
+                val observed = currentEntry(currentGeneration, id)
+                val target = update.configId ?: observed?.configId
+                if (observed?.state != DvrEntryState.SCHEDULED || target == null) {
+                    GatewayResult.Ok(Unit)
+                } else {
+                    when (val result = gateway.getDvrConfigs(currentGeneration)) {
+                        is GatewayResult.Ok -> {
+                            val config = result.value.singleOrNull { it.id == target }
+                            if (config == null || result.value.count { it.name == config.name } != 1 ||
+                                !matchesConfigObservation(currentGeneration, id, observed)
+                            ) {
+                                GatewayResult.ObservationExpired
+                            } else {
+                                configName = config.name
+                                resolvedEntry = observed
+                                GatewayResult.Ok(Unit)
+                            }
+                        }
+                        // Lookup errors are not write diagnostics; never carry server text that
+                        // could include a config name or UUID into the mutation result.
+                        is GatewayResult.ServerRejected -> GatewayResult.ServerRejected()
+                        GatewayResult.AccessDenied -> GatewayResult.AccessDenied
+                        GatewayResult.ConnectionLimit -> GatewayResult.ConnectionLimit
+                        GatewayResult.Timeout -> GatewayResult.Timeout
+                        GatewayResult.TransportUnavailable -> GatewayResult.TransportUnavailable
+                        GatewayResult.NotSupported -> GatewayResult.NotSupported
+                        GatewayResult.ObservationExpired -> GatewayResult.ObservationExpired
+                        GatewayResult.MalformedReply -> GatewayResult.MalformedReply
+                    }
+                }
+            },
+            command = { currentGeneration ->
+                if (resolvedEntry?.let { !matchesConfigObservation(currentGeneration, id, it) } == true) {
+                    GatewayResult.ObservationExpired
+                } else {
+                    val result = gateway.updateDvrEntry(currentGeneration, id, update, configName)
+                    if (resolvedEntry != null && result is GatewayResult.ServerRejected) GatewayResult.ServerRejected() else result
+                }
+            },
+        )
+    }
+
+    private fun matchesConfigObservation(
+        generation: GatewayGeneration,
+        id: DvrEntryId,
+        observed: DvrEntry,
+    ): Boolean {
+        val current = currentEntry(generation, id) ?: return false
+        // Snapshot publication rebuilds even unrelated entries; compare the relevant server facts,
+        // not object identity. Never resolve from a retained snapshot of another generation.
+        return current.uuid == observed.uuid && current.state == observed.state && current.configId == observed.configId
+    }
 
     override suspend fun stopEntry(
         generation: GatewayGeneration,
@@ -312,16 +368,32 @@ internal class DvrMutationCoordinator(
     private suspend fun mutate(
         expectedGeneration: GatewayGeneration,
         confirmations: Set<ConfirmationKey>,
+        prepare: (suspend (GatewayGeneration) -> GatewayResult<Unit>)? = null,
         command: suspend (GatewayGeneration) -> GatewayResult<Unit>,
     ): DvrMutationResult<Unit> = operationMutex.withLock {
         val operation = when (
-            val registration = register(expectedGeneration, confirmations = confirmations)
+            val registration = register(expectedGeneration, confirmations = if (prepare == null) confirmations else emptySet())
         ) {
             is MutationRegistration.Failed ->
                 return@withLock DvrMutationResult.Failed(registration.failure, mayHaveApplied = false)
             is MutationRegistration.Registered -> registration.operation
         }
         try {
+            if (prepare != null) {
+                when (val outcome = awaitCommand(operation, prepare)) {
+                    GatewayCommandOutcome.Retired -> return@withLock DvrMutationResult.Failed(
+                        TvheadendFailure.CONNECTION_CHANGED, mayHaveApplied = false,
+                    )
+                    is GatewayCommandOutcome.Cancelled -> throw outcome.exception
+                    is GatewayCommandOutcome.Completed -> if (outcome.result !is GatewayResult.Ok) {
+                        return@withLock failure(operation, outcome.result, mayHaveApplied = false)
+                    }
+                }
+                // Metadata during the read-only lookup cannot confirm a write not yet dispatched.
+                if (!setExpected(operation, confirmations)) {
+                    return@withLock DvrMutationResult.Failed(TvheadendFailure.CONNECTION_CHANGED, false)
+                }
+            }
             when (val outcome = awaitCommand(operation, command)) {
                 GatewayCommandOutcome.Retired ->
                     DvrMutationResult.Failed(TvheadendFailure.CONNECTION_CHANGED, mayHaveApplied = true)
@@ -457,29 +529,30 @@ internal class DvrMutationCoordinator(
     private fun failure(
         operation: PendingMutation,
         result: GatewayResult<*>,
+        mayHaveApplied: Boolean = result.mayHaveAppliedDvrCommand(),
     ): DvrMutationResult<Nothing> {
         if (!isActive(operation)) {
             return DvrMutationResult.Failed(
                 TvheadendFailure.CONNECTION_CHANGED,
-                mayHaveApplied = result.mayHaveAppliedDvrCommand(),
+                mayHaveApplied = mayHaveApplied,
             )
         }
         return when (result) {
             is GatewayResult.Ok -> error("A successful result is not a DVR mutation failure")
             is GatewayResult.ServerRejected ->
                 DvrMutationResult.Failed(TvheadendFailure.SERVER_REJECTED, false, result.serverMessage)
-            GatewayResult.AccessDenied -> error("Access denial must update DVR proof")
+            GatewayResult.AccessDenied -> DvrMutationResult.Failed(TvheadendFailure.ACCESS_DENIED, false)
             GatewayResult.ConnectionLimit ->
                 DvrMutationResult.Failed(TvheadendFailure.CONNECTION_LIMIT, mayHaveApplied = false)
-            GatewayResult.Timeout -> DvrMutationResult.Failed(TvheadendFailure.TIMEOUT, mayHaveApplied = true)
+            GatewayResult.Timeout -> DvrMutationResult.Failed(TvheadendFailure.TIMEOUT, mayHaveApplied)
             GatewayResult.TransportUnavailable ->
-                DvrMutationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = true)
+                DvrMutationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied)
             GatewayResult.NotSupported ->
                 DvrMutationResult.Failed(TvheadendFailure.NOT_SUPPORTED, mayHaveApplied = false)
             GatewayResult.ObservationExpired ->
                 DvrMutationResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false)
             GatewayResult.MalformedReply ->
-                DvrMutationResult.Failed(TvheadendFailure.MALFORMED_RESPONSE, mayHaveApplied = true)
+                DvrMutationResult.Failed(TvheadendFailure.MALFORMED_RESPONSE, mayHaveApplied)
         }
     }
 

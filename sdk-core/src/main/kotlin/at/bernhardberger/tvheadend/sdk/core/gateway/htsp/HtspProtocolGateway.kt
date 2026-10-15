@@ -610,10 +610,11 @@ internal class HtspProtocolGateway internal constructor(
         generation: GatewayGeneration,
         id: DvrEntryId,
         update: DvrEntryUpdate,
+        configName: String?,
     ): GatewayResult<Unit> = connection.updateDvrEntry(
         entryId = id.value,
         channelId = update.channelId?.value,
-        configName = update.configId?.value,
+        configName = configName,
         title = update.title,
         subtitle = update.subtitle,
         summary = update.summary,

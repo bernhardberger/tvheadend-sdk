@@ -57,9 +57,17 @@ public data class DvrScheduleRequest(
     override fun toString(): String = "DvrScheduleRequest(<redacted>)"
 }
 
-/** Partial DVR-entry change; null fields are omitted from the command. */
+/** Partial DVR-entry change; null fields are omitted except for scheduled-entry [configId] preservation. */
 public data class DvrEntryUpdate(
     public val channelId: ChannelId? = null,
+    /**
+     * Configuration UUID to select. For a last-observed scheduled entry, null preserves its
+     * observed configuration: the SDK resolves that UUID (or this explicit UUID) to a unique
+     * enabled, account-visible name before updating. If neither UUID exists, the field is omitted.
+     * Missing or ambiguous configs fail with `OBSERVATION_EXPIRED` before sending the update.
+     * A server-side ACL config list can still redirect the name to the default configuration;
+     * a rename between lookup and update can do the same. See [DvrRepository.updateEntry].
+     */
     public val configId: DvrConfigId? = null,
     public val title: String? = null,
     public val subtitle: String? = null,

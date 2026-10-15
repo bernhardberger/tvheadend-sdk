@@ -2401,6 +2401,7 @@ private class FakeProtocolGateway(
         generation: GatewayGeneration,
         id: DvrEntryId,
         update: DvrEntryUpdate,
+        configName: String?,
     ): GatewayResult<Unit> = GatewayResult.NotSupported
 
     override suspend fun stopDvrEntry(

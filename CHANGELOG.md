@@ -36,6 +36,11 @@
 
 ### Fixed
 
+- Scheduled DVR-entry edits now resolve explicit or observed config UUIDs to unique
+  visible config names, preserving the profile instead of silently selecting the
+  default. Missing/ambiguous configs and failed lookups stop before the update.
+  Server ACL config-list rewriting and a rename between lookup and update can
+  still cause default fallback; these server limitations are documented.
 - DVR statistics now clear omitted failure, subscriptionError, streamErrors and
   dataErrors; EPG updates without timing are no longer assembled into events;
   playPosition and playCount clear when the server omits them.

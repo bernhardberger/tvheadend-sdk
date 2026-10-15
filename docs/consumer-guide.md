@@ -648,6 +648,25 @@ did not arrive before the deadline; later observation data remains
 authoritative. Mutations and progress are admitted only for a ready generation.
 Cancellation remains caller-owned and is not converted into a failure result.
 
+When `updateEntry` targets a last-observed `SCHEDULED` entry, the SDK resolves
+`DvrEntryUpdate.configId` (or the entry's current config UUID when null) with a
+same-generation `getDvrConfigs` request. It sends the matching enabled,
+account-visible config's **name**, including `""` for the default config. This
+preserves the profile on edits such as changing the title. If neither UUID is
+known, the config field remains omitted. The UUID must match exactly one returned
+config, and its name must be unique in that list. Missing or ambiguous matches,
+or a changed entry identity/state/config during resolution, fail with
+`OBSERVATION_EXPIRED` and `mayHaveApplied=false`; refresh the observation before
+retrying. Lookup failures propagate with `mayHaveApplied=false` and do not change
+DVR write-access proof. Other entry states, watch-state changes, resume reset,
+and playback progress retain their existing requests without this lookup.
+
+**Known server limitations:** with an ACL config list, TVHeadend can translate
+the name back to a UUID before the entry update's name-only lookup, silently
+selecting the default profile. The client cannot detect this from the config
+list. A config rename in the small interval between lookup and update can also
+cause default fallback. Observe authoritative metadata after the update.
+
 `DvrMutationResult.Failed` and `DvrProgressResult.Failed` carry `mayHaveApplied`.
 It is false only when the command was never sent or the server explicitly refused
 it. It is true for uncertain dispatched commands and failures after acceptance,
@@ -1414,7 +1433,7 @@ already have applied the command. Never blindly retry non-idempotent requests
 
 | API | Malformed-response result |
 |---|---|
-| DVR mutations | `DvrMutationResult.Failed(TvheadendFailure.MALFORMED_RESPONSE, mayHaveApplied = true)` |
+| DVR mutations | `DvrMutationResult.Failed(TvheadendFailure.MALFORMED_RESPONSE, mayHaveApplied = true)` after write dispatch; `false` for the scheduled-entry config lookup |
 | DVR progress | `DvrProgressResult.Failed(TvheadendFailure.MALFORMED_RESPONSE, mayHaveApplied = true)` |
 | Cutpoints, EPG search, stream-profile discovery | Each result's `Failed(TvheadendFailure.MALFORMED_RESPONSE)` |
 | Artwork | `ArtworkLoadResult.Unavailable(TvheadendFailure.MALFORMED_RESPONSE)` |

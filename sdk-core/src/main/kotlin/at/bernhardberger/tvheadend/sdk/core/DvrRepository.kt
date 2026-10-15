@@ -1007,7 +1007,20 @@ public interface DvrRepository {
         request: DvrScheduleRequest,
     ): DvrMutationResult<DvrEntryId>
 
-    /** Changes one DVR entry and waits for authoritative stream confirmation. */
+    /**
+     * Changes one DVR entry and waits for authoritative stream confirmation.
+     *
+     * For a last-observed [DvrEntryState.SCHEDULED] entry, resolves [DvrEntryUpdate.configId]
+     * or the observed config UUID through a same-generation config lookup and sends its unique
+     * name, preserving the config on title-only and similar edits. No lookup is needed if both
+     * UUIDs are absent. Missing/ambiguous configs or changed entry identity/state/config fail with
+     * `OBSERVATION_EXPIRED`; lookup failures retain their typed failure. These failures have
+     * `mayHaveApplied=false`. Other entry states retain their existing request shape.
+     *
+     * Known server limitations: accounts with an ACL config list can have the name converted
+     * back to a UUID and silently fall back to the default config; this is not detectable by the
+     * client. A config rename between lookup and update can also cause default fallback.
+     */
     public suspend fun updateEntry(
         currentSession: CurrentSessionObservation,
         id: DvrEntryId,

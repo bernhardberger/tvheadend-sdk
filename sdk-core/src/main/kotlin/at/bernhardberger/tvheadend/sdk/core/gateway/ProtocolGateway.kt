@@ -90,6 +90,7 @@ internal interface ProtocolGateway {
         generation: GatewayGeneration,
         id: DvrEntryId,
         update: DvrEntryUpdate,
+        configName: String? = update.configId?.value,
     ): GatewayResult<Unit>
 
     public suspend fun stopDvrEntry(
