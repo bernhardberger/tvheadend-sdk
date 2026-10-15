@@ -194,6 +194,7 @@ import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -215,6 +216,8 @@ import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.CsvSource
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.Executors
@@ -2348,8 +2351,8 @@ internal class HtspProtocolGatewayTest {
         backgroundScope.launch(start = CoroutineStart.UNDISPATCHED) { gateway.metadata.collect {} }
         val autoId = AutorecRuleId("auto")
         val timeId = TimerecRuleId("time")
-        assertSame(GatewayResult.NotSupported, gateway.updateAutorecRule(generation, autoId, AutorecRuleUpdate(title = "next")))
-        assertSame(GatewayResult.NotSupported, gateway.updateTimerecRule(generation, timeId, TimerecRuleUpdate(title = "next")))
+        assertSame(GatewayResult.ObservationExpired, gateway.updateAutorecRule(generation, autoId, AutorecRuleUpdate(title = "next")))
+        assertSame(GatewayResult.ObservationExpired, gateway.updateTimerecRule(generation, timeId, TimerecRuleUpdate(title = "next")))
         assertEquals(null, fake.lastRequest)
 
         messages.emit(HtspTransportEvent.ServerMessage(
@@ -2377,8 +2380,8 @@ internal class HtspProtocolGatewayTest {
         messages.emit(HtspTransportEvent.ServerMessage(HtspTimerecEntryDeleteMessage("time"), source, 4))
         runCurrent()
         fake.lastRequest = null
-        assertSame(GatewayResult.NotSupported, gateway.updateAutorecRule(generation, autoId, AutorecRuleUpdate(title = "next")))
-        assertSame(GatewayResult.NotSupported, gateway.updateTimerecRule(generation, timeId, TimerecRuleUpdate(title = "next")))
+        assertSame(GatewayResult.ObservationExpired, gateway.updateAutorecRule(generation, autoId, AutorecRuleUpdate(title = "next")))
+        assertSame(GatewayResult.ObservationExpired, gateway.updateTimerecRule(generation, timeId, TimerecRuleUpdate(title = "next")))
         assertEquals(null, fake.lastRequest)
 
         messages.emit(HtspTransportEvent.ServerMessage(
@@ -2393,12 +2396,117 @@ internal class HtspProtocolGatewayTest {
             HtspTimerecEntryUpdateMessage(timerecFixture().copy(channelId = 9)), source, 6,
         ))
         runCurrent()
-        assertSame(GatewayResult.NotSupported, gateway.updateTimerecRule(next, timeId, TimerecRuleUpdate(title = "next")))
+        assertSame(GatewayResult.ObservationExpired, gateway.updateTimerecRule(next, timeId, TimerecRuleUpdate(title = "next")))
         assertSame(GatewayResult.TransportUnavailable, gateway.updateTimerecRule(generation, timeId, TimerecRuleUpdate(title = "next")))
         gateway.shutdown()
         assertSame(HtspConnectionState.Closed, fake.connectionState.value)
         assertSame(GatewayState.Disconnected, gateway.connectionState.value)
         assertEquals(null, gateway.commitIfLive(next) { true })
+    }
+
+    @ParameterizedTest
+    @CsvSource("false,false", "false,true", "true,false", "true,true")
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun `rule reply cannot overwrite newer metadata or resurrect a deletion`(timerec: Boolean, deleted: Boolean) = runTest {
+        val source = HtspConnectionGeneration()
+        val messages = MutableSharedFlow<HtspTransportEvent>()
+        val fake = FakeHtspConnection().apply {
+            connectOutcome = HtspConnectOutcome.Connected(liveConnection(source))
+            eventsFlow = messages
+            executeResult = if (timerec) HtspResult.Ok(UpdateTimerecEntryResponse) else HtspResult.Ok(UpdateAutorecEntryResponse)
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982)) as GatewayConnectResult.Connected).connection.generation
+        backgroundScope.launch(start = CoroutineStart.UNDISPATCHED) { gateway.metadata.collect {} }
+        suspend fun update(): GatewayResult<Unit> = if (timerec) {
+            gateway.updateTimerecRule(generation, TimerecRuleId("time"), TimerecRuleUpdate(title = "next"))
+        } else {
+            gateway.updateAutorecRule(generation, AutorecRuleId("auto"), AutorecRuleUpdate(title = "next"))
+        }
+        messages.emit(HtspTransportEvent.ServerMessage(
+            if (timerec) HtspTimerecEntryAddMessage(timerecFixture().copy(channelId = 7))
+            else HtspAutorecEntryAddMessage(autorecFixture().copy(channelId = 7)), source, 1,
+        ))
+        runCurrent()
+        val reply = CompletableDeferred<Unit>()
+        fake.beforeExecute = { reply.await() }
+        val pending = async { update() }
+        runCurrent()
+        assertNotNull(fake.lastRequest)
+        messages.emit(HtspTransportEvent.ServerMessage(
+            when {
+                timerec && deleted -> HtspTimerecEntryDeleteMessage("time")
+                timerec -> HtspTimerecEntryUpdateMessage(timerecFixture().copy(channelId = 8))
+                deleted -> HtspAutorecEntryDeleteMessage("auto")
+                else -> HtspAutorecEntryUpdateMessage(autorecFixture().copy(channelId = 8))
+            }, source, 2,
+        ))
+        runCurrent()
+        reply.complete(Unit)
+        assertTrue(pending.await() is GatewayResult.Ok)
+        fake.beforeExecute = {}
+        fake.lastRequest = null
+        val following = update()
+        if (deleted) {
+            assertSame(GatewayResult.ObservationExpired, following)
+            assertEquals(null, fake.lastRequest)
+        } else {
+            assertTrue(following is GatewayResult.Ok)
+            val channel = if (timerec) (fake.lastRequest as UpdateTimerecEntryRequest).channel
+                else (fake.lastRequest as UpdateAutorecEntryRequest).channel
+            assertEquals(HtspRecordingRuleChannel.Id(8), channel)
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource("false,none", "true,none", "false,update", "true,update", "false,delete", "true,delete")
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun `create seeds restriction only without newer metadata`(timerec: Boolean, metadata: String) = runTest {
+        val source = HtspConnectionGeneration()
+        val messages = MutableSharedFlow<HtspTransportEvent>()
+        val fake = FakeHtspConnection().apply {
+            connectOutcome = HtspConnectOutcome.Connected(liveConnection(source))
+            eventsFlow = messages
+            executeResult = if (timerec) HtspResult.Ok(AddTimerecEntryResponse("time")) else HtspResult.Ok(AddAutorecEntryResponse("auto"))
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982)) as GatewayConnectResult.Connected).connection.generation
+        backgroundScope.launch(start = CoroutineStart.UNDISPATCHED) { gateway.metadata.collect {} }
+        val reply = CompletableDeferred<Unit>()
+        fake.beforeExecute = { reply.await() }
+        val pending = async {
+            val channel = RecordingRuleChannel.SpecificChannel(ChannelId(7))
+            if (timerec) gateway.createTimerecRule(generation, TimerecRuleCreate(title = "new", channel = channel))
+            else gateway.createAutorecRule(generation, AutorecRuleCreate(title = "new", channel = channel))
+        }
+        runCurrent()
+        if (metadata != "none") {
+            messages.emit(HtspTransportEvent.ServerMessage(
+                when {
+                    timerec && metadata == "delete" -> HtspTimerecEntryDeleteMessage("time")
+                    timerec -> HtspTimerecEntryAddMessage(timerecFixture().copy(channelId = 8))
+                    metadata == "delete" -> HtspAutorecEntryDeleteMessage("auto")
+                    else -> HtspAutorecEntryAddMessage(autorecFixture().copy(channelId = 8))
+                }, source, 1,
+            ))
+            runCurrent()
+        }
+        reply.complete(Unit)
+        assertTrue(pending.await() is GatewayResult.Ok)
+        fake.beforeExecute = {}
+        fake.lastRequest = null
+        fake.executeResult = if (timerec) HtspResult.Ok(UpdateTimerecEntryResponse) else HtspResult.Ok(UpdateAutorecEntryResponse)
+        val following = if (timerec) gateway.updateTimerecRule(generation, TimerecRuleId("time"), TimerecRuleUpdate(title = "next"))
+            else gateway.updateAutorecRule(generation, AutorecRuleId("auto"), AutorecRuleUpdate(title = "next"))
+        if (metadata == "delete") {
+            assertSame(GatewayResult.ObservationExpired, following)
+            assertEquals(null, fake.lastRequest)
+        } else {
+            assertTrue(following is GatewayResult.Ok)
+            val channel = if (timerec) (fake.lastRequest as UpdateTimerecEntryRequest).channel
+                else (fake.lastRequest as UpdateAutorecEntryRequest).channel
+            assertEquals(HtspRecordingRuleChannel.Id(if (metadata == "none") 7 else 8), channel)
+        }
     }
 
     @Test

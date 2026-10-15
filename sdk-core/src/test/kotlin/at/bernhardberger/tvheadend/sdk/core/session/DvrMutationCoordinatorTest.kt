@@ -301,6 +301,8 @@ internal class DvrMutationCoordinatorTest {
                 DvrMutationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = true),
             GatewayResult.NotSupported to
                 DvrMutationResult.Failed(TvheadendFailure.NOT_SUPPORTED, mayHaveApplied = false),
+            GatewayResult.ObservationExpired to
+                DvrMutationResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false),
         )
         cases.forEach { (gatewayResult, expected) ->
             gateway.scheduleBehavior = { _, _ -> gatewayResult }
@@ -328,6 +330,7 @@ internal class DvrMutationCoordinatorTest {
             GatewayResult.ServerRejected() to false,
             GatewayResult.ConnectionLimit to false,
             GatewayResult.NotSupported to false,
+            GatewayResult.ObservationExpired to false,
             GatewayResult.MalformedReply to true,
             GatewayResult.Timeout to true,
             GatewayResult.TransportUnavailable to true,

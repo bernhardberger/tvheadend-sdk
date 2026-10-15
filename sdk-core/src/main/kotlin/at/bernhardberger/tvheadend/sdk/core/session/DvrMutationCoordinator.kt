@@ -299,6 +299,7 @@ internal class DvrMutationCoordinator(
                     GatewayResult.Timeout,
                     GatewayResult.TransportUnavailable,
                     GatewayResult.NotSupported,
+                    GatewayResult.ObservationExpired,
                     GatewayResult.MalformedReply,
                     -> failure(operation, result)
                 }
@@ -339,6 +340,7 @@ internal class DvrMutationCoordinator(
                     GatewayResult.Timeout,
                     GatewayResult.TransportUnavailable,
                     GatewayResult.NotSupported,
+                    GatewayResult.ObservationExpired,
                     GatewayResult.MalformedReply,
                     -> failure(operation, result)
                 }
@@ -474,6 +476,8 @@ internal class DvrMutationCoordinator(
                 DvrMutationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE, mayHaveApplied = true)
             GatewayResult.NotSupported ->
                 DvrMutationResult.Failed(TvheadendFailure.NOT_SUPPORTED, mayHaveApplied = false)
+            GatewayResult.ObservationExpired ->
+                DvrMutationResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false)
             GatewayResult.MalformedReply ->
                 DvrMutationResult.Failed(TvheadendFailure.MALFORMED_RESPONSE, mayHaveApplied = true)
         }
@@ -517,6 +521,7 @@ internal fun GatewayResult<*>.mayHaveAppliedDvrCommand(): Boolean = when (this) 
     GatewayResult.AccessDenied,
     GatewayResult.ConnectionLimit,
     GatewayResult.NotSupported,
+    GatewayResult.ObservationExpired,
     -> false
     is GatewayResult.Ok,
     GatewayResult.Timeout,

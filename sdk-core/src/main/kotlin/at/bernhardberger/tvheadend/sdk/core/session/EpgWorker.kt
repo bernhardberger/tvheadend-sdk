@@ -345,6 +345,7 @@ internal class EpgWorker(
                             }
                             GatewayResult.AccessDenied,
                             GatewayResult.NotSupported,
+                            GatewayResult.ObservationExpired,
                             GatewayResult.MalformedReply,
                             -> settleIneligible(plan.channelId)
                             is GatewayResult.ServerRejected,

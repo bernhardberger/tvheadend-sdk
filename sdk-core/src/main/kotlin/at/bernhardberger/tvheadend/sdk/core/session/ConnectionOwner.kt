@@ -591,6 +591,7 @@ internal class ConnectionOwner(
             GatewayResult.TransportUnavailable ->
                 GatewayResult.TransportUnavailable.toSynchronizationFailure()
             GatewayResult.NotSupported -> GatewayResult.NotSupported.toSynchronizationFailure()
+            GatewayResult.ObservationExpired -> GatewayResult.ObservationExpired.toSynchronizationFailure()
             GatewayResult.MalformedReply -> GatewayResult.MalformedReply.toSynchronizationFailure()
         }
     }
@@ -870,6 +871,7 @@ private fun GatewayResult<*>.toSynchronizationFailure(): SynchronizationOutcome.
     GatewayResult.TransportUnavailable ->
         synchronizationFailure(TvheadendFailure.TRANSPORT_UNAVAILABLE)
     GatewayResult.NotSupported -> synchronizationFailure(TvheadendFailure.NOT_SUPPORTED)
+    GatewayResult.ObservationExpired -> synchronizationFailure(TvheadendFailure.OBSERVATION_EXPIRED)
     GatewayResult.MalformedReply -> synchronizationFailure(TvheadendFailure.MALFORMED_RESPONSE)
 }
 

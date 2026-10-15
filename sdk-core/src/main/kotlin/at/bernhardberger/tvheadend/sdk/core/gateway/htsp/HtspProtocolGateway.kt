@@ -227,8 +227,10 @@ internal class HtspProtocolGateway internal constructor(
     private var currentLive: HtspLiveConnection? = null
     // HTSP rule updates always replace the channel restriction. Preserve SDK null-as-unchanged
     // from metadata (or a successful local mutation), never by guessing Any for an unknown rule.
-    private val autorecChannels = HashMap<String, HtspRecordingRuleChannel>()
-    private val timerecChannels = HashMap<String, HtspRecordingRuleChannel>()
+    // SDK mutations are serialized by DvrMutationCoordinator.operationMutex. Metadata can still
+    // overtake replies, so every cache write is also fenced by the observed per-rule revision.
+    private val autorecChannels = RuleChannelCache()
+    private val timerecChannels = RuleChannelCache()
     @Volatile private var observedLive: LiveObservation? = null
     @Volatile internal var lastDisconnectChanged: Boolean? = null
         private set
@@ -397,29 +399,71 @@ internal class HtspProtocolGateway internal constructor(
         currentLive?.generation?.let { retire(it) }
     }
 
-    private fun rememberRuleChannel(generation: HtspConnectionGeneration, message: HtspMetadataMessage) =
-        synchronized(generationLock) {
-            if (refreshLive()?.generation !== generation) return@synchronized
-            when (message) {
-                is HtspAutorecEntryAddMessage -> autorecChannels[message.entry.id] = message.entry.channelId.toRuleChannel()
-                is HtspAutorecEntryUpdateMessage -> autorecChannels[message.entry.id] = message.entry.channelId.toRuleChannel()
-                is HtspAutorecEntryDeleteMessage -> autorecChannels.remove(message.id)
-                is HtspTimerecEntryAddMessage -> timerecChannels[message.entry.id] = message.entry.channelId.toRuleChannel()
-                is HtspTimerecEntryUpdateMessage -> timerecChannels[message.entry.id] = message.entry.channelId.toRuleChannel()
-                is HtspTimerecEntryDeleteMessage -> timerecChannels.remove(message.id)
-                else -> Unit
+    private fun rememberRuleChannel(generation: HtspConnectionGeneration, message: HtspMetadataMessage) {
+        fun remember(cache: RuleChannelCache, id: String, channel: HtspRecordingRuleChannel?) {
+            synchronized(generationLock) {
+                if (refreshLive()?.generation === generation) cache.remember(id, channel)
             }
-            Unit
         }
+        // EPG/channel/DVR traffic never takes the rule-cache monitor or refreshes its snapshot.
+        when (message) {
+            is HtspAutorecEntryAddMessage -> remember(autorecChannels, message.entry.id, message.entry.channelId.toRuleChannel())
+            is HtspAutorecEntryUpdateMessage -> remember(autorecChannels, message.entry.id, message.entry.channelId.toRuleChannel())
+            is HtspAutorecEntryDeleteMessage -> remember(autorecChannels, message.id, null)
+            is HtspTimerecEntryAddMessage -> remember(timerecChannels, message.entry.id, message.entry.channelId.toRuleChannel())
+            is HtspTimerecEntryUpdateMessage -> remember(timerecChannels, message.entry.id, message.entry.channelId.toRuleChannel())
+            is HtspTimerecEntryDeleteMessage -> remember(timerecChannels, message.id, null)
+            else -> Unit
+        }
+    }
+
+    /** Accessed only under generationLock; null channel is a retained deletion tombstone. */
+    private class RuleChannelCache {
+        private class Observation(val revision: Long, val channel: HtspRecordingRuleChannel?)
+        private val entries = HashMap<String, Observation>()
+        var revision: Long = 0
+            private set
+
+        fun clear() { entries.clear() }
+        fun revision(id: String): Long = entries[id]?.revision ?: 0
+        fun channel(id: String): HtspRecordingRuleChannel? = entries[id]?.channel
+        fun remember(id: String, channel: HtspRecordingRuleChannel?) {
+            entries[id] = Observation(++revision, channel)
+        }
+
+        fun writeBack(id: String, expectedRevision: Long, channel: HtspRecordingRuleChannel?) {
+            val observed = entries[id]
+            if (revision(id) == expectedRevision && (observed == null || observed.channel != null)) {
+                remember(id, channel)
+            }
+        }
+
+        fun seed(id: String, requestRevision: Long, channel: HtspRecordingRuleChannel) {
+            // Create does not know its id yet. The watermark detects any intervening change to
+            // the returned id, without rejecting a seed because an unrelated rule changed.
+            val observed = entries[id]
+            if (observed == null || (observed.revision <= requestRevision && observed.channel != null)) {
+                remember(id, channel)
+            }
+        }
+    }
+
+    private sealed interface RuleChannelResolution {
+        data object NotLive : RuleChannelResolution
+        data object Unknown : RuleChannelResolution
+        class Observed(val channel: HtspRecordingRuleChannel, val revision: Long) : RuleChannelResolution
+    }
 
     private fun ruleUpdateChannel(
         generation: GatewayGeneration,
         id: String,
         requested: RecordingRuleChannel?,
-        channels: Map<String, HtspRecordingRuleChannel>,
-    ): HtspRecordingRuleChannel? = synchronized(generationLock) {
-        if (refreshLive()?.generation !== htspGenerationFor(generation)) return@synchronized null
-        requested.toHtspChannel() ?: channels[id]
+        channels: RuleChannelCache,
+    ): RuleChannelResolution = synchronized(generationLock) {
+        if (refreshLive()?.generation !== htspGenerationFor(generation)) return@synchronized RuleChannelResolution.NotLive
+        val channel = requested.toHtspChannel() ?: channels.channel(id)
+            ?: return@synchronized RuleChannelResolution.Unknown
+        RuleChannelResolution.Observed(channel, channels.revision(id))
     }
 
     override suspend fun enableInitialMetadata(
@@ -612,37 +656,41 @@ internal class HtspProtocolGateway internal constructor(
     override suspend fun createAutorecRule(
         generation: GatewayGeneration,
         request: AutorecRuleCreate,
-    ): GatewayResult<AutorecRuleId> = connection.addAutorecEntry(
-        title = request.title,
-        channel = request.channel.toHtspChannel(),
-        minDurationSeconds = request.minDuration?.toDvrMutationSeconds(),
-        maxDurationSeconds = request.maxDuration?.toDvrMutationSeconds(),
-        fullText = request.fullText,
-        mergeText = request.mergeText,
-        duplicateDetection = request.duplicateDetection?.wireValue,
-        maximumRecordingCount = request.maximumRecordingCount,
-        broadcastType = request.broadcastType?.wireValue,
-        startExtraMinutes = request.startExtraMinutes?.inWholeMinutes,
-        stopExtraMinutes = request.stopExtraMinutes?.inWholeMinutes,
-        seriesLinkUri = request.seriesLinkUri,
-        approximateStartMinutesSinceMidnight = request.approximateStartMinutesSinceMidnight?.toDvrMinute(),
-        startMinutesSinceMidnight = request.startMinutesSinceMidnight?.toDvrMinute(),
-        startWindowEndMinutesSinceMidnight = request.startWindowEndMinutesSinceMidnight?.toDvrMinute(),
-        enabled = request.enabled,
-        retentionDays = request.retentionDays,
-        removalDays = request.removalDays,
-        priority = request.priority?.wireValue,
-        name = request.name,
-        comment = request.comment,
-        directory = request.directory,
-        configName = request.configId?.value,
-        daysOfWeekMask = request.daysOfWeekMask?.toDvrDayMask(),
-        expectedGeneration = htspGenerationFor(generation),
-    ).toGatewayResult { response ->
-        commitIfLive(generation) {
-            autorecChannels[response.id] = request.channel.toHtspChannel() ?: HtspRecordingRuleChannel.Any
+    ): GatewayResult<AutorecRuleId> {
+        val revision = commitIfLive(generation) { autorecChannels.revision }
+            ?: return GatewayResult.TransportUnavailable
+        return connection.addAutorecEntry(
+            title = request.title,
+            channel = request.channel.toHtspChannel(),
+            minDurationSeconds = request.minDuration?.toDvrMutationSeconds(),
+            maxDurationSeconds = request.maxDuration?.toDvrMutationSeconds(),
+            fullText = request.fullText,
+            mergeText = request.mergeText,
+            duplicateDetection = request.duplicateDetection?.wireValue,
+            maximumRecordingCount = request.maximumRecordingCount,
+            broadcastType = request.broadcastType?.wireValue,
+            startExtraMinutes = request.startExtraMinutes?.inWholeMinutes,
+            stopExtraMinutes = request.stopExtraMinutes?.inWholeMinutes,
+            seriesLinkUri = request.seriesLinkUri,
+            approximateStartMinutesSinceMidnight = request.approximateStartMinutesSinceMidnight?.toDvrMinute(),
+            startMinutesSinceMidnight = request.startMinutesSinceMidnight?.toDvrMinute(),
+            startWindowEndMinutesSinceMidnight = request.startWindowEndMinutesSinceMidnight?.toDvrMinute(),
+            enabled = request.enabled,
+            retentionDays = request.retentionDays,
+            removalDays = request.removalDays,
+            priority = request.priority?.wireValue,
+            name = request.name,
+            comment = request.comment,
+            directory = request.directory,
+            configName = request.configId?.value,
+            daysOfWeekMask = request.daysOfWeekMask?.toDvrDayMask(),
+            expectedGeneration = htspGenerationFor(generation),
+        ).toGatewayResult { response ->
+            commitIfLive(generation) {
+                autorecChannels.seed(response.id, revision, request.channel.toHtspChannel() ?: HtspRecordingRuleChannel.Any)
+            }
+            AutorecRuleId(response.id)
         }
-        AutorecRuleId(response.id)
     }
 
     override suspend fun updateAutorecRule(
@@ -650,12 +698,14 @@ internal class HtspProtocolGateway internal constructor(
         id: AutorecRuleId,
         update: AutorecRuleUpdate,
     ): GatewayResult<Unit> {
-        if (commitIfLive(generation) { true } != true) return GatewayResult.TransportUnavailable
-        val channel = ruleUpdateChannel(generation, id.value, update.channel, autorecChannels)
-            ?: return GatewayResult.NotSupported
+        val observed = when (val result = ruleUpdateChannel(generation, id.value, update.channel, autorecChannels)) {
+            RuleChannelResolution.NotLive -> return GatewayResult.TransportUnavailable
+            RuleChannelResolution.Unknown -> return GatewayResult.ObservationExpired
+            is RuleChannelResolution.Observed -> result
+        }
         return connection.updateAutorecEntry(
             id = id.value,
-            channel = channel,
+            channel = observed.channel,
             minDurationSeconds = update.minDuration?.toDvrMutationSeconds(),
             maxDurationSeconds = update.maxDuration?.toDvrMutationSeconds(),
             fullText = update.fullText,
@@ -680,7 +730,7 @@ internal class HtspProtocolGateway internal constructor(
             daysOfWeekMask = update.daysOfWeekMask?.toDvrDayMask(),
             expectedGeneration = htspGenerationFor(generation),
         ).toGatewayResult {
-            commitIfLive(generation) { autorecChannels[id.value] = channel }
+            commitIfLive(generation) { autorecChannels.writeBack(id.value, observed.revision, observed.channel) }
             Unit
         }
     }
@@ -688,37 +738,45 @@ internal class HtspProtocolGateway internal constructor(
     override suspend fun deleteAutorecRule(
         generation: GatewayGeneration,
         id: AutorecRuleId,
-    ): GatewayResult<Unit> = connection.deleteAutorecEntry(
-        id = id.value,
-        expectedGeneration = htspGenerationFor(generation),
-    ).toGatewayResult {
-        commitIfLive(generation) { autorecChannels.remove(id.value) }
-        Unit
+    ): GatewayResult<Unit> {
+        val revision = commitIfLive(generation) { autorecChannels.revision(id.value) }
+            ?: return GatewayResult.TransportUnavailable
+        return connection.deleteAutorecEntry(
+            id = id.value,
+            expectedGeneration = htspGenerationFor(generation),
+        ).toGatewayResult {
+            commitIfLive(generation) { autorecChannels.writeBack(id.value, revision, null) }
+            Unit
+        }
     }
 
     override suspend fun createTimerecRule(
         generation: GatewayGeneration,
         request: TimerecRuleCreate,
-    ): GatewayResult<TimerecRuleId> = connection.addTimerecEntry(
-        title = request.title,
-        channel = request.channel.toHtspChannel(),
-        startMinutesSinceMidnight = request.startMinutesSinceMidnight?.toDvrMinute(),
-        stopMinutesSinceMidnight = request.stopMinutesSinceMidnight?.toDvrMinute(),
-        enabled = request.enabled,
-        retentionDays = request.retentionDays,
-        removalDays = request.removalDays,
-        priority = request.priority?.wireValue,
-        name = request.name,
-        comment = request.comment,
-        directory = request.directory,
-        configName = request.configId?.value,
-        daysOfWeekMask = request.daysOfWeekMask?.toDvrDayMask(),
-        expectedGeneration = htspGenerationFor(generation),
-    ).toGatewayResult { response ->
-        commitIfLive(generation) {
-            timerecChannels[response.id] = request.channel.toHtspChannel() ?: HtspRecordingRuleChannel.Any
+    ): GatewayResult<TimerecRuleId> {
+        val revision = commitIfLive(generation) { timerecChannels.revision }
+            ?: return GatewayResult.TransportUnavailable
+        return connection.addTimerecEntry(
+            title = request.title,
+            channel = request.channel.toHtspChannel(),
+            startMinutesSinceMidnight = request.startMinutesSinceMidnight?.toDvrMinute(),
+            stopMinutesSinceMidnight = request.stopMinutesSinceMidnight?.toDvrMinute(),
+            enabled = request.enabled,
+            retentionDays = request.retentionDays,
+            removalDays = request.removalDays,
+            priority = request.priority?.wireValue,
+            name = request.name,
+            comment = request.comment,
+            directory = request.directory,
+            configName = request.configId?.value,
+            daysOfWeekMask = request.daysOfWeekMask?.toDvrDayMask(),
+            expectedGeneration = htspGenerationFor(generation),
+        ).toGatewayResult { response ->
+            commitIfLive(generation) {
+                timerecChannels.seed(response.id, revision, request.channel.toHtspChannel() ?: HtspRecordingRuleChannel.Any)
+            }
+            TimerecRuleId(response.id)
         }
-        TimerecRuleId(response.id)
     }
 
     override suspend fun updateTimerecRule(
@@ -726,12 +784,14 @@ internal class HtspProtocolGateway internal constructor(
         id: TimerecRuleId,
         update: TimerecRuleUpdate,
     ): GatewayResult<Unit> {
-        if (commitIfLive(generation) { true } != true) return GatewayResult.TransportUnavailable
-        val channel = ruleUpdateChannel(generation, id.value, update.channel, timerecChannels)
-            ?: return GatewayResult.NotSupported
+        val observed = when (val result = ruleUpdateChannel(generation, id.value, update.channel, timerecChannels)) {
+            RuleChannelResolution.NotLive -> return GatewayResult.TransportUnavailable
+            RuleChannelResolution.Unknown -> return GatewayResult.ObservationExpired
+            is RuleChannelResolution.Observed -> result
+        }
         return connection.updateTimerecEntry(
             id = id.value,
-            channel = channel,
+            channel = observed.channel,
             startMinutesSinceMidnight = update.startMinutesSinceMidnight?.toDvrMinute(),
             stopMinutesSinceMidnight = update.stopMinutesSinceMidnight?.toDvrMinute(),
             enabled = update.enabled,
@@ -746,7 +806,7 @@ internal class HtspProtocolGateway internal constructor(
             daysOfWeekMask = update.daysOfWeekMask?.toDvrDayMask(),
             expectedGeneration = htspGenerationFor(generation),
         ).toGatewayResult {
-            commitIfLive(generation) { timerecChannels[id.value] = channel }
+            commitIfLive(generation) { timerecChannels.writeBack(id.value, observed.revision, observed.channel) }
             Unit
         }
     }
@@ -812,6 +872,7 @@ internal class HtspProtocolGateway internal constructor(
             GatewayResult.Timeout -> return GatewayResult.Timeout
             GatewayResult.TransportUnavailable -> return GatewayResult.TransportUnavailable
             GatewayResult.NotSupported -> return GatewayResult.NotSupported
+            GatewayResult.ObservationExpired -> return GatewayResult.ObservationExpired
             GatewayResult.MalformedReply -> return GatewayResult.MalformedReply
         }
 
@@ -863,6 +924,7 @@ internal class HtspProtocolGateway internal constructor(
                     GatewayResult.Timeout -> return GatewayResult.Timeout
                     GatewayResult.TransportUnavailable -> return GatewayResult.TransportUnavailable
                     GatewayResult.NotSupported -> return GatewayResult.NotSupported
+                    GatewayResult.ObservationExpired -> return GatewayResult.ObservationExpired
                     GatewayResult.MalformedReply -> return GatewayResult.MalformedReply
                 }
             }
@@ -892,6 +954,7 @@ internal class HtspProtocolGateway internal constructor(
                 GatewayResult.Timeout -> return GatewayResult.Timeout
                 GatewayResult.TransportUnavailable -> return GatewayResult.TransportUnavailable
                 GatewayResult.NotSupported -> return GatewayResult.NotSupported
+                GatewayResult.ObservationExpired -> return GatewayResult.ObservationExpired
                 GatewayResult.MalformedReply -> return GatewayResult.MalformedReply
             }
             if (data.size > requested) return GatewayResult.MalformedReply
@@ -1020,12 +1083,16 @@ internal class HtspProtocolGateway internal constructor(
     override suspend fun deleteTimerecRule(
         generation: GatewayGeneration,
         id: TimerecRuleId,
-    ): GatewayResult<Unit> = connection.deleteTimerecEntry(
-        id = id.value,
-        expectedGeneration = htspGenerationFor(generation),
-    ).toGatewayResult {
-        commitIfLive(generation) { timerecChannels.remove(id.value) }
-        Unit
+    ): GatewayResult<Unit> {
+        val revision = commitIfLive(generation) { timerecChannels.revision(id.value) }
+            ?: return GatewayResult.TransportUnavailable
+        return connection.deleteTimerecEntry(
+            id = id.value,
+            expectedGeneration = htspGenerationFor(generation),
+        ).toGatewayResult {
+            commitIfLive(generation) { timerecChannels.writeBack(id.value, revision, null) }
+            Unit
+        }
     }
 
     override fun subscription(
@@ -1277,9 +1344,9 @@ private fun HtspTransportFailureKind.toGatewayFailure(): GatewayConnectionFailur
     HtspTransportFailureKind.ZERO_CHANNELS -> GatewayConnectionFailure.NO_CHANNELS
     HtspTransportFailureKind.TRANSPORT_UNAVAILABLE,
     HtspTransportFailureKind.SUPERSEDED,
+    HtspTransportFailureKind.CLOSED,
     ->
         GatewayConnectionFailure.TRANSPORT_UNAVAILABLE
-    else -> GatewayConnectionFailure.TRANSPORT_UNAVAILABLE
 }
 
 private inline fun <T, R> HtspResult<T>.toGatewayResult(

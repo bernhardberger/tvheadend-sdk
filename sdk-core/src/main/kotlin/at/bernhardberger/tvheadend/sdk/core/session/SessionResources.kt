@@ -738,6 +738,7 @@ internal class PhaseOneSessionMetadata(
                 GatewayResult.Timeout,
                 GatewayResult.TransportUnavailable,
                 GatewayResult.NotSupported,
+                GatewayResult.ObservationExpired,
                 GatewayResult.MalformedReply,
                 -> mutableConfigurations.value = publishedConfigurationsState()
             }
@@ -768,6 +769,7 @@ internal class PhaseOneSessionMetadata(
                 GatewayResult.Timeout,
                 GatewayResult.TransportUnavailable,
                 GatewayResult.NotSupported,
+                GatewayResult.ObservationExpired,
                 GatewayResult.MalformedReply,
                 -> mutableDiskSpace.value = publishedDiskSpace?.let(DvrDiskSpaceState::Stale)
                     ?: DvrDiskSpaceState.Unknown
@@ -1284,6 +1286,7 @@ private fun GatewayResult<List<GatewayEpgQueryEvent>>.toEpgSearchResult(
         GatewayResult.Timeout -> EpgSearchResult.Failed(TvheadendFailure.TIMEOUT)
         GatewayResult.TransportUnavailable -> EpgSearchResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE)
         GatewayResult.NotSupported -> EpgSearchResult.Failed(TvheadendFailure.NOT_SUPPORTED)
+        GatewayResult.ObservationExpired -> EpgSearchResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED)
         GatewayResult.MalformedReply -> EpgSearchResult.Failed(TvheadendFailure.MALFORMED_RESPONSE)
     }
 }

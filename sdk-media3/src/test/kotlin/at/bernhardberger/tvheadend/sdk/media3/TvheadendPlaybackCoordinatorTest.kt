@@ -4382,7 +4382,7 @@ private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
 
     /** Mirrors the live source on a server restart: replace the held reason, then start a new period. */
     fun restartLiveStream(subscription: ActiveSubscription) {
-        checkNotNull(timeshiftControls).subscriptionRestarted(null)
+        checkNotNull(timeshiftControls).subscriptionRestarted()
         replaceTimeshiftPeriod(subscription)
         emitTimeshift(
             SubscriptionEvent.Started(streams = null, codecMetadata = null),
@@ -4391,7 +4391,7 @@ private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
 
     /** Mirrors the live source receiving a restart before Media3 creates the restarted period. */
     fun liveStreamRestarted() {
-        checkNotNull(timeshiftControls).subscriptionRestarted(null)
+        checkNotNull(timeshiftControls).subscriptionRestarted()
     }
 
     /** Mirrors the live source when its stopped subscription terminates. */

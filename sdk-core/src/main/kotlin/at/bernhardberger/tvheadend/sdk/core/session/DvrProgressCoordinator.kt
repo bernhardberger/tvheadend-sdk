@@ -212,6 +212,11 @@ internal class DvrProgressCoordinator(
                             DvrProgressResult.Failed(TvheadendFailure.SERVER_REJECTED, mayHaveApplied = false),
                             proof = null,
                         )
+                    GatewayResult.ObservationExpired ->
+                        ClassifiedProgress(
+                            DvrProgressResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false),
+                            proof = null,
+                        )
                     GatewayResult.MalformedReply ->
                         ClassifiedProgress(
                             DvrProgressResult.Failed(TvheadendFailure.MALFORMED_RESPONSE, mayHaveApplied = true),
@@ -298,6 +303,7 @@ internal class DvrProgressCoordinator(
                         DvrCutpointsResult.Failed(TvheadendFailure.NOT_SUPPORTED)
                     }
                     is GatewayResult.ServerRejected -> DvrCutpointsResult.Failed(TvheadendFailure.SERVER_REJECTED)
+                    GatewayResult.ObservationExpired -> DvrCutpointsResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED)
                     GatewayResult.MalformedReply -> DvrCutpointsResult.Failed(TvheadendFailure.MALFORMED_RESPONSE)
                     GatewayResult.ConnectionLimit -> DvrCutpointsResult.Failed(TvheadendFailure.CONNECTION_LIMIT)
                     GatewayResult.Timeout -> DvrCutpointsResult.Failed(TvheadendFailure.TIMEOUT)

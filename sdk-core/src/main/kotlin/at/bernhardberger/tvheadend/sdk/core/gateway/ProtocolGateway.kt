@@ -405,4 +405,6 @@ internal sealed interface GatewayResult<out T> {
     public data object Timeout : GatewayResult<Nothing>
     public data object TransportUnavailable : GatewayResult<Nothing>
     public data object NotSupported : GatewayResult<Nothing>
+    /** Required connection-local metadata is missing; no command was sent. */
+    public data object ObservationExpired : GatewayResult<Nothing>
 }

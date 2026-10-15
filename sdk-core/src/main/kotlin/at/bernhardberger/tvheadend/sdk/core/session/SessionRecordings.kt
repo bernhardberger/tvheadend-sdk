@@ -71,6 +71,7 @@ internal inline fun <T, R> GatewayResult<T>.toRecordingFileResult(
     GatewayResult.TransportUnavailable ->
         RecordingFileResult.Failed(TvheadendFailure.CONNECTION_CHANGED)
     GatewayResult.NotSupported -> RecordingFileResult.Failed(TvheadendFailure.NOT_SUPPORTED)
+    GatewayResult.ObservationExpired -> RecordingFileResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED)
     GatewayResult.MalformedReply -> RecordingFileResult.Failed(TvheadendFailure.MALFORMED_RESPONSE)
 }
 

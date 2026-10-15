@@ -498,13 +498,13 @@ internal class LiveTimeshiftControlBridge(
     }
 
     /**
-     * Ends the server stop and replaces a held stop reason with the restart's issue until a period
+     * Ends the server stop and clears a held stop reason until a period
      * observes the restart.
      */
-    internal fun subscriptionRestarted(issue: SubscriptionIssue?) {
+    internal fun subscriptionRestarted() {
         synchronized(lock) {
             if (!stoppedIssueHeld || retired || !token.isActive()) return
-            stoppedIssue = issue
+            stoppedIssue = null
             val wasStopped = serverStopped
             serverStopped = false
             val previous = currentIssue

@@ -15,7 +15,8 @@
   mapped; their existing nullable SDK fields remain absent for wire-sourced data.
 - Preserve rule-update null-as-unchanged channel semantics using the current
   generation's observed restriction. Updates with an unknown restriction return
-  not-supported rather than silently clearing it. Explicit all-channels clears it.
+  `OBSERVATION_EXPIRED` with `mayHaveApplied = false`; refresh the observation and
+  retry. Explicit all-channels clears it.
 - Full channel, tag, EPG, DVR-entry and recording-rule notifications now replace
   stored entities, including inserting previously unseen IDs. Optional server
   values that are cleared now also clear in SDK snapshots. Omitted tag membership
@@ -23,6 +24,12 @@
 - Channel now/next and DVR-statistics notifications explicitly patch only their
   own fields; patches for unknown IDs are ignored. Malformed-metadata recovery
   policy remains pending.
+
+### Fixed
+
+- Rule mutation replies no longer overwrite newer server channel restrictions or
+  resurrect deleted rules in the connection-local cache. Immediate follow-up
+  updates still preserve successful local changes before metadata arrives.
 
 ## [0.29.0]
 

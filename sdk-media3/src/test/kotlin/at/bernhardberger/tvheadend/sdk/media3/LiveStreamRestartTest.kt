@@ -534,6 +534,10 @@ internal class LiveStreamRestartTest {
             harness.started(SubscriptionStreamType.MPEG2_AUDIO)
             harness.flush()
             assertEquals(null, harness.observedIssues.last())
+            harness.createPeriod()
+            harness.emit(SubscriptionEvent.Status(SubscriptionCondition.ERROR_REPORTED, SubscriptionIssue.BAD_SIGNAL))
+            harness.flush()
+            assertSame(SubscriptionIssue.BAD_SIGNAL, harness.observedIssues.last())
             harness.emit(overridden)
             harness.emit(
                 SubscriptionEvent.Started(
@@ -550,6 +554,7 @@ internal class LiveStreamRestartTest {
                     null,
                     SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN,
                     null,
+                    SubscriptionIssue.BAD_SIGNAL,
                     SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN,
                     null,
                 ),
