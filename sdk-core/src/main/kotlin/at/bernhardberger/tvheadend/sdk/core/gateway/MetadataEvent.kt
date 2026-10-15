@@ -20,16 +20,13 @@ internal enum class GatewayDvrFailure {
     PRESENT,
 }
 
-internal enum class GatewayDvrUpdateProvenance {
-    FULL,
-    STATS_ONLY,
-}
 internal typealias EpgEpisodeId = at.bernhardberger.tvheadend.sdk.core.EpgEpisodeId
 internal typealias EpgSeriesLinkId = at.bernhardberger.tvheadend.sdk.core.EpgSeriesLinkId
 internal typealias EventId = at.bernhardberger.tvheadend.sdk.core.EventId
 internal typealias TagId = at.bernhardberger.tvheadend.sdk.core.ChannelTagId
 internal typealias TimerecRuleId = at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
 
+/** Add/Updated entity events replace whole entities; only the named sparse event types patch. */
 internal sealed interface MetadataEvent {
     public val generation: GatewayGeneration
 
@@ -52,6 +49,16 @@ internal sealed interface MetadataEvent {
         internal val channelId: ChannelId,
     ) : MetadataEvent {
         override fun toString(): String = "MetadataEvent.ChannelDeleted(<redacted>)"
+    }
+
+    /** Replaces only the current/next links of an existing channel. */
+    public class ChannelNowNextUpdated(
+        override val generation: GatewayGeneration,
+        internal val channelId: ChannelId,
+        internal val currentEventId: EventId?,
+        internal val nextEventId: EventId?,
+    ) : MetadataEvent {
+        override fun toString(): String = "MetadataEvent.ChannelNowNextUpdated(<redacted>)"
     }
 
     public class TagAdded(
@@ -112,7 +119,6 @@ internal sealed interface MetadataEvent {
     public class DvrEntryUpdated(
         override val generation: GatewayGeneration,
         internal val entry: GatewayDvrEntry,
-        internal val provenance: GatewayDvrUpdateProvenance,
     ) : MetadataEvent {
         override fun toString(): String = "MetadataEvent.DvrEntryUpdated(<redacted>)"
     }
@@ -122,6 +128,14 @@ internal sealed interface MetadataEvent {
         internal val entryId: DvrEntryId,
     ) : MetadataEvent {
         override fun toString(): String = "MetadataEvent.DvrEntryDeleted(<redacted>)"
+    }
+
+    /** Replaces only statistics/state fields of an existing recording, never its full metadata. */
+    public class DvrEntryStatsUpdated(
+        override val generation: GatewayGeneration,
+        internal val stats: GatewayDvrStats,
+    ) : MetadataEvent {
+        override fun toString(): String = "MetadataEvent.DvrEntryStatsUpdated(<redacted>)"
     }
 
     public class AutorecRuleAdded(
@@ -340,6 +354,21 @@ internal class GatewayTagMetadata(
     internal val channelIds: List<ChannelId>? = channelIds?.toList()
 
     override fun toString(): String = "GatewayTagMetadata(<redacted>)"
+}
+
+/** Every field in a statistics message is authoritative, including omitted optional statistics. */
+internal class GatewayDvrStats(
+    internal val id: DvrEntryId,
+    internal val uuid: String?,
+    internal val state: DvrEntryState,
+    internal val duplicate: Long? = null,
+    internal val failure: GatewayDvrFailure? = null,
+    internal val subscriptionError: DvrSubscriptionError? = null,
+    internal val streamErrors: Long? = null,
+    internal val dataErrors: Long? = null,
+    internal val dataSizeBytes: Long? = null,
+) {
+    override fun toString(): String = "GatewayDvrStats(<redacted>)"
 }
 
 internal class GatewayDvrEntry(

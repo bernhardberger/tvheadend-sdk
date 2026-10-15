@@ -11,7 +11,6 @@ import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.SessionObservation
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrRecordingFile
-import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrUpdateProvenance
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayRecordingFileStat
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
@@ -614,7 +613,6 @@ private class GrowingFixture(
                     dataSizeBytes = dataSizeBytes,
                     files = files,
                 ),
-                GatewayDvrUpdateProvenance.FULL,
             ),
         )
     }

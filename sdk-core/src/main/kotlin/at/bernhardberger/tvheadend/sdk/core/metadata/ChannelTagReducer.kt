@@ -29,29 +29,9 @@ internal data class ReducedChannel private constructor(
 ) {
     override fun toString(): String = "ReducedChannel(<redacted>)"
 
-    internal fun merge(
-        metadata: GatewayChannelMetadata,
-        resetEventLinks: Boolean,
-    ): ReducedChannel = ReducedChannel(
-        id = id,
-        name = metadata.name ?: name,
-        uuid = metadata.uuid ?: uuid,
-        number = metadata.number ?: number,
-        numberMinor = metadata.numberMinor ?: numberMinor,
-        icon = metadata.icon ?: icon,
-        currentEventId = if (resetEventLinks) {
-            metadata.currentEventId
-        } else {
-            metadata.currentEventId ?: currentEventId
-        },
-        nextEventId = if (resetEventLinks) {
-            metadata.nextEventId
-        } else {
-            metadata.nextEventId ?: nextEventId
-        },
-        services = metadata.services?.map(GatewayChannelService::toReduced)?.toImmutableList()
-            ?: services,
-        tagIds = metadata.tagIds?.toImmutableList() ?: tagIds,
+    internal fun patch(event: MetadataEvent.ChannelNowNextUpdated): ReducedChannel = copy(
+        currentEventId = event.currentEventId,
+        nextEventId = event.nextEventId,
     )
 
     internal fun removeTag(tagId: TagId): ReducedChannel {
@@ -136,13 +116,14 @@ internal data class ReducedChannelTag private constructor(
 ) {
     override fun toString(): String = "ReducedChannelTag(<redacted>)"
 
-    internal fun merge(metadata: GatewayTagMetadata): ReducedChannelTag = ReducedChannelTag(
+    internal fun replace(metadata: GatewayTagMetadata): ReducedChannelTag = ReducedChannelTag(
         id = id,
-        name = metadata.name ?: name,
-        uuid = metadata.uuid ?: uuid,
-        index = metadata.index ?: index,
-        icon = metadata.icon ?: icon,
-        titledIcon = metadata.titledIcon ?: titledIcon,
+        name = metadata.name,
+        uuid = metadata.uuid,
+        index = metadata.index,
+        icon = metadata.icon,
+        titledIcon = metadata.titledIcon,
+        // Initial-sync tagAdd omits members; an empty list explicitly clears them.
         channelIds = metadata.channelIds?.toImmutableList() ?: channelIds,
     )
 
@@ -192,11 +173,14 @@ internal class ChannelTagReducer {
 
     internal fun accept(event: MetadataEvent) {
         when (event) {
-            is MetadataEvent.ChannelAdded -> mergeChannel(event.channel, resetEventLinks = true)
-            is MetadataEvent.ChannelUpdated -> mergeChannel(event.channel, resetEventLinks = false)
+            is MetadataEvent.ChannelAdded -> replaceChannel(event.channel)
+            is MetadataEvent.ChannelUpdated -> replaceChannel(event.channel)
+            is MetadataEvent.ChannelNowNextUpdated -> channels[event.channelId]?.let {
+                channels[event.channelId] = it.patch(event)
+            }
             is MetadataEvent.ChannelDeleted -> deleteChannel(event.channelId)
-            is MetadataEvent.TagAdded -> mergeTag(event.tag)
-            is MetadataEvent.TagUpdated -> mergeTag(event.tag)
+            is MetadataEvent.TagAdded -> replaceTag(event.tag)
+            is MetadataEvent.TagUpdated -> replaceTag(event.tag)
             is MetadataEvent.TagDeleted -> deleteTag(event.tagId)
             is MetadataEvent.EventDeleted -> clearEvent(event.eventId)
             is MetadataEvent.EventAdded,
@@ -204,6 +188,7 @@ internal class ChannelTagReducer {
             is MetadataEvent.InitialSyncCompleted,
             is MetadataEvent.DvrEntryAdded,
             is MetadataEvent.DvrEntryUpdated,
+            is MetadataEvent.DvrEntryStatsUpdated,
             is MetadataEvent.DvrEntryDeleted,
             is MetadataEvent.AutorecRuleAdded,
             is MetadataEvent.AutorecRuleUpdated,
@@ -231,13 +216,14 @@ internal class ChannelTagReducer {
         tags = tags.values.map(ReducedChannelTag::toPublic),
     )
 
-    private fun mergeChannel(metadata: GatewayChannelMetadata, resetEventLinks: Boolean) {
-        channels[metadata.id] = channels[metadata.id]?.merge(metadata, resetEventLinks)
-            ?: ReducedChannel.create(metadata)
+    internal fun containsChannel(id: ChannelId): Boolean = id in channels
+
+    private fun replaceChannel(metadata: GatewayChannelMetadata) {
+        channels[metadata.id] = ReducedChannel.create(metadata)
     }
 
-    private fun mergeTag(metadata: GatewayTagMetadata) {
-        tags[metadata.id] = tags[metadata.id]?.merge(metadata) ?: ReducedChannelTag.create(metadata)
+    private fun replaceTag(metadata: GatewayTagMetadata) {
+        tags[metadata.id] = tags[metadata.id]?.replace(metadata) ?: ReducedChannelTag.create(metadata)
     }
 
     private fun deleteChannel(channelId: ChannelId) {

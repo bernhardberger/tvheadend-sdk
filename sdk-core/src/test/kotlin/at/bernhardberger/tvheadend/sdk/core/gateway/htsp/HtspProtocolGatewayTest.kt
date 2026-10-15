@@ -169,7 +169,6 @@ import at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrFailure
-import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrUpdateProvenance
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailureEvent
@@ -738,7 +737,7 @@ internal class HtspProtocolGatewayTest {
     }
 
     @Test
-    fun `sparse now next keeps the existing channel delta path while malformed policy is pending`() = runTest {
+    fun `sparse now next maps an explicit patch while malformed policy is pending`() = runTest {
         val source = HtspConnectionGeneration()
         val fake = FakeHtspConnection().apply {
             connectOutcome = HtspConnectOutcome.Connected(liveConnection(source))
@@ -750,13 +749,11 @@ internal class HtspProtocolGatewayTest {
         val gateway = HtspProtocolGateway(fake)
         val generation = (gateway.connect(ServerConfiguration("host", 9_982))
             as GatewayConnectResult.Connected).connection.generation
-        val event = gateway.metadata.toList().single() as MetadataEvent.ChannelUpdated
+        val event = gateway.metadata.toList().single() as MetadataEvent.ChannelNowNextUpdated
         assertSame(generation, event.generation)
-        assertEquals(ChannelId(1), event.channel.id)
-        assertEquals(EventId(0), event.channel.currentEventId)
-        assertEquals(EventId(9), event.channel.nextEventId)
-        assertEquals(null, event.channel.name)
-        assertEquals(null, event.channel.tagIds)
+        assertEquals(ChannelId(1), event.channelId)
+        assertEquals(EventId(0), event.currentEventId)
+        assertEquals(EventId(9), event.nextEventId)
         assertEquals(true, gateway.commitIfLive(generation) { true })
     }
 
@@ -1266,7 +1263,6 @@ internal class HtspProtocolGatewayTest {
         assertEquals(DvrEntryState.COMPLETED, updated.state)
         assertEquals(GatewayDvrFailure.FILE_MISSING, updated.failure)
         assertEquals(DvrSubscriptionError.INVALID_TARGET, updated.subscriptionError)
-        assertEquals(GatewayDvrUpdateProvenance.FULL, (events[1] as MetadataEvent.DvrEntryUpdated).provenance)
         assertEquals("private-auto", (events[3] as MetadataEvent.AutorecRuleAdded).rule.id.value)
         assertEquals("test-owner", (events[3] as MetadataEvent.AutorecRuleAdded).rule.owner)
         assertEquals("test-creator", (events[3] as MetadataEvent.AutorecRuleAdded).rule.creator)
@@ -1311,7 +1307,7 @@ internal class HtspProtocolGatewayTest {
                 ),
             )
         }
-        val entry = (HtspProtocolGateway(fake).metadata.toList().single() as MetadataEvent.DvrEntryUpdated).entry
+        val entry = (HtspProtocolGateway(fake).metadata.toList().single() as MetadataEvent.DvrEntryStatsUpdated).stats
         assertSame(DvrEntryState.UNKNOWN, entry.state)
         assertSame(DvrSubscriptionError.UNKNOWN, entry.subscriptionError)
         assertEquals("UNKNOWN", entry.state.toString())
@@ -1336,8 +1332,8 @@ internal class HtspProtocolGatewayTest {
             )
         }
         val events = HtspProtocolGateway(fake).metadata.toList()
-        assertEquals(GatewayDvrFailure.ABORTED, (events[0] as MetadataEvent.DvrEntryUpdated).entry.failure)
-        assertEquals(GatewayDvrFailure.PRESENT, (events[1] as MetadataEvent.DvrEntryUpdated).entry.failure)
+        assertEquals(GatewayDvrFailure.ABORTED, (events[0] as MetadataEvent.DvrEntryStatsUpdated).stats.failure)
+        assertEquals(GatewayDvrFailure.PRESENT, (events[1] as MetadataEvent.DvrEntryStatsUpdated).stats.failure)
     }
 
     @Test
@@ -1389,25 +1385,25 @@ internal class HtspProtocolGatewayTest {
         assertEquals(DvrEntryState.COMPLETED, added.state)
         assertEquals(GatewayDvrFailure.NONE, added.failure)
         assertEquals(DvrSubscriptionError.NO_SERVICE, added.subscriptionError)
-        val updated = (events[1] as MetadataEvent.DvrEntryUpdated).entry
+        val updated = (events[1] as MetadataEvent.DvrEntryStatsUpdated).stats
         assertEquals(DvrEntryState.COMPLETED, updated.state)
         assertEquals(GatewayDvrFailure.FILE_MISSING, updated.failure)
         assertEquals(DvrSubscriptionError.INVALID_SERVICE, updated.subscriptionError)
         assertTrue(
             events.drop(1).all {
-                (it as MetadataEvent.DvrEntryUpdated).provenance == GatewayDvrUpdateProvenance.STATS_ONLY
+                it is MetadataEvent.DvrEntryStatsUpdated
             },
         )
-        val invalid = (events[2] as MetadataEvent.DvrEntryUpdated).entry
+        val invalid = (events[2] as MetadataEvent.DvrEntryStatsUpdated).stats
         assertEquals(DvrEntryState.INVALID, invalid.state)
         assertEquals(DvrSubscriptionError.NO_DISK_SPACE, invalid.subscriptionError)
         assertEquals(
             DvrSubscriptionError.UNKNOWN,
-            (events[3] as MetadataEvent.DvrEntryUpdated).entry.subscriptionError,
+            (events[3] as MetadataEvent.DvrEntryStatsUpdated).stats.subscriptionError,
         )
         assertEquals(
             DvrSubscriptionError.UNKNOWN,
-            (events[4] as MetadataEvent.DvrEntryUpdated).entry.subscriptionError,
+            (events[4] as MetadataEvent.DvrEntryStatsUpdated).stats.subscriptionError,
         )
         assertFalse(events.toString().contains("service"), "Gateway DVR rendering exposed a server error")
     }

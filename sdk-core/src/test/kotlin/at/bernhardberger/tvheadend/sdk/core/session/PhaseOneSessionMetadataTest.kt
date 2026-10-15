@@ -28,6 +28,8 @@ import at.bernhardberger.tvheadend.sdk.core.EpgCoverageAcquisitionResult
 import at.bernhardberger.tvheadend.sdk.core.EpgCoveragePolicy
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
+import at.bernhardberger.tvheadend.sdk.core.EpgEvent
+import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
 import at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability
 import at.bernhardberger.tvheadend.sdk.core.ServerCapabilities
 import at.bernhardberger.tvheadend.sdk.core.SessionState
@@ -37,7 +39,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.EventId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelService
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
-import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrUpdateProvenance
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrStats
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgUpdate
@@ -70,6 +72,66 @@ import kotlin.time.Instant
 @OptIn(ExperimentalCoroutinesApi::class)
 internal class PhaseOneSessionMetadataTest {
     @Test
+    fun `cached fields are display only and neither sparse patches nor fresh sync resurrect them`() {
+        val metadata = PhaseOneSessionMetadata()
+        val cachedChannel = Channel.create(ChannelId(1), name = "Cached", icon = ArtworkId(1))
+        val cachedEvent = EpgEvent.create(EventId(1), ChannelId(1), Instant.fromEpochSeconds(0),
+            Instant.fromEpochSeconds(10), title = "Cached")
+        val cachedCatalog = ChannelCatalog.create(channels = listOf(cachedChannel))
+        val cachedEpg = EpgSnapshot.create(events = listOf(cachedEvent))
+        assertTrue(metadata.seedRetainedSnapshots(CachedCatalog(cachedCatalog), CachedEpg(cachedEpg)))
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        val synchronizing = metadata.observation.value
+        metadata.acceptMetadata(MetadataEvent.ChannelNowNextUpdated(generation, ChannelId(1), EventId(9), null))
+        metadata.acceptMetadata(MetadataEvent.DvrEntryStatsUpdated(generation,
+            GatewayDvrStats(DvrEntryId(1), null, DvrEntryState.RECORDING)))
+        assertSame(synchronizing, metadata.observation.value)
+        metadata.acceptMetadata(MetadataEvent.ChannelUpdated(generation, channel(1, name = "Fresh")))
+        metadata.acceptMetadata(MetadataEvent.EventUpdated(generation, epgUpdate(1, "Fresh")))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        assertEquals("Fresh", metadata.currentSnapshot().channels.single().name)
+        assertNull(metadata.currentSnapshot().channels.single().icon)
+        assertNull(metadata.currentSnapshot().channels.single().currentEventId)
+        assertEquals("Fresh", metadata.currentEpgSnapshot().events.single().title)
+        assertTrue(metadata.currentDvrSnapshot().entries.isEmpty())
+        assertEquals("Cached", cachedEvent.title)
+        assertEquals(ArtworkId(1), cachedChannel.icon)
+        val current = metadata.observation.value
+        metadata.acceptMetadata(MetadataEvent.ChannelNowNextUpdated(generation, ChannelId(99), EventId(1), null))
+        metadata.acceptMetadata(MetadataEvent.DvrEntryStatsUpdated(generation,
+            GatewayDvrStats(DvrEntryId(99), null, DvrEntryState.RECORDING)))
+        assertSame(current, metadata.observation.value)
+    }
+
+    @Test
+    fun `DVR replacement removes stale ranked links while stats retain them and snapshots stay immutable`() {
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(1)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(1, 1, 0, 10)))
+        metadata.acceptMetadata(MetadataEvent.DvrEntryAdded(generation, GatewayDvrEntry(
+            DvrEntryId(1), eventId = EventId(1), state = DvrEntryState.RECORDING, owner = "owner",
+        )))
+        metadata.acceptMetadata(MetadataEvent.DvrEntryAdded(generation, GatewayDvrEntry(
+            DvrEntryId(2), eventId = EventId(1), state = DvrEntryState.SCHEDULED,
+        )))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        val retained = metadata.observation.value
+        assertEquals(DvrEntryId(1), retained.dvrEntryForEvent(EventId(1))?.id)
+        metadata.acceptMetadata(MetadataEvent.DvrEntryStatsUpdated(generation,
+            GatewayDvrStats(DvrEntryId(1), null, DvrEntryState.RECORDING, dataSizeBytes = 42)))
+        assertEquals(DvrEntryId(1), metadata.observation.value.dvrEntryForEvent(EventId(1))?.id)
+        assertEquals("owner", metadata.currentDvrSnapshot().entries.first().owner)
+        metadata.acceptMetadata(MetadataEvent.DvrEntryUpdated(generation,
+            GatewayDvrEntry(DvrEntryId(1), state = DvrEntryState.RECORDING)))
+        assertEquals(DvrEntryId(2), metadata.observation.value.dvrEntryForEvent(EventId(1))?.id)
+        assertNull(metadata.currentDvrSnapshot().entries.first().owner)
+        assertEquals(DvrEntryId(1), retained.dvrEntryForEvent(EventId(1))?.id)
+    }
+
+    @Test
     fun `capacity rejected EPG pushes do not refresh but accepted no-ops do`() {
         var now = Instant.fromEpochSeconds(100)
         val metadata = PhaseOneSessionMetadata(
@@ -92,7 +154,8 @@ internal class PhaseOneSessionMetadataTest {
         assertEquals(original.epgRefreshTimes, metadata.publishedSnapshots.value?.epgRefreshTimes)
         for (event in listOf(
             MetadataEvent.EventAdded(generation, epgEvent(1, 1, 100, 110)),
-            MetadataEvent.EventUpdated(generation, GatewayEpgUpdate(id = EventId(1))),
+            MetadataEvent.EventUpdated(generation, GatewayEpgUpdate(id = EventId(1), channelId = ChannelId(1),
+                start = Instant.fromEpochSeconds(100), stop = Instant.fromEpochSeconds(110))),
             MetadataEvent.EventDeleted(generation, EventId(99)),
         )) {
             now += 1.seconds
@@ -114,13 +177,15 @@ internal class PhaseOneSessionMetadataTest {
         val original = metadata.observation.value
         now += 1.seconds
         val invalid = MetadataEvent.EventUpdated(generation,
-            GatewayEpgUpdate(id = EventId(1), stop = Instant.fromEpochSeconds(99)))
+            GatewayEpgUpdate(id = EventId(1), channelId = ChannelId(1), start = Instant.fromEpochSeconds(100),
+                stop = Instant.fromEpochSeconds(99)))
         metadata.acceptMetadata(invalid)
         assertSame(original, metadata.observation.value)
         metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(2, 1, 120, 119)))
         assertSame(original, metadata.observation.value)
         metadata.acceptMetadataDeferringEpg(MetadataEvent.EventUpdated(generation,
-            GatewayEpgUpdate(id = EventId(1), title = "Updated")))
+            GatewayEpgUpdate(id = EventId(1), channelId = ChannelId(1), start = Instant.fromEpochSeconds(100),
+                stop = Instant.fromEpochSeconds(110), title = "Updated")))
         val acceptedAt = now
         now += 1.seconds
         metadata.acceptMetadataDeferringEpg(invalid)
@@ -198,7 +263,8 @@ internal class PhaseOneSessionMetadataTest {
         ))
         assertSame(original, metadata.observation.value)
         metadata.acceptMetadataDeferringEpg(MetadataEvent.EventUpdated(generation,
-            GatewayEpgUpdate(id = EventId(1), title = "Updated")))
+            GatewayEpgUpdate(id = EventId(1), channelId = ChannelId(1), start = Instant.fromEpochSeconds(100),
+                stop = Instant.fromEpochSeconds(110), title = "Updated")))
         assertSame(original, metadata.observation.value)
         val acceptedAt = now
         now += 1.seconds
@@ -288,7 +354,7 @@ internal class PhaseOneSessionMetadataTest {
     }
 
     @Test
-    fun `complete channel add clears current link while update omission preserves successor evidence`() {
+    fun `complete channel add and update clear omitted current link and successor evidence`() {
         for (completeAdd in listOf(false, true)) {
             val metadata = PhaseOneSessionMetadata(estimatedServerTime = { Instant.fromEpochSeconds(19) })
             val generation = GatewayGeneration()
@@ -303,7 +369,7 @@ internal class PhaseOneSessionMetadataTest {
                 MetadataEvent.ChannelUpdated(generation, channel(1))
             })
             metadata.acceptMetadata(MetadataEvent.EventDeleted(generation, EventId(10)))
-            assertEquals(if (completeAdd) 0 else 1,
+            assertEquals(0,
                 metadata.observation.value.epgSnapshotForDisplay!!.historicalEvents.size)
         }
     }
@@ -412,7 +478,6 @@ internal class PhaseOneSessionMetadataTest {
             MetadataEvent.DvrEntryUpdated(
                 generation,
                 dvrEntry(1, "new"),
-                GatewayDvrUpdateProvenance.FULL,
             ),
         )
         runCurrent()
@@ -452,7 +517,6 @@ internal class PhaseOneSessionMetadataTest {
             MetadataEvent.DvrEntryUpdated(
                 generation,
                 dvrEntry(1, "invalid", start = 20, stop = 10),
-                GatewayDvrUpdateProvenance.FULL,
             ),
         )
         runCurrent()
@@ -464,7 +528,6 @@ internal class PhaseOneSessionMetadataTest {
             MetadataEvent.DvrEntryUpdated(
                 generation,
                 dvrEntry(1, "new"),
-                GatewayDvrUpdateProvenance.FULL,
             ),
         )
         runCurrent()
@@ -712,7 +775,7 @@ internal class PhaseOneSessionMetadataTest {
     }
 
     @Test
-    fun `partial updates preserve omissions and empty collections replace prior values`() {
+    fun `full updates clear omissions except tag members and empty collections replace prior values`() {
         val metadata = PhaseOneSessionMetadata()
         val generation = GatewayGeneration()
         metadata.bindGeneration(generation)
@@ -765,19 +828,19 @@ internal class PhaseOneSessionMetadataTest {
         var channel = snapshot.channels.single()
         var tag = snapshot.tags.single()
         assertEquals("", channel.name)
-        assertEquals("uuid", channel.uuid)
+        assertNull(channel.uuid)
         assertEquals(0L, channel.number)
-        assertEquals(8L, channel.numberMinor)
-        assertEquals(ArtworkId(12), channel.icon)
-        assertEquals(4L, channel.currentEventId?.value)
-        assertEquals(5L, channel.nextEventId?.value)
-        assertEquals("service", channel.services?.single()?.name)
-        assertEquals(listOf(2L), channel.tagIds?.map { it.value })
+        assertNull(channel.numberMinor)
+        assertNull(channel.icon)
+        assertNull(channel.currentEventId)
+        assertNull(channel.nextEventId)
+        assertNull(channel.services)
+        assertNull(channel.tagIds)
         assertEquals("", tag.name)
-        assertEquals("tag-uuid", tag.uuid)
+        assertNull(tag.uuid)
         assertEquals(0L, tag.index)
-        assertEquals(ArtworkId(34), tag.icon)
-        assertEquals(true, tag.titledIcon)
+        assertNull(tag.icon)
+        assertNull(tag.titledIcon)
         assertEquals(listOf(1L), tag.channelIds?.map { it.value })
 
         metadata.acceptMetadata(
@@ -795,8 +858,8 @@ internal class PhaseOneSessionMetadataTest {
         assertEquals(emptyList<Any>(), channel.services)
         assertEquals(emptyList<Any>(), channel.tagIds)
         assertEquals(emptyList<Any>(), tag.channelIds)
-        assertEquals(4L, channel.currentEventId?.value)
-        assertEquals(5L, channel.nextEventId?.value)
+        assertNull(channel.currentEventId)
+        assertNull(channel.nextEventId)
 
         metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(id = 1)))
         metadata.acceptMetadata(MetadataEvent.TagAdded(generation, tag(id = 2)))
@@ -805,12 +868,12 @@ internal class PhaseOneSessionMetadataTest {
         tag = snapshot.tags.single()
         assertEquals(null, channel.currentEventId)
         assertEquals(null, channel.nextEventId)
-        assertEquals("", channel.name)
-        assertEquals(0L, channel.number)
-        assertEquals(emptyList<Any>(), channel.services)
-        assertEquals(emptyList<Any>(), channel.tagIds)
-        assertEquals("", tag.name)
-        assertEquals(0L, tag.index)
+        assertNull(channel.name)
+        assertNull(channel.number)
+        assertNull(channel.services)
+        assertNull(channel.tagIds)
+        assertNull(tag.name)
+        assertNull(tag.index)
         assertEquals(emptyList<Any>(), tag.channelIds)
     }
 
@@ -1275,7 +1338,7 @@ internal class PhaseOneSessionMetadataTest {
         metadata.bindGeneration(generation)
         metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, firstChannel))
         metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(id = 1)))
-        metadata.acceptMetadata(MetadataEvent.ChannelUpdated(generation, channel(id = 2)))
+        metadata.acceptMetadata(MetadataEvent.ChannelUpdated(generation, firstChannel))
         metadata.acceptMetadata(MetadataEvent.ChannelDeleted(generation, ChannelId(1)))
         metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(id = 1)))
         metadata.acceptMetadata(
@@ -1304,12 +1367,14 @@ internal class PhaseOneSessionMetadataTest {
             (snapshot.tags.single().channelIds as MutableList<ChannelId>).clear()
         }
 
-        metadata.acceptMetadata(MetadataEvent.ChannelUpdated(generation, channel(id = 2)))
+        metadata.acceptMetadata(MetadataEvent.ChannelUpdated(generation, channel(
+            id = 2, name = "private-channel", services = listOf(service("private-service"), service("private-service")),
+            tagIds = listOf(7, 7),
+        )))
         metadata.acceptMetadata(
             MetadataEvent.DvrEntryUpdated(
                 generation,
                 dvrEntry(8, "private-dvr"),
-                GatewayDvrUpdateProvenance.FULL,
             ),
         )
         metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
@@ -1454,7 +1519,7 @@ internal class PhaseOneSessionMetadataTest {
             assertSame(epg, metadata.currentEpgSnapshot())
             assertSame(retainedDvr, metadata.currentDvrSnapshot())
         }
-        metadata.acceptMetadata(MetadataEvent.DvrEntryUpdated(generation, dvrEntry(8, "new"), GatewayDvrUpdateProvenance.FULL))
+        metadata.acceptMetadata(MetadataEvent.DvrEntryUpdated(generation, dvrEntry(8, "new")))
         assertSame(epg, metadata.currentEpgSnapshot())
         assertEquals("old", retainedDvr.entries.single().title)
         assertEquals("new", metadata.currentDvrSnapshot().entries.single().title)
@@ -1532,7 +1597,8 @@ internal class PhaseOneSessionMetadataTest {
     )
 
     private fun epgUpdate(id: Long, title: String): GatewayEpgUpdate =
-        GatewayEpgUpdate(id = EventId(id), title = title)
+        GatewayEpgUpdate(id = EventId(id), channelId = ChannelId(1), start = Instant.fromEpochSeconds(0),
+            stop = Instant.fromEpochSeconds(10), title = title)
 
     private fun service(name: String): GatewayChannelService = GatewayChannelService(
         name = name,

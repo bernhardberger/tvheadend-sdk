@@ -69,56 +69,6 @@ internal data class ReducedEpgEvent private constructor(
 
     override fun toString(): String = "ReducedEpgEvent(<redacted>)"
 
-    internal fun merge(update: GatewayEpgUpdate): ReducedEpgEvent? {
-        val candidate = ReducedEpgEvent(
-            id = id,
-            channelId = update.channelId ?: channelId,
-            start = update.start ?: start,
-            stop = update.stop ?: stop,
-            title = update.title ?: title,
-            subtitle = update.subtitle ?: subtitle,
-            summary = update.summary ?: summary,
-            description = update.description ?: description,
-            genre = update.genre ?: genre,
-            categories = update.categories?.toImmutableList() ?: categories,
-            keywords = update.keywords?.toImmutableList() ?: keywords,
-            credits = update.credits?.toImmutableList() ?: credits,
-            seriesLinkUri = update.seriesLinkUri ?: seriesLinkUri,
-            episodeUri = update.episodeUri ?: episodeUri,
-            contentType = update.contentType ?: contentType,
-            ageRating = update.ageRating ?: ageRating,
-            ratingLabel = update.ratingLabel ?: ratingLabel,
-            ratingIcon = update.ratingIcon ?: ratingIcon,
-            ratingAuthority = update.ratingAuthority ?: ratingAuthority,
-            ratingCountry = update.ratingCountry ?: ratingCountry,
-            starRating = update.starRating ?: starRating,
-            copyrightYear = update.copyrightYear ?: copyrightYear,
-            firstAired = update.firstAired ?: firstAired,
-            isNew = update.isNew ?: isNew,
-            seasonNumber = update.seasonNumber ?: seasonNumber,
-            seasonCount = update.seasonCount ?: seasonCount,
-            episodeNumber = update.episodeNumber ?: episodeNumber,
-            episodeCount = update.episodeCount ?: episodeCount,
-            partNumber = update.partNumber ?: partNumber,
-            partCount = update.partCount ?: partCount,
-            episodeOnscreen = update.episodeOnscreen ?: episodeOnscreen,
-            episodeId = update.episodeId ?: episodeId,
-            seriesLinkId = update.seriesLinkId ?: seriesLinkId,
-            image = update.image ?: image,
-            dvrEntryId = update.dvrEntryId ?: dvrEntryId,
-            nextEventId = update.nextEventId ?: nextEventId,
-        )
-        return candidate.takeUnless(ReducedEpgEvent::hasInvalidTiming)
-    }
-
-    internal fun replaceFromQuery(event: GatewayEpgQueryEvent): ReducedEpgEvent? =
-        fromQuery(
-            event = event,
-            genre = genre,
-            episodeId = episodeId,
-            seriesLinkId = seriesLinkId,
-        )
-
     internal fun toPublicOrNull(): EpgEvent? {
         publicEvent?.let { return it }
         val start = start ?: return null
@@ -255,49 +205,44 @@ internal data class ReducedEpgEvent private constructor(
 
         internal fun fromUpdate(update: GatewayEpgUpdate): ReducedEpgEvent? = ReducedEpgEvent(
             id = update.id,
-            channelId = null,
-            start = null,
-            stop = null,
-            title = null,
-            subtitle = null,
-            summary = null,
-            description = null,
-            genre = null,
-            categories = null,
-            keywords = null,
-            credits = null,
-            seriesLinkUri = null,
-            episodeUri = null,
-            contentType = null,
-            ageRating = null,
-            ratingLabel = null,
-            ratingIcon = null,
-            ratingAuthority = null,
-            ratingCountry = null,
-            starRating = null,
-            copyrightYear = null,
-            firstAired = null,
-            isNew = null,
-            seasonNumber = null,
-            seasonCount = null,
-            episodeNumber = null,
-            episodeCount = null,
-            partNumber = null,
-            partCount = null,
-            episodeOnscreen = null,
-            episodeId = null,
-            seriesLinkId = null,
-            image = null,
-            dvrEntryId = null,
-            nextEventId = null,
-        ).merge(update)
+            channelId = update.channelId,
+            start = update.start,
+            stop = update.stop,
+            title = update.title,
+            subtitle = update.subtitle,
+            summary = update.summary,
+            description = update.description,
+            genre = update.genre,
+            categories = update.categories?.toImmutableList(),
+            keywords = update.keywords?.toImmutableList(),
+            credits = update.credits?.toImmutableList(),
+            seriesLinkUri = update.seriesLinkUri,
+            episodeUri = update.episodeUri,
+            contentType = update.contentType,
+            ageRating = update.ageRating,
+            ratingLabel = update.ratingLabel,
+            ratingIcon = update.ratingIcon,
+            ratingAuthority = update.ratingAuthority,
+            ratingCountry = update.ratingCountry,
+            starRating = update.starRating,
+            copyrightYear = update.copyrightYear,
+            firstAired = update.firstAired,
+            isNew = update.isNew,
+            seasonNumber = update.seasonNumber,
+            seasonCount = update.seasonCount,
+            episodeNumber = update.episodeNumber,
+            episodeCount = update.episodeCount,
+            partNumber = update.partNumber,
+            partCount = update.partCount,
+            episodeOnscreen = update.episodeOnscreen,
+            episodeId = update.episodeId,
+            seriesLinkId = update.seriesLinkId,
+            image = update.image,
+            dvrEntryId = update.dvrEntryId,
+            nextEventId = update.nextEventId,
+        ).takeUnless { it.start == null || it.stop == null || it.hasInvalidTiming() }
 
-        internal fun fromQuery(
-            event: GatewayEpgQueryEvent,
-            genre: String? = null,
-            episodeId: EpgEpisodeId? = null,
-            seriesLinkId: EpgSeriesLinkId? = null,
-        ): ReducedEpgEvent? {
+        internal fun fromQuery(event: GatewayEpgQueryEvent): ReducedEpgEvent? {
             if (event.stop < event.start) return null
             return ReducedEpgEvent(
                 id = event.id,
@@ -308,7 +253,7 @@ internal data class ReducedEpgEvent private constructor(
                 subtitle = event.subtitle,
                 summary = event.summary,
                 description = event.description,
-                genre = genre,
+                genre = null,
                 categories = event.categories?.toImmutableList(),
                 keywords = event.keywords?.toImmutableList(),
                 credits = event.credits?.toImmutableList(),
@@ -331,8 +276,8 @@ internal data class ReducedEpgEvent private constructor(
                 partNumber = event.partNumber,
                 partCount = event.partCount,
                 episodeOnscreen = event.episodeOnscreen,
-                episodeId = episodeId,
-                seriesLinkId = seriesLinkId,
+                episodeId = null,
+                seriesLinkId = null,
                 image = event.image,
                 dvrEntryId = event.dvrEntryId,
                 nextEventId = event.nextEventId,
@@ -401,8 +346,14 @@ internal class EpgReducer(
                 if (channelIds.add(event.channel.id)) cachedSnapshot = null
             }
             is MetadataEvent.ChannelUpdated -> {
+                currentEventByChannel.remove(event.channel.id)
                 event.channel.currentEventId?.let { currentEventByChannel[event.channel.id] = it }
                 if (channelIds.add(event.channel.id)) cachedSnapshot = null
+            }
+            is MetadataEvent.ChannelNowNextUpdated -> {
+                if (event.channelId !in channelIds) return false
+                currentEventByChannel.remove(event.channelId)
+                event.currentEventId?.let { currentEventByChannel[event.channelId] = it }
             }
             is MetadataEvent.ChannelDeleted -> {
                 cachedSnapshot = null
@@ -446,6 +397,7 @@ internal class EpgReducer(
             is MetadataEvent.InitialSyncCompleted,
             is MetadataEvent.DvrEntryAdded,
             is MetadataEvent.DvrEntryUpdated,
+            is MetadataEvent.DvrEntryStatsUpdated,
             is MetadataEvent.DvrEntryDeleted,
             is MetadataEvent.AutorecRuleAdded,
             is MetadataEvent.AutorecRuleUpdated,
@@ -518,9 +470,7 @@ internal class EpgReducer(
                     ) {
                         continue
                     }
-                    val candidate = (stagedEvents[event.id] ?: events[event.id])
-                        ?.replaceFromQuery(event)
-                        ?: ReducedEpgEvent.fromQuery(event)
+                    val candidate = ReducedEpgEvent.fromQuery(event)
                     if (candidate != null) {
                         if (event.id !in events && event.id !in stagedEvents) {
                             if (events.size + stagedNewEventCount >= maximumRetainedEvents) {
@@ -630,14 +580,8 @@ internal class EpgReducer(
     }
 
     private fun acceptUpdate(update: GatewayEpgUpdate): Boolean {
-        val current = events[update.id] ?: history[update.id]
-        val candidate = if (current == null) {
-            ReducedEpgEvent.fromUpdate(update)
-        } else {
-            current.merge(update)
-        } ?: return false
+        val candidate = ReducedEpgEvent.fromUpdate(update) ?: return false
         supersedeHistory(candidate)
-        if (current == null && candidate.start == null && candidate.stop == null) return false
         if (update.id !in events && events.size >= maximumRetainedEvents) {
             invalidateActiveQueriesAfterCapacityDrop()
             return false

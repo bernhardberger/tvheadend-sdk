@@ -832,6 +832,7 @@ internal class PhaseOneSessionMetadata(
                 }
                 is MetadataEvent.ChannelAdded,
                 is MetadataEvent.ChannelUpdated,
+                is MetadataEvent.ChannelNowNextUpdated,
                 is MetadataEvent.ChannelDeleted,
                 is MetadataEvent.TagAdded,
                 is MetadataEvent.TagUpdated,
@@ -841,6 +842,7 @@ internal class PhaseOneSessionMetadata(
                 is MetadataEvent.EventDeleted,
                 is MetadataEvent.DvrEntryAdded,
                 is MetadataEvent.DvrEntryUpdated,
+                is MetadataEvent.DvrEntryStatsUpdated,
                 is MetadataEvent.DvrEntryDeleted,
                 is MetadataEvent.AutorecRuleAdded,
                 is MetadataEvent.AutorecRuleUpdated,
@@ -849,9 +851,17 @@ internal class PhaseOneSessionMetadata(
                 is MetadataEvent.TimerecRuleUpdated,
                 is MetadataEvent.TimerecRuleDeleted,
                 -> {
+                    // Unknown patches cannot establish a complete entity or refresh its publication.
+                    if (event is MetadataEvent.ChannelNowNextUpdated && !reducer.containsChannel(event.channelId)) {
+                        return@synchronized null
+                    }
+                    if (event is MetadataEvent.DvrEntryStatsUpdated && dvrReducer.entry(event.stats.id) == null) {
+                        return@synchronized null
+                    }
                     val changedEntryId = when (event) {
                         is MetadataEvent.DvrEntryAdded -> event.entry.id
                         is MetadataEvent.DvrEntryUpdated -> event.entry.id
+                        is MetadataEvent.DvrEntryStatsUpdated -> event.stats.id
                         is MetadataEvent.DvrEntryDeleted -> event.entryId
                         else -> null
                     }
@@ -914,6 +924,7 @@ internal class PhaseOneSessionMetadata(
                         val now = acceptanceTime()
                         when (event) {
                             is MetadataEvent.ChannelAdded, is MetadataEvent.ChannelUpdated,
+                            is MetadataEvent.ChannelNowNextUpdated,
                             is MetadataEvent.ChannelDeleted, is MetadataEvent.TagAdded,
                             is MetadataEvent.TagUpdated, is MetadataEvent.TagDeleted,
                             -> channelRefreshTimes = channelRefreshTimes.copy(lastUpdatedAt = now)
@@ -1301,6 +1312,8 @@ private fun MetadataEvent.isDvrMutationConfirmation(): Boolean = when (this) {
     -> true
     is MetadataEvent.ChannelAdded,
     is MetadataEvent.ChannelUpdated,
+    is MetadataEvent.ChannelNowNextUpdated,
+    is MetadataEvent.DvrEntryStatsUpdated,
     is MetadataEvent.ChannelDeleted,
     is MetadataEvent.TagAdded,
     is MetadataEvent.TagUpdated,

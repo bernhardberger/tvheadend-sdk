@@ -922,7 +922,7 @@ internal class EpgWorkerTest {
         metadata.acceptMetadata(
             MetadataEvent.EventUpdated(
                 generation,
-                GatewayEpgUpdate(id = EventId(1), title = "new"),
+                GatewayEpgUpdate(EventId(1), ChannelId(1), instant(10), instant(20), title = "new"),
             ),
         )
         release.complete(Unit)

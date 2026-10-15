@@ -14,7 +14,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayAutorecRule
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrRecordingFile
-import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrUpdateProvenance
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrStats
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayTimerecRule
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
@@ -32,7 +32,7 @@ internal class DvrReducerTest {
     private val generation = GatewayGeneration()
 
     @Test
-    fun `DVR episode grouping and ownership survive omissions and accept explicit updates`() {
+    fun `DVR episode grouping and ownership clear on full replacement and accept explicit updates`() {
         val reducer = DvrReducer()
         val id = DvrEntryId(1)
         reducer.accept(MetadataEvent.DvrEntryAdded(
@@ -46,13 +46,12 @@ internal class DvrReducerTest {
         assertEquals("test-owner", retained.owner)
         assertEquals("test-creator", retained.creator)
         assertEquals("DvrEntry(<redacted>)", retained.toString())
-        for (provenance in GatewayDvrUpdateProvenance.entries) {
-            reducer.accept(MetadataEvent.DvrEntryUpdated(generation, GatewayDvrEntry(id), provenance))
-            assertEquals(retained, reducer.snapshot().entries.single())
-        }
+        reducer.accept(MetadataEvent.DvrEntryUpdated(generation, GatewayDvrEntry(id)))
+        assertEquals(null, reducer.snapshot().entries.single().episode)
+        assertEquals(null, reducer.snapshot().entries.single().owner)
+        assertEquals(null, reducer.snapshot().entries.single().creator)
         reducer.accept(MetadataEvent.DvrEntryUpdated(
             generation, GatewayDvrEntry(id, seasonCount = 0, episodeOnscreen = "", owner = "", creator = "updated"),
-            GatewayDvrUpdateProvenance.FULL,
         ))
         val updated = reducer.snapshot().entries.single()
         assertEquals(0L, updated.episode?.seasonCount)
@@ -63,7 +62,7 @@ internal class DvrReducerTest {
         // Either newly mapped field alone must produce an episode grouping.
         reducer.accept(MetadataEvent.DvrEntryAdded(generation, GatewayDvrEntry(DvrEntryId(2), seasonCount = 3)))
         reducer.accept(MetadataEvent.DvrEntryUpdated(
-            generation, GatewayDvrEntry(DvrEntryId(3), episodeOnscreen = "Special"), GatewayDvrUpdateProvenance.FULL,
+            generation, GatewayDvrEntry(DvrEntryId(3), episodeOnscreen = "Special"),
         ))
         assertEquals(3L, reducer.snapshot().entries[1].episode?.seasonCount)
         assertEquals("Special", reducer.snapshot().entries[2].episode?.onscreen)
@@ -112,7 +111,7 @@ internal class DvrReducerTest {
     }
 
     @Test
-    fun `recording streams survive omitted updates and completion until files are replaced`() {
+    fun `recording streams survive stats but full replacement clears omitted files`() {
         val reducer = DvrReducer()
         val stream = DvrRecordingStream(width = 1920, height = 1080)
         val input = mutableListOf(stream)
@@ -126,12 +125,12 @@ internal class DvrReducerTest {
             generation, GatewayDvrEntry(id = DvrEntryId(1), files = listOf(file), state = DvrEntryState.RECORDING),
         ))
         val retained = reducer.snapshot()
-        for (provenance in GatewayDvrUpdateProvenance.entries) {
-            reducer.accept(MetadataEvent.DvrEntryUpdated(
-                generation, GatewayDvrEntry(id = DvrEntryId(1), state = DvrEntryState.COMPLETED), provenance,
-            ))
-            assertEquals(listOf(stream), reducer.snapshot().entries.single().files?.single()?.streams)
-        }
+        reducer.accept(MetadataEvent.DvrEntryStatsUpdated(
+            generation, GatewayDvrStats(DvrEntryId(1), null, DvrEntryState.COMPLETED),
+        ))
+        assertEquals(listOf(stream), reducer.snapshot().entries.single().files?.single()?.streams)
+        reducer.accept(MetadataEvent.DvrEntryUpdated(generation, GatewayDvrEntry(DvrEntryId(1))))
+        assertEquals(null, reducer.snapshot().entries.single().files)
         assertThrows(UnsupportedOperationException::class.java) {
             (retained.entries.single().files?.single()?.streams as MutableList<DvrRecordingStream>).clear()
         }
@@ -142,7 +141,6 @@ internal class DvrReducerTest {
                     id = DvrEntryId(1),
                     files = listOf(GatewayDvrRecordingFile(1, null, null, null, null, replacement)),
                 ),
-                GatewayDvrUpdateProvenance.FULL,
             ))
             assertEquals(replacement, reducer.snapshot().entries.single().files?.single()?.streams)
         }
@@ -160,7 +158,7 @@ internal class DvrReducerTest {
             assertSame(retained, reducer.snapshot())
         }
         assertFalse(reducer.accept(MetadataEvent.DvrEntryUpdated(
-            generation, entry(id = 1, start = 20, stop = 10), GatewayDvrUpdateProvenance.FULL,
+            generation, entry(id = 1, start = 20, stop = 10),
         )))
         assertSame(retained, reducer.snapshot())
         reducer.accept(MetadataEvent.DvrEntryAdded(generation, entry(id = 1, title = "new")))
@@ -172,7 +170,7 @@ internal class DvrReducerTest {
     }
 
     @Test
-    fun `dvr add null-baselines browse scalars while stats update preserves omissions`() {
+    fun `dvr replacement clears browse scalars while stats patch touches only stats`() {
         val reducer = DvrReducer()
         reducer.accept(
             MetadataEvent.DvrEntryAdded(
@@ -190,16 +188,16 @@ internal class DvrReducerTest {
             ),
         )
         reducer.accept(
-            MetadataEvent.DvrEntryUpdated(
+            MetadataEvent.DvrEntryStatsUpdated(
                 generation,
-                GatewayDvrEntry(
+                GatewayDvrStats(
                     id = DvrEntryId(1),
+                    uuid = null,
                     state = DvrEntryState.COMPLETED,
                     streamErrors = 1,
                     dataErrors = 2,
                     dataSizeBytes = 3,
                 ),
-                GatewayDvrUpdateProvenance.STATS_ONLY,
             ),
         )
 
@@ -209,14 +207,14 @@ internal class DvrReducerTest {
         assertEquals(null, snapshot.contentGenre)
         assertEquals(120.seconds, snapshot.startExtraMinutes)
         assertEquals(180.seconds, snapshot.stopExtraMinutes)
-        assertEquals(DvrSubscriptionError.SCRAMBLED, snapshot.subscriptionError)
+        assertEquals(null, snapshot.subscriptionError)
         assertEquals("private-channel", snapshot.channelName)
 
         reducer.accept(MetadataEvent.DvrEntryAdded(generation, entry(id = 1, title = "replaced")))
 
         snapshot = reducer.snapshot().entries.single()
         assertEquals("replaced", snapshot.title)
-        assertEquals("private-channel", snapshot.channelName)
+        assertEquals(null, snapshot.channelName)
         assertEquals(null, snapshot.enabled)
         assertEquals(null, snapshot.contentGenre)
         assertEquals(null, snapshot.startExtraMinutes)
@@ -231,7 +229,6 @@ internal class DvrReducerTest {
             MetadataEvent.DvrEntryUpdated(
                 generation,
                 entry(id = 10, title = "draft"),
-                GatewayDvrUpdateProvenance.FULL,
             ),
         )
         assertEquals("draft", reducer.snapshot().entries.single().title)
@@ -246,7 +243,6 @@ internal class DvrReducerTest {
             MetadataEvent.DvrEntryUpdated(
                 generation,
                 entry(id = 11, start = 30, stop = 10, title = "invalid"),
-                GatewayDvrUpdateProvenance.FULL,
             ),
         )
         val retained = reducer.snapshot().entries.single { it.id == DvrEntryId(11) }
@@ -417,7 +413,7 @@ internal class DvrReducerTest {
     }
 
     @Test
-    fun `full DVR updates clear omitted errors while stats updates preserve them`() {
+    fun `full and stats DVR messages clear omitted errors within their field sets`() {
         val reducer = DvrReducer()
         reducer.accept(
             MetadataEvent.DvrEntryAdded(
@@ -439,7 +435,6 @@ internal class DvrReducerTest {
                     id = DvrEntryId(1),
                     state = DvrEntryState.RECORDING,
                 ),
-                GatewayDvrUpdateProvenance.FULL,
             ),
         )
         var entry = reducer.snapshot().entries.single()
@@ -447,14 +442,15 @@ internal class DvrReducerTest {
         assertEquals(null, entry.subscriptionError)
 
         reducer.accept(
-            MetadataEvent.DvrEntryUpdated(
+            MetadataEvent.DvrEntryStatsUpdated(
                 generation,
-                GatewayDvrEntry(
+                GatewayDvrStats(
                     id = DvrEntryId(1),
+                    uuid = null,
+                    state = DvrEntryState.RECORDING,
                     failure = GatewayDvrFailure.PRESENT,
                     subscriptionError = DvrSubscriptionError.INVALID_TARGET,
                 ),
-                GatewayDvrUpdateProvenance.STATS_ONLY,
             ),
         )
         entry = reducer.snapshot().entries.single()
@@ -462,21 +458,19 @@ internal class DvrReducerTest {
         assertEquals(DvrSubscriptionError.INVALID_TARGET, entry.subscriptionError)
 
         reducer.accept(
-            MetadataEvent.DvrEntryUpdated(
+            MetadataEvent.DvrEntryStatsUpdated(
                 generation,
-                GatewayDvrEntry(id = DvrEntryId(1), state = DvrEntryState.COMPLETED),
-                GatewayDvrUpdateProvenance.STATS_ONLY,
+                GatewayDvrStats(DvrEntryId(1), null, DvrEntryState.COMPLETED),
             ),
         )
         entry = reducer.snapshot().entries.single()
-        assertEquals(DvrEntryState.COMPLETED_ERROR, entry.state)
-        assertEquals(DvrSubscriptionError.INVALID_TARGET, entry.subscriptionError)
+        assertEquals(DvrEntryState.COMPLETED, entry.state)
+        assertEquals(null, entry.subscriptionError)
 
         reducer.accept(
             MetadataEvent.DvrEntryUpdated(
                 generation,
                 GatewayDvrEntry(id = DvrEntryId(1), state = DvrEntryState.COMPLETED),
-                GatewayDvrUpdateProvenance.FULL,
             ),
         )
         entry = reducer.snapshot().entries.single()
@@ -501,17 +495,16 @@ internal class DvrReducerTest {
             MetadataEvent.DvrEntryUpdated(
                 generation,
                 entry(id = 1, files = emptyList()),
-                GatewayDvrUpdateProvenance.FULL,
             ),
         )
 
         val entry = reducer.snapshot().entries.single()
-        assertEquals(9L, entry.channelId?.value)
+        assertEquals(null, entry.channelId)
         assertEquals(emptyList<Any>(), entry.files)
     }
 
     @Test
-    fun `active recording keeps saved play position across partial updates and completion`() {
+    fun `active recording keeps saved play position across stats but full omission clears it`() {
         val reducer = DvrReducer()
         reducer.accept(
             MetadataEvent.DvrEntryAdded(
@@ -526,10 +519,9 @@ internal class DvrReducerTest {
         assertEquals(90.seconds, reducer.snapshot().entries.single().playPosition)
 
         reducer.accept(
-            MetadataEvent.DvrEntryUpdated(
+            MetadataEvent.DvrEntryStatsUpdated(
                 generation,
-                GatewayDvrEntry(id = DvrEntryId(1), state = DvrEntryState.RECORDING, dataSizeBytes = 4_096),
-                GatewayDvrUpdateProvenance.STATS_ONLY,
+                GatewayDvrStats(DvrEntryId(1), null, DvrEntryState.RECORDING, dataSizeBytes = 4_096),
             ),
         )
         assertEquals(90.seconds, reducer.snapshot().entries.single().playPosition)
@@ -538,7 +530,6 @@ internal class DvrReducerTest {
             MetadataEvent.DvrEntryUpdated(
                 generation,
                 GatewayDvrEntry(id = DvrEntryId(1), playPosition = 120.seconds, state = DvrEntryState.RECORDING),
-                GatewayDvrUpdateProvenance.FULL,
             ),
         )
         val active = reducer.snapshot().entries.single()
@@ -549,12 +540,11 @@ internal class DvrReducerTest {
             MetadataEvent.DvrEntryUpdated(
                 generation,
                 GatewayDvrEntry(id = DvrEntryId(1), state = DvrEntryState.COMPLETED),
-                GatewayDvrUpdateProvenance.FULL,
             ),
         )
         val completed = reducer.snapshot().entries.single()
         assertEquals(DvrEntryState.COMPLETED, completed.state)
-        assertEquals(120.seconds, completed.playPosition)
+        assertEquals(null, completed.playPosition)
     }
 
     private fun entry(

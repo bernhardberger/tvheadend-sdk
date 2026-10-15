@@ -25,7 +25,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailureEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrFailure
-import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrUpdateProvenance
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrStats
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayRecordingFile
@@ -566,7 +566,7 @@ internal class DvrMutationCoordinatorTest {
         val deleted = async { coordinator.deleteEntry(generation, DvrEntryId(1)) }
         runCurrent()
         coordinator.acceptMetadata(dvrUpdated(generation, 1, DvrEntryState.COMPLETED,
-            GatewayDvrUpdateProvenance.STATS_ONLY, GatewayDvrFailure.FILE_MISSING))
+            true, GatewayDvrFailure.FILE_MISSING))
         coordinator.acceptMetadata(dvrUpdated(generation, 2, failure = GatewayDvrFailure.FILE_MISSING))
         coordinator.acceptMetadata(dvrUpdated(GatewayGeneration(), 1, failure = GatewayDvrFailure.FILE_MISSING))
         for (failure in listOf(null, GatewayDvrFailure.NONE, GatewayDvrFailure.ABORTED, GatewayDvrFailure.PRESENT)) {
@@ -597,10 +597,10 @@ internal class DvrMutationCoordinatorTest {
             val unconfirmed = async { mutate() }
             runCurrent()
             coordinator.acceptMetadata(
-                dvrUpdated(generation, 1, DvrEntryState.RECORDING, GatewayDvrUpdateProvenance.STATS_ONLY),
+                dvrUpdated(generation, 1, DvrEntryState.RECORDING, statsOnly = true),
             )
             coordinator.acceptMetadata(
-                dvrUpdated(generation, 1, DvrEntryState.COMPLETED, GatewayDvrUpdateProvenance.STATS_ONLY),
+                dvrUpdated(generation, 1, DvrEntryState.COMPLETED, statsOnly = true),
             )
             coordinator.acceptMetadata(dvrUpdated(generation, 1, DvrEntryState.RECORDING))
             coordinator.acceptMetadata(dvrUpdated(generation, 1, DvrEntryState.RECORDING_ERROR))
@@ -684,7 +684,7 @@ internal class DvrMutationCoordinatorTest {
         val result = async { coordinator.updateEntry(generation, DvrEntryId(1), DvrEntryUpdate(title = "title")) }
         runCurrent()
         coordinator.acceptMetadata(
-            dvrUpdated(generation, 1, DvrEntryState.RECORDING, GatewayDvrUpdateProvenance.STATS_ONLY),
+            dvrUpdated(generation, 1, DvrEntryState.RECORDING, statsOnly = true),
         )
         runCurrent()
         assertFalse(result.isCompleted)
@@ -777,14 +777,16 @@ private fun dvrUpdated(
     generation: GatewayGeneration,
     id: Long,
     state: DvrEntryState? = null,
-    provenance: GatewayDvrUpdateProvenance = GatewayDvrUpdateProvenance.FULL,
+    statsOnly: Boolean = false,
     failure: GatewayDvrFailure? = null,
-): MetadataEvent.DvrEntryUpdated =
+): MetadataEvent = if (statsOnly) {
+    MetadataEvent.DvrEntryStatsUpdated(generation, GatewayDvrStats(DvrEntryId(id), null, checkNotNull(state), failure = failure))
+} else {
     MetadataEvent.DvrEntryUpdated(
         generation,
         GatewayDvrEntry(DvrEntryId(id), state = state, failure = failure),
-        provenance,
     )
+}
 
 internal class MutationGateway : ProtocolGateway {
     internal var resetResumeBehavior: suspend (GatewayGeneration, DvrEntryId) -> GatewayResult<Unit> =

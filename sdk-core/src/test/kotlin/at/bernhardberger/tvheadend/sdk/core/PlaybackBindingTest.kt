@@ -10,7 +10,6 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.DvrEntryId as GatewayDvrEntr
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrRecordingFile
-import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrUpdateProvenance
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.session.GenerationBoundGrowingRecordingFileLease
@@ -360,7 +359,6 @@ internal class PlaybackBindingTest {
                     MetadataEvent.DvrEntryUpdated(
                         generation,
                         recordingEntry(state = DvrEntryState.RECORDING, playPosition = kotlin.time.Duration.ZERO),
-                        GatewayDvrUpdateProvenance.FULL,
                     ),
                 )
                 assertNull(
@@ -501,7 +499,6 @@ private class BindingFixture {
                     path = path,
                     files = files,
                 ),
-                GatewayDvrUpdateProvenance.FULL,
             ),
         )
     }

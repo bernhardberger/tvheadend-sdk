@@ -7,7 +7,6 @@ import at.bernhardberger.tvheadend.sdk.core.DvrEntry
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
 import at.bernhardberger.tvheadend.sdk.core.SessionGenerationIdentity
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrFailure
-import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrUpdateProvenance
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.metadata.ReducedDvrEntry
 import kotlin.time.Duration.Companion.seconds
@@ -22,7 +21,7 @@ internal fun classifyDvrChange(
     intents: DvrIntentLedger?,
     failureReported: Boolean,
 ): DvrChange? {
-    if (event is MetadataEvent.DvrEntryUpdated && event.provenance == GatewayDvrUpdateProvenance.STATS_ONLY) return null
+    if (event is MetadataEvent.DvrEntryStatsUpdated) return null
     val before = previous?.toPublicOrNull()
     val after = current?.toPublicOrNull()
     val kind = when (event) {

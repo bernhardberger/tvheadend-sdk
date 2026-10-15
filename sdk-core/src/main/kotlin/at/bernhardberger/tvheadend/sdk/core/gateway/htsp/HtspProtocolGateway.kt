@@ -142,7 +142,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelService
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrRecordingFile
-import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrUpdateProvenance
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrStats
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnection
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailure
@@ -1370,13 +1370,9 @@ private fun HtspMetadataMessage.toGatewayMetadata(
         generation = generation,
         channel = channel.toGatewayChannel(),
     )
-    is HtspChannelNowNextMessage -> MetadataEvent.ChannelUpdated(
+    is HtspChannelNowNextMessage -> MetadataEvent.ChannelNowNextUpdated(
         generation,
-        GatewayChannelMetadata(
-            id = ChannelId(channelId), name = null, uuid = null, number = null,
-            numberMinor = null, icon = null, currentEventId = EventId(currentEventId),
-            nextEventId = EventId(nextEventId), services = null, tagIds = null,
-        ),
+        ChannelId(channelId), EventId(currentEventId), EventId(nextEventId),
     )
     is HtspChannelDeleteMessage -> MetadataEvent.ChannelDeleted(
         generation = generation,
@@ -1402,17 +1398,15 @@ private fun HtspMetadataMessage.toGatewayMetadata(
     is HtspDvrEntryUpdateMessage -> MetadataEvent.DvrEntryUpdated(
         generation = generation,
         entry = entry.toGatewayDvrEntry(),
-        provenance = GatewayDvrUpdateProvenance.FULL,
     )
-    is HtspDvrEntryStatsMessage -> MetadataEvent.DvrEntryUpdated(
+    is HtspDvrEntryStatsMessage -> MetadataEvent.DvrEntryStatsUpdated(
         generation,
-        GatewayDvrEntry(
-            id = DvrEntryId(entryId), uuid = entryUuid, state = state.toDvrEntryState(),
+        GatewayDvrStats(
+            id = DvrEntryId(entryId), uuid = entryUuid, state = checkNotNull(state.toDvrEntryState()),
             duplicate = duplicate?.toWireFlag(), failure = error.toDvrFailure(),
             subscriptionError = subscriptionError.toDvrSubscriptionError(),
             streamErrors = streamErrors, dataErrors = dataErrors, dataSizeBytes = dataSizeBytes,
         ),
-        GatewayDvrUpdateProvenance.STATS_ONLY,
     )
     is HtspDvrEntryDeleteMessage -> MetadataEvent.DvrEntryDeleted(generation, DvrEntryId(entryId))
     is HtspAutorecEntryAddMessage -> MetadataEvent.AutorecRuleAdded(generation, entry.toGatewayAutorecRule())

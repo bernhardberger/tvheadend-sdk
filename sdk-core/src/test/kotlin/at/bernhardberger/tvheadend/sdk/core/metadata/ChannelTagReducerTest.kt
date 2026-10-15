@@ -40,17 +40,17 @@ internal class ChannelTagReducerTest {
     }
 
     @Test
-    fun `an update without an icon keeps the previous artwork ID`() {
+    fun `a full update without an icon clears the previous artwork ID`() {
         val generation = GatewayGeneration()
         val reducer = ChannelTagReducer()
         reducer.accept(MetadataEvent.ChannelAdded(generation, channel(1, "imagecache/7")))
         reducer.accept(MetadataEvent.ChannelUpdated(generation, channel(1, null)))
 
-        assertEquals(ArtworkId(7), reducer.snapshot().channels.single().icon)
+        assertEquals(null, reducer.snapshot().channels.single().icon)
     }
 
     @Test
-    fun `partial updates retain services while replacements reclassify immutable snapshots`() {
+    fun `full updates clear absent services and reclassify immutable snapshots`() {
         val generation = GatewayGeneration()
         val reducer = ChannelTagReducer()
         reducer.accept(MetadataEvent.ChannelAdded(generation, channel(1, null)))
@@ -61,7 +61,7 @@ internal class ChannelTagReducerTest {
         val television = reducer.snapshot()
         services.clear()
         reducer.accept(MetadataEvent.ChannelUpdated(generation, channel(1, null, name = "Updated")))
-        assertEquals(ChannelMediaKind.TV, reducer.snapshot().channels.single().mediaKind)
+        assertEquals(ChannelMediaKind.UNKNOWN, reducer.snapshot().channels.single().mediaKind)
 
         reducer.accept(MetadataEvent.ChannelUpdated(generation, channel(1, null, services = listOf(service(2)))))
         assertEquals(ChannelMediaKind.RADIO, reducer.snapshot().channels.single().mediaKind)

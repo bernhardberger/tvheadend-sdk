@@ -11,7 +11,6 @@ import at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability
 import at.bernhardberger.tvheadend.sdk.core.ServerCapabilities
 import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
-import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrUpdateProvenance
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
@@ -74,7 +73,7 @@ internal class DvrWatchStateTest {
         assertEquals(listOf(true, false), requests.takeLast(2).map { it.second })
         metadata.acceptMetadata(MetadataEvent.DvrEntryUpdated(generation, GatewayDvrEntry(
             id = DvrEntryId(0), playCount = 0, playPosition = 0.seconds,
-        ), GatewayDvrUpdateProvenance.FULL))
+        )))
         assertEquals(0L, metadata.observation.value.dvrEntry(DvrEntryId(0))?.playCount)
         assertEquals(0.seconds, metadata.observation.value.dvrEntry(DvrEntryId(0))?.playPosition)
         assertEquals(4L, observation.dvrEntry(DvrEntryId(0))?.playCount)

@@ -29,7 +29,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayAutorecRule
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrRecordingFile
-import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrUpdateProvenance
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrStats
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayTimerecRule
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.TimerecRuleId
@@ -92,19 +92,15 @@ internal data class ReducedDvrEntry private constructor(
 ) {
     override fun toString(): String = "ReducedDvrEntry(<redacted>)"
 
-    internal fun mergeFromAdd(entry: GatewayDvrEntry): ReducedDvrEntry? = copyMerged(
-        entry = entry,
-        resetBrowseScalars = true,
-        preserveOmittedErrors = false,
-    )
-
-    internal fun mergeFromUpdate(
-        entry: GatewayDvrEntry,
-        provenance: GatewayDvrUpdateProvenance,
-    ): ReducedDvrEntry? = copyMerged(
-        entry = entry,
-        resetBrowseScalars = false,
-        preserveOmittedErrors = provenance == GatewayDvrUpdateProvenance.STATS_ONLY,
+    internal fun patch(stats: GatewayDvrStats): ReducedDvrEntry = copy(
+        uuid = stats.uuid,
+        state = stats.state,
+        duplicate = stats.duplicate,
+        failure = stats.failure,
+        subscriptionError = stats.subscriptionError,
+        streamErrors = stats.streamErrors,
+        dataErrors = stats.dataErrors,
+        dataSizeBytes = stats.dataSizeBytes,
     )
 
     internal fun toPublicOrNull(): DvrEntry? {
@@ -150,78 +146,6 @@ internal data class ReducedDvrEntry private constructor(
             dataErrors = dataErrors,
             dataSizeBytes = dataSizeBytes,
         )
-    }
-
-    private fun copyMerged(
-        entry: GatewayDvrEntry,
-        resetBrowseScalars: Boolean,
-        preserveOmittedErrors: Boolean,
-    ): ReducedDvrEntry? {
-        val candidate = ReducedDvrEntry(
-            id = id,
-            uuid = entry.uuid ?: uuid,
-            enabled = if (resetBrowseScalars) entry.enabled else entry.enabled ?: enabled,
-            channelId = entry.channelId ?: channelId,
-            channelName = entry.channelName ?: channelName,
-            eventId = entry.eventId ?: eventId,
-            autorecRuleId = entry.autorecRuleId ?: autorecRuleId,
-            timerecRuleId = entry.timerecRuleId ?: timerecRuleId,
-            start = entry.start ?: start,
-            stop = entry.stop ?: stop,
-            startExtraMinutes = if (resetBrowseScalars) {
-                entry.startExtraMinutes
-            } else {
-                entry.startExtraMinutes ?: startExtraMinutes
-            },
-            stopExtraMinutes = if (resetBrowseScalars) {
-                entry.stopExtraMinutes
-            } else {
-                entry.stopExtraMinutes ?: stopExtraMinutes
-            },
-            retentionDays = entry.retentionDays ?: retentionDays,
-            removalDays = entry.removalDays ?: removalDays,
-            priority = entry.priority ?: priority,
-            contentType = if (resetBrowseScalars) entry.contentType else entry.contentType ?: contentType,
-            ageRating = entry.ageRating ?: ageRating,
-            ratingLabel = entry.ratingLabel ?: ratingLabel,
-            ratingIcon = entry.ratingIcon ?: ratingIcon,
-            ratingAuthority = entry.ratingAuthority ?: ratingAuthority,
-            ratingCountry = entry.ratingCountry ?: ratingCountry,
-            playCount = entry.playCount ?: playCount,
-            playPosition = entry.playPosition ?: playPosition,
-            seasonNumber = entry.seasonNumber ?: seasonNumber,
-            seasonCount = entry.seasonCount ?: seasonCount,
-            episodeOnscreen = entry.episodeOnscreen ?: episodeOnscreen,
-            episodeNumber = entry.episodeNumber ?: episodeNumber,
-            episodeCount = entry.episodeCount ?: episodeCount,
-            partNumber = entry.partNumber ?: partNumber,
-            partCount = entry.partCount ?: partCount,
-            title = entry.title ?: title,
-            description = entry.description ?: description,
-            summary = entry.summary ?: summary,
-            subtitle = entry.subtitle ?: subtitle,
-            owner = entry.owner ?: owner,
-            creator = entry.creator ?: creator,
-            comment = entry.comment ?: comment,
-            image = entry.image ?: image,
-            fanartImage = entry.fanartImage ?: fanartImage,
-            copyrightYear = entry.copyrightYear ?: copyrightYear,
-            files = entry.files?.toImmutableList() ?: files,
-            path = entry.path ?: path,
-            configId = entry.configId ?: configId,
-            duplicate = entry.duplicate ?: duplicate,
-            state = entry.state ?: state,
-            failure = if (preserveOmittedErrors) entry.failure ?: failure else entry.failure,
-            subscriptionError = if (preserveOmittedErrors) {
-                entry.subscriptionError ?: subscriptionError
-            } else {
-                entry.subscriptionError
-            },
-            streamErrors = entry.streamErrors ?: streamErrors,
-            dataErrors = entry.dataErrors ?: dataErrors,
-            dataSizeBytes = entry.dataSizeBytes ?: dataSizeBytes,
-        )
-        return candidate.takeUnless(ReducedDvrEntry::hasInvalidTiming)
     }
 
     private fun hasInvalidTiming(): Boolean = start != null && stop != null && stop < start
@@ -336,7 +260,6 @@ internal data class ReducedDvrEntry private constructor(
             dataSizeBytes = entry.dataSizeBytes,
         ).takeUnless(ReducedDvrEntry::hasInvalidTiming)
 
-        internal fun fromUpdate(entry: GatewayDvrEntry): ReducedDvrEntry? = fromAdd(entry)
     }
 }
 
@@ -522,7 +445,8 @@ internal class DvrReducer {
 
     internal fun accept(event: MetadataEvent): Boolean = when (event) {
         is MetadataEvent.DvrEntryAdded -> acceptEntryAdd(event.entry)
-        is MetadataEvent.DvrEntryUpdated -> acceptEntryUpdate(event.entry, event.provenance)
+        is MetadataEvent.DvrEntryUpdated -> acceptEntryAdd(event.entry)
+        is MetadataEvent.DvrEntryStatsUpdated -> acceptStats(event.stats)
         is MetadataEvent.DvrEntryDeleted -> {
             entries.remove(event.entryId)
             true
@@ -547,6 +471,7 @@ internal class DvrReducer {
         }
         is MetadataEvent.ChannelAdded,
         is MetadataEvent.ChannelUpdated,
+        is MetadataEvent.ChannelNowNextUpdated,
         is MetadataEvent.ChannelDeleted,
         is MetadataEvent.TagAdded,
         is MetadataEvent.TagUpdated,
@@ -565,27 +490,15 @@ internal class DvrReducer {
     ).also { cachedSnapshot = it }
 
     private fun acceptEntryAdd(entry: GatewayDvrEntry): Boolean {
-        val current = entries[entry.id]
-        val candidate = if (current == null) {
-            ReducedDvrEntry.fromAdd(entry)
-        } else {
-            current.mergeFromAdd(entry)
-        } ?: return false
+        val candidate = ReducedDvrEntry.fromAdd(entry) ?: return false
         entries[entry.id] = candidate
         return true
     }
 
-    private fun acceptEntryUpdate(
-        entry: GatewayDvrEntry,
-        provenance: GatewayDvrUpdateProvenance,
-    ): Boolean {
-        val current = entries[entry.id]
-        val candidate = if (current == null) {
-            ReducedDvrEntry.fromUpdate(entry)
-        } else {
-            current.mergeFromUpdate(entry, provenance)
-        } ?: return false
-        entries[entry.id] = candidate
+    private fun acceptStats(stats: GatewayDvrStats): Boolean {
+        // A patch cannot establish the identity's full recording metadata.
+        val current = entries[stats.id] ?: return false
+        entries[stats.id] = current.patch(stats)
         return true
     }
 

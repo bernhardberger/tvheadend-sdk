@@ -16,7 +16,6 @@ import at.bernhardberger.tvheadend.sdk.core.TimerecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrFailure
-import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrUpdateProvenance
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
@@ -602,15 +601,11 @@ private enum class ConfirmationOutcome {
 
 private fun MetadataEvent.confirmationKeys(): List<ConfirmationKey> = when (this) {
     is MetadataEvent.DvrEntryAdded -> listOf(ConfirmationKey(ConfirmationKind.ENTRY_ADDED, entry.id))
-    is MetadataEvent.DvrEntryUpdated -> when {
-        // Stats-only updates report recording progress, not the server's reflection of a mutation.
-        provenance == GatewayDvrUpdateProvenance.STATS_ONLY -> emptyList()
-        else -> buildList {
-            add(ConfirmationKey(ConfirmationKind.ENTRY_UPDATED, entry.id))
-            if (entry.state in endedEntryStates) add(ConfirmationKey(ConfirmationKind.ENTRY_ENDED, entry.id))
-            if (entry.failure == GatewayDvrFailure.FILE_MISSING) {
-                add(ConfirmationKey(ConfirmationKind.ENTRY_FILE_MISSING, entry.id))
-            }
+    is MetadataEvent.DvrEntryUpdated -> buildList {
+        add(ConfirmationKey(ConfirmationKind.ENTRY_UPDATED, entry.id))
+        if (entry.state in endedEntryStates) add(ConfirmationKey(ConfirmationKind.ENTRY_ENDED, entry.id))
+        if (entry.failure == GatewayDvrFailure.FILE_MISSING) {
+            add(ConfirmationKey(ConfirmationKind.ENTRY_FILE_MISSING, entry.id))
         }
     }
     is MetadataEvent.DvrEntryDeleted -> listOf(ConfirmationKey(ConfirmationKind.ENTRY_DELETED, entryId))
@@ -622,6 +617,8 @@ private fun MetadataEvent.confirmationKeys(): List<ConfirmationKey> = when (this
     is MetadataEvent.TimerecRuleDeleted -> listOf(ConfirmationKey(ConfirmationKind.TIMEREC_DELETED, ruleId))
     is MetadataEvent.ChannelAdded,
     is MetadataEvent.ChannelUpdated,
+    is MetadataEvent.ChannelNowNextUpdated,
+    is MetadataEvent.DvrEntryStatsUpdated,
     is MetadataEvent.ChannelDeleted,
     is MetadataEvent.TagAdded,
     is MetadataEvent.TagUpdated,

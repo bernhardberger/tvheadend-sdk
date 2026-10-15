@@ -20,7 +20,7 @@ import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrRecordingFile
-import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrUpdateProvenance
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrStats
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
@@ -47,6 +47,22 @@ import kotlin.time.Instant
 
 @OptIn(ExperimentalCoroutinesApi::class)
 internal class DvrChangesTest {
+    @Test
+    fun `full completion clears an omitted prior failure before classifying the transition`() = runTest {
+        val fixture = Fixture(serverTime = Instant.fromEpochSeconds(1000))
+        fixture.accept(MetadataEvent.DvrEntryAdded(fixture.generation,
+            entry(state = DvrEntryState.RECORDING, failure = GatewayDvrFailure.PRESENT)))
+        fixture.ready()
+        val changes = collect(fixture)
+        fixture.accept(MetadataEvent.DvrEntryUpdated(fixture.generation, GatewayDvrEntry(
+            DvrEntryId(7), state = DvrEntryState.COMPLETED, stop = Instant.fromEpochSeconds(1000),
+        )))
+        runCurrent()
+        assertEquals(DvrChangeKind.RECORDING_COMPLETED, changes.single().kind)
+        assertEquals(DvrEntryState.RECORDING_ERROR, changes.single().previous!!.state)
+        assertEquals(DvrEntryState.COMPLETED, changes.single().current!!.state)
+    }
+
     @Test
     fun `resolved transitions emit only lifecycle changes including first error and abort`() = runTest {
         data class Case(
@@ -83,7 +99,7 @@ internal class DvrChangesTest {
             val changes = collect(fixture)
             val current = entry(state = case.after, failure = case.failure)
             fixture.accept(if (case.before == null) MetadataEvent.DvrEntryAdded(fixture.generation, current)
-                else MetadataEvent.DvrEntryUpdated(fixture.generation, current, GatewayDvrUpdateProvenance.FULL))
+                else MetadataEvent.DvrEntryUpdated(fixture.generation, current))
             runCurrent()
             assertEquals(listOfNotNull(case.expected), changes.map { it.kind }, case.toString())
             changes.singleOrNull()?.let {
@@ -117,7 +133,7 @@ internal class DvrChangesTest {
             fixture.accept(MetadataEvent.DvrEntryUpdated(fixture.generation, entry(
                 state = DvrEntryState.COMPLETED,
                 files = fileEnd?.let { listOf(GatewayDvrRecordingFile(null, null, null, Instant.fromEpochSeconds(it), null)) },
-            ), GatewayDvrUpdateProvenance.FULL))
+            )))
             runCurrent()
             assertEquals(expected, changes.single().kind)
         }
@@ -129,11 +145,11 @@ internal class DvrChangesTest {
         val changes = collect(fixture)
         fixture.accept(MetadataEvent.DvrEntryAdded(fixture.generation, entry()))
         fixture.ready()
-        fixture.accept(MetadataEvent.DvrEntryUpdated(fixture.generation, entry(), GatewayDvrUpdateProvenance.FULL))
+        fixture.accept(MetadataEvent.DvrEntryUpdated(fixture.generation, entry()))
+        fixture.accept(MetadataEvent.DvrEntryStatsUpdated(fixture.generation,
+            GatewayDvrStats(DvrEntryId(7), null, DvrEntryState.RECORDING)))
         fixture.accept(MetadataEvent.DvrEntryUpdated(fixture.generation,
-            entry(state = DvrEntryState.RECORDING), GatewayDvrUpdateProvenance.STATS_ONLY))
-        fixture.accept(MetadataEvent.DvrEntryUpdated(fixture.generation,
-            entry(id = 99, state = DvrEntryState.RECORDING), GatewayDvrUpdateProvenance.FULL))
+            entry(id = 99, state = DvrEntryState.RECORDING)))
         fixture.accept(MetadataEvent.DvrEntryDeleted(fixture.generation, DvrEntryId(100)))
         val oldGeneration = fixture.generation
         fixture.generation = GatewayGeneration()
@@ -169,12 +185,12 @@ internal class DvrChangesTest {
             }
             fixture.gateway.stopBehavior = { generation, _ ->
                 fixture.accept(MetadataEvent.DvrEntryUpdated(generation,
-                    entry(state = DvrEntryState.COMPLETED, failure = GatewayDvrFailure.PRESENT), GatewayDvrUpdateProvenance.FULL))
+                    entry(state = DvrEntryState.COMPLETED, failure = GatewayDvrFailure.PRESENT)))
                 GatewayResult.Ok(Unit)
             }
             fixture.gateway.cancelBehavior = { generation, _ ->
                 fixture.accept(MetadataEvent.DvrEntryUpdated(generation,
-                    entry(state = DvrEntryState.COMPLETED, failure = GatewayDvrFailure.ABORTED), GatewayDvrUpdateProvenance.FULL))
+                    entry(state = DvrEntryState.COMPLETED, failure = GatewayDvrFailure.ABORTED)))
                 GatewayResult.Ok(Unit)
             }
             fixture.gateway.deleteBehavior = { generation, _ ->
@@ -209,21 +225,21 @@ internal class DvrChangesTest {
         fixture.ready()
         val changes = collect(fixture)
         fixture.gateway.stopBehavior = { generation, _ ->
-            fixture.accept(MetadataEvent.DvrEntryUpdated(generation,
-                entry(state = DvrEntryState.RECORDING), GatewayDvrUpdateProvenance.STATS_ONLY))
+            fixture.accept(MetadataEvent.DvrEntryStatsUpdated(generation,
+                GatewayDvrStats(DvrEntryId(7), null, DvrEntryState.RECORDING)))
             GatewayResult.Ok(Unit)
         }
         assertTrue(fixture.coordinator.stopEntry(fixture.generation, DvrEntryId(7)) is DvrMutationResult.AcceptedButUnconfirmed)
         fixture.gateway.updateBehavior = { generation, _, _ ->
             fixture.accept(MetadataEvent.DvrEntryUpdated(generation,
-                entry(state = DvrEntryState.RECORDING), GatewayDvrUpdateProvenance.FULL))
+                entry(state = DvrEntryState.RECORDING)))
             GatewayResult.Ok(Unit)
         }
         assertTrue(fixture.coordinator.updateEntry(fixture.generation, DvrEntryId(7), DvrEntryUpdate()) is DvrMutationResult.Confirmed)
         fixture.accept(MetadataEvent.DvrEntryUpdated(fixture.generation,
-            entry(state = DvrEntryState.RECORDING, failure = GatewayDvrFailure.PRESENT), GatewayDvrUpdateProvenance.FULL))
+            entry(state = DvrEntryState.RECORDING, failure = GatewayDvrFailure.PRESENT)))
         fixture.accept(MetadataEvent.DvrEntryUpdated(fixture.generation,
-            entry(state = DvrEntryState.COMPLETED, failure = GatewayDvrFailure.PRESENT), GatewayDvrUpdateProvenance.FULL))
+            entry(state = DvrEntryState.COMPLETED, failure = GatewayDvrFailure.PRESENT)))
         runCurrent()
         assertEquals(listOf(DvrChangeKind.RECORDING_FAILED, DvrChangeKind.RECORDING_STOPPED), changes.map { it.kind })
         assertEquals(DvrChangeOrigin.External, changes.first().origin)
@@ -282,12 +298,12 @@ internal class DvrChangesTest {
         fixture.ready()
         val changes = collect(fixture)
         fixture.gateway.updateBehavior = { generation, _, _ ->
-            fixture.accept(MetadataEvent.DvrEntryUpdated(generation, entry(), GatewayDvrUpdateProvenance.FULL))
+            fixture.accept(MetadataEvent.DvrEntryUpdated(generation, entry()))
             GatewayResult.Ok(Unit)
         }
         assertTrue(fixture.coordinator.updateEntry(fixture.generation, DvrEntryId(7), DvrEntryUpdate()) is DvrMutationResult.Confirmed)
         fixture.accept(MetadataEvent.DvrEntryUpdated(fixture.generation,
-            entry(state = DvrEntryState.RECORDING), GatewayDvrUpdateProvenance.FULL))
+            entry(state = DvrEntryState.RECORDING)))
         runCurrent()
         assertEquals(DvrChangeKind.RECORDING_STARTED, changes.single().kind)
         assertEquals(DvrChangeOrigin.External, changes.single().origin)
@@ -300,7 +316,7 @@ internal class DvrChangesTest {
         fixture.ready()
         val changes = collect(fixture)
         fun update(failure: GatewayDvrFailure) = fixture.accept(MetadataEvent.DvrEntryUpdated(fixture.generation,
-            entry(state = DvrEntryState.RECORDING, failure = failure), GatewayDvrUpdateProvenance.FULL))
+            entry(state = DvrEntryState.RECORDING, failure = failure)))
         repeat(2) {
             update(GatewayDvrFailure.PRESENT)
             update(GatewayDvrFailure.NONE)
@@ -329,7 +345,7 @@ internal class DvrChangesTest {
         val changes = collect(fixture)
         fixture.gateway.deleteBehavior = { generation, _ ->
             fixture.accept(MetadataEvent.DvrEntryUpdated(generation,
-                entry(state = DvrEntryState.COMPLETED, failure = GatewayDvrFailure.ABORTED), GatewayDvrUpdateProvenance.FULL))
+                entry(state = DvrEntryState.COMPLETED, failure = GatewayDvrFailure.ABORTED)))
             fixture.accept(MetadataEvent.DvrEntryDeleted(generation, DvrEntryId(7)))
             GatewayResult.Ok(Unit)
         }
@@ -350,7 +366,7 @@ internal class DvrChangesTest {
                 if (addedState == DvrEntryState.SCHEDULED) {
                     fixture.accept(MetadataEvent.DvrEntryAdded(generation, entry(id = 99)))
                     fixture.accept(MetadataEvent.DvrEntryUpdated(generation,
-                        entry(state = DvrEntryState.RECORDING), GatewayDvrUpdateProvenance.FULL))
+                        entry(state = DvrEntryState.RECORDING)))
                 }
                 GatewayResult.Ok(DvrEntryId(7))
             }
@@ -377,7 +393,7 @@ internal class DvrChangesTest {
         ledger.record(fixture.generation, DvrMutationKind.CANCEL, entryId = DvrEntryId(7))
         val changes = collect(fixture)
         fixture.accept(MetadataEvent.DvrEntryUpdated(fixture.generation,
-            entry(state = DvrEntryState.COMPLETED, failure = GatewayDvrFailure.PRESENT), GatewayDvrUpdateProvenance.FULL))
+            entry(state = DvrEntryState.COMPLETED, failure = GatewayDvrFailure.PRESENT)))
         fixture.accept(MetadataEvent.DvrEntryDeleted(fixture.generation, DvrEntryId(7)))
         runCurrent()
         assertEquals(DvrChangeKind.REMOVED, changes.single().kind)
@@ -394,7 +410,7 @@ internal class DvrChangesTest {
         ledger.accepted(ledger.record(fixture.generation, DvrMutationKind.STOP, entryId = DvrEntryId(7)))
         ledger.accepted(ledger.record(fixture.generation, DvrMutationKind.CANCEL, entryId = DvrEntryId(7)))
         fixture.accept(MetadataEvent.DvrEntryUpdated(fixture.generation,
-            entry(state = DvrEntryState.COMPLETED, failure = GatewayDvrFailure.ABORTED), GatewayDvrUpdateProvenance.FULL))
+            entry(state = DvrEntryState.COMPLETED, failure = GatewayDvrFailure.ABORTED)))
         runCurrent()
         assertEquals(DvrChangeKind.RECORDING_STOPPED, changes.single().kind)
         assertEquals(DvrChangeOrigin.ThisClient(DvrMutationKind.STOP), changes.single().origin)
@@ -417,7 +433,7 @@ internal class DvrChangesTest {
             DvrScheduleRequest(DvrSchedule.Programme(EventId(1)))) is DvrMutationResult.Confirmed)
         now += 60.seconds
         fixture.accept(MetadataEvent.DvrEntryUpdated(fixture.generation,
-            entry(state = DvrEntryState.RECORDING), GatewayDvrUpdateProvenance.FULL))
+            entry(state = DvrEntryState.RECORDING)))
         runCurrent()
         assertEquals(DvrChangeOrigin.ThisClient(DvrMutationKind.SCHEDULE), changes.first().origin)
         assertEquals(DvrChangeOrigin.External, changes.last().origin)
@@ -439,7 +455,7 @@ internal class DvrChangesTest {
         response.complete(GatewayResult.AccessDenied)
         assertEquals(DvrMutationResult.Failed(TvheadendFailure.ACCESS_DENIED, mayHaveApplied = false), command.await())
         fixture.accept(MetadataEvent.DvrEntryUpdated(fixture.generation,
-            entry(state = DvrEntryState.RECORDING), GatewayDvrUpdateProvenance.FULL))
+            entry(state = DvrEntryState.RECORDING)))
         runCurrent()
         assertEquals(DvrChangeOrigin.External, changes.last().origin)
         assertEquals(DvrChangeOrigin.ThisClient(DvrMutationKind.SCHEDULE), changes.first().origin)

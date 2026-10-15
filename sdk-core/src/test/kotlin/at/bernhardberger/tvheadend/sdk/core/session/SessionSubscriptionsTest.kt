@@ -39,7 +39,6 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.EventId
 import at.bernhardberger.tvheadend.sdk.core.gateway.ServerTimeEstimate
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrRecordingFile
-import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrUpdateProvenance
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayRecordingFile
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
@@ -1930,7 +1929,6 @@ private fun PhaseOneSessionMetadata.updateCurrentRecording(
                 state = DvrEntryState.RECORDING,
                 dataSizeBytes = 64L,
             ),
-            GatewayDvrUpdateProvenance.FULL,
         ),
     )
 }

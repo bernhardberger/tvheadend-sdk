@@ -86,7 +86,8 @@ internal class PhaseOneSessionMetadataContentionTest {
             assertSame(EpgQueryAcceptance.APPLIED, writer.get(5, TimeUnit.SECONDS))
             assertEquals("initial", before.event(EventId(0))?.title)
             assertEquals("query", metadata.currentObservation(generation, current)?.event(EventId(0))?.title)
-            metadata.acceptMetadata(MetadataEvent.EventUpdated(generation, GatewayEpgUpdate(EventId(0), title = "live")))
+            metadata.acceptMetadata(MetadataEvent.EventUpdated(generation,
+                GatewayEpgUpdate(EventId(0), ChannelId(0), instant(0), instant(1800), title = "live")))
             assertEquals("live", metadata.currentObservation(generation, current)?.event(EventId(0))?.title)
             metadata.retainEpgEvents(generation, instant(1801), instant(10_000))
             val after = requireNotNull(metadata.currentObservation(generation, current))
