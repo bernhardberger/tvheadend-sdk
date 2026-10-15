@@ -235,7 +235,7 @@ internal class TvheadendLiveMediaSource(
                     return null
                 }
                 is SubscriptionEvent.Started -> {
-                    timeshiftControls?.subscriptionRestarted(event.issue)
+                    timeshiftControls?.subscriptionRestarted(null)
                     if (started) replaceEpochLocked()
                     started = true
                     stopped = false

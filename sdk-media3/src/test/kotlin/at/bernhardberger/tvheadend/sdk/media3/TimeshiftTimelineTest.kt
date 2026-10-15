@@ -114,7 +114,7 @@ class TimeshiftTimelineTest {
     @Test
     fun `dropped data and repeated stream starts disable estimates until replacement`() {
         val started = SubscriptionEvent.Started(
-            null, null, at.bernhardberger.tvheadend.sdk.playback.SubscriptionCondition.NO_DETAIL,
+            null, null,
         )
         for (event in listOf(SubscriptionEvent.Dropped(1), started)) {
             val bridge = LiveTimeshiftControlBridge(PlaybackTargetToken()) {}

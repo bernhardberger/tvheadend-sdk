@@ -30,7 +30,15 @@ import at.bernhardberger.tvheadend.htsp.messages.HtspChannelUpdateMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspDvrEntryAddMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspDvrEntryDeleteMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspDvrEntryUpdateMessage
-import at.bernhardberger.tvheadend.htsp.messages.HtspDvrRecordingFile
+import at.bernhardberger.tvheadend.htsp.model.HtspDvrRecordingFile
+import at.bernhardberger.tvheadend.htsp.model.HtspChannel
+import at.bernhardberger.tvheadend.htsp.model.HtspTag
+import at.bernhardberger.tvheadend.htsp.model.HtspDvrEntry
+import at.bernhardberger.tvheadend.htsp.model.HtspAutorecEntry
+import at.bernhardberger.tvheadend.htsp.model.HtspTimerecEntry
+import at.bernhardberger.tvheadend.htsp.messages.HtspChannelNowNextMessage
+import at.bernhardberger.tvheadend.htsp.messages.HtspDvrEntryStatsMessage
+import at.bernhardberger.tvheadend.htsp.messages.HtspFrameType
 import at.bernhardberger.tvheadend.htsp.messages.HtspDescrambleInfoMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspEventAddMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspEventDeleteMessage
@@ -38,7 +46,7 @@ import at.bernhardberger.tvheadend.htsp.messages.HtspEventUpdateMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspInitialSyncCompletedMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspMuxPacketMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspQueueStatusMessage
-import at.bernhardberger.tvheadend.htsp.messages.HtspServerMessage
+import at.bernhardberger.tvheadend.htsp.messages.HtspMetadataMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspSignalStatusMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspSubscriptionGraceMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspSubscriptionSkipMessage
@@ -58,10 +66,10 @@ import at.bernhardberger.tvheadend.htsp.messages.HtspTimeshiftStatusMessage
 import at.bernhardberger.tvheadend.htsp.requests.FileSeekResponse
 import at.bernhardberger.tvheadend.htsp.requests.FileSeekWhence
 import at.bernhardberger.tvheadend.htsp.requests.EpgQueryResponse
-import at.bernhardberger.tvheadend.htsp.requests.HtspChannelService
+import at.bernhardberger.tvheadend.htsp.model.HtspChannelService
 import at.bernhardberger.tvheadend.htsp.requests.AddDvrEntrySelector
 import at.bernhardberger.tvheadend.htsp.requests.HtspDvrCutpoint
-import at.bernhardberger.tvheadend.htsp.requests.HtspEvent
+import at.bernhardberger.tvheadend.htsp.model.HtspEvent
 import at.bernhardberger.tvheadend.htsp.requests.HtspRecordingRuleChannel
 import at.bernhardberger.tvheadend.htsp.requests.SubscribeResponse
 import at.bernhardberger.tvheadend.htsp.requests.SubscriptionSeekPosition
@@ -127,8 +135,6 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.DvrConfigId
 import at.bernhardberger.tvheadend.sdk.core.gateway.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.gateway.DvrEntryState
 import at.bernhardberger.tvheadend.sdk.core.gateway.DvrSubscriptionError
-import at.bernhardberger.tvheadend.sdk.core.gateway.EpgEpisodeId
-import at.bernhardberger.tvheadend.sdk.core.gateway.EpgSeriesLinkId
 import at.bernhardberger.tvheadend.sdk.core.gateway.EventId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayAutorecRule
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelMetadata
@@ -219,6 +225,10 @@ internal class HtspProtocolGateway internal constructor(
     // Never suspend or invoke library lifecycle operations while holding this monitor.
     private val generationLock = Any()
     private var currentLive: HtspLiveConnection? = null
+    // HTSP rule updates always replace the channel restriction. Preserve SDK null-as-unchanged
+    // from metadata (or a successful local mutation), never by guessing Any for an unknown rule.
+    private val autorecChannels = HashMap<String, HtspRecordingRuleChannel>()
+    private val timerecChannels = HashMap<String, HtspRecordingRuleChannel>()
     @Volatile private var observedLive: LiveObservation? = null
     @Volatile internal var lastDisconnectChanged: Boolean? = null
         private set
@@ -231,8 +241,8 @@ internal class HtspProtocolGateway internal constructor(
     override fun estimatedServerTime(generation: GatewayGeneration): Instant? {
         val observed = observedLive ?: return null
         if (observed.gatewayGeneration !== generation ||
-            connection.liveConnection.value?.generation !== observed.htspGeneration ||
-            connection.connectionState.value !is HtspConnectionState.Connected
+            (connection.connectionState.value as? HtspConnectionState.Connected)
+                ?.connection?.generation !== observed.htspGeneration
         ) return null
         return serverTimeEstimate.atStatus(generation)
     }
@@ -260,8 +270,11 @@ internal class HtspProtocolGateway internal constructor(
 
     override val metadata: Flow<MetadataEvent> = connection.events.transform { event ->
         when (event) {
-            is HtspTransportEvent.ServerMessage ->
+            is HtspTransportEvent.ServerMessage -> {
+                rememberRuleChannel(event.generation, event.message)
                 event.message.toGatewayMetadata(generationFor(event.generation))?.let { emit(it) }
+            }
+            is HtspTransportEvent.MalformedMetadata -> Unit // Recovery policy is pending a later slice.
             is HtspTransportEvent.MetadataOverflow -> {
                 // A repeated async-enable only resends EPG, not a complete snapshot. The
                 // connection owner's existing backoff/reconnect path performs a full resync.
@@ -280,11 +293,11 @@ internal class HtspProtocolGateway internal constructor(
     override val connectionFailures: Flow<GatewayConnectionFailureEvent> =
         merge(metadataFailures, connection.events.transform { event ->
             if (event is HtspTransportEvent.ConnectionFailure) {
-                event.generation?.let { retire(it, event.failure.kind.toGatewayFailure()) }
+                retire(event.generation, event.failure.kind.toGatewayFailure())
                 emit(
                     GatewayConnectionFailureEvent(
                         failure = event.failure.kind.toGatewayFailure(),
-                        generation = event.generation?.let(::generationFor),
+                        generation = generationFor(event.generation),
                     ),
                 )
             }
@@ -345,10 +358,12 @@ internal class HtspProtocolGateway internal constructor(
 
     /** Called only under generationLock; reads snapshots without making a suspending library call. */
     private fun refreshLive(): HtspLiveConnection? {
-        val snapshot = connection.liveConnection.value.takeIf {
-            connection.connectionState.value is HtspConnectionState.Connected
-        }
+        val snapshot = (connection.connectionState.value as? HtspConnectionState.Connected)?.connection
         val previous = currentLive
+        if (previous?.generation !== snapshot?.generation) {
+            autorecChannels.clear()
+            timerecChannels.clear()
+        }
         if (previous != null && previous.generation !== snapshot?.generation) {
             if (!retiredGenerations.containsKey(previous.generation)) {
                 retiredGenerations[previous.generation] = null
@@ -373,11 +388,38 @@ internal class HtspProtocolGateway internal constructor(
         if (currentLive?.generation === generation) {
             currentLive = null
             observedLive = null
+            autorecChannels.clear()
+            timerecChannels.clear()
         }
     }
 
     private fun retireObservedGeneration() = synchronized(generationLock) {
         currentLive?.generation?.let { retire(it) }
+    }
+
+    private fun rememberRuleChannel(generation: HtspConnectionGeneration, message: HtspMetadataMessage) =
+        synchronized(generationLock) {
+            if (refreshLive()?.generation !== generation) return@synchronized
+            when (message) {
+                is HtspAutorecEntryAddMessage -> autorecChannels[message.entry.id] = message.entry.channelId.toRuleChannel()
+                is HtspAutorecEntryUpdateMessage -> autorecChannels[message.entry.id] = message.entry.channelId.toRuleChannel()
+                is HtspAutorecEntryDeleteMessage -> autorecChannels.remove(message.id)
+                is HtspTimerecEntryAddMessage -> timerecChannels[message.entry.id] = message.entry.channelId.toRuleChannel()
+                is HtspTimerecEntryUpdateMessage -> timerecChannels[message.entry.id] = message.entry.channelId.toRuleChannel()
+                is HtspTimerecEntryDeleteMessage -> timerecChannels.remove(message.id)
+                else -> Unit
+            }
+            Unit
+        }
+
+    private fun ruleUpdateChannel(
+        generation: GatewayGeneration,
+        id: String,
+        requested: RecordingRuleChannel?,
+        channels: Map<String, HtspRecordingRuleChannel>,
+    ): HtspRecordingRuleChannel? = synchronized(generationLock) {
+        if (refreshLive()?.generation !== htspGenerationFor(generation)) return@synchronized null
+        requested.toHtspChannel() ?: channels[id]
     }
 
     override suspend fun enableInitialMetadata(
@@ -596,39 +638,52 @@ internal class HtspProtocolGateway internal constructor(
         configName = request.configId?.value,
         daysOfWeekMask = request.daysOfWeekMask?.toDvrDayMask(),
         expectedGeneration = htspGenerationFor(generation),
-    ).toGatewayResult { response -> AutorecRuleId(response.id) }
+    ).toGatewayResult { response ->
+        commitIfLive(generation) {
+            autorecChannels[response.id] = request.channel.toHtspChannel() ?: HtspRecordingRuleChannel.Any
+        }
+        AutorecRuleId(response.id)
+    }
 
     override suspend fun updateAutorecRule(
         generation: GatewayGeneration,
         id: AutorecRuleId,
         update: AutorecRuleUpdate,
-    ): GatewayResult<Unit> = connection.updateAutorecEntry(
-        id = id.value,
-        channel = update.channel.toHtspChannel(),
-        minDurationSeconds = update.minDuration?.toDvrMutationSeconds(),
-        maxDurationSeconds = update.maxDuration?.toDvrMutationSeconds(),
-        fullText = update.fullText,
-        mergeText = update.mergeText,
-        duplicateDetection = update.duplicateDetection?.wireValue,
-        maximumRecordingCount = update.maximumRecordingCount,
-        broadcastType = update.broadcastType?.wireValue,
-        startExtraMinutes = update.startExtraMinutes?.inWholeMinutes,
-        stopExtraMinutes = update.stopExtraMinutes?.inWholeMinutes,
-        seriesLinkUri = update.seriesLinkUri,
-        startMinutesSinceMidnight = update.startMinutesSinceMidnight?.toDvrMinute(),
-        startWindowEndMinutesSinceMidnight = update.startWindowEndMinutesSinceMidnight?.toDvrMinute(),
-        enabled = update.enabled,
-        retentionDays = update.retentionDays,
-        removalDays = update.removalDays,
-        priority = update.priority?.wireValue,
-        name = update.name,
-        comment = update.comment,
-        directory = update.directory,
-        title = update.title,
-        configName = update.configId?.value,
-        daysOfWeekMask = update.daysOfWeekMask?.toDvrDayMask(),
-        expectedGeneration = htspGenerationFor(generation),
-    ).toGatewayResult {}
+    ): GatewayResult<Unit> {
+        if (commitIfLive(generation) { true } != true) return GatewayResult.TransportUnavailable
+        val channel = ruleUpdateChannel(generation, id.value, update.channel, autorecChannels)
+            ?: return GatewayResult.NotSupported
+        return connection.updateAutorecEntry(
+            id = id.value,
+            channel = channel,
+            minDurationSeconds = update.minDuration?.toDvrMutationSeconds(),
+            maxDurationSeconds = update.maxDuration?.toDvrMutationSeconds(),
+            fullText = update.fullText,
+            mergeText = update.mergeText,
+            duplicateDetection = update.duplicateDetection?.wireValue,
+            maximumRecordingCount = update.maximumRecordingCount,
+            broadcastType = update.broadcastType?.wireValue,
+            startExtraMinutes = update.startExtraMinutes?.inWholeMinutes,
+            stopExtraMinutes = update.stopExtraMinutes?.inWholeMinutes,
+            seriesLinkUri = update.seriesLinkUri,
+            startMinutesSinceMidnight = update.startMinutesSinceMidnight?.toDvrMinute(),
+            startWindowEndMinutesSinceMidnight = update.startWindowEndMinutesSinceMidnight?.toDvrMinute(),
+            enabled = update.enabled,
+            retentionDays = update.retentionDays,
+            removalDays = update.removalDays,
+            priority = update.priority?.wireValue,
+            name = update.name,
+            comment = update.comment,
+            directory = update.directory,
+            title = update.title,
+            configName = update.configId?.value,
+            daysOfWeekMask = update.daysOfWeekMask?.toDvrDayMask(),
+            expectedGeneration = htspGenerationFor(generation),
+        ).toGatewayResult {
+            commitIfLive(generation) { autorecChannels[id.value] = channel }
+            Unit
+        }
+    }
 
     override suspend fun deleteAutorecRule(
         generation: GatewayGeneration,
@@ -636,7 +691,10 @@ internal class HtspProtocolGateway internal constructor(
     ): GatewayResult<Unit> = connection.deleteAutorecEntry(
         id = id.value,
         expectedGeneration = htspGenerationFor(generation),
-    ).toGatewayResult {}
+    ).toGatewayResult {
+        commitIfLive(generation) { autorecChannels.remove(id.value) }
+        Unit
+    }
 
     override suspend fun createTimerecRule(
         generation: GatewayGeneration,
@@ -644,8 +702,8 @@ internal class HtspProtocolGateway internal constructor(
     ): GatewayResult<TimerecRuleId> = connection.addTimerecEntry(
         title = request.title,
         channel = request.channel.toHtspChannel(),
-        startMinutesSinceMidnight = request.startMinutesSinceMidnight?.toDvrMinute()?.toLong(),
-        stopMinutesSinceMidnight = request.stopMinutesSinceMidnight?.toDvrMinute()?.toLong(),
+        startMinutesSinceMidnight = request.startMinutesSinceMidnight?.toDvrMinute(),
+        stopMinutesSinceMidnight = request.stopMinutesSinceMidnight?.toDvrMinute(),
         enabled = request.enabled,
         retentionDays = request.retentionDays,
         removalDays = request.removalDays,
@@ -656,29 +714,42 @@ internal class HtspProtocolGateway internal constructor(
         configName = request.configId?.value,
         daysOfWeekMask = request.daysOfWeekMask?.toDvrDayMask(),
         expectedGeneration = htspGenerationFor(generation),
-    ).toGatewayResult { response -> TimerecRuleId(response.id) }
+    ).toGatewayResult { response ->
+        commitIfLive(generation) {
+            timerecChannels[response.id] = request.channel.toHtspChannel() ?: HtspRecordingRuleChannel.Any
+        }
+        TimerecRuleId(response.id)
+    }
 
     override suspend fun updateTimerecRule(
         generation: GatewayGeneration,
         id: TimerecRuleId,
         update: TimerecRuleUpdate,
-    ): GatewayResult<Unit> = connection.updateTimerecEntry(
-        id = id.value,
-        channel = update.channel.toHtspChannel(),
-        startMinutesSinceMidnight = update.startMinutesSinceMidnight?.toDvrMinute()?.toLong(),
-        stopMinutesSinceMidnight = update.stopMinutesSinceMidnight?.toDvrMinute()?.toLong(),
-        enabled = update.enabled,
-        retentionDays = update.retentionDays,
-        removalDays = update.removalDays,
-        priority = update.priority?.wireValue,
-        name = update.name,
-        comment = update.comment,
-        directory = update.directory,
-        title = update.title,
-        configName = update.configId?.value,
-        daysOfWeekMask = update.daysOfWeekMask?.toDvrDayMask(),
-        expectedGeneration = htspGenerationFor(generation),
-    ).toGatewayResult {}
+    ): GatewayResult<Unit> {
+        if (commitIfLive(generation) { true } != true) return GatewayResult.TransportUnavailable
+        val channel = ruleUpdateChannel(generation, id.value, update.channel, timerecChannels)
+            ?: return GatewayResult.NotSupported
+        return connection.updateTimerecEntry(
+            id = id.value,
+            channel = channel,
+            startMinutesSinceMidnight = update.startMinutesSinceMidnight?.toDvrMinute(),
+            stopMinutesSinceMidnight = update.stopMinutesSinceMidnight?.toDvrMinute(),
+            enabled = update.enabled,
+            retentionDays = update.retentionDays,
+            removalDays = update.removalDays,
+            priority = update.priority?.wireValue,
+            name = update.name,
+            comment = update.comment,
+            directory = update.directory,
+            title = update.title,
+            configName = update.configId?.value,
+            daysOfWeekMask = update.daysOfWeekMask?.toDvrDayMask(),
+            expectedGeneration = htspGenerationFor(generation),
+        ).toGatewayResult {
+            commitIfLive(generation) { timerecChannels[id.value] = channel }
+            Unit
+        }
+    }
 
     override suspend fun resetDvrResume(
         generation: GatewayGeneration,
@@ -952,7 +1023,10 @@ internal class HtspProtocolGateway internal constructor(
     ): GatewayResult<Unit> = connection.deleteTimerecEntry(
         id = id.value,
         expectedGeneration = htspGenerationFor(generation),
-    ).toGatewayResult {}
+    ).toGatewayResult {
+        commitIfLive(generation) { timerecChannels.remove(id.value) }
+        Unit
+    }
 
     override fun subscription(
         generation: GatewayGeneration,
@@ -1182,6 +1256,8 @@ private class MappingStateFlow<T, R>(
 
 private fun HtspConnectionState.toGatewayState(): GatewayState = when (this) {
     HtspConnectionState.Disconnected -> GatewayState.Disconnected
+    // Shutdown has always presented as disconnected; terminal ownership stays in ConnectionOwner.
+    HtspConnectionState.Closed -> GatewayState.Disconnected
     is HtspConnectionState.Connecting -> GatewayState.Connecting
     is HtspConnectionState.Connected -> GatewayState.Connected
     is HtspConnectionState.Error -> GatewayState.Failed
@@ -1264,6 +1340,9 @@ private fun RecordingRuleChannel?.toHtspChannel(): HtspRecordingRuleChannel? = w
     RecordingRuleChannel.AllChannels -> HtspRecordingRuleChannel.Any
 }
 
+private fun Long?.toRuleChannel(): HtspRecordingRuleChannel =
+    this?.let(HtspRecordingRuleChannel::Id) ?: HtspRecordingRuleChannel.Any
+
 private fun Boolean.toWireFlag(): Long = if (this) 1L else 0L
 
 @OptIn(SubscriptionInfrastructureApi::class)
@@ -1280,16 +1359,24 @@ private inline fun <T, R> HtspResult<T>.toSubscriptionResult(
     HtspResult.NotSupported -> SubscriptionOperationResult.Failed(TvheadendFailure.NOT_SUPPORTED)
 }
 
-private fun HtspServerMessage.toGatewayMetadata(
+private fun HtspMetadataMessage.toGatewayMetadata(
     generation: GatewayGeneration,
 ): MetadataEvent? = when (this) {
     is HtspChannelAddMessage -> MetadataEvent.ChannelAdded(
         generation = generation,
-        channel = toGatewayChannel(),
+        channel = channel.toGatewayChannel(),
     )
     is HtspChannelUpdateMessage -> MetadataEvent.ChannelUpdated(
         generation = generation,
-        channel = toGatewayChannel(),
+        channel = channel.toGatewayChannel(),
+    )
+    is HtspChannelNowNextMessage -> MetadataEvent.ChannelUpdated(
+        generation,
+        GatewayChannelMetadata(
+            id = ChannelId(channelId), name = null, uuid = null, number = null,
+            numberMinor = null, icon = null, currentEventId = EventId(currentEventId),
+            nextEventId = EventId(nextEventId), services = null, tagIds = null,
+        ),
     )
     is HtspChannelDeleteMessage -> MetadataEvent.ChannelDeleted(
         generation = generation,
@@ -1297,63 +1384,51 @@ private fun HtspServerMessage.toGatewayMetadata(
     )
     is HtspTagAddMessage -> MetadataEvent.TagAdded(
         generation = generation,
-        tag = toGatewayTag(),
+        tag = tag.toGatewayTag(),
     )
     is HtspTagUpdateMessage -> MetadataEvent.TagUpdated(
         generation = generation,
-        tag = toGatewayTag(),
+        tag = tag.toGatewayTag(),
     )
     is HtspTagDeleteMessage -> MetadataEvent.TagDeleted(
         generation = generation,
         tagId = TagId(tagId),
     )
     HtspInitialSyncCompletedMessage -> MetadataEvent.InitialSyncCompleted(generation)
-    is HtspEventAddMessage -> MetadataEvent.EventAdded(generation, toGatewayEpgEvent())
-    is HtspEventUpdateMessage -> MetadataEvent.EventUpdated(generation, toGatewayEpgUpdate())
+    is HtspEventAddMessage -> MetadataEvent.EventAdded(generation, event.toGatewayEpgEvent())
+    is HtspEventUpdateMessage -> MetadataEvent.EventUpdated(generation, event.toGatewayEpgEvent().toGatewayEpgUpdate())
     is HtspEventDeleteMessage -> MetadataEvent.EventDeleted(generation, EventId(eventId))
-    is HtspDvrEntryAddMessage -> MetadataEvent.DvrEntryAdded(generation, toGatewayDvrEntry())
+    is HtspDvrEntryAddMessage -> MetadataEvent.DvrEntryAdded(generation, entry.toGatewayDvrEntry())
     is HtspDvrEntryUpdateMessage -> MetadataEvent.DvrEntryUpdated(
         generation = generation,
-        entry = toGatewayDvrEntry(),
-        provenance = toGatewayUpdateProvenance(),
+        entry = entry.toGatewayDvrEntry(),
+        provenance = GatewayDvrUpdateProvenance.FULL,
+    )
+    is HtspDvrEntryStatsMessage -> MetadataEvent.DvrEntryUpdated(
+        generation,
+        GatewayDvrEntry(
+            id = DvrEntryId(entryId), uuid = entryUuid, state = state.toDvrEntryState(),
+            duplicate = duplicate?.toWireFlag(), failure = error.toDvrFailure(),
+            subscriptionError = subscriptionError.toDvrSubscriptionError(),
+            streamErrors = streamErrors, dataErrors = dataErrors, dataSizeBytes = dataSizeBytes,
+        ),
+        GatewayDvrUpdateProvenance.STATS_ONLY,
     )
     is HtspDvrEntryDeleteMessage -> MetadataEvent.DvrEntryDeleted(generation, DvrEntryId(entryId))
-    is HtspAutorecEntryAddMessage -> MetadataEvent.AutorecRuleAdded(generation, toGatewayAutorecRule())
+    is HtspAutorecEntryAddMessage -> MetadataEvent.AutorecRuleAdded(generation, entry.toGatewayAutorecRule())
     is HtspAutorecEntryUpdateMessage ->
-        MetadataEvent.AutorecRuleUpdated(generation, toGatewayAutorecRule())
+        MetadataEvent.AutorecRuleUpdated(generation, entry.toGatewayAutorecRule())
     is HtspAutorecEntryDeleteMessage ->
         MetadataEvent.AutorecRuleDeleted(generation, AutorecRuleId(id))
-    is HtspTimerecEntryAddMessage -> MetadataEvent.TimerecRuleAdded(generation, toGatewayTimerecRule())
+    is HtspTimerecEntryAddMessage -> MetadataEvent.TimerecRuleAdded(generation, entry.toGatewayTimerecRule())
     is HtspTimerecEntryUpdateMessage ->
-        MetadataEvent.TimerecRuleUpdated(generation, toGatewayTimerecRule())
+        MetadataEvent.TimerecRuleUpdated(generation, entry.toGatewayTimerecRule())
     is HtspTimerecEntryDeleteMessage ->
         MetadataEvent.TimerecRuleDeleted(generation, TimerecRuleId(id))
-    is HtspMuxPacketMessage,
-    is HtspQueueStatusMessage,
-    is HtspSubscriptionStartMessage,
-    is HtspSubscriptionStopMessage,
-    is HtspSubscriptionGraceMessage,
-    is HtspSubscriptionStatusMessage,
-    is HtspSignalStatusMessage,
-    is HtspDescrambleInfoMessage,
-    is HtspSubscriptionSpeedMessage,
-    is HtspTimeshiftStatusMessage,
-    is HtspSubscriptionSkipMessage,
-    -> null
     else -> null
 }
 
-private fun HtspEventAddMessage.toGatewayEpgEvent(): GatewayEpgEvent = event.toGatewayEpgEvent(
-    genre = genre,
-    episodeId = episodeId?.let(::EpgEpisodeId),
-    seriesLinkId = seriesLinkId?.let(::EpgSeriesLinkId),
-)
-
-private fun HtspEvent.toGatewayEpgEvent(
-    genre: String?,
-    episodeId: EpgEpisodeId?,
-    seriesLinkId: EpgSeriesLinkId?,
-): GatewayEpgEvent = GatewayEpgEvent(
+private fun HtspEvent.toGatewayEpgEvent(): GatewayEpgEvent = GatewayEpgEvent(
     id = EventId(eventId),
     channelId = channelId?.let(::ChannelId),
     start = Instant.fromEpochSeconds(startEpochSeconds),
@@ -1362,7 +1437,6 @@ private fun HtspEvent.toGatewayEpgEvent(
     subtitle = subtitle,
     summary = summary,
     description = description,
-    genre = genre,
     categories = categories,
     keywords = keywords,
     credits = credits?.entries?.map { EpgCredit(it.name, EpgCreditRole.of(it.role)) },
@@ -1377,6 +1451,82 @@ private fun HtspEvent.toGatewayEpgEvent(
     starRating = starRating,
     copyrightYear = copyrightYear,
     firstAired = firstAiredEpochSeconds?.let { Instant.fromEpochSeconds(it) },
+    isNew = isNew,
+    seasonNumber = seasonNumber,
+    seasonCount = seasonCount,
+    episodeNumber = episodeNumber,
+    episodeCount = episodeCount,
+    partNumber = partNumber,
+    partCount = partCount,
+    episodeOnscreen = episodeOnscreen,
+    image = image,
+    dvrEntryId = dvrId?.let(::DvrEntryId),
+    nextEventId = nextEventId?.let(::EventId),
+)
+
+private fun HtspEvent.toGatewayEpgQueryEvent(): GatewayEpgQueryEvent =
+    toGatewayEpgEvent().toGatewayEpgQueryEvent()
+
+private fun GatewayEpgEvent.toGatewayEpgQueryEvent(): GatewayEpgQueryEvent = GatewayEpgQueryEvent(
+    id = id,
+    channelId = channelId,
+    start = start,
+    stop = stop,
+    title = title,
+    subtitle = subtitle,
+    summary = summary,
+    description = description,
+    categories = categories,
+    keywords = keywords,
+    credits = credits,
+    seriesLinkUri = seriesLinkUri,
+    episodeUri = episodeUri,
+    contentType = contentType,
+    ageRating = ageRating,
+    ratingLabel = ratingLabel,
+    ratingIcon = ratingIcon,
+    ratingAuthority = ratingAuthority,
+    ratingCountry = ratingCountry,
+    starRating = starRating,
+    copyrightYear = copyrightYear,
+    firstAired = firstAired,
+    isNew = isNew,
+    seasonNumber = seasonNumber,
+    seasonCount = seasonCount,
+    episodeNumber = episodeNumber,
+    episodeCount = episodeCount,
+    partNumber = partNumber,
+    partCount = partCount,
+    episodeOnscreen = episodeOnscreen,
+    image = image,
+    dvrEntryId = dvrEntryId,
+    nextEventId = nextEventId,
+)
+
+private fun GatewayEpgEvent.toGatewayEpgUpdate(): GatewayEpgUpdate = GatewayEpgUpdate(
+    id = id,
+    channelId = channelId,
+    start = start,
+    stop = stop,
+    title = title,
+    subtitle = subtitle,
+    summary = summary,
+    description = description,
+    genre = genre,
+    categories = categories,
+    keywords = keywords,
+    credits = credits,
+    seriesLinkUri = seriesLinkUri,
+    episodeUri = episodeUri,
+    contentType = contentType,
+    ageRating = ageRating,
+    ratingLabel = ratingLabel,
+    ratingIcon = ratingIcon,
+    ratingAuthority = ratingAuthority,
+    ratingCountry = ratingCountry,
+    starRating = starRating,
+    copyrightYear = copyrightYear,
+    firstAired = firstAired,
     isNew = isNew,
     seasonNumber = seasonNumber,
     seasonCount = seasonCount,
@@ -1388,100 +1538,11 @@ private fun HtspEvent.toGatewayEpgEvent(
     episodeId = episodeId,
     seriesLinkId = seriesLinkId,
     image = image,
-    dvrEntryId = dvrId?.let(::DvrEntryId),
-    nextEventId = nextEventId?.let(::EventId),
+    dvrEntryId = dvrEntryId,
+    nextEventId = nextEventId,
 )
 
-private fun HtspEvent.toGatewayEpgQueryEvent(): GatewayEpgQueryEvent = GatewayEpgQueryEvent(
-    id = EventId(eventId),
-    channelId = channelId?.let(::ChannelId),
-    start = Instant.fromEpochSeconds(startEpochSeconds),
-    stop = Instant.fromEpochSeconds(stopEpochSeconds),
-    title = title,
-    subtitle = subtitle,
-    summary = summary,
-    description = description,
-    categories = categories,
-    keywords = keywords,
-    credits = credits?.entries?.map { EpgCredit(it.name, EpgCreditRole.of(it.role)) },
-    seriesLinkUri = seriesLinkUri,
-    episodeUri = episodeUri,
-    contentType = contentType,
-    ageRating = ageRating,
-    ratingLabel = ratingLabel,
-    ratingIcon = ratingIcon,
-    ratingAuthority = ratingAuthority,
-    ratingCountry = ratingCountry,
-    starRating = starRating,
-    copyrightYear = copyrightYear,
-    firstAired = firstAiredEpochSeconds?.let { Instant.fromEpochSeconds(it) },
-    isNew = isNew,
-    seasonNumber = seasonNumber,
-    seasonCount = seasonCount,
-    episodeNumber = episodeNumber,
-    episodeCount = episodeCount,
-    partNumber = partNumber,
-    partCount = partCount,
-    episodeOnscreen = episodeOnscreen,
-    image = image,
-    dvrEntryId = dvrId?.let(::DvrEntryId),
-    nextEventId = nextEventId?.let(::EventId),
-)
-
-private fun HtspEventUpdateMessage.toGatewayEpgUpdate(): GatewayEpgUpdate = GatewayEpgUpdate(
-    id = EventId(eventId),
-    channelId = channelId?.let(::ChannelId),
-    start = startEpochSeconds?.let { Instant.fromEpochSeconds(it) },
-    stop = stopEpochSeconds?.let { Instant.fromEpochSeconds(it) },
-    title = title,
-    subtitle = subtitle,
-    summary = summary,
-    description = description,
-    genre = genre,
-    categories = categories,
-    keywords = keywords,
-    credits = credits?.entries?.map { EpgCredit(it.name, EpgCreditRole.of(it.role)) },
-    seriesLinkUri = seriesLinkUri,
-    episodeUri = episodeUri,
-    contentType = contentType,
-    ageRating = ageRating,
-    ratingLabel = ratingLabel,
-    ratingIcon = ratingIcon,
-    ratingAuthority = ratingAuthority,
-    ratingCountry = ratingCountry,
-    starRating = starRating,
-    copyrightYear = copyrightYear,
-    firstAired = firstAiredEpochSeconds?.let { Instant.fromEpochSeconds(it) },
-    isNew = isNew,
-    seasonNumber = seasonNumber,
-    seasonCount = seasonCount,
-    episodeNumber = episodeNumber,
-    episodeCount = episodeCount,
-    partNumber = partNumber,
-    partCount = partCount,
-    episodeOnscreen = episodeOnscreen,
-    episodeId = episodeId?.let(::EpgEpisodeId),
-    seriesLinkId = seriesLinkId?.let(::EpgSeriesLinkId),
-    image = image,
-    dvrEntryId = dvrId?.let(::DvrEntryId),
-    nextEventId = nextEventId?.let(::EventId),
-)
-
-private fun HtspChannelAddMessage.toGatewayChannel(): GatewayChannelMetadata =
-    GatewayChannelMetadata(
-        id = ChannelId(channelId),
-        name = channelName,
-        uuid = channelUuid,
-        number = channelNumber,
-        numberMinor = channelNumberMinor,
-        icon = channelIcon,
-        currentEventId = currentEventId?.let(::EventId),
-        nextEventId = nextEventId?.let(::EventId),
-        services = services?.map(HtspChannelService::toGatewayService),
-        tagIds = tagIds?.map(::TagId),
-    )
-
-private fun HtspChannelUpdateMessage.toGatewayChannel(): GatewayChannelMetadata =
+private fun HtspChannel.toGatewayChannel(): GatewayChannelMetadata =
     GatewayChannelMetadata(
         id = ChannelId(channelId),
         name = channelName,
@@ -1504,17 +1565,7 @@ private fun HtspChannelService.toGatewayService(): GatewayChannelService = Gatew
     providerName = providerName,
 )
 
-private fun HtspTagAddMessage.toGatewayTag(): GatewayTagMetadata = GatewayTagMetadata(
-    id = TagId(tagId),
-    name = tagName,
-    uuid = tagUuid,
-    index = tagIndex,
-    icon = tagIcon,
-    titledIcon = tagTitledIcon.toFlag(),
-    channelIds = channelIds?.map(::ChannelId),
-)
-
-private fun HtspTagUpdateMessage.toGatewayTag(): GatewayTagMetadata = GatewayTagMetadata(
+private fun HtspTag.toGatewayTag(): GatewayTagMetadata = GatewayTagMetadata(
     id = TagId(tagId),
     name = tagName,
     uuid = tagUuid,
@@ -1526,7 +1577,7 @@ private fun HtspTagUpdateMessage.toGatewayTag(): GatewayTagMetadata = GatewayTag
 
 private fun Long?.toFlag(): Boolean? = this?.let { it != 0L }
 
-private fun HtspDvrEntryAddMessage.toGatewayDvrEntry(): GatewayDvrEntry = GatewayDvrEntry(
+private fun HtspDvrEntry.toGatewayDvrEntry(): GatewayDvrEntry = GatewayDvrEntry(
     id = DvrEntryId(entryId),
     uuid = entryUuid,
     enabled = enabled,
@@ -1578,70 +1629,8 @@ private fun HtspDvrEntryAddMessage.toGatewayDvrEntry(): GatewayDvrEntry = Gatewa
     dataErrors = dataErrors,
     dataSizeBytes = dataSizeBytes,
 )
-
-private fun HtspDvrEntryUpdateMessage.toGatewayDvrEntry(): GatewayDvrEntry = GatewayDvrEntry(
-    id = DvrEntryId(entryId),
-    uuid = entryUuid,
-    enabled = enabled,
-    channelId = channelId?.let(::ChannelId),
-    channelName = channelName,
-    eventId = eventId?.let(::EventId),
-    autorecRuleId = autorecEntryUuid?.let(::AutorecRuleId),
-    timerecRuleId = timerecEntryUuid?.let(::TimerecRuleId),
-    start = startEpochSeconds?.let(Instant::fromEpochSeconds),
-    stop = stopEpochSeconds?.let(Instant::fromEpochSeconds),
-    startExtraMinutes = startExtraMinutes,
-    stopExtraMinutes = stopExtraMinutes,
-    retentionDays = retentionDays,
-    removalDays = removalDays,
-    priority = priority,
-    contentType = contentType,
-    ageRating = ageRating,
-    ratingLabel = ratingLabel,
-    ratingIcon = ratingIcon,
-    ratingAuthority = ratingAuthority,
-    ratingCountry = ratingCountry,
-    playCount = playCount,
-    playPosition = playPositionSeconds?.seconds,
-    seasonNumber = seasonNumber,
-    seasonCount = seasonCount,
-    episodeOnscreen = episodeOnscreen,
-    episodeNumber = episodeNumber,
-    episodeCount = episodeCount,
-    partNumber = partNumber,
-    partCount = partCount,
-    title = title,
-    description = description,
-    summary = summary,
-    subtitle = subtitle,
-    owner = owner,
-    creator = creator,
-    comment = comment,
-    image = image,
-    fanartImage = fanartImage,
-    copyrightYear = copyrightYear,
-    files = files?.map(HtspDvrRecordingFile::toGatewayFile),
-    path = path,
-    configId = dvrConfigUuid?.let(::DvrConfigId),
-    duplicate = duplicate?.toWireFlag(),
-    state = state.toDvrEntryState(),
-    failure = error.toDvrFailure(),
-    subscriptionError = subscriptionError.toDvrSubscriptionError(),
-    streamErrors = streamErrors,
-    dataErrors = dataErrors,
-    dataSizeBytes = dataSizeBytes,
-)
-
-private fun HtspDvrEntryUpdateMessage.toGatewayUpdateProvenance(): GatewayDvrUpdateProvenance =
-    // Full updates always carry enabled; v26+ stats-only updates omit the full section.
-    if (enabled == null) {
-        GatewayDvrUpdateProvenance.STATS_ONLY
-    } else {
-        GatewayDvrUpdateProvenance.FULL
-    }
 
 private fun HtspDvrRecordingFile.toGatewayFile(): GatewayDvrRecordingFile = GatewayDvrRecordingFile(
-    fileId = fileId,
     path = path,
     start = startEpochSeconds?.let(Instant::fromEpochSeconds),
     stop = stopEpochSeconds?.let(Instant::fromEpochSeconds),
@@ -1656,7 +1645,7 @@ private fun HtspDvrRecordingFile.toGatewayFile(): GatewayDvrRecordingFile = Gate
     },
 )
 
-private fun HtspAutorecEntryAddMessage.toGatewayAutorecRule(): GatewayAutorecRule = GatewayAutorecRule(
+private fun HtspAutorecEntry.toGatewayAutorecRule(): GatewayAutorecRule = GatewayAutorecRule(
     id = AutorecRuleId(id),
     enabled = enabled,
     maxDuration = maxDurationSeconds.seconds,
@@ -1683,41 +1672,10 @@ private fun HtspAutorecEntryAddMessage.toGatewayAutorecRule(): GatewayAutorecRul
     creator = creator,
     channelId = channelId?.let(::ChannelId),
     seriesLinkUri = seriesLinkUri,
-    configId = configId?.let(::DvrConfigId),
+    configId = dvrConfigUuid?.let(::DvrConfigId),
 )
 
-private fun HtspAutorecEntryUpdateMessage.toGatewayAutorecRule(): GatewayAutorecRule =
-    GatewayAutorecRule(
-        id = AutorecRuleId(id),
-        enabled = enabled,
-        maxDuration = maxDurationSeconds?.seconds,
-        minDuration = minDurationSeconds?.seconds,
-        retentionDays = retentionDays,
-        removalDays = removalDays,
-        daysOfWeekMask = daysOfWeekMask,
-        approximateStartMinutesSinceMidnight = approximateStartMinutesSinceMidnight,
-        startMinutesSinceMidnight = startMinutesSinceMidnight,
-        startWindowEndMinutesSinceMidnight = startWindowEndMinutesSinceMidnight,
-        priority = priority,
-        startExtraMinutes = startExtraMinutes,
-        stopExtraMinutes = stopExtraMinutes,
-        duplicateDetection = duplicateDetection,
-        maximumRecordingCount = maximumRecordingCount,
-        broadcastType = broadcastType,
-        comment = comment,
-        title = title,
-        fullText = fullText,
-        mergeText = mergeText,
-        name = name,
-        directory = directory,
-        owner = owner,
-        creator = creator,
-        channelId = channelId?.let(::ChannelId),
-        seriesLinkUri = seriesLinkUri,
-        configId = configId?.let(::DvrConfigId),
-    )
-
-private fun HtspTimerecEntryAddMessage.toGatewayTimerecRule(): GatewayTimerecRule = GatewayTimerecRule(
+private fun HtspTimerecEntry.toGatewayTimerecRule(): GatewayTimerecRule = GatewayTimerecRule(
     id = TimerecRuleId(id),
     enabled = enabled,
     name = name,
@@ -1732,29 +1690,9 @@ private fun HtspTimerecEntryAddMessage.toGatewayTimerecRule(): GatewayTimerecRul
     directory = directory,
     owner = owner,
     creator = creator,
-    configId = configId?.let(::DvrConfigId),
+    configId = dvrConfigUuid?.let(::DvrConfigId),
     comment = comment,
 )
-
-private fun HtspTimerecEntryUpdateMessage.toGatewayTimerecRule(): GatewayTimerecRule =
-    GatewayTimerecRule(
-        id = TimerecRuleId(id),
-        enabled = enabled,
-        name = name,
-        title = title,
-        channelId = channelId?.let(::ChannelId),
-        startMinutesSinceMidnight = startMinutesSinceMidnight,
-        stopMinutesSinceMidnight = stopMinutesSinceMidnight,
-        daysOfWeekMask = daysOfWeekMask,
-        priority = priority,
-        retentionDays = retentionDays,
-        removalDays = removalDays,
-        directory = directory,
-        owner = owner,
-        creator = creator,
-        configId = configId?.let(::DvrConfigId),
-        comment = comment,
-    )
 
 private fun String?.toDvrEntryState(): DvrEntryState? = when (this) {
     null -> null
@@ -1850,8 +1788,6 @@ private fun HtspSubscriptionStartMessage.toGatewayEvent(): SubscriptionEvent.Sta
     SubscriptionEvent.Started(
         streams = streams?.map(HtspSubscriptionStream::toGatewayStream),
         codecMetadata = codecMetadata?.let(::HtspGatewayBinary),
-        condition = subscriptionCondition(status, subscriptionError),
-        issue = subscriptionIssue(status, subscriptionError),
         source = sourceInfo?.toGatewaySource(),
     )
 
@@ -1904,7 +1840,6 @@ private fun HtspSubscriptionStream.toGatewayStream(): SubscriptionStream = Subsc
     channelCount = channelCount,
     rate = sampleRate,
     rdsUecp = rdsUecp?.toWireFlag(),
-    codecMetadata = codecMetadata?.let(::HtspGatewayBinary),
 )
 
 private fun String.toGatewayStreamType(): SubscriptionStreamType = when (this) {
@@ -1924,9 +1859,9 @@ private fun String.toGatewayStreamType(): SubscriptionStreamType = when (this) {
 private fun HtspMuxPacketMessage.toGatewayEvent(): SubscriptionEvent.Packet =
     SubscriptionEvent.Packet(
         frameType = when (frameType) {
-            66L -> MuxFrameType.B
-            73L -> MuxFrameType.I
-            80L -> MuxFrameType.P
+            HtspFrameType.B -> MuxFrameType.B
+            HtspFrameType.I -> MuxFrameType.I
+            HtspFrameType.P -> MuxFrameType.P
             else -> MuxFrameType.UNKNOWN
         },
         streamIndex = StreamIndex(streamIndex),

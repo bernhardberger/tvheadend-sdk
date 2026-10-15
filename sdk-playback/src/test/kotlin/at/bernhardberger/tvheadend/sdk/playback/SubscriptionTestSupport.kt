@@ -196,12 +196,10 @@ internal fun started(vararg streams: SubscriptionStream): SubscriptionEvent.Star
     SubscriptionEvent.Started(
         streams = streams.toList(),
         codecMetadata = null,
-        condition = SubscriptionCondition.NO_DETAIL,
     )
 
 internal fun stream(
     index: Long = 0L,
-    codecMetadata: SubscriptionBinary? = null,
     type: SubscriptionStreamType = SubscriptionStreamType.H264,
 ): SubscriptionStream = SubscriptionStream(
     index = StreamIndex(index),
@@ -219,7 +217,6 @@ internal fun stream(
     channelCount = null,
     rate = null,
     rdsUecp = null,
-    codecMetadata = codecMetadata,
 )
 
 internal fun packet(

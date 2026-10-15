@@ -84,9 +84,9 @@ internal class TvheadendLiveMediaSourceTest {
         runCurrent()
         val stream = SubscriptionStream(
             StreamIndex(0), SubscriptionStreamType.MPEG2_AUDIO, null, null, null, null, null,
-            null, null, null, null, null, null, null, null, null,
+            null, null, null, null, null, null, null, null,
         )
-        connection.emit(SubscriptionEvent.Started(listOf(stream), null, SubscriptionCondition.NO_DETAIL))
+        connection.emit(SubscriptionEvent.Started(listOf(stream), null))
         runCurrent()
         val subscription = (opening.await() as SubscriptionOpenResult.Opened).subscription
         attachment.bind(subscription)

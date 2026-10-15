@@ -939,7 +939,7 @@ internal class LiveTimeshiftControlBridge(
                         }
                         started = true
                         issueObserved = true
-                        latestIssue = event.issue
+                        latestIssue = null
                         releaseStoppedIssueLocked()
                         diagnosticsInvalidated = replaceDiagnosticsThroughLocked(sequence - 1L)
                     }

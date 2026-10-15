@@ -1513,7 +1513,7 @@ private class ActiveSubscriptionImpl(
 
     private fun acceptStarted(event: SubscriptionEvent.Started) {
         val streams = event.streams
-        updateDiagnostics(condition = event.condition)
+        updateDiagnostics(condition = SubscriptionCondition.NO_DETAIL)
         if (streams.isNullOrEmpty()) {
             setLocalFailure(SubscriptionTerminalReason.InvalidTracks)
             return

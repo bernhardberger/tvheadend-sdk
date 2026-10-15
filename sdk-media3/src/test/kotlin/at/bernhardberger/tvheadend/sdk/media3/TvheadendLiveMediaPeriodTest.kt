@@ -769,7 +769,7 @@ private class PeriodHarness(private val scope: TestScope, attachment: LiveTimesh
         scope.runCurrent()
         connection.emit(SubscriptionEvent.Started(types.mapIndexed { index, type ->
             subscriptionStream(index.toLong(), type, languages.getOrNull(index), audioTypes.getOrNull(index))
-        }, null, SubscriptionCondition.NO_DETAIL))
+        }, null))
         scope.runCurrent()
         subscription = (opening.await() as SubscriptionOpenResult.Opened).subscription
         period.bind(subscription)
@@ -844,7 +844,7 @@ private fun subscriptionStream(
     if (type == SubscriptionStreamType.DVB_SUBTITLE) 1L else null,
     if (type == SubscriptionStreamType.DVB_SUBTITLE) 2L else null,
     null, null,
-    null, null, null, audioType, null, null, null, null, null,
+    null, null, null, audioType, null, null, null, null,
 )
 
 private fun packetEvent(index: Long, payload: SubscriptionBinary, timeUs: Long? = 1_117_733) =

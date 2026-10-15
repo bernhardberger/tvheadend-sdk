@@ -90,8 +90,8 @@ internal class LiveStreamRestartInstrumentationTest {
                 val durationUs = if (changed) 32_000L else 24_000L
                 connection.emit(SubscriptionEvent.Started((0 until count).map { index ->
                     SubscriptionStream(StreamIndex(index.toLong()), type, null, null, null, null, null,
-                        null, null, null, null, null, null, null, null, null)
-                }, null, SubscriptionCondition.NO_DETAIL))
+                        null, null, null, null, null, null, null, null)
+                }, null))
                 repeat(128) { sample ->
                     repeat(count) { index ->
                         val time = 9_000_000_000L + segment * 10_000_000L + sample * durationUs

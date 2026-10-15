@@ -267,8 +267,8 @@ internal class FakeTvheadendSessionTest {
             val registration = connection.awaitCollectionRegistered()
             connection.emit(registration, SubscriptionEvent.Started(listOf(SubscriptionStream(
                 StreamIndex(1), SubscriptionStreamType.H264, null, null, null, null, null, null,
-                null, null, null, null, null, null, null, null,
-            )), null, SubscriptionCondition.NO_DETAIL))
+                null, null, null, null, null, null, null,
+            )), null))
             try {
                 if (boundary == "cancel") {
                     var cancelled = false

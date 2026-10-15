@@ -1885,12 +1885,13 @@ internal class TvheadendPlaybackCoordinatorTest {
                 SubscriptionEvent.Started(
                     streams = null,
                     codecMetadata = null,
-                    condition = SubscriptionCondition.ERROR_REPORTED,
-                    issue = SubscriptionIssue.BAD_SIGNAL,
                 ),
             )
             assertEquals(null, fixture.coordinator.subscriptionIssue.value)
             fixture.player.attachTimeshift(FakeTimeshiftSubscription(60.seconds))
+            fixture.player.emitTimeshift(
+                SubscriptionEvent.Status(SubscriptionCondition.ERROR_REPORTED, SubscriptionIssue.BAD_SIGNAL),
+            )
             assertSame(SubscriptionIssue.BAD_SIGNAL, fixture.coordinator.subscriptionIssue.value)
 
             fixture.player.emitTimeshift(
@@ -2489,7 +2490,6 @@ internal class TvheadendPlaybackCoordinatorTest {
             SubscriptionEvent.Started(
                 streams = null,
                 codecMetadata = null,
-                condition = SubscriptionCondition.NO_DETAIL,
             ),
         )
         assertEquals(null, publishedDiagnostics)
@@ -2518,7 +2518,6 @@ internal class TvheadendPlaybackCoordinatorTest {
             SubscriptionEvent.Started(
                 streams = null,
                 codecMetadata = null,
-                condition = SubscriptionCondition.NO_DETAIL,
             ),
         )
 
@@ -2547,7 +2546,6 @@ internal class TvheadendPlaybackCoordinatorTest {
                 SubscriptionEvent.Started(
                     streams = null,
                     codecMetadata = null,
-                    condition = SubscriptionCondition.NO_DETAIL,
                 ),
             )
             accept(SubscriptionEvent.Terminated(SubscriptionTermination.GENERATION_LOST))
@@ -2870,7 +2868,7 @@ internal class TvheadendPlaybackCoordinatorTest {
         fixture.coordinator.setLiveTarget(ChannelId(4))
         fixture.player.attachTimeshift(FakeTimeshiftSubscription(60.seconds))
         fixture.player.emitTimeshift(
-            SubscriptionEvent.Started(streams = null, codecMetadata = null, condition = SubscriptionCondition.NO_DETAIL),
+            SubscriptionEvent.Started(streams = null, codecMetadata = null),
         )
 
         fixture.player.stopLiveStream(SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN)
@@ -2895,7 +2893,7 @@ internal class TvheadendPlaybackCoordinatorTest {
         fixture.coordinator.setLiveTarget(ChannelId(4))
         fixture.player.attachTimeshift(FakeTimeshiftSubscription(60.seconds))
         fixture.player.emitTimeshift(
-            SubscriptionEvent.Started(streams = null, codecMetadata = null, condition = SubscriptionCondition.NO_DETAIL),
+            SubscriptionEvent.Started(streams = null, codecMetadata = null),
         )
         assertFalse(fixture.liveObservation().serverStopped)
 
@@ -2928,7 +2926,7 @@ internal class TvheadendPlaybackCoordinatorTest {
         fixture.coordinator.setLiveTarget(ChannelId(4))
         fixture.player.attachTimeshift(FakeTimeshiftSubscription(60.seconds))
         fixture.player.emitTimeshift(
-            SubscriptionEvent.Started(streams = null, codecMetadata = null, condition = SubscriptionCondition.NO_DETAIL),
+            SubscriptionEvent.Started(streams = null, codecMetadata = null),
         )
 
         fixture.player.stopLiveStream(SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN)
@@ -2952,7 +2950,7 @@ internal class TvheadendPlaybackCoordinatorTest {
             fixture.coordinator.setLiveTarget(ChannelId(4))
             fixture.player.attachTimeshift(FakeTimeshiftSubscription(60.seconds))
             fixture.player.emitTimeshift(
-                SubscriptionEvent.Started(streams = null, codecMetadata = null, condition = SubscriptionCondition.NO_DETAIL),
+                SubscriptionEvent.Started(streams = null, codecMetadata = null),
             )
             if (playingStatus != null) {
                 fixture.player.emitTimeshift(playingStatus)
@@ -3977,8 +3975,6 @@ private fun sourceStarted(serviceName: String): SubscriptionEvent.Started =
     SubscriptionEvent.Started(
         streams = null,
         codecMetadata = null,
-        condition = SubscriptionCondition.NO_DETAIL,
-        issue = null,
         source = requireNotNull(
             LiveSubscriptionSource.create(
                 adapterName = "Adapter",
@@ -4389,7 +4385,7 @@ private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
         checkNotNull(timeshiftControls).subscriptionRestarted(null)
         replaceTimeshiftPeriod(subscription)
         emitTimeshift(
-            SubscriptionEvent.Started(streams = null, codecMetadata = null, condition = SubscriptionCondition.NO_DETAIL),
+            SubscriptionEvent.Started(streams = null, codecMetadata = null),
         )
     }
 
@@ -4479,11 +4475,10 @@ private class ScriptedLiveTransport(private val scope: TestScope, private val fi
         listOf(
             SubscriptionStream(
                 StreamIndex(0), SubscriptionStreamType.MPEG2_AUDIO, null, null, null, null, null,
-                null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null,
             ),
         ),
         null,
-        SubscriptionCondition.NO_DETAIL,
     )
 
     suspend fun emit(event: SubscriptionEvent) {
@@ -4517,7 +4512,7 @@ internal class FakeTimeshiftSubscription(
             at.bernhardberger.tvheadend.sdk.playback.SubscriptionStream(
                 at.bernhardberger.tvheadend.sdk.playback.StreamIndex(0),
                 at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType.MPEG2_AUDIO, null, null, null, null, null,
-                null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null,
             ),
         ))),
     )

@@ -304,7 +304,7 @@ internal class GatewayGeneration {
 
 internal class GatewayConnection(
     internal val generation: GatewayGeneration,
-    internal val protocolVersion: Int?,
+    internal val protocolVersion: Long?,
     internal val dvrAccess: Boolean?,
     internal val serverFacts: GatewayServerFacts,
 ) {
@@ -320,7 +320,7 @@ internal class GatewayConnection(
 internal class GatewayRecordingFile(
     internal val handleId: Long,
     internal val sizeBytes: Long?,
-    internal val protocolVersion: Int?,
+    internal val protocolVersion: Long?,
 ) {
     override fun toString(): String = "GatewayRecordingFile(<redacted>)"
 }

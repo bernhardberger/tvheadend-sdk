@@ -73,23 +73,8 @@ public sealed interface SubscriptionEvent {
     public class Started(
         streams: List<SubscriptionStream>?,
         public val codecMetadata: SubscriptionBinary?,
-        public val condition: SubscriptionCondition,
-        public val issue: SubscriptionIssue?,
-        public val source: LiveSubscriptionSource?,
+        public val source: LiveSubscriptionSource? = null,
     ) : SubscriptionEvent {
-        public constructor(
-            streams: List<SubscriptionStream>?,
-            codecMetadata: SubscriptionBinary?,
-            condition: SubscriptionCondition,
-            issue: SubscriptionIssue?,
-        ) : this(streams, codecMetadata, condition, issue, null)
-
-        public constructor(
-            streams: List<SubscriptionStream>?,
-            codecMetadata: SubscriptionBinary?,
-            condition: SubscriptionCondition,
-        ) : this(streams, codecMetadata, condition, null)
-
         /** Ordered stream descriptions, or null when omitted. */
         public val streams: List<SubscriptionStream>? = streams?.toImmutableList()
 
@@ -271,7 +256,6 @@ public data class SubscriptionStream(
     public val channelCount: Long?,
     public val rate: Long?,
     public val rdsUecp: Long?,
-    public val codecMetadata: SubscriptionBinary?,
 ) {
     override fun toString(): String = "SubscriptionStream(<redacted>)"
 }

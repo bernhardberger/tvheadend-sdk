@@ -1,5 +1,24 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- BREAKING: migrate the gateway to the unreleased HTSP entity model. Remove
+  `SubscriptionEvent.Started.condition` / `issue` and per-stream
+  `SubscriptionStream.codecMetadata`, which have no corresponding server fields.
+  Subscription status events still carry issues; top-level start codec metadata
+  remains available.
+- Share entity mapping across add/update notifications and EPG request replies;
+  use atomic connected-state snapshots, Long protocol versions and typed frame kinds.
+  Removed HTSP event genre/episode/series IDs and recording-file IDs are no longer
+  mapped; their existing nullable SDK fields remain absent for wire-sourced data.
+- Preserve rule-update null-as-unchanged channel semantics using the current
+  generation's observed restriction. Updates with an unknown restriction return
+  not-supported rather than silently clearing it. Explicit all-channels clears it.
+- Keep existing reducer merges and sparse now/next and DVR-statistics paths for
+  this migration slice. Malformed-metadata recovery policy remains pending.
+
 ## [0.29.0]
 
 Released 2026-10-15.

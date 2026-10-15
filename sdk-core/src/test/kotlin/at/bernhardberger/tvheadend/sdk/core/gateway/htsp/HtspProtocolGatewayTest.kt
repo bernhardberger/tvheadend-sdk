@@ -5,8 +5,16 @@
 
 package at.bernhardberger.tvheadend.sdk.core.gateway.htsp
 
-import at.bernhardberger.tvheadend.htsp.requests.HtspProgrammeCredit
-import at.bernhardberger.tvheadend.htsp.requests.HtspProgrammeCredits
+import at.bernhardberger.tvheadend.htsp.model.HtspProgrammeCredit
+import at.bernhardberger.tvheadend.htsp.model.HtspProgrammeCredits
+import at.bernhardberger.tvheadend.htsp.model.HtspChannel
+import at.bernhardberger.tvheadend.htsp.model.HtspTag
+import at.bernhardberger.tvheadend.htsp.model.HtspDvrEntry
+import at.bernhardberger.tvheadend.htsp.model.HtspAutorecEntry
+import at.bernhardberger.tvheadend.htsp.model.HtspTimerecEntry
+import at.bernhardberger.tvheadend.htsp.messages.HtspFrameType
+import at.bernhardberger.tvheadend.htsp.messages.HtspMetadataMessage
+import at.bernhardberger.tvheadend.htsp.messages.HtspDvrEntryStatsMessage
 import kotlinx.coroutines.flow.map
 import at.bernhardberger.tvheadend.sdk.core.EpgCredit
 import at.bernhardberger.tvheadend.sdk.core.EpgCreditRole
@@ -31,11 +39,12 @@ import at.bernhardberger.tvheadend.htsp.messages.HtspAutorecEntryUpdateMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspChannelAddMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspChannelDeleteMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspChannelUpdateMessage
+import at.bernhardberger.tvheadend.htsp.messages.HtspChannelNowNextMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspDescrambleInfoMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspDvrEntryAddMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspDvrEntryDeleteMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspDvrEntryUpdateMessage
-import at.bernhardberger.tvheadend.htsp.messages.HtspDvrRecordingFile
+import at.bernhardberger.tvheadend.htsp.model.HtspDvrRecordingFile
 import at.bernhardberger.tvheadend.htsp.messages.HtspEventAddMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspEventDeleteMessage
 import at.bernhardberger.tvheadend.htsp.messages.HtspEventUpdateMessage
@@ -102,9 +111,9 @@ import at.bernhardberger.tvheadend.htsp.requests.GetSysTimeRequest
 import at.bernhardberger.tvheadend.htsp.requests.GetSysTimeResponse
 import at.bernhardberger.tvheadend.htsp.requests.HtspDvrConfig
 import at.bernhardberger.tvheadend.htsp.requests.HtspDvrCutpoint
-import at.bernhardberger.tvheadend.htsp.requests.HtspChannelService
+import at.bernhardberger.tvheadend.htsp.model.HtspChannelService
 import at.bernhardberger.tvheadend.htsp.requests.HtspEmptyResponse
-import at.bernhardberger.tvheadend.htsp.requests.HtspEvent
+import at.bernhardberger.tvheadend.htsp.model.HtspEvent
 import at.bernhardberger.tvheadend.htsp.requests.HtspRequest
 import at.bernhardberger.tvheadend.htsp.requests.HtspRecordingRuleChannel
 import at.bernhardberger.tvheadend.htsp.requests.HtspProfile
@@ -196,6 +205,7 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.yield
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -459,12 +469,12 @@ internal class HtspProtocolGatewayTest {
     @Test
     fun `malformed stream indices retain malformed termination not infrastructure failure`() = runTest {
         assertThrows(IllegalArgumentException::class.java) {
-            HtspMuxPacketMessage(77, 73, -1, null, null, 0, HtspBinary(byteArrayOf()))
+            HtspMuxPacketMessage(77, HtspFrameType.I, -1, null, null, 0, HtspBinary(byteArrayOf()))
         }
         // Library constructors enforce the same u32 range as SDK StreamIndex: no public fixture
         // can reach this defensive catch. Corrupt only this fake DTO and fail loudly if its shape
         // changes, rather than merely forwarding a library MALFORMED_MESSAGE terminal.
-        val packet = HtspMuxPacketMessage(77, 73, 0, null, null, 0, HtspBinary(byteArrayOf()))
+        val packet = HtspMuxPacketMessage(77, HtspFrameType.I, 0, null, null, 0, HtspBinary(byteArrayOf()))
         val field = packet.javaClass.declaredFields.singleOrNull { it.name == "streamIndex" }
         assertNotNull(field, "Malformed stream fixture requires the stream index field")
         requireNotNull(field).apply { isAccessible = true }.setLong(packet, -1)
@@ -615,7 +625,7 @@ internal class HtspProtocolGatewayTest {
                         failure = HtspTransportFailure(
                             HtspTransportFailureKind.TRANSPORT_UNAVAILABLE,
                         ),
-                        generation = null,
+                        generation = sourceGeneration,
                     )
                 ).toTypedArray(),
             )
@@ -656,8 +666,7 @@ internal class HtspProtocolGatewayTest {
         fake.connectionStateValue.value = HtspConnectionState.Connected(
             host = "private host",
             port = 9_982,
-            protocolVersion = 43,
-            dvrAccess = true,
+            connection = liveConnection,
         )
         yield()
         assertSame(GatewayState.Connected, gateway.connectionState.value)
@@ -687,6 +696,7 @@ internal class HtspProtocolGatewayTest {
             GatewayConnectionFailure.NO_CHANNELS,
             GatewayConnectionFailure.TRANSPORT_UNAVAILABLE,
             GatewayConnectionFailure.TRANSPORT_UNAVAILABLE,
+            GatewayConnectionFailure.TRANSPORT_UNAVAILABLE,
             GatewayConnectionFailure.UNSUPPORTED_SERVER_VERSION,
             GatewayConnectionFailure.TRANSPORT_UNAVAILABLE,
         )
@@ -694,7 +704,7 @@ internal class HtspProtocolGatewayTest {
 
         assertEquals(expectedFailures, failures.map { it.failure })
         assertTrue(failures.dropLast(1).all { it.generation === result.connection.generation })
-        assertEquals(null, failures.last().generation)
+        assertSame(result.connection.generation, failures.last().generation)
         assertTrue(failures.all { it.toString() == "GatewayConnectionFailureEvent(<redacted>)" })
         assertFalse(failures.toString().contains("private"))
 
@@ -728,10 +738,33 @@ internal class HtspProtocolGatewayTest {
     }
 
     @Test
+    fun `sparse now next keeps the existing channel delta path while malformed policy is pending`() = runTest {
+        val source = HtspConnectionGeneration()
+        val fake = FakeHtspConnection().apply {
+            connectOutcome = HtspConnectOutcome.Connected(liveConnection(source))
+            eventsFlow = flowOf(
+                HtspTransportEvent.MalformedMetadata(source, 1),
+                HtspTransportEvent.ServerMessage(HtspChannelNowNextMessage(1, 0, 9), source, 2),
+            )
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+        val event = gateway.metadata.toList().single() as MetadataEvent.ChannelUpdated
+        assertSame(generation, event.generation)
+        assertEquals(ChannelId(1), event.channel.id)
+        assertEquals(EventId(0), event.channel.currentEventId)
+        assertEquals(EventId(9), event.channel.nextEventId)
+        assertEquals(null, event.channel.name)
+        assertEquals(null, event.channel.tagIds)
+        assertEquals(true, gateway.commitIfLive(generation) { true })
+    }
+
+    @Test
     fun `metadata preserves ordered channel and tag deltas on one translated generation`() = runTest {
         val generation = HtspConnectionGeneration()
-        val sourceMessages = listOf<HtspServerMessage>(
-            HtspChannelAddMessage(
+        val sourceMessages = listOf<HtspMetadataMessage>(
+            HtspChannelAddMessage(HtspChannel(
                 channelId = 1,
                 channelName = "Private channel",
                 channelUuid = "private-channel-uuid",
@@ -751,10 +784,10 @@ internal class HtspProtocolGatewayTest {
                     ),
                 ),
                 tagIds = listOf(8),
-            ),
-            HtspChannelUpdateMessage(channelId = 1, channelName = null, tagIds = emptyList()),
+            )),
+            HtspChannelUpdateMessage(channelFixture().copy(channelName = "Updated", tagIds = emptyList())),
             HtspChannelDeleteMessage(channelId = 1),
-            HtspTagAddMessage(
+            HtspTagAddMessage(HtspTag(
                 tagId = 8,
                 tagName = "Private tag",
                 tagUuid = "private-tag-uuid",
@@ -762,8 +795,8 @@ internal class HtspProtocolGatewayTest {
                 tagIcon = "private-tag-icon",
                 tagTitledIcon = 1,
                 channelIds = listOf(1),
-            ),
-            HtspTagUpdateMessage(tagId = 8, tagName = null, channelIds = emptyList()),
+            )),
+            HtspTagUpdateMessage(tagFixture().copy(tagId = 8, tagName = "Updated", channelIds = emptyList())),
             HtspTagDeleteMessage(tagId = 8),
             HtspEventDeleteMessage(eventId = 4),
             HtspInitialSyncCompletedMessage,
@@ -803,14 +836,14 @@ internal class HtspProtocolGatewayTest {
         assertEquals("Private service", added.channel.services?.single()?.name)
         assertEquals(8L, added.channel.tagIds?.single()?.value)
         val updated = events[1] as MetadataEvent.ChannelUpdated
-        assertEquals(null, updated.channel.name)
+        assertEquals("Updated", updated.channel.name)
         assertEquals(emptyList<ChannelId>(), updated.channel.tagIds)
         val tagAdded = events[3] as MetadataEvent.TagAdded
         assertEquals("Private tag", tagAdded.tag.name)
         assertEquals(true, tagAdded.tag.titledIcon)
         assertEquals(1L, tagAdded.tag.channelIds?.single()?.value)
         val tagUpdated = events[4] as MetadataEvent.TagUpdated
-        assertEquals(null, tagUpdated.tag.name)
+        assertEquals("Updated", tagUpdated.tag.name)
         assertEquals(emptyList<ChannelId>(), tagUpdated.tag.channelIds)
         val eventDeleted = events[6] as MetadataEvent.EventDeleted
         assertEquals(4L, eventDeleted.eventId.value)
@@ -853,7 +886,7 @@ internal class HtspProtocolGatewayTest {
         val events = HtspProtocolGateway(fake).metadata.toList().map { it as MetadataEvent.ChannelAdded }
 
         assertEquals(contents, events.dropLast(1).map { it.channel.services?.single()?.content })
-        assertEquals(null, events.last().channel.services)
+        assertEquals(emptyList<Any>(), events.last().channel.services)
     }
 
     @Test
@@ -868,10 +901,13 @@ internal class HtspProtocolGatewayTest {
 
     // Exercise the pinned library's internal decoder, not a second SDK decoder. Reflection stays
     // inside gateway tests and makes a dependency change to required-field handling visible.
-    private fun decodeChannelAdd(fields: Map<String, Any>): HtspServerMessage =
+    private fun decodeChannelAdd(fields: Map<String, Any>): HtspMetadataMessage =
         Class.forName("at.bernhardberger.tvheadend.htsp.messages.HtspServerMessageDecodersKt")
-            .getMethod("decodeChannelAdd", Map::class.java)
-            .invoke(null, fields) as HtspServerMessage
+            .getMethod("decodeChannelAdd", Map::class.java, Long::class.javaPrimitiveType)
+            .invoke(null, mapOf(
+                "channelNumber" to 1L, "channelName" to "Channel", "channelIdStr" to "channel-uuid",
+                "eventId" to 0L, "nextEventId" to 0L, "services" to emptyList<Any>(), "tags" to emptyList<Long>(),
+            ) + fields, 44L) as HtspMetadataMessage
 
     @Test
     fun `credits map known and unknown roles in order and preserve absent and empty updates`() = runTest {
@@ -893,9 +929,9 @@ internal class HtspProtocolGatewayTest {
             eventsFlow = flowOf(
                 added(credits),
                 added(),
-                HtspEventUpdateMessage(eventId = 1, credits = credits),
-                HtspEventUpdateMessage(eventId = 1),
-                HtspEventUpdateMessage(eventId = 1, credits = HtspProgrammeCredits(emptyList())),
+                HtspEventUpdateMessage(added(credits).event),
+                HtspEventUpdateMessage(added().event),
+                HtspEventUpdateMessage(added(HtspProgrammeCredits(emptyList())).event),
             ).map { HtspTransportEvent.ServerMessage(it, generation, 1) }
         }
         val events = HtspProtocolGateway(fake).metadata.toList()
@@ -944,13 +980,11 @@ internal class HtspProtocolGatewayTest {
                 dvrId = 13,
                 nextEventId = 14,
             ),
-            genre = "Private genre",
-            episodeId = 15,
-            seriesLinkId = 16,
         )
-        val update = HtspEventUpdateMessage(
+        val update = HtspEventUpdateMessage(HtspEvent(
             eventId = 1,
             channelId = 3,
+            startEpochSeconds = -3,
             stopEpochSeconds = 2_147_483_649,
             title = "",
             categories = emptyList(),
@@ -967,11 +1001,9 @@ internal class HtspProtocolGatewayTest {
             episodeCount = 24,
             partNumber = 25,
             partCount = 26,
-            episodeId = 27,
-            seriesLinkId = 28,
             dvrId = 29,
             nextEventId = 30,
-        )
+        ))
         val fake = FakeHtspConnection().apply {
             eventsFlow = flowOf(
                 HtspTransportEvent.ServerMessage(add, generation, 1),
@@ -1002,19 +1034,19 @@ internal class HtspProtocolGatewayTest {
         assertEquals(Instant.fromEpochSeconds(0), added.firstAired)
         assertEquals(13L, added.dvrEntryId?.value)
         assertEquals(14L, added.nextEventId?.value)
-        assertEquals(15L, added.episodeId?.value)
-        assertEquals(16L, added.seriesLinkId?.value)
+        assertEquals(null, added.episodeId)
+        assertEquals(null, added.seriesLinkId)
 
         val updated = (events[1] as MetadataEvent.EventUpdated).event
-        assertEquals(null, updated.start)
+        assertEquals(Instant.fromEpochSeconds(-3), updated.start)
         assertEquals(Instant.fromEpochSeconds(2_147_483_649), updated.stop)
         assertEquals("", updated.title)
         assertEquals(emptyList<String>(), updated.categories)
         assertEquals(emptyList<String>(), updated.keywords)
         assertEquals(true, updated.isNew)
         assertEquals(Instant.fromEpochSeconds(-20), updated.firstAired)
-        assertEquals(27L, updated.episodeId?.value)
-        assertEquals(28L, updated.seriesLinkId?.value)
+        assertEquals(null, updated.episodeId)
+        assertEquals(null, updated.seriesLinkId)
         assertEquals(29L, updated.dvrEntryId?.value)
         assertEquals(30L, updated.nextEventId?.value)
         assertTrue(events.all { it.generation === events.first().generation })
@@ -1026,10 +1058,13 @@ internal class HtspProtocolGatewayTest {
         val generation = HtspConnectionGeneration()
         val fields = mapOf(
             "id" to 1L,
+            "enabled" to 1L, "start" to 10L, "stop" to 20L,
+            "startExtra" to 0L, "stopExtra" to 0L, "retention" to 0L, "removal" to 0L,
+            "priority" to 0L, "contentType" to 0L, "state" to "completed",
             "files" to listOf(
-                mapOf("id" to 1L),
-                mapOf("id" to 2L, "info" to emptyList<Any>()),
-                mapOf("id" to 3L, "info" to listOf(
+                emptyMap<String, Any>(),
+                mapOf("info" to emptyList<Any>()),
+                mapOf("info" to listOf(
                     mapOf("type" to "H264", "width" to 1920L, "height" to 1080L),
                     mapOf("type" to "AAC", "language" to "private-language"),
                     mapOf("type" to "future-codec", "width" to 1L, "height" to Int.MAX_VALUE.toLong()),
@@ -1043,7 +1078,8 @@ internal class HtspProtocolGatewayTest {
         // Use the pinned decoder to exercise malformed elements without another SDK parser.
         val decoder = Class.forName("at.bernhardberger.tvheadend.htsp.messages.HtspServerMessageDecodersKt")
         val messages = listOf("decodeDvrEntryAdd", "decodeDvrEntryUpdate").map { name ->
-            decoder.getMethod(name, Map::class.java).invoke(null, fields) as HtspServerMessage
+            decoder.getMethod(name, Map::class.java, Long::class.javaPrimitiveType)
+                .invoke(null, fields, 36L) as HtspMetadataMessage
         }
         val fake = FakeHtspConnection().apply {
             eventsFlow = flowOf(*messages.mapIndexed { index, message ->
@@ -1057,7 +1093,7 @@ internal class HtspProtocolGatewayTest {
         )
         for (entry in entries) {
             val files = requireNotNull(entry.files)
-            assertEquals(listOf(1L, 2L, 3L), files.map { it.fileId })
+            assertEquals(3, files.size)
             assertEquals(null, files[0].streams)
             assertEquals(emptyList<Any>(), files[1].streams)
             val streams = requireNotNull(files[2].streams)
@@ -1080,14 +1116,13 @@ internal class HtspProtocolGatewayTest {
         val generation = HtspConnectionGeneration()
         val files = mutableListOf(
             HtspDvrRecordingFile(
-                fileId = 9,
                 path = "/private/recording.ts",
                 startEpochSeconds = 10,
                 stopEpochSeconds = 20,
                 sizeBytes = 30,
             ),
         )
-        val add = HtspDvrEntryAddMessage(
+        val add = HtspDvrEntryAddMessage(dvrFixture().copy(
             entryId = 1,
             enabled = true,
             channelId = 2,
@@ -1110,8 +1145,8 @@ internal class HtspProtocolGatewayTest {
             state = "recording",
             error = "Private error",
             subscriptionError = "scrambled",
-        )
-        val update = HtspDvrEntryUpdateMessage(
+        ))
+        val update = HtspDvrEntryUpdateMessage(dvrFixture().copy(
             entryId = 1,
             enabled = false,
             title = "",
@@ -1123,8 +1158,8 @@ internal class HtspProtocolGatewayTest {
             episodeOnscreen = "S2 E4",
             owner = "updated-owner",
             creator = "updated-creator",
-        )
-        val autorecAdd = HtspAutorecEntryAddMessage(
+        ))
+        val autorecAdd = HtspAutorecEntryAddMessage(autorecFixture().copy(
             id = "private-auto",
             enabled = true,
             maxDurationSeconds = 60,
@@ -1145,30 +1180,30 @@ internal class HtspProtocolGatewayTest {
             owner = "test-owner",
             creator = "test-creator",
             channelId = 12,
-            configId = "private-auto-config",
-        )
-        val messages = listOf<HtspServerMessage>(
+            dvrConfigUuid = "private-auto-config",
+        ))
+        val messages = listOf<HtspMetadataMessage>(
             add,
             update,
             HtspDvrEntryDeleteMessage(1),
             autorecAdd,
-            HtspAutorecEntryUpdateMessage(
-                id = "private-auto", title = null, enabled = false,
+            HtspAutorecEntryUpdateMessage(autorecFixture().copy(
+                id = "private-auto", title = "", enabled = false,
                 owner = "updated-owner", creator = "updated-creator",
-            ),
+            )),
             HtspAutorecEntryDeleteMessage("private-auto"),
-            HtspTimerecEntryAddMessage(
+            HtspTimerecEntryAddMessage(timerecFixture().copy(
                 id = "private-time",
                 enabled = true,
                 channelId = null,
                 startMinutesSinceMidnight = null,
                 stopMinutesSinceMidnight = null,
-                configId = "private-time-config",
+                dvrConfigUuid = "private-time-config",
                 removalDays = 0xffff_ffffL,
                 owner = "test-owner",
                 creator = "test-creator",
-            ),
-            HtspTimerecEntryUpdateMessage(
+            )),
+            HtspTimerecEntryUpdateMessage(timerecFixture().copy(
                 id = "private-time",
                 enabled = false,
                 removalDays = 0,
@@ -1177,7 +1212,7 @@ internal class HtspProtocolGatewayTest {
                 channelId = null,
                 startMinutesSinceMidnight = null,
                 stopMinutesSinceMidnight = null,
-            ),
+            )),
             HtspTimerecEntryDeleteMessage("private-time"),
         )
         val fake = FakeHtspConnection().apply {
@@ -1238,7 +1273,7 @@ internal class HtspProtocolGatewayTest {
         assertEquals("updated-owner", (events[4] as MetadataEvent.AutorecRuleUpdated).rule.owner)
         assertEquals("updated-creator", (events[4] as MetadataEvent.AutorecRuleUpdated).rule.creator)
         assertEquals(false, (events[4] as MetadataEvent.AutorecRuleUpdated).rule.enabled)
-        assertEquals(null, (events[4] as MetadataEvent.AutorecRuleUpdated).rule.title)
+        assertEquals("", (events[4] as MetadataEvent.AutorecRuleUpdated).rule.title)
         val timerecAdded = (events[6] as MetadataEvent.TimerecRuleAdded).rule
         assertEquals(0xffff_ffffL, timerecAdded.removalDays)
         assertEquals("test-owner", timerecAdded.owner)
@@ -1265,8 +1300,9 @@ internal class HtspProtocolGatewayTest {
         val fake = FakeHtspConnection().apply {
             eventsFlow = flowOf(
                 HtspTransportEvent.ServerMessage(
-                    HtspDvrEntryUpdateMessage(
+                    HtspDvrEntryStatsMessage(
                         entryId = 1,
+                        entryUuid = null,
                         state = "future-private-state",
                         subscriptionError = "future-private-error",
                     ),
@@ -1288,12 +1324,12 @@ internal class HtspProtocolGatewayTest {
         val fake = FakeHtspConnection().apply {
             eventsFlow = flowOf(
                 HtspTransportEvent.ServerMessage(
-                    HtspDvrEntryUpdateMessage(entryId = 1, state = "completed", error = "Aborted by user"),
+                    HtspDvrEntryStatsMessage(entryId = 1, entryUuid = null, state = "completed", error = "Aborted by user"),
                     generation,
                     1,
                 ),
                 HtspTransportEvent.ServerMessage(
-                    HtspDvrEntryUpdateMessage(entryId = 1, state = "completed", error = "other failure"),
+                    HtspDvrEntryStatsMessage(entryId = 1, entryUuid = null, state = "completed", error = "other failure"),
                     generation,
                     2,
                 ),
@@ -1310,18 +1346,20 @@ internal class HtspProtocolGatewayTest {
         val fake = FakeHtspConnection().apply {
             eventsFlow = flowOf(
                 HtspTransportEvent.ServerMessage(
-                    HtspDvrEntryAddMessage(
+                    HtspDvrEntryAddMessage(dvrFixture().copy(
                         entryId = 1,
                         state = "completed",
                         error = "none",
                         subscriptionError = "No service assigned to channel",
-                    ),
+                    )),
                     generation,
                     1,
                 ),
                 HtspTransportEvent.ServerMessage(
-                    HtspDvrEntryUpdateMessage(
+                    HtspDvrEntryStatsMessage(
                         entryId = 1,
+                        entryUuid = null,
+                        state = "completed",
                         error = "File missing",
                         subscriptionError = "Invalid service",
                     ),
@@ -1329,17 +1367,17 @@ internal class HtspProtocolGatewayTest {
                     2,
                 ),
                 HtspTransportEvent.ServerMessage(
-                    HtspDvrEntryUpdateMessage(entryId = 1, state = "invalid", subscriptionError = "noDiskSpace"),
+                    HtspDvrEntryStatsMessage(entryId = 1, entryUuid = null, state = "invalid", subscriptionError = "noDiskSpace"),
                     generation,
                     3,
                 ),
                 HtspTransportEvent.ServerMessage(
-                    HtspDvrEntryUpdateMessage(entryId = 1, subscriptionError = "noService"),
+                    HtspDvrEntryStatsMessage(entryId = 1, entryUuid = null, state = "invalid", subscriptionError = "noService"),
                     generation,
                     4,
                 ),
                 HtspTransportEvent.ServerMessage(
-                    HtspDvrEntryUpdateMessage(entryId = 1, subscriptionError = "invalidService"),
+                    HtspDvrEntryStatsMessage(entryId = 1, entryUuid = null, state = "invalid", subscriptionError = "invalidService"),
                     generation,
                     5,
                 ),
@@ -1352,7 +1390,7 @@ internal class HtspProtocolGatewayTest {
         assertEquals(GatewayDvrFailure.NONE, added.failure)
         assertEquals(DvrSubscriptionError.NO_SERVICE, added.subscriptionError)
         val updated = (events[1] as MetadataEvent.DvrEntryUpdated).entry
-        assertEquals(null, updated.state)
+        assertEquals(DvrEntryState.COMPLETED, updated.state)
         assertEquals(GatewayDvrFailure.FILE_MISSING, updated.failure)
         assertEquals(DvrSubscriptionError.INVALID_SERVICE, updated.subscriptionError)
         assertTrue(
@@ -2266,6 +2304,10 @@ internal class HtspProtocolGatewayTest {
         val fake = FakeHtspConnection().apply {
             liveConnectionValue.value = liveConnection(sourceGeneration)
             connectOutcome = HtspConnectOutcome.Connected(requireNotNull(liveConnectionValue.value))
+            eventsFlow = flowOf(
+                HtspTransportEvent.ServerMessage(HtspAutorecEntryAddMessage(autorecFixture().copy(id = "rule")), sourceGeneration, 1),
+                HtspTransportEvent.ServerMessage(HtspTimerecEntryAddMessage(timerecFixture()), sourceGeneration, 2),
+            )
         }
         val gateway = HtspProtocolGateway(fake)
         val generation = (gateway.connect(ServerConfiguration("host", 9_982))
@@ -2274,11 +2316,12 @@ internal class HtspProtocolGatewayTest {
         gateway.updateDvrEntry(generation, DvrEntryId(7), DvrEntryUpdate(title = "new"))
         assertEquals(UpdateDvrEntryRequest(entryId = 7, title = "new"), fake.lastRequest)
         fake.executeResult = HtspResult.Ok(UpdateAutorecEntryResponse)
+        gateway.metadata.toList()
         gateway.updateAutorecRule(generation, AutorecRuleId("rule"), AutorecRuleUpdate(title = "new"))
-        assertEquals(UpdateAutorecEntryRequest(id = "rule", title = "new"), fake.lastRequest)
+        assertEquals(UpdateAutorecEntryRequest(id = "rule", channel = HtspRecordingRuleChannel.Any, title = "new"), fake.lastRequest)
         fake.executeResult = HtspResult.Ok(UpdateTimerecEntryResponse)
         gateway.updateTimerecRule(generation, TimerecRuleId("time"), TimerecRuleUpdate(title = "new"))
-        assertEquals(UpdateTimerecEntryRequest(id = "time", title = "new"), fake.lastRequest)
+        assertEquals(UpdateTimerecEntryRequest(id = "time", channel = HtspRecordingRuleChannel.Any, title = "new"), fake.lastRequest)
 
         // An explicit caller choice is required to send even a server-default policy.
         fake.executeResult = HtspResult.Ok(UpdateAutorecEntryResponse)
@@ -2289,9 +2332,77 @@ internal class HtspProtocolGatewayTest {
             startWindowEndMinutesSinceMidnight = AutorecTime.At(LocalTime.MIDNIGHT),
         ))
         assertEquals(UpdateAutorecEntryRequest(
-            id = "rule", priority = 6, duplicateDetection = 15, broadcastType = 0, daysOfWeekMask = 0,
+            id = "rule", channel = HtspRecordingRuleChannel.Any, priority = 6, duplicateDetection = 15, broadcastType = 0, daysOfWeekMask = 0,
             startMinutesSinceMidnight = -1, startWindowEndMinutesSinceMidnight = 0,
         ), fake.lastRequest)
+    }
+
+    @Test
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun `rule updates preserve observed restrictions and never invent an unknown channel`() = runTest {
+        val source = HtspConnectionGeneration()
+        val messages = MutableSharedFlow<HtspTransportEvent>()
+        val fake = FakeHtspConnection().apply {
+            connectOutcome = HtspConnectOutcome.Connected(liveConnection(source))
+            eventsFlow = messages
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+        backgroundScope.launch(start = CoroutineStart.UNDISPATCHED) { gateway.metadata.collect {} }
+        val autoId = AutorecRuleId("auto")
+        val timeId = TimerecRuleId("time")
+        assertSame(GatewayResult.NotSupported, gateway.updateAutorecRule(generation, autoId, AutorecRuleUpdate(title = "next")))
+        assertSame(GatewayResult.NotSupported, gateway.updateTimerecRule(generation, timeId, TimerecRuleUpdate(title = "next")))
+        assertEquals(null, fake.lastRequest)
+
+        messages.emit(HtspTransportEvent.ServerMessage(
+            HtspAutorecEntryAddMessage(autorecFixture().copy(channelId = 7)), source, 1,
+        ))
+        messages.emit(HtspTransportEvent.ServerMessage(
+            HtspTimerecEntryUpdateMessage(timerecFixture().copy(channelId = 8)), source, 2,
+        ))
+        runCurrent()
+        fake.executeResult = HtspResult.Ok(UpdateAutorecEntryResponse)
+        assertTrue(gateway.updateAutorecRule(generation, autoId, AutorecRuleUpdate(title = "next")) is GatewayResult.Ok)
+        assertEquals(7L, ((fake.lastRequest as UpdateAutorecEntryRequest).channel as HtspRecordingRuleChannel.Id).channelId)
+        gateway.updateAutorecRule(generation, autoId, AutorecRuleUpdate(channel = RecordingRuleChannel.AllChannels))
+        gateway.updateAutorecRule(generation, autoId, AutorecRuleUpdate(title = "after clear"))
+        assertSame(HtspRecordingRuleChannel.Any, (fake.lastRequest as UpdateAutorecEntryRequest).channel)
+
+        fake.executeResult = HtspResult.Ok(UpdateTimerecEntryResponse)
+        assertTrue(gateway.updateTimerecRule(generation, timeId, TimerecRuleUpdate(title = "next")) is GatewayResult.Ok)
+        assertEquals(8L, ((fake.lastRequest as UpdateTimerecEntryRequest).channel as HtspRecordingRuleChannel.Id).channelId)
+        gateway.updateTimerecRule(generation, timeId, TimerecRuleUpdate(channel = RecordingRuleChannel.AllChannels))
+        gateway.updateTimerecRule(generation, timeId, TimerecRuleUpdate(title = "after clear"))
+        assertSame(HtspRecordingRuleChannel.Any, (fake.lastRequest as UpdateTimerecEntryRequest).channel)
+
+        messages.emit(HtspTransportEvent.ServerMessage(HtspAutorecEntryDeleteMessage("auto"), source, 3))
+        messages.emit(HtspTransportEvent.ServerMessage(HtspTimerecEntryDeleteMessage("time"), source, 4))
+        runCurrent()
+        fake.lastRequest = null
+        assertSame(GatewayResult.NotSupported, gateway.updateAutorecRule(generation, autoId, AutorecRuleUpdate(title = "next")))
+        assertSame(GatewayResult.NotSupported, gateway.updateTimerecRule(generation, timeId, TimerecRuleUpdate(title = "next")))
+        assertEquals(null, fake.lastRequest)
+
+        messages.emit(HtspTransportEvent.ServerMessage(
+            HtspTimerecEntryAddMessage(timerecFixture().copy(channelId = 8)), source, 5,
+        ))
+        runCurrent()
+        val replacement = HtspConnectionGeneration()
+        fake.connectOutcome = HtspConnectOutcome.Connected(liveConnection(replacement))
+        val next = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+        messages.emit(HtspTransportEvent.ServerMessage(
+            HtspTimerecEntryUpdateMessage(timerecFixture().copy(channelId = 9)), source, 6,
+        ))
+        runCurrent()
+        assertSame(GatewayResult.NotSupported, gateway.updateTimerecRule(next, timeId, TimerecRuleUpdate(title = "next")))
+        assertSame(GatewayResult.TransportUnavailable, gateway.updateTimerecRule(generation, timeId, TimerecRuleUpdate(title = "next")))
+        gateway.shutdown()
+        assertSame(HtspConnectionState.Closed, fake.connectionState.value)
+        assertSame(GatewayState.Disconnected, gateway.connectionState.value)
+        assertEquals(null, gateway.commitIfLive(next) { true })
     }
 
     @Test
@@ -2422,8 +2533,8 @@ internal class HtspProtocolGatewayTest {
         val addTimerec = fake.lastRequest as AddTimerecEntryRequest
         assertEquals(TimerecRuleId("private-timerec-id"), createdTimerec.value)
         assertSame(HtspRecordingRuleChannel.Any, addTimerec.channel)
-        assertEquals(60L, addTimerec.startMinutesSinceMidnight)
-        assertEquals(120L, addTimerec.stopMinutesSinceMidnight)
+        assertEquals(60, addTimerec.startMinutesSinceMidnight)
+        assertEquals(120, addTimerec.stopMinutesSinceMidnight)
         assertEquals("private-time-config", addTimerec.configName)
 
         fake.executeResult = HtspResult.Ok(UpdateTimerecEntryResponse)
@@ -2437,7 +2548,7 @@ internal class HtspProtocolGatewayTest {
         val updateTimerec = fake.lastRequest as UpdateTimerecEntryRequest
         assertEquals("private-timerec-id", updateTimerec.id)
         assertEquals("private-next-time", updateTimerec.title)
-        assertEquals(180L, updateTimerec.stopMinutesSinceMidnight)
+        assertEquals(180, updateTimerec.stopMinutesSinceMidnight)
 
         fake.executeResult = HtspResult.Ok(DeleteTimerecEntryResponse)
         assertTrue(
@@ -2453,24 +2564,24 @@ internal class HtspProtocolGatewayTest {
         val fake = FakeHtspConnection().apply {
             eventsFlow = flowOf(
                 HtspTransportEvent.ServerMessage(
-                    message = HtspTagAddMessage(tagId = 1),
+                    message = HtspTagAddMessage(tagFixture()),
                     generation = generation,
                     messageSequence = 1,
                 ),
                 HtspTransportEvent.ServerMessage(
-                    message = HtspTagAddMessage(tagId = 2, tagTitledIcon = 0),
+                    message = HtspTagAddMessage(tagFixture().copy(tagId = 2, tagTitledIcon = 0)),
                     generation = generation,
                     messageSequence = 2,
                 ),
                 HtspTransportEvent.ServerMessage(
-                    message = HtspTagAddMessage(tagId = 3, tagTitledIcon = 2),
+                    message = HtspTagAddMessage(tagFixture().copy(tagId = 3, tagTitledIcon = 2)),
                     generation = generation,
                     messageSequence = 3,
                 ),
             )
         }
         val events = HtspProtocolGateway(fake).metadata.toList()
-        assertEquals(null, (events[0] as MetadataEvent.TagAdded).tag.titledIcon)
+        assertEquals(false, (events[0] as MetadataEvent.TagAdded).tag.titledIcon)
         assertEquals(false, (events[1] as MetadataEvent.TagAdded).tag.titledIcon)
         assertEquals(true, (events[2] as MetadataEvent.TagAdded).tag.titledIcon)
     }
@@ -3418,7 +3529,6 @@ internal class HtspProtocolGatewayTest {
                             channelCount = null,
                             sampleRate = null,
                             rdsUecp = true,
-                            codecMetadata = HtspBinary(codecBytes),
                         ),
                         HtspSubscriptionStream(
                             streamIndex = 2,
@@ -3468,14 +3578,12 @@ internal class HtspProtocolGatewayTest {
                         satellitePosition = "secret orbital position",
                     ),
                     codecMetadata = HtspBinary(codecBytes),
-                    status = "private status",
-                    subscriptionError = null,
                 ),
             ),
             HtspSubscriptionEvent.Packet(
                 HtspMuxPacketMessage(
                     subscriptionId = 77,
-                    frameType = 73,
+                    frameType = HtspFrameType.I,
                     streamIndex = 1,
                     decodingTimeUs = 100,
                     presentationTimeUs = 110,
@@ -3548,7 +3656,6 @@ internal class HtspProtocolGatewayTest {
         )
 
         val started = events[0] as SubscriptionEvent.Started
-        assertEquals(SubscriptionCondition.STATUS_REPORTED, started.condition)
         assertEquals(SubscriptionStreamType.H264, started.streams?.get(0)?.type)
         assertEquals(4L, started.streams?.get(0)?.frameDuration)
         assertEquals(1L, started.streams?.get(0)?.rdsUecp)
@@ -3567,7 +3674,7 @@ internal class HtspProtocolGatewayTest {
             assertEquals("LiveSubscriptionSource(<redacted>)", toString())
         }
         val codecDestination = ByteArray(4) { -1 }
-        assertEquals(2, started.streams?.first()?.codecMetadata?.copyInto(codecDestination, 1))
+        assertEquals(2, started.codecMetadata?.copyInto(codecDestination, 1))
         assertArrayEquals(byteArrayOf(-1, 5, 6, -1), codecDestination)
 
         val packet = events[1] as SubscriptionEvent.Packet
@@ -3627,7 +3734,7 @@ internal class HtspProtocolGatewayTest {
         val packet = HtspSubscriptionEvent.Packet(
             HtspMuxPacketMessage(
                 subscriptionId = 77,
-                frameType = -1,
+                frameType = HtspFrameType.UNKNOWN,
                 streamIndex = 1,
                 decodingTimeUs = null,
                 presentationTimeUs = null,
@@ -3695,17 +3802,59 @@ internal class HtspProtocolGatewayTest {
     ): HtspLiveConnection =
         HtspLiveConnection(
             generation = generation,
-            protocolVersion = protocolVersion,
+            protocolVersion = protocolVersion?.toLong(),
             dvrAccess = true,
             serverFacts = HtspServerFacts(),
         )
 }
 
+private fun channelFixture(): HtspChannel = HtspChannel(
+    channelId = 1, channelUuid = null, channelNumber = 1, channelNumberMinor = null,
+    channelName = "Channel", channelIcon = null, currentEventId = 0, nextEventId = 0,
+    services = emptyList(), tagIds = emptyList(),
+)
+
+private fun tagFixture(): HtspTag = HtspTag(
+    tagId = 1, tagName = "Tag", tagUuid = null, tagIndex = 0, tagIcon = null,
+    tagTitledIcon = 0, channelIds = null,
+)
+
+private fun dvrFixture(): HtspDvrEntry = HtspDvrEntry(
+    entryId = 1, enabled = true, startEpochSeconds = 10, stopEpochSeconds = 20,
+    startExtraMinutes = 0, stopExtraMinutes = 0, retentionDays = 0, removalDays = 0,
+    priority = 0, contentType = 0, state = "scheduled",
+)
+
+private fun autorecFixture(): HtspAutorecEntry = HtspAutorecEntry(
+    id = "auto", enabled = true, maxDurationSeconds = 0, minDurationSeconds = 0,
+    retentionDays = 0, removalDays = 0, daysOfWeekMask = 127,
+    approximateStartMinutesSinceMidnight = null, startMinutesSinceMidnight = null,
+    startWindowEndMinutesSinceMidnight = null, priority = 0, startExtraMinutes = 0,
+    stopExtraMinutes = 0, duplicateDetection = 0, maximumRecordingCount = 0,
+)
+
+private fun timerecFixture(): HtspTimerecEntry = HtspTimerecEntry(
+    id = "time", enabled = true, startMinutesSinceMidnight = null, stopMinutesSinceMidnight = null,
+    daysOfWeekMask = 127, priority = 0, retentionDays = 0, removalDays = 0,
+)
+
 private class FakeHtspConnection : HtspConnection {
     internal val connectionStateValue = MutableStateFlow<HtspConnectionState>(
         HtspConnectionState.Disconnected,
     )
-    internal val liveConnectionValue = MutableStateFlow<HtspLiveConnection?>(null)
+    internal val liveConnectionValue = LiveValue()
+    internal inner class LiveValue {
+        var value: HtspLiveConnection? = null
+            set(value) {
+                field = value
+                val state = connectionStateValue.value as? HtspConnectionState.Connected
+                if (state != null) {
+                    connectionStateValue.value = value?.let {
+                        HtspConnectionState.Connected(state.host, state.port, it)
+                    } ?: HtspConnectionState.Disconnected
+                }
+            }
+    }
     internal var eventsFlow: Flow<HtspTransportEvent> = emptyFlow()
     internal var subscriptionFlow: Flow<HtspSubscriptionEvent> = emptyFlow()
     internal var connectOutcome: HtspConnectOutcome = HtspConnectOutcome.Failed(
@@ -3726,7 +3875,6 @@ private class FakeHtspConnection : HtspConnection {
     internal var closeCalls: Int = 0
 
     override val connectionState: MutableStateFlow<HtspConnectionState> = connectionStateValue
-    override val liveConnection: MutableStateFlow<HtspLiveConnection?> = liveConnectionValue
     override val events: Flow<HtspTransportEvent>
         get() = eventsFlow
 
@@ -3784,8 +3932,7 @@ private class FakeHtspConnection : HtspConnection {
             connectionStateValue.value = HtspConnectionState.Connected(
                 host = endpoint.host,
                 port = endpoint.port,
-                protocolVersion = live.protocolVersion,
-                dvrAccess = live.dvrAccess,
+                connection = live,
             )
         }
         return connectOutcome
@@ -3823,7 +3970,7 @@ private class FakeHtspConnection : HtspConnection {
             attempt += 1
             currentGeneration = HtspConnectionGeneration()
             liveConnectionValue.value = null
-            connectionStateValue.value = HtspConnectionState.Disconnected
+            connectionStateValue.value = HtspConnectionState.Closed
         }
         return accepted
     }

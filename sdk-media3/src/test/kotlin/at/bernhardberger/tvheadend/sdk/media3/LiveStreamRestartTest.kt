@@ -493,11 +493,9 @@ internal class LiveStreamRestartTest {
                 SubscriptionEvent.Started(
                     listOf(
                         SubscriptionStream(StreamIndex(0), SubscriptionStreamType.MPEG2_AUDIO, null, null, null, null, null,
-                            null, null, null, null, null, null, null, null, null),
+                            null, null, null, null, null, null, null, null),
                     ),
                     null,
-                    SubscriptionCondition.ERROR_REPORTED,
-                    SubscriptionIssue.BAD_SIGNAL,
                 ),
             )
             harness.audio(0, 10_000_000)
@@ -509,7 +507,7 @@ internal class LiveStreamRestartTest {
                     null,
                     SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN,
                     SubscriptionIssue.NO_FREE_ADAPTER,
-                    SubscriptionIssue.BAD_SIGNAL,
+                    null,
                 ),
                 harness.observedIssues,
             )
@@ -541,11 +539,9 @@ internal class LiveStreamRestartTest {
                 SubscriptionEvent.Started(
                     listOf(
                         SubscriptionStream(StreamIndex(0), SubscriptionStreamType.MPEG2_AUDIO, null, null, null, null, null,
-                            null, null, null, null, null, null, null, null, null),
+                            null, null, null, null, null, null, null, null),
                     ),
                     null,
-                    SubscriptionCondition.ERROR_REPORTED,
-                    SubscriptionIssue.BAD_SIGNAL,
                 ),
             )
             harness.flush()
@@ -555,7 +551,7 @@ internal class LiveStreamRestartTest {
                     SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN,
                     null,
                     SubscriptionIssue.SUBSCRIPTION_OVERRIDDEN,
-                    SubscriptionIssue.BAD_SIGNAL,
+                    null,
                 ),
                 harness.observedIssues,
             )
@@ -1021,8 +1017,8 @@ internal class RestartSourceHarness(
 
     suspend fun started(vararg types: SubscriptionStreamType) = emit(SubscriptionEvent.Started(types.mapIndexed { index, type ->
         SubscriptionStream(StreamIndex(index.toLong()), type, null, null, null, null, null,
-            null, null, null, null, null, null, null, null, null)
-    }, null, SubscriptionCondition.NO_DETAIL))
+            null, null, null, null, null, null, null, null)
+    }, null))
 
     suspend fun stop() = emit(SubscriptionEvent.Stopped(SubscriptionCondition.NO_DETAIL))
     suspend fun audio(index: Long, timeUs: Long = 1_000_000) = packet(index, timeUs, fixture("mpeg-audio.bin"))

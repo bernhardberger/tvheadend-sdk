@@ -53,8 +53,6 @@ internal class LiveSubscriptionDiagnosticsTest {
             event = SubscriptionEvent.Started(
                 streams = emptyList(),
                 codecMetadata = null,
-                condition = SubscriptionCondition.NO_DETAIL,
-                issue = null,
                 source = source,
             ),
         )
@@ -318,7 +316,6 @@ internal class LiveSubscriptionDiagnosticsTest {
             SubscriptionEvent.Started(
                 streams = null,
                 codecMetadata = null,
-                condition = SubscriptionCondition.NO_DETAIL,
             ),
         )
         assertNull(restarted)

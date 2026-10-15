@@ -137,8 +137,8 @@ internal class Media3SampleQueueInstrumentationTest {
                 if (epoch > 0) connection.emit(SubscriptionEvent.Stopped(SubscriptionCondition.NO_DETAIL))
                 connection.emit(SubscriptionEvent.Started(listOf(
                     SubscriptionStream(StreamIndex(0), SubscriptionStreamType.MPEG2_AUDIO,
-                        null, null, null, null, null, null, null, null, null, null, null, null, null, null),
-                ), null, SubscriptionCondition.NO_DETAIL))
+                        null, null, null, null, null, null, null, null, null, null, null, null, null),
+                ), null))
                 repeat(128) { sample ->
                     val time = 9_000_000_000L + epoch * 10_000_000L + sample * 24_000L
                     connection.emit(SubscriptionEvent.Packet(MuxFrameType.UNKNOWN, StreamIndex(0),
@@ -344,7 +344,7 @@ internal class Media3SampleQueueInstrumentationTest {
                 ))
             }
             val registration = withTimeout(10_000) { connection.awaitCollectionRegistered() }
-            connection.emit(registration, SubscriptionEvent.Started(channel.streams, null, SubscriptionCondition.NO_DETAIL))
+            connection.emit(registration, SubscriptionEvent.Started(channel.streams, null))
             initialPackets.forEach { connection.emit(registration, it) }
             awaitCondition("Initial frame", { frames.get() > 0 })
             if (finitePaused) {
@@ -535,7 +535,7 @@ internal class Media3SampleQueueInstrumentationTest {
                 connection.emit(registration, rawPackets.first().toEvent(assets))
                 delay(300)
                 assertEquals("Retired subscription cannot render into replacement", beforeLateFrames, frames.get())
-                connection.emit(replacement, SubscriptionEvent.Started(channel.streams, null, SubscriptionCondition.NO_DETAIL))
+                connection.emit(replacement, SubscriptionEvent.Started(channel.streams, null))
                 initialPackets.forEach { connection.emit(replacement, it) }
                 awaitCondition("Replacement owns new rendered frame", { frames.get() > beforeLateFrames })
                 val unsubscribesBeforeRelease = connection.unsubscribeCount
@@ -790,7 +790,6 @@ internal class Media3SampleQueueInstrumentationTest {
                     SubscriptionEvent.Started(
                         listOf(syntheticDvbStream()),
                         null,
-                        SubscriptionCondition.NO_DETAIL,
                     ),
                 )
                 registered
@@ -984,7 +983,7 @@ internal class Media3SampleQueueInstrumentationTest {
                 val registration = withTimeout(10_000L) { connection.awaitCollectionRegistered() }
                 connection.emit(
                     registration,
-                    SubscriptionEvent.Started(channel.streams, null, SubscriptionCondition.NO_DETAIL),
+                    SubscriptionEvent.Started(channel.streams, null),
                 )
                 channel.packets.forEach { packet -> connection.emit(registration, packet.toEvent(assets)) }
             }
@@ -1295,7 +1294,6 @@ private fun JSONObject.toStream(): SubscriptionStream = SubscriptionStream(
     channelCount = null,
     rate = nullableLong("rate"),
     rdsUecp = null,
-    codecMetadata = null,
 )
 
 private fun JSONObject.toPacket(): CapturedPacket = CapturedPacket(
@@ -1339,7 +1337,6 @@ private fun syntheticDvbStream(): SubscriptionStream = SubscriptionStream(
     channelCount = null,
     rate = null,
     rdsUecp = null,
-    codecMetadata = null,
 )
 
 private fun syntheticDvbSubtitleSegments(): ByteArray = byteArrayOf(

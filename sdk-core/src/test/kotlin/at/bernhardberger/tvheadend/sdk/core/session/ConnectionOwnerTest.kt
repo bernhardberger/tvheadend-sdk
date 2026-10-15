@@ -2206,7 +2206,7 @@ private fun connected(
 ): GatewayConnectResult.Connected = GatewayConnectResult.Connected(
     GatewayConnection(
         generation = generation,
-        protocolVersion = protocolVersion,
+        protocolVersion = protocolVersion?.toLong(),
         dvrAccess = dvrAccess,
         serverFacts = GatewayServerFacts(
             serverName = null,

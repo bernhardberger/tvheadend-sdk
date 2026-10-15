@@ -628,7 +628,6 @@ class ActualElementaryStreamReaderFixtureTest {
         channelCount = null,
         rate = 3L,
         rdsUecp = null,
-        codecMetadata = null,
     )
 }
 

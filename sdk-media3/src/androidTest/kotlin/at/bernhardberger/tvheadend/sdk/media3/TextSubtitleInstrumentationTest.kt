@@ -116,5 +116,4 @@ private fun textStream(): SubscriptionStream = SubscriptionStream(
     channelCount = null,
     rate = null,
     rdsUecp = null,
-    codecMetadata = null,
 )

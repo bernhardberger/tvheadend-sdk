@@ -400,7 +400,7 @@ internal class GatewayDvrEntry(
 }
 
 internal class GatewayDvrRecordingFile(
-    internal val fileId: Long?,
+    internal val fileId: Long? = null,
     internal val path: String?,
     internal val start: Instant?,
     internal val stop: Instant?,

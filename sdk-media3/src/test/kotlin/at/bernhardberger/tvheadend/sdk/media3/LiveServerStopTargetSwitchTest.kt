@@ -180,10 +180,9 @@ private class ScriptedLiveChannel(private val scope: TestScope) : CoordinatorLiv
         SubscriptionEvent.Started(
             listOf(
                 SubscriptionStream(StreamIndex(0), SubscriptionStreamType.MPEG2_AUDIO, null, null, null, null, null,
-                    null, null, null, null, null, null, null, null, null),
+                    null, null, null, null, null, null, null, null),
             ),
             null,
-            SubscriptionCondition.NO_DETAIL,
         ),
     )
 

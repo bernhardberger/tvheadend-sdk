@@ -240,7 +240,6 @@ class TextSubtitleReaderTest {
         channelCount = null,
         rate = null,
         rdsUecp = null,
-        codecMetadata = null,
     )
 
     private fun page(bytes: ByteArray, presentationTimeUs: Long?) = SubscriptionEvent.Packet(

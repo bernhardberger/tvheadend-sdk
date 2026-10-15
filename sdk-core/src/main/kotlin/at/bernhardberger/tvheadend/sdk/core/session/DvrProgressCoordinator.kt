@@ -23,7 +23,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
 internal interface DvrProgressLifecycle {
-    public fun bindGeneration(generation: GatewayGeneration, protocolVersion: Int?)
+    public fun bindGeneration(generation: GatewayGeneration, protocolVersion: Long?)
 
     public fun startAdmission(generation: GatewayGeneration): Boolean
 
@@ -31,7 +31,7 @@ internal interface DvrProgressLifecycle {
     public fun stopAdmission(connectionRetired: Boolean = false)
 
     public data object None : DvrProgressLifecycle {
-        override fun bindGeneration(generation: GatewayGeneration, protocolVersion: Int?) = Unit
+        override fun bindGeneration(generation: GatewayGeneration, protocolVersion: Long?) = Unit
 
         override fun startAdmission(generation: GatewayGeneration): Boolean = true
 
@@ -53,7 +53,7 @@ internal class DvrProgressCoordinator(
     private var notSupported = false
     private var cutpointsNotSupported = false
 
-    override fun bindGeneration(generation: GatewayGeneration, protocolVersion: Int?) {
+    override fun bindGeneration(generation: GatewayGeneration, protocolVersion: Long?) {
         synchronized(lock) {
             admitted = false
             stoppedFailure = null

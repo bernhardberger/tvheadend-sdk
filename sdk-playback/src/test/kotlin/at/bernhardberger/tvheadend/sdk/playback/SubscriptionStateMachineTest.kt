@@ -1501,7 +1501,7 @@ class SubscriptionStateMachineTest {
         val binary = CountingBinary(byteArrayOf(1, 2, 3))
         val connection = RecordingSubscriptionConnection()
         val received = ArrayList<SubscriptionEvent>()
-        val sourceStreams = arrayListOf(stream(codecMetadata = binary))
+        val sourceStreams = arrayListOf(stream())
         val started = started(*sourceStreams.toTypedArray())
         sourceStreams.clear()
         val manager = manager(connection)

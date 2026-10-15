@@ -1772,7 +1772,6 @@ private class SubscriptionGateway : ProtocolGateway {
             SubscriptionEvent.Started(
                 streams = listOf(stream()),
                 codecMetadata = null,
-                condition = SubscriptionCondition.NO_DETAIL,
             ),
         )
     }
@@ -1952,5 +1951,4 @@ private fun stream(): SubscriptionStream = SubscriptionStream(
     channelCount = null,
     rate = null,
     rdsUecp = null,
-    codecMetadata = null,
 )
