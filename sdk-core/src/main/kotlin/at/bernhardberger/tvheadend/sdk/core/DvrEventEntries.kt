@@ -6,7 +6,7 @@ import java.util.Collections
 /** Ranked, explicitly linked DVR entries from one immutable [SessionObservation]. */
 @ExperimentalTvheadendApi
 public class DvrEventEntries private constructor(
-    /** The same entry returned by [SessionObservation.dvrEntryForEvent]. */
+    /** The same entry returned by the matching `SessionObservation.dvrEntryForEvent` overload. */
     public val selected: DvrEntry,
     otherActive: List<DvrEntry>,
 ) {

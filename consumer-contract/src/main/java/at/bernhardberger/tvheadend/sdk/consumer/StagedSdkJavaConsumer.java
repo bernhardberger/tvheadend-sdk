@@ -162,6 +162,17 @@ public final class StagedSdkJavaConsumer {
     }
 
     @kotlin.OptIn(markerClass = ExperimentalTvheadendApi.class)
+    public static DvrEventEntries heldProgrammeRecordings(SessionObservation observation, EpgEvent event) {
+        // EpgEvent overloads are directly callable; only the EventId overloads need a Kotlin bridge.
+        return observation.dvrEntriesForEvent(event);
+    }
+
+    @kotlin.OptIn(markerClass = ExperimentalTvheadendApi.class)
+    public static DvrEntry heldProgrammeRecording(SessionObservation observation, EpgEvent event) {
+        return observation.dvrEntryForEvent(event);
+    }
+
+    @kotlin.OptIn(markerClass = ExperimentalTvheadendApi.class)
     public static Long timerecRemovalDays(at.bernhardberger.tvheadend.sdk.core.TimerecRule rule) {
         return rule.getRemovalDays();
     }

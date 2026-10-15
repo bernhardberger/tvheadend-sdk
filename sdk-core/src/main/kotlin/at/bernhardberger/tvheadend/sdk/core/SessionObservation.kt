@@ -127,16 +127,41 @@ public class SessionObservation private constructor(
      * Returns null for an unknown or ambiguous event ID, when no linked entry exists,
      * or when matched entries are ambiguous because they contain duplicate DVR entry IDs.
      */
-    public fun dvrEntryForEvent(eventId: EventId): DvrEntry? = rankedDvrEntriesForEvent(eventId).firstOrNull()
+    public fun dvrEntryForEvent(eventId: EventId): DvrEntry? =
+        event(eventId)?.let { rankedDvrEntriesForEvent(it).firstOrNull() }
 
     /**
-     * Returns the [dvrEntryForEvent] selection and the remaining linked scheduled or recording
-     * entries, including recording errors, in the same rank order. Null has the same meaning as
-     * for [dvrEntryForEvent]. Only explicit event/entry links participate, not time-window matches.
+     * Ranks entries for a held [event], including query results and historical programmes absent
+     * from this observation's EPG snapshot, using the same order as the event-ID selector.
+     * Only explicit links participate: entry event ID or the held event's DVR entry ID.
+     * The held event's [EpgEvent.dvrEntryId] is used as given and may be stale. Event and DVR entry
+     * IDs are server-scoped: the held event must come from this observation's server profile, so
+     * drop held events on profile switch.
+     * Returns null when no entries match or matched DVR entry IDs are ambiguous.
      */
     @ExperimentalTvheadendApi
-    public fun dvrEntriesForEvent(eventId: EventId): DvrEventEntries? {
-        val ranked = rankedDvrEntriesForEvent(eventId)
+    public fun dvrEntryForEvent(event: EpgEvent): DvrEntry? = rankedDvrEntriesForEvent(event).firstOrNull()
+
+    /**
+     * Returns the event-ID `dvrEntryForEvent` selection and the remaining linked scheduled or
+     * recording entries, including recording errors, in the same rank order. Null has the same
+     * meaning as for the event-ID `dvrEntryForEvent` overload. Only explicit event/entry links participate, not time-window matches.
+     */
+    @ExperimentalTvheadendApi
+    public fun dvrEntriesForEvent(eventId: EventId): DvrEventEntries? =
+        event(eventId)?.let { dvrEntriesForEvent(it) }
+
+    /**
+     * Returns the held-event selection plus the remaining active entries in the same rank order.
+     * The [event] is used as given without an EPG snapshot lookup; its [EpgEvent.dvrEntryId] may
+     * be stale. The held event must come from this observation's server profile because event and
+     * DVR entry IDs are server-scoped. Matching uses only explicit links. Returns null when no
+     * entries match or matched DVR entry IDs are ambiguous, just like the held-event
+     * `dvrEntryForEvent` overload.
+     */
+    @ExperimentalTvheadendApi
+    public fun dvrEntriesForEvent(event: EpgEvent): DvrEventEntries? {
+        val ranked = rankedDvrEntriesForEvent(event)
         val selected = ranked.firstOrNull() ?: return null
         return DvrEventEntries.create(selected, ranked.drop(1).filter { entry ->
             entry.state == DvrEntryState.SCHEDULED || entry.state == DvrEntryState.RECORDING ||
@@ -144,11 +169,10 @@ public class SessionObservation private constructor(
         })
     }
 
-    private fun rankedDvrEntriesForEvent(eventId: EventId): List<DvrEntry> {
+    private fun rankedDvrEntriesForEvent(event: EpgEvent): List<DvrEntry> {
         val entries = dvrSnapshotForDisplay?.entries ?: return emptyList()
-        val event = event(eventId) ?: return emptyList()
         val matched = entries.filter { entry ->
-            entry.eventId == eventId || event.dvrEntryId == entry.id
+            entry.eventId == event.id || event.dvrEntryId == entry.id
         }
         if (matched.map { it.id }.toSet().size != matched.size) return emptyList()
         val ranking = compareByDescending<DvrEntry> { entry ->

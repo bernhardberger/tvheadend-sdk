@@ -6,6 +6,9 @@ Unreleased; development target.
 
 ### Added
 
+- Experimental held-`EpgEvent` overloads of `dvrEntryForEvent` and `dvrEntriesForEvent`
+  rank explicit recording links for search results and historical programmes outside
+  the observation's EPG snapshot, using the held event's potentially stale DVR link.
 - Experimental `SessionObservation.dvrEntriesForEvent` returns `DvrEventEntries`:
   the same ranked `selected` entry as `dvrEntryForEvent`, plus an immutable
   `otherActive` list of remaining scheduled/recording entries (including recording

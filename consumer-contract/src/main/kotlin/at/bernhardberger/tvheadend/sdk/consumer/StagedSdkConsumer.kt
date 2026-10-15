@@ -168,6 +168,12 @@ public fun dvrRejectionText(result: DvrMutationResult.Failed): String? = result.
 public fun programmeRecordings(observation: SessionObservation, eventId: Long): DvrEventEntries? =
     observation.dvrEntriesForEvent(EventId(eventId))
 
+public fun heldProgrammeRecordings(observation: SessionObservation, event: EpgEvent): DvrEventEntries? =
+    observation.dvrEntriesForEvent(event)
+
+public fun heldProgrammeRecording(observation: SessionObservation, event: EpgEvent): DvrEntry? =
+    observation.dvrEntryForEvent(event)
+
 public fun programmeRecordingTargets(observation: SessionObservation, eventId: Long): List<DvrEntry> =
     programmeRecordings(observation, eventId)?.let { listOf(it.selected) + it.otherActive }.orEmpty()
 

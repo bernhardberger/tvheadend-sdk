@@ -2211,8 +2211,10 @@ public final class at/bernhardberger/tvheadend/sdk/core/SessionObservation {
 	public final fun channel-9w0kQQ0 (J)Lat/bernhardberger/tvheadend/sdk/core/Channel;
 	public final fun channels (Ljava/util/Set;)Ljava/util/List;
 	public final fun coverage-9w0kQQ0 (J)Lat/bernhardberger/tvheadend/sdk/core/EpgCoverage;
+	public final fun dvrEntriesForEvent (Lat/bernhardberger/tvheadend/sdk/core/EpgEvent;)Lat/bernhardberger/tvheadend/sdk/core/DvrEventEntries;
 	public final fun dvrEntriesForEvent-eg3kBS8 (J)Lat/bernhardberger/tvheadend/sdk/core/DvrEventEntries;
 	public final fun dvrEntry-lyT0IZA (J)Lat/bernhardberger/tvheadend/sdk/core/DvrEntry;
+	public final fun dvrEntryForEvent (Lat/bernhardberger/tvheadend/sdk/core/EpgEvent;)Lat/bernhardberger/tvheadend/sdk/core/DvrEntry;
 	public final fun dvrEntryForEvent-eg3kBS8 (J)Lat/bernhardberger/tvheadend/sdk/core/DvrEntry;
 	public final fun epgEventForDvrEntry-lyT0IZA (J)Lat/bernhardberger/tvheadend/sdk/core/EpgEvent;
 	public fun equals (Ljava/lang/Object;)Z

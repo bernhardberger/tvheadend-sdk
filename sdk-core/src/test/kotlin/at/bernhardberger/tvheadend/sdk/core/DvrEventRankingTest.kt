@@ -16,6 +16,53 @@ import kotlin.time.Instant
 
 internal class DvrEventRankingTest {
     @Test
+    fun `held search and historical events absent from snapshot match either explicit link`() {
+        val searchResult = EpgEvent.create(
+            EventId(88), start = Instant.parse("2030-01-01T12:00:00Z"), stop = Instant.parse("2030-01-01T13:00:00Z"),
+        )
+        val historical = EpgEvent.create(
+            EventId(89), start = Instant.parse("2000-01-01T12:00:00Z"), stop = Instant.parse("2000-01-01T13:00:00Z"),
+        )
+        for (event in listOf(searchResult, historical)) {
+            val byEvent = DvrEntry.create(DvrEntryId(1), eventId = event.id, state = DvrEntryState.RECORDING)
+            val byEntry = DvrEntry.create(DvrEntryId(2), state = DvrEntryState.SCHEDULED)
+            val linked = EpgEvent.create(event.id, start = event.start, stop = event.stop, dvrEntryId = byEntry.id)
+            for ((held, entry) in listOf(event to byEvent, linked to byEntry)) {
+                val observed = observation(listOf(entry))
+                assertNull(observed.event(held.id))
+                assertNull(observed.dvrEntryForEvent(held.id))
+                assertNull(observed.dvrEntriesForEvent(held.id))
+                assertSame(entry, observed.dvrEntryForEvent(held))
+                val result = requireNotNull(observed.dvrEntriesForEvent(held))
+                assertSame(entry, result.selected)
+                assertEquals(emptyList<DvrEntry>(), result.otherActive)
+            }
+        }
+    }
+
+    @Test
+    fun `held event uses its own link and rejects absent and ambiguous entry matches`() {
+        val older = entry(1, DvrEntryState.SCHEDULED, stop = 20)
+        val newer = entry(2, DvrEntryState.SCHEDULED, stop = 30)
+        val observed = observation(listOf(newer, older), link = newer.id)
+        val held = EpgEvent.create(
+            EventId(10), start = Instant.fromEpochSeconds(10), stop = Instant.fromEpochSeconds(20), dvrEntryId = older.id,
+        )
+        assertSame(newer, observed.dvrEntryForEvent(held.id))
+        assertSame(older, observed.dvrEntryForEvent(held))
+        assertEquals(listOf(newer), observed.dvrEntriesForEvent(held)?.otherActive)
+        val unlinked = DvrEntry.create(older.id, start = held.start, stop = held.stop)
+        for (unmatched in listOf(observation(emptyList()), observation(listOf(unlinked)))) {
+            val noLink = EpgEvent.create(held.id, start = held.start, stop = held.stop)
+            assertNull(unmatched.dvrEntryForEvent(noLink))
+            assertNull(unmatched.dvrEntriesForEvent(noLink))
+        }
+        val ambiguous = observation(listOf(older, newer, newer))
+        assertNull(ambiguous.dvrEntryForEvent(held))
+        assertNull(ambiguous.dvrEntriesForEvent(held))
+    }
+
+    @Test
     fun `other active entries preserve link and stop tie breaks within each state tier`() {
         val scheduledOlder = entry(1, DvrEntryState.SCHEDULED, stop = 20, owner = "test-account")
         val scheduledNewer = entry(2, DvrEntryState.SCHEDULED, stop = 30, owner = "test-account")
@@ -34,6 +81,9 @@ internal class DvrEventRankingTest {
                 val result = requireNotNull(observed.dvrEntriesForEvent(EventId(10)))
                 assertSame(expected.first(), result.selected)
                 assertEquals(expected.drop(1), result.otherActive)
+                val held = requireNotNull(observed.event(EventId(10)))
+                assertSame(observed.dvrEntryForEvent(held.id), observed.dvrEntryForEvent(held))
+                assertEquals(result, observed.dvrEntriesForEvent(held))
             }
         }
     }
@@ -55,6 +105,9 @@ internal class DvrEventRankingTest {
                 if (username == null) listOf(recordingError, scheduled) else listOf(recording, recordingError, scheduled),
                 ranked.otherActive,
             )
+            val held = requireNotNull(observed.event(EventId(10)))
+            assertSame(ranked.selected, observed.dvrEntryForEvent(held))
+            assertEquals(ranked, observed.dvrEntriesForEvent(held))
         }
     }
 

@@ -271,6 +271,7 @@ Use observation point selectors when selecting related entities:
 | `nextEvent(channelId, instant)` | The linked or deterministically timed next event |
 | `dvrEntry(id)` | One current or retained DVR entry |
 | `dvrEntryForEvent(eventId)` | The highest-ranked recording linked to an event |
+| `dvrEntryForEvent(event)` / `dvrEntriesForEvent(event)` | Experimental ranking for a held EPG event, including search results and historical programmes |
 | `epgEventForDvrEntry(entryId)` | The unique event linked to a recording |
 
 `dvrEntryForEvent` ranks matches lexicographically: entries owned by the session's
@@ -288,6 +289,14 @@ With `@OptIn(ExperimentalTvheadendApi::class)`, `dvrEntriesForEvent(eventId)` re
 list of remaining SCHEDULED/RECORDING/RECORDING_ERROR matches in rank order.
 It returns null exactly when `dvrEntryForEvent` does. This lets consumers identify
 the selected target and any other active entries before a mutation.
+
+The experimental `EpgEvent` overloads use the supplied event without looking it up
+in the observation's EPG snapshot. They match only explicit entry/event links and
+use the held event's `dvrEntryId` as given, even if stale. Ranking and duplicate-entry
+ambiguity rules are identical to the ID overloads; the ID overloads still require
+a unique event in the observation's snapshot. Event and DVR entry IDs are
+server-scoped: pass only events obtained from the same server profile, and drop
+held search or history results when the profile changes.
 
 `Channel.tagIds` and `ChannelTag.channelIds` expose catalog membership. Entity
 lists are immutable and preserve SDK catalog order. Presentation filtering,
