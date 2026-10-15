@@ -158,8 +158,9 @@ cycle, but must state the reason and replacement in their `BREAKING` entry.
 An HTSP dependency major normally requires only an SDK minor. HTSP is an
 implementation dependency and its types do not appear in SDK public signatures.
 If the upgrade breaks the SDK's stable public contract, it requires an SDK major
-(`docs/roadmap.md:77-80`). The current dependency is **1.0.0-beta.1**; SDK 1.0 must
-pin HTSP **1.0 final** (`gradle/libs.versions.toml:13`; `docs/roadmap.md:128`).
+(see [roadmap](roadmap.md)). The current dependency pin is recorded in
+[`gradle/libs.versions.toml`](../gradle/libs.versions.toml); SDK 1.0 must pin
+HTSP **1.0 final** (see [roadmap](roadmap.md)).
 
 Mark every known incompatibility `BREAKING`, including permitted minor changes
 and excluded call forms affected by an API change. State the affected tier,

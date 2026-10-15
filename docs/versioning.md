@@ -35,7 +35,12 @@ must never be replaced.
 While the major version is zero, the public API and behavior are provisional.
 No source, binary, or behavioral compatibility is promised for the provisional
 0.x line. A known breaking change requires the next minor version, not a patch
-version. Patch versions are reserved for backward-compatible fixes. The `0.24.0`
+version. Patch versions are reserved for backward-compatible fixes. The `0.30.0`
+development cycle adopts the HTSP entity model; the current HTSP pin is recorded in
+[`gradle/libs.versions.toml`](../gradle/libs.versions.toml). Local verification of
+an unreleased HTSP candidate uses the opt-in repository described in
+[offline verification](offline-verification.md#staged-consumer-and-r8).
+The `0.24.0`
 minor moves `sdk-core` to the `at.bernhardberger.tvheadend:htsp` 1.0.0-beta.1
 runtime, raises the Android minSdk to 28 and compileSdk to 37, and stops bundling
 the Media3 FFmpeg audio decoder. It widens `ServerCapabilities` limits to `Long?`,

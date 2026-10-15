@@ -102,11 +102,12 @@ session readiness. JVM tests can use `FakeServerProfileStore` to script stored,
 missing, and unavailable behavior without Android `Context` or Android runtime
 internals.
 
-This branch pins `at.bernhardberger.tvheadend:htsp:1.0.0-beta.2-entity-model-SNAPSHOT`.
-The main build uses source substitution with `-Ptvheadend.htsp.composite=true`
-across adjacent checkouts. For the `consumer-contract` build, resolve the staged
-candidate with `-Ptvheadend.htsp.candidateRepository=/absolute/path/to/candidate-maven`.
-The main build's dependency-verification trust is not configured for this candidate.
+The pinned `at.bernhardberger.tvheadend:htsp` version is recorded in
+[`gradle/libs.versions.toml`](gradle/libs.versions.toml). Local source substitution
+across adjacent checkouts is opt-in with `-Ptvheadend.htsp.composite=true`.
+To verify an unreleased HTSP candidate in the `consumer-contract` build, use
+`-Ptvheadend.htsp.candidateRepository=/absolute/path/to/candidate-maven`.
+Candidate verification does not establish dependency-verification trust for a release.
 The candidate repository is exclusive to HTSP and enabled only by the property;
 CI and release resolution do not add it automatically. See
 [staged consumer verification](docs/offline-verification.md#staged-consumer-and-r8).
