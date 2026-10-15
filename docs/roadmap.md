@@ -219,6 +219,17 @@ experimental opt-in; see the [0.27 design note](consumer-gaps-0.27.md).
 0.28.0 was released on 2026-10-14. Programme credits (cast and crew) ship
 as experimental EPG metadata.
 
+### 0.29: DVR feedback and ranked lookups (released)
+
+0.29.0 was released on 2026-10-15. It adds display-only DVR rejection feedback,
+ranked recording lookups, and experimental ownership metadata.
+
+### 0.30: HTSP entity model (development target)
+
+0.30.0 is unreleased. It adopts full-entity replacement and explicit sparse patches,
+removes unsupported subscription fields and unreachable session failures, and
+preserves DVR configurations during edits. See the changelog for consumer migration.
+
 ### Next 0.x minors: player-driven gaps
 
 The owner decided on 2026-10-12 not to start the 1.0 track yet. 0.x minors

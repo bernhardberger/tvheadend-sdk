@@ -1,6 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [0.30.0]
+
+Unreleased; development target.
 
 ### Changed
 
@@ -13,22 +15,24 @@
   `SubscriptionEvent.Started.condition` / `issue` and per-stream
   `SubscriptionStream.codecMetadata`, which have no corresponding server fields.
   Subscription status events still carry issues; top-level start codec metadata
-  remains available.
-- Share entity mapping across add/update notifications and EPG request replies;
+  remains available. Recompile adapters and fakes: `Started` constructor signatures
+  and `SubscriptionStream` constructor/copy signatures change; its `component16`
+  is removed.
+- BREAKING: share entity mapping across add/update notifications and EPG request replies;
   use atomic connected-state snapshots, Long protocol versions and typed frame kinds.
   Removed HTSP event genre/episode/series IDs and recording-file IDs are no longer
   mapped; their existing nullable SDK fields remain absent for wire-sourced data.
-- Preserve rule-update null-as-unchanged channel semantics using the current
+- BREAKING: preserve rule-update null-as-unchanged channel semantics using the current
   generation's observed restriction. Updates with an unknown restriction return
   `OBSERVATION_EXPIRED` with `mayHaveApplied = false`; refresh the observation and
   retry. Explicit all-channels clears it.
-- Full channel, tag, EPG, DVR-entry and recording-rule notifications now replace
+- BREAKING: full channel, tag, EPG, DVR-entry and recording-rule notifications now replace
   stored entities, including inserting previously unseen IDs. Optional server
   values that are cleared now also clear in SDK snapshots. Omitted tag membership
   alone retains known members; an empty member list clears them.
-- Channel now/next and DVR-statistics notifications explicitly patch only their
+- BREAKING: channel now/next and DVR-statistics notifications explicitly patch only their
   own fields; patches for unknown IDs are ignored.
-- Skipped malformed metadata no longer prevents initial synchronization from
+- BREAKING: skipped malformed metadata no longer prevents initial synchronization from
   reaching Ready; pre-sync and post-sync reports both allow later updates to
   continue without resync. Malformed acknowledgements still fail with
   `MALFORMED_RESPONSE` and require explicit retry; metadata overflow still
@@ -36,17 +40,16 @@
 
 ### Fixed
 
-- DVR-entry edits now resolve explicit config UUIDs in every state, and implicit
+- BREAKING: DVR-entry edits now resolve explicit config UUIDs in every state, and implicit
   observed config UUIDs for scheduled entries, to unique visible config names.
   `updateEntry` can now fail with `OBSERVATION_EXPIRED` or a config-lookup failure
   where it previously sent the update and the server silently moved the recording
   to the default config. These failures stop before the update with `mayHaveApplied=false`.
   Server ACL config-list rewriting and a rename between lookup and update can
   still cause default fallback; these server limitations are documented.
-- DVR statistics now clear omitted failure, subscriptionError, streamErrors and
+- BREAKING: DVR statistics now clear omitted failure, subscriptionError, streamErrors and
   dataErrors; EPG updates without timing are no longer assembled into events;
   playPosition and playCount clear when the server omits them.
-
 - Rule mutation replies no longer overwrite newer server channel restrictions or
   resurrect deleted rules in the connection-local cache. Immediate follow-up
   updates still preserve successful local changes before metadata arrives.
