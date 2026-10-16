@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Avoid redundant background EPG queries for channels covered by the completed
+  initial sync, without changing explicit coverage acquisition or public coverage.
+
 ## [0.30.0]
 
 Released 2026-10-15.

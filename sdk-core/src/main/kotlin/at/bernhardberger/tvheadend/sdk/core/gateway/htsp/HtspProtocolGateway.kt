@@ -224,6 +224,8 @@ internal class HtspProtocolGateway internal constructor(
     // Never suspend or invoke library lifecycle operations while holding this monitor.
     private val generationLock = Any()
     private var currentLive: HtspLiveConnection? = null
+    private var initialEpgThrough: Instant? = null
+    private var initialEpgIncomplete = false
     // HTSP rule updates always replace the channel restriction. Preserve SDK null-as-unchanged
     // from metadata (or a successful local mutation), never by guessing Any for an unknown rule.
     // SDK mutations are serialized by DvrMutationCoordinator.operationMutex. Metadata can still
@@ -273,13 +275,21 @@ internal class HtspProtocolGateway internal constructor(
         when (event) {
             is HtspTransportEvent.ServerMessage -> {
                 rememberRuleChannel(event.generation, event.message)
-                event.message.toGatewayMetadata(generationFor(event.generation))?.let { emit(it) }
+                val epgThrough = if (event.message === HtspInitialSyncCompletedMessage) {
+                    synchronized(generationLock) {
+                        refreshLive()?.takeIf { it.generation === event.generation }
+                            ?.let { initialEpgThrough.takeUnless { initialEpgIncomplete } }
+                    }
+                } else null
+                event.message.toGatewayMetadata(generationFor(event.generation), epgThrough)?.let { emit(it) }
             }
             // Before and after the sync marker, keep usable metadata and accept later updates:
             // the initial-sync waiter accepts skipped metadata, and retrying a
             // deterministic decode failure would repeat it. The next reconnect replaces all
             // reduced state. Ignore retired reports too; never retain or render their tokens.
-            is HtspTransportEvent.MalformedMetadata -> Unit
+            is HtspTransportEvent.MalformedMetadata -> synchronized(generationLock) {
+                if (refreshLive()?.generation === event.generation) initialEpgIncomplete = true
+            }
             is HtspTransportEvent.MetadataOverflow -> {
                 // A repeated async-enable only resends EPG, not a complete snapshot. The
                 // connection owner's existing backoff/reconnect path performs a full resync.
@@ -368,6 +378,8 @@ internal class HtspProtocolGateway internal constructor(
         if (previous?.generation !== snapshot?.generation) {
             autorecChannels.clear()
             timerecChannels.clear()
+            initialEpgThrough = null
+            initialEpgIncomplete = false
         }
         if (previous != null && previous.generation !== snapshot?.generation) {
             if (!retiredGenerations.containsKey(previous.generation)) {
@@ -393,6 +405,8 @@ internal class HtspProtocolGateway internal constructor(
         if (currentLive?.generation === generation) {
             currentLive = null
             observedLive = null
+            initialEpgThrough = null
+            initialEpgIncomplete = false
             autorecChannels.clear()
             timerecChannels.clear()
         }
@@ -484,6 +498,9 @@ internal class HtspProtocolGateway internal constructor(
                 }
                 else -> return serverTime.toGatewayResult {}
             }
+        // Capture before enabling: the completion marker may precede the reply.
+        commitIfLive(generation) { initialEpgThrough = Instant.fromEpochSeconds(epgMaxTime) }
+            ?: return GatewayResult.TransportUnavailable
         return connection.enableAsyncMetadataAwaitingInitialSync(
             epg = true,
             epgMaxTimeEpochSeconds = epgMaxTime,
@@ -1430,6 +1447,7 @@ private inline fun <T, R> HtspResult<T>.toSubscriptionResult(
 
 private fun HtspMetadataMessage.toGatewayMetadata(
     generation: GatewayGeneration,
+    epgThrough: Instant? = null,
 ): MetadataEvent? = when (this) {
     is HtspChannelAddMessage -> MetadataEvent.ChannelAdded(
         generation = generation,
@@ -1459,7 +1477,7 @@ private fun HtspMetadataMessage.toGatewayMetadata(
         generation = generation,
         tagId = TagId(tagId),
     )
-    HtspInitialSyncCompletedMessage -> MetadataEvent.InitialSyncCompleted(generation)
+    HtspInitialSyncCompletedMessage -> MetadataEvent.InitialSyncCompleted(generation, epgThrough)
     is HtspEventAddMessage -> MetadataEvent.EventAdded(generation, event.toGatewayEpgEvent())
     is HtspEventUpdateMessage -> MetadataEvent.EventUpdated(generation, event.toGatewayEpgEvent())
     is HtspEventDeleteMessage -> MetadataEvent.EventDeleted(generation, EventId(eventId))

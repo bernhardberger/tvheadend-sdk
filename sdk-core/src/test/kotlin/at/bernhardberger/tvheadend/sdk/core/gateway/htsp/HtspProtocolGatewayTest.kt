@@ -204,6 +204,7 @@ import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -1842,6 +1843,7 @@ internal class HtspProtocolGatewayTest {
     }
 
     @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun `initial metadata uses server time for bounded async EPG`() = runTest {
         val serverNow = 1_000_000L
         val serverTime = GetSysTimeResponse(
@@ -1854,6 +1856,7 @@ internal class HtspProtocolGatewayTest {
             protocolVersion: Int,
             coveragePolicy: EpgCoveragePolicy = EpgCoveragePolicy.create(),
             serverTimeResult: HtspResult<GetSysTimeResponse> = HtspResult.Ok(serverTime),
+            malformedBeforeSync: Boolean = false,
         ): Pair<GatewayResult<Unit>, List<HtspRequest<*>>> {
             val sourceGeneration = HtspConnectionGeneration()
             val metadataEvents = MutableSharedFlow<HtspTransportEvent>()
@@ -1871,6 +1874,9 @@ internal class HtspProtocolGatewayTest {
                         is GetSysTimeRequest -> executeResult = serverTimeResult
                         is EnableAsyncMetadataRequest -> {
                             executeResult = HtspResult.Ok(HtspEmptyResponse)
+                            if (malformedBeforeSync) metadataEvents.emit(
+                                HtspTransportEvent.MalformedMetadata(sourceGeneration, 1),
+                            )
                             metadataEvents.emit(
                                 HtspTransportEvent.ServerMessage(
                                     message = HtspInitialSyncCompletedMessage,
@@ -1887,13 +1893,28 @@ internal class HtspProtocolGatewayTest {
             val generation = (gateway.connect(ServerConfiguration("host", 9_982))
                 as GatewayConnectResult.Connected).connection.generation
 
+            val completions = mutableListOf<MetadataEvent.InitialSyncCompleted>()
+            val collector = backgroundScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                gateway.metadata.collect { if (it is MetadataEvent.InitialSyncCompleted) completions += it }
+            }
             val result = gateway.enableInitialMetadata(generation)
+            runCurrent()
+            if (result is GatewayResult.Ok) {
+                assertEquals(
+                    if (malformedBeforeSync) null else Instant.fromEpochSeconds(serverNow + coveragePolicy.futureHorizon.inWholeSeconds),
+                    completions.single().epgThrough,
+                )
+            } else {
+                assertTrue(completions.isEmpty())
+            }
+            collector.cancel()
             assertSame(sourceGeneration, fake.lastExpectedGeneration)
             val status = gateway.subscription(generation, SubscriptionId(77)).toList().single() as SubscriptionEvent.Timeshift
             assertEquals(serverTimeResult is HtspResult.Ok, status.estimatedServerTime != null)
             return result to requests
         }
 
+        requestFor(protocolVersion = 36, malformedBeforeSync = true)
         val (supportedResult, supportedRequests) = requestFor(protocolVersion = 36)
         assertTrue(supportedResult is GatewayResult.Ok)
         assertTrue(supportedRequests.singleOrNull { it is GetSysTimeRequest } is GetSysTimeRequest)
@@ -1919,6 +1940,7 @@ internal class HtspProtocolGatewayTest {
     }
 
     @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun `configured async EPG horizon survives a fresh connection generation`() = runTest {
         val serverTimes = ArrayDeque(listOf(1_000_000L, 2_000_000L))
         val metadataEvents = MutableSharedFlow<HtspTransportEvent>()
@@ -1958,6 +1980,10 @@ internal class HtspProtocolGatewayTest {
             }
         }
         val gateway = HtspProtocolGateway(fake, EpgCoveragePolicy.create(7.days))
+        val completions = mutableListOf<MetadataEvent.InitialSyncCompleted>()
+        backgroundScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            gateway.metadata.collect { if (it is MetadataEvent.InitialSyncCompleted) completions += it }
+        }
 
         repeat(2) { index ->
             val sourceGeneration = HtspConnectionGeneration()
@@ -1971,6 +1997,11 @@ internal class HtspProtocolGatewayTest {
             val before = gateway.subscription(generation, SubscriptionId(77)).toList().single() as SubscriptionEvent.Timeshift
             assertEquals(null, before.estimatedServerTime)
             assertTrue(gateway.enableInitialMetadata(generation) is GatewayResult.Ok)
+            runCurrent()
+            assertEquals(
+                Instant.fromEpochSeconds((index + 1) * 1_000_000L + 604_800L),
+                completions.last().epgThrough,
+            )
             assertSame(sourceGeneration, fake.lastExpectedGeneration)
             val after = gateway.subscription(generation, SubscriptionId(77)).toList().single() as SubscriptionEvent.Timeshift
             assertTrue(requireNotNull(after.estimatedServerTime).epochSeconds >= (index + 1) * 1_000_000L)

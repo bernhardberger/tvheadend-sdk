@@ -105,6 +105,7 @@ internal sealed interface MetadataEvent {
 
     public class InitialSyncCompleted(
         override val generation: GatewayGeneration,
+        internal val epgThrough: Instant? = null,
     ) : MetadataEvent {
         override fun toString(): String = "MetadataEvent.InitialSyncCompleted(<redacted>)"
     }

@@ -53,6 +53,85 @@ import kotlin.time.Instant
 @OptIn(ExperimentalCoroutinesApi::class)
 internal class EpgWorkerTest {
     @Test
+    fun `completed sync suppresses ordinary queries without changing public acquisition`() = runTest {
+        val generation = GatewayGeneration()
+        val now = instant(0)
+        val metadata = synchronizedMetadata(generation, 1L..2L, syncThrough = now + 24.hours)
+        val requests = mutableListOf<ChannelId>()
+        val worker = EpgWorker(generation, metadata, MutableClock(now), queryEpg = { _, channelId, _ ->
+            requests += channelId
+            GatewayResult.Ok(emptyList())
+        })
+        val job = backgroundScope.launch { worker.run() }
+        runCurrent()
+        advanceTimeBy(1.seconds)
+        runCurrent()
+        assertTrue(requests.isEmpty())
+        val coverage = metadata.currentEpgSnapshot(generation)!!.coverages.first()
+        assertNull(coverage.queriedTo)
+        assertNull(coverage.knownTo)
+
+        val proof = requireNotNull(metadata.observation.value.currentSession)
+        val acquisition = backgroundScope.async { worker.acquireCoverage(proof, ChannelId(1), now + 8.hours) }
+        runCurrent()
+        assertTrue(acquisition.await() is EpgCoverageAcquisitionResult.CoveredEmpty)
+        assertEquals(listOf(ChannelId(1)), requests)
+
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(3)))
+        advanceTimeBy(1.seconds)
+        runCurrent()
+        assertEquals(listOf(ChannelId(1), ChannelId(3)), requests)
+        job.cancelAndJoin()
+    }
+
+    @Test
+    fun `ordinary queries extend beyond the fixed sync boundary as time passes`() = runTest {
+        val generation = GatewayGeneration()
+        val now = instant(0)
+        val clock = MutableClock(now)
+        val metadata = synchronizedMetadata(generation, 1L..1L, syncThrough = now + 24.hours)
+        val targets = mutableListOf<Instant>()
+        val worker = EpgWorker(generation, metadata, clock, queryEpg = { _, _, target ->
+            targets += target
+            GatewayResult.Ok(emptyList())
+        })
+        val job = backgroundScope.launch { worker.run() }
+        runCurrent()
+        assertTrue(targets.isEmpty())
+        clock.now = now + 5.hours
+        advanceTimeBy(10.minutes)
+        runCurrent()
+        assertEquals(listOf(now + 28.hours), targets)
+        job.cancelAndJoin()
+    }
+
+    @Test
+    fun `sync scheduling proof retires on channel deletion reset and generation rebind`() = runTest {
+        val generation = GatewayGeneration()
+        val now = instant(0)
+        val metadata = synchronizedMetadata(generation, 1L..2L, syncThrough = now + 24.hours)
+        assertEquals(setOf(ChannelId(1), ChannelId(2)), metadata.initialEpgCoverage(generation).keys)
+        metadata.acceptMetadata(MetadataEvent.ChannelDeleted(generation, ChannelId(1)))
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(1)))
+        assertEquals(setOf(ChannelId(2)), metadata.initialEpgCoverage(generation).keys)
+        metadata.resetWorkingStateRetainingPublishedSnapshot()
+        assertTrue(metadata.initialEpgCoverage(generation).isEmpty())
+        val replacement = GatewayGeneration()
+        metadata.bindGeneration(replacement)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(replacement, channel(2)))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation, now + 24.hours))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(replacement))
+        assertTrue(metadata.initialEpgCoverage(replacement).isEmpty())
+        assertEquals(
+            listOf(EpgQueryPlan(ChannelId(2), now + 4.hours)),
+            selectEpgQueries(
+                metadata.currentEpgSnapshot(replacement)!!, now, EpgWorkerSettings(),
+                initialEpgCoverage = metadata.initialEpgCoverage(replacement),
+            ),
+        )
+    }
+
+    @Test
     fun `defaults and target policy require polling proof before steady advancement`() {
         val settings = EpgWorkerSettings()
         val now = instant(1_000)
@@ -1076,6 +1155,48 @@ internal class EpgWorkerTest {
         job.cancelAndJoin()
     }
 
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `post sync capacity refusal revokes scheduling proof`(unattributed: Boolean) = runTest {
+        val generation = GatewayGeneration()
+        val policy = EpgCoveragePolicy.create(24.hours, maximumRetainedEvents = 1)
+        val metadata = synchronizedMetadata(generation, 1L..2L, policy, instant(0) + 24.hours) {
+            acceptMetadata(MetadataEvent.EventAdded(generation, event(1, 1, 0, 100)))
+        }
+        val refused = GatewayEpgEvent(EventId(2), if (unattributed) null else ChannelId(2), instant(0), instant(100))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, refused))
+        metadata.acceptMetadata(MetadataEvent.EventDeleted(generation, EventId(1)))
+        val queried = mutableListOf<ChannelId>()
+        val job = backgroundScope.launch {
+            EpgWorker(generation, metadata, MutableClock(instant(0)), EpgWorkerSettings(coveragePolicy = policy),
+                queryEpg = { _, channel, _ -> queried += channel; GatewayResult.Timeout }).run()
+        }
+        runCurrent()
+        advanceTimeBy(1.seconds)
+        runCurrent()
+        assertEquals(if (unattributed) listOf(ChannelId(1), ChannelId(2)) else listOf(ChannelId(2)), queried)
+        job.cancelAndJoin()
+    }
+
+    @Test
+    fun `capacity refused sync channel warms up after capacity frees`() = runTest {
+        val generation = GatewayGeneration()
+        val policy = EpgCoveragePolicy.create(24.hours, maximumRetainedEvents = 1)
+        val metadata = synchronizedMetadata(generation, 1L..2L, policy, instant(0) + 24.hours) {
+            acceptMetadata(MetadataEvent.EventAdded(generation, event(1, 1, 0, 100)))
+            acceptMetadata(MetadataEvent.EventAdded(generation, event(2, 2, 0, 100)))
+        }
+        metadata.acceptMetadata(MetadataEvent.EventDeleted(generation, EventId(1)))
+        val queried = mutableListOf<ChannelId>()
+        val job = backgroundScope.launch {
+            EpgWorker(generation, metadata, MutableClock(instant(0)), EpgWorkerSettings(coveragePolicy = policy),
+                queryEpg = { _, channel, _ -> queried += channel; GatewayResult.Timeout }).run()
+        }
+        runCurrent()
+        assertEquals(listOf(ChannelId(2)), queried)
+        job.cancelAndJoin()
+    }
+
     @Test
     fun `seven day policy controls the future eviction boundary`() = runTest {
         val generation = GatewayGeneration()
@@ -1194,6 +1315,7 @@ private fun synchronizedMetadata(
     generation: GatewayGeneration,
     channelIds: LongRange,
     coveragePolicy: EpgCoveragePolicy = EpgCoveragePolicy.create(),
+    syncThrough: Instant? = null,
     beforeFence: PhaseOneSessionMetadata.() -> Unit = {},
 ): PhaseOneSessionMetadata = PhaseOneSessionMetadata(epgCoveragePolicy = coveragePolicy).apply {
     bindGeneration(generation)
@@ -1201,7 +1323,7 @@ private fun synchronizedMetadata(
         acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(id)))
     }
     beforeFence()
-    acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+    acceptMetadata(MetadataEvent.InitialSyncCompleted(generation, syncThrough))
     publishSessionState(
         state = SessionState.Ready(
             ServerCapabilities.create(CapabilityAccess.UNKNOWN, CapabilityAccess.UNKNOWN),

@@ -82,9 +82,10 @@ internal fun epgQueryTarget(
     coverage: EpgCoverage,
     now: Instant,
     settings: EpgWorkerSettings,
+    initialSyncThrough: Instant? = null,
 ): Instant? {
-    if (coverage.queriedTo == null) return now + settings.warmupHorizon
-    val knownTo = coverage.knownTo
+    if (coverage.queriedTo == null && initialSyncThrough == null) return now + settings.warmupHorizon
+    val knownTo = listOfNotNull(coverage.knownTo, initialSyncThrough).maxOrNull()
     val warmupTarget = now + settings.warmupHorizon
     if (knownTo == null || knownTo < warmupTarget) return warmupTarget
 
@@ -98,11 +99,12 @@ internal fun selectEpgQueries(
     now: Instant,
     settings: EpgWorkerSettings,
     excludedChannelIds: Set<ChannelId> = emptySet(),
+    initialEpgCoverage: Map<ChannelId, Instant> = emptyMap(),
 ): List<EpgQueryPlan> = snapshot.coverages
     .asSequence()
     .filter { coverage -> coverage.channelId !in excludedChannelIds }
     .mapNotNull { coverage ->
-        epgQueryTarget(coverage, now, settings)?.let { target ->
+        epgQueryTarget(coverage, now, settings, initialEpgCoverage[coverage.channelId])?.let { target ->
             coverage to EpgQueryPlan(
                 channelId = coverage.channelId,
                 target = target.toWholeSecond(),
@@ -292,6 +294,7 @@ internal class EpgWorker(
             now = now,
             settings = settings,
             excludedChannelIds = scheduling.excluded + scheduling.priorities.keys,
+            initialEpgCoverage = metadata.initialEpgCoverage(generation),
         )
         val selected = when {
             priorityPlans.isEmpty() -> ordinaryPlans

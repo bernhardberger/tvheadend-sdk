@@ -265,6 +265,8 @@ internal class EpgReducer(
     // The last published snapshot stays valid until retained events, channels or query
     // coverage change, so unrelated metadata traffic republishes the identical instance.
     private var cachedSnapshot: EpgSnapshot? = null
+    internal var lastEventRefusedForCapacity: Boolean = false
+        private set
 
     init {
         require(maximumRetainedEvents > 0) { "EPG retained-event limit must be positive" }
@@ -272,6 +274,7 @@ internal class EpgReducer(
 
     internal fun clear() {
         cachedSnapshot = null
+        lastEventRefusedForCapacity = false
         events.clear()
         history.clear()
         currentEventByChannel.clear()
@@ -286,6 +289,7 @@ internal class EpgReducer(
 
     /** Returns whether this reducer accepted the event, including accepted no-ops. */
     internal fun accept(event: MetadataEvent, serverNow: Instant? = null): Boolean {
+        lastEventRefusedForCapacity = false
         serverNow?.let(::pruneHistory)
         when (event) {
             is MetadataEvent.ChannelAdded -> {
@@ -517,6 +521,7 @@ internal class EpgReducer(
         val candidate = ReducedEpgEvent.fromEvent(event) ?: return false
         supersedeHistory(candidate)
         if (event.id !in events && events.size >= maximumRetainedEvents) {
+            lastEventRefusedForCapacity = true
             invalidateActiveQueriesAfterCapacityDrop()
             return false
         }

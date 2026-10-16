@@ -252,6 +252,8 @@ internal interface SessionMetadata {
 
     public fun currentEpgSnapshot(generation: GatewayGeneration): EpgSnapshot?
 
+    public fun initialEpgCoverage(generation: GatewayGeneration): Map<ChannelId, Instant> = emptyMap()
+
     public fun beginEpgQuery(
         generation: GatewayGeneration,
         channelId: ChannelId,
@@ -460,6 +462,9 @@ internal class PhaseOneSessionMetadata(
     @Volatile private var generation: GatewayGeneration? = null
     private var generationBindRevision = 0L
     private var initialSync = CompletableDeferred<Unit>()
+    private var initialEpgCoverage: Map<ChannelId, Instant> = emptyMap()
+    private val incompleteEpgChannels = mutableSetOf<ChannelId>()
+    private var unattributedEpgCapacityDrop = false
     private var publishedCatalog: ChannelCatalog? = null
     private var publishedEpgSnapshot: EpgSnapshot? = null
     private val mutablePublishedSnapshots = MutableStateFlow<PublishedSnapshots?>(null)
@@ -611,6 +616,9 @@ internal class PhaseOneSessionMetadata(
         val retiredFence = synchronized(lock) {
             retiredPublication = mutablePublishedSnapshots.value
             generation = null
+            initialEpgCoverage = emptyMap()
+            incompleteEpgChannels.clear()
+            unattributedEpgCapacityDrop = false
             val previousFence = initialSync
             initialSync = CompletableDeferred()
             synchronizedCurrent = false
@@ -660,6 +668,9 @@ internal class PhaseOneSessionMetadata(
             val previousFence = initialSync
             generationBindRevision += 1
             this.generation = generation
+            initialEpgCoverage = emptyMap()
+            incompleteEpgChannels.clear()
+            unattributedEpgCapacityDrop = false
             initialSync = CompletableDeferred()
             synchronizedCurrent = false
             epgPublicationDeferred = false
@@ -819,6 +830,10 @@ internal class PhaseOneSessionMetadata(
                     } else {
                         reducer.reconcileReferences()
                         val channelSnapshot = reducer.snapshot()
+                        initialEpgCoverage = event.epgThrough?.takeUnless { unattributedEpgCapacityDrop }?.let { through ->
+                            channelSnapshot.channels.filterNot { it.id in incompleteEpgChannels }.associate { it.id to through }
+                        }.orEmpty()
+                        incompleteEpgChannels.clear()
                         epgReducer.reconcileChannels(channelSnapshot.channels.map { channel -> channel.id })
                         val epgSnapshot = epgReducer.snapshot()
                         val dvrSnapshot = dvrReducer.snapshot()
@@ -880,7 +895,22 @@ internal class PhaseOneSessionMetadata(
                             ?.singleOrNull { entry -> entry.id == id }
                     }
                     reducer.accept(event)
+                    if (event is MetadataEvent.ChannelDeleted) {
+                        initialEpgCoverage = initialEpgCoverage - event.channelId
+                    }
                     val epgEventAccepted = epgReducer.accept(event, estimatedServerTime(event.generation))
+                    if (epgReducer.lastEventRefusedForCapacity) {
+                        val channelId = when (event) {
+                            is MetadataEvent.EventAdded -> event.event.channelId
+                            is MetadataEvent.EventUpdated -> event.event.channelId
+                            else -> null
+                        }
+                        if (synchronizedCurrent) {
+                            initialEpgCoverage = if (channelId == null) emptyMap() else initialEpgCoverage - channelId
+                        } else {
+                            if (channelId == null) unattributedEpgCapacityDrop = true else incompleteEpgChannels += channelId
+                        }
+                    }
                     val dvrEventAccepted = dvrReducer.accept(event)
                     if (dvrEventAccepted && event is MetadataEvent.DvrEntryDeleted) {
                         dvrFailuresReported.remove(event.entryId)
@@ -1077,6 +1107,14 @@ internal class PhaseOneSessionMetadata(
         } else {
             (mutableEpg.value as? EpgRepositoryState.Current)?.snapshot
         }
+    }
+
+    /**
+     * Fixed completed-sync proof for ordinary scheduling only, never public query coverage.
+     * Periodic server window advances have no completion fence, so this is not extrapolated.
+     */
+    override fun initialEpgCoverage(generation: GatewayGeneration): Map<ChannelId, Instant> = synchronized(lock) {
+        if (this.generation === generation && synchronizedCurrent) initialEpgCoverage else emptyMap()
     }
 
     override fun beginEpgQuery(
