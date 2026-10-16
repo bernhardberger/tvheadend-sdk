@@ -85,7 +85,7 @@ val requiredVersions = mapOf(
     "detekt" to "2.0.0-alpha.6",
     "dokka" to "2.2.0",
     "foojay" to "1.0.0",
-    "htsp" to "1.0.0-beta.3-generation-termination-SNAPSHOT",
+    "htsp" to "1.0.0-beta.3",
     "jdk" to "21",
     "junit" to "6.1.3",
     "jvmTarget" to "17",
@@ -177,7 +177,7 @@ val commonResolved = setOf(
     "org.jetbrains.kotlin:kotlin-stdlib:2.4.10",
 )
 val coreResolved = (commonResolved - "org.jetbrains:annotations:13.0") + setOf(
-    "at.bernhardberger.tvheadend:htsp:1.0.0-beta.3-generation-termination-SNAPSHOT",
+    "at.bernhardberger.tvheadend:htsp:1.0.0-beta.3",
     "org.jetbrains:annotations:23.0.0",
     "org.jetbrains.kotlinx:kotlinx-coroutines-bom:1.11.0",
     "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0",
@@ -189,7 +189,7 @@ val coreResolved = (commonResolved - "org.jetbrains:annotations:13.0") + setOf(
     "org.jetbrains.kotlinx:kotlinx-serialization-protobuf-jvm:1.11.0",
 )
 val serializationResolved = coreResolved.filter { "kotlinx-serialization" in it }.toSet()
-val coroutineResolved = (coreResolved - "at.bernhardberger.tvheadend:htsp:1.0.0-beta.3-generation-termination-SNAPSHOT") - serializationResolved
+val coroutineResolved = (coreResolved - "at.bernhardberger.tvheadend:htsp:1.0.0-beta.3") - serializationResolved
 val useHtspComposite = providers.gradleProperty("tvheadend.htsp.composite")
     .map(String::toBooleanStrict)
     .getOrElse(false)
@@ -205,12 +205,12 @@ val productionGraphs = sdkModules.associateWith {
     this["sdk-core"] = ProductionGraph(
         direct = commonDirect + setOf(
             "project::sdk-playback",
-            "at.bernhardberger.tvheadend:htsp:1.0.0-beta.3-generation-termination-SNAPSHOT",
+            "at.bernhardberger.tvheadend:htsp:1.0.0-beta.3",
             "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0",
             "org.jetbrains.kotlinx:kotlinx-serialization-protobuf:1.11.0",
         ),
         resolved = (if (useHtspComposite) {
-            (coreResolved - "at.bernhardberger.tvheadend:htsp:1.0.0-beta.3-generation-termination-SNAPSHOT") + "project::tvheadend-htsp"
+            (coreResolved - "at.bernhardberger.tvheadend:htsp:1.0.0-beta.3") + "project::tvheadend-htsp"
         } else {
             coreResolved
         }) + "project::sdk-playback",
@@ -224,7 +224,7 @@ val productionGraphs = sdkModules.associateWith {
             "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0",
         ),
         resolved = (if (useHtspComposite) {
-            (coreResolved - "at.bernhardberger.tvheadend:htsp:1.0.0-beta.3-generation-termination-SNAPSHOT") +
+            (coreResolved - "at.bernhardberger.tvheadend:htsp:1.0.0-beta.3") +
                 "project::tvheadend-htsp"
         } else {
             coreResolved
@@ -297,7 +297,7 @@ val productionGraphs = sdkModules.associateWith {
             "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0",
         ),
         resolved = (if (useHtspComposite) {
-            (coreResolved - "at.bernhardberger.tvheadend:htsp:1.0.0-beta.3-generation-termination-SNAPSHOT") +
+            (coreResolved - "at.bernhardberger.tvheadend:htsp:1.0.0-beta.3") +
                 "project::tvheadend-htsp"
         } else {
             coreResolved
@@ -328,7 +328,7 @@ val productionGraphs = sdkModules.associateWith {
     this["sdk-testing"] = ProductionGraph(
         direct = setOf("project::sdk-core", "project::sdk-playback"),
         resolved = (if (useHtspComposite) {
-            (coreResolved - "at.bernhardberger.tvheadend:htsp:1.0.0-beta.3-generation-termination-SNAPSHOT") + "project::tvheadend-htsp"
+            (coreResolved - "at.bernhardberger.tvheadend:htsp:1.0.0-beta.3") + "project::tvheadend-htsp"
         } else {
             coreResolved
         }) + setOf("project::sdk-core", "project::sdk-playback"),
@@ -338,7 +338,7 @@ val scopedDirectDependencies = sdkModules.associateWith { emptySet<String>() }.t
     this["sdk-core"] = setOf(
         "api=project::sdk-playback",
         "api=org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0",
-        "implementation=at.bernhardberger.tvheadend:htsp:1.0.0-beta.3-generation-termination-SNAPSHOT",
+        "implementation=at.bernhardberger.tvheadend:htsp:1.0.0-beta.3",
         "implementation=org.jetbrains.kotlinx:kotlinx-serialization-protobuf:1.11.0",
     )
     this["sdk-android"] = setOf(

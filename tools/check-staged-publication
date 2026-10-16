@@ -121,7 +121,7 @@ def pom_dependencies(module: str, version: str) -> set[tuple[str, str, str, str]
             ("org.jetbrains.kotlinx", "kotlinx-coroutines-core-jvm", "1.11.0", "compile"),
             (GROUP, "sdk-playback", version, "compile"),
             ("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.10", "compile"),
-            (GROUP, "htsp", "1.0.0-beta.2", "runtime"),
+            (GROUP, "htsp", "1.0.0-beta.3", "runtime"),
             ("org.jetbrains.kotlinx", "kotlinx-serialization-protobuf-jvm", "1.11.0", "runtime"),
         },
         "sdk-media3": {
@@ -471,7 +471,7 @@ def self_test() -> list[str]:
                 }]}).encode()
                 return pom, metadata
 
-            for version in ("1.0.0", "1.0.0-beta.2", "1.0.0-alpha01", "1.0.0-rc1", "2.4.10", "33.4.8"):
+            for version in ("1.0.0", "1.0.0-beta.3", "1.0.0-alpha01", "1.0.0-rc1", "2.4.10", "33.4.8"):
                 try:
                     verify_release_dependencies(*dependency_documents(version, version), module)
                 except VerificationError as error:
@@ -479,7 +479,7 @@ def self_test() -> list[str]:
             for version in ("1.0.0-SNAPSHOT", "1.0.0-beta.2-entity-model-SNAPSHOT", "1.0.0-snapshot",
                             "1.0.0-20261015.150132-1", "1.0.0-dev", "1.0.0-candidate", "+", "1.+",
                             "latest.release", "latest.integration", "[1.0,2.0)", "${htsp.version}", ""):
-                for pom_version, metadata_version in ((version, "1.0.0-beta.2"), ("1.0.0-beta.2", version)):
+                for pom_version, metadata_version in ((version, "1.0.0-beta.3"), ("1.0.0-beta.3", version)):
                     expect_error(errors, f"{module} non-release dependency {version}",
                                  lambda: verify_release_dependencies(*dependency_documents(pom_version, metadata_version), module))
     build = f'group = "{GROUP}"\nversion = "0.4.0"\n'
@@ -498,7 +498,7 @@ def self_test() -> list[str]:
         ("org.jetbrains.kotlinx", "kotlinx-coroutines-core-jvm", "1.11.0", "compile"),
         (GROUP, "sdk-playback", "0.8.0", "compile"),
         ("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.10", "compile"),
-        (GROUP, "htsp", "1.0.0-beta.2", "runtime"),
+        (GROUP, "htsp", "1.0.0-beta.3", "runtime"),
         ("org.jetbrains.kotlinx", "kotlinx-serialization-protobuf-jvm", "1.11.0", "runtime"),
     ]
     core_pom = ET.fromstring(f"""<project>
@@ -690,7 +690,7 @@ def self_test() -> list[str]:
     # repository, metadata, archive and release-version validators remain real.
     version = configured_version()
     fixture_dependencies = {
-        module: {(group, artifact, "1.0.0-beta.2" if (group, artifact) == (GROUP, "htsp") else required, scope)
+        module: {(group, artifact, "1.0.0-beta.3" if (group, artifact) == (GROUP, "htsp") else required, scope)
                  for group, artifact, required, scope in pom_dependencies(module, version)}
         for module in MODULES
     }
@@ -699,7 +699,7 @@ def self_test() -> list[str]:
         with patch.dict(globals(), pom_dependencies=lambda module, version: fixture_dependencies[module]):
             for snapshot in (False, True):
                 if snapshot:
-                    fixture_dependencies["sdk-core"].remove((GROUP, "htsp", "1.0.0-beta.2", "runtime"))
+                    fixture_dependencies["sdk-core"].remove((GROUP, "htsp", "1.0.0-beta.3", "runtime"))
                     fixture_dependencies["sdk-core"].add((GROUP, "htsp", "1.0.0-SNAPSHOT", "runtime"))
                 expected_manifest = {}
                 for module in MODULES:

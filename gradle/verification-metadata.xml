@@ -123,6 +123,7 @@
          <trusted-key id="EAB02E488E7B944EAA6D65814BF0412FD2A3B741">
             <trusting group="at.bernhardberger.tvheadend" name="htsp" version="1.0.0-beta.1"/>
             <trusting group="at.bernhardberger.tvheadend" name="htsp" version="1.0.0-beta.2"/>
+            <trusting group="at.bernhardberger.tvheadend" name="htsp" version="1.0.0-beta.3"/>
          </trusted-key>
          <trusted-key id="EB1B3DE71713C9EC2E87CC26EE92349AD86DE446" group="com.google.j2objc" name="j2objc-annotations" version="2.8"/>
          <trusted-key id="EE0CA873074092F806F59B65D364ABAA39A47320" group="com.google.errorprone"/>
