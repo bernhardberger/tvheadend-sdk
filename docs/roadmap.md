@@ -230,6 +230,12 @@ ranked recording lookups, and experimental ownership metadata.
 sparse patches, removes unsupported subscription fields and unreachable session failures, and
 preserves DVR configurations during edits. See the changelog for consumer migration.
 
+### 0.31: startup batching and cache restore (released)
+
+0.31.0 was released on 2026-10-16. It consumes HTSP metadata in batches, restores
+the cached catalog and near guide window beside connecting, and watches
+connection failures through HTSP generation termination.
+
 ### Next 0.x minors: player-driven gaps
 
 The owner decided on 2026-10-12 not to start the 1.0 track yet. 0.x minors
