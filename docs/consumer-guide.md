@@ -210,16 +210,23 @@ time, and the SDK queries further programmes after `Ready` as for any other
 uncovered range. At `Ready`, programmes from the cached guide (or, after a
 same-profile reconnect, from the previously retained guide) that start beyond a
 channel's live coverage remain in the `CURRENT` snapshot as display-only
-carryover. They are events outside `EpgSnapshot.coverages`: `EpgCoverage`,
-`knownTo` and acquisition results describe live data only, and carryover never
-claims live proof. Wherever live coverage reaches, including through later
-queries or the sliding server window, only live events are shown; an event ID
-present live always uses the live version, and a server deletion removes the
-carryover copy. `event(id)`, `eventAt`, `nextEvent` and the DVR lookups by
-event ID may return a carryover event for display; DVR mutations remain server
-validated. Retention and `EpgCoveragePolicy.maximumRetainedEvents` apply to
-carryover too, which is evicted before live events and never causes a live
-capacity refusal. A profile switch never carries guide data over. Ordinary queries extend each channel in four-hour steps to
+carryover. Only channels whose live programmes the initial sync proved get
+carryover, and only after that proven window; programmes the server named during
+initial sync, such as deletions, never return as carryover. Carryover events are
+outside `EpgSnapshot.coverages`: `EpgCoverage`, `knownTo` and acquisition results
+describe live data only, and carryover never claims live proof. Wherever live
+data reaches, including through later queries or the sliding server window, only
+live events are shown, and that carryover stays gone even if the live data later
+shrinks; an event ID present live always uses the live version, and a server
+deletion removes the carryover copy. Because carryover is restored only up to the
+device time plus 24 hours and is replaced once its start falls within the live
+window, it is at most about one restore window old in practice. `event(id)`,
+`eventAt`, `nextEvent` and the DVR lookups by event ID may return a carryover
+event for display; DVR mutations remain server validated. Retention and
+`EpgCoveragePolicy.maximumRetainedEvents` apply to carryover too, which is
+evicted before live events and never causes a live capacity refusal. A profile
+switch never carries guide data over. Ordinary queries extend each channel in
+four-hour steps to
 about 20 hours ahead over roughly 30 minutes; later programmes, up to the
 configured `EpgCoveragePolicy.futureHorizon`, need explicit coverage acquisition.
 Tvheadend pushes programme updates only for programmes starting within its
@@ -263,7 +270,8 @@ pruned by cache activity, or can be deleted immediately with the root-wide `clea
 `clear()` to delete every cached namespace. Statistics are measured once the
 session first touches the cache, and a connected session persists its current
 snapshots again right after `clear()`, so the control resets stale or damaged
-files rather than freeing storage. A session created without a policy reports
+files rather than freeing storage. That rewrite is the current in-memory
+publication, which may include guide carryover restored before the clear. A session created without a policy reports
 empty statistics and `clear()` is a no-op. `FakeTvheadendSession.cache`
 is a `FakeSessionCache` whose statistics can be scripted.
 Statistics include encoded artwork bytes and entry count (excluding index

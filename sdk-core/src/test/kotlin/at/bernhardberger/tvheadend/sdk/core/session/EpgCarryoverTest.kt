@@ -217,6 +217,136 @@ internal class EpgCarryoverTest {
         assertEquals(listOf(1L, 3L, 4L), second.currentEpg().events.map { it.id.value })
     }
 
+    @Test
+    fun `a deletion received before installation excludes the id from carryover`() {
+        for (lateSeed in listOf(false, true)) {
+            val metadata = PhaseOneSessionMetadata(clock = clock)
+            val seed = CachedEpg(EpgSnapshot.create(listOf(cachedEvent(3, 8.hours, 9.hours), cachedEvent(4, 10.hours, 11.hours))))
+            if (!lateSeed) metadata.seedRetainedSnapshots(null, seed)
+            val generation = GatewayGeneration()
+            metadata.bindGeneration(generation)
+            metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(1)))
+            metadata.acceptMetadata(MetadataEvent.EventAdded(generation, liveEvent(1, 0.hours, 6.hours)))
+            metadata.acceptMetadata(MetadataEvent.EventDeleted(generation, EventId(3)))
+            if (lateSeed) metadata.seedRetainedSnapshots(null, seed, generation)
+            metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation, now + 6.hours))
+
+            assertEquals(listOf(1L, 4L), metadata.currentEpg().events.map { it.id.value }, "late seed: $lateSeed")
+            assertEquals(listOf(1L, 4L), checkNotNull(metadata.publishedSnapshots.value).epgSnapshot.events.map { it.id.value },
+                "A deleted programme is not persisted either (late seed: $lateSeed)")
+        }
+    }
+
+    @Test
+    fun `a batched live add then delete drops carryover as individual messages do`() {
+        assertBatchingIndependent(listOf(1L, 4L)) { generation ->
+            listOf(
+                MetadataEvent.EventAdded(generation, liveEvent(20, 7.hours, 10.hours)),
+                MetadataEvent.EventDeleted(generation, EventId(20)),
+            )
+        }
+    }
+
+    @Test
+    fun `carryover stays dropped when an update shortens the live event that reached it`() {
+        assertBatchingIndependent(listOf(1L, 20L, 4L)) { generation ->
+            listOf(
+                MetadataEvent.EventAdded(generation, liveEvent(20, 6.hours, 10.hours)),
+                MetadataEvent.EventUpdated(generation, liveEvent(20, 6.hours, 7.hours)),
+            )
+        }
+    }
+
+    @Test
+    fun `a channel without initial sync proof gets no carryover`() {
+        val metadata = PhaseOneSessionMetadata(clock = clock)
+        metadata.seedRetainedSnapshots(null, CachedEpg(EpgSnapshot.create(listOf(
+            cachedEvent(3, 3.hours, 4.hours, channelId = 2),
+            cachedEvent(4, 8.hours, 9.hours, channelId = 2),
+        ))))
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(2)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, liveEvent(1, 0.hours, 2.hours, channelId = 2)))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation, epgThrough = null))
+
+        assertEquals(emptyMap<ChannelId, Instant>(), metadata.initialEpgCoverage(generation))
+        assertEquals(listOf(1L), metadata.currentEpg().events.map { it.id.value },
+            "An unproven channel must not show cached programmes as CURRENT")
+    }
+
+    @Test
+    fun `install keeps only carryover beyond the proven window even when live data ends earlier`() {
+        val (metadata) = syncedWithCarryover(
+            cachedEvent(3, 5.hours, 6.hours),
+            cachedEvent(4, 7.hours, 8.hours),
+            liveEvents = listOf(liveEvent(1, 0.hours, 4.hours)),
+        )
+        assertEquals(listOf(1L, 4L), metadata.currentEpg().events.map { it.id.value })
+    }
+
+    @Test
+    fun `a proven channel without live events shows only carryover beyond its proof`() {
+        val (metadata) = syncedWithCarryover(cachedEvent(3, 3.hours, 4.hours), cachedEvent(4, 7.hours, 8.hours), liveEvents = emptyList())
+        val snapshot = metadata.currentEpg()
+        assertEquals(listOf(4L), snapshot.events.map { it.id.value })
+        assertEquals(true, snapshot.coverages.single().isEmpty, "Carryover never creates coverage")
+    }
+
+    @Test
+    fun `observation lookups return carryover programmes`() {
+        val (metadata) = syncedWithCarryover(cachedEvent(3, 8.hours, 9.hours, "cached"))
+        val observation = metadata.observation.value
+        assertEquals("cached", observation.event(EventId(3))?.title)
+        assertEquals(EventId(3), observation.eventAt(ChannelId(1), now + 8.hours + 30.minutes)?.id)
+    }
+
+    @Test
+    fun `channel deletion removes that channel's carryover`() {
+        val metadata = PhaseOneSessionMetadata(clock = clock)
+        metadata.seedRetainedSnapshots(null, CachedEpg(EpgSnapshot.create(listOf(
+            cachedEvent(3, 8.hours, 9.hours),
+            cachedEvent(4, 8.hours, 9.hours, channelId = 2),
+        ))))
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(1)))
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(2)))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation, now + 6.hours))
+        assertEquals(listOf(3L, 4L), metadata.currentEpg().events.map { it.id.value })
+
+        metadata.acceptMetadata(MetadataEvent.ChannelDeleted(generation, ChannelId(2)))
+        assertEquals(listOf(3L), metadata.currentEpg().events.map { it.id.value })
+    }
+
+    @Test
+    fun `installation applies production retention bounds`() {
+        val metadata = PhaseOneSessionMetadata(clock = clock, epgWorkerSettings = EpgWorkerSettings())
+        metadata.seedRetainedSnapshots(null, CachedEpg(EpgSnapshot.create(listOf(
+            cachedEvent(3, 8.hours, 9.hours),
+            cachedEvent(4, 25.hours, 26.hours),
+        ))))
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(1)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, liveEvent(1, 0.hours, 6.hours)))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation, now + 6.hours))
+        assertEquals(listOf(1L, 3L), metadata.currentEpg().events.map { it.id.value })
+    }
+
+    private fun assertBatchingIndependent(expected: List<Long>, messages: (GatewayGeneration) -> List<MetadataEvent>) {
+        val cached = arrayOf(cachedEvent(3, 8.hours, 9.hours), cachedEvent(4, 12.hours, 13.hours))
+        val (individual, individualGeneration) = syncedWithCarryover(*cached)
+        messages(individualGeneration).forEach(individual::acceptMetadata)
+        assertEquals(expected, individual.currentEpg().events.map { it.id.value })
+
+        val (batched, batchedGeneration) = syncedWithCarryover(*cached)
+        batched.acceptMetadataBatch(messages(batchedGeneration))
+        batched.flushDeferredMetadata()
+        assertEquals(expected, batched.currentEpg().events.map { it.id.value },
+            "Carryover reached by live data stays dropped when live data later recedes")
+    }
+
     private data class Synced(val metadata: PhaseOneSessionMetadata, val generation: GatewayGeneration)
 
     private fun syncedWithCarryover(
@@ -264,13 +394,13 @@ internal class EpgCarryoverTest {
         tagIds = null,
     )
 
-    private fun cachedEvent(id: Long, start: Duration, stop: Duration, title: String? = null): EpgEvent =
-        EpgEvent.create(id = EventId(id), channelId = ChannelId(1), start = now + start, stop = now + stop, title = title)
+    private fun cachedEvent(id: Long, start: Duration, stop: Duration, title: String? = null, channelId: Long = 1): EpgEvent =
+        EpgEvent.create(id = EventId(id), channelId = ChannelId(channelId), start = now + start, stop = now + stop, title = title)
 
-    private fun liveEvent(id: Long, start: Duration, stop: Duration, title: String? = null): GatewayEpgEvent =
+    private fun liveEvent(id: Long, start: Duration, stop: Duration, title: String? = null, channelId: Long = 1): GatewayEpgEvent =
         GatewayEpgEvent(
             id = EventId(id),
-            channelId = ChannelId(1),
+            channelId = ChannelId(channelId),
             start = now + start,
             stop = now + stop,
             title = title,

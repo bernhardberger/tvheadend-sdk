@@ -260,6 +260,10 @@ internal class EpgReducer(
     // only beyond live coverage, never counted as live coverage or capacity, and once live data
     // shadows them they are discarded for good.
     private val carryover = linkedMapOf<EventId, EpgEvent>()
+    // Ids this generation's server traffic named before installation without leaving a live
+    // copy, such as deletions; their previous publication is outdated. Dropped at installation.
+    private val carryoverExcluded = hashSetOf<EventId>()
+    private var carryoverInstalled = false
     // Mutation revisions exist only while an older in-flight query can still observe them.
     private val activeQueries = linkedSetOf<EpgQueryFence>()
     private val eventAuthorityRevisions = linkedMapOf<EventId, Long>()
@@ -285,6 +289,8 @@ internal class EpgReducer(
         channelIds.clear()
         queriedToByChannel.clear()
         carryover.clear()
+        carryoverExcluded.clear()
+        carryoverInstalled = false
         activeQueries.clear()
         eventAuthorityRevisions.clear()
         channelAuthorityRevisions.clear()
@@ -323,19 +329,24 @@ internal class EpgReducer(
             is MetadataEvent.EventAdded -> {
                 recordEventAuthority(event.event.id)
                 val carryoverChanged = removeCarryover(event.event.id)
-                return acceptEvent(event.event, retainFrom) || historyChanged || carryoverChanged
+                val accepted = acceptEvent(event.event, retainFrom)
+                excludeFromCarryover(event.event.id)
+                return accepted || historyChanged || carryoverChanged
             }
             is MetadataEvent.EventUpdated -> {
                 recordEventAuthority(event.event.id)
                 val carryoverChanged = removeCarryover(event.event.id)
-                return acceptEvent(event.event, retainFrom) || historyChanged || carryoverChanged
+                val accepted = acceptEvent(event.event, retainFrom)
+                excludeFromCarryover(event.event.id)
+                return accepted || historyChanged || carryoverChanged
             }
             is MetadataEvent.EventDeleted -> {
                 cachedSnapshot = null
                 recordEventAuthority(event.eventId)
-                carryover.remove(event.eventId)
                 currentEventByChannel.entries.removeIf { it.value == event.eventId }
+                removeCarryover(event.eventId)
                 val removed = events.remove(event.eventId)
+                excludeFromCarryover(event.eventId)
                 if (removed != null && serverNow != null) {
                     val programme = removed.toPublicOrNull()
                     // channelUpdate can prove the next programme is current before the
@@ -390,9 +401,10 @@ internal class EpgReducer(
 
     /**
      * Installs display-only [previous] programmes once live data first publishes for a
-     * generation. Only channel-attributed events for known channels that start after the
-     * initial synchronisation proved their channel through [provenThrough], and that overlap the
-     * retention window, are kept; [snapshot] hides the rest wherever live coverage reaches.
+     * generation. Only events of known channels that initial synchronisation proved through
+     * [provenThrough] are kept, when they start after that proof, at or after the channel's live
+     * events, outside ids the server already named, and overlap the retention window. Later
+     * reduction discards carryover for good wherever live data reaches.
      */
     internal fun installCarryover(
         previous: Collection<EpgEvent>,
@@ -402,13 +414,23 @@ internal class EpgReducer(
     ) {
         carryover.clear()
         cachedSnapshot = null
+        val liveEnds = HashMap<ChannelId, Instant>(channelIds.size * 2)
+        for (reduced in events.values) {
+            val channelId = reduced.channelId ?: continue
+            if (liveEnds[channelId]?.let { reduced.stop <= it } != true) liveEnds[channelId] = reduced.stop
+        }
         for (event in previous) {
             val channelId = event.channelId ?: continue
-            if (channelId !in channelIds || event.id in events) continue
-            if (provenThrough[channelId]?.let { event.start <= it } == true) continue
+            val proven = provenThrough[channelId] ?: continue
+            if (channelId !in channelIds || event.id in events || event.id in carryoverExcluded) continue
+            if (event.start <= proven || liveEnds[channelId]?.let { event.start < it } == true) continue
+            if (queriedToByChannel[channelId]?.let { event.start <= it } == true) continue
             if (event.stop.epochSeconds < retainFrom || event.start.epochSeconds > retainTo) continue
             carryover[event.id] = event
         }
+        carryoverExcluded.clear()
+        carryoverInstalled = true
+        trimCarryover()
     }
 
     internal fun beginQuery(channelId: ChannelId): EpgQueryFence? {
@@ -428,6 +450,7 @@ internal class EpgReducer(
         if (previous == null || queriedTo > previous) {
             cachedSnapshot = null
             queriedToByChannel[channelId] = queriedTo
+            dropCarryoverBefore(channelId, queriedTo, inclusive = true)
         }
     }
 
@@ -469,17 +492,24 @@ internal class EpgReducer(
                     if (event.stop.epochSeconds >= retainFrom) retainedCount += 1
                 }
                 if (retainedCount > maximumRetainedEvents) return EpgQueryAcceptance.CAPACITY_REJECTED
+                var liveEnd: Instant? = null
                 stagedEvents.forEach { (eventId, event) ->
                     removeCarryover(eventId)
                     supersedeHistory(event)
                     if (event.stop.epochSeconds < retainFrom) {
                         if (events.remove(eventId) != null) cachedSnapshot = null
-                    } else if (events[eventId] != event) {
-                        cachedSnapshot = null
-                        events[eventId] = event
+                    } else {
+                        if (events[eventId] != event) {
+                            cachedSnapshot = null
+                            events[eventId] = event
+                        }
+                        if (event.channelId != null && liveEnd?.let { event.stop <= it } != true) liveEnd = event.stop
                     }
+                    excludeFromCarryover(eventId)
                 }
+                liveEnd?.let { end -> dropCarryoverBefore(query.channelId, end, inclusive = false) }
                 recordSuccessfulQuery(query.channelId, queriedTo)
+                trimCarryover()
                 EpgQueryAcceptance.APPLIED
             }
         } finally {
@@ -550,7 +580,7 @@ internal class EpgReducer(
                 )
             }
         }
-        if (carryover.isNotEmpty()) appendCarryover(visibleEvents, boundsByChannel)
+        visibleEvents.addAll(carryover.values)
         return EpgSnapshot.create(
             visibleEvents, coverages,
             history.values.mapNotNull { it.toPublicOrNull() }.sortedWith(
@@ -561,32 +591,38 @@ internal class EpgReducer(
 
     private class CoverageBounds(var from: Instant, var to: Instant)
 
-    /**
-     * Live wins: a carryover event survives only while its id is not live and it starts at or
-     * after its channel's retained live events and after its queried boundary. Capacity is
-     * whatever live events leave free, evicting the latest-starting carryover first.
-     */
-    private fun appendCarryover(visibleEvents: MutableList<EpgEvent>, boundsByChannel: Map<ChannelId, CoverageBounds>) {
-        carryover.values.removeIf { event ->
-            val channelId = event.channelId
-            channelId !in channelIds || event.id in events ||
-                boundsByChannel[channelId]?.let { event.start < it.to } == true ||
-                queriedToByChannel[channelId]?.let { event.start <= it } == true
-        }
-        val excess = carryover.size - (maximumRetainedEvents - events.size).coerceAtLeast(0)
-        if (excess > 0) {
-            carryover.values
-                .sortedWith(compareByDescending<EpgEvent> { it.start }.thenByDescending { it.id.value })
-                .take(excess)
-                .forEach { carryover.remove(it.id) }
-        }
-        visibleEvents.addAll(carryover.values)
-    }
-
+    // Live wins, irreversibly and independently of publication batching: once live data names an
+    // id or reaches a start time, the carryover there is gone even if live data later recedes.
     private fun removeCarryover(eventId: EventId): Boolean {
         if (carryover.remove(eventId) == null) return false
         cachedSnapshot = null
         return true
+    }
+
+    private fun excludeFromCarryover(eventId: EventId) {
+        // A retained live copy already shadows the id at installation; remember the rest.
+        if (!carryoverInstalled && eventId !in events) carryoverExcluded += eventId
+    }
+
+    private fun dropCarryoverBefore(channelId: ChannelId?, bound: Instant, inclusive: Boolean) {
+        if (channelId == null || carryover.isEmpty()) return
+        if (carryover.values.removeIf { event ->
+                event.channelId == channelId && (event.start < bound || inclusive && event.start == bound)
+            }
+        ) cachedSnapshot = null
+    }
+
+    // Carryover only uses capacity live events leave free, evicting the latest start first.
+    private fun trimCarryover() {
+        val excess = carryover.size - (maximumRetainedEvents - events.size).coerceAtLeast(0)
+        if (excess <= 0) return
+        cachedSnapshot = null
+        val latestFirst = compareByDescending<EpgEvent> { it.start }.thenByDescending { it.id.value }
+        if (excess == 1) {
+            carryover.remove(carryover.values.minWith(latestFirst).id)
+        } else {
+            carryover.values.sortedWith(latestFirst).take(excess).forEach { carryover.remove(it.id) }
+        }
     }
 
     private fun acceptEvent(event: GatewayEpgEvent, retainFrom: Long): Boolean {
@@ -607,6 +643,8 @@ internal class EpgReducer(
             cachedSnapshot = null
             events[event.id] = candidate
         }
+        dropCarryoverBefore(candidate.channelId, candidate.stop, inclusive = false)
+        trimCarryover()
         return true
     }
 

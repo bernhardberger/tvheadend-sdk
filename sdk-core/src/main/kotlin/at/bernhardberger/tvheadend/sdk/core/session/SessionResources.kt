@@ -909,14 +909,13 @@ internal class PhaseOneSessionMetadata(
                         epgReducer.reconcileChannels(channelSnapshot.channels.map { channel -> channel.id })
                         // The display seed is this profile's restored cache or its previous
                         // generation's publication; clearAllState drops it on a profile switch.
-                        publishedEpgSnapshot?.let { seed ->
-                            epgRetentionBounds?.refresh(estimatedServerTime(event.generation))
-                            epgReducer.installCarryover(
-                                seed.events, initialEpgCoverage,
-                                epgRetentionBounds?.fromEpochSeconds ?: Long.MIN_VALUE,
-                                epgRetentionBounds?.toEpochSeconds ?: Long.MAX_VALUE,
-                            )
-                        }
+                        // Install even without a seed so ids excluded during sync are released.
+                        epgRetentionBounds?.refresh(estimatedServerTime(event.generation))
+                        epgReducer.installCarryover(
+                            publishedEpgSnapshot?.events.orEmpty(), initialEpgCoverage,
+                            epgRetentionBounds?.fromEpochSeconds ?: Long.MIN_VALUE,
+                            epgRetentionBounds?.toEpochSeconds ?: Long.MAX_VALUE,
+                        )
                         val epgSnapshot = epgReducer.snapshot()
                         val dvrSnapshot = dvrReducer.snapshot()
                         synchronizedCurrent = true
