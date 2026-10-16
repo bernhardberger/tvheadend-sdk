@@ -2,7 +2,7 @@
 
 ## [0.32.0]
 
-Unreleased; development target.
+Released 2026-10-16.
 
 ### Added
 
