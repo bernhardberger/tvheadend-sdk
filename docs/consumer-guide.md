@@ -1456,6 +1456,26 @@ integration; the SDK policy owns persistence. Catch
 exception text. Coil owns decoding and closes successful image sources. This
 component is not a URI factory or a generic image cache.
 
+Experimental `TvheadendArtwork.cached(session, id)` shows logos from the SDK's
+persistent artwork cache before `Ready` and while offline. It returns `null`
+without a cache policy or an active profile, and its fetches never reach the
+server. The model is bound to the profile active at creation: once another
+profile is active it fails with `OBSERVATION_EXPIRED` (or `CONNECTION_CHANGED`
+when the switch races the read) and never shows that profile's bytes, even for
+an equal `ArtworkId`. A missing, expired or cleared entry fails with
+`NOT_READY`. Its memory key equals the `create` model's key for the same
+profile and artwork, so switching to `create` once a current session exists
+reuses the decoded image without a second load:
+
+```kotlin
+val artwork = observed.currentSession
+    ?.let { TvheadendArtwork.create(session, it, icon) }
+    ?: TvheadendArtwork.cached(session, icon)
+```
+
+Without Coil, `ArtworkLoader.cachedArtwork` and `loadCachedArtwork` expose the
+same disk-only path; custom loaders default to `null` and `NOT_SUPPORTED`.
+
 ## Test a consumer
 
 Add `sdk-testing` with `testImplementation`. `FakeTvheadendSession` implements

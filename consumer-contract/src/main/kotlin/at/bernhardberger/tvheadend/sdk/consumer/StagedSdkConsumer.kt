@@ -18,6 +18,7 @@ import at.bernhardberger.tvheadend.sdk.core.MetadataCachePolicy
 import at.bernhardberger.tvheadend.sdk.core.MetadataRefreshTimes
 import at.bernhardberger.tvheadend.sdk.core.createTvheadendSession
 import at.bernhardberger.tvheadend.sdk.media3.TvheadendAudioOutputProvider
+import at.bernhardberger.tvheadend.sdk.android.TvheadendArtwork
 import at.bernhardberger.tvheadend.sdk.android.TvheadendArtworkLoadException
 import at.bernhardberger.tvheadend.sdk.android.ServerProfileEditReadResult
 import at.bernhardberger.tvheadend.sdk.android.TvheadendServerProfileStore
@@ -74,6 +75,7 @@ import at.bernhardberger.tvheadend.sdk.core.ServerProfileReadResult
 import at.bernhardberger.tvheadend.sdk.core.ServerProfileStore
 import at.bernhardberger.tvheadend.sdk.core.StreamProfileId
 import at.bernhardberger.tvheadend.sdk.core.StreamProfilesResult
+import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
 import at.bernhardberger.tvheadend.sdk.core.channelCatalogAuthority
 import at.bernhardberger.tvheadend.sdk.core.channelCatalogForDisplay
@@ -341,6 +343,8 @@ public class StagedSdkConsumer(
 
     public fun artworkFailure(failure: TvheadendArtworkLoadException): TvheadendFailure =
         failure.failure
+
+    public fun cachedArtwork(id: ArtworkId): TvheadendArtwork? = TvheadendArtwork.cached(session, id)
 
     public fun channel(id: ChannelId): Channel? = observation.value.channel(id)
 

@@ -4,6 +4,13 @@
 
 Unreleased; development target.
 
+### Added
+
+- Experimental `TvheadendArtwork.cached` and `ArtworkLoader.cachedArtwork` /
+  `loadCachedArtwork` show artwork from the persistent cache before `Ready` and
+  offline. Loads read the disk only, are bound to the profile active at
+  creation, and share the restart-stable memory key of current-session models.
+
 ### Changed
 
 - BREAKING (behavioural): initial synchronization requests only programmes

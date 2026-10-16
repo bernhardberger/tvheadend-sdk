@@ -1,9 +1,12 @@
+@file:OptIn(ExperimentalTvheadendApi::class, TvheadendTestingApi::class)
+
 package at.bernhardberger.tvheadend.sdk.android
 
 import at.bernhardberger.tvheadend.sdk.core.ArtworkContent
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoader
+import at.bernhardberger.tvheadend.sdk.core.CachedArtworkReference
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
@@ -24,7 +27,10 @@ import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
 import at.bernhardberger.tvheadend.sdk.core.SessionObservation
 import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
+import at.bernhardberger.tvheadend.sdk.core.TvheadendTestResultFactory
+import at.bernhardberger.tvheadend.sdk.core.TvheadendTestingApi
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
+import at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
 import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import coil3.ComponentRegistry
 import coil3.decode.DataSource
@@ -165,6 +171,36 @@ internal class TvheadendArtworkTest {
     }
 
     @Test
+    fun `cached models read only the captured cache reference before ready`() = runTest {
+        val reference = TvheadendTestResultFactory.cachedArtwork(ServerProfile("fixture"), ArtworkId(5))
+        val loader = FakeArtworkLoader().apply {
+            cachedReference = reference
+            cachedResult = ArtworkLoadResult.Available(ArtworkContent.create(byteArrayOf(5, 6)))
+        }
+        val session = sessionWith(loader, MutableStateFlow(SessionObservation.create()))
+        val uncached = sessionWith(FakeArtworkLoader(), MutableStateFlow(SessionObservation.create()))
+        assertNull(TvheadendArtwork.cached(uncached, ArtworkId(5)))
+        val artwork = requireNotNull(TvheadendArtwork.cached(session, ArtworkId(5)))
+        assertEquals(artwork, TvheadendArtwork.cached(session, ArtworkId(5)))
+        assertEquals(reference.cacheKey, artwork.memoryCacheKey())
+        assertEquals("TvheadendArtwork(<redacted>)", artwork.toString())
+
+        val result = TvheadendArtworkFetcher(artwork).fetch() as SourceFetchResult
+        try {
+            assertSame(DataSource.DISK, result.dataSource)
+            assertArrayEquals(byteArrayOf(5, 6), result.source.source().readByteArray())
+        } finally {
+            result.source.close()
+        }
+        assertSame(reference, loader.lastReference)
+        assertNull(loader.lastCurrentSession)
+
+        loader.cachedResult = ArtworkLoadResult.Unavailable(TvheadendFailure.NOT_READY)
+        val failure = runCatching { TvheadendArtworkFetcher(artwork).fetch() }.exceptionOrNull()
+        assertSame(TvheadendFailure.NOT_READY, (failure as TvheadendArtworkLoadException).failure)
+    }
+
+    @Test
     fun `delayed fetch retains its originating observation after replacement`() {
         val loader = FakeArtworkLoader(
             ArtworkLoadResult.Unavailable(TvheadendFailure.OBSERVATION_EXPIRED),
@@ -272,6 +308,16 @@ private class FakeArtworkLoader(
     internal var lastCurrentSession: CurrentSessionObservation? = null
     internal var cancellation: CancellationException? = null
     internal var persistentKey: String? = null
+    internal var cachedReference: CachedArtworkReference? = null
+    internal var cachedResult: ArtworkLoadResult = ArtworkLoadResult.Unavailable(TvheadendFailure.NOT_READY)
+    internal var lastReference: CachedArtworkReference? = null
+
+    override fun cachedArtwork(artworkId: ArtworkId): CachedArtworkReference? = cachedReference
+
+    override suspend fun loadCachedArtwork(reference: CachedArtworkReference): ArtworkLoadResult {
+        lastReference = reference
+        return cachedResult
+    }
 
     override fun cacheKey(currentSession: CurrentSessionObservation, artworkId: ArtworkId): String? = persistentKey
 
