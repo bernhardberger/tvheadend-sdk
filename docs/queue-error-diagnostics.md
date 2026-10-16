@@ -24,7 +24,7 @@ HTSP dependency: `at.bernhardberger.tvheadend:htsp:0.10.0`, public tag
 Producer P36-H1 verified all signed Central members and GitHub assets:
 
 - [Public Maven coordinate](https://repo1.maven.org/maven2/at/bernhardberger/tvheadend/htsp/0.10.0/)
-- [Release](https://github.com/bernhardberger/tvheadend-htsp/releases/tag/v0.10.0)
+- [Release](https://github.com/bernhardberger/tvheadend-htsp-kotlin/releases/tag/v0.10.0)
 - JAR SHA-256: `7e62397d5af399dec4436e58afc98a0c6a340e37578a29fcf85b8fbbb416ad7f`
 - Sources JAR SHA-256: `f4a2b3b3ce3a09cb9d268f7d1d98a712773fd6755300fbdce58af71ab33cc13b`
 - Release manifest SHA-256: `bfa2f116907bdf72106c543921204c95014da94434d41bd8b62790dc9f0a7ec3`

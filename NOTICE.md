@@ -5,7 +5,7 @@ affiliated with, endorsed by, or sponsored by the
 [Tvheadend project](https://github.com/tvheadend/tvheadend).
 
 The SDK links the independently maintained GPLv3
-[`tvheadend-htsp`](https://github.com/bernhardberger/tvheadend-htsp) protocol
+[`tvheadend-htsp-kotlin`](https://github.com/bernhardberger/tvheadend-htsp-kotlin) protocol
 library. That library is derived from
 [`Preclikos/tvhstream`](https://github.com/Preclikos/tvhstream), which in turn
 acknowledges ideas and code from
