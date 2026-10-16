@@ -51,7 +51,9 @@ internal class RestoredSnapshots(
  *
  * All store access runs on [ioDispatcher]. The writer observes [PublishedSnapshots] and writes
  * the catalog whenever content or receipt times change, also while an EPG write waits, and the EPG
- * at most once per [epgWriteInterval]; [stop] flushes the latest EPG under [NonCancellable],
+ * after one [epgWriteInterval] from its first observed live publication, then at most once
+ * per interval across automatic retries;
+ * [stop] flushes the latest EPG under [NonCancellable],
  * including a publication the session retired before stopping the writer. The store never
  * throws for IO problems, so a failing cache cannot fail the session.
  */
@@ -153,8 +155,11 @@ internal class MetadataCacheRuntime(
         }
     }
 
-    private fun launchWriter(namespace: CacheNamespace, publications: StateFlow<PublishedSnapshots?>): Writer =
-        Writer(namespace, publications).also { it.job = scope.launch { it.run() } }
+    private fun launchWriter(
+        namespace: CacheNamespace,
+        publications: StateFlow<PublishedSnapshots?>,
+        deferFirstEpgWrite: Boolean = true,
+    ): Writer = Writer(namespace, publications, deferFirstEpgWrite).also { it.job = scope.launch { it.run() } }
 
     /**
      * Stops the writer and flushes the latest catalog and EPG snapshot to the writer's namespace.
@@ -191,7 +196,10 @@ internal class MetadataCacheRuntime(
                 }
             } finally {
                 if (active != null) {
-                    writer = launchWriter(active.namespace, active.publications)
+                    // Explicit clear keeps its immediate rewrite of the current publication.
+                    writer = launchWriter(
+                        active.namespace, active.publications, deferFirstEpgWrite = active.publications.value == null,
+                    )
                 }
             }
         }
@@ -210,6 +218,7 @@ internal class MetadataCacheRuntime(
     private inner class Writer(
         val namespace: CacheNamespace,
         val publications: StateFlow<PublishedSnapshots?>,
+        private val deferFirstEpgWrite: Boolean,
     ) {
         lateinit var job: Job
         private var writtenCatalog: ChannelCatalog? = null
@@ -217,19 +226,22 @@ internal class MetadataCacheRuntime(
         private var writtenEpg: EpgSnapshot? = null
         private var writtenEpgTimes: MetadataRefreshTimes? = null
         private var writtenQueryTimes: Map<ChannelId, Instant>? = null
-        private var lastEpgWrite: Instant = Instant.DISTANT_PAST
+        private var epgDeadline: Instant? = null
 
         suspend fun run() {
             while (currentCoroutineContext().isActive) {
                 val snapshots = publications.filterNotNull().first(::isNewer)
+                if (epgDeadline == null) {
+                    epgDeadline = clock.now() + if (deferFirstEpgWrite) epgWriteInterval else Duration.ZERO
+                }
                 if (isNewCatalog(snapshots)) {
                     writeCatalog(snapshots)
                 }
                 if (isNewEpg(snapshots)) {
-                    writeCatalogsUntil(lastEpgWrite + epgWriteInterval)
+                    writeCatalogsUntil(checkNotNull(epgDeadline))
                     val latest = publications.value ?: snapshots
                     if (isNewCatalog(latest)) writeCatalog(latest)
-                    writeEpg(latest)
+                    writeEpg(latest, useLatestPublication = true)
                 }
             }
         }
@@ -277,17 +289,20 @@ internal class MetadataCacheRuntime(
             writtenCatalogTimes = snapshots.channelRefreshTimes
         }
 
-        private suspend fun writeEpg(snapshots: PublishedSnapshots) {
-            val now = clock.now()
+        private suspend fun writeEpg(fallback: PublishedSnapshots, useLatestPublication: Boolean = false) {
             accessStore {
+                // Ordinary writes resolve after store admission, which may have suspended
+                // across newer publications. Stop's explicit retired publication stays pinned.
+                val snapshots = if (useLatestPublication) publications.value ?: fallback else fallback
+                val now = clock.now()
                 store.storeEpg(namespace, CachedEpg(snapshots.epgSnapshot, snapshots.epgRefreshTimes,
                     snapshots.epgLastQueriedAt), now)
                 refreshStatistics()
+                writtenEpg = snapshots.epgSnapshot
+                writtenEpgTimes = snapshots.epgRefreshTimes
+                writtenQueryTimes = snapshots.epgLastQueriedAt
+                epgDeadline = now + epgWriteInterval
             }
-            writtenEpg = snapshots.epgSnapshot
-            writtenEpgTimes = snapshots.epgRefreshTimes
-            writtenQueryTimes = snapshots.epgLastQueriedAt
-            lastEpgWrite = now
         }
     }
 

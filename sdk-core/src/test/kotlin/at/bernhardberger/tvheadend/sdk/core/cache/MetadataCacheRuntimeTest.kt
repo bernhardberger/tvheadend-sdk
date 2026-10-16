@@ -10,6 +10,9 @@ import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.MetadataCachePolicy
 import at.bernhardberger.tvheadend.sdk.core.MetadataRefreshTimes
 import at.bernhardberger.tvheadend.sdk.core.session.PublishedSnapshots
+import at.bernhardberger.tvheadend.sdk.core.session.PhaseOneSessionMetadata
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
+import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import java.io.File
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
@@ -37,6 +40,133 @@ class MetadataCacheRuntimeTest {
     private val namespace = cacheNamespace("server", 9_982, "user")
 
     @Test
+    fun `first EPG write waits sixty seconds from sync while catalog is immediate`() = runTest {
+        val store = RecordingStore()
+        val runtime = runtime(store, clock = TestClock(this))
+        val publications = MutableStateFlow<PublishedSnapshots?>(null)
+        runtime.start(namespace, publications)
+        advanceTimeBy(120.seconds) // Connecting time must not consume the write delay.
+        val first = PublishedSnapshots(catalog(1), EpgSnapshot.create())
+        publications.value = first
+        runCurrent()
+        assertEquals(listOf(Call.StoreCatalog(first.catalog)), store.writes())
+        advanceTimeBy(59_999.milliseconds)
+        runCurrent()
+        assertTrue(store.calls.filterIsInstance<Call.StoreEpg>().isEmpty())
+        advanceTimeBy(1.milliseconds)
+        runCurrent()
+        assertEquals(listOf(Call.StoreEpg(first.epgSnapshot)), store.calls.filterIsInstance<Call.StoreEpg>())
+        advanceTimeBy(120.seconds)
+        runCurrent()
+        assertEquals(1, store.calls.filterIsInstance<Call.StoreEpg>().size)
+        runtime.shutdown()
+    }
+
+    @Test
+    fun `syncs every thirty seconds cannot postpone the first or later EPG writes`() = runTest {
+        val store = RecordingStore()
+        val clock = TestClock(this)
+        val runtime = runtime(store, clock = clock)
+        val metadata = PhaseOneSessionMetadata(clock = clock)
+        runtime.start(namespace, metadata.publishedSnapshots)
+        repeat(2) {
+            metadata.resetWorkingStateRetainingPublishedSnapshot()
+            val generation = GatewayGeneration()
+            metadata.bindGeneration(generation)
+            metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+            runCurrent()
+            advanceTimeBy(29_999.milliseconds)
+            runCurrent()
+            assertTrue(store.calls.filterIsInstance<Call.StoreEpg>().isEmpty())
+            advanceTimeBy(1.milliseconds)
+        }
+        runCurrent()
+        assertEquals(1, store.calls.filterIsInstance<Call.StoreEpg>().size)
+        repeat(2) {
+            metadata.resetWorkingStateRetainingPublishedSnapshot()
+            val next = GatewayGeneration()
+            metadata.bindGeneration(next)
+            metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(next))
+            runCurrent()
+            advanceTimeBy(29_999.milliseconds)
+            runCurrent()
+            assertEquals(1, store.calls.filterIsInstance<Call.StoreEpg>().size)
+            advanceTimeBy(1.milliseconds)
+        }
+        runCurrent()
+        assertEquals(2, store.calls.filterIsInstance<Call.StoreEpg>().size)
+        runtime.shutdown()
+    }
+
+    @Test
+    fun `EPG write waiting for store admission persists only the newest publication`() = runTest {
+        val store = RecordingStore()
+        val loading = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val blockedStore = object : MetadataCacheStore by store {
+            override suspend fun loadEpg(namespace: CacheNamespace, notBefore: Instant): CachedEpg? {
+                loading.complete(Unit)
+                release.await()
+                return null
+            }
+        }
+        val runtime = runtime(blockedStore, clock = TestClock(this))
+        val catalog = catalog(1)
+        val publications = MutableStateFlow<PublishedSnapshots?>(PublishedSnapshots(catalog, EpgSnapshot.create()))
+        runtime.start(namespace, publications)
+        runCurrent()
+        val restore = launch { runtime.restore(namespace) }
+        loading.await()
+        advanceTimeBy(60.seconds)
+        runCurrent() // The first EPG write has reached store admission and is blocked.
+        assertTrue(store.calls.filterIsInstance<Call.StoreEpg>().isEmpty())
+        val newest = PublishedSnapshots(catalog, EpgSnapshot.create())
+        publications.value = newest
+        runCurrent()
+        release.complete(Unit)
+        restore.join()
+        runCurrent()
+        assertEquals(1, store.calls.filterIsInstance<Call.StoreEpg>().size)
+        assertSame(newest.epgSnapshot, store.epg)
+        runtime.shutdown()
+    }
+
+    @Test
+    fun `teardown at thirty seconds flushes latest EPG only to outgoing namespace`() = runTest {
+        for (shutdown in listOf(false, true)) {
+            val store = RecordingStore()
+            val runtime = runtime(store, clock = TestClock(this))
+            val publications = MutableStateFlow<PublishedSnapshots?>(PublishedSnapshots(catalog(1), EpgSnapshot.create()))
+            runtime.start(namespace, publications)
+            runCurrent()
+            advanceTimeBy(30.seconds)
+            val retired = PublishedSnapshots(catalog(1), EpgSnapshot.create())
+            publications.value = retired
+            runCurrent()
+            assertTrue(store.epgNamespaces.isEmpty())
+            publications.value = null
+            if (shutdown) runtime.shutdown(retired) else runtime.stop(retired)
+            assertEquals(listOf(namespace), store.epgNamespaces)
+            assertSame(retired.epgSnapshot, store.epg)
+            if (!shutdown) {
+                val replacement = cacheNamespace("replacement", 9_982, "user")
+                val incoming = PublishedSnapshots(catalog(2), EpgSnapshot.create())
+                publications.value = incoming
+                runtime.start(replacement, publications)
+                runCurrent()
+                advanceTimeBy(59_999.milliseconds)
+                runCurrent()
+                assertEquals(listOf(namespace), store.epgNamespaces)
+                advanceTimeBy(1.milliseconds)
+                runCurrent()
+                assertEquals(listOf(namespace, replacement), store.epgNamespaces)
+                assertSame(incoming.epgSnapshot, store.epg)
+                runtime.shutdown()
+            }
+        }
+    }
+
+    @Test
     fun `unchanged content persists new times and retirement flush restores exact freshness`() = runTest {
         val store = RecordingStore()
         val runtime = runtime(store, clock = TestClock(this))
@@ -47,6 +177,8 @@ class MetadataCacheRuntimeTest {
             PublishedSnapshots(catalog, snapshot, first, first, emptyMap()),
         )
         runtime.start(namespace, publications)
+        runCurrent()
+        advanceTimeBy(60.seconds)
         runCurrent()
         val updated = first.copy(lastUpdatedAt = START)
         val queries = mapOf(ChannelId(1) to START)
@@ -104,6 +236,8 @@ class MetadataCacheRuntimeTest {
         val firstEpg = EpgSnapshot.create()
         publications.value = PublishedSnapshots(firstCatalog, firstEpg)
         runCurrent()
+        advanceTimeBy(60.seconds)
+        runCurrent()
 
         assertEquals(listOf(Call.StoreCatalog(firstCatalog), Call.StoreEpg(firstEpg)), store.writes())
 
@@ -151,7 +285,7 @@ class MetadataCacheRuntimeTest {
 
         advanceTimeBy(51.seconds)
         runCurrent()
-        assertEquals(5, store.writes().size)
+        assertEquals(4, store.writes().size)
         assertSame(pendingEpg, store.epg)
         runtime.shutdown()
     }
@@ -171,11 +305,11 @@ class MetadataCacheRuntimeTest {
         publications.value = null
         runCurrent()
 
-        assertEquals(2, store.writes().size)
+        assertEquals(1, store.writes().size)
 
         runtime.stop(retired)
 
-        assertEquals(3, store.writes().size)
+        assertEquals(2, store.writes().size)
         assertSame(retired.epgSnapshot, store.epg)
         runtime.shutdown()
     }
@@ -213,14 +347,19 @@ class MetadataCacheRuntimeTest {
         publications.value = PublishedSnapshots(catalog, EpgSnapshot.create())
         runCurrent()
 
+        advanceTimeBy(30.seconds)
+        assertTrue(store.calls.filterIsInstance<Call.StoreEpg>().isEmpty())
         runtime.clear()
         runCurrent()
 
         assertEquals(
             listOf(Call.Clear, Call.StoreCatalog(catalog), Call.StoreEpg(EpgSnapshot.create())),
-            store.calls.filterNot { it is Call.Load || it is Call.Statistics }.drop(2),
+            store.calls.filterNot { it is Call.Load || it is Call.Statistics }.drop(1),
         )
         assertSame(catalog, store.catalog)
+        advanceTimeBy(60.seconds)
+        runCurrent()
+        assertEquals(1, store.calls.filterIsInstance<Call.StoreEpg>().size)
         runtime.shutdown()
     }
 
@@ -331,6 +470,7 @@ class MetadataCacheRuntimeTest {
         var epgTimes = MetadataRefreshTimes()
         var queryTimes: Map<ChannelId, Instant> = emptyMap()
         val calls = mutableListOf<Call>()
+        val epgNamespaces = mutableListOf<CacheNamespace>()
 
         fun writes(): List<Call> = calls.filter { it is Call.StoreCatalog || it is Call.StoreEpg }
 
@@ -349,6 +489,7 @@ class MetadataCacheRuntimeTest {
         }
 
         override suspend fun storeEpg(namespace: CacheNamespace, snapshot: CachedEpg, storedAt: Instant) {
+            epgNamespaces += namespace
             calls += Call.StoreEpg(snapshot.snapshot)
             epg = snapshot.snapshot
             epgTimes = snapshot.refreshTimes

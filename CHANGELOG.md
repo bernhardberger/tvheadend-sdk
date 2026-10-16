@@ -15,6 +15,11 @@
   ended events, with bounded coverage, including offline. The ordered `EPG4`
   format skips far-future decoding; existing `EPG3` guides are discarded once.
   Persistence continues to store the complete live guide.
+- Defer the writer's first persistent EPG write by 60 seconds after its first
+  observed live publication, reducing work during the first tune. Automatic
+  retries do not restart the delay. Catalog writes remain
+  immediate; disconnect, profile replacement and shutdown still flush the latest
+  guide, and explicit cache clearing retains its immediate rewrite.
 
 ### Fixed
 

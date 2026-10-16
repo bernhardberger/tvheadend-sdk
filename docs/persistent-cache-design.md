@@ -152,9 +152,14 @@ through a conflated channel; publication itself stays synchronous under the
 metadata lock and never blocks on IO.
 
 - Catalog: write on every change (small).
-- EPG: coalesce; write at most once per 60 s while changes keep arriving, and
-  always on `Ready -> Disconnected`, `disconnect()`, and `shutdown()` under
-  `NonCancellable` in the ordered cleanup list (`ConnectionOwner.kt:342-352`).
+- EPG: defer the writer's first write by 60 s after its first observed live
+  publication, then coalesce writes at most once per 60 s while changes arrive.
+  Catalog changes still persist immediately during that wait. Stopping the writer
+  on disconnect, profile replacement or shutdown flushes the latest publication
+  under `NonCancellable`, even inside the first interval, to the outgoing
+  namespace. Automatic retries and new generations never restart the delay.
+  Ordinary EPG writes resolve the latest publication after acquiring store access.
+  Explicit `clear()` retains its immediate rewrite of the current publication.
 - Every write goes to `<file>.tmp` then `Files.move(ATOMIC_MOVE)`.
 - IO failures are logged as bounded diagnostics without paths and never fail the
   session. `CancellationException` propagates.

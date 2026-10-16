@@ -438,7 +438,9 @@ internal class ConnectionOwnerTest {
             store = store,
             policy = MetadataCachePolicy.create(File("unused")),
             ioDispatcher = StandardTestDispatcher(testScheduler),
-            clock = Clock.System,
+            clock = object : Clock {
+                override fun now(): Instant = Instant.fromEpochMilliseconds(testScheduler.currentTime)
+            },
         )
         val metadata = PhaseOneSessionMetadata()
         val owner = owner(gateway = gateway, metadata = metadata, cacheRuntime = cacheRuntime)
@@ -458,6 +460,8 @@ internal class ConnectionOwnerTest {
 
         assertEquals(listOf(1L), owner.currentCatalog().channels.map { it.id.value })
         assertSame(owner.currentCatalog(), store.catalog)
+        advanceTimeBy(60.seconds)
+        runCurrent()
         assertSame(owner.currentEpgSnapshot(), store.epg)
 
         owner.cache.clear()
@@ -903,7 +907,13 @@ internal class ConnectionOwnerTest {
             connectBehavior = { authenticate.await(); connected(generation) }
         }
         val store = InMemoryMetadataCacheStore(null, null)
-        val runtime = MetadataCacheRuntime(store, MetadataCachePolicy.create(File("unused")), Dispatchers.Unconfined, Clock.System)
+        val runtime = MetadataCacheRuntime(
+            store, MetadataCachePolicy.create(File("unused")),
+            kotlinx.coroutines.test.UnconfinedTestDispatcher(testScheduler),
+            object : Clock {
+                override fun now(): Instant = Instant.fromEpochMilliseconds(testScheduler.currentTime)
+            },
+        )
         val owner = owner(gateway, cacheRuntime = runtime)
         val profile = ServerProfile("first")
         try {
@@ -936,6 +946,8 @@ internal class ConnectionOwnerTest {
             gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
             runCurrent()
             assertEquals(listOf(1L), store.catalog?.channels?.map { it.id.value })
+            advanceTimeBy(60.seconds)
+            runCurrent()
             assertSame(owner.currentEpgSnapshot(), store.epg)
             assertEquals(setOf(profile.cacheNamespace()), store.writtenNamespaces)
         } finally {
