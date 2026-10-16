@@ -1500,6 +1500,41 @@ internal class PhaseOneSessionMetadataTest {
     }
 
     @Test
+    fun `a generation-fenced retained seed preserves live sync and never lends cached query proof`() {
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        val cachedCatalog = ChannelCatalog.create(channels = listOf(Channel.create(ChannelId(9), "Cached")))
+        val cachedEpg = EpgSnapshot.create()
+        val received = Instant.fromEpochSeconds(5)
+        val times = MetadataRefreshTimes(received, received)
+        val catalog = CachedCatalog(cachedCatalog, times)
+        val guide = CachedEpg(cachedEpg, times, mapOf(ChannelId(1) to received, ChannelId(9) to received))
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(id = 1)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(1, 1, 10, 20)))
+
+        assertFalse(metadata.seedRetainedSnapshots(catalog, guide, GatewayGeneration()))
+        assertFalse(metadata.seedRetainedSnapshots(catalog, guide), "An unfenced seed cannot target a bound generation")
+        assertTrue(metadata.seedRetainedSnapshots(catalog, guide, generation))
+        assertSame(cachedCatalog, (metadata.observation.value.channelState as ChannelRepositoryState.Synchronizing).staleCatalog)
+        assertSame(cachedEpg, (metadata.observation.value.epgState as EpgRepositoryState.Synchronizing).staleSnapshot)
+        assertEquals(times, metadata.observation.value.channelRefreshTimes)
+        assertEquals(times, metadata.observation.value.epgRefreshTimes)
+        assertNull(metadata.publishedSnapshots.value)
+        assertTrue(metadata.initialEpgCoverage(generation).isEmpty())
+
+        val through = Instant.fromEpochSeconds(100)
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation, through))
+        val published = requireNotNull(metadata.publishedSnapshots.value)
+        assertEquals(listOf(1L), published.catalog.channels.map { it.id.value })
+        assertEquals(listOf(1L), published.epgSnapshot.events.map { it.id.value })
+        assertTrue(published.epgLastQueriedAt.isEmpty(), "The marker discards cached scheduling timestamps")
+        assertEquals(mapOf(ChannelId(1) to through), metadata.initialEpgCoverage(generation))
+        assertFalse(metadata.seedRetainedSnapshots(catalog, guide, generation))
+        assertSame(published, metadata.publishedSnapshots.value)
+    }
+
+    @Test
     fun `published snapshots retain insertion order are immutable conflated and redacted`() {
         val metadata = PhaseOneSessionMetadata()
         val generation = GatewayGeneration()

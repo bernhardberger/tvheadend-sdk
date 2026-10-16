@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Restore the persistent metadata cache alongside connecting and authentication.
+  Cached catalog and guide data can populate the synchronizing display without
+  delaying the connection, or remain browsable offline after a failed attempt.
+  Restores finishing after initial sync are discarded; completed live sync data
+  is still persisted when teardown cancels a slow restore.
+
 ### Fixed
 
 - Avoid redundant background EPG queries for channels covered by the completed

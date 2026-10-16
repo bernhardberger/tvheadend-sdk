@@ -15,9 +15,11 @@ import kotlin.time.Duration.Companion.days
  * under the root is a consumer contract; its contents may change between releases and files
  * written by one release may be discarded by the next.
  *
- * Cached snapshots never claim [RetainedMetadataAuthority.CURRENT]. A cold start publishes a
- * cached catalog and EPG as [ChannelRepositoryState.Stale] and [EpgRepositoryState.Stale] until a
- * connection completes its initial synchronisation.
+ * Cached snapshots never claim [RetainedMetadataAuthority.CURRENT]. Cold-start restoration runs
+ * alongside connecting: snapshots arriving before generation binding are published as
+ * [ChannelRepositoryState.Stale] and [EpgRepositoryState.Stale], or as retained data in
+ * [ChannelRepositoryState.Synchronizing] and [EpgRepositoryState.Synchronizing] during initial
+ * synchronisation. A restore finishing after initial synchronisation is discarded.
  *
  * Policies compare by all configuration values. The root is stored and compared as a normalized
  * absolute path, removing lexical `.` and `..` segments without resolving symlinks or requiring
@@ -114,6 +116,10 @@ public interface SessionCache {
      * freeing storage for the rest of the session. A normal return follows the deletion attempt.
      * Cancellation waits for any in-flight writer to retire and does not guarantee deletion;
      * persistence resumes even when the caller cancels. Filesystem failures are best-effort.
+     *
+     * A restore racing clear may still display a pre-clear snapshot in this session. Such a
+     * display-only seed is never persisted; later live publications replace it. A cancelled
+     * clear may still reject an in-flight restore's display seed even if deletion did not finish.
      */
     public suspend fun clear()
 }

@@ -182,12 +182,20 @@ internal interface SessionMetadata {
     public val publishedSnapshots: StateFlow<PublishedSnapshots?>
 
     /**
-     * Seeds the retained catalog and EPG snapshot from persistence before any connection.
+     * Seeds display-only retained snapshots before binding or for [expectedGeneration] during sync.
      *
-     * Publishes them as stale states. Returns `false` without changes when a generation is bound
-     * or a snapshot is already retained, so a cached copy never replaces live data.
+     * Publishes stale states before binding and synchronizing states for an exact bound generation.
+     * Refuses a mismatched generation, completed sync or already retained snapshot. The caller
+     * additionally fences the session and namespace, and the attempt revision when bound.
+     * [restoreIsCurrent] checks cache-clear admission under the metadata lock. Once admitted,
+     * a racing clear may leave this display-only seed in memory; it is never a live publication.
      */
-    public fun seedRetainedSnapshots(catalog: CachedCatalog?, epgSnapshot: CachedEpg?): Boolean
+    public fun seedRetainedSnapshots(
+        catalog: CachedCatalog?,
+        epgSnapshot: CachedEpg?,
+        expectedGeneration: GatewayGeneration? = null,
+        restoreIsCurrent: () -> Boolean = { true },
+    ): Boolean
 
     /** Whether a cache seed is currently eligible, without reading or publishing cache data. */
     public fun canSeedRetainedSnapshots(): Boolean
@@ -594,22 +602,34 @@ internal class PhaseOneSessionMetadata(
         generation == null && publishedCatalog == null && publishedEpgSnapshot == null
     }
 
-    override fun seedRetainedSnapshots(catalog: CachedCatalog?, epgSnapshot: CachedEpg?): Boolean {
+    override fun seedRetainedSnapshots(
+        catalog: CachedCatalog?,
+        epgSnapshot: CachedEpg?,
+        expectedGeneration: GatewayGeneration?,
+        restoreIsCurrent: () -> Boolean,
+    ): Boolean {
         if (catalog == null && epgSnapshot == null) return false
+        epgSnapshot?.snapshot?.prepareForObservation()
         synchronized(lock) {
-            if (!canSeedRetainedSnapshots()) {
+            if (generation !== expectedGeneration || synchronizedCurrent ||
+                publishedCatalog != null || publishedEpgSnapshot != null || !restoreIsCurrent()
+            ) {
                 return false
             }
-            epgSnapshot?.snapshot?.prepareForObservation()
             publishedCatalog = catalog?.catalog
             publishedEpgSnapshot = epgSnapshot?.snapshot
             channelRefreshTimes = catalog?.refreshTimes ?: MetadataRefreshTimes()
             epgRefreshTimes = epgSnapshot?.refreshTimes ?: MetadataRefreshTimes()
             epgLastQueriedAt.clear()
             epgLastQueriedAt.putAll(epgSnapshot?.lastQueriedAt.orEmpty())
-            mutableChannelsAndTags.value = catalog?.let { ChannelRepositoryState.Stale(it.catalog) }
-                ?: ChannelRepositoryState.Empty
-            mutableEpg.value = epgSnapshot?.let { EpgRepositoryState.Stale(it.snapshot) } ?: EpgRepositoryState.Empty
+            if (expectedGeneration == null) {
+                mutableChannelsAndTags.value = catalog?.let { ChannelRepositoryState.Stale(it.catalog) }
+                    ?: ChannelRepositoryState.Empty
+                mutableEpg.value = epgSnapshot?.let { EpgRepositoryState.Stale(it.snapshot) } ?: EpgRepositoryState.Empty
+            } else {
+                mutableChannelsAndTags.value = ChannelRepositoryState.Synchronizing(publishedCatalog)
+                mutableEpg.value = EpgRepositoryState.Synchronizing(publishedEpgSnapshot)
+            }
             publishMetadataObservation()
         }
         return true

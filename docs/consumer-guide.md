@@ -193,9 +193,15 @@ The SDK owns the mechanics: files live under `<root>/tvheadend-sdk/<namespace>/`
 where the namespace is a hash of host, port and username, the catalog is written
 on every change, the guide is coalesced to one write per minute and flushed on
 disconnect, and files older than `metadataRetention` (default seven days) or
-that fail to decode are deleted. On the next `connect(profile)` the cached
-snapshots are published as `Stale` repository states before the transport
-connects, so a channel list can render during `Connecting` and `Synchronizing`.
+that fail to decode are deleted. On the next `connect(profile)` cache restoration
+runs alongside connecting. Snapshots available before authentication are published
+as `Stale`; those restored during initial sync become the retained data in
+`Synchronizing`. A restore finishing after initial sync is discarded. Connecting
+does not wait for disk IO, and a channel list can render as soon as restore finishes.
+If connecting fails before restore finishes, cached snapshots can still appear as
+`Stale` for offline browsing and carry into the next connection attempt. Persistence
+starts independently of restore completion, so disconnecting during a slow restore
+still flushes any live metadata already synchronized.
 Cached data is never published as `CURRENT`: tuning, EPG queries and DVR
 mutations still wait for `Ready`. The guide is seeded for display only; the
 initial sync re-sends the configured horizon.

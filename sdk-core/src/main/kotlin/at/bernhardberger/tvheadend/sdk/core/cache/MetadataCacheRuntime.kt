@@ -14,6 +14,7 @@ import at.bernhardberger.tvheadend.sdk.core.MetadataCachePolicy
 import at.bernhardberger.tvheadend.sdk.core.SessionCache
 import at.bernhardberger.tvheadend.sdk.core.session.PublishedSnapshots
 import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -42,6 +43,7 @@ import kotlin.time.Instant
 internal class RestoredSnapshots(
     val catalog: CachedCatalog?,
     val epgSnapshot: CachedEpg?,
+    val isCurrent: () -> Boolean = { true },
 )
 
 /**
@@ -64,6 +66,7 @@ internal class MetadataCacheRuntime(
     private val scope = CoroutineScope(ioDispatcher + rootJob)
     private val lifecycle = Mutex()
     private val storeAccess = Mutex()
+    private val restoreRevision = AtomicLong()
     private val artworkStore = FileArtworkCacheStore(policy.root)
     private var clearEpoch = 0L
     private val mutableStatistics = MutableStateFlow(CacheStatistics.EMPTY)
@@ -72,13 +75,30 @@ internal class MetadataCacheRuntime(
     override val statistics: StateFlow<CacheStatistics> = mutableStatistics.asStateFlow()
 
     /** Restores snapshots for [namespace] that are within the metadata retention. */
-    suspend fun restore(namespace: CacheNamespace): RestoredSnapshots = accessStore {
-        val notBefore = clock.now() - policy.metadataRetention
-        val catalog = store.loadCatalog(namespace, notBefore)
-        val epgSnapshot = store.loadEpg(namespace, notBefore)
-        artworkStore.prune(clock.now() - policy.artworkRetention, policy.artworkMaxBytes)
-        refreshStatistics()
-        RestoredSnapshots(catalog, epgSnapshot)
+    suspend fun restore(
+        namespace: CacheNamespace,
+        accept: (RestoredSnapshots) -> Unit = {},
+    ): RestoredSnapshots {
+        val revision = restoreRevision.get()
+        return withContext(ioDispatcher) {
+            val restored = lifecycle.withLock {
+                accessStore {
+                    val notBefore = clock.now() - policy.metadataRetention
+                    val catalog = store.loadCatalog(namespace, notBefore)
+                    val epgSnapshot = store.loadEpg(namespace, notBefore)
+                    artworkStore.prune(clock.now() - policy.artworkRetention, policy.artworkMaxBytes)
+                    refreshStatistics()
+                    RestoredSnapshots(catalog, epgSnapshot) { restoreRevision.get() == revision }
+                }
+            }
+            // Index construction and acceptance hold no cache locks. Acceptance rechecks the
+            // atomic epoch inside the owner/metadata critical section, avoiding lock inversion
+            // when an inline observation collector clears the cache during publication.
+            restored.epgSnapshot?.snapshot?.prepareForObservation()
+            currentCoroutineContext().ensureActive()
+            accept(restored)
+            restored
+        }
     }
 
     suspend fun loadArtwork(
@@ -148,6 +168,10 @@ internal class MetadataCacheRuntime(
 
     override suspend fun clear() {
         currentCoroutineContext().ensureActive()
+        // Never acquire a monitor here: an inline collector can call clear under publication
+        // locks while a restore is waiting to take those locks. The atomic read at acceptance
+        // linearizes the seed before clear, or rejects a load invalidated by clear.
+        restoreRevision.incrementAndGet()
         lifecycle.withLock {
             val active = writer
             try {

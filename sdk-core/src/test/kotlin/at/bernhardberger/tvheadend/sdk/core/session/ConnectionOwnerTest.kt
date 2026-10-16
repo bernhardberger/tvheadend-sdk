@@ -101,6 +101,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -425,7 +426,7 @@ internal class ConnectionOwnerTest {
     }
 
     @Test
-    fun `a cached catalog is browsable before connecting and persisted after sync`() = runTest {
+    fun `a cached catalog is browsable during synchronization and persisted after sync`() = runTest {
         val gateway = FakeProtocolGateway(mutableListOf())
         val generation = GatewayGeneration()
         gateway.connectResults += connected(generation, streaming = true, dvrAccess = false)
@@ -515,24 +516,443 @@ internal class ConnectionOwnerTest {
     }
 
     @Test
-    fun `retry preserves a cache seed even before the first successful sync`() = runTest {
+    fun `slow restore does not delay connect and seeds only retained data during sync`() = runTest {
+        val release = CompletableDeferred<Unit>()
+        val catalog = ChannelCatalog.create(channels = listOf(Channel.create(SdkChannelId(9), "Cached")))
+        val cachedEpg = EpgSnapshot.create()
+        val store = InMemoryMetadataCacheStore(catalog, cachedEpg) { release.await() }
+        val gateway = FakeProtocolGateway()
+        val generation = GatewayGeneration()
+        gateway.connectResults += connected(generation)
+        val metadata = PhaseOneSessionMetadata()
+        val owner = owner(gateway, metadata = metadata, cacheRuntime = cacheRuntime(store))
+        try {
+            owner.connect(ServerProfile("first"))
+            runCurrent()
+            assertEquals(1, gateway.connectCalls, "Connecting must not wait for cache IO")
+            assertEquals(SessionState.Synchronizing, owner.observation.value.sessionState)
+            gateway.emitMetadata(MetadataEvent.ChannelAdded(generation, channelMetadata(1)))
+            gateway.emitMetadata(MetadataEvent.EventAdded(generation, epgMetadata(1, 1)))
+            runCurrent()
+            release.complete(Unit)
+            runCurrent()
+            assertSame(catalog, (owner.observation.value.channelState as ChannelRepositoryState.Synchronizing).staleCatalog)
+            assertSame(cachedEpg, (owner.observation.value.epgState as EpgRepositoryState.Synchronizing).staleSnapshot)
+            assertNull(metadata.publishedSnapshots.value, "A retained seed must not become a live publication")
+            assertTrue(metadata.initialEpgCoverage(generation).isEmpty())
+            gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation, Instant.fromEpochSeconds(100)))
+            runCurrent()
+            assertEquals(listOf(1L), owner.currentCatalog().channels.map { it.id.value })
+            assertNotSame(cachedEpg, owner.currentEpgSnapshot())
+            assertEquals(mapOf(ChannelId(1) to Instant.fromEpochSeconds(100)), metadata.initialEpgCoverage(generation))
+            assertTrue(requireNotNull(metadata.publishedSnapshots.value).epgLastQueriedAt.isEmpty())
+            assertSame(owner.currentCatalog(), store.catalog)
+        } finally {
+            owner.shutdown()
+        }
+    }
+
+    @Test
+    fun `restore before authentication retains the pre-bind stale seed`() = runTest {
+        val authenticate = CompletableDeferred<Unit>()
+        val generation = GatewayGeneration()
         val gateway = FakeProtocolGateway().apply {
-            defaultConnectResult = failed(GatewayConnectionFailure.SERVER_UNREACHABLE)
+            connectBehavior = { authenticate.await(); connected(generation) }
+        }
+        val catalog = ChannelCatalog.create(channels = listOf(Channel.create(SdkChannelId(9), "Cached")))
+        val store = InMemoryMetadataCacheStore(catalog, EpgSnapshot.create())
+        val owner = owner(gateway, cacheRuntime = cacheRuntime(store))
+        try {
+            owner.connect(ServerProfile("first"))
+            runCurrent()
+            assertEquals(1, gateway.connectCalls)
+            assertEquals(SessionState.Connecting, owner.observation.value.sessionState)
+            assertSame(catalog, (owner.observation.value.channelState as ChannelRepositoryState.Stale).catalog)
+            authenticate.complete(Unit)
+            runCurrent()
+            assertSame(catalog, (owner.observation.value.channelState as ChannelRepositoryState.Synchronizing).staleCatalog)
+        } finally {
+            owner.shutdown()
+        }
+    }
+
+    @Test
+    fun `restore after initial sync is discarded but persistence starts`() = runTest {
+        val release = CompletableDeferred<Unit>()
+        val store = InMemoryMetadataCacheStore(ChannelCatalog.create(), EpgSnapshot.create()) { release.await() }
+        val generation = GatewayGeneration()
+        val gateway = FakeProtocolGateway().apply { connectResults += connected(generation) }
+        val owner = owner(gateway, cacheRuntime = cacheRuntime(store))
+        try {
+            owner.connect(ServerProfile("first"))
+            runCurrent()
+            assertEquals(1, gateway.connectCalls)
+            gateway.emitMetadata(MetadataEvent.ChannelAdded(generation, channelMetadata(1)))
+            gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+            runCurrent()
+            val live = owner.currentCatalog()
+            release.complete(Unit)
+            runCurrent()
+            assertSame(live, owner.currentCatalog())
+            assertSame(live, store.catalog, "A rejected seed must not suppress persistence")
+        } finally {
+            owner.shutdown()
+        }
+    }
+
+    @Test
+    fun `late restore from a failed attempt remains browsable during an unbound retry`() = runTest {
+        val release = CompletableDeferred<Unit>()
+        val retryAuthentication = CompletableDeferred<Unit>()
+        val store = InMemoryMetadataCacheStore(ChannelCatalog.create(), EpgSnapshot.create()) { release.await() }
+        val gateway = FakeProtocolGateway().apply {
+            connectBehavior = {
+                if (connectCalls == 1) failed(GatewayConnectionFailure.SERVER_UNREACHABLE)
+                else { retryAuthentication.await(); connected(GatewayGeneration()) }
+            }
+        }
+        val owner = owner(gateway, cacheRuntime = cacheRuntime(store))
+        try {
+            owner.connect(ServerProfile("first"))
+            runCurrent()
+            assertEquals(1, gateway.connectCalls)
+            advanceTimeBy(2.seconds)
+            runCurrent()
+            assertEquals(2, gateway.connectCalls)
+            release.complete(Unit)
+            runCurrent()
+            assertSame(store.catalog, (owner.observation.value.channelState as ChannelRepositoryState.Stale).catalog)
+            assertSame(store.epg, (owner.observation.value.epgState as EpgRepositoryState.Stale).snapshot)
+        } finally {
+            owner.shutdown()
+        }
+    }
+
+    @Test
+    fun `profile replacement and shutdown join a cancelled restore before retiring persistence`() = runTest {
+        for (replaceProfile in listOf(true, false)) {
+            val release = CompletableDeferred<Unit>()
+            var restoring = false
+            val store = InMemoryMetadataCacheStore(ChannelCatalog.create(), EpgSnapshot.create()) {
+                restoring = true
+                try { withContext(kotlinx.coroutines.NonCancellable) { release.await() } }
+                finally { restoring = false }
+            }
+            val gateway = FakeProtocolGateway().apply { defaultConnectResult = connected(GatewayGeneration()) }
+            val owner = owner(gateway, cacheRuntime = cacheRuntime(store))
+            owner.connect(ServerProfile("first"))
+            runCurrent()
+            assertTrue(restoring)
+            val retiring = launch {
+                if (replaceProfile) owner.connect(ServerProfile("second")) else owner.shutdown()
+            }
+            runCurrent()
+            assertFalse(retiring.isCompleted, "Restore must be joined before teardown completes")
+            assertTrue(store.writes.isEmpty())
+            store.catalog = null
+            store.epg = null
+            release.complete(Unit)
+            retiring.join()
+            runCurrent()
+            assertFalse(restoring)
+            if (replaceProfile) {
+                assertNull((owner.observation.value.channelState as ChannelRepositoryState.Synchronizing).staleCatalog)
+                assertEquals(2, gateway.connectCalls)
+            } else {
+                assertSame(ChannelRepositoryState.Empty, owner.observation.value.channelState)
+            }
+            owner.shutdown()
+            assertTrue(store.writes.isEmpty(), "Retired restore must never start a stale writer")
+        }
+    }
+
+    @Test
+    fun `cache clear fences an in-flight restore without stopping the connection`() = runTest {
+        val release = CompletableDeferred<Unit>()
+        val store = InMemoryMetadataCacheStore(ChannelCatalog.create(), EpgSnapshot.create()) { release.await() }
+        val generation = GatewayGeneration()
+        val gateway = FakeProtocolGateway().apply { connectResults += connected(generation) }
+        val owner = owner(gateway, cacheRuntime = cacheRuntime(store))
+        try {
+            owner.connect(ServerProfile("first"))
+            runCurrent()
+            val clearing = launch { owner.cache.clear() }
+            runCurrent()
+            release.complete(Unit)
+            clearing.join()
+            runCurrent()
+            assertTrue(store.cleared)
+            assertNull((owner.observation.value.channelState as ChannelRepositoryState.Synchronizing).staleCatalog)
+            assertNull((owner.observation.value.epgState as EpgRepositoryState.Synchronizing).staleSnapshot)
+            gateway.emitMetadata(MetadataEvent.ChannelAdded(generation, channelMetadata(1)))
+            gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+            runCurrent()
+            assertSame(owner.currentCatalog(), store.catalog)
+        } finally {
+            owner.shutdown()
+        }
+    }
+
+    @Test
+    fun `restore failure does not fail connecting or suppress persistence`() = runTest {
+        val store = InMemoryMetadataCacheStore(null, null) { throw IllegalStateException("cache failure") }
+        val generation = GatewayGeneration()
+        val gateway = FakeProtocolGateway().apply { connectResults += connected(generation) }
+        val owner = owner(gateway, cacheRuntime = cacheRuntime(store))
+        try {
+            owner.connect(ServerProfile("first"))
+            runCurrent()
+            assertEquals(1, gateway.connectCalls)
+            assertEquals(SessionState.Synchronizing, owner.observation.value.sessionState)
+            gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+            runCurrent()
+            assertSame(owner.currentCatalog(), store.catalog)
+        } finally {
+            owner.shutdown()
+        }
+    }
+
+    @Test
+    fun `retry preserves a cache seed even before the first successful sync`() = runTest {
+        val loading = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val gateway = FakeProtocolGateway().apply {
+            connectBehavior = { loading.await(); failed(GatewayConnectionFailure.SERVER_UNREACHABLE) }
         }
         val seed = EpgSnapshot.create()
-        val store = InMemoryMetadataCacheStore(null, seed)
+        val store = InMemoryMetadataCacheStore(null, seed) { loading.complete(Unit); release.await() }
         val runtime = MetadataCacheRuntime(store, MetadataCachePolicy.create(File("unused")),
             StandardTestDispatcher(testScheduler), Clock.System)
         val owner = owner(gateway, cacheRuntime = runtime)
         try {
             owner.connect(ServerProfile("first"))
             runCurrent()
+            assertTrue(owner.observation.value.sessionState is SessionState.Unavailable)
+            assertSame(EpgRepositoryState.Empty, owner.observation.value.epgState)
+            release.complete(Unit)
+            runCurrent()
+            assertSame(seed, (owner.observation.value.epgState as EpgRepositoryState.Stale).snapshot,
+                "A slow cold-start restore must remain browsable while offline")
             assertEquals(SessionCommandResult.STARTED, owner.retry())
             runCurrent()
             assertSame(seed, owner.observedEpgSnapshot())
             assertEquals(1, store.epgLoads)
         } finally {
             owner.shutdown()
+        }
+    }
+
+    @Test
+    fun `late restore from a failed attempt cannot seed a bound retry`() = runTest {
+        val release = CompletableDeferred<Unit>()
+        val store = InMemoryMetadataCacheStore(ChannelCatalog.create(), EpgSnapshot.create()) { release.await() }
+        val generation = GatewayGeneration()
+        val gateway = FakeProtocolGateway().apply {
+            connectResults += failed(GatewayConnectionFailure.SERVER_UNREACHABLE)
+            connectResults += connected(generation)
+        }
+        val owner = owner(gateway, cacheRuntime = cacheRuntime(store))
+        try {
+            owner.connect(ServerProfile("first"))
+            runCurrent()
+            advanceTimeBy(2.seconds)
+            runCurrent()
+            assertEquals(2, gateway.connectCalls)
+            assertEquals(SessionState.Synchronizing, owner.observation.value.sessionState)
+            release.complete(Unit)
+            runCurrent()
+            assertNull((owner.observation.value.channelState as ChannelRepositoryState.Synchronizing).staleCatalog)
+            assertNull((owner.observation.value.epgState as EpgRepositoryState.Synchronizing).staleSnapshot)
+        } finally {
+            owner.shutdown()
+        }
+    }
+
+    @Test
+    fun `restore acceptance rejects stale token and wrong namespace independently of cancellation`() = runTest {
+        val authenticate = CompletableDeferred<Unit>()
+        val gateway = FakeProtocolGateway().apply {
+            connectBehavior = {
+                if (connectCalls > 1) authenticate.await()
+                connected(GatewayGeneration())
+            }
+        }
+        val runtime = cacheRuntime(InMemoryMetadataCacheStore(null, null))
+        val owner = owner(gateway, cacheRuntime = runtime)
+        val profile = ServerProfile("first")
+        val restored = at.bernhardberger.tvheadend.sdk.core.cache.RestoredSnapshots(
+            CachedCatalog(ChannelCatalog.create()), CachedEpg(EpgSnapshot.create()),
+        )
+        try {
+            owner.connect(profile)
+            runCurrent()
+            val oldToken = owner.cacheRestoreAcceptance(profile.cacheNamespace())
+            owner.disconnect()
+            owner.connect(profile)
+            runCurrent()
+            assertEquals(SessionState.Connecting, owner.observation.value.sessionState)
+            // No bound generation: attempt revision is deliberately not a fence here. Namespace
+            // matches, and direct acceptance is not a coroutine that teardown could cancel.
+            oldToken(restored)
+            assertSame(ChannelRepositoryState.Empty, owner.observation.value.channelState)
+
+            val wrongNamespace = owner.cacheRestoreAcceptance(ServerProfile("different").cacheNamespace())
+            wrongNamespace(restored)
+            assertSame(ChannelRepositoryState.Empty, owner.observation.value.channelState)
+
+            val current = owner.cacheRestoreAcceptance(profile.cacheNamespace())
+            current(at.bernhardberger.tvheadend.sdk.core.cache.RestoredSnapshots(
+                restored.catalog, restored.epgSnapshot, isCurrent = { false },
+            ))
+            assertSame(ChannelRepositoryState.Empty, owner.observation.value.channelState)
+            current(restored)
+            assertSame(restored.catalog?.catalog, (owner.observation.value.channelState as ChannelRepositoryState.Stale).catalog)
+            assertSame(restored.epgSnapshot?.snapshot, (owner.observation.value.epgState as EpgRepositoryState.Stale).snapshot)
+        } finally {
+            owner.shutdown()
+        }
+    }
+
+    @Test
+    fun `clear after restore admission permits only a display seed until live publication`() = runTest {
+        val authenticate = CompletableDeferred<Unit>()
+        val generation = GatewayGeneration()
+        val gateway = FakeProtocolGateway().apply {
+            connectBehavior = { authenticate.await(); connected(generation) }
+        }
+        val store = InMemoryMetadataCacheStore(null, null)
+        val runtime = MetadataCacheRuntime(store, MetadataCachePolicy.create(File("unused")), Dispatchers.Unconfined, Clock.System)
+        val owner = owner(gateway, cacheRuntime = runtime)
+        val profile = ServerProfile("first")
+        try {
+            owner.connect(profile)
+            runCurrent()
+            store.catalog = ChannelCatalog.create(channels = listOf(Channel.create(SdkChannelId(9), "Cached")))
+            store.epg = EpgSnapshot.create()
+            val restored = runtime.restore(profile.cacheNamespace())
+            val accept = owner.cacheRestoreAcceptance(profile.cacheNamespace())
+            accept(at.bernhardberger.tvheadend.sdk.core.cache.RestoredSnapshots(
+                restored.catalog, restored.epgSnapshot,
+                isCurrent = {
+                    val admitted = restored.isCurrent()
+                    // Deterministically finish clear after the epoch read but before the seed
+                    // mutates any state. Unconfined cache IO keeps this synchronous test bounded.
+                    kotlinx.coroutines.runBlocking { runtime.clear() }
+                    assertTrue(store.cleared)
+                    admitted
+                },
+            ))
+            assertSame(restored.catalog?.catalog, (owner.observation.value.channelState as ChannelRepositoryState.Stale).catalog)
+            assertSame(restored.epgSnapshot?.snapshot, (owner.observation.value.epgState as EpgRepositoryState.Stale).snapshot)
+            assertNull(store.catalog)
+            assertNull(store.epg)
+            assertTrue(store.writes.isEmpty(), "The accepted seed must never repopulate disk")
+
+            authenticate.complete(Unit)
+            runCurrent()
+            gateway.emitMetadata(MetadataEvent.ChannelAdded(generation, channelMetadata(1)))
+            gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+            runCurrent()
+            assertEquals(listOf(1L), store.catalog?.channels?.map { it.id.value })
+            assertSame(owner.currentEpgSnapshot(), store.epg)
+            assertEquals(setOf(profile.cacheNamespace()), store.writtenNamespaces)
+        } finally {
+            owner.shutdown()
+        }
+    }
+
+    @Test
+    fun `early teardown persists a live sync even while restore is blocked`() = runTest {
+        for (action in listOf("disconnect", "replace", "shutdown")) {
+            val release = CompletableDeferred<Unit>()
+            val store = InMemoryMetadataCacheStore(null, null) { release.await() }
+            val generation = GatewayGeneration()
+            val gateway = FakeProtocolGateway().apply {
+                connectResults += connected(generation)
+                connectResults += connected(GatewayGeneration())
+            }
+            val owner = owner(gateway, cacheRuntime = cacheRuntime(store))
+            val profile = ServerProfile("first")
+            try {
+                owner.connect(profile)
+                runCurrent()
+                gateway.emitMetadata(MetadataEvent.ChannelAdded(generation, channelMetadata(1)))
+                gateway.emitMetadata(MetadataEvent.EventAdded(generation, epgMetadata(1, 1)))
+                gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+                runCurrent()
+                val catalog = owner.currentCatalog()
+                val guide = owner.currentEpgSnapshot()
+                assertTrue(store.writes.isEmpty(), "The store is held by restore")
+                when (action) {
+                    "disconnect" -> owner.disconnect()
+                    "replace" -> owner.connect(ServerProfile("second"))
+                    else -> owner.shutdown()
+                }
+                runCurrent()
+                assertSame(catalog, store.catalog, "Early $action must flush live data")
+                assertSame(guide, store.epg)
+                assertEquals(setOf(profile.cacheNamespace()), store.writtenNamespaces,
+                    "The retired publication belongs only to the outgoing namespace")
+            } finally {
+                owner.shutdown()
+            }
+        }
+    }
+
+    @Test
+    fun `inline observer cache clear cannot deadlock a concurrent restore commit`() = runTest {
+        val allowRestore = CountDownLatch(1)
+        val cleared = CountDownLatch(1)
+        val restoringThread = java.util.concurrent.atomic.AtomicReference<Thread>()
+        val observerFailure = java.util.concurrent.atomic.AtomicReference<Throwable>()
+        val executor = java.util.concurrent.Executors.newSingleThreadExecutor { task ->
+            Thread(task, "cache-restore-test").apply { isDaemon = true }
+        }
+        val io = executor.asCoroutineDispatcher()
+        val store = InMemoryMetadataCacheStore(ChannelCatalog.create(), EpgSnapshot.create()) {
+            restoringThread.set(Thread.currentThread())
+            check(allowRestore.await(5, java.util.concurrent.TimeUnit.SECONDS))
+        }
+        val runtime = MetadataCacheRuntime(store, MetadataCachePolicy.create(File("unused")), io, Clock.System)
+        val gateway = FakeProtocolGateway().apply { defaultConnectResult = connected(GatewayGeneration()) }
+        val owner = owner(gateway, cacheRuntime = runtime, defaultDispatcher = Dispatchers.Default)
+        val observerScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Unconfined)
+        val observer = observerScope.launch {
+            owner.observation.collect { observation ->
+                if (observation.sessionState == SessionState.Connecting) {
+                    try {
+                        allowRestore.countDown()
+                        val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5)
+                        while (restoringThread.get()?.state != Thread.State.BLOCKED && System.nanoTime() < deadline) {
+                            Thread.sleep(1)
+                        }
+                        check(restoringThread.get()?.state == Thread.State.BLOCKED) {
+                            "Restore did not reach the owner lock held by inline publication"
+                        }
+                        owner.cache.clear()
+                    } catch (failure: Throwable) {
+                        observerFailure.set(failure)
+                    } finally {
+                        cleared.countDown()
+                    }
+                }
+            }
+        }
+        var completed = false
+        try {
+            owner.connect(ServerProfile("first"))
+            completed = cleared.await(10, java.util.concurrent.TimeUnit.SECONDS)
+            assertTrue(completed, "Inline cache clear deadlocked with restore commit")
+            observerFailure.get()?.let { throw it }
+            assertTrue(store.cleared)
+        } finally {
+            // The red implementation holds JVM monitors forever. Its daemon threads must not
+            // strand the test process attempting teardown through those same monitors.
+            if (completed) {
+                observer.cancel()
+                owner.shutdown()
+            }
+            io.close()
         }
     }
 
@@ -2135,6 +2555,10 @@ internal class ConnectionOwnerTest {
         assertFalse(exposedStringAccessor, "Credential accessors must be JVM-synthetic")
     }
 
+    private fun TestScope.cacheRuntime(store: MetadataCacheStore): MetadataCacheRuntime = MetadataCacheRuntime(
+        store, MetadataCachePolicy.create(File("unused")), StandardTestDispatcher(testScheduler), Clock.System,
+    )
+
     private fun TestScope.owner(
         gateway: FakeProtocolGateway,
         children: SessionChildren = SessionChildren.None,
@@ -2160,6 +2584,7 @@ internal class ConnectionOwnerTest {
 private class InMemoryMetadataCacheStore(
     var catalog: ChannelCatalog?,
     var epg: EpgSnapshot?,
+    private val beforeEpgLoad: suspend () -> Unit = {},
 ) : MetadataCacheStore {
     val writes = mutableListOf<Any>()
     val writtenNamespaces = mutableSetOf<CacheNamespace>()
@@ -2172,6 +2597,7 @@ private class InMemoryMetadataCacheStore(
 
     override suspend fun loadEpg(namespace: CacheNamespace, notBefore: Instant): CachedEpg? {
         epgLoads++
+        beforeEpgLoad()
         return epg?.let { CachedEpg(it) }
     }
 

@@ -133,16 +133,40 @@ metadata lock and never blocks on IO.
 
 ## Cold start and reconnect
 
-On `connect(profile)`, before the gateway connects, the owner loads the
-namespace for that profile. If `catalog.bin` is within `metadataRetention` it
-seeds the published catalog as `ChannelRepositoryState.Stale`, and
-`bindGeneration` (`SessionResources.kt`) then publishes
-`Synchronizing(previousCatalog)`, so the consumer can render a channel list
-immediately. The EPG snapshot is seeded the same way as `EpgRepositoryState.Stale`
-for cold-start display only: `bindGeneration` clears the EPG reducer and the
-HTSP initial sync re-sends the configured horizon, so the cached guide does not
-reduce network traffic. Authority stays `SYNCHRONIZING`/`STALE` until the HTSP
-initial sync completes; the SDK never claims `CURRENT` from disk.
+On `connect(profile)`, the owner restores that profile's namespace in a structured
+child alongside connecting and authentication. A slow load never delays starting
+the connection. A retained in-memory snapshot skips disk restore on reconnect.
+Within `metadataRetention`, a restore that wins before generation binding seeds
+`ChannelRepositoryState.Stale` and `EpgRepositoryState.Stale`; binding then publishes
+`Synchronizing` with those snapshots. If authentication wins, restore can still
+seed retained-only snapshots for that exact synchronizing generation. Restore
+after the initial-sync marker is discarded.
+
+The commit checks the session token, namespace and atomic cache-clear epoch under
+the owner/metadata locks. A bound generation also requires the captured attempt
+revision, so an earlier attempt cannot seed a synchronizing retry. While unbound,
+even after a failed connection, the same profile can accept display-only stale data
+for offline browsing; the next bind carries it into `Synchronizing`.
+Teardown cancels and joins the restore child before stopping the writer or replacing
+the profile. Persistence starts once for the captured namespace before restoring,
+so a completed live sync can still be flushed if teardown cancels a slow restore.
+Seeding is independent of persistence, including when discarded or restore fails.
+EPG indexes are prepared before acquiring owner/metadata locks. Restore acceptance
+holds no cache locks, and cache clear invalidates pending acceptance atomically.
+Clear leaves in-memory session state untouched: a restore racing clear may still
+display a pre-clear snapshot, including when clear finishes after its epoch check
+or a load overtakes deletion. These operations linearize as restore before clear.
+The seed is display-only, never enters persistence, and later live publications
+replace it. A cancelled clear may still invalidate an in-flight display seed even
+if deletion does not finish. A late restore can also be discarded during the
+transition between retiring a failed generation and resetting its working state.
+
+Cached data is display-only: it never enters working reducers or supplies live EPG
+coverage proof. Original receipt times and per-channel query timestamps are retained
+as before; the initial-sync marker clears the cached query timestamps and establishes
+fresh scheduling proof from live sync. HTSP re-sends the configured horizon, so the
+cached guide does not reduce network traffic. Authority stays `SYNCHRONIZING`/`STALE`
+until initial sync completes; the SDK never claims `CURRENT` from disk.
 
 Files older than retention are deleted at load. Corrupt or truncated files are
 deleted and the session proceeds as today.

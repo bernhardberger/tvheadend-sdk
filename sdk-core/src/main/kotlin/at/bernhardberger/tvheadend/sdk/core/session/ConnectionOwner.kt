@@ -32,6 +32,7 @@ import at.bernhardberger.tvheadend.sdk.core.SessionPlaybackBindingFactory
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
 import at.bernhardberger.tvheadend.sdk.core.cache.DisabledSessionCache
 import at.bernhardberger.tvheadend.sdk.core.cache.MetadataCacheRuntime
+import at.bernhardberger.tvheadend.sdk.core.cache.RestoredSnapshots
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
@@ -85,6 +86,8 @@ internal class ConnectionOwner(
     private var worker: Job? = null
     private var activeToken: SessionToken? = null
     private var activeGeneration: GatewayGeneration? = null
+    private var attemptGeneration: GatewayGeneration? = null
+    private var connectionAttemptRevision = 0L
     private var latestDvrCapabilityRevision: Long? = null
     private var retryDisposition: SessionRecoveryDisposition? = null
     private var closed = false
@@ -325,6 +328,8 @@ internal class ConnectionOwner(
         val admissionFailure = synchronized(stateLock) {
             if (terminal) closed = true
             activeToken = null
+            connectionAttemptRevision += 1
+            attemptGeneration = null
             artworkNamespace = null
             activeGeneration = null
             latestDvrCapabilityRevision = null
@@ -367,28 +372,61 @@ internal class ConnectionOwner(
     }
 
     /**
-     * Seeds retained metadata from the cache and starts persisting publications.
+     * Restores display-only metadata beside connecting and starts persisting publications.
      *
      * A same-profile reconnect already retains its snapshots, so restoration is skipped and the
-     * writer simply resumes. The store never throws for IO problems, so cache work cannot fail
-     * the connection.
+     * writer simply resumes. Restore failures are nonfatal; cancellation still propagates.
      */
-    private suspend fun prepareCache(profile: ServerProfile) {
+    private suspend fun prepareCache(
+        namespace: CacheNamespace,
+        restore: Boolean,
+        accept: (RestoredSnapshots) -> Unit,
+    ) {
         val runtime = cacheRuntime ?: return
-        val namespace = profile.cacheNamespace()
-        if (synchronized(stateLock) { metadata.canSeedRetainedSnapshots() }) {
-            val restored = runtime.restore(namespace)
+        try {
+            if (restore) runtime.restore(namespace, accept)
+        } catch (exception: CancellationException) {
+            throw exception
+        } catch (_: Exception) {
+            // Persistence is optional. A failed restore must not fail connecting or the writer.
+        }
+    }
+
+    /** Captures acceptance authority independently of the restore child's cancellation. */
+    internal fun cacheRestoreAcceptance(
+        namespace: CacheNamespace,
+    ): (RestoredSnapshots) -> Unit {
+        val (token, revision) = synchronized(stateLock) { activeToken to connectionAttemptRevision }
+        return { restored ->
+            // Snapshot lazies are thread-safe and built before taking owner/metadata locks.
+            restored.epgSnapshot?.snapshot?.prepareForObservation()
             synchronized(stateLock) {
-                metadata.seedRetainedSnapshots(restored.catalog, restored.epgSnapshot)
+                if (token != null && activeToken === token && !closed && artworkNamespace == namespace &&
+                    (attemptGeneration == null || connectionAttemptRevision == revision)
+                ) {
+                    metadata.seedRetainedSnapshots(
+                        restored.catalog, restored.epgSnapshot, attemptGeneration, restored.isCurrent,
+                    )
+                }
             }
         }
-        runtime.start(namespace, metadata.publishedSnapshots)
     }
 
     private suspend fun connectionLoop(profile: ServerProfile, token: SessionToken) {
         try {
-            prepareCache(profile)
-            connectionLoopBody(profile, token)
+            coroutineScope {
+                if (cacheRuntime != null) {
+                    synchronized(stateLock) { ++connectionAttemptRevision }
+                    val restore = synchronized(stateLock) { metadata.canSeedRetainedSnapshots() }
+                    val namespace = profile.cacheNamespace()
+                    val accept = cacheRestoreAcceptance(namespace)
+                    // Establish persistence before either connection work or restore-child
+                    // dispatch: even immediate sync/teardown must have a writer to flush.
+                    cacheRuntime.start(namespace, metadata.publishedSnapshots)
+                    launch { prepareCache(namespace, restore, accept) }
+                }
+                connectionLoopBody(profile, token)
+            }
         } catch (exception: CancellationException) {
             throw exception
         } catch (_: Exception) {
@@ -478,7 +516,11 @@ internal class ConnectionOwner(
             dvrMutations.bindGeneration(connection.generation)
             dvrProgress.bindGeneration(connection.generation, connection.protocolVersion)
             children.bindGeneration(connection.generation)
-            metadata.bindGeneration(connection.generation)
+            synchronized(stateLock) {
+                requireCurrent(token)
+                attemptGeneration = connection.generation
+                metadata.bindGeneration(connection.generation)
+            }
             metadata.applyDvrAccess(connection.generation, connection.dvrAccess)
             metadata.publishServerFacts(connection.generation, connection.serverFacts)
             metadataWorker = launch(start = CoroutineStart.UNDISPATCHED) {
@@ -670,6 +712,8 @@ internal class ConnectionOwner(
         if (activeToken !== token || closed) {
             UnavailableCommit(committed = false, admissionFailure = null)
         } else {
+            connectionAttemptRevision += 1
+            attemptGeneration = null
             activeGeneration = null
             latestDvrCapabilityRevision = null
             retryDisposition = disposition
