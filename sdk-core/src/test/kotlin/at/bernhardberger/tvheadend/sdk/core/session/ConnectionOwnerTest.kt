@@ -516,6 +516,88 @@ internal class ConnectionOwnerTest {
     }
 
     @Test
+    fun `catalog is visible before EPG decoding both before bind and during sync`() = runTest {
+        for (bound in listOf(false, true)) {
+            val authenticate = CompletableDeferred<Unit>()
+            val releaseEpg = CompletableDeferred<Unit>()
+            val generation = GatewayGeneration()
+            val gateway = FakeProtocolGateway().apply {
+                connectBehavior = { if (!bound) authenticate.await(); connected(generation) }
+            }
+            val catalog = ChannelCatalog.create(channels = listOf(Channel.create(SdkChannelId(9), "Cached")))
+            val epg = EpgSnapshot.create()
+            val store = InMemoryMetadataCacheStore(catalog, epg).apply { beforeEpgLoad = { releaseEpg.await() } }
+            val metadata = PhaseOneSessionMetadata()
+            val owner = owner(gateway, metadata = metadata, cacheRuntime = cacheRuntime(store))
+            try {
+                owner.connect(ServerProfile("first"))
+                runCurrent()
+                assertSame(catalog, owner.observation.value.channelCatalogForDisplay)
+                assertNull(owner.observation.value.epgSnapshotForDisplay)
+                assertEquals(bound, owner.observation.value.channelState is ChannelRepositoryState.Synchronizing)
+                val catalogState = owner.observation.value.channelState
+                releaseEpg.complete(Unit)
+                runCurrent()
+                assertSame(catalogState, owner.observation.value.channelState)
+                assertSame(epg, owner.observation.value.epgSnapshotForDisplay)
+                assertNull(metadata.publishedSnapshots.value)
+                assertTrue(metadata.initialEpgCoverage(generation).isEmpty())
+            } finally { owner.shutdown() }
+        }
+    }
+
+    @Test
+    fun `catalog survives absent or failed EPG restore`() = runTest {
+        for (fail in listOf(false, true)) {
+            val catalog = ChannelCatalog.create()
+            val store = InMemoryMetadataCacheStore(catalog, null).apply {
+                beforeEpgLoad = { if (fail) error("Synthetic restore failure") }
+            }
+            val gateway = FakeProtocolGateway().apply { connectResults += connected(GatewayGeneration()) }
+            val owner = owner(gateway, cacheRuntime = cacheRuntime(store))
+            try {
+                owner.connect(ServerProfile("first"))
+                runCurrent()
+                assertSame(catalog, owner.observation.value.channelCatalogForDisplay)
+                assertNull(owner.observation.value.epgSnapshotForDisplay)
+            } finally { owner.shutdown() }
+        }
+    }
+
+    @Test
+    fun `second restore step is fenced by clear or completed live sync`() = runTest {
+        for (clear in listOf(false, true)) {
+            val releaseEpg = CompletableDeferred<Unit>()
+            val catalog = ChannelCatalog.create()
+            val store = InMemoryMetadataCacheStore(catalog, EpgSnapshot.create()).apply {
+                beforeEpgLoad = { releaseEpg.await() }
+            }
+            val generation = GatewayGeneration()
+            val gateway = FakeProtocolGateway().apply { connectResults += connected(generation) }
+            val runtime = cacheRuntime(store)
+            val owner = owner(gateway, cacheRuntime = runtime)
+            try {
+                owner.connect(ServerProfile("first"))
+                runCurrent()
+                assertSame(catalog, owner.observation.value.channelCatalogForDisplay)
+                val clearing = if (clear) launch { runtime.clear() } else null
+                if (!clear) {
+                    gateway.emitMetadata(MetadataEvent.ChannelAdded(generation, channelMetadata(1)))
+                    gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+                }
+                runCurrent()
+                val channels = owner.observation.value.channelState
+                val epg = owner.observation.value.epgState
+                releaseEpg.complete(Unit)
+                runCurrent()
+                clearing?.join()
+                assertSame(channels, owner.observation.value.channelState)
+                assertSame(epg, owner.observation.value.epgState)
+            } finally { owner.shutdown() }
+        }
+    }
+
+    @Test
     fun `slow restore does not delay connect and seeds only retained data during sync`() = runTest {
         val release = CompletableDeferred<Unit>()
         val catalog = ChannelCatalog.create(channels = listOf(Channel.create(SdkChannelId(9), "Cached")))
@@ -2584,16 +2666,19 @@ internal class ConnectionOwnerTest {
 private class InMemoryMetadataCacheStore(
     var catalog: ChannelCatalog?,
     var epg: EpgSnapshot?,
-    private val beforeEpgLoad: suspend () -> Unit = {},
+    private val beforeLoad: suspend () -> Unit = {},
 ) : MetadataCacheStore {
+    var beforeEpgLoad: suspend () -> Unit = {}
     val writes = mutableListOf<Any>()
     val writtenNamespaces = mutableSetOf<CacheNamespace>()
     val epgWrites = mutableListOf<Pair<CacheNamespace, EpgSnapshot>>()
     var cleared = false
     var epgLoads = 0
 
-    override suspend fun loadCatalog(namespace: CacheNamespace, notBefore: Instant): CachedCatalog? =
-        catalog?.let { CachedCatalog(it) }
+    override suspend fun loadCatalog(namespace: CacheNamespace, notBefore: Instant): CachedCatalog? {
+        beforeLoad()
+        return catalog?.let { CachedCatalog(it) }
+    }
 
     override suspend fun loadEpg(namespace: CacheNamespace, notBefore: Instant): CachedEpg? {
         epgLoads++

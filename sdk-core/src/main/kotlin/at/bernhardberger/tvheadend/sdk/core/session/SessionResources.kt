@@ -612,24 +612,27 @@ internal class PhaseOneSessionMetadata(
         if (catalog == null && epgSnapshot == null) return false
         epgSnapshot?.snapshot?.prepareForObservation()
         synchronized(lock) {
-            if (generation !== expectedGeneration || synchronizedCurrent ||
-                publishedCatalog != null || publishedEpgSnapshot != null || !restoreIsCurrent()
-            ) {
+            if (generation !== expectedGeneration || synchronizedCurrent || !restoreIsCurrent()) {
                 return false
             }
-            publishedCatalog = catalog?.catalog
-            publishedEpgSnapshot = epgSnapshot?.snapshot
-            channelRefreshTimes = catalog?.refreshTimes ?: MetadataRefreshTimes()
-            epgRefreshTimes = epgSnapshot?.refreshTimes ?: MetadataRefreshTimes()
-            epgLastQueriedAt.clear()
-            epgLastQueriedAt.putAll(epgSnapshot?.lastQueriedAt.orEmpty())
-            if (expectedGeneration == null) {
-                mutableChannelsAndTags.value = catalog?.let { ChannelRepositoryState.Stale(it.catalog) }
-                    ?: ChannelRepositoryState.Empty
-                mutableEpg.value = epgSnapshot?.let { EpgRepositoryState.Stale(it.snapshot) } ?: EpgRepositoryState.Empty
-            } else {
-                mutableChannelsAndTags.value = ChannelRepositoryState.Synchronizing(publishedCatalog)
-                mutableEpg.value = EpgRepositoryState.Synchronizing(publishedEpgSnapshot)
+            val seedCatalog = catalog?.takeIf { publishedCatalog == null }
+            val seedEpg = epgSnapshot?.takeIf { publishedEpgSnapshot == null }
+            if (seedCatalog == null && seedEpg == null) return false
+            if (seedCatalog != null) {
+                publishedCatalog = seedCatalog.catalog
+                channelRefreshTimes = seedCatalog.refreshTimes
+                mutableChannelsAndTags.value = if (expectedGeneration == null) {
+                    ChannelRepositoryState.Stale(seedCatalog.catalog)
+                } else ChannelRepositoryState.Synchronizing(seedCatalog.catalog)
+            }
+            if (seedEpg != null) {
+                publishedEpgSnapshot = seedEpg.snapshot
+                epgRefreshTimes = seedEpg.refreshTimes
+                epgLastQueriedAt.clear()
+                epgLastQueriedAt.putAll(seedEpg.lastQueriedAt)
+                mutableEpg.value = if (expectedGeneration == null) {
+                    EpgRepositoryState.Stale(seedEpg.snapshot)
+                } else EpgRepositoryState.Synchronizing(seedEpg.snapshot)
             }
             publishMetadataObservation()
         }

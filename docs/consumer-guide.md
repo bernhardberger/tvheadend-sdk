@@ -197,7 +197,8 @@ that fail to decode are deleted. On the next `connect(profile)` cache restoratio
 runs alongside connecting. Snapshots available before authentication are published
 as `Stale`; those restored during initial sync become the retained data in
 `Synchronizing`. A restore finishing after initial sync is discarded. Connecting
-does not wait for disk IO, and a channel list can render as soon as restore finishes.
+does not wait for disk IO. The catalog is accepted before guide decoding, so a
+channel list can render while the guide is still loading, or if guide restore fails.
 If connecting fails before restore finishes, cached snapshots can still appear as
 `Stale` for offline browsing and carry into the next connection attempt. Persistence
 starts independently of restore completion, so disconnecting during a slow restore

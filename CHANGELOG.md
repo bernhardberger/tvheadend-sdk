@@ -9,6 +9,8 @@
   delaying the connection, or remain browsable offline after a failed attempt.
   Restores finishing after initial sync are discarded; completed live sync data
   is still persisted when teardown cancels a slow restore.
+- Publish the cached catalog before decoding the guide, allowing cached channel
+  rows to appear independently of a slow, missing or failed guide restore.
 
 ### Fixed
 

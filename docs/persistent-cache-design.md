@@ -142,6 +142,11 @@ Within `metadataRetention`, a restore that wins before generation binding seeds
 seed retained-only snapshots for that exact synchronizing generation. Restore
 after the initial-sync marker is discarded.
 
+The catalog and guide are accepted independently: catalog loading and acceptance
+finish before guide decoding begins. The later guide seed preserves the catalog
+and its receipt times, and each acceptance rechecks the same restore fences.
+A missing or failed guide load does not suppress the cached catalog.
+
 The commit checks the session token, namespace and atomic cache-clear epoch under
 the owner/metadata locks. A bound generation also requires the captured attempt
 revision, so an earlier attempt cannot seed a synchronizing retry. While unbound,

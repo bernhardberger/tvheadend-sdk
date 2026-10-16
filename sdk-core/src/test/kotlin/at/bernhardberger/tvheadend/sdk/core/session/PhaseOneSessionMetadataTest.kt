@@ -1500,6 +1500,26 @@ internal class PhaseOneSessionMetadataTest {
     }
 
     @Test
+    fun `partial cache seeds cannot replace live snapshots retained after reset`() {
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(id = 1)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(1, 1, 10, 20)))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        val published = requireNotNull(metadata.publishedSnapshots.value)
+        metadata.resetWorkingStateRetainingPublishedSnapshot()
+        val observation = metadata.observation.value
+
+        assertFalse(metadata.seedRetainedSnapshots(null, CachedEpg(EpgSnapshot.create())))
+        assertFalse(metadata.seedRetainedSnapshots(CachedCatalog(ChannelCatalog.create()), null))
+        assertSame(observation, metadata.observation.value)
+        assertSame(published, metadata.publishedSnapshots.value)
+        assertSame(published.catalog, observation.channelCatalogForDisplay)
+        assertSame(published.epgSnapshot, observation.epgSnapshotForDisplay)
+    }
+
+    @Test
     fun `a generation-fenced retained seed preserves live sync and never lends cached query proof`() {
         val metadata = PhaseOneSessionMetadata()
         val generation = GatewayGeneration()

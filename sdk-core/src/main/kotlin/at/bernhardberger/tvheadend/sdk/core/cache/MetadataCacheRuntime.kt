@@ -81,10 +81,15 @@ internal class MetadataCacheRuntime(
     ): RestoredSnapshots {
         val revision = restoreRevision.get()
         return withContext(ioDispatcher) {
+            val catalog = lifecycle.withLock {
+                accessStore { store.loadCatalog(namespace, clock.now() - policy.metadataRetention) }
+            }
+            // Publish the small catalog before EPG decoding, with neither cache lock held.
+            currentCoroutineContext().ensureActive()
+            accept(RestoredSnapshots(catalog, null) { restoreRevision.get() == revision })
             val restored = lifecycle.withLock {
                 accessStore {
                     val notBefore = clock.now() - policy.metadataRetention
-                    val catalog = store.loadCatalog(namespace, notBefore)
                     val epgSnapshot = store.loadEpg(namespace, notBefore)
                     artworkStore.prune(clock.now() - policy.artworkRetention, policy.artworkMaxBytes)
                     refreshStatistics()
@@ -96,7 +101,7 @@ internal class MetadataCacheRuntime(
             // when an inline observation collector clears the cache during publication.
             restored.epgSnapshot?.snapshot?.prepareForObservation()
             currentCoroutineContext().ensureActive()
-            accept(restored)
+            accept(RestoredSnapshots(null, restored.epgSnapshot, restored.isCurrent))
             restored
         }
     }
