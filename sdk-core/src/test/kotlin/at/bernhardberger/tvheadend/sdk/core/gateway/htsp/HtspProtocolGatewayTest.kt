@@ -243,6 +243,98 @@ import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
 internal class HtspProtocolGatewayTest {
+    @Test
+    fun `owner disconnect cancels admission awaiting a not yet latched terminal result`() = runTest {
+        val fake = connectedFake()
+        val retries = mutableListOf<Int>()
+        val children = object : SessionChildren by SessionChildren.None {
+            override fun bindGeneration(generation: at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration) {
+                fake.connectionStateValue.value = HtspConnectionState.Error(
+                    HtspTransportFailure(HtspTransportFailureKind.AUTHENTICATION_REJECTED))
+            }
+        }
+        val owner = ConnectionOwner(HtspProtocolGateway(fake), PhaseOneSessionMetadata(), children,
+            defaultDispatcher = StandardTestDispatcher(testScheduler),
+            backoff = ReconnectBackoff { retries += it; 1.seconds })
+        try {
+            owner.connect(ServerProfile("host"))
+            testScheduler.runCurrent()
+            assertEquals(2, fake.terminationWaiters)
+            owner.disconnect()
+            assertEquals(0, fake.terminationWaiters)
+            assertTrue(retries.isEmpty())
+        } finally {
+            owner.shutdown()
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource("disconnect", "shutdown", "replace")
+    fun `owner lifecycle termination does not become transport failure`(action: String) = runTest {
+        val fake = connectedFake()
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982)) as GatewayConnectResult.Connected).connection.generation
+        val failure = backgroundScope.async { gateway.awaitConnectionFailure(generation) }
+        testScheduler.runCurrent()
+        when (action) {
+            "disconnect" -> gateway.disconnect()
+            "shutdown" -> gateway.shutdown()
+            else -> {
+                fake.connectOutcome = HtspConnectOutcome.Connected(liveConnection(HtspConnectionGeneration()))
+                gateway.connect(ServerConfiguration("host", 9_982))
+            }
+        }
+        testScheduler.runCurrent()
+        assertFalse(failure.isCompleted)
+        assertEquals(null, gateway.retirementFailure(generation))
+        failure.cancel()
+        failure.join()
+    }
+
+    @Test
+    fun `request cancellation mid frame reconnects instead of leaving owner ready`() = runTest {
+        val source = HtspConnectionGeneration()
+        val fake = metadataConnection(source, MutableSharedFlow())
+        val gateway = HtspProtocolGateway(fake)
+        val retries = mutableListOf<Int>()
+        var generation: at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration? = null
+        val children = object : SessionChildren by SessionChildren.None {
+            override fun bindGeneration(value: at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration) {
+                generation = value
+            }
+        }
+        val owner = ConnectionOwner(gateway, PhaseOneSessionMetadata(), children,
+            defaultDispatcher = StandardTestDispatcher(testScheduler),
+            backoff = ReconnectBackoff { retries += it; 1.seconds })
+        try {
+            owner.connect(ServerProfile("host"))
+            testScheduler.runCurrent()
+            assertTrue(owner.observation.value.sessionState is SessionState.Ready)
+            fake.beforeExecute = {
+                try {
+                    kotlinx.coroutines.awaitCancellation()
+                } finally {
+                    // HTSP retires locally when cancellation interrupts an already-started frame.
+                    fake.end(source, at.bernhardberger.tvheadend.htsp.connection.HtspGenerationTermination.Disconnected)
+                    fake.connectionStateValue.value = HtspConnectionState.Disconnected
+                }
+            }
+            val request = backgroundScope.launch { gateway.loadArtwork(checkNotNull(generation), ArtworkId(1)) }
+            testScheduler.runCurrent()
+            request.cancel()
+            request.join()
+            testScheduler.runCurrent()
+            assertEquals(SessionState.Unavailable(SessionFailure.TRANSPORT_UNAVAILABLE), owner.observation.value.sessionState)
+            assertEquals(listOf(0), retries)
+            fake.connectOutcome = HtspConnectOutcome.Failed(HtspTransportFailure(HtspTransportFailureKind.CONNECTION_REFUSED))
+            testScheduler.advanceTimeBy(1_000)
+            testScheduler.runCurrent()
+            assertEquals(listOf(0, 1), retries)
+        } finally {
+            owner.shutdown()
+        }
+    }
+
     @ParameterizedTest
     @CsvSource("AUTHENTICATION_REJECTED,false", "UNSUPPORTED_SERVER_VERSION,false", "AUTHENTICATION_REJECTED,true", "UNSUPPORTED_SERVER_VERSION,true")
     fun `admission denial resolves termination while watcher continuation is queued`(

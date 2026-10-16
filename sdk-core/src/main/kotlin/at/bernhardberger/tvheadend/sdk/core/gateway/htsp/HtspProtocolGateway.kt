@@ -239,6 +239,8 @@ internal class HtspProtocolGateway internal constructor(
     @Volatile internal var lastCloseChanged: Boolean? = null
         private set
     private val retiredGenerations = WeakHashMap<HtspConnectionGeneration, GatewayConnectionFailure?>()
+    private val intentionallyEnded = WeakHashMap<HtspConnectionGeneration, Boolean>()
+    private var ownedGeneration: HtspConnectionGeneration? = null
     // Generation-local latch: overflow may be observed before the owner starts its await.
     private val failures = WeakHashMap<HtspConnectionGeneration, CompletableDeferred<GatewayConnectionFailure>>()
     private val serverTimeEstimate = at.bernhardberger.tvheadend.sdk.core.gateway.ServerTimeEstimate()
@@ -332,8 +334,8 @@ internal class HtspProtocolGateway internal constructor(
                 val failure = when (val ended = connection.awaitTermination(source)) {
                     is HtspGenerationTermination.Failed ->
                         ended.failure.kind.toGatewayFailure()
-                    HtspGenerationTermination.Disconnected -> return@launch
-                    // HTSP termination is open: unknown results conservatively close admission.
+                    HtspGenerationTermination.Disconnected -> disconnectedFailure(source) ?: return@launch
+                    // Guard against future HTSP termination subtypes.
                     else -> GatewayConnectionFailure.TRANSPORT_UNAVAILABLE
                 }
                 retire(source, failure)
@@ -358,9 +360,16 @@ internal class HtspProtocolGateway internal constructor(
                 password = authentication.password,
             )
         }
+        retireObservedGeneration()
         return when (val result = connection.connect(endpoint)) {
             is HtspConnectOutcome.Connected -> {
                 synchronized(generationLock) {
+                    ownedGeneration = result.connection.generation
+                    // An idempotent connect can return the same still-live generation.
+                    intentionallyEnded.remove(result.connection.generation)
+                    if (retiredGenerations[result.connection.generation] == null) {
+                        retiredGenerations.remove(result.connection.generation)
+                    }
                     refreshLive()
                 }
                 GatewayConnectResult.Connected(connection = result.connection.toGatewayConnection())
@@ -407,7 +416,8 @@ internal class HtspProtocolGateway internal constructor(
         // never infer its cause from the conflated, unscoped connection state.
         val failure = when (val ended = connection.awaitTermination(source)) {
             is HtspGenerationTermination.Failed -> ended.failure.kind.toGatewayFailure()
-            HtspGenerationTermination.Disconnected -> null
+            HtspGenerationTermination.Disconnected -> disconnectedFailure(source)
+            // Guard against future HTSP termination subtypes.
             else -> GatewayConnectionFailure.TRANSPORT_UNAVAILABLE
         }
         retire(source, failure)
@@ -460,8 +470,16 @@ internal class HtspProtocolGateway internal constructor(
     }
 
     private fun retireObservedGeneration() = synchronized(generationLock) {
-        currentLive?.generation?.let { retire(it) }
+        ownedGeneration?.let {
+            intentionallyEnded[it] = true
+            retire(it)
+        }
     }
+
+    private fun disconnectedFailure(source: HtspConnectionGeneration): GatewayConnectionFailure? =
+        synchronized(generationLock) {
+            if (intentionallyEnded[source] == true) null else GatewayConnectionFailure.TRANSPORT_UNAVAILABLE
+        }
 
     private fun rememberRuleChannel(generation: HtspConnectionGeneration, message: HtspMetadataMessage) {
         fun remember(cache: RuleChannelCache, id: String, channel: HtspRecordingRuleChannel?) {
