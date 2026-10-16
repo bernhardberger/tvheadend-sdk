@@ -300,7 +300,13 @@ public data class EpgCoverage private constructor(
 /** One immutable EPG event and per-channel coverage snapshot. */
 @ConsistentCopyVisibility
 public data class EpgSnapshot private constructor(
+    /**
+     * Programmes for display. After a warm start or same-profile reconnect, this can include
+     * cached or previously retained carryover programmes starting beyond their channel's live
+     * coverage; they carry no live proof and disappear once live coverage reaches them.
+     */
     public val events: List<EpgEvent>,
+    /** Per-channel coverage proven by live data only; carryover events never extend it. */
     public val coverages: List<EpgCoverage>,
     /** Deleted, ended programmes retained for display only; never live schedule or action authority. */
     public val historicalEvents: List<EpgEvent>,

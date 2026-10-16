@@ -194,19 +194,28 @@ holds no cache locks, and cache clear invalidates pending acceptance atomically.
 Clear leaves in-memory session state untouched: a restore racing clear may still
 display a pre-clear snapshot, including when clear finishes after its epoch check
 or a load overtakes deletion. These operations linearize as restore before clear.
-The seed is display-only, never enters persistence, and later live publications
-replace it. A cancelled clear may still invalidate an in-flight display seed even
+The seed is display-only and never enters persistence as such; later live
+publications replace it, keeping only its carryover described below. A cancelled clear may still invalidate an in-flight display seed even
 if deletion does not finish. A late restore can also be discarded during the
 transition between retiring a failed generation and resetting its working state.
 
-Cached data is display-only: it never enters working reducers or supplies live EPG
-coverage proof. Original receipt times and per-channel query timestamps are retained
+Cached data is display-only: it never enters the live reducer state or supplies
+live EPG coverage proof. Original receipt times and per-channel query timestamps are retained
 as before; the initial-sync marker clears the cached query timestamps and establishes
 fresh scheduling proof from live sync. HTSP re-sends a fixed six-hour initial
 window, and later programmes are queried after `Ready` (ordinary scheduling to
 about 20 hours, explicit acquisition beyond), so the cached guide does not reduce
-network traffic. Live publication at `Ready` replaces the cached guide; cached
-programmes beyond the live six hours disappear until queried again. Authority stays `SYNCHRONIZING`/`STALE` until initial
+network traffic. Live publication at `Ready` replaces the cached guide within each
+channel's live coverage. The display seed present at that first live publication,
+either this restored guide or the previous same-profile generation's retained
+publication, supplies carryover: per channel, events that start after the
+initial-sync window, at or after the last live programme's end and after any
+successful query boundary stay visible, while live event IDs, server deletions,
+retention and capacity (carryover first) remove them permanently. Carryover is
+kept outside coverage, so the worker still queries that range. Persistence writes
+the visible carryover events with the live snapshot but no coverage for them, and
+restore bounds them by the same near window and retention. `clearAllState` drops
+the seed, so a profile switch never carries data over. Authority stays `SYNCHRONIZING`/`STALE` until initial
 sync completes; the SDK never claims `CURRENT` from disk.
 
 Files older than retention are deleted at load. Corrupt or truncated files are

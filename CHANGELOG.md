@@ -12,9 +12,13 @@ Unreleased; development target.
   lineups. At `Ready` the guide covers about six hours; the EPG worker then
   queries later programmes as for any other uncovered range, which currently
   reaches about 20 hours ahead in four-hour steps per channel over roughly
-  30 minutes. Later programmes need explicit coverage acquisition. The live
-  guide replaces a restored cached guide at `Ready`, so cached programmes
-  beyond six hours disappear until the worker queries them again. Tvheadend
+  30 minutes. Later programmes need explicit coverage acquisition. Cached or
+  previously retained programmes beyond each channel's live coverage stay
+  visible at `Ready`, and after a same-profile reconnect, as display-only
+  carryover until live coverage reaches them; there live data wins, and server
+  deletions remove carryover immediately. Carryover is persisted without
+  coverage and never extends `EpgCoverage`, query proof or worker scheduling;
+  it is never taken across a profile switch. Tvheadend
   pushes programme updates only within the sliding six-hour window; programmes
   further ahead are refreshed by worker queries or when they enter the window,
   so their changes can appear late. Deletions are still pushed immediately.

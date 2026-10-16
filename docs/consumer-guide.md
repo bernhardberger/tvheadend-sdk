@@ -207,9 +207,19 @@ Cached data is never published as `CURRENT`: tuning, EPG queries and DVR
 mutations still wait for `Ready`. The guide is seeded for display only; the
 initial sync re-sends programmes starting within the next six hours of server
 time, and the SDK queries further programmes after `Ready` as for any other
-uncovered range. The live guide replaces the cached one at `Ready` rather than
-merging with it, so cached programmes beyond the six-hour window disappear until
-those queries return. Ordinary queries extend each channel in four-hour steps to
+uncovered range. At `Ready`, programmes from the cached guide (or, after a
+same-profile reconnect, from the previously retained guide) that start beyond a
+channel's live coverage remain in the `CURRENT` snapshot as display-only
+carryover. They are events outside `EpgSnapshot.coverages`: `EpgCoverage`,
+`knownTo` and acquisition results describe live data only, and carryover never
+claims live proof. Wherever live coverage reaches, including through later
+queries or the sliding server window, only live events are shown; an event ID
+present live always uses the live version, and a server deletion removes the
+carryover copy. `event(id)`, `eventAt`, `nextEvent` and the DVR lookups by
+event ID may return a carryover event for display; DVR mutations remain server
+validated. Retention and `EpgCoveragePolicy.maximumRetainedEvents` apply to
+carryover too, which is evicted before live events and never causes a live
+capacity refusal. A profile switch never carries guide data over. Ordinary queries extend each channel in four-hour steps to
 about 20 hours ahead over roughly 30 minutes; later programmes, up to the
 configured `EpgCoveragePolicy.futureHorizon`, need explicit coverage acquisition.
 Tvheadend pushes programme updates only for programmes starting within its
@@ -222,7 +232,8 @@ plus 24 hours (whole seconds), dropping events that ended more than six hours ag
 This same window is available offline. Restored coverage and query horizons are
 capped at that cut; persisted query receipt times remain display metadata and do
 not supply live initial-sync scheduling proof. Persistence still writes the full
-live guide, including its far-future events.
+live guide, including its far-future events, plus any visible carryover events
+without coverage, so a short session does not shorten the next warm start.
 
 Guide persistence streams individual protobuf records rather than buffering an
 encoded copy of the entire guide. The `EPG4` record stream orders events by start
