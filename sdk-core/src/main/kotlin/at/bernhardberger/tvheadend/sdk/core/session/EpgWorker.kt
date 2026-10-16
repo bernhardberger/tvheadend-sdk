@@ -144,6 +144,7 @@ internal class EpgWorker(
     private val metadata: SessionMetadata,
     private val clock: Clock,
     private val settings: EpgWorkerSettings = EpgWorkerSettings(),
+    private val estimatedServerTime: () -> Instant? = { null },
     private val queryEpg: suspend (
         generation: GatewayGeneration,
         channelId: ChannelId,
@@ -171,7 +172,7 @@ internal class EpgWorker(
             ?: return EpgCoverageAcquisitionResult.ObservationExpired
         val coverage = observation.coverage(channelId)
             ?: return EpgCoverageAcquisitionResult.Ineligible
-        val now = clock.now().toWholeSecond()
+        val now = queryTime()
         val target = through.toWholeSecond()
         if (coverage.knownTo?.let { knownTo -> knownTo >= target } == true) {
             return coveredResult(observation, coverage)
@@ -235,6 +236,10 @@ internal class EpgWorker(
         expireWaiters()
     }
 
+    // Query scheduling follows the server estimate; retention additionally needs the raw
+    // device clock so its bounds really cover both clocks rather than two server readings.
+    private fun queryTime(): Instant = (estimatedServerTime() ?: clock.now()).toWholeSecond()
+
     internal suspend fun run(): Unit = coroutineScope {
         val retentionBounds = EpgRetentionBounds(clock, settings.retainPast, settings.coveragePolicy.futureHorizon)
         synchronized(activityLock) {
@@ -248,7 +253,7 @@ internal class EpgWorker(
             while (currentCoroutineContext().isActive) {
                 try {
                     settleCoveredWaiters()
-                    val now = clock.now().toWholeSecond()
+                    val now = queryTime()
                     metadata.retainEpgEvents(
                         generation = generation,
                         bounds = retentionBounds,

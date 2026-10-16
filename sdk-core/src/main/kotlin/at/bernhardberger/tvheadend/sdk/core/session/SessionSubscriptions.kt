@@ -383,9 +383,8 @@ internal class PlaybackSessionChildren(
             val worker = EpgWorker(
                 generation = generation,
                 metadata = metadata,
-                clock = object : Clock {
-                    override fun now(): Instant = gateway.estimatedServerTime(generation) ?: clock.now()
-                },
+                clock = clock,
+                estimatedServerTime = { gateway.estimatedServerTime(generation) },
                 settings = epgSettings,
                 queryEpg = gateway::queryEpg,
             )

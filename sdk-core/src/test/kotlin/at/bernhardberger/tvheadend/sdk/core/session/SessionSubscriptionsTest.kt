@@ -94,10 +94,56 @@ import kotlin.time.Duration
 import kotlin.time.Clock
 import kotlin.time.TestTimeSource
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SessionSubscriptionsTest {
+    @ParameterizedTest
+    @ValueSource(ints = [-3600, 3600])
+    fun `production worker retains both clock windows and queries using server time`(deviceSkew: Int) = runTest {
+        val generation = GatewayGeneration()
+        val serverNow = Instant.fromEpochSeconds(1_000_000)
+        val deviceNow = serverNow + deviceSkew.seconds
+        val gateway = SubscriptionGateway().apply {
+            serverTime = { requested -> serverNow.takeIf { requested === generation } }
+        }
+        val metadata = PhaseOneSessionMetadata(estimatedServerTime = gateway::estimatedServerTime)
+        val children = PlaybackSessionChildren(
+            gateway, metadata, StandardTestDispatcher(testScheduler),
+            clock = object : Clock { override fun now(): Instant = deviceNow },
+        )
+        metadata.bindKnownChannels(generation, 1)
+        val past = minOf(deviceNow, serverNow) - 6.hours
+        val future = maxOf(deviceNow, serverNow) + 24.hours
+        fun add(id: Long, start: Instant, stop: Instant) {
+            metadata.acceptMetadata(MetadataEvent.EventAdded(generation, GatewayEpgEvent(
+                EventId(id), ChannelId(1), start, stop, title = "Boundary",
+            )))
+        }
+        fun ids(): List<Long> = metadata.observation.value.epgSnapshotForDisplay!!.events.map { it.id.value }.sorted()
+        add(1, past - 1.hours, past)
+        add(2, future, future + 1.hours)
+        add(3, past - 1.hours, past - 1.seconds)
+        add(4, future + 61.seconds, future + 1.hours)
+        children.bindGeneration(generation)
+        try {
+            assertTrue(children.prepareBackgroundEnrichment(generation) {})
+            assertTrue(children.startBackgroundEnrichment(generation))
+            runCurrent()
+            assertEquals(listOf(1L, 2L), ids(), "Startup pruning must keep the device and server edges")
+            assertEquals(listOf(serverNow + 4.hours), gateway.epgTargets)
+            add(5, past - 1.hours, past)
+            add(6, future, future + 1.hours)
+            assertEquals(listOf(1L, 2L, 5L, 6L), ids(), "Push admission must use the same union")
+            runCurrent()
+            assertEquals(listOf(1L, 2L, 5L, 6L), ids())
+        } finally {
+            children.cancelAndJoinBackgroundEnrichment()
+            children.closeAndJoinSubscriptions()
+        }
+    }
+
     @Test
     fun `worker uses generation server time despite skewed device clock before expiry deletion`() = runTest {
         val generation = GatewayGeneration()
