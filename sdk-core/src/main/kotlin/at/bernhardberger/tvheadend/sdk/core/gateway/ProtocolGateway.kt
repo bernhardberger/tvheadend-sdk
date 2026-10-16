@@ -34,7 +34,8 @@ internal interface ProtocolGateway {
     /** Ordered batches; custom gateways retain the singleton fallback. */
     public val metadataBatches: Flow<List<MetadataEvent>>
         get() = metadata.map { listOf(it) }
-    public val connectionFailures: Flow<GatewayConnectionFailureEvent>
+    /** Awaits the first failure of this generation; owner-initiated teardown reports nothing. */
+    public suspend fun awaitConnectionFailure(generation: GatewayGeneration): GatewayConnectionFailure
 
     /** Generation-scoped server time advanced by monotonic elapsed time, or unknown. */
     public fun estimatedServerTime(generation: GatewayGeneration): Instant? = null

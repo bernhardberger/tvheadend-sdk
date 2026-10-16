@@ -244,6 +244,46 @@ import kotlin.time.Instant
 
 internal class HtspProtocolGatewayTest {
     @Test
+    fun `termination awaits are latched generation scoped and cancellation independent`() = runTest {
+        val fake = connectedFake()
+        val gateway = HtspProtocolGateway(fake)
+        val first = (gateway.connect(ServerConfiguration("host", 9_982)) as GatewayConnectResult.Connected).connection.generation
+        val oldSource = requireNotNull(fake.liveConnectionValue.value).generation
+        val cancelled = backgroundScope.launch { gateway.awaitConnectionFailure(first) }
+        testScheduler.runCurrent()
+        cancelled.cancel()
+        cancelled.join()
+        fake.fail(oldSource, HtspTransportFailure(HtspTransportFailureKind.NETWORK_UNREACHABLE))
+        assertEquals(GatewayConnectionFailure.NETWORK_UNAVAILABLE, gateway.awaitConnectionFailure(first))
+        val newSource = HtspConnectionGeneration()
+        fake.connectOutcome = HtspConnectOutcome.Connected(liveConnection(newSource))
+        val second = (gateway.connect(ServerConfiguration("host", 9_982)) as GatewayConnectResult.Connected).connection.generation
+        val secondResult = backgroundScope.async { gateway.awaitConnectionFailure(second) }
+        testScheduler.runCurrent()
+        assertFalse(secondResult.isCompleted)
+        gateway.disconnect()
+        testScheduler.runCurrent()
+        assertFalse(secondResult.isCompleted, "SDK disconnect must not become a failure")
+        secondResult.cancel()
+        secondResult.join()
+        assertEquals(0, fake.terminationWaiters)
+    }
+
+    @Test
+    fun `transport failure before overflow remains the first retirement cause`() = runTest {
+        val fake = connectedFake()
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982)) as GatewayConnectResult.Connected).connection.generation
+        val source = requireNotNull(fake.liveConnectionValue.value).generation
+        fake.fail(source, HtspTransportFailure(HtspTransportFailureKind.NETWORK_UNREACHABLE))
+        assertEquals(GatewayConnectionFailure.NETWORK_UNAVAILABLE, gateway.awaitConnectionFailure(generation))
+        fake.eventsFlow = flowOf(HtspTransportEvent.MetadataOverflow(source, 1))
+        gateway.metadata.toList()
+        assertEquals(GatewayConnectionFailure.NETWORK_UNAVAILABLE, gateway.awaitConnectionFailure(generation))
+        assertEquals(GatewayConnectionFailure.NETWORK_UNAVAILABLE, gateway.retirementFailure(generation))
+    }
+
+    @Test
     fun `later batches cannot publish a catalog after metadata overflow`() = runTest {
         val source = HtspConnectionGeneration()
         val transportBatches = MutableSharedFlow<List<HtspTransportEvent>>()
@@ -256,13 +296,14 @@ internal class HtspProtocolGatewayTest {
         val metadata = PhaseOneSessionMetadata()
         metadata.bindGeneration(generation)
         val failures = mutableListOf<GatewayConnectionFailureEvent>()
-        backgroundScope.launch { gateway.connectionFailures.toList(failures) }
+        backgroundScope.launch { failures += GatewayConnectionFailureEvent(gateway.awaitConnectionFailure(generation), generation) }
         backgroundScope.launch { gateway.metadataBatches.collect { metadata.acceptMetadataBatch(it) } }
         testScheduler.runCurrent()
-        assertEquals(2, transportBatches.subscriptionCount.value)
+        assertEquals(1, transportBatches.subscriptionCount.value)
         transportBatches.emit(listOf(HtspTransportEvent.MetadataOverflow(source, 1)))
         testScheduler.runCurrent()
         assertEquals(listOf(GatewayConnectionFailure.METADATA_OVERFLOW), failures.map { it.failure })
+        fake.fail(source, HtspTransportFailure(HtspTransportFailureKind.TRANSPORT_UNAVAILABLE))
         transportBatches.emit(listOf(
             HtspTransportEvent.ServerMessage(HtspChannelAddMessage(channelFixture()), source, 1),
             HtspTransportEvent.ServerMessage(HtspInitialSyncCompletedMessage, source, 2),
@@ -271,13 +312,13 @@ internal class HtspProtocolGatewayTest {
         testScheduler.runCurrent()
         assertTrue(metadata.observation.value.channelState is ChannelRepositoryState.Synchronizing)
         assertEquals(
-            listOf(GatewayConnectionFailure.METADATA_OVERFLOW, GatewayConnectionFailure.TRANSPORT_UNAVAILABLE),
+            listOf(GatewayConnectionFailure.METADATA_OVERFLOW),
             failures.map { it.failure },
         )
         // Delivery continues after retirement, including new overflow markers.
         transportBatches.emit(listOf(HtspTransportEvent.MetadataOverflow(source, 1)))
         testScheduler.runCurrent()
-        assertEquals(2, failures.count { it.failure == GatewayConnectionFailure.METADATA_OVERFLOW })
+        assertEquals(1, failures.count { it.failure == GatewayConnectionFailure.METADATA_OVERFLOW })
         assertTrue(failures.all { it.generation === generation })
         assertEquals(GatewayConnectionFailure.METADATA_OVERFLOW, gateway.retirementFailure(generation))
     }
@@ -551,10 +592,10 @@ internal class HtspProtocolGatewayTest {
         val fake = connectedFake().apply { eventsFlow = transportEvents }
         val gateway = HtspProtocolGateway(fake)
         val failures = mutableListOf<GatewayConnectionFailureEvent>()
-        backgroundScope.launch { gateway.connectionFailures.toList(failures) }
         testScheduler.runCurrent()
         val generation = (gateway.connect(ServerConfiguration("host", 9_982))
             as GatewayConnectResult.Connected).connection.generation
+        backgroundScope.launch { failures += GatewayConnectionFailureEvent(gateway.awaitConnectionFailure(generation), generation) }
         val sourceGeneration = requireNotNull(fake.liveConnectionValue.value).generation
         fake.connectionStateValue.value = HtspConnectionState.Error(
             HtspTransportFailure(HtspTransportFailureKind.TRANSPORT_UNAVAILABLE),
@@ -563,9 +604,7 @@ internal class HtspProtocolGatewayTest {
             assertSame(GatewayState.Failed, gateway.connectionState.value)
             assertEquals(null, gateway.commitIfLive(generation) { true })
         }
-        transportEvents.emit(HtspTransportEvent.ConnectionFailure(
-            HtspTransportFailure(HtspTransportFailureKind.TRANSPORT_UNAVAILABLE), sourceGeneration,
-        ))
+        fake.fail(sourceGeneration, HtspTransportFailure(HtspTransportFailureKind.TRANSPORT_UNAVAILABLE))
         testScheduler.runCurrent()
         assertEquals(1, failures.size)
         assertSame(generation, failures.single().generation)
@@ -589,12 +628,12 @@ internal class HtspProtocolGatewayTest {
         val source = requireNotNull(fake.liveConnectionValue.value).generation
         val failure = HtspTransportFailure(HtspTransportFailureKind.AUTHENTICATION_REJECTED)
         val failures = mutableListOf<GatewayConnectionFailureEvent>()
-        backgroundScope.launch { gateway.connectionFailures.toList(failures) }
+        backgroundScope.launch { failures += GatewayConnectionFailureEvent(gateway.awaitConnectionFailure(generation), generation) }
         testScheduler.runCurrent()
         fake.connectionStateValue.value = HtspConnectionState.Error(failure)
         assertEquals(null, gateway.commitIfLive(generation) { true })
         assertEquals(null, gateway.retirementFailure(generation))
-        transportEvents.emit(HtspTransportEvent.ConnectionFailure(failure, source))
+        fake.fail(source, failure)
         testScheduler.runCurrent()
         assertEquals(GatewayConnectionFailure.AUTHENTICATION_REJECTED, failures.single().failure)
         assertEquals(GatewayConnectionFailure.AUTHENTICATION_REJECTED, gateway.retirementFailure(generation))
@@ -696,9 +735,8 @@ internal class HtspProtocolGatewayTest {
         val generation = (gateway.connect(ServerConfiguration("host", 9_982))
             as GatewayConnectResult.Connected).connection.generation
         val failures = mutableListOf<GatewayConnectionFailureEvent>()
-        backgroundScope.launch { gateway.connectionFailures.toList(failures) }
-        testScheduler.runCurrent()
         assertTrue(gateway.metadata.toList().isEmpty())
+        backgroundScope.launch { failures += GatewayConnectionFailureEvent(gateway.awaitConnectionFailure(generation), generation) }
         testScheduler.runCurrent()
         assertSame(generation, failures.single().generation)
         assertEquals(GatewayConnectionFailure.METADATA_OVERFLOW, failures.single().failure)
@@ -891,21 +929,6 @@ internal class HtspProtocolGatewayTest {
         )
         val fake = FakeHtspConnection().apply {
             connectOutcome = HtspConnectOutcome.Connected(liveConnection)
-            eventsFlow = flowOf(
-                *(
-                    HtspTransportFailureKind.entries.map { kind ->
-                        HtspTransportEvent.ConnectionFailure(
-                            failure = HtspTransportFailure(kind),
-                            generation = sourceGeneration,
-                        )
-                    } + HtspTransportEvent.ConnectionFailure(
-                        failure = HtspTransportFailure(
-                            HtspTransportFailureKind.TRANSPORT_UNAVAILABLE,
-                        ),
-                        generation = sourceGeneration,
-                    )
-                ).toTypedArray(),
-            )
         }
         val gateway = HtspProtocolGateway(fake)
         val observedStates = mutableListOf<GatewayState>()
@@ -975,11 +998,16 @@ internal class HtspProtocolGatewayTest {
             GatewayConnectionFailure.UNSUPPORTED_SERVER_VERSION,
             GatewayConnectionFailure.TRANSPORT_UNAVAILABLE,
         )
-        val failures = gateway.connectionFailures.take(expectedFailures.size).toList()
+        val failures = (HtspTransportFailureKind.entries.toList() + HtspTransportFailureKind.TRANSPORT_UNAVAILABLE).map { kind ->
+            val source = HtspConnectionGeneration()
+            fake.connectOutcome = HtspConnectOutcome.Connected(liveConnection.copy(generation = source))
+            val connected = gateway.connect(ServerConfiguration("host", 9_982)) as GatewayConnectResult.Connected
+            fake.fail(source, HtspTransportFailure(kind)) // Complete before the await starts.
+            GatewayConnectionFailureEvent(gateway.awaitConnectionFailure(connected.connection.generation), connected.connection.generation)
+        }
 
         assertEquals(expectedFailures, failures.map { it.failure })
-        assertTrue(failures.dropLast(1).all { it.generation === result.connection.generation })
-        assertSame(result.connection.generation, failures.last().generation)
+        assertEquals(failures.size, failures.map { it.generation }.distinct().size)
         assertTrue(failures.all { it.toString() == "GatewayConnectionFailureEvent(<redacted>)" })
         assertFalse(failures.toString().contains("private"))
 
@@ -4322,6 +4350,27 @@ private fun timerecFixture(): HtspTimerecEntry = HtspTimerecEntry(
 )
 
 private class FakeHtspConnection : HtspConnection {
+    private val terminations = java.util.IdentityHashMap<HtspConnectionGeneration,
+        kotlinx.coroutines.CompletableDeferred<at.bernhardberger.tvheadend.htsp.connection.HtspGenerationTermination>>()
+
+    fun fail(generation: HtspConnectionGeneration, failure: HtspTransportFailure) {
+        checkNotNull(terminations[generation]).complete(
+            at.bernhardberger.tvheadend.htsp.connection.HtspGenerationTermination.Failed(failure),
+        )
+    }
+
+    var terminationWaiters: Int = 0
+    override suspend fun awaitTermination(generation: HtspConnectionGeneration):
+        at.bernhardberger.tvheadend.htsp.connection.HtspGenerationTermination {
+        val result = requireNotNull(terminations[generation])
+        terminationWaiters++
+        try {
+            return result.await()
+        } finally {
+            terminationWaiters--
+        }
+    }
+
     internal val connectionStateValue = MutableStateFlow<HtspConnectionState>(
         HtspConnectionState.Disconnected,
     )
@@ -4423,8 +4472,10 @@ private class FakeHtspConnection : HtspConnection {
             connectionStateValue.value is HtspConnectionState.Connected
         ) return connectOutcome
         attempt += 1
+        currentGeneration?.let { terminations[it]?.complete(at.bernhardberger.tvheadend.htsp.connection.HtspGenerationTermination.Disconnected) }
         currentGeneration = (connectOutcome as? HtspConnectOutcome.Connected)?.connection?.generation
             ?: HtspConnectionGeneration()
+        terminations.getOrPut(checkNotNull(currentGeneration)) { kotlinx.coroutines.CompletableDeferred() }
         liveConnectionValue.value = (connectOutcome as? HtspConnectOutcome.Connected)?.connection
         (connectOutcome as? HtspConnectOutcome.Failed)?.let {
             connectionStateValue.value = HtspConnectionState.Error(it.failure)
@@ -4455,6 +4506,7 @@ private class FakeHtspConnection : HtspConnection {
         beforeTeardown()
         val accepted = admittedAttempt == attempt && connectionStateValue.value != HtspConnectionState.Disconnected
         if (accepted) {
+            currentGeneration?.let { terminations[it]?.complete(at.bernhardberger.tvheadend.htsp.connection.HtspGenerationTermination.Disconnected) }
             attempt += 1
             liveConnectionValue.value = null
             connectionStateValue.value = HtspConnectionState.Disconnected
@@ -4468,6 +4520,7 @@ private class FakeHtspConnection : HtspConnection {
         val accepted = !closed && (expectedGeneration == null || isCurrent(expectedGeneration))
         if (accepted) {
             closed = true
+            currentGeneration?.let { terminations[it]?.complete(at.bernhardberger.tvheadend.htsp.connection.HtspGenerationTermination.Disconnected) }
             attempt += 1
             currentGeneration = HtspConnectionGeneration()
             liveConnectionValue.value = null

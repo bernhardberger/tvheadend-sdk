@@ -314,8 +314,8 @@ internal class ConnectionOwnerTest {
         assertEquals(SessionState.Synchronizing, owner.observation.value.sessionState)
         assertEquals(
             listOf(
-                "failures.collect",
                 "connect",
+                "failures.collect",
                 "generation.bind",
                 "metadata.collect",
                 "admission.start",
@@ -359,8 +359,8 @@ internal class ConnectionOwnerTest {
         assertEquals(listOf(8L), owner.currentDvrSnapshot().entries.map { it.id.value })
         assertEquals(
             listOf(
-                "failures.collect",
                 "connect",
+                "failures.collect",
                 "generation.bind",
                 "metadata.collect",
                 "admission.start",
@@ -2893,9 +2893,9 @@ private class FakeProtocolGateway(
         order += "metadata.collect"
         metadataEvents.collect { emit(it) }
     }
-    override val connectionFailures: Flow<GatewayConnectionFailureEvent> = flow {
+    override suspend fun awaitConnectionFailure(generation: GatewayGeneration): GatewayConnectionFailure {
         order += "failures.collect"
-        failureEvents.collect { emit(it) }
+        return failureEvents.first { it.generation === generation }.failure
     }
 
     override suspend fun connect(server: ServerConfiguration): GatewayConnectResult {

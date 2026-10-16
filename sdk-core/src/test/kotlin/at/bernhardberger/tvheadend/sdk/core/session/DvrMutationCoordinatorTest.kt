@@ -24,7 +24,7 @@ import at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayAutorecRule
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectResult
-import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailureEvent
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrStats
@@ -1120,7 +1120,8 @@ internal class MutationGateway : ProtocolGateway {
     override val connectionState: MutableStateFlow<GatewayState> =
         MutableStateFlow(GatewayState.Disconnected)
     override val metadata: Flow<MetadataEvent> = emptyFlow()
-    override val connectionFailures: Flow<GatewayConnectionFailureEvent> = emptyFlow()
+    override suspend fun awaitConnectionFailure(generation: GatewayGeneration): GatewayConnectionFailure =
+        kotlinx.coroutines.awaitCancellation()
 
     override suspend fun connect(server: ServerConfiguration): GatewayConnectResult =
         error("Connection lifecycle is not used")

@@ -35,7 +35,7 @@ import at.bernhardberger.tvheadend.sdk.core.StreamProfilesResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectResult
-import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailureEvent
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.EventId
@@ -1639,7 +1639,8 @@ private class SubscriptionGateway : ProtocolGateway {
 
     override val connectionState = MutableStateFlow<GatewayState>(GatewayState.Disconnected)
     override val metadata: Flow<MetadataEvent> = emptyFlow()
-    override val connectionFailures: Flow<GatewayConnectionFailureEvent> = emptyFlow()
+    override suspend fun awaitConnectionFailure(generation: GatewayGeneration): GatewayConnectionFailure =
+        kotlinx.coroutines.awaitCancellation()
 
     override suspend fun connect(server: ServerConfiguration): GatewayConnectResult =
         error("Connection is not used by this test")

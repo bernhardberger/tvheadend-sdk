@@ -499,19 +499,16 @@ internal class ConnectionOwner(
         requireCurrent(token)
         commitState(token, SessionState.Connecting)
 
-        val generation = CompletableDeferred<GatewayGeneration>()
-        val runtimeFailure = async(start = CoroutineStart.UNDISPATCHED) {
-            gateway.connectionFailures.first { event ->
-                event.generation === generation.await()
-            }.failure
-        }
+        var runtimeFailure: kotlinx.coroutines.Deferred<GatewayConnectionFailure>? = null
         var metadataWorker: Job? = null
         try {
             val connection = when (val result = gateway.connect(profile.toGatewayConfiguration())) {
                 is GatewayConnectResult.Connected -> result.connection
                 is GatewayConnectResult.Failed -> return@coroutineScope result.failure.toAttemptOutcome()
             }
-            generation.complete(connection.generation)
+            runtimeFailure = async(start = CoroutineStart.UNDISPATCHED) {
+                gateway.awaitConnectionFailure(connection.generation)
+            }
             requireCurrent(token)
             dvrMutations.bindGeneration(connection.generation)
             dvrProgress.bindGeneration(connection.generation, connection.protocolVersion)
@@ -601,7 +598,7 @@ internal class ConnectionOwner(
             ).withRetirementFailure(connection.generation)
         } finally {
             metadataWorker?.cancelAndJoin()
-            runtimeFailure.cancelAndJoin()
+            runtimeFailure?.cancelAndJoin()
         }
     }
 

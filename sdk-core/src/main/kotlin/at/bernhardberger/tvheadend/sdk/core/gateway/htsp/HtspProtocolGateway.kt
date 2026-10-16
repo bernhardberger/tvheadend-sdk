@@ -146,7 +146,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrStats
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnection
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailure
-import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayConnectionFailureEvent
+import at.bernhardberger.tvheadend.htsp.connection.HtspGenerationTermination
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
@@ -197,8 +197,9 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.transform
 import kotlinx.coroutines.flow.transformWhile
 import kotlinx.coroutines.sync.Semaphore
@@ -238,7 +239,8 @@ internal class HtspProtocolGateway internal constructor(
     @Volatile internal var lastCloseChanged: Boolean? = null
         private set
     private val retiredGenerations = WeakHashMap<HtspConnectionGeneration, GatewayConnectionFailure?>()
-    private val metadataFailures = MutableSharedFlow<GatewayConnectionFailureEvent>()
+    // Generation-local latch: overflow may be observed before the owner starts its await.
+    private val failures = WeakHashMap<HtspConnectionGeneration, CompletableDeferred<GatewayConnectionFailure>>()
     private val serverTimeEstimate = at.bernhardberger.tvheadend.sdk.core.gateway.ServerTimeEstimate()
 
     override fun estimatedServerTime(generation: GatewayGeneration): Instant? {
@@ -309,12 +311,6 @@ internal class HtspProtocolGateway internal constructor(
                 // A repeated async-enable only resends EPG, not a complete snapshot. The
                 // connection owner's existing backoff/reconnect path performs a full resync.
                 retire(event.generation, GatewayConnectionFailure.METADATA_OVERFLOW)
-                metadataFailures.emit(
-                    GatewayConnectionFailureEvent(
-                        GatewayConnectionFailure.METADATA_OVERFLOW,
-                        generation,
-                    ),
-                )
                 return@transform
             }
             is HtspTransportEvent.ConnectionFailure -> {
@@ -326,18 +322,28 @@ internal class HtspProtocolGateway internal constructor(
         if (mapped.isNotEmpty()) emit(mapped)
     }
 
-    override val connectionFailures: Flow<GatewayConnectionFailureEvent> =
-        merge(metadataFailures, connection.eventBatches().transform { batch ->
-            for (event in batch) if (event is HtspTransportEvent.ConnectionFailure) {
-                retire(event.generation, event.failure.kind.toGatewayFailure())
-                emit(
-                    GatewayConnectionFailureEvent(
-                        failure = event.failure.kind.toGatewayFailure(),
-                        generation = generationFor(event.generation),
-                    ),
-                )
+    override suspend fun awaitConnectionFailure(generation: GatewayGeneration): GatewayConnectionFailure =
+        coroutineScope {
+            val source = htspGenerationFor(generation)
+            val result = synchronized(generationLock) {
+                failures.getOrPut(source) { CompletableDeferred() }
             }
-        })
+            val termination = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                val failure = when (val ended = connection.awaitTermination(source)) {
+                    is HtspGenerationTermination.Failed ->
+                        ended.failure.kind.toGatewayFailure()
+                    HtspGenerationTermination.Disconnected -> return@launch
+                    // HTSP termination is open: unknown results conservatively close admission.
+                    else -> GatewayConnectionFailure.TRANSPORT_UNAVAILABLE
+                }
+                retire(source, failure)
+            }
+            try {
+                result.await()
+            } finally {
+                termination.cancel()
+            }
+        }
 
     override suspend fun connect(server: ServerConfiguration): GatewayConnectResult {
         val endpoint = when (val authentication = server.authentication) {
@@ -416,12 +422,16 @@ internal class HtspProtocolGateway internal constructor(
         generation: HtspConnectionGeneration,
         failure: GatewayConnectionFailure? = null,
     ) = synchronized(generationLock) {
-        if (retiredGenerations[generation] != GatewayConnectionFailure.METADATA_OVERFLOW) {
-            // Snapshot-only retirement has no known cause. A later typed event supplies it;
-            // cleanup and subsequent transport loss must not erase an observed overflow.
+        if (retiredGenerations[generation] == null) {
+            // Snapshot-only retirement has no cause. The first typed failure supplies it;
+            // cleanup and later reports cannot replace that generation's first failure.
             if (failure != null || !retiredGenerations.containsKey(generation)) {
                 retiredGenerations[generation] = failure
             }
+        }
+        if (failure != null) {
+            failures.getOrPut(generation) { CompletableDeferred() }
+                .complete(checkNotNull(retiredGenerations[generation]))
         }
         if (currentLive?.generation === generation) {
             currentLive = null
