@@ -205,7 +205,17 @@ starts independently of restore completion, so disconnecting during a slow resto
 still flushes any live metadata already synchronized.
 Cached data is never published as `CURRENT`: tuning, EPG queries and DVR
 mutations still wait for `Ready`. The guide is seeded for display only; the
-initial sync re-sends the configured horizon.
+initial sync re-sends programmes starting within the next six hours of server
+time, and the SDK queries further programmes after `Ready` as for any other
+uncovered range. The live guide replaces the cached one at `Ready` rather than
+merging with it, so cached programmes beyond the six-hour window disappear until
+those queries return. Ordinary queries extend each channel in four-hour steps to
+about 20 hours ahead over roughly 30 minutes; later programmes, up to the
+configured `EpgCoveragePolicy.futureHorizon`, need explicit coverage acquisition.
+Tvheadend pushes programme updates only for programmes starting within its
+sliding six-hour window. Programmes further ahead are refreshed when the worker
+queries them again or when they enter the window, so late schedule changes can
+show late; deletions are pushed immediately.
 
 Guide restore includes events starting through the device clock's current time
 plus 24 hours (whole seconds), dropping events that ended more than six hours ago.

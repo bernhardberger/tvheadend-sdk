@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.32.0]
+
+Unreleased; development target.
+
+### Changed
+
+- BREAKING (behavioural): initial synchronization requests only programmes
+  starting within six hours of server time instead of the whole
+  `EpgCoveragePolicy.futureHorizon`, shortening the time to `Ready` on large
+  lineups. At `Ready` the guide covers about six hours; the EPG worker then
+  queries later programmes as for any other uncovered range, which currently
+  reaches about 20 hours ahead in four-hour steps per channel over roughly
+  30 minutes. Later programmes need explicit coverage acquisition. The live
+  guide replaces a restored cached guide at `Ready`, so cached programmes
+  beyond six hours disappear until the worker queries them again. Tvheadend
+  pushes programme updates only within the sliding six-hour window; programmes
+  further ahead are refreshed by worker queries or when they enter the window,
+  so their changes can appear late. Deletions are still pushed immediately.
+  Explicit acquisition and `EpgCoveragePolicy` semantics are unchanged.
+
 ## [0.31.0]
 
 Released 2026-10-16.

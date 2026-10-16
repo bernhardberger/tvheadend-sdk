@@ -206,6 +206,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
@@ -561,7 +562,8 @@ internal class HtspProtocolGateway internal constructor(
                     commitIfLive(generation) {
                         serverTimeEstimate.observe(generation, Instant.fromEpochSeconds(serverTime.value.timeEpochSeconds))
                     }
-                    serverTime.value.timeEpochSeconds + epgCoveragePolicy.futureHorizon.inWholeSeconds
+                    serverTime.value.timeEpochSeconds +
+                        minOf(INITIAL_SYNC_EPG_WINDOW, epgCoveragePolicy.futureHorizon).inWholeSeconds
                 }
                 else -> return serverTime.toGatewayResult {}
             }
@@ -2062,6 +2064,10 @@ private const val MAX_CONCURRENT_ARTWORK_FILES = 3
 private const val ABSOLUTE_SKIP_FLAG = true
 private const val RELATIVE_SKIP_FLAG = false
 private const val PROFILE_DEFAULT_SUBSCRIPTION_WEIGHT = 0L
+
+// Initial async sync sends only events starting within this window (server minimum 600 s), and
+// the same boundary becomes initial-sync coverage. The EPG worker queries beyond it after Ready.
+private val INITIAL_SYNC_EPG_WINDOW: Duration = 6.hours
 
 // Server SUBSCRIPTION_PRIO_MIN: the lowest weight still treated as a normal subscription.
 private const val YIELD_SUBSCRIPTION_WEIGHT = 10L

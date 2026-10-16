@@ -169,6 +169,9 @@ import at.bernhardberger.tvheadend.sdk.core.SessionFailure
 import at.bernhardberger.tvheadend.sdk.core.SessionRecoveryDisposition
 import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.session.ConnectionOwner
+import at.bernhardberger.tvheadend.sdk.core.session.EpgQueryPlan
+import at.bernhardberger.tvheadend.sdk.core.session.EpgWorkerSettings
+import at.bernhardberger.tvheadend.sdk.core.session.selectEpgQueries
 import at.bernhardberger.tvheadend.sdk.core.session.PhaseOneSessionMetadata
 import at.bernhardberger.tvheadend.sdk.core.session.ReconnectBackoff
 import at.bernhardberger.tvheadend.sdk.core.session.SessionChildren
@@ -238,6 +241,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.Executors
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
@@ -691,6 +695,41 @@ internal class HtspProtocolGatewayTest {
             runCurrent()
             assertEquals(requests, fake.expectedGenerations.size)
             assertEquals(listOf(0), retries)
+        } finally {
+            owner.shutdown()
+        }
+    }
+
+    @Test
+    fun `initial sync coverage ends at the short window so the worker queries beyond it`() = runTest {
+        val policy = EpgCoveragePolicy.create(7.days)
+        val fake = metadataConnection(HtspConnectionGeneration(), MutableSharedFlow())
+        val metadata = PhaseOneSessionMetadata(epgCoveragePolicy = policy)
+        var generation: at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration? = null
+        val children = object : SessionChildren by SessionChildren.None {
+            override fun bindGeneration(value: at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration) {
+                generation = value
+            }
+        }
+        val owner = ConnectionOwner(HtspProtocolGateway(fake, policy), metadata, children,
+            defaultDispatcher = StandardTestDispatcher(testScheduler),
+            backoff = ReconnectBackoff { error("Initial sync must not fail") })
+        try {
+            owner.connect(ServerProfile("host"))
+            testScheduler.runCurrent()
+            assertTrue(owner.observation.value.sessionState is SessionState.Ready)
+            val current = checkNotNull(generation)
+            val serverNow = Instant.fromEpochSeconds(1_000_000)
+            val channel = at.bernhardberger.tvheadend.sdk.core.ChannelId(1)
+            val initialCoverage = metadata.initialEpgCoverage(current)
+            assertEquals(mapOf(channel to serverNow + 6.hours), initialCoverage)
+            assertEquals(
+                listOf(EpgQueryPlan(channel, serverNow + 10.hours)),
+                selectEpgQueries(
+                    checkNotNull(metadata.currentEpgSnapshot(current)), serverNow,
+                    EpgWorkerSettings(coveragePolicy = policy), initialEpgCoverage = initialCoverage,
+                ),
+            )
         } finally {
             owner.shutdown()
         }
@@ -2211,7 +2250,7 @@ internal class HtspProtocolGatewayTest {
             runCurrent()
             if (result is GatewayResult.Ok) {
                 assertEquals(
-                    if (malformedBeforeSync) null else Instant.fromEpochSeconds(serverNow + coveragePolicy.futureHorizon.inWholeSeconds),
+                    if (malformedBeforeSync) null else Instant.fromEpochSeconds(serverNow + 21_600L),
                     completions.single().epgThrough,
                 )
             } else {
@@ -2230,7 +2269,7 @@ internal class HtspProtocolGatewayTest {
         assertTrue(supportedRequests.singleOrNull { it is GetSysTimeRequest } is GetSysTimeRequest)
         val supported = supportedRequests.last() as EnableAsyncMetadataRequest
         assertEquals(true, supported.epg)
-        assertEquals(serverNow + 86_400L, supported.epgMaxTimeEpochSeconds)
+        assertEquals(serverNow + 21_600L, supported.epgMaxTimeEpochSeconds)
         assertEquals(6, supported.minimumProtocolVersion)
 
         val (configuredResult, configuredRequests) = requestFor(
@@ -2239,7 +2278,8 @@ internal class HtspProtocolGatewayTest {
         )
         assertTrue(configuredResult is GatewayResult.Ok)
         val configured = configuredRequests.last() as EnableAsyncMetadataRequest
-        assertEquals(serverNow + 604_800L, configured.epgMaxTimeEpochSeconds)
+        // The initial sync window is fixed; the coverage policy only bounds later worker queries.
+        assertEquals(serverNow + 21_600L, configured.epgMaxTimeEpochSeconds)
 
         val (failure, failedRequests) = requestFor(
             protocolVersion = 36,
@@ -2251,7 +2291,7 @@ internal class HtspProtocolGatewayTest {
 
     @Test
     @OptIn(ExperimentalCoroutinesApi::class)
-    fun `configured async EPG horizon survives a fresh connection generation`() = runTest {
+    fun `initial async EPG window is requested again for a fresh connection generation`() = runTest {
         val serverTimes = ArrayDeque(listOf(1_000_000L, 2_000_000L))
         val metadataEvents = MutableSharedFlow<HtspTransportEvent>()
         val requests = mutableListOf<HtspRequest<*>>()
@@ -2309,7 +2349,7 @@ internal class HtspProtocolGatewayTest {
             assertTrue(gateway.enableInitialMetadata(generation) is GatewayResult.Ok)
             runCurrent()
             assertEquals(
-                Instant.fromEpochSeconds((index + 1) * 1_000_000L + 604_800L),
+                Instant.fromEpochSeconds((index + 1) * 1_000_000L + 21_600L),
                 completions.last().epgThrough,
             )
             assertSame(sourceGeneration, fake.lastExpectedGeneration)
@@ -2322,7 +2362,7 @@ internal class HtspProtocolGatewayTest {
 
         val asyncRequests = requests.filterIsInstance<EnableAsyncMetadataRequest>()
         assertEquals(2, asyncRequests.size)
-        assertEquals(listOf(1_604_800L, 2_604_800L), asyncRequests.map { it.epgMaxTimeEpochSeconds })
+        assertEquals(listOf(1_021_600L, 2_021_600L), asyncRequests.map { it.epgMaxTimeEpochSeconds })
         assertEquals(2, timeRequestGenerations.size)
         sourceGenerations.zip(timeRequestGenerations).forEach { (expected, actual) ->
             assertSame(expected, actual)

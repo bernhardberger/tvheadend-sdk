@@ -202,9 +202,12 @@ transition between retiring a failed generation and resetting its working state.
 Cached data is display-only: it never enters working reducers or supplies live EPG
 coverage proof. Original receipt times and per-channel query timestamps are retained
 as before; the initial-sync marker clears the cached query timestamps and establishes
-fresh scheduling proof from live sync. HTSP re-sends the configured horizon, so the
-cached guide does not reduce network traffic. Authority stays `SYNCHRONIZING`/`STALE`
-until initial sync completes; the SDK never claims `CURRENT` from disk.
+fresh scheduling proof from live sync. HTSP re-sends a fixed six-hour initial
+window, and later programmes are queried after `Ready` (ordinary scheduling to
+about 20 hours, explicit acquisition beyond), so the cached guide does not reduce
+network traffic. Live publication at `Ready` replaces the cached guide; cached
+programmes beyond the live six hours disappear until queried again. Authority stays `SYNCHRONIZING`/`STALE` until initial
+sync completes; the SDK never claims `CURRENT` from disk.
 
 Files older than retention are deleted at load. Corrupt or truncated files are
 deleted and the session proceeds as today.
