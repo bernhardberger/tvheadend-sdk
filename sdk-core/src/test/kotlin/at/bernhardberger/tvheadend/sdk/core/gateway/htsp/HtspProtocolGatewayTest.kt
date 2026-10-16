@@ -390,7 +390,7 @@ internal class HtspProtocolGatewayTest {
     }
 
     @Test
-    fun `intentional termination during binding resolves denial without waiting for failure`() = runTest {
+    fun `unowned Disconnected during binding retires as transport failure`() = runTest {
         val fake = connectedFake()
         val gateway = HtspProtocolGateway(fake)
         val retries = mutableListOf<Int>()

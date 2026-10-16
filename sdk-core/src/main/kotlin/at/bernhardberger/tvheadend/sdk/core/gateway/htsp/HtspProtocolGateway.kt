@@ -449,6 +449,8 @@ internal class HtspProtocolGateway internal constructor(
         failure: GatewayConnectionFailure? = null,
     ) = synchronized(generationLock) {
         if (retiredGenerations[generation] == null) {
+            // Overflow versus transport failure is decided by which the SDK records first,
+            // not stream order. Both back off; the reported SessionFailure and failureIndex differ.
             // Snapshot-only retirement has no cause. The first typed failure supplies it;
             // cleanup and later reports cannot replace that generation's first failure.
             if (failure != null || !retiredGenerations.containsKey(generation)) {
