@@ -573,7 +573,9 @@ internal class HtspProtocolGateway internal constructor(
         return connection.enableAsyncMetadataAwaitingInitialSync(
             epg = true,
             epgMaxTimeEpochSeconds = epgMaxTime,
+            timeoutMs = null,
             expectedGeneration = htspGeneration,
+            idleTimeoutMs = INITIAL_SYNC_IDLE_TIMEOUT.inWholeMilliseconds,
         ).toGatewayResult {}
     }
 
@@ -2068,6 +2070,10 @@ private const val PROFILE_DEFAULT_SUBSCRIPTION_WEIGHT = 0L
 // Initial async sync sends only events starting within this window (server minimum 600 s), and
 // the same boundary becomes initial-sync coverage. The EPG worker queries beyond it after Ready.
 private val INITIAL_SYNC_EPG_WINDOW: Duration = 6.hours
+
+// Initial sync fails only when no acknowledgement or metadata arrives for this long, so slow links
+// complete while data keeps flowing; there is deliberately no overall cap.
+private val INITIAL_SYNC_IDLE_TIMEOUT: Duration = 30.seconds
 
 // Server SUBSCRIPTION_PRIO_MIN: the lowest weight still treated as a normal subscription.
 private const val YIELD_SUBSCRIPTION_WEIGHT = 10L

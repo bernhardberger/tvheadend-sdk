@@ -209,6 +209,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -223,6 +224,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.yield
 import org.junit.jupiter.api.Assertions.assertArrayEquals
@@ -2287,6 +2289,77 @@ internal class HtspProtocolGatewayTest {
         )
         assertSame(GatewayResult.Timeout, failure)
         assertTrue(failedRequests.single() is GetSysTimeRequest)
+    }
+
+    private class InitialSyncRun(val result: GatewayResult<Unit>, val elapsedMs: Long, val acknowledgementTimeoutMs: Long)
+
+    // Runs enableInitialMetadata in virtual time: a channel update every [progressEvery] until the
+    // sync marker at [markerAt]; no marker when null.
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private suspend fun TestScope.runInitialSync(progressEvery: Duration?, markerAt: Duration?): InitialSyncRun {
+        val sourceGeneration = HtspConnectionGeneration()
+        val metadataEvents = MutableSharedFlow<HtspTransportEvent>()
+        var acknowledgementTimeoutMs = -1L
+        val fake = FakeHtspConnection().apply {
+            liveConnectionValue.value = liveConnection(sourceGeneration)
+            connectOutcome = HtspConnectOutcome.Connected(requireNotNull(liveConnectionValue.value))
+            eventsFlow = metadataEvents
+            beforeExecute = { request ->
+                when (request) {
+                    is GetSysTimeRequest -> executeResult = HtspResult.Ok(
+                        GetSysTimeResponse(
+                            timeEpochSeconds = 1_000_000L,
+                            legacyTimezoneHoursWestOfGmt = 0,
+                            gmtOffsetMinutes = 0,
+                        ),
+                    )
+                    is EnableAsyncMetadataRequest -> {
+                        acknowledgementTimeoutMs = timeouts.last()
+                        executeResult = HtspResult.Ok(HtspEmptyResponse)
+                    }
+                    else -> error("Unexpected initial metadata request")
+                }
+            }
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+        backgroundScope.launch {
+            var sequence = 0L
+            var elapsed = Duration.ZERO
+            while (progressEvery != null && (markerAt == null || elapsed + progressEvery < markerAt)) {
+                delay(progressEvery)
+                elapsed += progressEvery
+                metadataEvents.emit(
+                    HtspTransportEvent.ServerMessage(HtspChannelAddMessage(channelFixture()), sourceGeneration, ++sequence),
+                )
+            }
+            if (markerAt != null) {
+                delay(markerAt - elapsed)
+                metadataEvents.emit(
+                    HtspTransportEvent.ServerMessage(HtspInitialSyncCompletedMessage, sourceGeneration, ++sequence),
+                )
+            }
+        }
+        val started = testScheduler.currentTime
+        val result = gateway.enableInitialMetadata(generation)
+        return InitialSyncRun(result, testScheduler.currentTime - started, acknowledgementTimeoutMs)
+    }
+
+    @Test
+    fun `initial sync outlasts thirty seconds while metadata keeps flowing`() = runTest {
+        val run = runInitialSync(progressEvery = 20.seconds, markerAt = 100.seconds)
+        assertTrue(run.result is GatewayResult.Ok)
+        assertEquals(100_000L, run.elapsedMs)
+    }
+
+    @Test
+    fun `initial sync times out after thirty seconds without metadata and sets no overall cap`() = runTest {
+        val stalled = runInitialSync(progressEvery = null, markerAt = null)
+        assertSame(GatewayResult.Timeout, stalled.result)
+        assertEquals(30_000L, stalled.elapsedMs)
+        // The acknowledgement is bounded by the idle limit alone; an overall cap would shorten it.
+        assertEquals(30_000L, stalled.acknowledgementTimeoutMs)
     }
 
     @Test
@@ -4621,6 +4694,7 @@ private class FakeHtspConnection : HtspConnection {
     internal var lastExpectedGeneration: HtspConnectionGeneration? = null
     internal val expectedGenerations = ArrayList<HtspConnectionGeneration?>()
     internal var lastRequest: HtspRequest<*>? = null
+    internal val timeouts = ArrayList<Long>()
     internal var lastSubscriptionId: Long? = null
     internal var lastSubscriptionExpectedGeneration: HtspConnectionGeneration? = null
     internal var disconnectCalls: Int = 0
@@ -4669,6 +4743,7 @@ private class FakeHtspConnection : HtspConnection {
     ): HtspResult<R> {
         executeException?.let { throw it }
         lastRequest = request
+        timeouts += timeoutMs
         lastExpectedGeneration = expectedGeneration
         expectedGenerations += expectedGeneration
         beforeExecute(request)

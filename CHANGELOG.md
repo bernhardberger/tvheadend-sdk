@@ -33,6 +33,12 @@ Unreleased; development target.
   when they enter the window, so their changes can appear late. Deletions are
   still pushed immediately.
   Explicit acquisition and `EpgCoveragePolicy` semantics are unchanged.
+- Initial synchronization now fails with a timeout only after 30 seconds
+  without progress, instead of 30 seconds in total, so slow links reach `Ready`
+  as long as metadata keeps arriving; it has no overall cap. The acknowledgement
+  and every metadata message of the connection count as progress. This uses the
+  HTSP `1.0.0-beta.4-sync-idle-timeout` candidate, pinned from the opt-in
+  candidate repository. No public SDK API changes.
 
 ## [0.31.0]
 
