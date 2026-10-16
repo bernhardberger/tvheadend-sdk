@@ -18,7 +18,7 @@ Android modules use AGP's built-in Kotlin support and never apply
 | Okio (sdk-android constraint) | 3.18.2 |
 | AndroidX DataStore Preferences | 1.2.1 |
 | Google Tink Android | 1.23.0 |
-| HTSP | 1.0.0-beta.4-sync-idle-timeout-SNAPSHOT (opt-in candidate repository) |
+| HTSP | 1.0.0-beta.4 |
 | Media3 | 1.11.1 |
 | JUnit Jupiter | 6.1.3 |
 | AndroidX Test runner / ext JUnit | 1.7.0 / 1.3.0 |
