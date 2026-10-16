@@ -1,9 +1,20 @@
 # Changelog
 
-## [Unreleased]
+## [0.31.0]
+
+Unreleased; development target.
 
 ### Changed
 
+- Move the protocol dependency to HTSP 1.0.0-beta.3.
+- Consume metadata in batches through HTSP `eventBatches`, reducing per-event
+  handoffs and lock acquisitions. Watch connection failures through HTSP
+  generation termination without a second metadata subscription.
+- Use the upstream "Tvheadend" spelling in published POM names and descriptions,
+  Dokka module names, and SDK exception and diagnostic messages. Coordinates,
+  package names and slugs are unchanged.
+- Update NOTICE and attribution links to the renamed `tvheadend-htsp-kotlin`
+  repository.
 - Restore the persistent metadata cache alongside connecting and authentication.
   Cached catalog and guide data can populate the synchronizing display without
   delaying the connection, or remain browsable offline after a failed attempt.
@@ -23,12 +34,22 @@
 
 ### Fixed
 
+- Report the typed `SessionFailure` for authentication rejection and unsupported
+  server versions during binding or Ready admission, rather than a generic
+  transport failure with retry backoff.
+- Reconnect when a protocol connection ends without an SDK disconnect, close or
+  replacement, instead of leaving the session Ready on a dead connection.
+- Report the first cause recorded by the SDK when a transport failure and
+  metadata overflow race.
 - Avoid redundant background EPG queries for channels covered by the completed
   initial sync, without changing explicit coverage acquisition or public coverage.
 - Reject expired EPG admissions using fresh device/server union bounds, avoiding
   repeated publication and pruning while preserving skewed future-edge events
   with a 60-second future pruning allowance for server slide and estimate lag.
   Query replacements account for final retained capacity and supersede history.
+- Apply the guide retention bounds from the start of initial sync, so events that
+  ended more than six hours ago are no longer published and then pruned shortly
+  after Ready.
 
 ## [0.30.0]
 

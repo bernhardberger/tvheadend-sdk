@@ -224,10 +224,10 @@ as experimental EPG metadata.
 0.29.0 was released on 2026-10-15. It adds display-only DVR rejection feedback,
 ranked recording lookups, and experimental ownership metadata.
 
-### 0.30: HTSP entity model (development target)
+### 0.30: HTSP entity model (released)
 
-0.30.0 is unreleased. It adopts full-entity replacement and explicit sparse patches,
-removes unsupported subscription fields and unreachable session failures, and
+0.30.0 was released on 2026-10-15. It adopts full-entity replacement and explicit
+sparse patches, removes unsupported subscription fields and unreachable session failures, and
 preserves DVR configurations during edits. See the changelog for consumer migration.
 
 ### Next 0.x minors: player-driven gaps
