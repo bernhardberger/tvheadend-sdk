@@ -299,6 +299,37 @@ internal class FakeTvheadendSessionTest {
     }
 
     @Test
+    fun `scripts cached artwork bound to the scripted profile`() = runTest {
+        val fake = FakeTvheadendSession(currentObservation())
+        val bytes = ArtworkLoadResult.Available(ArtworkContent.create(byteArrayOf(7)))
+        org.junit.jupiter.api.Assertions.assertNull(fake.artwork.cachedArtwork(ArtworkId(1)))
+
+        fake.artwork.scriptCached(ServerProfile("a.invalid"), bytes)
+        val first = requireNotNull(fake.artwork.cachedArtwork(ArtworkId(1)))
+        assertEquals(first, fake.artwork.cachedArtwork(ArtworkId(1)))
+        assertSame(bytes, fake.artwork.loadCachedArtwork(first))
+
+        fake.artwork.scriptCached(ServerProfile("b.invalid"), bytes)
+        val second = requireNotNull(fake.artwork.cachedArtwork(ArtworkId(1)))
+        org.junit.jupiter.api.Assertions.assertNotEquals(first.cacheKey, second.cacheKey)
+        assertEquals(
+            TvheadendFailure.OBSERVATION_EXPIRED,
+            (fake.artwork.loadCachedArtwork(first) as ArtworkLoadResult.Unavailable).failure,
+        )
+        assertSame(bytes, fake.artwork.loadCachedArtwork(second))
+
+        fake.artwork.scriptCached(ServerProfile("a.invalid"), bytes)
+        assertSame(bytes, fake.artwork.loadCachedArtwork(first), "Equal profile identity reads again")
+        assertEquals(
+            TvheadendFailure.OBSERVATION_EXPIRED,
+            (fake.artwork.loadCachedArtwork(second) as ArtworkLoadResult.Unavailable).failure,
+        )
+
+        fake.artwork.scriptCached(null)
+        org.junit.jupiter.api.Assertions.assertNull(fake.artwork.cachedArtwork(ArtworkId(1)))
+    }
+
+    @Test
     fun `scripts successful session repository and binding results and records calls`() = runTest {
         val supplied = currentObservation()
         val fake = FakeTvheadendSession(supplied)

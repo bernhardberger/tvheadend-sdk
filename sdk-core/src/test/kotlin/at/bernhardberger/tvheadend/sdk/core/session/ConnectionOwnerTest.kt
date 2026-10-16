@@ -506,6 +506,12 @@ internal class ConnectionOwnerTest {
         assertNotEquals(reference, switched)
         assertNotEquals(reference.cacheKey, switched.cacheKey)
         assertArrayEquals(byteArrayOf(2), bytes(switched))
+        owner.connect(first)
+        runCurrent()
+        assertArrayEquals(byteArrayOf(1), bytes(reference), "A reference reads again once A is active")
+        assertEquals(TvheadendFailure.OBSERVATION_EXPIRED, failure(switched))
+        owner.connect(second)
+        runCurrent()
 
         owner.cache.clear()
         assertEquals(TvheadendFailure.NOT_READY, failure(switched))

@@ -14,6 +14,7 @@ import at.bernhardberger.tvheadend.sdk.core.AutorecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleId
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.CacheStatistics
+import at.bernhardberger.tvheadend.sdk.core.CachedArtworkReference
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
 import at.bernhardberger.tvheadend.sdk.core.DvrChange
@@ -694,6 +695,49 @@ public class FakeArtworkLoader internal constructor(
             "Scripted artwork results require a current observation"
         }
         synchronized(lock) { this.result = result }
+    }
+
+    private var cachedProfile: ServerProfile? = null
+    private var cachedResult: ArtworkLoadResult = ArtworkLoadResult.Unavailable(TvheadendFailure.NOT_READY)
+    private val issuedCachedIds = mutableMapOf<String, ArtworkId>()
+
+    /**
+     * Scripts the disk-only cached path. References are issued for [profile], or not at all when
+     * it is null (no cache policy or active profile). Like a real session, loads return [result]
+     * while the scripted profile has the same cache identity (host, port and username) as the one
+     * a reference was issued under, and [TvheadendFailure.OBSERVATION_EXPIRED] otherwise.
+     */
+    @ExperimentalTvheadendApi
+    public fun scriptCached(
+        profile: ServerProfile?,
+        result: ArtworkLoadResult = ArtworkLoadResult.Unavailable(TvheadendFailure.NOT_READY),
+    ) {
+        synchronized(lock) {
+            cachedProfile = profile
+            cachedResult = result
+        }
+    }
+
+    @ExperimentalTvheadendApi
+    override fun cachedArtwork(artworkId: ArtworkId): CachedArtworkReference? = synchronized(lock) {
+        cachedProfile?.let { TvheadendTestResultFactory.cachedArtwork(it, artworkId) }
+            ?.also { issuedCachedIds[it.cacheKey] = artworkId }
+    }
+
+    @ExperimentalTvheadendApi
+    override suspend fun loadCachedArtwork(reference: CachedArtworkReference): ArtworkLoadResult {
+        currentCoroutineContext().ensureActive()
+        return synchronized(lock) {
+            val profile = cachedProfile
+            val id = issuedCachedIds[reference.cacheKey]
+            if (profile != null && id != null &&
+                TvheadendTestResultFactory.cachedArtwork(profile, id).cacheKey == reference.cacheKey
+            ) {
+                cachedResult
+            } else {
+                ArtworkLoadResult.Unavailable(TvheadendFailure.OBSERVATION_EXPIRED)
+            }
+        }
     }
 
     override suspend fun loadArtwork(

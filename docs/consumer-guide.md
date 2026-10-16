@@ -1462,8 +1462,11 @@ without a cache policy or an active profile, and its fetches never reach the
 server. The model is bound to the profile active at creation: once another
 profile is active it fails with `OBSERVATION_EXPIRED` (or `CONNECTION_CHANGED`
 when the switch races the read) and never shows that profile's bytes, even for
-an equal `ArtworkId`. A missing, expired or cleared entry fails with
-`NOT_READY`. Its memory key equals the `create` model's key for the same
+an equal `ArtworkId`. Fetches also fail briefly while an explicit `connect` or
+`retry` restarts the session, even for the same profile, and after `disconnect`
+until the next `connect`; an image Coil already decoded stays in its memory
+cache. A missing, expired or
+cleared entry fails with `NOT_READY`. Its memory key equals the `create` model's key for the same
 profile and artwork, so switching to `create` once a current session exists
 reuses the decoded image without a second load:
 

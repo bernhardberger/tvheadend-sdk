@@ -15,6 +15,8 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeArtworkLoader : a
 	public fun cachedArtwork-CvLOJc8 (I)Lat/bernhardberger/tvheadend/sdk/core/CachedArtworkReference;
 	public fun loadArtwork-j_U-F9s (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;ILkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun loadCachedArtwork (Lat/bernhardberger/tvheadend/sdk/core/CachedArtworkReference;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun scriptCached (Lat/bernhardberger/tvheadend/sdk/core/ServerProfile;Lat/bernhardberger/tvheadend/sdk/core/ArtworkLoadResult;)V
+	public static synthetic fun scriptCached$default (Lat/bernhardberger/tvheadend/sdk/testing/FakeArtworkLoader;Lat/bernhardberger/tvheadend/sdk/core/ServerProfile;Lat/bernhardberger/tvheadend/sdk/core/ArtworkLoadResult;ILjava/lang/Object;)V
 	public final fun scriptLoad (Lat/bernhardberger/tvheadend/sdk/core/ArtworkLoadResult;)V
 }
 

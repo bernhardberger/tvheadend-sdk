@@ -265,10 +265,11 @@ sdk-android `TvheadendArtwork` changes:
 Experimental cached references (`ArtworkLoader.cachedArtwork`) read the disk
 store only, in any session state. A reference captures the active profile's
 namespace opaquely at creation; a load reads only that namespace and returns
-bytes only while it is still the active namespace, checked under the store mutex
-before the read and again after it. Misses never fetch, store or remove beyond a normal
-hit, so they are not authority for `FILE_UNAVAILABLE` removal. The reference's
-`cacheKey` is the same digest as `ArtworkLoader.cacheKey`.
+bytes only while it is still the active namespace. The namespace is checked
+before the read under the store mutex and again after the mutex is released.
+Misses never fetch, store or remove beyond a normal hit, so they are not
+authority for `FILE_UNAVAILABLE` removal. The reference's `cacheKey` is the
+same digest as `ArtworkLoader.cacheKey`.
 
 ## Clear
 

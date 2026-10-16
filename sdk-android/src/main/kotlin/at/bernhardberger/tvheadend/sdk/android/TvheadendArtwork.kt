@@ -75,7 +75,9 @@ public class TvheadendArtwork private constructor(
          * Returns null without a cache policy or an active profile. The memory key equals that of
          * [create] for the same profile and artwork, so switching to [create] once a current
          * session exists reuses the decoded image. Fetches never reach the server and fail with
-         * [TvheadendArtworkLoadException] on a cache miss or once another profile is active.
+         * [TvheadendArtworkLoadException] on a cache miss, once another profile is active, briefly
+         * while an explicit connect or retry restarts the session, and after disconnect until the
+         * next connect. Images already decoded into Coil's memory cache are unaffected.
          */
         @ExperimentalTvheadendApi
         public fun cached(session: TvheadendSession, id: ArtworkId): TvheadendArtwork? =

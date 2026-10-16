@@ -147,7 +147,9 @@ public interface ArtworkLoader {
      *
      * Bytes are returned only while the profile that created [reference] is still active:
      * otherwise the result is [TvheadendFailure.OBSERVATION_EXPIRED], or
-     * [TvheadendFailure.CONNECTION_CHANGED] when the profile changed during the read. An absent,
+     * [TvheadendFailure.CONNECTION_CHANGED] when the profile changed during the read. An explicit
+     * connect or retry briefly leaves no profile active, even when the same profile resumes, and
+     * disconnect leaves none until the next connect; loads in between fail the same way. An absent,
      * expired, corrupt or cleared entry is [TvheadendFailure.NOT_READY]; it implies nothing about
      * the server, and [loadArtwork] may still succeed once the session is ready. The default
      * returns [TvheadendFailure.NOT_SUPPORTED].
