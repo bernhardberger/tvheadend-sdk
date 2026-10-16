@@ -16,8 +16,10 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import kotlin.time.Clock
@@ -209,10 +211,98 @@ internal class ArtworkCacheTest {
         runtime.shutdown()
     }
 
+    @Test
+    fun `artwork reads do not wait for a blocked guide restore`() = runTest {
+        runtime().apply { loadArtwork(namespace, id, { true }) { available() } }.shutdown()
+        val loading = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val runtime = runtime(gatedEpgStore(loading, release))
+        val restore = async { runtime.restore(namespace) }
+        loading.await()
+        val cached = async { runtime.loadCachedArtwork(namespace, id) { true } }
+        val fetched = async { runtime.loadArtwork(namespace, ArtworkId(2), { true }) { available() } }
+        runCurrent()
+        assertTrue(cached.isCompleted && fetched.isCompleted, "Artwork reads must not queue behind the guide decode")
+        assertArrayEquals(bytes, (cached.await() as ArtworkLoadResult.Available).content.openStream().readBytes())
+        assertFalse(restore.isCompleted)
+        release.complete(Unit)
+        restore.await()
+        runtime.shutdown()
+    }
+
+    @Test
+    fun `restore prunes expired artwork of every namespace after accepting the guide`() = runTest {
+        runtime().apply { loadArtwork(other, id, { true }) { available() } }.shutdown()
+        now += 11.seconds
+        val file = File(root, "tvheadend-sdk/${other.value}/artwork/1")
+        val loading = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val runtime = runtime(gatedEpgStore(loading, release))
+        val retainedAtAcceptance = mutableListOf<Boolean>()
+        val restore = async { runtime.restore(namespace) { retainedAtAcceptance += file.isFile } }
+        loading.await()
+        runCurrent()
+        assertTrue(file.isFile)
+        release.complete(Unit)
+        restore.await()
+        runCurrent() // The prune runs in its own runtime job.
+        assertEquals(listOf(true, true), retainedAtAcceptance)
+        assertFalse(file.exists())
+        runtime.shutdown()
+    }
+
+    @Test
+    fun `prune leaves legacy namespaces to catalog restore`() {
+        val legacy = File(root, "tvheadend-sdk/${"0".repeat(32)}/artwork").apply { mkdirs() }
+        File(legacy, "1").writeBytes(bytes)
+        FileArtworkCacheStore(root).prune(now, 0)
+        assertTrue(File(legacy, "1").isFile)
+    }
+
+    @Test
+    fun `clear queued behind a blocked guide restore still invalidates artwork`() = runTest {
+        runtime().apply { loadArtwork(namespace, id, { true }) { available() } }.shutdown()
+        val loading = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val runtime = runtime(gatedEpgStore(loading, release))
+        val restore = async { runtime.restore(namespace) }
+        loading.await()
+        val completion = CompletableDeferred<Unit>()
+        val pending = async {
+            runtime.loadArtwork(namespace, ArtworkId(2), { true }) { completion.await(); available() }
+        }
+        runCurrent()
+        val clear = async { runtime.clear() }
+        runCurrent()
+        assertFalse(clear.isCompleted)
+        release.complete(Unit)
+        clear.await()
+        val cleared = runtime.loadCachedArtwork(namespace, id) { true }
+        assertEquals(TvheadendFailure.NOT_READY, (cleared as ArtworkLoadResult.Unavailable).failure)
+        completion.complete(Unit)
+        pending.await()
+        assertFalse(restore.await().isCurrent())
+        runCurrent() // A prune after clear must not recreate the deleted tree.
+        assertEquals(CacheStatistics.EMPTY, runtime.statistics.value)
+        assertEquals(0, root.walkTopDown().count { it.isFile })
+        runtime.shutdown()
+    }
+
+    private fun gatedEpgStore(loading: CompletableDeferred<Unit>, release: CompletableDeferred<Unit>): MetadataCacheStore {
+        val store = FileMetadataCacheStore(root)
+        return object : MetadataCacheStore by store {
+            override suspend fun loadEpg(namespace: CacheNamespace, notBefore: Instant): CachedEpg? {
+                loading.complete(Unit)
+                release.await()
+                return store.loadEpg(namespace, notBefore)
+            }
+        }
+    }
+
     private fun available(): ArtworkLoadResult.Available = ArtworkLoadResult.Available(ArtworkContent.create(bytes))
 
-    private fun TestScope.runtime(): MetadataCacheRuntime = MetadataCacheRuntime(
-        FileMetadataCacheStore(root), MetadataCachePolicy.create(root, artworkRetention = 10.seconds),
+    private fun TestScope.runtime(store: MetadataCacheStore = FileMetadataCacheStore(root)) = MetadataCacheRuntime(
+        store, MetadataCachePolicy.create(root, artworkRetention = 10.seconds),
         StandardTestDispatcher(testScheduler), clock,
     )
 }

@@ -30,7 +30,7 @@ private const val CACHE_ROOT_DIR_NAME = "tvheadend-sdk"
 private const val CATALOG_FILE_NAME = "catalog.bin"
 private const val EPG_FILE_NAME = "epg.bin"
 private const val TMP_FILE_SUFFIX = ".tmp"
-private val LEGACY_NAMESPACE_PATTERN = Regex("[0-9a-f]{32}")
+internal val LEGACY_NAMESPACE_PATTERN = Regex("[0-9a-f]{32}")
 // EPG4 puts coverage/receipt times before start-ordered events, permitting a bounded restore.
 private const val EPG_STREAM_MAGIC = 0x45504734
 private const val MAX_EPG_CACHE_RECORDS = 250_000

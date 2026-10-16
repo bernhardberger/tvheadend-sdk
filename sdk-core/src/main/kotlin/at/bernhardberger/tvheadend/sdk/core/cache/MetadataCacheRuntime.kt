@@ -59,6 +59,11 @@ internal class RestoredSnapshots(
  * [stop] flushes the latest EPG under [NonCancellable],
  * including a publication the session retired before stopping the writer. The store never
  * throws for IO problems, so a failing cache cannot fail the session.
+ *
+ * Catalog and EPG files are guarded by `metadataAccess`, artwork files and `clearEpoch` by
+ * `artworkAccess`, so artwork reads never wait for a guide decode. Locks are only taken in the
+ * order `lifecycle`, `metadataAccess`, `artworkAccess`; only [clear] holds more than one store lock.
+ * Each lock refreshes only its own part of [statistics].
  */
 internal class MetadataCacheRuntime(
     private val store: MetadataCacheStore,
@@ -70,7 +75,8 @@ internal class MetadataCacheRuntime(
     private val rootJob = SupervisorJob()
     private val scope = CoroutineScope(ioDispatcher + rootJob)
     private val lifecycle = Mutex()
-    private val storeAccess = Mutex()
+    private val metadataAccess = Mutex()
+    private val artworkAccess = Mutex()
     private val restoreRevision = AtomicLong()
     // Namespaces whose restore may still accept a guide; a writer's first EPG write waits for them.
     private val restoring = MutableStateFlow<List<CacheNamespace>>(emptyList())
@@ -101,17 +107,16 @@ internal class MetadataCacheRuntime(
     ): RestoredSnapshots {
         return withContext(ioDispatcher) {
             val catalog = lifecycle.withLock {
-                accessStore { store.loadCatalog(namespace, clock.now() - policy.metadataRetention) }
+                accessMetadata { store.loadCatalog(namespace, clock.now() - policy.metadataRetention) }
             }
             // Publish the small catalog before EPG decoding, with neither cache lock held.
             currentCoroutineContext().ensureActive()
             accept(RestoredSnapshots(catalog, null) { restoreRevision.get() == revision })
             val restored = lifecycle.withLock {
-                accessStore {
+                accessMetadata {
                     val notBefore = clock.now() - policy.metadataRetention
                     val epgSnapshot = store.loadEpg(namespace, notBefore)
-                    artworkStore.prune(clock.now() - policy.artworkRetention, policy.artworkMaxBytes)
-                    refreshStatistics()
+                    refreshMetadataStatistics()
                     RestoredSnapshots(catalog, epgSnapshot) { restoreRevision.get() == revision }
                 }
             }
@@ -121,10 +126,23 @@ internal class MetadataCacheRuntime(
             restored.epgSnapshot?.snapshot?.prepareForObservation()
             currentCoroutineContext().ensureActive()
             accept(RestoredSnapshots(null, restored.epgSnapshot, restored.isCurrent))
+            // The prune walks every namespace, so it follows acceptance off the restore's
+            // completion path. A prune after clear finds no namespaces and recreates nothing.
+            scope.launch {
+                accessArtwork {
+                    artworkStore.prune(clock.now() - policy.artworkRetention, policy.artworkMaxBytes)
+                    refreshArtworkStatistics()
+                }
+            }
             restored
         }
     }
 
+    /**
+     * Reads [id] from [namespace], else fetches and stores it unless [clear] or [isCurrent]
+     * retired the fetch meanwhile. A read overlapping [clear] linearizes before it and may return
+     * bytes read before the deletion; a read that starts after [clear] returned never does.
+     */
     suspend fun loadArtwork(
         namespace: CacheNamespace,
         id: ArtworkId,
@@ -132,17 +150,17 @@ internal class MetadataCacheRuntime(
         fetch: suspend () -> ArtworkLoadResult,
     ): ArtworkLoadResult {
         var epoch = 0L
-        val cached = accessStore {
+        val cached = accessArtwork {
             epoch = clearEpoch
             val now = clock.now()
             val bytes = artworkStore.load(namespace, id, now, now - policy.artworkRetention)
-            refreshStatistics()
+            refreshArtworkStatistics()
             bytes
         }
         if (!isCurrent()) return ArtworkLoadResult.Unavailable(TvheadendFailure.CONNECTION_CHANGED)
         if (cached != null) return ArtworkLoadResult.Available(ArtworkContent.create(cached))
         val result = fetch()
-        accessStore {
+        accessArtwork {
             if (epoch == clearEpoch && isCurrent()) {
                 val now = clock.now()
                 when (result) {
@@ -154,7 +172,7 @@ internal class MetadataCacheRuntime(
                         artworkStore.remove(namespace, id, now - policy.artworkRetention)
                     }
                 }
-                refreshStatistics()
+                refreshArtworkStatistics()
             }
         }
         return if (isCurrent()) result else ArtworkLoadResult.Unavailable(TvheadendFailure.CONNECTION_CHANGED)
@@ -163,16 +181,17 @@ internal class MetadataCacheRuntime(
     /**
      * Reads [id] from [namespace] without fetching, storing or removing beyond a normal disk hit.
      * [isCurrent] is checked before and after the read so a racing profile switch returns no bytes.
+     * Like [loadArtwork], a read overlapping [clear] linearizes before it.
      */
     suspend fun loadCachedArtwork(
         namespace: CacheNamespace,
         id: ArtworkId,
         isCurrent: () -> Boolean,
     ): ArtworkLoadResult {
-        val cached = accessStore {
-            if (!isCurrent()) return@accessStore null
+        val cached = accessArtwork {
+            if (!isCurrent()) return@accessArtwork null
             val now = clock.now()
-            artworkStore.load(namespace, id, now, now - policy.artworkRetention).also { refreshStatistics() }
+            artworkStore.load(namespace, id, now, now - policy.artworkRetention).also { refreshArtworkStatistics() }
         }
         return when {
             !isCurrent() -> ArtworkLoadResult.Unavailable(TvheadendFailure.CONNECTION_CHANGED)
@@ -181,8 +200,12 @@ internal class MetadataCacheRuntime(
         }
     }
 
-    private suspend fun <T> accessStore(block: suspend () -> T): T = withContext(ioDispatcher) {
-        storeAccess.withLock { block() }
+    private suspend fun <T> accessMetadata(block: suspend () -> T): T = withContext(ioDispatcher) {
+        metadataAccess.withLock { block() }
+    }
+
+    private suspend fun <T> accessArtwork(block: suspend () -> T): T = withContext(ioDispatcher) {
+        artworkAccess.withLock { block() }
     }
 
     /** Starts writing [publications] for [namespace]; a previous writer is stopped first. */
@@ -227,10 +250,13 @@ internal class MetadataCacheRuntime(
                 // writer before a cancelled caller can restore persistence.
                 withContext(NonCancellable) { active?.job?.cancelAndJoin() }
                 writer = null
-                accessStore {
-                    clearEpoch++
-                    store.clear()
-                    refreshStatistics()
+                // Store clear deletes artwork directories too, so it holds both locks in order.
+                accessMetadata {
+                    artworkAccess.withLock {
+                        clearEpoch++
+                        store.clear()
+                        mutableStatistics.value = store.statistics()
+                    }
                 }
             } finally {
                 if (active != null) {
@@ -249,8 +275,14 @@ internal class MetadataCacheRuntime(
         rootJob.cancelAndJoin()
     }
 
-    private suspend fun refreshStatistics() {
-        mutableStatistics.value = store.statistics()
+    private suspend fun refreshMetadataStatistics() {
+        val metadataBytes = store.statistics().metadataBytes
+        mutableStatistics.update { CacheStatistics(metadataBytes, it.artworkBytes, it.artworkEntryCount) }
+    }
+
+    private suspend fun refreshArtworkStatistics() {
+        val measured = store.statistics()
+        mutableStatistics.update { CacheStatistics(it.metadataBytes, measured.artworkBytes, measured.artworkEntryCount) }
     }
 
     private inner class Writer(
@@ -332,23 +364,23 @@ internal class MetadataCacheRuntime(
                 snapshots.epgLastQueriedAt != writtenQueryTimes
 
         private suspend fun writeCatalog(snapshots: PublishedSnapshots) {
-            accessStore {
+            accessMetadata {
                 store.storeCatalog(namespace, CachedCatalog(snapshots.catalog, snapshots.channelRefreshTimes), clock.now())
-                refreshStatistics()
+                refreshMetadataStatistics()
             }
             writtenCatalog = snapshots.catalog
             writtenCatalogTimes = snapshots.channelRefreshTimes
         }
 
         private suspend fun writeEpg(fallback: PublishedSnapshots, useLatestPublication: Boolean = false) {
-            accessStore {
+            accessMetadata {
                 // Ordinary writes resolve after store admission, which may have suspended
                 // across newer publications. Stop's explicit retired publication stays pinned.
                 val snapshots = if (useLatestPublication) publications.value ?: fallback else fallback
                 val now = clock.now()
                 store.storeEpg(namespace, CachedEpg(snapshots.epgSnapshot, snapshots.epgRefreshTimes,
                     snapshots.epgLastQueriedAt), now)
-                refreshStatistics()
+                refreshMetadataStatistics()
                 writtenEpg = snapshots.epgSnapshot
                 writtenEpgTimes = snapshots.epgRefreshTimes
                 writtenQueryTimes = snapshots.epgLastQueriedAt

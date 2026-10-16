@@ -120,6 +120,8 @@ public interface SessionCache {
      * A restore racing clear may still display a pre-clear snapshot in this session. Such a
      * display-only seed is never persisted; later live publications replace it. A cancelled
      * clear may still reject an in-flight restore's display seed even if deletion did not finish.
+     * Likewise an artwork load overlapping clear may return bytes read before the deletion; loads
+     * that start after clear returns never do, and a fetch racing clear is not stored.
      */
     public suspend fun clear()
 }

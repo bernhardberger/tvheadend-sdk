@@ -62,10 +62,16 @@ internal class FileArtworkCacheStore(root: File) {
         }
     }
 
-    /** Retention and byte budget apply across every namespace under this policy root. */
+    /**
+     * Retention and byte budget apply across every namespace under this policy root. Legacy
+     * namespaces are skipped: catalog restore deletes them without holding the artwork lock.
+     */
     fun prune(notBefore: Instant, maxBytes: Long) {
         safely {
-            val indexes = namespacesRoot.listFiles().orEmpty().filter { it.isDirectory }.associate { namespace ->
+            val namespaces = namespacesRoot.listFiles().orEmpty().filter {
+                it.isDirectory && !LEGACY_NAMESPACE_PATTERN.matches(it.name)
+            }
+            val indexes = namespaces.associate { namespace ->
                 val directory = File(namespace, "artwork")
                 directory to readIndex(directory, notBefore)
             }

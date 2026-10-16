@@ -265,7 +265,13 @@ gateway: hit within `artworkRetention` returns bytes from disk and touches
 `lastAccess`; miss fetches through the existing three-handle semaphore
 (`HtspProtocolGateway.kt:214`) and stores the bytes. Eviction is LRU by bytes
 against `artworkMaxBytes` across all namespaces, run after each store on the IO
-dispatcher under the runtime store mutex. Restore also prunes expired entries.
+dispatcher under the runtime artwork mutex. Restore also prunes expired entries
+in a runtime job launched after accepting the restored guide, so the prune does
+not delay restore completion; legacy namespaces, which catalog restore deletes,
+are skipped. Artwork files use their own mutex, separate from the catalog/EPG
+mutex, so artwork reads never wait for a guide decode. Locks are taken only in
+the order lifecycle, metadata, artwork; only clear holds both store mutexes, and
+each mutex refreshes only its own statistics fields.
 `ArtworkFailure.FILE_UNAVAILABLE` from the server removes any stale entry.
 
 sdk-android `TvheadendArtwork` changes:
@@ -288,7 +294,7 @@ Experimental cached references (`ArtworkLoader.cachedArtwork`) read the disk
 store only, in any session state. A reference captures the active profile's
 namespace opaquely at creation; a load reads only that namespace and returns
 bytes only while it is still the active namespace. The namespace is checked
-before the read under the store mutex and again after the mutex is released.
+before the read under the artwork mutex and again after the mutex is released.
 Misses never fetch, store or remove beyond a normal hit, so they are not
 authority for `FILE_UNAVAILABLE` removal. The reference's `cacheKey` is the
 same digest as `ArtworkLoader.cacheKey`.
@@ -298,8 +304,11 @@ same digest as `ArtworkLoader.cacheKey`.
 `SessionCache.clear()` deletes every namespace under the root and resets
 statistics. While connected the in-memory state is untouched; the next write
 recreates the files. It is safe to call from any thread; it runs on the writer
-IO dispatcher under the store mutex and returns after deletion. An epoch fences
-artwork fetches already pending at deletion from repopulating cleared files.
+IO dispatcher under the metadata and artwork mutexes and returns after
+deletion. An epoch fences artwork fetches already pending at deletion from
+repopulating cleared files. An artwork read overlapping clear linearizes before
+it and may deliver bytes read before deletion after clear returns; a read that
+starts after clear returns never sees pre-clear bytes.
 
 ## Tests (all JVM, temp directories)
 
