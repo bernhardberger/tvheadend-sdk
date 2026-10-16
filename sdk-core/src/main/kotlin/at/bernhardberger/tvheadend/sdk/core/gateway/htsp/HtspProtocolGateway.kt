@@ -402,8 +402,9 @@ internal class HtspProtocolGateway internal constructor(
             if (refreshLive()?.generation === source) return null
             source
         }
-        // HTSP latches termination before publishing closed admission. Resolve that latch
-        // directly: the watcher continuation may still be queued on the owner dispatcher.
+        // Closed transport admission guarantees termination, but request-detected failures
+        // can publish Error before the reader latches it. Await the generation's result,
+        // never infer its cause from the conflated, unscoped connection state.
         val failure = when (val ended = connection.awaitTermination(source)) {
             is HtspGenerationTermination.Failed -> ended.failure.kind.toGatewayFailure()
             HtspGenerationTermination.Disconnected -> null

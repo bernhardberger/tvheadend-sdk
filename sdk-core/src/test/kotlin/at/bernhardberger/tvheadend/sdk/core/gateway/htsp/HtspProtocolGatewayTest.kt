@@ -244,16 +244,21 @@ import kotlin.time.Instant
 
 internal class HtspProtocolGatewayTest {
     @ParameterizedTest
-    @CsvSource("AUTHENTICATION_REJECTED", "UNSUPPORTED_SERVER_VERSION")
-    fun `admission denial resolves termination while watcher continuation is queued`(kind: HtspTransportFailureKind) = runTest {
+    @CsvSource("AUTHENTICATION_REJECTED,false", "UNSUPPORTED_SERVER_VERSION,false", "AUTHENTICATION_REJECTED,true", "UNSUPPORTED_SERVER_VERSION,true")
+    fun `admission denial resolves termination while watcher continuation is queued`(
+        kind: HtspTransportFailureKind,
+        delayedTermination: Boolean,
+    ) = runTest {
         val fake = connectedFake()
         val gateway = HtspProtocolGateway(fake)
         val retries = mutableListOf<Int>()
+        var source: HtspConnectionGeneration? = null
         val children = object : SessionChildren by SessionChildren.None {
             override fun bindGeneration(generation: at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration) {
                 assertEquals(1, fake.terminationWaiters)
-                fake.fail(requireNotNull(fake.liveConnectionValue.value).generation, HtspTransportFailure(kind))
-                fake.connectionStateValue.value = HtspConnectionState.Disconnected
+                source = requireNotNull(fake.liveConnectionValue.value).generation
+                if (!delayedTermination) fake.fail(checkNotNull(source), HtspTransportFailure(kind))
+                fake.connectionStateValue.value = HtspConnectionState.Error(HtspTransportFailure(kind))
                 // StandardTestDispatcher keeps the termination watcher queued until binding returns.
             }
         }
@@ -263,6 +268,12 @@ internal class HtspProtocolGatewayTest {
         try {
             owner.connect(ServerProfile("host"))
             testScheduler.runCurrent()
+            if (delayedTermination) {
+                assertEquals(SessionState.Synchronizing, owner.observation.value.sessionState)
+                assertTrue(retries.isEmpty())
+                fake.fail(checkNotNull(source), HtspTransportFailure(kind))
+                testScheduler.runCurrent()
+            }
             val expected = if (kind == HtspTransportFailureKind.AUTHENTICATION_REJECTED)
                 SessionFailure.AUTHENTICATION_REJECTED else SessionFailure.SERVER_UPGRADE_REQUIRED
             assertEquals(SessionState.Unavailable(expected), owner.observation.value.sessionState)
