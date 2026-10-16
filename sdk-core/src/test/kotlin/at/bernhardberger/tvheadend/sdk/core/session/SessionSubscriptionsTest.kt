@@ -12,6 +12,9 @@ import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
+import at.bernhardberger.tvheadend.sdk.core.EpgCoveragePolicy
+import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.SessionRegistry
 import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
 import at.bernhardberger.tvheadend.sdk.core.DvrCutpoint
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
@@ -99,6 +102,99 @@ import kotlin.time.Instant
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SessionSubscriptionsTest {
+    @Test
+    fun `initial retention is past only and rebind replaces previous worker bounds`() {
+        val now = Instant.fromEpochSeconds(1_000_000)
+        val clock = object : Clock { override fun now(): Instant = now }
+        val settings = EpgWorkerSettings(retainPast = 2.hours)
+        val metadata = PhaseOneSessionMetadata(clock = clock, epgWorkerSettings = settings)
+        val retired = GatewayGeneration()
+        metadata.bindGeneration(retired)
+        // Simulate a prior worker with wider bounds; a new generation must install its own.
+        metadata.retainEpgEvents(retired, EpgRetentionBounds(clock, 72.hours, 24.hours))
+        metadata.resetWorkingStateRetainingPublishedSnapshot()
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        metadata.retainEpgEvents(retired, EpgRetentionBounds(clock, 72.hours, 24.hours))
+        fun event(id: Long, stop: Instant) = MetadataEvent.EventAdded(generation,
+            GatewayEpgEvent(EventId(id), ChannelId(1), stop - 1.hours, stop, title = "Initial"))
+        metadata.acceptMetadataBatch(listOf(
+            MetadataEvent.ChannelAdded(generation,
+                GatewayChannelMetadata(ChannelId(1), null, null, null, null, null, null, null, null, null)),
+            event(1, now - 2.hours - 1.seconds),
+            event(2, now + 72.hours),
+            event(3, now - 2.hours),
+            MetadataEvent.InitialSyncCompleted(generation, now + 24.hours),
+        ))
+        val snapshot = (metadata.observation.value.epgState as EpgRepositoryState.Current).snapshot
+        assertEquals(listOf(2L, 3L), snapshot.events.map { it.id.value }.sorted())
+        assertTrue(snapshot.historicalEvents.isEmpty())
+        assertEquals(mapOf(ChannelId(1) to now + 24.hours), metadata.initialEpgCoverage(generation))
+        assertTrue(metadata.initialEpgCoverage(retired).isEmpty())
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = [-3600, 0, 3600])
+    fun `production initial sync trims expired events without losing scheduling proof`(serverSkew: Int) = runTest {
+        val generation = GatewayGeneration()
+        val deviceNow = Instant.fromEpochSeconds(1_000_000)
+        var estimate: Instant? = null
+        val clock = object : Clock { override fun now(): Instant = deviceNow }
+        val gateway = SubscriptionGateway().apply {
+            serverTime = { requested -> estimate.takeIf { requested === generation } }
+        }
+        lateinit var metadata: SessionMetadata
+        lateinit var children: PlaybackSessionChildren
+        val owner = SessionRegistry.createOwner(
+            EpgCoveragePolicy.create(24.hours, maximumRetainedEvents = 2),
+            clock = clock,
+            gatewayFactory = { gateway },
+            childrenFactory = { suppliedGateway, suppliedMetadata, settings ->
+                metadata = suppliedMetadata
+                PlaybackSessionChildren(suppliedGateway, metadata, StandardTestDispatcher(testScheduler),
+                    clock = clock, epgSettings = settings).also { children = it }
+            },
+        )
+        fun event(id: Long, channel: Long, stop: Instant) = MetadataEvent.EventAdded(generation,
+            GatewayEpgEvent(EventId(id), ChannelId(channel), stop - 1.hours, stop, title = "Initial"))
+        try {
+            metadata.bindGeneration(generation)
+            // enableInitialMetadata learns the estimate after binding, before async enable.
+            estimate = (deviceNow + serverSkew.seconds).takeUnless { serverSkew == 0 }
+            val past = minOf(deviceNow, estimate ?: deviceNow) - 6.hours
+            val through = (estimate ?: deviceNow) + 24.hours
+            val channels = (1L..2L).map { id -> MetadataEvent.ChannelAdded(generation,
+                GatewayChannelMetadata(ChannelId(id), null, null, null, null, null, null, null, null, null)) }
+            metadata.acceptMetadataBatch(channels + listOf(
+                event(1, 1, past - 1.seconds), event(2, 1, past - 2.hours),
+                event(3, 2, past - 30.hours), event(10, 1, past),
+                event(11, 2, deviceNow + 1.hours), MetadataEvent.InitialSyncCompleted(generation, through),
+            ))
+            val first = metadata.observation.value.epgState as EpgRepositoryState.Current
+            assertEquals(listOf(10L, 11L), first.snapshot.events.map { it.id.value }.sorted())
+            assertTrue(first.snapshot.historicalEvents.isEmpty())
+            assertEquals(mapOf(ChannelId(1) to through, ChannelId(2) to through), metadata.initialEpgCoverage(generation))
+            val publication = metadata.publishedSnapshots.value
+            val refreshTimes = metadata.observation.value.epgRefreshTimes
+            // Refusal is not an update, including a burst after the marker.
+            metadata.acceptMetadataBatch(listOf(event(12, 1, past - 1.seconds)))
+            assertSame(first, metadata.observation.value.epgState)
+            assertEquals(refreshTimes, metadata.observation.value.epgRefreshTimes)
+            children.bindGeneration(generation)
+            assertTrue(children.prepareBackgroundEnrichment(generation) {})
+            assertTrue(children.startBackgroundEnrichment(generation))
+            runCurrent()
+            assertSame(first, metadata.observation.value.epgState, "First worker pass must not republish EPG")
+            assertSame(publication?.epgSnapshot, metadata.publishedSnapshots.value?.epgSnapshot)
+            assertEquals(refreshTimes, metadata.observation.value.epgRefreshTimes)
+            assertTrue(gateway.epgTargets.isEmpty(), "Long-ended refusal must not revoke scheduling proof")
+        } finally {
+            children.cancelAndJoinBackgroundEnrichment()
+            children.closeAndJoinSubscriptions()
+            owner.shutdown()
+        }
+    }
+
     @ParameterizedTest
     @ValueSource(ints = [-3600, 3600])
     fun `production worker retains both clock windows and queries using server time`(deviceSkew: Int) = runTest {

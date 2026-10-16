@@ -400,6 +400,7 @@ internal class PhaseOneSessionMetadata(
     private val estimatedServerTime: (GatewayGeneration) -> Instant? = { null },
     private val dvrIntents: DvrIntentLedger? = null,
     private val clock: Clock = Clock.System,
+    private val epgWorkerSettings: EpgWorkerSettings? = null,
 ) : SessionMetadata {
     private val lock = Any()
     private var channelRefreshTimes = MetadataRefreshTimes()
@@ -698,7 +699,11 @@ internal class PhaseOneSessionMetadata(
             initialEpgCoverage = emptyMap()
             incompleteEpgChannels.clear()
             unattributedEpgCapacityDrop = false
-            epgRetentionBounds = null
+            // Production shares these settings and the raw device clock with the worker.
+            // Refresh at admission: the estimate may first arrive during metadata enable.
+            epgRetentionBounds = epgWorkerSettings?.let { settings ->
+                EpgRetentionBounds(clock, settings.retainPast, settings.coveragePolicy.futureHorizon)
+            }
             initialSync = CompletableDeferred()
             synchronizedCurrent = false
             epgPublicationDeferred = false

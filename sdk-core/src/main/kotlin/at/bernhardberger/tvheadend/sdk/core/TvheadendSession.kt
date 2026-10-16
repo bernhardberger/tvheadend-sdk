@@ -201,6 +201,7 @@ internal object SessionRegistry {
     internal fun createOwner(
         epgCoveragePolicy: EpgCoveragePolicy,
         cacheRuntime: MetadataCacheRuntime? = null,
+        clock: Clock = Clock.System,
         gatewayFactory: (EpgCoveragePolicy) -> ProtocolGateway = { policy ->
             HtspProtocolGateway(Dispatchers.IO, policy)
         },
@@ -213,7 +214,7 @@ internal object SessionRegistry {
                 gateway = gateway,
                 metadata = metadata,
                 dispatcher = Dispatchers.Default,
-                clock = Clock.System,
+                clock = clock,
                 epgSettings = settings,
             )
         },
@@ -242,6 +243,8 @@ internal object SessionRegistry {
             },
         )
         metadata = PhaseOneSessionMetadata(
+            clock = clock,
+            epgWorkerSettings = epgSettings,
             epgCoveragePolicy = epgCoveragePolicy,
             estimatedServerTime = gateway::estimatedServerTime,
             mutationCommands = dvrMutations,
