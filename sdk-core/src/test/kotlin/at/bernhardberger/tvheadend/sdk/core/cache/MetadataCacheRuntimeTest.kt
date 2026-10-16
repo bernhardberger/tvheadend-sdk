@@ -132,6 +132,45 @@ class MetadataCacheRuntimeTest {
     }
 
     @Test
+    fun `first EPG write waits until the restore has accepted its guide`() = runTest {
+        val store = RecordingStore().apply { epg = EpgSnapshot.create() }
+        val loading = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val blockedStore = object : MetadataCacheStore by store {
+            override suspend fun loadEpg(namespace: CacheNamespace, notBefore: Instant): CachedEpg? {
+                loading.complete(Unit)
+                release.await()
+                return store.loadEpg(namespace, notBefore)
+            }
+        }
+        val runtime = runtime(blockedStore, clock = TestClock(this))
+        val live = PublishedSnapshots(catalog(1), EpgSnapshot.create())
+        val publications = MutableStateFlow<PublishedSnapshots?>(live)
+        runtime.start(namespace, publications)
+        runCurrent()
+        val withCarryover = PublishedSnapshots(live.catalog, EpgSnapshot.create())
+        val restore = launch {
+            runtime.restore(namespace) { restored ->
+                if (restored.epgSnapshot != null) {
+                    // The writer runs while a large guide is still being prepared and accepted.
+                    testScheduler.runCurrent()
+                    publications.value = withCarryover
+                }
+            }
+        }
+        loading.await()
+        advanceTimeBy(60.seconds)
+        runCurrent()
+        assertTrue(store.calls.filterIsInstance<Call.StoreEpg>().isEmpty())
+        release.complete(Unit)
+        restore.join()
+        runCurrent()
+        assertEquals(1, store.calls.filterIsInstance<Call.StoreEpg>().size)
+        assertSame(withCarryover.epgSnapshot, store.epg, "A live-only guide must not replace the restored one first")
+        runtime.shutdown()
+    }
+
+    @Test
     fun `teardown at thirty seconds flushes latest EPG only to outgoing namespace`() = runTest {
         for (shutdown in listOf(false, true)) {
             val store = RecordingStore()

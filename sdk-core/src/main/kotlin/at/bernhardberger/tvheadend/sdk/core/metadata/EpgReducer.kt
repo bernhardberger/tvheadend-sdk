@@ -273,8 +273,10 @@ internal class EpgReducer(
     private var carryoverInstalled = false
     // While a generation that published without a seed waits for a late restored guide: per
     // channel, the latest live end seen since publication; carryover starting before it is gone.
+    // The peak live count bounds what capacity would have evicted from an on-time install.
     private var carryoverAwaitingSeed = false
     private val carryoverReachedBefore = hashMapOf<ChannelId, Instant>()
+    private var carryoverPeakLiveCount = 0
     // Mutation revisions exist only while an older in-flight query can still observe them.
     private val activeQueries = linkedSetOf<EpgQueryFence>()
     private val eventAuthorityRevisions = linkedMapOf<EventId, Long>()
@@ -306,6 +308,7 @@ internal class EpgReducer(
         carryoverInstalled = false
         carryoverAwaitingSeed = false
         carryoverReachedBefore.clear()
+        carryoverPeakLiveCount = 0
         activeQueries.clear()
         eventAuthorityRevisions.clear()
         channelAuthorityRevisions.clear()
@@ -441,6 +444,7 @@ internal class EpgReducer(
         if (awaitLateSeed) {
             carryoverAwaitingSeed = true
             carryoverReachedBefore.putAll(liveEnds)
+            carryoverPeakLiveCount = events.size
             return
         }
         if (!carryoverDisabled) {
@@ -465,6 +469,10 @@ internal class EpgReducer(
      * Installs [previous] as the seed a generation waited for after publishing without one, under
      * the same rules as at publication; live data since then shadows it as if it had been installed
      * on time. Returns whether visible carryover changed; does nothing unless waiting.
+     *
+     * Capacity evicts carryover for good, but which events an on-time install would have lost is
+     * not recorded. So the seed is refused for this generation unless every live count since
+     * publication left room for all of [previous], where an on-time install never evicted any.
      */
     internal fun installLateCarryover(
         previous: Collection<EpgEvent>,
@@ -473,8 +481,14 @@ internal class EpgReducer(
         retainTo: Long = Long.MAX_VALUE,
     ): Boolean {
         if (!carryoverAwaitingSeed) return false
+        if (carryoverPeakLiveCount.toLong() + previous.size > maximumRetainedEvents) carryoverDisabled = true
         installCarryover(previous, provenThrough, retainFrom, retainTo)
         return carryover.isNotEmpty()
+    }
+
+    /** Ends a post-publication wait for a late seed, if any; tracking before publication continues. */
+    internal fun releaseLateSeedWait() {
+        if (carryoverAwaitingSeed) releaseCarryoverTracking()
     }
 
     /** Stops tracking named ids and live reach for carryover installation in this generation. */
@@ -482,7 +496,15 @@ internal class EpgReducer(
         carryoverExcluded = HashSet()
         carryoverReachedBefore.clear()
         carryoverAwaitingSeed = false
+        carryoverPeakLiveCount = 0
         carryoverInstalled = true
+    }
+
+    // Named ids are tracked from binding until the generation's seed decision.
+    private val carryoverTracking: Boolean get() = !carryoverInstalled && !carryoverDisabled
+
+    private fun recordCarryoverLiveCount() {
+        if (carryoverAwaitingSeed && events.size > carryoverPeakLiveCount) carryoverPeakLiveCount = events.size
     }
 
     private fun liveEnds(): HashMap<ChannelId, Instant> {
@@ -578,6 +600,7 @@ internal class EpgReducer(
                     }
                     excludeFromCarryover(eventId)
                 }
+                recordCarryoverLiveCount()
                 liveEnd?.let { end ->
                     dropCarryoverBefore(query.channelId, end, inclusive = false)
                     recordCarryoverReach(query.channelId, end)
@@ -593,14 +616,14 @@ internal class EpgReducer(
 
     internal fun retainOverlapping(from: Instant, to: Instant) {
         require(to >= from) { "EPG retention stop must not precede start" }
-        val pruned = events.values.filterNot { event -> event.shouldRetain(from, to) }
-        if (pruned.isNotEmpty()) {
-            cachedSnapshot = null
-            pruned.forEach { event ->
-                events.remove(event.id)
-                // A late seed must not revive an id live data held since publication.
-                if (carryoverAwaitingSeed) excludeFromCarryover(event.id)
-            }
+        if (!carryoverTracking) {
+            if (events.values.removeIf { event -> !event.shouldRetain(from, to) }) cachedSnapshot = null
+        } else {
+            // A pending seed must not revive an id live data held.
+            val pruned = events.values.filterNot { event -> event.shouldRetain(from, to) }
+            if (pruned.isNotEmpty()) cachedSnapshot = null
+            pruned.forEach { event -> events.remove(event.id) }
+            pruned.forEach { event -> excludeFromCarryover(event.id) }
         }
         if (carryover.values.removeIf { event -> event.stop < from || event.start > to }) {
             cachedSnapshot = null
@@ -729,6 +752,7 @@ internal class EpgReducer(
         }
         if (event.id !in events && events.size >= maximumRetainedEvents) {
             lastEventRefusedForCapacity = true
+            if (carryoverAwaitingSeed) carryoverPeakLiveCount = maximumRetainedEvents
             invalidateActiveQueriesAfterCapacityDrop()
             return historyChanged
         }
@@ -737,6 +761,7 @@ internal class EpgReducer(
             cachedSnapshot = null
             events[event.id] = candidate
         }
+        recordCarryoverLiveCount()
         dropCarryoverBefore(candidate.channelId, candidate.stop, inclusive = false)
         recordCarryoverReach(candidate.channelId, candidate.stop)
         trimCarryover()
@@ -803,7 +828,14 @@ internal class EpgReducer(
         carryover.values.removeIf { event -> event.channelId == channelId }
         carryoverEarliestStart.remove(channelId)
         carryoverReachedBefore.remove(channelId)
-        events.entries.removeIf { entry -> entry.value.channelId == channelId }
+        if (!carryoverTracking) {
+            events.entries.removeIf { entry -> entry.value.channelId == channelId }
+        } else {
+            // A pending seed may hold these ids on another channel; the server named them here.
+            val removed = events.values.filter { event -> event.channelId == channelId }.map { event -> event.id }
+            removed.forEach(events::remove)
+            removed.forEach(::excludeFromCarryover)
+        }
         history.entries.removeIf { entry -> entry.value.channelId == channelId }
     }
 

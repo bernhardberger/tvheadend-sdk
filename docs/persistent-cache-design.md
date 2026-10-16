@@ -154,7 +154,9 @@ metadata lock and never blocks on IO.
 - Catalog: write on every change (small).
 - EPG: defer the writer's first write by 60 s after its first observed live
   publication, then coalesce writes at most once per 60 s while changes arrive.
-  Catalog changes still persist immediately during that wait. Stopping the writer
+  The writer's first EPG write also waits until a running restore of its namespace
+  has accepted or dropped the restored guide; a write already due follows at once.
+  Catalog changes still persist immediately during both waits. Stopping the writer
   on disconnect, profile replacement or shutdown flushes the latest publication
   under `NonCancellable`, even inside the first interval, to the outgoing
   namespace. Automatic retries and new generations never restart the delay.
@@ -173,7 +175,8 @@ Within `metadataRetention`, a restore that wins before generation binding seeds
 `ChannelRepositoryState.Stale` and `EpgRepositoryState.Stale`; binding then publishes
 `Synchronizing` with those snapshots. If authentication wins, restore can still
 seed retained-only snapshots for that exact synchronizing generation. Restore
-after the initial-sync marker is discarded.
+after the initial-sync marker is discarded, except that a guide the generation
+still waits for supplies carryover as described below.
 
 The catalog and guide are accepted independently: catalog loading and acceptance
 finish before guide decoding begins. The later guide seed preserves the catalog
@@ -215,21 +218,25 @@ previous same-profile generation's retained publication, supplies carryover for
 channels the initial sync proved: per channel, events that start after the
 initial-sync window, at or after the last live programme's end and after any
 successful query boundary stay visible. IDs the server named during initial sync
-without a live copy, such as deletions, are excluded. When that first live
+without a live copy, such as deletions, capacity refusals, programmes expired
+before retention or removed with their channel, are excluded, also when the
+restore itself ended during initial sync. When that first live
 publication has no seed while this attempt's restore is still running, the
 guide it decodes later still supplies carryover under the same rules, plus
-everything live since publication: named IDs (deletions, updates, query results)
-stay excluded, and live ends or query boundaries reached since then stay
-reached. The pre-installation tracking stays alive, with the same bound, until
-that guide installs or the restore ends without one. A late guide never
+everything live since publication: named IDs (deletions, updates, query results,
+retention and channel removals) stay excluded, and live ends or query boundaries
+reached since then stay reached. Capacity evicts carryover for good without
+recording which, so the late guide installs only if the peak live event count
+since publication plus the guide's event count fits `maximumRetainedEvents`;
+otherwise carryover stays off for that generation. The pre-installation tracking
+stays alive, with the same bound, until that guide installs or the restore ends
+without one. A late guide never
 replaces or merges into a seed present at publication, including a same-profile
 reconnect's retained publication, and the catalog part is ignored once current.
 Profile, attempt and clear fences apply to it as to any seed; the installation
 publishes a new snapshot, still `CURRENT`, without changing coverage, proof or
-receipt times, and the next EPG write persists it. The restore starts reading
-the guide right after the catalog, normally long before the deferred first write
-about a minute after the first live publication, and store access serializes the
-two; an installation after that write is persisted by the next one. Afterwards
+receipt times. Because the writer's first EPG write waits for the running
+restore, it persists that carryover instead of a live-only guide. Afterwards
 live event IDs,
 server deletions, live programmes or query boundaries reaching an event's start,
 retention and capacity (carryover first) remove carryover permanently during

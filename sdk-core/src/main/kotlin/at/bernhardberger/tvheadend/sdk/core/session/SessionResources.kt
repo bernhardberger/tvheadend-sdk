@@ -208,7 +208,10 @@ internal interface SessionMetadata {
      */
     public fun beginRetainedSnapshotRestore(): Long
 
-    /** Ends the restore [ticket]; a generation still waiting for its guide stops waiting. */
+    /**
+     * Ends the restore [ticket]. A generation already waiting for its guide after sync stops
+     * waiting; during sync, ids named before completion keep excluding carryover at installation.
+     */
     public fun finishRetainedSnapshotRestore(ticket: Long)
 
     public fun bindGeneration(generation: GatewayGeneration)
@@ -627,7 +630,8 @@ internal class PhaseOneSessionMetadata(
         synchronized(lock) {
             if (ticket != epgRestoreTicket || !epgRestorePending) return
             epgRestorePending = false
-            epgReducer.releaseCarryoverTracking()
+            // Before publication the install itself decides; exclusions named meanwhile still count.
+            epgReducer.releaseLateSeedWait()
         }
     }
 

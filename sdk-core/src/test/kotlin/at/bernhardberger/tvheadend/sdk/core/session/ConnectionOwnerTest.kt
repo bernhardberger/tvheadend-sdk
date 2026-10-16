@@ -1000,6 +1000,41 @@ internal class ConnectionOwnerTest {
     }
 
     @Test
+    fun `a guide restore outlasting the deferred write is persisted by the first guide write`() = runTest {
+        val releaseEpg = CompletableDeferred<Unit>()
+        val base = Instant.fromEpochSeconds(1_800_000_000)
+        val cached = EpgSnapshot.create(listOf(
+            at.bernhardberger.tvheadend.sdk.core.EpgEvent.create(
+                id = EventId(3), channelId = ChannelId(1), start = base + 8.hours, stop = base + 9.hours,
+            ),
+        ))
+        val store = InMemoryMetadataCacheStore(null, cached).apply { beforeEpgLoad = { releaseEpg.await() } }
+        val generation = GatewayGeneration()
+        val gateway = FakeProtocolGateway().apply { connectResults += connected(generation) }
+        val owner = owner(gateway, cacheRuntime = virtualClockCacheRuntime(store))
+        try {
+            owner.connect(ServerProfile("first"))
+            runCurrent()
+            gateway.emitMetadata(MetadataEvent.ChannelAdded(generation, channelMetadata(1)))
+            gateway.emitMetadata(MetadataEvent.EventAdded(generation, GatewayEpgEvent(
+                id = EventId(1), channelId = ChannelId(1), start = base, stop = base + 6.hours,
+            )))
+            gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation, base + 6.hours))
+            runCurrent()
+            advanceTimeBy(61.seconds)
+            runCurrent()
+            assertTrue(store.epgWrites.isEmpty(), "No guide write while the restore decodes")
+
+            releaseEpg.complete(Unit)
+            runCurrent()
+            assertEquals(listOf(listOf(1L, 3L)), store.epgWrites.map { (_, epg) -> epg.events.map { it.id.value } },
+                "The first guide write waits for the restore and includes its carryover")
+        } finally {
+            owner.shutdown()
+        }
+    }
+
+    @Test
     fun `guide restore finishing after a failed attempt never installs carryover into the retry`() = runTest {
         val releaseEpg = CompletableDeferred<Unit>()
         val base = Instant.fromEpochSeconds(1_800_000_000)

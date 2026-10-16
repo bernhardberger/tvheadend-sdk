@@ -196,7 +196,8 @@ disconnect, and files older than `metadataRetention` (default seven days) or
 that fail to decode are deleted. On the next `connect(profile)` cache restoration
 runs alongside connecting. Snapshots available before authentication are published
 as `Stale`; those restored during initial sync become the retained data in
-`Synchronizing`. A restore finishing after initial sync is discarded. Connecting
+`Synchronizing`. A restore finishing after initial sync only adds carryover, as
+described below. Connecting
 does not wait for disk IO. The catalog is accepted before guide decoding, so a
 channel list can render while the guide is still loading, or if guide restore fails.
 If connecting fails before restore finishes, cached snapshots can still appear as
@@ -215,7 +216,8 @@ carryover, and only after that proven window; programmes the server named during
 initial sync, such as deletions, never return as carryover. If the cached guide
 finishes decoding only after `Ready`, it is added then as a new `CURRENT`
 snapshot under the same rules, and nothing the live session changed, deleted or
-queried in the meantime comes back. Carryover events are
+queried in the meantime comes back; if live programmes neared the retained-event
+limit meanwhile, that late guide adds no carryover. Carryover events are
 outside `EpgSnapshot.coverages`: `EpgCoverage`, `knownTo` and acquisition results
 describe live data only, and carryover never claims live proof. Wherever live
 data reaches, including through later queries or the sliding server window, only

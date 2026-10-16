@@ -26,8 +26,10 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -51,8 +53,9 @@ internal class RestoredSnapshots(
  *
  * All store access runs on [ioDispatcher]. The writer observes [PublishedSnapshots] and writes
  * the catalog whenever content or receipt times change, also while an EPG write waits, and the EPG
- * after one [epgWriteInterval] from its first observed live publication, then at most once
- * per interval across automatic retries;
+ * after one [epgWriteInterval] from its first observed live publication, and not before a running
+ * restore of its namespace has accepted the restored guide, then at most once per interval
+ * across automatic retries;
  * [stop] flushes the latest EPG under [NonCancellable],
  * including a publication the session retired before stopping the writer. The store never
  * throws for IO problems, so a failing cache cannot fail the session.
@@ -69,6 +72,8 @@ internal class MetadataCacheRuntime(
     private val lifecycle = Mutex()
     private val storeAccess = Mutex()
     private val restoreRevision = AtomicLong()
+    // Namespaces whose restore may still accept a guide; a writer's first EPG write waits for them.
+    private val restoring = MutableStateFlow<List<CacheNamespace>>(emptyList())
     private val artworkStore = FileArtworkCacheStore(policy.root)
     private var clearEpoch = 0L
     private val mutableStatistics = MutableStateFlow(CacheStatistics.EMPTY)
@@ -82,6 +87,18 @@ internal class MetadataCacheRuntime(
         accept: (RestoredSnapshots) -> Unit = {},
     ): RestoredSnapshots {
         val revision = restoreRevision.get()
+        restoring.update { namespaces -> namespaces + namespace }
+        // Released only after acceptance, so a late guide is published before the first EPG write.
+        return try { restoreAccepting(namespace, revision, accept) } finally {
+            restoring.update { namespaces -> namespaces - namespace }
+        }
+    }
+
+    private suspend fun restoreAccepting(
+        namespace: CacheNamespace,
+        revision: Long,
+        accept: (RestoredSnapshots) -> Unit,
+    ): RestoredSnapshots {
         return withContext(ioDispatcher) {
             val catalog = lifecycle.withLock {
                 accessStore { store.loadCatalog(namespace, clock.now() - policy.metadataRetention) }
@@ -260,6 +277,8 @@ internal class MetadataCacheRuntime(
                 }
                 if (isNewEpg(snapshots)) {
                     writeCatalogsUntil(checkNotNull(epgDeadline))
+                    // A live-only first write would replace the restored guide still being accepted.
+                    if (writtenEpg == null) writeCatalogsWhileRestoring()
                     val latest = publications.value ?: snapshots
                     if (isNewCatalog(latest)) writeCatalog(latest)
                     writeEpg(latest, useLatestPublication = true)
@@ -277,6 +296,17 @@ internal class MetadataCacheRuntime(
                     publications.filterNotNull().first(::isNewCatalog)
                 } ?: return
                 writeCatalog(changed)
+            }
+        }
+
+        /** Keeps catalog writes immediate while a restore of [namespace] is still running. */
+        private suspend fun writeCatalogsWhileRestoring() {
+            while (true) {
+                val (restoringNamespace, changed) = combine(restoring, publications) { namespaces, latest ->
+                    (namespace in namespaces) to latest?.takeIf(::isNewCatalog)
+                }.first { (restoringNamespace, changed) -> !restoringNamespace || changed != null }
+                if (!restoringNamespace) return
+                writeCatalog(checkNotNull(changed))
             }
         }
 

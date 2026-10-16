@@ -576,6 +576,60 @@ internal class EpgCarryoverTest {
         assertEquals(listOf(1L, 3L), metadata.currentEpg().events.map { it.id.value })
     }
 
+    @Test
+    fun `a restore ending during sync keeps excluding ids named before ready`() {
+        val cached = listOf(cachedEvent(3, 8.hours, 9.hours), cachedEvent(4, 10.hours, 11.hours))
+        assertEquals(listOf(1L, 4L), readyAfterRestoreEndsDuringSync(cached, PhaseOneSessionMetadata(clock = clock)) { generation ->
+            acceptMetadata(MetadataEvent.EventDeleted(generation, EventId(3)))
+        }, "A deletion after the restore ended")
+        val bounded = PhaseOneSessionMetadata(epgCoveragePolicy = EpgCoveragePolicy.create(24.hours, 4), clock = clock)
+        assertEquals(listOf(1L, 4L), readyAfterRestoreEndsDuringSync(cached, bounded) { generation ->
+            (20L..22L).forEach { id -> acceptMetadata(MetadataEvent.EventAdded(generation, liveEvent(id, 1.hours, 2.hours, channelId = 2))) }
+            acceptMetadata(MetadataEvent.EventAdded(generation, liveEvent(3, 1.hours, 2.hours, channelId = 2)))
+            (20L..22L).forEach { id -> acceptMetadata(MetadataEvent.EventDeleted(generation, EventId(id))) }
+        }, "A capacity refusal after the restore ended")
+        val retained = PhaseOneSessionMetadata(clock = clock, epgWorkerSettings = EpgWorkerSettings())
+        assertEquals(listOf(1L, 4L), readyAfterRestoreEndsDuringSync(cached, retained) { generation ->
+            acceptMetadata(MetadataEvent.EventUpdated(generation, liveEvent(3, (-48).hours, (-47).hours)))
+        }, "An update expiring the id before retention after the restore ended")
+    }
+
+    @Test
+    fun `a late guide respects an id that moved to a since deleted channel`() {
+        assertLateMatchesOnTime(listOf(1L, 8L), cachedEvent(3, 8.hours, 9.hours), cachedEvent(8, 16.hours, 17.hours)) { generation ->
+            acceptMetadata(MetadataEvent.EventAdded(generation, liveEvent(3, 1.hours, 2.hours, channelId = 2)))
+            acceptMetadata(MetadataEvent.ChannelDeleted(generation, ChannelId(2)))
+        }
+    }
+
+    @Test
+    fun `a late guide stays evicted where live data filled capacity since initial sync`() {
+        assertLateMatchesOnTime(listOf(1L), cachedEvent(3, 8.hours, 9.hours), cachedEvent(8, 16.hours, 17.hours),
+            policy = EpgCoveragePolicy.create(24.hours, 4),
+        ) { generation ->
+            (20L..22L).forEach { id -> acceptMetadata(MetadataEvent.EventAdded(generation, liveEvent(id, 1.hours, 2.hours, channelId = 2))) }
+            (20L..22L).forEach { id -> acceptMetadata(MetadataEvent.EventDeleted(generation, EventId(id))) }
+        }
+    }
+
+    private fun readyAfterRestoreEndsDuringSync(
+        cached: List<EpgEvent>,
+        metadata: PhaseOneSessionMetadata,
+        beforeSync: PhaseOneSessionMetadata.(GatewayGeneration) -> Unit,
+    ): List<Long> {
+        val restore = metadata.beginRetainedSnapshotRestore()
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(1)))
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(2)))
+        assertTrue(metadata.seedRetainedSnapshots(null, CachedEpg(EpgSnapshot.create(cached)), generation))
+        metadata.finishRetainedSnapshotRestore(restore)
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, liveEvent(1, 0.hours, 6.hours)))
+        metadata.beforeSync(generation)
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation, now + 6.hours))
+        return metadata.currentEpg().events.map { it.id.value }
+    }
+
     private fun syncLive(metadata: PhaseOneSessionMetadata): GatewayGeneration {
         val generation = GatewayGeneration()
         metadata.bindGeneration(generation)
@@ -588,20 +642,22 @@ internal class EpgCarryoverTest {
     private fun assertLateMatchesOnTime(
         expected: List<Long>,
         vararg cached: EpgEvent,
+        policy: EpgCoveragePolicy = EpgCoveragePolicy.create(),
         changes: PhaseOneSessionMetadata.(GatewayGeneration) -> Unit,
     ) {
         for (late in listOf(false, true)) {
-            val metadata = PhaseOneSessionMetadata(clock = clock)
+            val metadata = PhaseOneSessionMetadata(epgCoveragePolicy = policy, clock = clock)
             val seed = CachedEpg(EpgSnapshot.create(cached.toList()))
             val restore = metadata.beginRetainedSnapshotRestore()
-            if (!late) {
-                metadata.seedRetainedSnapshots(null, seed)
-                metadata.finishRetainedSnapshotRestore(restore)
-            }
             val generation = GatewayGeneration()
             metadata.bindGeneration(generation)
             metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(1)))
             metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(2)))
+            if (!late) {
+                // The usual warm start: the guide seeds and the restore ends during sync.
+                assertTrue(metadata.seedRetainedSnapshots(null, seed, generation))
+                metadata.finishRetainedSnapshotRestore(restore)
+            }
             metadata.acceptMetadata(MetadataEvent.EventAdded(generation, liveEvent(1, 0.hours, 6.hours)))
             metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation, now + 6.hours))
             metadata.changes(generation)
