@@ -218,17 +218,20 @@ describe live data only, and carryover never claims live proof. Wherever live
 data reaches, including through later queries or the sliding server window, only
 live events are shown, and that carryover stays gone even if the live data later
 shrinks; an event ID present live always uses the live version, and a server
-deletion removes the carryover copy. Because carryover is restored only up to the
-device time plus 24 hours and is replaced once its start falls within the live
-window, it is at most about one restore window old in practice. `event(id)`,
-`eventAt`, `nextEvent` and the DVR lookups by event ID may return a carryover
-event for display; DVR mutations remain server validated. Retention and
+deletion removes the carryover copy. Carryover stays visible until its start
+falls within the six-hour live window or a query reaches it, so its data can be
+up to roughly `EpgCoveragePolicy.futureHorizon` minus six hours old. A restored
+guide only reaches device time plus 24 hours (about 18 hours with the default
+policy), but a same-profile reconnect can carry over explicitly acquired
+programmes up to the configured horizon. `event(id)`, `eventAt`, `nextEvent` and
+the DVR lookups by event ID may return a carryover event for display; DVR
+mutations remain server validated. Retention and
 `EpgCoveragePolicy.maximumRetainedEvents` apply to carryover too, which is
 evicted before live events and never causes a live capacity refusal. A profile
 switch never carries guide data over. Ordinary queries extend each channel in
-four-hour steps to
-about 20 hours ahead over roughly 30 minutes; later programmes, up to the
-configured `EpgCoveragePolicy.futureHorizon`, need explicit coverage acquisition.
+four-hour steps to about 20 hours ahead over roughly 30 minutes; later
+programmes, up to the configured `EpgCoveragePolicy.futureHorizon`, need
+explicit coverage acquisition.
 Tvheadend pushes programme updates only for programmes starting within its
 sliding six-hour window. Programmes further ahead are refreshed when the worker
 queries them again or when they enter the window, so late schedule changes can
@@ -271,9 +274,10 @@ pruned by cache activity, or can be deleted immediately with the root-wide `clea
 session first touches the cache, and a connected session persists its current
 snapshots again right after `clear()`, so the control resets stale or damaged
 files rather than freeing storage. That rewrite is the current in-memory
-publication, which may include guide carryover restored before the clear. A session created without a policy reports
-empty statistics and `clear()` is a no-op. `FakeTvheadendSession.cache`
-is a `FakeSessionCache` whose statistics can be scripted.
+publication, which may include guide carryover restored before the clear. A
+session created without a policy reports empty statistics and `clear()` is a
+no-op. `FakeTvheadendSession.cache` is a `FakeSessionCache` whose statistics can
+be scripted.
 Statistics include encoded artwork bytes and entry count (excluding index
 overhead). Clearing deletes artwork, including other profiles, and fences writes
 from fetches already pending at deletion. New loads can cache again. It does not

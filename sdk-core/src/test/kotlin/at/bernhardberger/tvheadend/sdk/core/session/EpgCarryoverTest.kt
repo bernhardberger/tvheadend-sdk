@@ -347,6 +347,95 @@ internal class EpgCarryoverTest {
             "Carryover reached by live data stays dropped when live data later recedes")
     }
 
+    @Test
+    fun `refused adds overflowing the exclusion bound disable carryover until the next generation`() {
+        val metadata = PhaseOneSessionMetadata(epgCoveragePolicy = EpgCoveragePolicy.create(24.hours, 4), clock = clock)
+        metadata.seedRetainedSnapshots(null, CachedEpg(EpgSnapshot.create(listOf(cachedEvent(50, 8.hours, 9.hours)))))
+        val first = GatewayGeneration()
+        metadata.bindGeneration(first)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(first, channel(1)))
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(first, channel(2)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(first, liveEvent(1, 0.hours, 6.hours)))
+        (2L..4L).forEach { id -> metadata.acceptMetadata(MetadataEvent.EventAdded(first, liveEvent(id, 1.hours, 2.hours, channelId = 2))) }
+        // Five refused ids exceed the four-id bound; the deletions then free capacity for carryover.
+        (10L..14L).forEach { id -> metadata.acceptMetadata(MetadataEvent.EventAdded(first, liveEvent(id, 1.hours, 2.hours, channelId = 2))) }
+        (2L..4L).forEach { id -> metadata.acceptMetadata(MetadataEvent.EventDeleted(first, EventId(id))) }
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(first, now + 6.hours))
+        assertEquals(listOf(1L), metadata.currentEpg().events.map { it.id.value })
+        assertEquals(listOf(1L), checkNotNull(metadata.publishedSnapshots.value).epgSnapshot.events.map { it.id.value })
+        query(metadata, first, 12.hours, queryEvent(3, 6.hours, 12.hours))
+
+        metadata.resetWorkingStateRetainingPublishedSnapshot()
+        val second = GatewayGeneration()
+        metadata.bindGeneration(second)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(second, channel(1)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(second, liveEvent(1, 0.hours, 6.hours)))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(second, now + 5.hours))
+        assertEquals(listOf(1L, 3L), metadata.currentEpg().events.map { it.id.value },
+            "A new generation starts with a fresh exclusion set")
+    }
+
+    @Test
+    fun `deletions overflowing the exclusion bound disable carryover`() {
+        val (metadata) = syncedWithCarryover(
+            cachedEvent(50, 8.hours, 9.hours),
+            policy = EpgCoveragePolicy.create(24.hours, 4),
+            beforeSync = { generation -> (20L..24L).map { MetadataEvent.EventDeleted(generation, EventId(it)) } },
+        )
+        assertEquals(listOf(1L), metadata.currentEpg().events.map { it.id.value })
+        assertEquals(listOf(1L), checkNotNull(metadata.publishedSnapshots.value).epgSnapshot.events.map { it.id.value })
+    }
+
+    @Test
+    fun `deletions within the exclusion bound still install the remaining carryover`() {
+        val (metadata) = syncedWithCarryover(
+            cachedEvent(50, 8.hours, 9.hours),
+            cachedEvent(20, 9.hours, 10.hours),
+            policy = EpgCoveragePolicy.create(24.hours, 4),
+            beforeSync = { generation -> (20L..23L).map { MetadataEvent.EventDeleted(generation, EventId(it)) } },
+        )
+        assertEquals(listOf(1L, 50L), metadata.currentEpg().events.map { it.id.value })
+    }
+
+    @Test
+    fun `install without a seed releases overflowed exclusions and the next generation carries over`() {
+        val metadata = PhaseOneSessionMetadata(epgCoveragePolicy = EpgCoveragePolicy.create(24.hours, 4), clock = clock)
+        val first = GatewayGeneration()
+        metadata.bindGeneration(first)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(first, channel(1)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(first, liveEvent(1, 0.hours, 6.hours)))
+        (20L..24L).forEach { id -> metadata.acceptMetadata(MetadataEvent.EventDeleted(first, EventId(id))) }
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(first, now + 6.hours))
+        assertEquals(listOf(1L), metadata.currentEpg().events.map { it.id.value })
+        query(metadata, first, 12.hours, queryEvent(3, 6.hours, 12.hours))
+
+        metadata.resetWorkingStateRetainingPublishedSnapshot()
+        val second = GatewayGeneration()
+        metadata.bindGeneration(second)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(second, channel(1)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(second, liveEvent(1, 0.hours, 6.hours)))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(second, now + 5.hours))
+        assertEquals(listOf(1L, 3L), metadata.currentEpg().events.map { it.id.value })
+    }
+
+    @Test
+    fun `live ends keep dropping carryover after its earliest event was removed by id`() {
+        val (metadata, generation) = syncedWithCarryover(
+            cachedEvent(3, 8.hours, 9.hours),
+            cachedEvent(4, 9.hours, 10.hours),
+            cachedEvent(5, 11.hours, 12.hours),
+        )
+        metadata.acceptMetadata(MetadataEvent.EventDeleted(generation, EventId(3)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, liveEvent(6, 6.hours, 8.hours + 30.minutes)))
+        assertEquals(listOf(1L, 6L, 4L, 5L), metadata.currentEpg().events.map { it.id.value })
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, liveEvent(7, 8.hours + 30.minutes, 10.hours)))
+        assertEquals(listOf(1L, 6L, 7L, 5L), metadata.currentEpg().events.map { it.id.value })
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, liveEvent(8, 10.hours, 10.hours + 30.minutes)))
+        assertEquals(listOf(1L, 6L, 7L, 8L, 5L), metadata.currentEpg().events.map { it.id.value })
+        metadata.acceptMetadata(MetadataEvent.EventUpdated(generation, liveEvent(8, 10.hours, 11.hours + 30.minutes)))
+        assertEquals(listOf(1L, 6L, 7L, 8L), metadata.currentEpg().events.map { it.id.value })
+    }
+
     private data class Synced(val metadata: PhaseOneSessionMetadata, val generation: GatewayGeneration)
 
     private fun syncedWithCarryover(
@@ -354,6 +443,7 @@ internal class EpgCarryoverTest {
         policy: EpgCoveragePolicy = EpgCoveragePolicy.create(),
         liveEvents: List<GatewayEpgEvent> = listOf(liveEvent(1, 0.hours, 6.hours)),
         seed: CachedEpg = CachedEpg(EpgSnapshot.create(cached.toList())),
+        beforeSync: (GatewayGeneration) -> List<MetadataEvent> = { emptyList() },
     ): Synced {
         val metadata = PhaseOneSessionMetadata(epgCoveragePolicy = policy, clock = clock)
         metadata.seedRetainedSnapshots(null, seed)
@@ -361,6 +451,7 @@ internal class EpgCarryoverTest {
         metadata.bindGeneration(generation)
         metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(1)))
         liveEvents.forEach { metadata.acceptMetadata(MetadataEvent.EventAdded(generation, it)) }
+        beforeSync(generation).forEach(metadata::acceptMetadata)
         metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation, now + 6.hours))
         return Synced(metadata, generation)
     }

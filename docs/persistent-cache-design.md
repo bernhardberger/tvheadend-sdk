@@ -221,9 +221,14 @@ retention and capacity (carryover first) remove carryover permanently during
 reduction, independent of how publications are batched. Carryover is kept
 outside coverage, so the worker still queries that range. Persistence writes the
 visible carryover events with the live snapshot but no coverage for them, and
-restore bounds them by the same near window and retention, so carryover is at
-most about one restore window old in practice: it is restored only up to now
-plus 24 hours and replaced once its start falls within the live window.
+restore bounds them by the same near window and retention. Carryover is replaced
+once its start falls within the six-hour live window or a query reaches it, so
+its data can be up to roughly `futureHorizon` minus six hours old: restore caps
+it at now plus 24 hours (about 18 hours with the default policy), while a
+same-profile reconnect seed can hold explicitly acquired programmes up to the
+configured horizon. The pre-installation set of server-named IDs is bounded by
+`maximumRetainedEvents`; a generation that overflows it installs no carryover
+rather than forgetting an exclusion.
 `clearAllState` drops the seed, so a profile switch never carries data over.
 Authority stays `SYNCHRONIZING`/`STALE` until initial sync completes; the SDK
 never claims `CURRENT` from disk.

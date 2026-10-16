@@ -19,9 +19,10 @@ Unreleased; development target.
   deletions remove carryover immediately. Only channels proven by the initial
   sync get carryover. Carryover is persisted without coverage and never extends
   `EpgCoverage`, query proof or worker scheduling; it is never taken across a
-  profile switch. Tvheadend pushes programme updates only within the sliding six-hour window; programmes
-  further ahead are refreshed by worker queries or when they enter the window,
-  so their changes can appear late. Deletions are still pushed immediately.
+  profile switch. Tvheadend pushes programme updates only within the sliding
+  six-hour window; programmes further ahead are refreshed by worker queries or
+  when they enter the window, so their changes can appear late. Deletions are
+  still pushed immediately.
   Explicit acquisition and `EpgCoveragePolicy` semantics are unchanged.
 
 ## [0.31.0]
