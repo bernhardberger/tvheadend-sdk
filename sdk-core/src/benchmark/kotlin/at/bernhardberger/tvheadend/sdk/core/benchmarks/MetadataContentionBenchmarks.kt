@@ -6,6 +6,9 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.gateway.EventId
 import at.bernhardberger.tvheadend.sdk.core.metadata.EpgQueryAcceptance
 import at.bernhardberger.tvheadend.sdk.core.session.PhaseOneSessionMetadata
+import at.bernhardberger.tvheadend.sdk.core.session.EpgRetentionBounds
+import kotlin.time.Clock
+import kotlin.time.Duration
 import org.openjdk.jmh.annotations.Benchmark
 import org.openjdk.jmh.annotations.BenchmarkMode
 import org.openjdk.jmh.annotations.Group
@@ -26,6 +29,7 @@ public class MetadataContentionBenchmarks {
     private lateinit var fixture: EpgFixture
     private lateinit var metadata: PhaseOneSessionMetadata
     private lateinit var current: CurrentSessionObservation
+    private lateinit var retentionBounds: EpgRetentionBounds
     // Each counter has one worker owner; JMH joins workers before iteration teardown.
     private var reads = 0L
     private var writes = 0L
@@ -35,6 +39,9 @@ public class MetadataContentionBenchmarks {
     @Setup
     public fun setup(): Unit {
         fixture = EpgFixture(100)
+        retentionBounds = EpgRetentionBounds(
+            object : Clock { override fun now() = fixture.from }, Duration.ZERO, fixture.to - fixture.from,
+        )
         metadata = fixture.readyMetadata()
         current = checkNotNull(metadata.observation.value.currentSession)
         fixture.validate(metadata)
@@ -72,7 +79,7 @@ public class MetadataContentionBenchmarks {
         ) == EpgQueryAcceptance.APPLIED)
         revision = 1 - revision
         // Keep guide size stable rather than progressively deleting the measured workload.
-        metadata.retainEpgEvents(fixture.generation, fixture.from, fixture.to)
+        metadata.retainEpgEvents(fixture.generation, retentionBounds)
         writes += 1
     }
 

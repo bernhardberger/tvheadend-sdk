@@ -268,7 +268,7 @@ internal interface SessionMetadata {
         events: List<GatewayEpgQueryEvent>,
     ): EpgQueryAcceptance
 
-    public fun retainEpgEvents(generation: GatewayGeneration, from: Instant, to: Instant)
+    public fun retainEpgEvents(generation: GatewayGeneration, bounds: EpgRetentionBounds)
 
     public fun capabilitySnapshot(generation: GatewayGeneration): SessionCapabilitiesSnapshot
 
@@ -465,6 +465,7 @@ internal class PhaseOneSessionMetadata(
     private var initialEpgCoverage: Map<ChannelId, Instant> = emptyMap()
     private val incompleteEpgChannels = mutableSetOf<ChannelId>()
     private var unattributedEpgCapacityDrop = false
+    private var epgRetentionBounds: EpgRetentionBounds? = null
     private var publishedCatalog: ChannelCatalog? = null
     private var publishedEpgSnapshot: EpgSnapshot? = null
     private val mutablePublishedSnapshots = MutableStateFlow<PublishedSnapshots?>(null)
@@ -619,6 +620,7 @@ internal class PhaseOneSessionMetadata(
             initialEpgCoverage = emptyMap()
             incompleteEpgChannels.clear()
             unattributedEpgCapacityDrop = false
+            epgRetentionBounds = null
             val previousFence = initialSync
             initialSync = CompletableDeferred()
             synchronizedCurrent = false
@@ -671,6 +673,7 @@ internal class PhaseOneSessionMetadata(
             initialEpgCoverage = emptyMap()
             incompleteEpgChannels.clear()
             unattributedEpgCapacityDrop = false
+            epgRetentionBounds = null
             initialSync = CompletableDeferred()
             synchronizedCurrent = false
             epgPublicationDeferred = false
@@ -898,7 +901,10 @@ internal class PhaseOneSessionMetadata(
                     if (event is MetadataEvent.ChannelDeleted) {
                         initialEpgCoverage = initialEpgCoverage - event.channelId
                     }
-                    val epgEventAccepted = epgReducer.accept(event, estimatedServerTime(event.generation))
+                    val serverNow = estimatedServerTime(event.generation)
+                    if (event.isEpgEvent()) epgRetentionBounds?.refresh(serverNow)
+                    val epgEventAccepted = epgReducer.accept(event, serverNow,
+                        epgRetentionBounds?.fromEpochSeconds ?: Long.MIN_VALUE)
                     if (epgReducer.lastEventRefusedForCapacity) {
                         val channelId = when (event) {
                             is MetadataEvent.EventAdded -> event.event.channelId
@@ -974,6 +980,7 @@ internal class PhaseOneSessionMetadata(
                             }
                         }
                         if (event is MetadataEvent.ChannelDeleted) epgLastQueriedAt.remove(event.channelId)
+                        if (event.isEpgEvent() && !epgEventAccepted) return@synchronized null
                         if (deferEpgPublication && event.isEpgEvent()) {
                             epgPublicationDeferred = true
                         } else {
@@ -1141,7 +1148,9 @@ internal class PhaseOneSessionMetadata(
         events: List<GatewayEpgQueryEvent>,
     ): EpgQueryAcceptance = synchronized(lock) {
         if (this.generation === generation && synchronizedCurrent) {
-            epgReducer.acceptSuccessfulQuery(query, queriedTo, events).also { acceptance ->
+            epgRetentionBounds?.refresh(estimatedServerTime(generation))
+            epgReducer.acceptSuccessfulQuery(query, queriedTo, events,
+                epgRetentionBounds?.fromEpochSeconds ?: Long.MIN_VALUE).also { acceptance ->
                 if (acceptance == EpgQueryAcceptance.APPLIED) {
                     val now = acceptanceTime()
                     pendingEpgUpdatedAt = now
@@ -1154,11 +1163,16 @@ internal class PhaseOneSessionMetadata(
         }
     }
 
-    override fun retainEpgEvents(generation: GatewayGeneration, from: Instant, to: Instant) {
+    override fun retainEpgEvents(generation: GatewayGeneration, bounds: EpgRetentionBounds) {
         synchronized(lock) {
             if (this.generation === generation) {
-                epgReducer.retainOverlapping(from, to)
-                estimatedServerTime(generation)?.let(epgReducer::pruneHistory)
+                val serverNow = estimatedServerTime(generation)
+                bounds.refresh(serverNow)
+                epgRetentionBounds = bounds
+                epgReducer.retainOverlapping(
+                    Instant.fromEpochSeconds(bounds.fromEpochSeconds), Instant.fromEpochSeconds(bounds.toEpochSeconds),
+                )
+                serverNow?.let(epgReducer::pruneHistory)
                 if (synchronizedCurrent) publishCurrentEpg(epgReducer.snapshot())
             }
         }

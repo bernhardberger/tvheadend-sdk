@@ -78,6 +78,29 @@ internal data class EpgQueryPlan(
     internal val target: Instant,
 )
 
+// Cover the upstream 30 s slide timer plus whole-second estimate and transport lag.
+// This allowance affects future pruning only, never admission or query targets.
+private const val EPG_FUTURE_PRUNE_ALLOWANCE_SECONDS = 60L
+
+/** Refreshed under the metadata lock; no range objects or additional locks per admission. */
+internal class EpgRetentionBounds(
+    private val clock: Clock,
+    private val retainPast: Duration,
+    private val futureHorizon: Duration,
+) {
+    internal var fromEpochSeconds: Long = Long.MIN_VALUE
+        private set
+    internal var toEpochSeconds: Long = Long.MAX_VALUE
+        private set
+
+    internal fun refresh(serverNow: Instant?) {
+        val deviceNow = clock.now().epochSeconds
+        val estimatedNow = serverNow?.epochSeconds ?: deviceNow
+        fromEpochSeconds = minOf(deviceNow, estimatedNow) - retainPast.inWholeSeconds
+        toEpochSeconds = maxOf(deviceNow, estimatedNow) + futureHorizon.inWholeSeconds + EPG_FUTURE_PRUNE_ALLOWANCE_SECONDS
+    }
+}
+
 internal fun epgQueryTarget(
     coverage: EpgCoverage,
     now: Instant,
@@ -213,6 +236,7 @@ internal class EpgWorker(
     }
 
     internal suspend fun run(): Unit = coroutineScope {
+        val retentionBounds = EpgRetentionBounds(clock, settings.retainPast, settings.coveragePolicy.futureHorizon)
         synchronized(activityLock) {
             check(!started) { "EPG worker may be started only once" }
             started = true
@@ -227,8 +251,7 @@ internal class EpgWorker(
                     val now = clock.now().toWholeSecond()
                     metadata.retainEpgEvents(
                         generation = generation,
-                        from = now - settings.retainPast,
-                        to = now + settings.coveragePolicy.futureHorizon,
+                        bounds = retentionBounds,
                     )
                     val plans = metadata.currentEpgSnapshot(generation)?.let { snapshot ->
                         selectBatch(snapshot, now)

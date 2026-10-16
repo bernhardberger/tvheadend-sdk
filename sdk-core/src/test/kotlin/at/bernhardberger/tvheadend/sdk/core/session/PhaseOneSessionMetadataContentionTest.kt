@@ -88,7 +88,7 @@ internal class PhaseOneSessionMetadataContentionTest {
             metadata.acceptMetadata(MetadataEvent.EventUpdated(generation,
                 GatewayEpgEvent(EventId(0), ChannelId(0), instant(0), instant(1800), title = "live")))
             assertEquals("live", metadata.currentObservation(generation, current)?.event(EventId(0))?.title)
-            metadata.retainEpgEvents(generation, instant(1801), instant(10_000))
+            metadata.retainEpgEvents(generation, retentionBounds(instant(1801), instant(10_000)))
             val after = requireNotNull(metadata.currentObservation(generation, current))
             assertEquals(listOf(EventId(2), EventId(3)), after.epgSnapshotForDisplay?.events?.map { it.id })
             assertEquals(instant(7200), after.coverage(ChannelId(0))?.queriedTo)
@@ -132,7 +132,7 @@ internal class PhaseOneSessionMetadataContentionTest {
                     metadata.applySuccessfulEpgQuery(generation, query, instant(400_000), gatedEvents(
                         listOf(queryEvent(0, "query-$iteration")), entered, release,
                     ))
-                    metadata.retainEpgEvents(generation, instant(iteration * 1800L), instant(400_000))
+                    metadata.retainEpgEvents(generation, retentionBounds(instant(iteration * 1800L), instant(400_000)))
                 }
                 try {
                     assertTrue(entered.await(5, TimeUnit.SECONDS))

@@ -287,10 +287,12 @@ internal class EpgReducer(
         queriesInvalidAfterRevision = null
     }
 
-    /** Returns whether this reducer accepted the event, including accepted no-ops. */
-    internal fun accept(event: MetadataEvent, serverNow: Instant? = null): Boolean {
+    /** Returns whether this reducer accepted the event (including no-ops) or pruned display history. */
+    internal fun accept(event: MetadataEvent, serverNow: Instant? = null, retainFrom: Long = Long.MIN_VALUE): Boolean {
         lastEventRefusedForCapacity = false
+        val previousHistorySize = history.size
         serverNow?.let(::pruneHistory)
+        val historyChanged = history.size != previousHistorySize
         when (event) {
             is MetadataEvent.ChannelAdded -> {
                 currentEventByChannel.remove(event.channel.id)
@@ -304,7 +306,7 @@ internal class EpgReducer(
                 if (channelIds.add(event.channel.id)) cachedSnapshot = null
             }
             is MetadataEvent.ChannelNowNextUpdated -> {
-                if (event.channelId !in channelIds) return false
+                if (event.channelId !in channelIds) return historyChanged
                 currentEventByChannel.remove(event.channelId)
                 event.currentEventId?.let { currentEventByChannel[event.channelId] = it }
             }
@@ -315,11 +317,11 @@ internal class EpgReducer(
             }
             is MetadataEvent.EventAdded -> {
                 recordEventAuthority(event.event.id)
-                return acceptEvent(event.event)
+                return acceptEvent(event.event, retainFrom) || historyChanged
             }
             is MetadataEvent.EventUpdated -> {
                 recordEventAuthority(event.event.id)
-                return acceptEvent(event.event)
+                return acceptEvent(event.event, retainFrom) || historyChanged
             }
             is MetadataEvent.EventDeleted -> {
                 cachedSnapshot = null
@@ -358,7 +360,7 @@ internal class EpgReducer(
             is MetadataEvent.TimerecRuleAdded,
             is MetadataEvent.TimerecRuleUpdated,
             is MetadataEvent.TimerecRuleDeleted,
-            -> return false
+            -> return historyChanged
         }
         return true
     }
@@ -401,6 +403,7 @@ internal class EpgReducer(
         query: EpgQueryFence,
         queriedTo: Instant,
         queriedEvents: List<GatewayEpgQueryEvent>,
+        retainFrom: Long = Long.MIN_VALUE,
     ): EpgQueryAcceptance {
         if (!activeQueries.remove(query)) return EpgQueryAcceptance.STALE
         return try {
@@ -414,7 +417,6 @@ internal class EpgReducer(
                 EpgQueryAcceptance.STALE
             } else {
                 val stagedEvents = linkedMapOf<EventId, ReducedEpgEvent>()
-                var stagedNewEventCount = 0
                 for (event in queriedEvents) {
                     if (event.channelId != null && event.channelId != query.channelId) continue
                     if (
@@ -425,18 +427,21 @@ internal class EpgReducer(
                     }
                     val candidate = ReducedEpgEvent.fromQuery(event)
                     if (candidate != null) {
-                        if (event.id !in events && event.id !in stagedEvents) {
-                            if (events.size + stagedNewEventCount >= maximumRetainedEvents) {
-                                return EpgQueryAcceptance.CAPACITY_REJECTED
-                            }
-                            stagedNewEventCount += 1
-                        }
                         stagedEvents[event.id] = candidate
                     }
                 }
+                // Check the final set, not response order: replacements can release capacity.
+                var retainedCount = events.size
+                stagedEvents.forEach { (eventId, event) ->
+                    if (eventId in events) retainedCount -= 1
+                    if (event.stop.epochSeconds >= retainFrom) retainedCount += 1
+                }
+                if (retainedCount > maximumRetainedEvents) return EpgQueryAcceptance.CAPACITY_REJECTED
                 stagedEvents.forEach { (eventId, event) ->
                     supersedeHistory(event)
-                    if (events[eventId] != event) {
+                    if (event.stop.epochSeconds < retainFrom) {
+                        if (events.remove(eventId) != null) cachedSnapshot = null
+                    } else if (events[eventId] != event) {
                         cachedSnapshot = null
                         events[eventId] = event
                     }
@@ -474,10 +479,12 @@ internal class EpgReducer(
         left.channelId != null && left.channelId == right.channelId &&
             left.start < right.stop && right.start < left.stop
 
-    private fun supersedeHistory(event: ReducedEpgEvent) {
-        if (history.entries.removeIf { it.key == event.id || overlaps(it.value, event) }) {
+    private fun supersedeHistory(event: ReducedEpgEvent): Boolean {
+        val changed = history.entries.removeIf { it.key == event.id || overlaps(it.value, event) }
+        if (changed) {
             cachedSnapshot = null
         }
+        return changed
     }
 
     internal fun snapshot(): EpgSnapshot {
@@ -517,13 +524,18 @@ internal class EpgReducer(
 
     private class CoverageBounds(var from: Instant, var to: Instant)
 
-    private fun acceptEvent(event: GatewayEpgEvent): Boolean {
+    private fun acceptEvent(event: GatewayEpgEvent, retainFrom: Long): Boolean {
         val candidate = ReducedEpgEvent.fromEvent(event) ?: return false
-        supersedeHistory(candidate)
+        val historyChanged = supersedeHistory(candidate)
+        if (candidate.stop.epochSeconds < retainFrom) {
+            val removed = events.remove(event.id) != null
+            if (removed) cachedSnapshot = null
+            return removed || historyChanged
+        }
         if (event.id !in events && events.size >= maximumRetainedEvents) {
             lastEventRefusedForCapacity = true
             invalidateActiveQueriesAfterCapacityDrop()
-            return false
+            return historyChanged
         }
         // Identical full entities still supersede history without rebuilding an unchanged snapshot.
         if (events[event.id] != candidate) {

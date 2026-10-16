@@ -341,7 +341,7 @@ internal class PhaseOneSessionMetadataTest {
             assertEquals(now, after.epgLastQueriedAt[ChannelId(1)])
             assertEquals(before.channelRefreshTimes, after.channelRefreshTimes)
             assertEquals(before.dvrRefreshTimes, after.dvrRefreshTimes)
-            metadata.retainEpgEvents(generation, Instant.DISTANT_PAST, Instant.DISTANT_FUTURE)
+            metadata.retainEpgEvents(generation, retentionBounds(Instant.DISTANT_PAST, Instant.DISTANT_FUTURE))
             assertEquals(after.epgRefreshTimes, metadata.observation.value.epgRefreshTimes)
         }
         val query = checkNotNull(metadata.beginEpgQuery(generation, ChannelId(1)))
@@ -411,9 +411,51 @@ internal class PhaseOneSessionMetadataTest {
         metadata.acceptMetadata(MetadataEvent.EventDeleted(generation, EventId(11)))
         assertNull(metadata.observation.value.eventAt(ChannelId(1), Instant.fromEpochSeconds(25)))
         now = Instant.fromEpochSeconds(20) + 6.hours
-        metadata.retainEpgEvents(generation, now - 6.hours, now + 24.hours)
+        metadata.retainEpgEvents(generation, retentionBounds(now - 6.hours, now + 24.hours))
         assertTrue(metadata.observation.value.epgSnapshotForDisplay!!.historicalEvents.isEmpty())
         assertEquals("A", observed.eventAt(ChannelId(1), Instant.fromEpochSeconds(10))?.title)
+    }
+
+    @Test
+    fun `capacity refused event still publishes history expiry`() {
+        var now = Instant.fromEpochSeconds(20)
+        val metadata = PhaseOneSessionMetadata(
+            epgCoveragePolicy = EpgCoveragePolicy.create(24.hours, maximumRetainedEvents = 1),
+            estimatedServerTime = { now },
+        )
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(1)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(10, 1, 10, 20)))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        metadata.acceptMetadata(MetadataEvent.EventDeleted(generation, EventId(10)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(11, 1, 30, 30_000)))
+        assertEquals(1, metadata.observation.value.epgSnapshotForDisplay!!.historicalEvents.size)
+        now += 6.hours
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(12, 1, 30_000, 40_000)))
+        assertEquals(listOf(EventId(11)), metadata.observation.value.epgSnapshotForDisplay!!.events.map { it.id })
+        assertTrue(metadata.observation.value.epgSnapshotForDisplay!!.historicalEvents.isEmpty())
+    }
+
+    @Test
+    fun `channel and DVR metadata do not refresh EPG retention bounds`() {
+        val now = Instant.fromEpochSeconds(20)
+        var reads = 0
+        val clock = object : Clock {
+            override fun now(): Instant { reads += 1; return now }
+        }
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(1)))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        metadata.retainEpgEvents(generation, EpgRetentionBounds(clock, 6.hours, 24.hours))
+        reads = 0
+        metadata.acceptMetadata(MetadataEvent.ChannelUpdated(generation, channel(1)))
+        metadata.acceptMetadata(MetadataEvent.DvrEntryAdded(generation, dvrEntry(1, "recording")))
+        assertEquals(0, reads)
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(10, 1, 20, 30)))
+        assertEquals(1, reads)
     }
 
     @Test
@@ -1148,13 +1190,13 @@ internal class PhaseOneSessionMetadataTest {
         val query = checkNotNull(metadata.beginEpgQuery(current, ChannelId(1)))
         assertEquals(EpgQueryAcceptance.STALE,
             metadata.applySuccessfulEpgQuery(stale, query, Instant.fromEpochSeconds(100), emptyList()))
-        metadata.retainEpgEvents(stale, Instant.fromEpochSeconds(20), Instant.fromEpochSeconds(10))
+        metadata.retainEpgEvents(stale, retentionBounds(Instant.fromEpochSeconds(20), Instant.fromEpochSeconds(10)))
         assertEquals(EpgQueryAcceptance.APPLIED,
             metadata.applySuccessfulEpgQuery(current, query, Instant.fromEpochSeconds(50), emptyList()))
         val nextQuery = checkNotNull(metadata.beginEpgQuery(current, ChannelId(1)))
         assertEquals(EpgQueryAcceptance.APPLIED,
             metadata.applySuccessfulEpgQuery(current, nextQuery, Instant.fromEpochSeconds(40), emptyList()))
-        metadata.retainEpgEvents(current, Instant.fromEpochSeconds(10), Instant.fromEpochSeconds(20))
+        metadata.retainEpgEvents(current, retentionBounds(Instant.fromEpochSeconds(10), Instant.fromEpochSeconds(20)))
 
         var snapshot = metadata.currentEpgSnapshot()
         assertEquals(listOf(1L, 2L), snapshot.events.map { it.id.value })
@@ -1163,7 +1205,7 @@ internal class PhaseOneSessionMetadataTest {
         assertEquals(Instant.fromEpochSeconds(30), coverage.coveredTo)
         assertEquals(Instant.fromEpochSeconds(50), coverage.queriedTo)
 
-        metadata.retainEpgEvents(current, Instant.fromEpochSeconds(11), Instant.fromEpochSeconds(19))
+        metadata.retainEpgEvents(current, retentionBounds(Instant.fromEpochSeconds(11), Instant.fromEpochSeconds(19)))
         snapshot = metadata.currentEpgSnapshot()
         coverage = snapshot.coverages.single()
         assertEquals(emptyList<Any>(), snapshot.events)

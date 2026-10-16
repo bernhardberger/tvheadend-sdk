@@ -6,6 +6,10 @@
 
 - Avoid redundant background EPG queries for channels covered by the completed
   initial sync, without changing explicit coverage acquisition or public coverage.
+- Reject expired EPG admissions using fresh device/server union bounds, avoiding
+  repeated publication and pruning while preserving skewed future-edge events
+  with a 60-second future pruning allowance for server slide and estimate lag.
+  Query replacements account for final retained capacity and supersede history.
 
 ## [0.30.0]
 

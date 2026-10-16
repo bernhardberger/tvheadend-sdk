@@ -29,6 +29,97 @@ internal class EpgReducerTest {
     private val generation = GatewayGeneration()
 
     @Test
+    fun `out of window query correction supersedes history without resurrecting live data`() {
+        for (id in listOf(1L, 2L)) {
+            val reducer = EpgReducer()
+            addChannel(reducer, 1)
+            reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20)))
+            reducer.accept(MetadataEvent.EventDeleted(generation, EventId(1)), instant(20))
+            reducer.retainOverlapping(instant(30), instant(40))
+            val query = requireNotNull(reducer.beginQuery(ChannelId(1)))
+            assertEquals(EpgQueryAcceptance.APPLIED, reducer.acceptSuccessfulQuery(query, instant(40), listOf(
+                queryEvent(id, 1, 10, 20),
+            ), retainFrom = 30))
+            assertTrue(reducer.snapshot().historicalEvents.isEmpty())
+            assertTrue(reducer.snapshot().events.isEmpty())
+        }
+    }
+
+    @Test
+    fun `query replacement at capacity accounts for removals in either response order`() {
+        for (reverse in listOf(false, true)) {
+            val reducer = EpgReducer(maximumRetainedEvents = 1)
+            addChannel(reducer, 1)
+            reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20)))
+            reducer.retainOverlapping(instant(10), instant(40))
+            val response = listOf(queryEvent(1, 1, 0, 9), queryEvent(2, 1, 20, 30))
+            assertEquals(EpgQueryAcceptance.APPLIED, reducer.acceptSuccessfulQuery(
+                requireNotNull(reducer.beginQuery(ChannelId(1))), instant(40),
+                if (reverse) response.reversed() else response,
+                retainFrom = 10,
+            ))
+            assertEquals(listOf(EventId(2)), reducer.snapshot().events.map { it.id })
+        }
+    }
+
+    @Test
+    fun `staged new event corrected outside window frees its capacity atomically`() {
+        val reducer = EpgReducer(maximumRetainedEvents = 1)
+        addChannel(reducer, 1)
+        reducer.retainOverlapping(instant(10), instant(40))
+        assertEquals(EpgQueryAcceptance.APPLIED, reducer.acceptSuccessfulQuery(
+            requireNotNull(reducer.beginQuery(ChannelId(1))), instant(40), listOf(
+                queryEvent(1, 1, 10, 20), queryEvent(1, 1, 0, 9), queryEvent(2, 1, 20, 30),
+            ),
+            retainFrom = 10,
+        ))
+        assertEquals(listOf(EventId(2)), reducer.snapshot().events.map { it.id })
+    }
+
+    @Test
+    fun `admission retains inclusive past edge and ignores expired events for capacity`() {
+        val reducer = EpgReducer(maximumRetainedEvents = 2)
+        addChannel(reducer, 1)
+        reducer.retainOverlapping(instant(10), instant(20))
+        reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 0, 9)), retainFrom = 10)
+        reducer.accept(MetadataEvent.EventAdded(generation, event(2, 1, 0, 10)), retainFrom = 10)
+        val query = requireNotNull(reducer.beginQuery(ChannelId(1)))
+        assertEquals(EpgQueryAcceptance.APPLIED, reducer.acceptSuccessfulQuery(query, instant(30), listOf(
+            GatewayEpgQueryEvent(EventId(3), ChannelId(1), instant(0), instant(9)),
+            GatewayEpgQueryEvent(EventId(4), ChannelId(1), instant(20), instant(30)),
+        ), retainFrom = 10))
+        assertEquals(listOf(EventId(2), EventId(4)), reducer.snapshot().events.map { it.id })
+        assertEquals(instant(30), reducer.snapshot().coverages.single().queriedTo)
+        reducer.clear()
+        addChannel(reducer, 1)
+        reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 0, 9)))
+        assertEquals(listOf(EventId(1)), reducer.snapshot().events.map { it.id })
+    }
+
+    @Test
+    fun `moving an event outside retention removes it and fences stale query resurrection`() {
+        val reducer = EpgReducer()
+        addChannel(reducer, 1)
+        reducer.retainOverlapping(instant(10), instant(20))
+        reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20)))
+        val query = requireNotNull(reducer.beginQuery(ChannelId(1)))
+        reducer.accept(MetadataEvent.EventUpdated(generation, event(1, 1, 0, 9)), retainFrom = 10)
+        assertTrue(reducer.snapshot().events.isEmpty())
+        reducer.acceptSuccessfulQuery(query, instant(20), listOf(
+            GatewayEpgQueryEvent(EventId(1), ChannelId(1), instant(10), instant(20)),
+        ))
+        assertTrue(reducer.snapshot().events.isEmpty())
+        reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20)))
+        reducer.acceptSuccessfulQuery(requireNotNull(reducer.beginQuery(ChannelId(1))), instant(30), listOf(
+            GatewayEpgQueryEvent(EventId(1), ChannelId(1), instant(0), instant(9)),
+        ), retainFrom = 10)
+        assertTrue(reducer.snapshot().events.isEmpty())
+        reducer.retainOverlapping(instant(20), instant(30))
+        reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 21, 30)))
+        assertEquals(listOf(EventId(1)), reducer.snapshot().events.map { it.id })
+    }
+
+    @Test
     fun `credits replace and clear without mutating retained snapshots`() {
         val reducer = EpgReducer()
         addChannel(reducer, 1)

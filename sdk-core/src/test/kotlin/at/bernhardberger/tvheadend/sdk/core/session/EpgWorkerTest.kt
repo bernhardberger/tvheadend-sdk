@@ -30,6 +30,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -1156,6 +1157,98 @@ internal class EpgWorkerTest {
     }
 
     @ParameterizedTest
+    @ValueSource(ints = [24, 168])
+    fun `advancing edge is admitted before another worker pass`(hours: Int) = runTest {
+        val generation = GatewayGeneration()
+        val clock = MutableClock(instant(0))
+        val policy = EpgCoveragePolicy.create(hours.hours)
+        val metadata = synchronizedMetadata(generation, 1L..1L, policy, clock.now + hours.hours)
+        val job = backgroundScope.launch {
+            EpgWorker(generation, metadata, clock, EpgWorkerSettings(coveragePolicy = policy),
+                queryEpg = { _, _, _ -> GatewayResult.Timeout }).run()
+        }
+        runCurrent()
+        clock.now += 1.minutes
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation,
+            timedEvent(1, 1, clock.now + hours.hours, clock.now + hours.hours + 1.hours)))
+        assertEquals(listOf(EventId(1)), metadata.observation.value.epgSnapshotForDisplay!!.events.map { it.id })
+        val expiredStop = clock.now - 6.hours - 30.seconds
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation,
+            timedEvent(2, 1, expiredStop - 1.hours, expiredStop)))
+        metadata.applySuccessfulEpgQuery(generation, requireNotNull(metadata.beginEpgQuery(generation, ChannelId(1))),
+            clock.now + hours.hours, listOf(
+                GatewayEpgQueryEvent(EventId(3), ChannelId(1), expiredStop - 1.hours, expiredStop),
+            ))
+        assertEquals(listOf(EventId(1)), metadata.observation.value.epgSnapshotForDisplay!!.events.map { it.id })
+        job.cancelAndJoin()
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = [-3600, 3600])
+    fun `both clock windows survive admission and worker pruning`(skew: Int) = runTest {
+        val generation = GatewayGeneration()
+        val clock = MutableClock(instant(0))
+        val serverNow = instant(skew.toLong())
+        val metadata = synchronizedMetadata(generation, 1L..1L, syncThrough = instant(0) + 24.hours,
+            estimatedServerTime = { serverNow })
+        val job = backgroundScope.launch {
+            EpgWorker(generation, metadata, clock, queryEpg = { _, _, _ -> GatewayResult.Timeout }).run()
+        }
+        runCurrent()
+        val past = minOf(clock.now, serverNow) - 6.hours
+        val future = maxOf(clock.now, serverNow) + 24.hours
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, timedEvent(1, 1, past - 1.hours, past)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, timedEvent(2, 1, future, future + 1.hours)))
+        assertEquals(2, metadata.observation.value.epgSnapshotForDisplay!!.events.size)
+        runCurrent()
+        assertEquals(2, metadata.observation.value.epgSnapshotForDisplay!!.events.size)
+        job.cancelAndJoin()
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = [-3600, 3600])
+    fun `fallback to estimated time preserves retained edges`(skew: Int) = runTest {
+        val generation = GatewayGeneration()
+        val clock = MutableClock(instant(0))
+        var estimate: Instant? = null
+        val metadata = synchronizedMetadata(generation, 1L..1L, syncThrough = clock.now + 24.hours,
+            estimatedServerTime = { estimate }) {
+            acceptMetadata(MetadataEvent.EventAdded(generation, timedEvent(1, 1, clock.now - 7.hours, clock.now - 6.hours)))
+            acceptMetadata(MetadataEvent.EventAdded(generation, timedEvent(2, 1, clock.now + 24.hours, clock.now + 25.hours)))
+        }
+        val job = backgroundScope.launch {
+            EpgWorker(generation, metadata, clock, queryEpg = { _, _, _ -> GatewayResult.Timeout }).run()
+        }
+        runCurrent()
+        val before = metadata.observation.value.epgSnapshotForDisplay!!.events
+        estimate = instant(skew.toLong())
+        advanceTimeBy(10.minutes)
+        runCurrent()
+        assertEquals(before, metadata.observation.value.epgSnapshotForDisplay!!.events)
+        // The newly available estimate expands, rather than replaces, the device window.
+        val edge = if (skew < 0) estimate - 6.hours else estimate + 24.hours
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, timedEvent(3, 1, edge, edge)))
+        runCurrent()
+        assertEquals(3, metadata.observation.value.epgSnapshotForDisplay!!.events.size)
+        job.cancelAndJoin()
+    }
+
+    @Test
+    fun `filtered async traffic does not stamp publish or wake the worker`() = runTest {
+        val generation = GatewayGeneration()
+        val metadata = synchronizedMetadata(generation, 1L..1L, syncThrough = instant(0) + 24.hours)
+        val job = backgroundScope.launch {
+            EpgWorker(generation, metadata, MutableClock(instant(0)),
+                queryEpg = { _, _, _ -> error("Unexpected query") }).run()
+        }
+        runCurrent()
+        val before = metadata.observation.value
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, event(1, 1, -30_000, -25_000)))
+        assertSame(before, metadata.observation.value)
+        job.cancelAndJoin()
+    }
+
+    @ParameterizedTest
     @ValueSource(booleans = [false, true])
     fun `post sync capacity refusal revokes scheduling proof`(unattributed: Boolean) = runTest {
         val generation = GatewayGeneration()
@@ -1179,6 +1272,28 @@ internal class EpgWorkerTest {
     }
 
     @Test
+    fun `lagging estimate retains a server slide edge through pruning`() = runTest {
+        val generation = GatewayGeneration()
+        val serverTick = instant(1)
+        val estimate = serverTick - 500.milliseconds
+        val clock = MutableClock(estimate)
+        val metadata = synchronizedMetadata(generation, 1L..1L, syncThrough = estimate + 24.hours,
+            estimatedServerTime = { estimate })
+        val job = backgroundScope.launch {
+            EpgWorker(generation, metadata, clock, queryEpg = { _, _, _ -> GatewayResult.Timeout }).run()
+        }
+        runCurrent()
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation,
+            timedEvent(1, 1, serverTick + 24.hours, serverTick + 25.hours)))
+        assertEquals(1, metadata.observation.value.epgSnapshotForDisplay!!.events.size)
+        runCurrent()
+        advanceTimeBy(10.minutes)
+        runCurrent()
+        assertEquals(1, metadata.observation.value.epgSnapshotForDisplay!!.events.size)
+        job.cancelAndJoin()
+    }
+
+    @Test
     fun `capacity refused sync channel warms up after capacity frees`() = runTest {
         val generation = GatewayGeneration()
         val policy = EpgCoveragePolicy.create(24.hours, maximumRetainedEvents = 1)
@@ -1194,6 +1309,66 @@ internal class EpgWorkerTest {
         }
         runCurrent()
         assertEquals(listOf(ChannelId(2)), queried)
+        job.cancelAndJoin()
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `out of window async events do not oscillate published counts`(update: Boolean) = runTest {
+        val generation = GatewayGeneration()
+        val now = instant(0)
+        val metadata = synchronizedMetadata(generation, 1L..1L) {
+            acceptMetadata(MetadataEvent.EventAdded(generation, event(1, 1, 0, 3_600)))
+        }
+        val counts = mutableListOf<Int>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            metadata.observation.collect { counts += it.epgSnapshotForDisplay!!.events.size }
+        }
+        val worker = EpgWorker(generation, metadata, MutableClock(now), queryEpg = { _, _, _ ->
+            GatewayResult.Timeout
+        })
+        val job = backgroundScope.launch { worker.run() }
+        runCurrent()
+        repeat(2) {
+            val outside = timedEvent(2, 1, now - 7.hours, now - 6.hours - 1.seconds)
+            metadata.acceptMetadata(
+                if (update) MetadataEvent.EventUpdated(generation, outside)
+                else MetadataEvent.EventAdded(generation, outside),
+            )
+            runCurrent()
+            advanceTimeBy(1.seconds)
+            runCurrent()
+        }
+        assertEquals(1, counts.last())
+        assertTrue(counts.all { it == 1 }, "Published counts: $counts")
+        job.cancelAndJoin()
+    }
+
+    @Test
+    fun `out of window query events do not oscillate published counts`() = runTest {
+        val generation = GatewayGeneration()
+        val now = instant(0)
+        val metadata = synchronizedMetadata(generation, 1L..1L) {
+            acceptMetadata(MetadataEvent.EventAdded(generation, event(1, 1, 0, 3_600)))
+        }
+        val counts = mutableListOf<Int>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            metadata.observation.collect { counts += it.epgSnapshotForDisplay!!.events.size }
+        }
+        // A server clock behind the device can return a programme outside local past retention.
+        val worker = EpgWorker(generation, metadata, MutableClock(now), queryEpg = { _, _, _ ->
+            GatewayResult.Ok(listOf(queryEvent(2, 1, -25_200, -21_601)))
+        })
+        val job = backgroundScope.launch { worker.run() }
+        runCurrent()
+        advanceTimeBy(1.seconds)
+        runCurrent()
+        advanceTimeBy(10.minutes)
+        runCurrent()
+        advanceTimeBy(1.seconds)
+        runCurrent()
+        assertEquals(1, counts.last())
+        assertTrue(counts.all { it == 1 }, "Published counts: $counts")
         job.cancelAndJoin()
     }
 
@@ -1220,6 +1395,12 @@ internal class EpgWorkerTest {
                     timedEvent(3, 1, now + 7.days + 1.seconds, now + 7.days + 1.hours),
                 ),
             )
+            acceptMetadata(
+                MetadataEvent.EventAdded(
+                    generation,
+                    timedEvent(4, 1, now + 7.days + 61.seconds, now + 7.days + 1.hours),
+                ),
+            )
         }
         val worker = EpgWorker(
             generation = generation,
@@ -1235,7 +1416,7 @@ internal class EpgWorkerTest {
         runCurrent()
 
         val snapshot = (metadata.observation.value.epgState as EpgRepositoryState.Current).snapshot
-        assertEquals(listOf(1L, 2L), snapshot.events.map { it.id.value })
+        assertEquals(listOf(1L, 2L, 3L), snapshot.events.map { it.id.value })
         job.cancelAndJoin()
     }
 
@@ -1316,8 +1497,9 @@ private fun synchronizedMetadata(
     channelIds: LongRange,
     coveragePolicy: EpgCoveragePolicy = EpgCoveragePolicy.create(),
     syncThrough: Instant? = null,
+    estimatedServerTime: (GatewayGeneration) -> Instant? = { null },
     beforeFence: PhaseOneSessionMetadata.() -> Unit = {},
-): PhaseOneSessionMetadata = PhaseOneSessionMetadata(epgCoveragePolicy = coveragePolicy).apply {
+): PhaseOneSessionMetadata = PhaseOneSessionMetadata(epgCoveragePolicy = coveragePolicy, estimatedServerTime = estimatedServerTime).apply {
     bindGeneration(generation)
     channelIds.forEach { id ->
         acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(id)))
