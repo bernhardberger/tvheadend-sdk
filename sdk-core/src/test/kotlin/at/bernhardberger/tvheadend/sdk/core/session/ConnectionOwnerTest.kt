@@ -128,6 +128,22 @@ import org.junit.jupiter.api.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 internal class ConnectionOwnerTest {
     @Test
+    fun `fake failure latch retains first result before subscribers and isolates generations`() = runTest {
+        val gateway = FakeProtocolGateway()
+        val first = GatewayGeneration()
+        val second = GatewayGeneration()
+        gateway.emitFailure(GatewayConnectionFailureEvent(GatewayConnectionFailure.AUTHENTICATION_REJECTED, first))
+        gateway.emitFailure(GatewayConnectionFailureEvent(GatewayConnectionFailure.TRANSPORT_UNAVAILABLE, first))
+        val other = backgroundScope.async { gateway.awaitConnectionFailure(second) }
+        runCurrent()
+        assertFalse(other.isCompleted)
+        assertEquals(GatewayConnectionFailure.AUTHENTICATION_REJECTED, gateway.awaitConnectionFailure(first))
+        assertEquals(GatewayConnectionFailure.AUTHENTICATION_REJECTED, gateway.awaitConnectionFailure(first))
+        gateway.emitFailure(GatewayConnectionFailureEvent(GatewayConnectionFailure.NETWORK_UNAVAILABLE, second))
+        assertEquals(GatewayConnectionFailure.NETWORK_UNAVAILABLE, other.await())
+    }
+
+    @Test
     fun `session title only update resolves observed scheduled config through production wiring`() = runTest {
         withContext(Dispatchers.Default) {
             val generation = GatewayGeneration()
@@ -2831,7 +2847,7 @@ private class FakeProtocolGateway(
     private val order: MutableList<String> = mutableListOf(),
 ) : ProtocolGateway {
     private val metadataEvents = MutableSharedFlow<MetadataEvent>()
-    private val failureEvents = MutableSharedFlow<GatewayConnectionFailureEvent>()
+    private val failureResults = IdentityHashMap<GatewayGeneration, CompletableDeferred<GatewayConnectionFailure>>()
     private val liveGenerations = Collections.newSetFromMap(
         IdentityHashMap<GatewayGeneration, Boolean>(),
     )
@@ -2895,7 +2911,9 @@ private class FakeProtocolGateway(
     }
     override suspend fun awaitConnectionFailure(generation: GatewayGeneration): GatewayConnectionFailure {
         order += "failures.collect"
-        return failureEvents.first { it.generation === generation }.failure
+        val failure = failureResults.getOrPut(generation) { CompletableDeferred() }.await()
+        retirementFailures.putIfAbsent(generation, failure)
+        return checkNotNull(retirementFailures[generation])
     }
 
     override suspend fun connect(server: ServerConfiguration): GatewayConnectResult {
@@ -3105,19 +3123,27 @@ private class FakeProtocolGateway(
     }
 
     internal suspend fun emitFailure(event: GatewayConnectionFailureEvent) {
-        retire(event)
-        failureEvents.emit(event)
+        event.generation?.let {
+            liveGenerations.remove(it)
+            failureResults.getOrPut(it) { CompletableDeferred() }.complete(event.failure)
+        }
     }
 
     internal fun retire(event: GatewayConnectionFailureEvent) {
         event.generation?.let {
             liveGenerations.remove(it)
-            retirementFailures[it] = event.failure
+            retirementFailures.putIfAbsent(it, event.failure)
+            failureResults.getOrPut(it) { CompletableDeferred() }.complete(event.failure)
         }
     }
 
-    override suspend fun retirementFailure(generation: GatewayGeneration): GatewayConnectionFailure? =
-        retirementFailures[generation]
+    override suspend fun retirementFailure(generation: GatewayGeneration): GatewayConnectionFailure? {
+        retirementFailures[generation]?.let { return it }
+        val result = failureResults[generation]?.takeIf { it.isCompleted } ?: return null
+        val failure = result.await()
+        retirementFailures.putIfAbsent(generation, failure)
+        return retirementFailures[generation]
+    }
 }
 
 private class RecordingSessionChildren(
