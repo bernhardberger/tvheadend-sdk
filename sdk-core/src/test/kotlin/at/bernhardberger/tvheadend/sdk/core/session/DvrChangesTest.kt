@@ -3,6 +3,8 @@
 package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
+import at.bernhardberger.tvheadend.sdk.core.AutorecRuleId
+import at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
 import at.bernhardberger.tvheadend.sdk.core.DvrChange
 import at.bernhardberger.tvheadend.sdk.core.DvrChangeKind
 import at.bernhardberger.tvheadend.sdk.core.DvrChangeOrigin
@@ -18,6 +20,8 @@ import at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability
 import at.bernhardberger.tvheadend.sdk.core.ServerCapabilities
 import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayAutorecRule
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayTimerecRule
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrRecordingFile
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrStats
@@ -47,6 +51,57 @@ import kotlin.time.Instant
 
 @OptIn(ExperimentalCoroutinesApi::class)
 internal class DvrChangesTest {
+    @Test
+    fun `batch stats and rule events preserve notification and confirmation order`() = runTest {
+        val effects = mutableListOf<Any>()
+        val fixture = Fixture(onAccepted = { effects += it })
+        fixture.ready()
+        backgroundScope.launch(context = kotlinx.coroutines.Dispatchers.Unconfined) {
+            fixture.metadata.dvrRepository.changes.collect { effects += it.kind }
+        }
+        val generation = fixture.generation
+        val added = MetadataEvent.DvrEntryAdded(generation, entry())
+        val started = MetadataEvent.DvrEntryUpdated(generation, entry(state = DvrEntryState.RECORDING))
+        val removed = MetadataEvent.DvrEntryDeleted(generation, DvrEntryId(7))
+        val autorec = GatewayAutorecRule(AutorecRuleId("auto"))
+        val timerec = GatewayTimerecRule(TimerecRuleId("time"))
+        val rules = listOf(
+            MetadataEvent.AutorecRuleAdded(generation, autorec),
+            MetadataEvent.TimerecRuleAdded(generation, timerec),
+            MetadataEvent.AutorecRuleUpdated(generation, autorec),
+            MetadataEvent.TimerecRuleUpdated(generation, timerec),
+            MetadataEvent.AutorecRuleDeleted(generation, autorec.id),
+            MetadataEvent.TimerecRuleDeleted(generation, timerec.id),
+        )
+        fixture.metadata.acceptMetadataBatch(listOf(added,
+            MetadataEvent.DvrEntryStatsUpdated(generation,
+                GatewayDvrStats(DvrEntryId(7), null, DvrEntryState.SCHEDULED, dataSizeBytes = 100)),
+        ) + rules + listOf(started, removed))
+        assertEquals(
+            listOf(DvrChangeKind.SCHEDULED, added) + rules +
+                listOf(DvrChangeKind.RECORDING_STARTED, started, DvrChangeKind.REMOVED, removed),
+            effects,
+        )
+    }
+
+    @Test
+    fun `batch emits each DVR lifecycle transition in input order`() = runTest {
+        val fixture = Fixture()
+        fixture.ready()
+        val changes = collect(fixture)
+        fixture.metadata.acceptMetadataBatch(listOf(
+            MetadataEvent.DvrEntryAdded(fixture.generation, entry(state = DvrEntryState.SCHEDULED)),
+            MetadataEvent.DvrEntryUpdated(fixture.generation, entry(state = DvrEntryState.RECORDING)),
+            MetadataEvent.DvrEntryDeleted(fixture.generation, DvrEntryId(7)),
+        ))
+        runCurrent()
+        assertEquals(
+            listOf(DvrChangeKind.SCHEDULED, DvrChangeKind.RECORDING_STARTED, DvrChangeKind.REMOVED),
+            changes.map { it.kind },
+        )
+        assertNull(changes.last().current)
+    }
+
     @Test
     fun `full completion clears an omitted prior failure before classifying the transition`() = runTest {
         val fixture = Fixture(serverTime = Instant.fromEpochSeconds(1000))
@@ -509,12 +564,13 @@ internal class DvrChangesTest {
     private class Fixture(
         serverTime: Instant? = Instant.fromEpochSeconds(1000),
         ledger: DvrIntentLedger = DvrIntentLedger(),
+        onAccepted: (MetadataEvent) -> Unit = {},
     ) {
         var generation = GatewayGeneration()
         val gateway = MutationGateway()
         val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> null }, intents = ledger)
         val metadata = PhaseOneSessionMetadata(
-            onDvrMetadataAccepted = coordinator::acceptMetadata,
+            onDvrMetadataAccepted = { onAccepted(it); coordinator.acceptMetadata(it) },
             estimatedServerTime = { serverTime },
             dvrIntents = ledger,
         )

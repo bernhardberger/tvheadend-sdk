@@ -20,18 +20,21 @@ public class EpgIngestionBenchmarks {
     /** 200 half-hour events per channel: 2,000 / 20,000 / 100,000 events. */
     @Param("10", "100", "500")
     public var channelCount: Int = 0
+    /** Compare the original per-event acceptance with the bounded borrowed-list path. */
+    @Param("false", "true")
+    public var batched: Boolean = false
     private lateinit var fixture: EpgFixture
 
     /** Validate capacity and publication outside measurement. */
     @Setup
     public fun setup(): Unit {
         fixture = EpgFixture(channelCount)
-        fixture.validate(fixture.readyMetadata())
+        fixture.validate(fixture.readyMetadata(batched = batched))
     }
 
     /** Includes a fresh metadata owner, initial sync reconciliation and ready publication. */
     @Benchmark
-    public fun ingestAndPublish(): SessionObservation = fixture.readyMetadata().observation.value
+    public fun ingestAndPublish(): SessionObservation = fixture.readyMetadata(batched = batched).observation.value
 }
 
 /** One operation updates 100 events and flushes a single deferred EPG publication. */

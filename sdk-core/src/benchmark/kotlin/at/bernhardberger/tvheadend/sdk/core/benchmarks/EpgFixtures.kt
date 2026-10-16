@@ -52,11 +52,26 @@ internal class EpgFixture(private val channelCount: Int) {
 
     fun readyMetadata(
         metadata: PhaseOneSessionMetadata = PhaseOneSessionMetadata(),
+        batched: Boolean = false,
         beforeInitialSync: () -> Unit = {},
     ): PhaseOneSessionMetadata = metadata.also {
         metadata.bindGeneration(generation)
-        channels.forEach(metadata::acceptMetadata)
-        events.forEach(metadata::acceptMetadata)
+        if (batched) {
+            val burst = ArrayList<MetadataEvent>(512)
+            for (input in listOf(channels, events)) {
+                for (event in input) {
+                    burst.add(event)
+                    if (burst.size == 512) {
+                        metadata.acceptMetadataBatch(burst)
+                        burst.clear()
+                    }
+                }
+            }
+            metadata.acceptMetadataBatch(burst)
+        } else {
+            channels.forEach(metadata::acceptMetadata)
+            events.forEach(metadata::acceptMetadata)
+        }
         beforeInitialSync()
         metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
         metadata.publishSessionState(

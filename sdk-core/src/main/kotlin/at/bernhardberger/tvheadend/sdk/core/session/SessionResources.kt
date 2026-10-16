@@ -225,6 +225,11 @@ internal interface SessionMetadata {
         acceptMetadata(event)
     }
 
+    /** Synchronously consumes a borrowed ordered list; implementations must not retain it. */
+    public fun acceptMetadataBatch(events: List<MetadataEvent>) {
+        events.forEach(::acceptMetadataDeferringEpg)
+    }
+
     /** Publishes EPG changes accepted through [acceptMetadataDeferringEpg] since the last publication. */
     public fun flushDeferredMetadata() {}
 
@@ -809,6 +814,35 @@ internal class PhaseOneSessionMetadata(
         acceptMetadata(event, deferEpgPublication = true)
     }
 
+    override fun acceptMetadataBatch(events: List<MetadataEvent>) {
+        var index = 0
+        while (index < events.size) {
+            val first = events[index]
+            // Complete sync and dispatch DVR notifications before touching the next event. A
+            // callback may retire the generation, so the following chunk must resolve it again.
+            if (first.isMetadataBarrier()) {
+                acceptMetadata(first, deferEpgPublication = true)
+                index += 1
+                continue
+            }
+            val batchGeneration = first.generation
+            val limit = minOf(events.size, index + METADATA_LOCK_BATCH_LIMIT)
+            synchronized(lock) {
+                var publications = 0
+                while (index < limit && publications < METADATA_PUBLICATION_BATCH_LIMIT) {
+                    val event = events[index]
+                    if (event.generation !== batchGeneration || event.isMetadataBarrier()) break
+                    // Synchronous observers can retire metadata reentrantly during publication.
+                    if (generation === batchGeneration) {
+                        if (synchronizedCurrent && !event.isEpgEvent()) publications += 1
+                        check(acceptMetadataLocked(event, deferEpgPublication = true) == null)
+                    }
+                    index += 1
+                }
+            }
+        }
+    }
+
     override fun flushDeferredMetadata() {
         synchronized(lock) {
             if (!epgPublicationDeferred) return
@@ -820,12 +854,19 @@ internal class PhaseOneSessionMetadata(
     }
 
     private fun acceptMetadata(event: MetadataEvent, deferEpgPublication: Boolean) {
+        val effects = synchronized(lock) {
+            if (event.generation !== generation) return@synchronized null
+            acceptMetadataLocked(event, deferEpgPublication)
+        }
+        effects?.completedFence?.complete(Unit)
+        effects?.dvrChange?.let(mutableDvrChanges::tryEmit)
+        effects?.acceptedDvrEvent?.let(onDvrMetadataAccepted)
+    }
+
+    private fun acceptMetadataLocked(event: MetadataEvent, deferEpgPublication: Boolean): MetadataEffects? {
         var acceptedDvrEvent: MetadataEvent? = null
         var dvrChange: DvrChange? = null
-        val completedFence = synchronized(lock) {
-            if (event.generation !== generation) {
-                return@synchronized null
-            }
+        val completedFence = run {
             when (event) {
                 is MetadataEvent.InitialSyncCompleted -> {
                     if (synchronizedCurrent) {
@@ -873,10 +914,10 @@ internal class PhaseOneSessionMetadata(
                 -> {
                     // Unknown patches cannot establish a complete entity or refresh its publication.
                     if (event is MetadataEvent.ChannelNowNextUpdated && !reducer.containsChannel(event.channelId)) {
-                        return@synchronized null
+                        return@run null
                     }
                     if (event is MetadataEvent.DvrEntryStatsUpdated && dvrReducer.entry(event.stats.id) == null) {
-                        return@synchronized null
+                        return@run null
                     }
                     val changedEntryId = when (event) {
                         is MetadataEvent.DvrEntryAdded -> event.entry.id
@@ -980,7 +1021,7 @@ internal class PhaseOneSessionMetadata(
                             }
                         }
                         if (event is MetadataEvent.ChannelDeleted) epgLastQueriedAt.remove(event.channelId)
-                        if (event.isEpgEvent() && !epgEventAccepted) return@synchronized null
+                        if (event.isEpgEvent() && !epgEventAccepted) return@run null
                         if (deferEpgPublication && event.isEpgEvent()) {
                             epgPublicationDeferred = true
                         } else {
@@ -994,9 +1035,8 @@ internal class PhaseOneSessionMetadata(
                 }
             }
         }
-        completedFence?.complete(Unit)
-        dvrChange?.let(mutableDvrChanges::tryEmit)
-        acceptedDvrEvent?.let(onDvrMetadataAccepted)
+        return if (completedFence == null && dvrChange == null && acceptedDvrEvent == null) null
+        else MetadataEffects(completedFence, dvrChange, acceptedDvrEvent)
     }
 
     override suspend fun awaitMetadataCurrent(generation: GatewayGeneration) {
@@ -1354,6 +1394,21 @@ private fun Boolean?.toCapabilityAccess(): CapabilityAccess = when (this) {
     true -> CapabilityAccess.ALLOWED
     false -> CapabilityAccess.DENIED
 }
+
+private const val METADATA_LOCK_BATCH_LIMIT = 512
+// Post-sync non-EPG events publish immediately. Yield the lock after at most 64
+// publications, while retaining 512-event chunks for initial sync and deferred EPG.
+private const val METADATA_PUBLICATION_BATCH_LIMIT = 64
+
+private class MetadataEffects(
+    val completedFence: CompletableDeferred<Unit>?,
+    val dvrChange: DvrChange?,
+    val acceptedDvrEvent: MetadataEvent?,
+)
+
+private fun MetadataEvent.isMetadataBarrier(): Boolean =
+    this is MetadataEvent.InitialSyncCompleted || this is MetadataEvent.DvrEntryStatsUpdated ||
+        isDvrMutationConfirmation()
 
 private fun MetadataEvent.isEpgEvent(): Boolean =
     this is MetadataEvent.EventAdded ||

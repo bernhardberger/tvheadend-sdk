@@ -904,6 +904,7 @@ internal suspend fun drainMetadata(
     metadata: SessionMetadata,
     burstLimit: Int = METADATA_BURST_LIMIT,
 ) = coroutineScope {
+    require(burstLimit in 1..METADATA_BURST_LIMIT)
     val buffered = Channel<MetadataEvent>(METADATA_BUFFER_CAPACITY)
     launch(start = CoroutineStart.UNDISPATCHED) {
         try {
@@ -912,15 +913,23 @@ internal suspend fun drainMetadata(
             buffered.close()
         }
     }
+    val burst = ArrayList<MetadataEvent>(burstLimit)
+    var pending: MetadataEvent? = null
     while (true) {
-        val first = buffered.receiveCatching().getOrNull() ?: break
-        metadata.acceptMetadataDeferringEpg(first)
-        var drained = 1
-        while (drained < burstLimit) {
+        val first = pending ?: buffered.receiveCatching().getOrNull() ?: break
+        pending = null
+        burst.add(first)
+        while (burst.size < burstLimit && burst.last() !is MetadataEvent.InitialSyncCompleted) {
             val next = buffered.tryReceive().getOrNull() ?: break
-            metadata.acceptMetadataDeferringEpg(next)
-            drained += 1
+            if (next.generation !== first.generation) {
+                pending = next
+                break
+            }
+            burst.add(next)
         }
+        currentCoroutineContext().ensureActive()
+        metadata.acceptMetadataBatch(burst)
+        burst.clear()
         metadata.flushDeferredMetadata()
     }
 }

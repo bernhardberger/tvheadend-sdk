@@ -71,6 +71,141 @@ import kotlin.time.Instant
 @OptIn(ExperimentalCoroutinesApi::class)
 internal class PhaseOneSessionMetadataTest {
     @Test
+    fun `reentrant observation retirement fences the rest of a post-sync batch`() = runTest {
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        val replacement = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        var retired = false
+        val observer = launch(context = kotlinx.coroutines.Dispatchers.Unconfined) {
+            metadata.observation.collect { observation ->
+                if (!retired && observation.channelCatalogForDisplay?.channels?.any { it.id == ChannelId(1) } == true) {
+                    retired = true
+                    metadata.resetWorkingStateRetainingPublishedSnapshot()
+                    metadata.bindGeneration(replacement)
+                }
+            }
+        }
+        metadata.acceptMetadataBatch(listOf(
+            MetadataEvent.ChannelAdded(generation, channel(1)),
+            MetadataEvent.ChannelAdded(generation, channel(2)),
+            MetadataEvent.EventAdded(generation, epgEvent(2, 2, 0, 10)),
+        ))
+        observer.cancel()
+        assertTrue(retired)
+        assertNull(metadata.currentEpgSnapshot(generation))
+        // Finish the replacement sync to expose any old tail admitted into its working state.
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(replacement))
+        assertTrue(metadata.currentSnapshot().channels.isEmpty())
+        assertTrue(metadata.currentEpgSnapshot().events.isEmpty())
+    }
+
+    @Test
+    fun `batch longer than lock chunk accepts its entire ordered tail`() {
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadataBatch(buildList {
+            add(MetadataEvent.ChannelAdded(generation, channel(1)))
+            (1L..1100L).forEach { add(MetadataEvent.EventAdded(generation, epgEvent(it, 1, 0, 10))) }
+            add(MetadataEvent.EventUpdated(generation, epgEvent(1100, 1, 0, 10, "Tail")))
+            add(MetadataEvent.InitialSyncCompleted(generation))
+        })
+        assertEquals(1100, metadata.currentEpgSnapshot().events.size)
+        assertEquals("Tail", metadata.currentEpgSnapshot().events.single { it.id == EventId(1100) }.title)
+    }
+
+    @Test
+    fun `post-sync batch releases lock after at most 64 non-EPG publications`() {
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        val worker = java.util.concurrent.Executors.newSingleThreadExecutor()
+        var checked = false
+        val events = object : AbstractList<MetadataEvent>() {
+            override val size: Int = 65
+            override fun get(index: Int): MetadataEvent {
+                if (index == 64 && !checked) {
+                    checked = true
+                    // Borrowed-list access between chunks must allow another thread's metadata read.
+                    worker.submit { metadata.currentEpgSnapshot(generation) }
+                        .get(5, java.util.concurrent.TimeUnit.SECONDS)
+                }
+                return MetadataEvent.ChannelAdded(generation, channel(index.toLong() + 1))
+            }
+        }
+        try {
+            metadata.acceptMetadataBatch(events)
+            assertTrue(checked)
+            assertEquals(65, metadata.currentSnapshot().channels.size)
+        } finally {
+            worker.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `batch fences mixed generations and preserves sync then deferred publication`() = runTest {
+        val metadata = PhaseOneSessionMetadata()
+        val old = GatewayGeneration()
+        val current = GatewayGeneration()
+        metadata.bindGeneration(old)
+        metadata.bindGeneration(current)
+        var titleAtSync: String? = null
+        val waiter = launch(start = CoroutineStart.UNDISPATCHED, context = kotlinx.coroutines.Dispatchers.Unconfined) {
+            metadata.awaitMetadataCurrent(current)
+            titleAtSync = metadata.currentEpgSnapshot().events.single().title
+        }
+        metadata.acceptMetadataBatch(listOf(
+            MetadataEvent.ChannelAdded(old, channel(99)),
+            MetadataEvent.InitialSyncCompleted(old),
+            MetadataEvent.ChannelAdded(current, channel(1)),
+            MetadataEvent.EventAdded(current, epgEvent(1, 1, 0, 10, "Before")),
+            MetadataEvent.InitialSyncCompleted(current),
+            MetadataEvent.EventUpdated(current, epgEvent(1, 1, 0, 10, "After")),
+            MetadataEvent.EventAdded(old, epgEvent(99, 1, 0, 10)),
+        ))
+        waiter.join()
+        assertEquals("Before", titleAtSync)
+        assertEquals("Before", metadata.currentEpgSnapshot().events.single().title)
+        metadata.flushDeferredMetadata()
+        assertEquals("After", metadata.currentEpgSnapshot().events.single().title)
+        assertEquals(listOf(ChannelId(1)), metadata.currentSnapshot().channels.map { it.id })
+    }
+
+    @Test
+    fun `batch DVR callbacks are outside lock ordered and fence the remaining events on retirement`() {
+        val first = GatewayGeneration()
+        val second = GatewayGeneration()
+        val accepted = mutableListOf<MetadataEvent>()
+        lateinit var metadata: PhaseOneSessionMetadata
+        metadata = PhaseOneSessionMetadata(onDvrMetadataAccepted = { event ->
+            accepted += event
+            // A different thread must be able to acquire the metadata lock before callback returns.
+            val worker = java.util.concurrent.Executors.newSingleThreadExecutor()
+            try {
+                worker.submit { metadata.bindGeneration(second) }.get(5, java.util.concurrent.TimeUnit.SECONDS)
+            } finally {
+                worker.shutdownNow()
+            }
+        })
+        metadata.bindGeneration(first)
+        val confirmation = MetadataEvent.DvrEntryAdded(first, GatewayDvrEntry(DvrEntryId(1)))
+        metadata.acceptMetadataBatch(listOf(
+            confirmation,
+            MetadataEvent.DvrEntryDeleted(first, DvrEntryId(1)),
+            MetadataEvent.ChannelAdded(first, channel(99)),
+            MetadataEvent.InitialSyncCompleted(first),
+            MetadataEvent.ChannelAdded(second, channel(2)),
+            MetadataEvent.InitialSyncCompleted(second),
+        ))
+        assertEquals(listOf(confirmation), accepted)
+        assertEquals(listOf(ChannelId(2)), metadata.currentSnapshot().channels.map { it.id })
+        assertTrue(metadata.currentDvrSnapshot().entries.isEmpty())
+    }
+
+    @Test
     fun `cached fields are display only and neither sparse patches nor fresh sync resurrect them`() {
         val metadata = PhaseOneSessionMetadata()
         val cachedChannel = Channel.create(ChannelId(1), name = "Cached", icon = ArtworkId(1))

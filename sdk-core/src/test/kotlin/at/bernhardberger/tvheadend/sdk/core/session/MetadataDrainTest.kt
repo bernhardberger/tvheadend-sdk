@@ -20,13 +20,64 @@ internal class MetadataDrainTest {
     private val generation = GatewayGeneration()
 
     @Test
+    fun `outside cancellation drops already buffered metadata`() = runTest {
+        val recorder = RecordingMetadata()
+        val buffered = kotlinx.coroutines.CompletableDeferred<Unit>()
+        lateinit var worker: kotlinx.coroutines.Job
+        val canceller = launch(context = kotlinx.coroutines.Dispatchers.Unconfined) {
+            buffered.await()
+            worker.cancel()
+        }
+        worker = launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+            drainMetadata(flow {
+                (1L..5L).forEach { emit(MetadataEvent.EventAdded(generation, epgEvent(it))) }
+                buffered.complete(Unit)
+                kotlinx.coroutines.awaitCancellation()
+            }, recorder)
+        }
+        worker.start()
+        worker.join()
+        canceller.join()
+        assertEquals(emptyList<String>(), recorder.calls)
+        org.junit.jupiter.api.Assertions.assertTrue(worker.isCancelled)
+    }
+
+    @Test
+    fun `drained lists end at sync markers and never span generations`() = runTest {
+        val recorder = RecordingMetadata()
+        val next = GatewayGeneration()
+        drainMetadata(flow {
+            emit(MetadataEvent.EventAdded(generation, epgEvent(1)))
+            emit(MetadataEvent.InitialSyncCompleted(generation))
+            emit(MetadataEvent.EventAdded(generation, epgEvent(2)))
+            emit(MetadataEvent.EventAdded(next, epgEvent(3)))
+        }, recorder)
+        assertEquals(listOf("batch:1,sync", "flush", "batch:2", "flush", "batch:3", "flush"), recorder.calls)
+    }
+
+    @Test
+    fun `failed upstream does not accept its buffered tail`() = runTest {
+        val recorder = RecordingMetadata()
+        val failure = IllegalStateException("Synthetic failure")
+        val result = runCatching {
+            drainMetadata(flow {
+                emit(MetadataEvent.EventAdded(generation, epgEvent(1)))
+                throw failure
+            }, recorder)
+        }
+        assertEquals(failure.javaClass, result.exceptionOrNull()?.javaClass)
+        assertEquals(failure.message, result.exceptionOrNull()?.message)
+        assertEquals(emptyList<String>(), recorder.calls)
+    }
+
+    @Test
     fun `a burst that is already buffered is reduced in order and published once`() = runTest {
         val recorder = RecordingMetadata()
         val burst = (1L..5L).map { id -> MetadataEvent.EventAdded(generation, epgEvent(id)) }
 
         drainMetadata(flow { burst.forEach { emit(it) } }, recorder)
 
-        assertEquals(burst.map { "accept:${it.eventId()}" } + "flush", recorder.calls)
+        assertEquals(listOf("batch:1,2,3,4,5", "flush"), recorder.calls)
     }
 
     @Test
@@ -37,9 +88,9 @@ internal class MetadataDrainTest {
         drainMetadata(flow { stream.forEach { emit(it) } }, recorder, burstLimit = 3)
 
         assertEquals(
-            listOf("accept:1", "accept:2", "accept:3", "flush") +
-                listOf("accept:4", "accept:5", "accept:6", "flush") +
-                listOf("accept:7", "flush"),
+            listOf("batch:1,2,3", "flush") +
+                listOf("batch:4,5,6", "flush") +
+                listOf("batch:7", "flush"),
             recorder.calls,
         )
     }
@@ -57,7 +108,7 @@ internal class MetadataDrainTest {
         source.emit(MetadataEvent.EventAdded(generation, epgEvent(2)))
         runCurrent()
 
-        assertEquals(listOf("accept:1", "flush", "accept:2", "flush"), recorder.calls)
+        assertEquals(listOf("batch:1", "flush", "batch:2", "flush"), recorder.calls)
         worker.cancel()
     }
 
@@ -74,9 +125,9 @@ internal class MetadataDrainTest {
     ) : SessionMetadata by delegate {
         val calls = mutableListOf<String>()
 
-        override fun acceptMetadataDeferringEpg(event: MetadataEvent) {
-            calls += "accept:${event.eventId()}"
-            delegate.acceptMetadataDeferringEpg(event)
+        override fun acceptMetadataBatch(events: List<MetadataEvent>) {
+            calls += "batch:${events.joinToString(",") { if (it is MetadataEvent.InitialSyncCompleted) "sync" else it.eventId().toString() }}"
+            delegate.acceptMetadataBatch(events)
         }
 
         override fun flushDeferredMetadata() {
