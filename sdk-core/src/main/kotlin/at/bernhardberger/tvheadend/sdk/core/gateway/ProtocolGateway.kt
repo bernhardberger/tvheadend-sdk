@@ -51,8 +51,8 @@ internal interface ProtocolGateway {
         block: () -> T,
     ): T?
 
-    /** The retirement cause observed atomically with closed admission, even before flow delivery. */
-    public fun retirementFailure(generation: GatewayGeneration): GatewayConnectionFailure? = null
+    /** Resolves the latched cause after admission closes, even before its watcher resumes; null while live or disconnected. */
+    public suspend fun retirementFailure(generation: GatewayGeneration): GatewayConnectionFailure? = null
 
     public suspend fun enableInitialMetadata(
         generation: GatewayGeneration,

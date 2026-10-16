@@ -3116,7 +3116,7 @@ private class FakeProtocolGateway(
         }
     }
 
-    override fun retirementFailure(generation: GatewayGeneration): GatewayConnectionFailure? =
+    override suspend fun retirementFailure(generation: GatewayGeneration): GatewayConnectionFailure? =
         retirementFailures[generation]
 }
 

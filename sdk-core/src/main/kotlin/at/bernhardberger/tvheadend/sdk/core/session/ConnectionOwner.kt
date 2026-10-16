@@ -602,8 +602,8 @@ internal class ConnectionOwner(
         }
     }
 
-    private fun AttemptOutcome.withRetirementFailure(generation: GatewayGeneration): AttemptOutcome =
-        // A flow notification can lag retirement while sync finishes or ready admission is denied.
+    private suspend fun AttemptOutcome.withRetirementFailure(generation: GatewayGeneration): AttemptOutcome =
+        // The termination watcher can still be queued when admission observes retirement.
         gateway.retirementFailure(generation)?.toAttemptOutcome(connected, reachedReady) ?: this
 
     private suspend fun synchronize(generation: GatewayGeneration): SynchronizationOutcome {

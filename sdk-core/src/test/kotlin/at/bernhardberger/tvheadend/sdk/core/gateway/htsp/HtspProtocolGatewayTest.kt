@@ -243,6 +243,75 @@ import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
 internal class HtspProtocolGatewayTest {
+    @ParameterizedTest
+    @CsvSource("AUTHENTICATION_REJECTED", "UNSUPPORTED_SERVER_VERSION")
+    fun `admission denial resolves termination while watcher continuation is queued`(kind: HtspTransportFailureKind) = runTest {
+        val fake = connectedFake()
+        val gateway = HtspProtocolGateway(fake)
+        val retries = mutableListOf<Int>()
+        val children = object : SessionChildren by SessionChildren.None {
+            override fun bindGeneration(generation: at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration) {
+                assertEquals(1, fake.terminationWaiters)
+                fake.fail(requireNotNull(fake.liveConnectionValue.value).generation, HtspTransportFailure(kind))
+                fake.connectionStateValue.value = HtspConnectionState.Disconnected
+                // StandardTestDispatcher keeps the termination watcher queued until binding returns.
+            }
+        }
+        val owner = ConnectionOwner(gateway, PhaseOneSessionMetadata(), children,
+            defaultDispatcher = StandardTestDispatcher(testScheduler),
+            backoff = ReconnectBackoff { retries += it; 1.seconds })
+        try {
+            owner.connect(ServerProfile("host"))
+            testScheduler.runCurrent()
+            val expected = if (kind == HtspTransportFailureKind.AUTHENTICATION_REJECTED)
+                SessionFailure.AUTHENTICATION_REJECTED else SessionFailure.SERVER_UPGRADE_REQUIRED
+            assertEquals(SessionState.Unavailable(expected), owner.observation.value.sessionState)
+            assertTrue(retries.isEmpty())
+        } finally {
+            owner.shutdown()
+        }
+    }
+
+    @Test
+    fun `foreign termination token ends owner attempt as unexpected failure`() = runTest {
+        val fake = connectedFake().apply { rejectTerminationToken = true }
+        val owner = ConnectionOwner(HtspProtocolGateway(fake), PhaseOneSessionMetadata(), SessionChildren.None,
+            defaultDispatcher = StandardTestDispatcher(testScheduler), backoff = ReconnectBackoff { 1.seconds })
+        try {
+            owner.connect(ServerProfile("host"))
+            testScheduler.runCurrent()
+            assertEquals(SessionState.Unavailable(SessionFailure.UNEXPECTED_FAILURE), owner.observation.value.sessionState)
+        } finally {
+            owner.shutdown()
+        }
+    }
+
+    @Test
+    fun `intentional termination during binding resolves denial without waiting for failure`() = runTest {
+        val fake = connectedFake()
+        val gateway = HtspProtocolGateway(fake)
+        val retries = mutableListOf<Int>()
+        val children = object : SessionChildren by SessionChildren.None {
+            override fun bindGeneration(generation: at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration) {
+                fake.end(requireNotNull(fake.liveConnectionValue.value).generation,
+                    at.bernhardberger.tvheadend.htsp.connection.HtspGenerationTermination.Disconnected)
+                fake.connectionStateValue.value = HtspConnectionState.Disconnected
+            }
+        }
+        val owner = ConnectionOwner(gateway, PhaseOneSessionMetadata(), children,
+            defaultDispatcher = StandardTestDispatcher(testScheduler),
+            backoff = ReconnectBackoff { retries += it; 1.seconds })
+        try {
+            owner.connect(ServerProfile("host"))
+            testScheduler.runCurrent()
+            assertEquals(SessionState.Unavailable(SessionFailure.TRANSPORT_UNAVAILABLE), owner.observation.value.sessionState)
+            assertEquals(listOf(0), retries)
+            assertEquals(0, fake.terminationWaiters)
+        } finally {
+            owner.shutdown()
+        }
+    }
+
     @Test
     fun `termination awaits are latched generation scoped and cancellation independent`() = runTest {
         val fake = connectedFake()
@@ -630,10 +699,10 @@ internal class HtspProtocolGatewayTest {
         val failures = mutableListOf<GatewayConnectionFailureEvent>()
         backgroundScope.launch { failures += GatewayConnectionFailureEvent(gateway.awaitConnectionFailure(generation), generation) }
         testScheduler.runCurrent()
+        fake.fail(source, failure)
         fake.connectionStateValue.value = HtspConnectionState.Error(failure)
         assertEquals(null, gateway.commitIfLive(generation) { true })
-        assertEquals(null, gateway.retirementFailure(generation))
-        fake.fail(source, failure)
+        assertEquals(GatewayConnectionFailure.AUTHENTICATION_REJECTED, gateway.retirementFailure(generation))
         testScheduler.runCurrent()
         assertEquals(GatewayConnectionFailure.AUTHENTICATION_REJECTED, failures.single().failure)
         assertEquals(GatewayConnectionFailure.AUTHENTICATION_REJECTED, gateway.retirementFailure(generation))
@@ -4350,6 +4419,10 @@ private fun timerecFixture(): HtspTimerecEntry = HtspTimerecEntry(
 )
 
 private class FakeHtspConnection : HtspConnection {
+    var rejectTerminationToken: Boolean = false
+    fun end(generation: HtspConnectionGeneration, result: at.bernhardberger.tvheadend.htsp.connection.HtspGenerationTermination) {
+        checkNotNull(terminations[generation]).complete(result)
+    }
     private val terminations = java.util.IdentityHashMap<HtspConnectionGeneration,
         kotlinx.coroutines.CompletableDeferred<at.bernhardberger.tvheadend.htsp.connection.HtspGenerationTermination>>()
 
@@ -4362,6 +4435,7 @@ private class FakeHtspConnection : HtspConnection {
     var terminationWaiters: Int = 0
     override suspend fun awaitTermination(generation: HtspConnectionGeneration):
         at.bernhardberger.tvheadend.htsp.connection.HtspGenerationTermination {
+        require(!rejectTerminationToken)
         val result = requireNotNull(terminations[generation])
         terminationWaiters++
         try {

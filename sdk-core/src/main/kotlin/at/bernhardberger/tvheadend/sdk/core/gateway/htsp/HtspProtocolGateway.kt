@@ -395,8 +395,23 @@ internal class HtspProtocolGateway internal constructor(
         if (live?.generation === htspGenerationFor(generation)) block() else null
     }
 
-    override fun retirementFailure(generation: GatewayGeneration): GatewayConnectionFailure? =
-        synchronized(generationLock) { retiredGenerations[htspGenerations[generation]] }
+    override suspend fun retirementFailure(generation: GatewayGeneration): GatewayConnectionFailure? {
+        val source = synchronized(generationLock) {
+            val source = htspGenerationFor(generation)
+            retiredGenerations[source]?.let { return it }
+            if (refreshLive()?.generation === source) return null
+            source
+        }
+        // HTSP latches termination before publishing closed admission. Resolve that latch
+        // directly: the watcher continuation may still be queued on the owner dispatcher.
+        val failure = when (val ended = connection.awaitTermination(source)) {
+            is HtspGenerationTermination.Failed -> ended.failure.kind.toGatewayFailure()
+            HtspGenerationTermination.Disconnected -> null
+            else -> GatewayConnectionFailure.TRANSPORT_UNAVAILABLE
+        }
+        retire(source, failure)
+        return synchronized(generationLock) { retiredGenerations[source] }
+    }
 
     /** Called only under generationLock; reads snapshots without making a suspending library call. */
     private fun refreshLive(): HtspLiveConnection? {
