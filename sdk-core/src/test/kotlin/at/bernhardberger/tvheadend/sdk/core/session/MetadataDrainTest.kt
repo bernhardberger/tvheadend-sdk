@@ -20,25 +20,17 @@ internal class MetadataDrainTest {
     private val generation = GatewayGeneration()
 
     @Test
-    fun `outside cancellation drops already buffered metadata`() = runTest {
-        val recorder = RecordingMetadata()
-        val buffered = kotlinx.coroutines.CompletableDeferred<Unit>()
+    fun `outside cancellation drops the remainder of a batch`() = runTest {
         lateinit var worker: kotlinx.coroutines.Job
-        val canceller = launch(context = kotlinx.coroutines.Dispatchers.Unconfined) {
-            buffered.await()
-            worker.cancel()
-        }
+        val recorder = RecordingMetadata(afterBatch = { worker.cancel() })
         worker = launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             drainMetadata(flow {
-                (1L..5L).forEach { emit(MetadataEvent.EventAdded(generation, epgEvent(it))) }
-                buffered.complete(Unit)
-                kotlinx.coroutines.awaitCancellation()
-            }, recorder)
+                emit((1L..5L).map { MetadataEvent.EventAdded(generation, epgEvent(it)) })
+            }, recorder, burstLimit = 2)
         }
         worker.start()
         worker.join()
-        canceller.join()
-        assertEquals(emptyList<String>(), recorder.calls)
+        assertEquals(listOf("batch:1,2", "flush"), recorder.calls)
         org.junit.jupiter.api.Assertions.assertTrue(worker.isCancelled)
     }
 
@@ -47,27 +39,29 @@ internal class MetadataDrainTest {
         val recorder = RecordingMetadata()
         val next = GatewayGeneration()
         drainMetadata(flow {
-            emit(MetadataEvent.EventAdded(generation, epgEvent(1)))
-            emit(MetadataEvent.InitialSyncCompleted(generation))
-            emit(MetadataEvent.EventAdded(generation, epgEvent(2)))
-            emit(MetadataEvent.EventAdded(next, epgEvent(3)))
+            emit(listOf(
+                MetadataEvent.EventAdded(generation, epgEvent(1)),
+                MetadataEvent.InitialSyncCompleted(generation),
+                MetadataEvent.EventAdded(generation, epgEvent(2)),
+                MetadataEvent.EventAdded(next, epgEvent(3)),
+            ))
         }, recorder)
         assertEquals(listOf("batch:1,sync", "flush", "batch:2", "flush", "batch:3", "flush"), recorder.calls)
     }
 
     @Test
-    fun `failed upstream does not accept its buffered tail`() = runTest {
+    fun `upstream failure propagates after the accepted batch`() = runTest {
         val recorder = RecordingMetadata()
         val failure = IllegalStateException("Synthetic failure")
         val result = runCatching {
             drainMetadata(flow {
-                emit(MetadataEvent.EventAdded(generation, epgEvent(1)))
+                emit(listOf(MetadataEvent.EventAdded(generation, epgEvent(1))))
                 throw failure
             }, recorder)
         }
         assertEquals(failure.javaClass, result.exceptionOrNull()?.javaClass)
         assertEquals(failure.message, result.exceptionOrNull()?.message)
-        assertEquals(emptyList<String>(), recorder.calls)
+        assertEquals(listOf("batch:1", "flush"), recorder.calls)
     }
 
     @Test
@@ -75,7 +69,7 @@ internal class MetadataDrainTest {
         val recorder = RecordingMetadata()
         val burst = (1L..5L).map { id -> MetadataEvent.EventAdded(generation, epgEvent(id)) }
 
-        drainMetadata(flow { burst.forEach { emit(it) } }, recorder)
+        drainMetadata(flow { emit(burst) }, recorder)
 
         assertEquals(listOf("batch:1,2,3,4,5", "flush"), recorder.calls)
     }
@@ -85,7 +79,7 @@ internal class MetadataDrainTest {
         val recorder = RecordingMetadata()
         val stream = (1L..7L).map { id -> MetadataEvent.EventAdded(generation, epgEvent(id)) }
 
-        drainMetadata(flow { stream.forEach { emit(it) } }, recorder, burstLimit = 3)
+        drainMetadata(flow { emit(stream) }, recorder, burstLimit = 3)
 
         assertEquals(
             listOf("batch:1,2,3", "flush") +
@@ -98,14 +92,14 @@ internal class MetadataDrainTest {
     @Test
     fun `events emitted after subscription are not missed and each idle event flushes`() = runTest {
         val recorder = RecordingMetadata()
-        val source = MutableSharedFlow<MetadataEvent>()
+        val source = MutableSharedFlow<List<MetadataEvent>>()
         val worker = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
             drainMetadata(source, recorder)
         }
 
-        source.emit(MetadataEvent.EventAdded(generation, epgEvent(1)))
+        source.emit(listOf(MetadataEvent.EventAdded(generation, epgEvent(1))))
         runCurrent()
-        source.emit(MetadataEvent.EventAdded(generation, epgEvent(2)))
+        source.emit(listOf(MetadataEvent.EventAdded(generation, epgEvent(2))))
         runCurrent()
 
         assertEquals(listOf("batch:1", "flush", "batch:2", "flush"), recorder.calls)
@@ -122,12 +116,14 @@ internal class MetadataDrainTest {
 
     private class RecordingMetadata(
         private val delegate: PhaseOneSessionMetadata = PhaseOneSessionMetadata(),
+        private val afterBatch: () -> Unit = {},
     ) : SessionMetadata by delegate {
         val calls = mutableListOf<String>()
 
         override fun acceptMetadataBatch(events: List<MetadataEvent>) {
             calls += "batch:${events.joinToString(",") { if (it is MetadataEvent.InitialSyncCompleted) "sync" else it.eventId().toString() }}"
             delegate.acceptMetadataBatch(events)
+            afterBatch()
         }
 
         override fun flushDeferredMetadata() {

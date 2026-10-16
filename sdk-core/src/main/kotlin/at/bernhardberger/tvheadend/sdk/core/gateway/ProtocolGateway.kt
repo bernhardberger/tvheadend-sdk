@@ -23,6 +23,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
 import kotlin.time.Duration
 import kotlin.time.Instant
 
@@ -30,6 +31,9 @@ import kotlin.time.Instant
 internal interface ProtocolGateway {
     public val connectionState: StateFlow<GatewayState>
     public val metadata: Flow<MetadataEvent>
+    /** Ordered batches; custom gateways retain the singleton fallback. */
+    public val metadataBatches: Flow<List<MetadataEvent>>
+        get() = metadata.map { listOf(it) }
     public val connectionFailures: Flow<GatewayConnectionFailureEvent>
 
     /** Generation-scoped server time advanced by monotonic elapsed time, or unknown. */

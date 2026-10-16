@@ -271,9 +271,19 @@ internal class HtspProtocolGateway internal constructor(
         transform = HtspConnectionState::toGatewayState,
     )
 
-    override val metadata: Flow<MetadataEvent> = connection.events.transform { event ->
-        when (event) {
+    override val metadata: Flow<MetadataEvent>
+        get() = metadataBatches.transform { batch -> batch.forEach { emit(it) } }
+
+    override val metadataBatches: Flow<List<MetadataEvent>> = connection.eventBatches().transform { batch ->
+        val source = batch.firstOrNull()?.generation ?: return@transform
+        val metadataRetired = synchronized(generationLock) {
+            retiredGenerations[source] == GatewayConnectionFailure.METADATA_OVERFLOW
+        }
+        val generation = generationFor(source)
+        var mapped = ArrayList<MetadataEvent>(batch.size)
+        for (event in batch) when (event) {
             is HtspTransportEvent.ServerMessage -> {
+                if (metadataRetired) continue
                 rememberRuleChannel(event.generation, event.message)
                 val epgThrough = if (event.message === HtspInitialSyncCompletedMessage) {
                     synchronized(generationLock) {
@@ -281,7 +291,11 @@ internal class HtspProtocolGateway internal constructor(
                             ?.let { initialEpgThrough.takeUnless { initialEpgIncomplete } }
                     }
                 } else null
-                event.message.toGatewayMetadata(generationFor(event.generation), epgThrough)?.let { emit(it) }
+                event.message.toGatewayMetadata(generation, epgThrough)?.let { mapped.add(it) }
+                if (event.message === HtspInitialSyncCompletedMessage && mapped.isNotEmpty()) {
+                    emit(mapped)
+                    mapped = ArrayList(batch.size)
+                }
             }
             // Before and after the sync marker, keep usable metadata and accept later updates:
             // the initial-sync waiter accepts skipped metadata, and retrying a
@@ -291,23 +305,30 @@ internal class HtspProtocolGateway internal constructor(
                 if (refreshLive()?.generation === event.generation) initialEpgIncomplete = true
             }
             is HtspTransportEvent.MetadataOverflow -> {
+                if (mapped.isNotEmpty()) emit(mapped)
                 // A repeated async-enable only resends EPG, not a complete snapshot. The
                 // connection owner's existing backoff/reconnect path performs a full resync.
                 retire(event.generation, GatewayConnectionFailure.METADATA_OVERFLOW)
                 metadataFailures.emit(
                     GatewayConnectionFailureEvent(
                         GatewayConnectionFailure.METADATA_OVERFLOW,
-                        generationFor(event.generation),
+                        generation,
                     ),
                 )
+                return@transform
+            }
+            is HtspTransportEvent.ConnectionFailure -> {
+                if (mapped.isNotEmpty()) emit(mapped)
+                return@transform
             }
             else -> Unit
         }
+        if (mapped.isNotEmpty()) emit(mapped)
     }
 
     override val connectionFailures: Flow<GatewayConnectionFailureEvent> =
-        merge(metadataFailures, connection.events.transform { event ->
-            if (event is HtspTransportEvent.ConnectionFailure) {
+        merge(metadataFailures, connection.eventBatches().transform { batch ->
+            for (event in batch) if (event is HtspTransportEvent.ConnectionFailure) {
                 retire(event.generation, event.failure.kind.toGatewayFailure())
                 emit(
                     GatewayConnectionFailureEvent(

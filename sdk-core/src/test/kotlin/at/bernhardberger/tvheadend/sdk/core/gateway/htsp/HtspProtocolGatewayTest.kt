@@ -210,6 +210,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.filterNot
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
@@ -241,6 +243,101 @@ import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
 internal class HtspProtocolGatewayTest {
+    @Test
+    fun `later batches cannot publish a catalog after metadata overflow`() = runTest {
+        val source = HtspConnectionGeneration()
+        val transportBatches = MutableSharedFlow<List<HtspTransportEvent>>()
+        val fake = FakeHtspConnection().apply {
+            connectOutcome = HtspConnectOutcome.Connected(liveConnection(source))
+            batchesFlow = transportBatches
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982)) as GatewayConnectResult.Connected).connection.generation
+        val metadata = PhaseOneSessionMetadata()
+        metadata.bindGeneration(generation)
+        val failures = mutableListOf<GatewayConnectionFailureEvent>()
+        backgroundScope.launch { gateway.connectionFailures.toList(failures) }
+        backgroundScope.launch { gateway.metadataBatches.collect { metadata.acceptMetadataBatch(it) } }
+        testScheduler.runCurrent()
+        assertEquals(2, transportBatches.subscriptionCount.value)
+        transportBatches.emit(listOf(HtspTransportEvent.MetadataOverflow(source, 1)))
+        testScheduler.runCurrent()
+        assertEquals(listOf(GatewayConnectionFailure.METADATA_OVERFLOW), failures.map { it.failure })
+        transportBatches.emit(listOf(
+            HtspTransportEvent.ServerMessage(HtspChannelAddMessage(channelFixture()), source, 1),
+            HtspTransportEvent.ServerMessage(HtspInitialSyncCompletedMessage, source, 2),
+            HtspTransportEvent.ConnectionFailure(HtspTransportFailure(HtspTransportFailureKind.TRANSPORT_UNAVAILABLE), source),
+        ))
+        testScheduler.runCurrent()
+        assertTrue(metadata.observation.value.channelState is ChannelRepositoryState.Synchronizing)
+        assertEquals(
+            listOf(GatewayConnectionFailure.METADATA_OVERFLOW, GatewayConnectionFailure.TRANSPORT_UNAVAILABLE),
+            failures.map { it.failure },
+        )
+        // Delivery continues after retirement, including new overflow markers.
+        transportBatches.emit(listOf(HtspTransportEvent.MetadataOverflow(source, 1)))
+        testScheduler.runCurrent()
+        assertEquals(2, failures.count { it.failure == GatewayConnectionFailure.METADATA_OVERFLOW })
+        assertTrue(failures.all { it.generation === generation })
+        assertEquals(GatewayConnectionFailure.METADATA_OVERFLOW, gateway.retirementFailure(generation))
+    }
+
+    @Test
+    fun `fake batches honour the gateway requested batch size`() = runTest {
+        val source = HtspConnectionGeneration()
+        val fake = FakeHtspConnection().apply {
+            connectOutcome = HtspConnectOutcome.Connected(liveConnection(source))
+            batchesFlow = flowOf(List(1_025) { index ->
+                HtspTransportEvent.ServerMessage(HtspChannelAddMessage(channelFixture()), source, index.toLong() + 1)
+            })
+        }
+        val gateway = HtspProtocolGateway(fake)
+        gateway.connect(ServerConfiguration("host", 9_982))
+        assertEquals(listOf(512, 512, 1), gateway.metadataBatches.toList().map { it.size })
+    }
+
+    @Test
+    fun `fake batches omit empty input and split at size and generation boundaries`() = runTest {
+        val first = HtspConnectionGeneration()
+        val second = HtspConnectionGeneration()
+        val events = listOf(first, first, first, second, second).mapIndexed { index, source ->
+            HtspTransportEvent.ServerMessage(HtspChannelAddMessage(channelFixture()), source, index.toLong() + 1)
+        }
+        val fake = FakeHtspConnection().apply { batchesFlow = flowOf(emptyList(), events) }
+        val batches = fake.eventBatches(2).toList()
+        assertEquals(listOf(2, 1, 2), batches.map { it.size })
+        assertEquals(events, batches.flatten())
+        assertTrue(batches.all { batch -> batch.all { it.generation === batch.first().generation } })
+        assertThrows(IllegalArgumentException::class.java) { fake.eventBatches(0) }
+        assertThrows(IllegalArgumentException::class.java) { fake.eventBatches(4_097) }
+    }
+
+    @Test
+    fun `transport batches stay grouped and split at sync and overflow barriers`() = runTest {
+        val source = HtspConnectionGeneration()
+        val fake = FakeHtspConnection().apply {
+            connectOutcome = HtspConnectOutcome.Connected(liveConnection(source))
+            eventsFlow = flow { error("Per-event stream must not be collected") }
+            batchesFlow = flowOf(listOf(
+                HtspTransportEvent.ServerMessage(HtspChannelAddMessage(channelFixture()), source, 1),
+                HtspTransportEvent.MalformedMetadata(source, 2),
+                HtspTransportEvent.ServerMessage(HtspInitialSyncCompletedMessage, source, 2),
+                HtspTransportEvent.ServerMessage(HtspChannelUpdateMessage(channelFixture()), source, 3),
+                HtspTransportEvent.MetadataOverflow(source, 1),
+                HtspTransportEvent.ServerMessage(HtspChannelDeleteMessage(1), source, 4),
+            ))
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982)) as GatewayConnectResult.Connected).connection.generation
+        val batches = gateway.metadataBatches.toList()
+        assertEquals(listOf(2, 1), batches.map { it.size })
+        assertTrue(batches[0][0] is MetadataEvent.ChannelAdded)
+        assertTrue(batches[0][1] is MetadataEvent.InitialSyncCompleted)
+        assertTrue(batches[1][0] is MetadataEvent.ChannelUpdated)
+        assertTrue(batches.flatten().all { it.generation === generation })
+        assertEquals(GatewayConnectionFailure.METADATA_OVERFLOW, gateway.retirementFailure(generation))
+    }
+
     @ParameterizedTest
     @CsvSource("false", "true")
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -348,12 +445,19 @@ internal class HtspProtocolGatewayTest {
         }
     }
 
-    @Test
+    @ParameterizedTest
+    @CsvSource("false", "true")
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    fun `pre sync metadata overflow still retires the generation and schedules backoff`() = runTest {
+    fun `pre sync metadata overflow still retires the generation and schedules backoff`(collectorOnly: Boolean) = runTest {
         val source = HtspConnectionGeneration()
         val messages = MutableSharedFlow<HtspTransportEvent>()
         val fake = metadataConnection(source, messages, HtspTransportEvent.MetadataOverflow(source, 1))
+        if (collectorOnly) {
+            // Model S1: the helper sees the sync marker, but only the SDK batch collector
+            // sees its own overflow. It cannot rely on a helper TransportUnavailable result.
+            fake.batchesFlow = messages.map { listOf(it) }
+            fake.eventsFlow = messages.filterNot { it is HtspTransportEvent.MetadataOverflow }
+        }
         val gateway = HtspProtocolGateway(fake)
         val retries = mutableListOf<Int>()
         val owner = ConnectionOwner(
@@ -1865,6 +1969,10 @@ internal class HtspProtocolGatewayTest {
                 liveConnectionValue.value = liveConnection(sourceGeneration, protocolVersion)
                 connectOutcome = HtspConnectOutcome.Connected(requireNotNull(liveConnectionValue.value))
                 eventsFlow = metadataEvents
+                batchesFlow = metadataEvents.filterNot { it is HtspTransportEvent.MalformedMetadata }.map { event ->
+                    if (malformedBeforeSync) listOf(HtspTransportEvent.MalformedMetadata(sourceGeneration, 1), event)
+                    else listOf(event)
+                }
                 subscriptionFlow = flowOf(
                     HtspSubscriptionEvent.Timeshift(HtspTimeshiftStatusMessage(77, false, 0, 0, 100, 100)),
                 )
@@ -4231,6 +4339,7 @@ private class FakeHtspConnection : HtspConnection {
             }
     }
     internal var eventsFlow: Flow<HtspTransportEvent> = emptyFlow()
+    internal var batchesFlow: Flow<List<HtspTransportEvent>>? = null
     internal var subscriptionFlow: Flow<HtspSubscriptionEvent> = emptyFlow()
     internal var connectOutcome: HtspConnectOutcome = HtspConnectOutcome.Failed(
         HtspTransportFailure(HtspTransportFailureKind.TRANSPORT_UNAVAILABLE),
@@ -4252,6 +4361,23 @@ private class FakeHtspConnection : HtspConnection {
     override val connectionState: MutableStateFlow<HtspConnectionState> = connectionStateValue
     override val events: Flow<HtspTransportEvent>
         get() = eventsFlow
+
+    override fun eventBatches(maxBatchSize: Int): Flow<List<HtspTransportEvent>> {
+        require(maxBatchSize in 1..4096)
+        return flow {
+            (batchesFlow ?: eventsFlow.map { listOf(it) }).collect { batch ->
+                var start = 0
+                while (start < batch.size) {
+                    var end = start + 1
+                    while (end < batch.size && end - start < maxBatchSize &&
+                        batch[end].generation === batch[start].generation
+                    ) end += 1
+                    emit(batch.subList(start, end).toList())
+                    start = end
+                }
+            }
+        }
+    }
 
     override fun subscriptionEvents(subscriptionId: Long): Flow<HtspSubscriptionEvent> {
         lastSubscriptionId = subscriptionId

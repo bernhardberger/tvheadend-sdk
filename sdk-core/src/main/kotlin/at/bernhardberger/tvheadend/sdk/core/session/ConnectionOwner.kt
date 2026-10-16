@@ -49,7 +49,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
@@ -483,7 +482,7 @@ internal class ConnectionOwner(
             metadata.applyDvrAccess(connection.generation, connection.dvrAccess)
             metadata.publishServerFacts(connection.generation, connection.serverFacts)
             metadataWorker = launch(start = CoroutineStart.UNDISPATCHED) {
-                drainMetadata(gateway.metadata, metadata)
+                drainMetadata(gateway.metadataBatches, metadata)
             }
             commitState(token, SessionState.Synchronizing)
             val liveAdmissionCommitted = gateway.commitIfLive(connection.generation) {
@@ -895,47 +894,32 @@ private fun Boolean?.toCapabilityAccess(): CapabilityAccess = when (this) {
  * arrive continuously from broadcast EIT, and each publication rebuilds the full EPG snapshot, so
  * publishing per message starves the rest of the process on small devices.
  *
- * The buffering collector subscribes before this function first suspends so no event is lost
- * between subscription and the first drain. Publication is bounded by [burstLimit] events so a
- * continuous stream still surfaces regularly.
+ * Collection starts inline before async-enable. HTSP already owns an event/byte-bounded queue
+ * per collector; adding a second queue duplicates buffering and coroutine handoffs. Consume
+ * each borrowed batch directly, splitting only for publication, sync and generation fences.
  */
 internal suspend fun drainMetadata(
-    events: Flow<MetadataEvent>,
+    events: Flow<List<MetadataEvent>>,
     metadata: SessionMetadata,
     burstLimit: Int = METADATA_BURST_LIMIT,
-) = coroutineScope {
+) {
     require(burstLimit in 1..METADATA_BURST_LIMIT)
-    val buffered = Channel<MetadataEvent>(METADATA_BUFFER_CAPACITY)
-    launch(start = CoroutineStart.UNDISPATCHED) {
-        try {
-            events.collect { event -> buffered.send(event) }
-        } finally {
-            buffered.close()
-        }
-    }
-    val burst = ArrayList<MetadataEvent>(burstLimit)
-    var pending: MetadataEvent? = null
-    while (true) {
-        val first = pending ?: buffered.receiveCatching().getOrNull() ?: break
-        pending = null
-        burst.add(first)
-        while (burst.size < burstLimit && burst.last() !is MetadataEvent.InitialSyncCompleted) {
-            val next = buffered.tryReceive().getOrNull() ?: break
-            if (next.generation !== first.generation) {
-                pending = next
-                break
+    events.collect { batch ->
+        var start = 0
+        while (start < batch.size) {
+            var end = start
+            while (end < batch.size && end - start < burstLimit &&
+                batch[end].generation === batch[start].generation
+            ) {
+                if (batch[end++] is MetadataEvent.InitialSyncCompleted) break
             }
-            burst.add(next)
+            currentCoroutineContext().ensureActive()
+            metadata.acceptMetadataBatch(if (start == 0 && end == batch.size) batch else batch.subList(start, end))
+            metadata.flushDeferredMetadata()
+            start = end
         }
-        currentCoroutineContext().ensureActive()
-        metadata.acceptMetadataBatch(burst)
-        burst.clear()
-        metadata.flushDeferredMetadata()
     }
 }
-
-// Enough to absorb an EIT burst without stalling the transport reader; sends suspend past it.
-private const val METADATA_BUFFER_CAPACITY = 4_096
 
 // One publication at least every this many drained events under continuous traffic.
 private const val METADATA_BURST_LIMIT = 512
