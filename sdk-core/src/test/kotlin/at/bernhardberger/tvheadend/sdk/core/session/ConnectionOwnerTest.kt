@@ -964,6 +964,78 @@ internal class ConnectionOwnerTest {
     }
 
     @Test
+    fun `guide restore finishing after initial sync installs and persists carryover`() = runTest {
+        val releaseEpg = CompletableDeferred<Unit>()
+        val base = Instant.fromEpochSeconds(1_800_000_000)
+        val cached = EpgSnapshot.create(listOf(
+            at.bernhardberger.tvheadend.sdk.core.EpgEvent.create(
+                id = EventId(3), channelId = ChannelId(1), start = base + 8.hours, stop = base + 9.hours,
+            ),
+        ))
+        val store = InMemoryMetadataCacheStore(null, cached).apply { beforeEpgLoad = { releaseEpg.await() } }
+        val generation = GatewayGeneration()
+        val gateway = FakeProtocolGateway().apply { connectResults += connected(generation) }
+        val owner = owner(gateway, cacheRuntime = virtualClockCacheRuntime(store))
+        try {
+            owner.connect(ServerProfile("first"))
+            runCurrent()
+            gateway.emitMetadata(MetadataEvent.ChannelAdded(generation, channelMetadata(1)))
+            gateway.emitMetadata(MetadataEvent.EventAdded(generation, GatewayEpgEvent(
+                id = EventId(1), channelId = ChannelId(1), start = base, stop = base + 6.hours,
+            )))
+            gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation, base + 6.hours))
+            runCurrent()
+            assertEquals(listOf(1L), owner.currentEpgSnapshot().events.map { it.id.value })
+
+            releaseEpg.complete(Unit)
+            runCurrent()
+            assertEquals(listOf(1L, 3L), owner.currentEpgSnapshot().events.map { it.id.value })
+            assertEquals(base + 6.hours, owner.currentEpgSnapshot().coverages.single().coveredTo)
+            advanceTimeBy(61.seconds)
+            runCurrent()
+            assertEquals(listOf(1L, 3L), store.epg?.events?.map { it.id.value }, "The deferred write keeps the restored carryover")
+        } finally {
+            owner.shutdown()
+        }
+    }
+
+    @Test
+    fun `guide restore finishing after a failed attempt never installs carryover into the retry`() = runTest {
+        val releaseEpg = CompletableDeferred<Unit>()
+        val base = Instant.fromEpochSeconds(1_800_000_000)
+        val cached = EpgSnapshot.create(listOf(
+            at.bernhardberger.tvheadend.sdk.core.EpgEvent.create(
+                id = EventId(3), channelId = ChannelId(1), start = base + 8.hours, stop = base + 9.hours,
+            ),
+        ))
+        val store = InMemoryMetadataCacheStore(null, cached).apply { beforeEpgLoad = { releaseEpg.await() } }
+        val generation = GatewayGeneration()
+        val gateway = FakeProtocolGateway().apply {
+            connectResults += failed(GatewayConnectionFailure.SERVER_UNREACHABLE)
+            connectResults += connected(generation)
+        }
+        val owner = owner(gateway, cacheRuntime = cacheRuntime(store))
+        try {
+            owner.connect(ServerProfile("first"))
+            runCurrent()
+            advanceTimeBy(2.seconds)
+            runCurrent()
+            assertEquals(2, gateway.connectCalls)
+            gateway.emitMetadata(MetadataEvent.ChannelAdded(generation, channelMetadata(1)))
+            gateway.emitMetadata(MetadataEvent.EventAdded(generation, GatewayEpgEvent(
+                id = EventId(1), channelId = ChannelId(1), start = base, stop = base + 6.hours,
+            )))
+            gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation, base + 6.hours))
+            runCurrent()
+            releaseEpg.complete(Unit)
+            runCurrent()
+            assertEquals(listOf(1L), owner.currentEpgSnapshot().events.map { it.id.value })
+        } finally {
+            owner.shutdown()
+        }
+    }
+
+    @Test
     fun `late restore from a failed attempt cannot seed a bound retry`() = runTest {
         val release = CompletableDeferred<Unit>()
         val store = InMemoryMetadataCacheStore(ChannelCatalog.create(), EpgSnapshot.create()) { release.await() }
@@ -2786,6 +2858,13 @@ internal class ConnectionOwnerTest {
 
     private fun TestScope.cacheRuntime(store: MetadataCacheStore): MetadataCacheRuntime = MetadataCacheRuntime(
         store, MetadataCachePolicy.create(File("unused")), StandardTestDispatcher(testScheduler), Clock.System,
+    )
+
+    private fun TestScope.virtualClockCacheRuntime(store: MetadataCacheStore): MetadataCacheRuntime = MetadataCacheRuntime(
+        store, MetadataCachePolicy.create(File("unused")), StandardTestDispatcher(testScheduler),
+        object : Clock {
+            override fun now(): Instant = Instant.fromEpochMilliseconds(testScheduler.currentTime)
+        },
     )
 
     private fun TestScope.owner(

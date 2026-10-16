@@ -212,7 +212,10 @@ same-profile reconnect, from the previously retained guide) that start beyond a
 channel's live coverage remain in the `CURRENT` snapshot as display-only
 carryover. Only channels whose live programmes the initial sync proved get
 carryover, and only after that proven window; programmes the server named during
-initial sync, such as deletions, never return as carryover. Carryover events are
+initial sync, such as deletions, never return as carryover. If the cached guide
+finishes decoding only after `Ready`, it is added then as a new `CURRENT`
+snapshot under the same rules, and nothing the live session changed, deleted or
+queried in the meantime comes back. Carryover events are
 outside `EpgSnapshot.coverages`: `EpgCoverage`, `knownTo` and acquisition results
 describe live data only, and carryover never claims live proof. Wherever live
 data reaches, including through later queries or the sliding server window, only

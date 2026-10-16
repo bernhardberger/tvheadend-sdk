@@ -441,7 +441,13 @@ internal class ConnectionOwner(
                     // Establish persistence before either connection work or restore-child
                     // dispatch: even immediate sync/teardown must have a writer to flush.
                     cacheRuntime.start(namespace, metadata.publishedSnapshots)
-                    launch { prepareCache(namespace, restore, accept) }
+                    // Register the restore before sync can complete, so a guide decoded after
+                    // Ready still installs carryover; completion ends it even if never started.
+                    val restoreTicket = if (restore) metadata.beginRetainedSnapshotRestore() else null
+                    val restoring = launch { prepareCache(namespace, restore, accept) }
+                    restoreTicket?.let { ticket ->
+                        restoring.invokeOnCompletion { metadata.finishRetainedSnapshotRestore(ticket) }
+                    }
                 }
                 connectionLoopBody(profile, token)
             }

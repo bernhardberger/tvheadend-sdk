@@ -24,7 +24,9 @@ Unreleased; development target.
   visible at `Ready`, and after a same-profile reconnect, as display-only
   carryover until live coverage reaches them; there live data wins, and server
   deletions remove carryover immediately. Only channels proven by the initial
-  sync get carryover. Carryover is persisted without coverage and never extends
+  sync get carryover. A cached guide that finishes decoding after `Ready` still
+  becomes carryover, without reviving anything live data changed, deleted or
+  queried meanwhile. Carryover is persisted without coverage and never extends
   `EpgCoverage`, query proof or worker scheduling; it is never taken across a
   profile switch. Tvheadend pushes programme updates only within the sliding
   six-hour window; programmes further ahead are refreshed by worker queries or

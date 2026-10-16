@@ -26,7 +26,9 @@ import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 
@@ -434,6 +436,183 @@ internal class EpgCarryoverTest {
         assertEquals(listOf(1L, 6L, 7L, 8L, 5L), metadata.currentEpg().events.map { it.id.value })
         metadata.acceptMetadata(MetadataEvent.EventUpdated(generation, liveEvent(8, 10.hours, 11.hours + 30.minutes)))
         assertEquals(listOf(1L, 6L, 7L, 8L), metadata.currentEpg().events.map { it.id.value })
+    }
+
+    @Test
+    fun `a guide restored after initial sync installs carryover with the on-time rules`() {
+        val metadata = PhaseOneSessionMetadata(clock = clock)
+        val restore = metadata.beginRetainedSnapshotRestore()
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(1)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, liveEvent(1, 0.hours, 6.hours + 30.minutes)))
+        metadata.acceptMetadata(MetadataEvent.EventDeleted(generation, EventId(5)))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation, now + 6.hours))
+        val ready = metadata.currentEpg()
+        assertEquals(listOf(1L), ready.events.map { it.id.value })
+
+        assertTrue(metadata.seedRetainedSnapshots(null, CachedEpg(EpgSnapshot.create(listOf(
+            cachedEvent(2, 3.hours, 4.hours),
+            cachedEvent(3, 6.hours + 15.minutes, 7.hours),
+            cachedEvent(4, 8.hours, 9.hours),
+            cachedEvent(5, 10.hours, 11.hours),
+            cachedEvent(6, 20.hours, 21.hours),
+        ))), generation))
+        metadata.finishRetainedSnapshotRestore(restore)
+
+        val snapshot = metadata.currentEpg()
+        assertEquals(listOf(1L, 4L, 6L), snapshot.events.map { it.id.value })
+        assertEquals(ready.coverages, snapshot.coverages, "Carryover never extends live coverage")
+        assertEquals(mapOf(ChannelId(1) to now + 6.hours), metadata.initialEpgCoverage(generation))
+        assertEquals(listOf(1L, 4L, 6L), checkNotNull(metadata.publishedSnapshots.value).epgSnapshot.events.map { it.id.value },
+            "Persistence includes carryover installed after Ready")
+    }
+
+    @Test
+    fun `a late guide respects a server deletion since initial sync`() {
+        assertLateMatchesOnTime(listOf(1L, 8L), cachedEvent(3, 8.hours, 9.hours), cachedEvent(8, 16.hours, 17.hours)) { generation ->
+            acceptMetadata(MetadataEvent.EventDeleted(generation, EventId(3)))
+        }
+    }
+
+    @Test
+    fun `a late guide keeps the live version of an id updated since initial sync`() {
+        assertLateMatchesOnTime(listOf(1L, 4L, 8L), cachedEvent(4, 20.hours, 21.hours), cachedEvent(8, 16.hours, 17.hours)) { generation ->
+            acceptMetadata(MetadataEvent.EventUpdated(generation, liveEvent(4, 6.hours, 7.hours, "live")))
+        }
+    }
+
+    @Test
+    fun `a late guide stays dropped where receded live data reached since initial sync`() {
+        assertLateMatchesOnTime(listOf(1L, 21L, 8L),
+            cachedEvent(5, 9.hours, 10.hours), cachedEvent(6, 11.hours, 12.hours), cachedEvent(8, 16.hours, 17.hours),
+        ) { generation ->
+            acceptMetadata(MetadataEvent.EventAdded(generation, liveEvent(20, 6.hours, 10.hours)))
+            acceptMetadata(MetadataEvent.EventDeleted(generation, EventId(20)))
+            acceptMetadata(MetadataEvent.EventAdded(generation, liveEvent(21, 6.hours, 12.hours)))
+            acceptMetadata(MetadataEvent.EventUpdated(generation, liveEvent(21, 6.hours, 6.hours + 30.minutes)))
+        }
+    }
+
+    @Test
+    fun `a late guide stays dropped inside ranges queries covered since initial sync`() {
+        assertLateMatchesOnTime(listOf(1L, 8L), cachedEvent(7, 13.hours, 14.hours), cachedEvent(8, 16.hours, 17.hours)) { generation ->
+            query(this, generation, 12.hours, queryEvent(22, 6.hours, 15.hours))
+            acceptMetadata(MetadataEvent.EventDeleted(generation, EventId(22)))
+        }
+        assertLateMatchesOnTime(listOf(1L, 8L), cachedEvent(7, 13.hours, 14.hours), cachedEvent(8, 16.hours, 17.hours)) { generation ->
+            query(this, generation, 14.hours)
+        }
+    }
+
+    @Test
+    fun `a late guide respects channel deletion and retention since initial sync`() {
+        assertLateMatchesOnTime(listOf(1L, 8L),
+            cachedEvent(10, 16.hours, 17.hours, channelId = 2), cachedEvent(9, 30.hours, 31.hours), cachedEvent(8, 16.hours, 17.hours),
+        ) { generation ->
+            acceptMetadata(MetadataEvent.ChannelDeleted(generation, ChannelId(2)))
+            retainEpgEvents(generation, retentionBounds(now - 6.hours, now + 24.hours))
+        }
+    }
+
+    @Test
+    fun `server-named ids overflowing the bound after initial sync disable a late guide`() {
+        val metadata = PhaseOneSessionMetadata(epgCoveragePolicy = EpgCoveragePolicy.create(24.hours, 4), clock = clock)
+        metadata.beginRetainedSnapshotRestore()
+        val generation = syncLive(metadata)
+        (20L..24L).forEach { id -> metadata.acceptMetadata(MetadataEvent.EventDeleted(generation, EventId(id))) }
+        assertFalse(metadata.seedRetainedSnapshots(null, CachedEpg(EpgSnapshot.create(listOf(cachedEvent(50, 8.hours, 9.hours)))), generation))
+        assertEquals(listOf(1L), metadata.currentEpg().events.map { it.id.value })
+    }
+
+    @Test
+    fun `a late guide never installs after a profile switch or once its restore ended`() {
+        val seed = CachedEpg(EpgSnapshot.create(listOf(cachedEvent(3, 8.hours, 9.hours))))
+        val switched = PhaseOneSessionMetadata(clock = clock)
+        switched.beginRetainedSnapshotRestore()
+        val first = syncLive(switched)
+        switched.clearAllState()
+        val second = syncLive(switched)
+        assertFalse(switched.seedRetainedSnapshots(null, seed, first))
+        assertFalse(switched.seedRetainedSnapshots(null, seed, second), "A profile switch retires the running restore")
+        assertEquals(listOf(1L), switched.currentEpg().events.map { it.id.value })
+
+        val ended = PhaseOneSessionMetadata(clock = clock)
+        val retired = ended.beginRetainedSnapshotRestore()
+        val current = ended.beginRetainedSnapshotRestore()
+        val generation = syncLive(ended)
+        ended.finishRetainedSnapshotRestore(retired)
+        ended.finishRetainedSnapshotRestore(current)
+        assertFalse(ended.seedRetainedSnapshots(null, seed, generation))
+        assertEquals(listOf(1L), ended.currentEpg().events.map { it.id.value })
+    }
+
+    @Test
+    fun `a stale restore ticket does not end the running restore`() {
+        val metadata = PhaseOneSessionMetadata(clock = clock)
+        val retired = metadata.beginRetainedSnapshotRestore()
+        val current = metadata.beginRetainedSnapshotRestore()
+        val generation = syncLive(metadata)
+        metadata.finishRetainedSnapshotRestore(retired)
+        assertTrue(metadata.seedRetainedSnapshots(null, CachedEpg(EpgSnapshot.create(listOf(cachedEvent(3, 8.hours, 9.hours)))), generation))
+        metadata.finishRetainedSnapshotRestore(current)
+        assertEquals(listOf(1L, 3L), metadata.currentEpg().events.map { it.id.value })
+    }
+
+    @Test
+    fun `a late guide never replaces the seed present at initial sync`() {
+        val metadata = PhaseOneSessionMetadata(clock = clock)
+        metadata.beginRetainedSnapshotRestore()
+        metadata.seedRetainedSnapshots(null, CachedEpg(EpgSnapshot.create(listOf(cachedEvent(3, 8.hours, 9.hours)))))
+        val first = syncLive(metadata)
+        val late = CachedEpg(EpgSnapshot.create(listOf(cachedEvent(3, 8.hours, 9.hours, "late"), cachedEvent(4, 10.hours, 11.hours))))
+        assertFalse(metadata.seedRetainedSnapshots(null, late, first))
+        assertEquals(listOf(1L, 3L), metadata.currentEpg().events.map { it.id.value })
+        assertNull(metadata.currentEpg().events.single { it.id == EventId(3) }.title)
+
+        metadata.resetWorkingStateRetainingPublishedSnapshot()
+        val second = syncLive(metadata)
+        assertFalse(metadata.seedRetainedSnapshots(null, late, second), "A reconnect's retained publication is its seed")
+        assertEquals(listOf(1L, 3L), metadata.currentEpg().events.map { it.id.value })
+    }
+
+    private fun syncLive(metadata: PhaseOneSessionMetadata): GatewayGeneration {
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(1)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, liveEvent(1, 0.hours, 6.hours)))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation, now + 6.hours))
+        return generation
+    }
+
+    private fun assertLateMatchesOnTime(
+        expected: List<Long>,
+        vararg cached: EpgEvent,
+        changes: PhaseOneSessionMetadata.(GatewayGeneration) -> Unit,
+    ) {
+        for (late in listOf(false, true)) {
+            val metadata = PhaseOneSessionMetadata(clock = clock)
+            val seed = CachedEpg(EpgSnapshot.create(cached.toList()))
+            val restore = metadata.beginRetainedSnapshotRestore()
+            if (!late) {
+                metadata.seedRetainedSnapshots(null, seed)
+                metadata.finishRetainedSnapshotRestore(restore)
+            }
+            val generation = GatewayGeneration()
+            metadata.bindGeneration(generation)
+            metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(1)))
+            metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(2)))
+            metadata.acceptMetadata(MetadataEvent.EventAdded(generation, liveEvent(1, 0.hours, 6.hours)))
+            metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation, now + 6.hours))
+            metadata.changes(generation)
+            if (late) {
+                metadata.seedRetainedSnapshots(null, seed, generation)
+                metadata.finishRetainedSnapshotRestore(restore)
+            }
+            assertEquals(expected, metadata.currentEpg().events.map { it.id.value }, "late: $late")
+            assertEquals(expected, checkNotNull(metadata.publishedSnapshots.value).epgSnapshot.events.map { it.id.value },
+                "Persistence matches the visible guide (late: $late)")
+        }
     }
 
     private data class Synced(val metadata: PhaseOneSessionMetadata, val generation: GatewayGeneration)

@@ -185,7 +185,8 @@ internal interface SessionMetadata {
      * Seeds display-only retained snapshots before binding or for [expectedGeneration] during sync.
      *
      * Publishes stale states before binding and synchronizing states for an exact bound generation.
-     * Refuses a mismatched generation, completed sync or already retained snapshot. The caller
+     * Refuses a mismatched generation or already retained snapshot. After sync completed, only a
+     * guide the generation still waits for is accepted, as display-only carryover. The caller
      * additionally fences the session and namespace, and the attempt revision when bound.
      * [restoreIsCurrent] checks cache-clear admission under the metadata lock. Once admitted,
      * a racing clear may leave this display-only seed in memory; it is never a live publication.
@@ -199,6 +200,16 @@ internal interface SessionMetadata {
 
     /** Whether a cache seed is currently eligible, without reading or publishing cache data. */
     public fun canSeedRetainedSnapshots(): Boolean
+
+    /**
+     * Marks a cache restore as running, before it can race initial synchronisation, and returns
+     * its ticket. A generation that completes sync without a guide seed while a restore runs keeps
+     * its carryover exclusions until that restore's guide arrives or the restore ends.
+     */
+    public fun beginRetainedSnapshotRestore(): Long
+
+    /** Ends the restore [ticket]; a generation still waiting for its guide stops waiting. */
+    public fun finishRetainedSnapshotRestore(ticket: Long)
 
     public fun bindGeneration(generation: GatewayGeneration)
 
@@ -490,6 +501,10 @@ internal class PhaseOneSessionMetadata(
     private var publishedDiskSpace: DvrDiskSpace? = null
     private var synchronizedCurrent = false
     private var epgPublicationDeferred = false
+    // The running cache restore, whose guide may arrive after initial sync. Survives retained
+    // resets and binds across retries; a profile switch retires it.
+    private var epgRestoreTicket = 0L
+    private var epgRestorePending = false
     private var serverFacts: GatewayServerFacts? = null
     private var dvrAccess: CapabilityAccess = CapabilityAccess.UNKNOWN
     private var capabilityRevision = 0L
@@ -603,6 +618,19 @@ internal class PhaseOneSessionMetadata(
         generation == null && publishedCatalog == null && publishedEpgSnapshot == null
     }
 
+    override fun beginRetainedSnapshotRestore(): Long = synchronized(lock) {
+        epgRestorePending = true
+        ++epgRestoreTicket
+    }
+
+    override fun finishRetainedSnapshotRestore(ticket: Long) {
+        synchronized(lock) {
+            if (ticket != epgRestoreTicket || !epgRestorePending) return
+            epgRestorePending = false
+            epgReducer.releaseCarryoverTracking()
+        }
+    }
+
     override fun seedRetainedSnapshots(
         catalog: CachedCatalog?,
         epgSnapshot: CachedEpg?,
@@ -612,8 +640,21 @@ internal class PhaseOneSessionMetadata(
         if (catalog == null && epgSnapshot == null) return false
         epgSnapshot?.snapshot?.prepareForObservation()
         synchronized(lock) {
-            if (generation !== expectedGeneration || synchronizedCurrent || !restoreIsCurrent()) {
-                return false
+            if (generation !== expectedGeneration || !restoreIsCurrent()) return false
+            if (synchronizedCurrent) {
+                // Live data owns the catalog; a guide this generation waited for still supplies
+                // carryover, publishing as an ordinary carryover change would.
+                val current = generation ?: return false
+                val seed = epgSnapshot ?: return false
+                epgRetentionBounds?.refresh(estimatedServerTime(current))
+                if (!epgReducer.installLateCarryover(
+                        seed.snapshot.events, initialEpgCoverage,
+                        epgRetentionBounds?.fromEpochSeconds ?: Long.MIN_VALUE,
+                        epgRetentionBounds?.toEpochSeconds ?: Long.MAX_VALUE,
+                    )
+                ) return false
+                publishCurrentEpg(epgReducer.snapshot())
+                return true
             }
             val seedCatalog = catalog?.takeIf { publishedCatalog == null }
             val seedEpg = epgSnapshot?.takeIf { publishedEpgSnapshot == null }
@@ -665,6 +706,7 @@ internal class PhaseOneSessionMetadata(
             dvrFailuresReported.clear()
             dvrEntryIncarnations.clear()
             if (!retainPublishedCatalog) {
+                epgRestorePending = false
                 observationStore.selectAccount(null)
                 channelRefreshTimes = MetadataRefreshTimes()
                 epgRefreshTimes = MetadataRefreshTimes()
@@ -909,12 +951,16 @@ internal class PhaseOneSessionMetadata(
                         epgReducer.reconcileChannels(channelSnapshot.channels.map { channel -> channel.id })
                         // The display seed is this profile's restored cache or its previous
                         // generation's publication; clearAllState drops it on a profile switch.
-                        // Install even without a seed so ids excluded during sync are released.
+                        // Install even without a seed so ids excluded during sync are released,
+                        // unless a running restore may still deliver this profile's guide: then
+                        // keep tracking until it installs late or the restore ends. A seed present
+                        // now wins; a later restored guide never replaces or merges into it.
                         epgRetentionBounds?.refresh(estimatedServerTime(event.generation))
                         epgReducer.installCarryover(
                             publishedEpgSnapshot?.events.orEmpty(), initialEpgCoverage,
                             epgRetentionBounds?.fromEpochSeconds ?: Long.MIN_VALUE,
                             epgRetentionBounds?.toEpochSeconds ?: Long.MAX_VALUE,
+                            awaitLateSeed = publishedEpgSnapshot == null && epgRestorePending,
                         )
                         val epgSnapshot = epgReducer.snapshot()
                         val dvrSnapshot = dvrReducer.snapshot()

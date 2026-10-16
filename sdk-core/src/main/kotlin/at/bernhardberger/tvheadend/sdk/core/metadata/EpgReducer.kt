@@ -263,13 +263,18 @@ internal class EpgReducer(
     // Lower bound of each channel's earliest carryover start; a live end at or before it cannot
     // reach any carryover. Removals elsewhere may leave it low, which only costs one rescan.
     private val carryoverEarliestStart = hashMapOf<ChannelId, Instant>()
-    // Ids this generation's server traffic named before installation without leaving a live
-    // copy, such as deletions; their previous publication is outdated. Replaced at installation
+    // Ids this generation's server traffic named before installation (including while awaiting a
+    // late seed) without leaving a live copy, such as deletions; their previous publication is
+    // outdated. Replaced at installation
     // and reset to release its table. Bounded like the query authority ledger: a seed holds at
     // most maximumRetainedEvents events, so overflowing ids conservatively disable installation.
     private var carryoverExcluded = HashSet<EventId>()
     private var carryoverDisabled = false
     private var carryoverInstalled = false
+    // While a generation that published without a seed waits for a late restored guide: per
+    // channel, the latest live end seen since publication; carryover starting before it is gone.
+    private var carryoverAwaitingSeed = false
+    private val carryoverReachedBefore = hashMapOf<ChannelId, Instant>()
     // Mutation revisions exist only while an older in-flight query can still observe them.
     private val activeQueries = linkedSetOf<EpgQueryFence>()
     private val eventAuthorityRevisions = linkedMapOf<EventId, Long>()
@@ -299,6 +304,8 @@ internal class EpgReducer(
         carryoverExcluded = HashSet()
         carryoverDisabled = false
         carryoverInstalled = false
+        carryoverAwaitingSeed = false
+        carryoverReachedBefore.clear()
         activeQueries.clear()
         eventAuthorityRevisions.clear()
         channelAuthorityRevisions.clear()
@@ -406,6 +413,7 @@ internal class EpgReducer(
         queriedToByChannel.keys.retainAll(valid)
         carryover.values.removeIf { it.channelId !in valid }
         carryoverEarliestStart.keys.retainAll(valid)
+        carryoverReachedBefore.keys.retainAll(valid)
     }
 
     /**
@@ -415,22 +423,27 @@ internal class EpgReducer(
      * events, outside ids the server already named, and overlap the retention window. Nothing is
      * installed when too many named ids overflowed their bound. Later reduction discards
      * carryover for good wherever live data reaches.
+     *
+     * With [awaitLateSeed], nothing is installed yet: named ids and live reach stay tracked until
+     * [installLateCarryover] receives the restored guide or [releaseCarryoverTracking] ends the wait.
      */
     internal fun installCarryover(
         previous: Collection<EpgEvent>,
         provenThrough: Map<ChannelId, Instant>,
         retainFrom: Long = Long.MIN_VALUE,
         retainTo: Long = Long.MAX_VALUE,
+        awaitLateSeed: Boolean = false,
     ) {
         carryover.clear()
         carryoverEarliestStart.clear()
         cachedSnapshot = null
+        val liveEnds = liveEnds()
+        if (awaitLateSeed) {
+            carryoverAwaitingSeed = true
+            carryoverReachedBefore.putAll(liveEnds)
+            return
+        }
         if (!carryoverDisabled) {
-            val liveEnds = HashMap<ChannelId, Instant>(channelIds.size * 2)
-            for (reduced in events.values) {
-                val channelId = reduced.channelId ?: continue
-                if (liveEnds[channelId]?.let { reduced.stop <= it } != true) liveEnds[channelId] = reduced.stop
-            }
             for (event in previous) {
                 val channelId = event.channelId ?: continue
                 val proven = provenThrough[channelId] ?: continue
@@ -444,9 +457,51 @@ internal class EpgReducer(
                 }
             }
         }
-        carryoverExcluded = HashSet()
-        carryoverInstalled = true
+        releaseCarryoverTracking()
         trimCarryover()
+    }
+
+    /**
+     * Installs [previous] as the seed a generation waited for after publishing without one, under
+     * the same rules as at publication; live data since then shadows it as if it had been installed
+     * on time. Returns whether visible carryover changed; does nothing unless waiting.
+     */
+    internal fun installLateCarryover(
+        previous: Collection<EpgEvent>,
+        provenThrough: Map<ChannelId, Instant>,
+        retainFrom: Long = Long.MIN_VALUE,
+        retainTo: Long = Long.MAX_VALUE,
+    ): Boolean {
+        if (!carryoverAwaitingSeed) return false
+        installCarryover(previous, provenThrough, retainFrom, retainTo)
+        return carryover.isNotEmpty()
+    }
+
+    /** Stops tracking named ids and live reach for carryover installation in this generation. */
+    internal fun releaseCarryoverTracking() {
+        carryoverExcluded = HashSet()
+        carryoverReachedBefore.clear()
+        carryoverAwaitingSeed = false
+        carryoverInstalled = true
+    }
+
+    private fun liveEnds(): HashMap<ChannelId, Instant> {
+        val liveEnds = HashMap<ChannelId, Instant>(channelIds.size * 2)
+        carryoverReachedBefore.forEach { (channelId, reached) ->
+            if (channelId in channelIds) liveEnds[channelId] = reached
+        }
+        for (reduced in events.values) {
+            val channelId = reduced.channelId ?: continue
+            if (liveEnds[channelId]?.let { reduced.stop <= it } != true) liveEnds[channelId] = reduced.stop
+        }
+        return liveEnds
+    }
+
+    private fun recordCarryoverReach(channelId: ChannelId?, liveEnd: Instant) {
+        if (!carryoverAwaitingSeed || channelId == null || channelId !in channelIds) return
+        if (carryoverReachedBefore[channelId]?.let { liveEnd <= it } != true) {
+            carryoverReachedBefore[channelId] = liveEnd
+        }
     }
 
     internal fun beginQuery(channelId: ChannelId): EpgQueryFence? {
@@ -523,7 +578,10 @@ internal class EpgReducer(
                     }
                     excludeFromCarryover(eventId)
                 }
-                liveEnd?.let { end -> dropCarryoverBefore(query.channelId, end, inclusive = false) }
+                liveEnd?.let { end ->
+                    dropCarryoverBefore(query.channelId, end, inclusive = false)
+                    recordCarryoverReach(query.channelId, end)
+                }
                 recordSuccessfulQuery(query.channelId, queriedTo)
                 trimCarryover()
                 EpgQueryAcceptance.APPLIED
@@ -535,8 +593,14 @@ internal class EpgReducer(
 
     internal fun retainOverlapping(from: Instant, to: Instant) {
         require(to >= from) { "EPG retention stop must not precede start" }
-        if (events.entries.removeIf { entry -> !entry.value.shouldRetain(from, to) }) {
+        val pruned = events.values.filterNot { event -> event.shouldRetain(from, to) }
+        if (pruned.isNotEmpty()) {
             cachedSnapshot = null
+            pruned.forEach { event ->
+                events.remove(event.id)
+                // A late seed must not revive an id live data held since publication.
+                if (carryoverAwaitingSeed) excludeFromCarryover(event.id)
+            }
         }
         if (carryover.values.removeIf { event -> event.stop < from || event.start > to }) {
             cachedSnapshot = null
@@ -674,6 +738,7 @@ internal class EpgReducer(
             events[event.id] = candidate
         }
         dropCarryoverBefore(candidate.channelId, candidate.stop, inclusive = false)
+        recordCarryoverReach(candidate.channelId, candidate.stop)
         trimCarryover()
         return true
     }
@@ -737,6 +802,7 @@ internal class EpgReducer(
         queriedToByChannel.remove(channelId)
         carryover.values.removeIf { event -> event.channelId == channelId }
         carryoverEarliestStart.remove(channelId)
+        carryoverReachedBefore.remove(channelId)
         events.entries.removeIf { entry -> entry.value.channelId == channelId }
         history.entries.removeIf { entry -> entry.value.channelId == channelId }
     }

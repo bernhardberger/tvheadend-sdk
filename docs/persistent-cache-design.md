@@ -215,7 +215,22 @@ previous same-profile generation's retained publication, supplies carryover for
 channels the initial sync proved: per channel, events that start after the
 initial-sync window, at or after the last live programme's end and after any
 successful query boundary stay visible. IDs the server named during initial sync
-without a live copy, such as deletions, are excluded. Afterwards live event IDs,
+without a live copy, such as deletions, are excluded. When that first live
+publication has no seed while this attempt's restore is still running, the
+guide it decodes later still supplies carryover under the same rules, plus
+everything live since publication: named IDs (deletions, updates, query results)
+stay excluded, and live ends or query boundaries reached since then stay
+reached. The pre-installation tracking stays alive, with the same bound, until
+that guide installs or the restore ends without one. A late guide never
+replaces or merges into a seed present at publication, including a same-profile
+reconnect's retained publication, and the catalog part is ignored once current.
+Profile, attempt and clear fences apply to it as to any seed; the installation
+publishes a new snapshot, still `CURRENT`, without changing coverage, proof or
+receipt times, and the next EPG write persists it. The restore starts reading
+the guide right after the catalog, normally long before the deferred first write
+about a minute after the first live publication, and store access serializes the
+two; an installation after that write is persisted by the next one. Afterwards
+live event IDs,
 server deletions, live programmes or query boundaries reaching an event's start,
 retention and capacity (carryover first) remove carryover permanently during
 reduction, independent of how publications are batched. Carryover is kept
