@@ -28,6 +28,9 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import kotlin.random.Random
 import kotlin.time.Instant
+import kotlin.time.Clock
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.milliseconds
 
 internal class FileMetadataCacheStoreTest {
     @TempDir
@@ -36,7 +39,10 @@ internal class FileMetadataCacheStoreTest {
     private val namespace = cacheNamespace("tvh.example.org", 9982, "alice")
     private val storedAt = Instant.fromEpochMilliseconds(1_700_000_000_000L)
 
-    private fun store(): FileMetadataCacheStore = FileMetadataCacheStore(root)
+    private var restoreNow = storedAt
+    private fun store(): FileMetadataCacheStore = FileMetadataCacheStore(root, object : Clock {
+        override fun now(): Instant = restoreNow
+    })
 
     private fun sampleCatalog(): CachedCatalog = CachedCatalog(ChannelCatalog.create(
         channels = listOf(Channel.create(id = ChannelId(1L), name = "Channel One")),
@@ -83,7 +89,7 @@ internal class FileMetadataCacheStoreTest {
     }
 
     @Test
-    fun `EPG3 record written before credits existed restores with absent credits`() = runTest {
+    fun `EPG3 is discarded once without touching the catalog`() = runTest {
         // Independent old schema: field 23 does not exist in this writer.
         val record = ProtoBuf.encodeToByteArray(LegacyEpgEvent.serializer(), LegacyEpgEvent(
             1, storedAt.toEpochMilliseconds(), storedAt.toEpochMilliseconds(), "Legacy title",
@@ -99,10 +105,11 @@ internal class FileMetadataCacheStoreTest {
             it.writeInt(0) // Coverages.
             it.writeInt(0) // Query times.
         }
-        val restored = requireNotNull(store().loadEpg(namespace, storedAt)).snapshot.events.single()
-        assertEquals(EpgEvent.create(EventId(1), start = storedAt, stop = storedAt, title = "Legacy title"), restored)
-        assertNull(restored.credits)
-        assertTrue(epgFile().exists())
+        val cache = store()
+        cache.storeCatalog(namespace, sampleCatalog(), storedAt)
+        assertNull(cache.loadEpg(namespace, storedAt))
+        assertFalse(epgFile().exists())
+        assertEquals(sampleCatalog(), cache.loadCatalog(namespace, storedAt))
     }
 
     @Test
@@ -125,6 +132,129 @@ internal class FileMetadataCacheStoreTest {
         @kotlinx.serialization.protobuf.ProtoNumber(4) val stop: Long,
         @kotlinx.serialization.protobuf.ProtoNumber(5) val title: String,
     )
+
+    @Test
+    fun `restore uses current device seconds caps coverage and retains only recent ended events`() = runTest {
+        val cache = store()
+        val channel = ChannelId(1)
+        val cut = storedAt + 24.hours
+        fun event(id: Long, start: Instant, stop: Instant = start) =
+            EpgEvent.create(EventId(id), channel, start, stop)
+        val events = listOf(
+            event(6, cut + 1.hours), event(5, cut), event(4, storedAt),
+            event(3, storedAt - 7.hours, storedAt - 6.hours),
+            event(2, storedAt - 8.hours, storedAt - 7.hours),
+            event(1, storedAt - 9.hours, storedAt + 1.hours),
+        )
+        val snapshot = CachedEpg(EpgSnapshot.create(events, listOf(
+            EpgCoverage.create(channel, storedAt - 9.hours, storedAt + 168.hours, storedAt + 168.hours),
+            EpgCoverage.empty(ChannelId(2), storedAt + 168.hours),
+            EpgCoverage.create(ChannelId(3), storedAt + 48.hours, storedAt + 168.hours),
+        )), lastQueriedAt = mapOf(channel to storedAt))
+        cache.storeEpg(namespace, snapshot, storedAt)
+        val bytes = epgFile().readBytes()
+        restoreNow = storedAt + 999.milliseconds
+        val restored = requireNotNull(cache.loadEpg(namespace, storedAt))
+        assertEquals(listOf(1L, 3L, 4L, 5L), restored.snapshot.events.map { it.id.value })
+        assertTrue(restored.snapshot.coverages.all { it.knownTo == null || it.knownTo!! <= cut })
+        assertEquals(cut, restored.snapshot.coverages[0].coveredTo)
+        assertEquals(storedAt - 6.hours, restored.snapshot.coverages[0].coveredFrom)
+        assertTrue(restored.snapshot.coverages[2].isEmpty)
+        assertEquals(snapshot.lastQueriedAt, restored.lastQueriedAt)
+        // The restore cut is taken at load time, not the write timestamp; the full file is retained.
+        restoreNow = storedAt + 2.hours
+        assertTrue(requireNotNull(cache.loadEpg(namespace, storedAt)).snapshot.events.any { it.id == EventId(6) })
+        assertTrue(bytes.contentEquals(epgFile().readBytes()))
+    }
+
+    @Test
+    fun `intersected coverage preserves proven gaps even when no events remain in the window`() = runTest {
+        val cache = store()
+        val cut = storedAt + 24.hours
+        for (expired in listOf(false, true)) {
+            val firstStart = if (expired) storedAt - 8.hours else storedAt
+            val snapshot = EpgSnapshot.create(events = listOf(
+                EpgEvent.create(EventId(1), ChannelId(1), firstStart, firstStart + 1.hours),
+                EpgEvent.create(EventId(2), ChannelId(1), storedAt + 48.hours, storedAt + 49.hours),
+            ), coverages = listOf(EpgCoverage.create(ChannelId(1), firstStart, storedAt + 49.hours)))
+            cache.storeEpg(namespace, CachedEpg(snapshot), storedAt)
+            val restored = requireNotNull(cache.loadEpg(namespace, storedAt)).snapshot
+            assertEquals(if (expired) 0 else 1, restored.events.size)
+            val coverage = restored.coverages.single()
+            assertFalse(coverage.isEmpty)
+            assertEquals(if (expired) storedAt - 6.hours else storedAt, coverage.coveredFrom)
+            assertEquals(cut, coverage.coveredTo)
+            assertEquals(cut, coverage.knownTo)
+        }
+    }
+
+    @Test
+    fun `prefix mismatch and out of order decoded prefixes delete the file`() = runTest {
+        val cache = store()
+        val snapshot = EpgSnapshot.create(events = listOf(1L, 2L).map { id ->
+            val start = storedAt + id.toInt().hours
+            EpgEvent.create(EventId(id), start = start, stop = start)
+        })
+        for (reverse in listOf(false, true)) {
+            cache.storeEpg(namespace, CachedEpg(snapshot), storedAt)
+            RandomAccessFile(epgFile(), "rw").use { file ->
+                file.seek(28) // Magic, timestamp, empty times record, coverage/query/event counts.
+                if (reverse) {
+                    val records = List(2) {
+                        val offset = file.filePointer
+                        file.readLong()
+                        val length = file.readInt()
+                        file.seek(offset)
+                        ByteArray(12 + length).also(file::readFully)
+                    }
+                    file.seek(28)
+                    file.write(records[1])
+                    file.write(records[0])
+                } else {
+                    file.writeLong(storedAt.epochSeconds) // Prefix disagrees with the valid DTO.
+                }
+            }
+            assertNull(cache.loadEpg(namespace, storedAt))
+            assertFalse(epgFile().exists())
+        }
+    }
+
+    @Test
+    fun `EPG4 writes all events ordered by start then id and does not decode the far tail`() = runTest {
+        val cache = store()
+        val events = listOf(3L, 2L, 1L).map { id ->
+            val start = if (id == 3L) storedAt + 25.hours else storedAt
+            EpgEvent.create(EventId(id), start = start, stop = start)
+        }
+        cache.storeEpg(namespace, CachedEpg(EpgSnapshot.create(events)), storedAt)
+        RandomAccessFile(epgFile(), "rw").use { file ->
+            assertEquals(0x45504734, file.readInt())
+            file.readLong()
+            file.seek(file.filePointer + 4 + file.readInt()) // Empty refresh-times record.
+            assertEquals(0, file.readInt()) // Coverage count.
+            assertEquals(0, file.readInt()) // Query count.
+            assertEquals(3, file.readInt()) // Full snapshot persisted, not just the near window.
+            val ids = mutableListOf<Long>()
+            repeat(2) {
+                assertEquals(storedAt.epochSeconds, file.readLong())
+                val record = ByteArray(file.readInt()).also(file::readFully)
+                ids += ProtoBuf.decodeFromByteArray(EpgEventDto.serializer(), record).id
+            }
+            assertEquals(listOf(1L, 2L), ids)
+            assertEquals((storedAt + 25.hours).epochSeconds, file.readLong())
+            val tail = file.filePointer
+            val record = ByteArray(file.readInt()).also(file::readFully)
+            assertEquals(3L, ProtoBuf.decodeFromByteArray(EpgEventDto.serializer(), record).id)
+            // No readable payload remains after the first out-of-window start. A decoder/read
+            // crossing this boundary would reject the file instead of returning the near guide.
+            file.setLength(tail)
+        }
+        assertEquals(listOf(1L, 2L), requireNotNull(cache.loadEpg(namespace, storedAt)).snapshot.events.map { it.id.value })
+        assertTrue(epgFile().exists())
+        restoreNow = storedAt + 2.hours
+        assertNull(cache.loadEpg(namespace, storedAt))
+        assertFalse(epgFile().exists())
+    }
 
     @Test
     fun `catalog v1 absent optional times remain unknown with usable content`() = runTest {
@@ -154,7 +284,7 @@ internal class FileMetadataCacheStoreTest {
     }
 
     @Test
-    fun `EPG3 and catalog preserve receipt times independently of storedAt`() = runTest {
+    fun `EPG4 and catalog preserve receipt times independently of storedAt`() = runTest {
         val times = MetadataRefreshTimes(Instant.fromEpochMilliseconds(100), Instant.fromEpochMilliseconds(234))
         val queries = mapOf(ChannelId(1) to Instant.fromEpochMilliseconds(234), ChannelId(2) to storedAt)
         val catalog = sampleCatalog().copy(refreshTimes = times)
@@ -164,13 +294,13 @@ internal class FileMetadataCacheStoreTest {
         cache.storeEpg(namespace, epg, storedAt)
         assertEquals(catalog, cache.loadCatalog(namespace, storedAt))
         assertEquals(epg, cache.loadEpg(namespace, storedAt))
-        RandomAccessFile(epgFile(), "r").use { assertEquals(0x45504733, it.readInt()) }
+        RandomAccessFile(epgFile(), "r").use { assertEquals(0x45504734, it.readInt()) }
     }
 
     @Test
     fun `query time count and record length are bounded before allocation`() = runTest {
         val payload = CachedEpg(EpgSnapshot.create(), lastQueriedAt = mapOf(ChannelId(1) to storedAt))
-        for (offset in listOf(24L, 28L)) {
+        for (offset in listOf(20L, 24L)) {
             for (invalid in listOf(-1, Int.MAX_VALUE)) {
                 val cache = store()
                 cache.storeEpg(namespace, payload, storedAt)

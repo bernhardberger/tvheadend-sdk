@@ -11,6 +11,10 @@
   is still persisted when teardown cancels a slow restore.
 - Publish the cached catalog before decoding the guide, allowing cached channel
   rows to appear independently of a slow, missing or failed guide restore.
+- Restore only the cached next 24 hours of guide starts and six hours of recent
+  ended events, with bounded coverage, including offline. The ordered `EPG4`
+  format skips far-future decoding; existing `EPG3` guides are discarded once.
+  Persistence continues to store the complete live guide.
 
 ### Fixed
 

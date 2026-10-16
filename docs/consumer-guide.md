@@ -207,9 +207,18 @@ Cached data is never published as `CURRENT`: tuning, EPG queries and DVR
 mutations still wait for `Ready`. The guide is seeded for display only; the
 initial sync re-sends the configured horizon.
 
+Guide restore includes events starting through the device clock's current time
+plus 24 hours (whole seconds), dropping events that ended more than six hours ago.
+This same window is available offline. Restored coverage and query horizons are
+capped at that cut; persisted query receipt times remain display metadata and do
+not supply live initial-sync scheduling proof. Persistence still writes the full
+live guide, including its far-future events.
+
 Guide persistence streams individual protobuf records rather than buffering an
-encoded copy of the entire guide. The record-stream format replaces the earlier
-whole-guide envelope; an older guide cache is discarded and repopulated by normal
+encoded copy of the entire guide. The `EPG4` record stream orders events by start
+time and ID, allowing restore to stop before decoding the far-future tail. Live
+insertion order is not retained in restored stale event lists. Earlier
+formats, including `EPG3`, are discarded once and repopulated by normal
 synchronization, without affecting the catalog, artwork or application settings.
 Cache records are bounded to 1 MiB each and 250,000 events/coverage entries per
 snapshot. An oversized replacement is not persisted; the last complete cache

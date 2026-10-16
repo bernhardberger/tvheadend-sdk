@@ -7,6 +7,8 @@ import at.bernhardberger.tvheadend.sdk.core.CacheStatistics
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.MetadataRefreshTimes
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
+import at.bernhardberger.tvheadend.sdk.core.EpgCoverage
+import at.bernhardberger.tvheadend.sdk.core.EpgEvent
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
@@ -21,14 +23,16 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlin.io.path.deleteRecursively
 import kotlin.time.Instant
+import kotlin.time.Clock
+import kotlin.time.Duration.Companion.hours
 
 private const val CACHE_ROOT_DIR_NAME = "tvheadend-sdk"
 private const val CATALOG_FILE_NAME = "catalog.bin"
 private const val EPG_FILE_NAME = "epg.bin"
 private const val TMP_FILE_SUFFIX = ".tmp"
 private val LEGACY_NAMESPACE_PATTERN = Regex("[0-9a-f]{32}")
-// EPG3 is the format version: bump this magic for incompatible framing or DTO changes.
-private const val EPG_STREAM_MAGIC = 0x45504733
+// EPG4 puts coverage/receipt times before start-ordered events, permitting a bounded restore.
+private const val EPG_STREAM_MAGIC = 0x45504734
 private const val MAX_EPG_CACHE_RECORDS = 250_000
 private const val MAX_EPG_CACHE_RECORD_BYTES = 1_048_576
 
@@ -42,7 +46,7 @@ private const val MAX_EPG_CACHE_RECORD_BYTES = 1_048_576
  * file and [Files.move] with [StandardCopyOption.ATOMIC_MOVE]. Read and write failures never
  * throw: missing, expired, schema-mismatched, or corrupt files are deleted and treated as absent.
  */
-internal class FileMetadataCacheStore(root: File) : MetadataCacheStore {
+internal class FileMetadataCacheStore(root: File, private val clock: Clock = Clock.System) : MetadataCacheStore {
 
     private val namespacesRoot: File = File(root, CACHE_ROOT_DIR_NAME)
 
@@ -76,17 +80,21 @@ internal class FileMetadataCacheStore(root: File) : MetadataCacheStore {
         val file = epgFile(namespace)
         if (!file.isFile) return null
         return try {
+            val now = Instant.fromEpochSeconds(clock.now().epochSeconds)
+            val through = now + 24.hours
+            val past = now - 6.hours
             DataInputStream(file.inputStream().buffered()).use { input ->
                 require(input.readInt() == EPG_STREAM_MAGIC)
                 require(Instant.fromEpochMilliseconds(input.readLong()) >= notBefore)
                 val times = input.readRecord(MetadataRefreshTimesDto.serializer()).toModel()
-                val events = List(input.readRecordCount()) {
-                    currentCoroutineContext().ensureActive()
-                    input.readRecord(EpgEventDto.serializer()).toModel()
-                }
                 val coverages = List(input.readRecordCount()) {
                     currentCoroutineContext().ensureActive()
-                    input.readRecord(EpgCoverageDto.serializer()).toModel()
+                    val coverage = input.readRecord(EpgCoverageDto.serializer()).toModel()
+                    val queriedTo = coverage.queriedTo?.coerceAtMost(through)
+                    val from = maxOf(coverage.coveredFrom, past)
+                    val to = minOf(coverage.coveredTo, through)
+                    if (from > to) EpgCoverage.empty(coverage.channelId, queriedTo)
+                    else EpgCoverage.create(coverage.channelId, from, to, queriedTo)
                 }
                 val queries = LinkedHashMap<ChannelId, Instant>()
                 repeat(input.readRecordCount()) {
@@ -95,7 +103,7 @@ internal class FileMetadataCacheStore(root: File) : MetadataCacheStore {
                     require(queries.put(ChannelId(record.channelId),
                         Instant.fromEpochMilliseconds(record.queriedAtEpochMillis)) == null)
                 }
-                require(input.read() == -1)
+                val events = input.readNearEvents(past, through)
                 CachedEpg(EpgSnapshot.create(events, coverages), times, queries)
             }
         } catch (cancelled: CancellationException) {
@@ -135,11 +143,6 @@ internal class FileMetadataCacheStore(root: File) : MetadataCacheStore {
                 output.writeInt(EPG_STREAM_MAGIC)
                 output.writeLong(storedAt.toEpochMilliseconds())
                 output.writeRecord(MetadataRefreshTimesDto.serializer(), snapshot.refreshTimes.toDto())
-                output.writeInt(snapshot.snapshot.events.size)
-                for (event in snapshot.snapshot.events) {
-                    currentCoroutineContext().ensureActive()
-                    output.writeRecord(EpgEventDto.serializer(), event.toDto())
-                }
                 output.writeInt(snapshot.snapshot.coverages.size)
                 for (coverage in snapshot.snapshot.coverages) {
                     currentCoroutineContext().ensureActive()
@@ -150,6 +153,13 @@ internal class FileMetadataCacheStore(root: File) : MetadataCacheStore {
                     currentCoroutineContext().ensureActive()
                     output.writeRecord(EpgQueryTimeDto.serializer(),
                         EpgQueryTimeDto(channelId.value, time.toEpochMilliseconds()))
+                }
+                output.writeInt(snapshot.snapshot.events.size)
+                for (event in snapshot.snapshot.events.sortedWith(compareBy<EpgEvent> { it.start }.thenBy { it.id.value })) {
+                    currentCoroutineContext().ensureActive()
+                    // Standard framing keeps the first far event's protobuf payload unread.
+                    output.writeLong(event.start.epochSeconds)
+                    output.writeRecord(EpgEventDto.serializer(), event.toDto())
                 }
             }
             currentCoroutineContext().ensureActive()
@@ -238,6 +248,24 @@ internal class FileMetadataCacheStore(root: File) : MetadataCacheStore {
 
     private fun DataInputStream.readRecordCount(): Int =
         readInt().also { require(it in 0..MAX_EPG_CACHE_RECORDS) }
+
+    private suspend fun DataInputStream.readNearEvents(past: Instant, through: Instant): List<EpgEvent> {
+        val count = readRecordCount()
+        val events = ArrayList<EpgEvent>()
+        var previousStart = Long.MIN_VALUE
+        repeat(count) {
+            currentCoroutineContext().ensureActive()
+            val start = readLong()
+            require(start >= previousStart)
+            if (start > through.epochSeconds) return events
+            previousStart = start
+            val event = readRecord(EpgEventDto.serializer()).toModel()
+            require(event.start.epochSeconds == start)
+            if (event.stop >= past) events.add(event)
+        }
+        require(read() == -1)
+        return events
+    }
 
     private fun <T> DataInputStream.readRecord(serializer: KSerializer<T>): T {
         val size = readInt()
