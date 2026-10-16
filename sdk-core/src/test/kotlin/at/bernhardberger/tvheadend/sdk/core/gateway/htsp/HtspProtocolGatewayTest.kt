@@ -292,7 +292,7 @@ internal class HtspProtocolGatewayTest {
     }
 
     @Test
-    fun `request cancellation mid frame reconnects instead of leaving owner ready`() = runTest {
+    fun `injected unowned Disconnected after request cancellation reconnects instead of leaving owner ready`() = runTest {
         val source = HtspConnectionGeneration()
         val fake = metadataConnection(source, MutableSharedFlow())
         val gateway = HtspProtocolGateway(fake)
@@ -314,7 +314,9 @@ internal class HtspProtocolGatewayTest {
                 try {
                     kotlinx.coroutines.awaitCancellation()
                 } finally {
-                    // HTSP retires locally when cancellation interrupts an already-started frame.
+                    // Inject an unexpected disconnect as a guard, not ordinary request behavior:
+                    // HTSP now finishes started ordinary frames; hello/authenticate cancellation
+                    // can still disconnect, as could future transport behavior.
                     fake.end(source, at.bernhardberger.tvheadend.htsp.connection.HtspGenerationTermination.Disconnected)
                     fake.connectionStateValue.value = HtspConnectionState.Disconnected
                 }
