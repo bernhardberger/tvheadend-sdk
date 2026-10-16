@@ -51,6 +51,25 @@ internal class ArtworkCacheTest {
     }
 
     @Test
+    fun `cached reads only read and recheck authority after the read`() = runTest {
+        val runtime = runtime()
+        val miss = runtime.loadCachedArtwork(namespace, id) { true }
+        assertEquals(TvheadendFailure.NOT_READY, (miss as ArtworkLoadResult.Unavailable).failure)
+        assertEquals(CacheStatistics.EMPTY, runtime.statistics.value)
+        runtime.loadArtwork(namespace, id, { true }) { available() }
+        val hit = runtime.loadCachedArtwork(namespace, id) { true }
+        assertArrayEquals(bytes, (hit as ArtworkLoadResult.Available).content.openStream().readBytes())
+        var checks = 0
+        val raced = runtime.loadCachedArtwork(namespace, id) { ++checks < 2 }
+        assertEquals(TvheadendFailure.CONNECTION_CHANGED, (raced as ArtworkLoadResult.Unavailable).failure)
+        assertEquals(2, checks)
+        now += 11.seconds
+        val expired = runtime.loadCachedArtwork(namespace, id) { true }
+        assertEquals(TvheadendFailure.NOT_READY, (expired as ArtworkLoadResult.Unavailable).failure)
+        runtime.shutdown()
+    }
+
+    @Test
     fun `restart hits avoid fetch and clear removes metadata and artwork in every namespace`() = runTest {
         val first = runtime()
         first.restore(namespace)

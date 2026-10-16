@@ -143,6 +143,27 @@ internal class MetadataCacheRuntime(
         return if (isCurrent()) result else ArtworkLoadResult.Unavailable(TvheadendFailure.CONNECTION_CHANGED)
     }
 
+    /**
+     * Reads [id] from [namespace] without fetching, storing or removing beyond a normal disk hit.
+     * [isCurrent] is checked before and after the read so a racing profile switch returns no bytes.
+     */
+    suspend fun loadCachedArtwork(
+        namespace: CacheNamespace,
+        id: ArtworkId,
+        isCurrent: () -> Boolean,
+    ): ArtworkLoadResult {
+        val cached = accessStore {
+            if (!isCurrent()) return@accessStore null
+            val now = clock.now()
+            artworkStore.load(namespace, id, now, now - policy.artworkRetention).also { refreshStatistics() }
+        }
+        return when {
+            !isCurrent() -> ArtworkLoadResult.Unavailable(TvheadendFailure.CONNECTION_CHANGED)
+            cached == null -> ArtworkLoadResult.Unavailable(TvheadendFailure.NOT_READY)
+            else -> ArtworkLoadResult.Available(ArtworkContent.create(cached))
+        }
+    }
+
     private suspend fun <T> accessStore(block: suspend () -> T): T = withContext(ioDispatcher) {
         storeAccess.withLock { block() }
     }

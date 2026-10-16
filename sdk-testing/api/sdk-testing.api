@@ -12,7 +12,9 @@ public final class at/bernhardberger/tvheadend/sdk/testing/DvrRecordingFixture {
 
 public final class at/bernhardberger/tvheadend/sdk/testing/FakeArtworkLoader : at/bernhardberger/tvheadend/sdk/core/ArtworkLoader {
 	public fun cacheKey-noSgMNw (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;I)Ljava/lang/String;
+	public fun cachedArtwork-CvLOJc8 (I)Lat/bernhardberger/tvheadend/sdk/core/CachedArtworkReference;
 	public fun loadArtwork-j_U-F9s (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;ILkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun loadCachedArtwork (Lat/bernhardberger/tvheadend/sdk/core/CachedArtworkReference;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun scriptLoad (Lat/bernhardberger/tvheadend/sdk/core/ArtworkLoadResult;)V
 }
 

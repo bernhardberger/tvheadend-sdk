@@ -3,7 +3,10 @@
 
 package at.bernhardberger.tvheadend.sdk.core.session
 
+import at.bernhardberger.tvheadend.sdk.core.ArtworkId
+import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleCreate
+import at.bernhardberger.tvheadend.sdk.core.CachedArtworkReference
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleId
 import at.bernhardberger.tvheadend.sdk.core.AutorecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
@@ -14,6 +17,7 @@ import java.io.File
 import at.bernhardberger.tvheadend.sdk.core.cache.MetadataCacheStore
 import at.bernhardberger.tvheadend.sdk.core.cache.MetadataCacheRuntime
 import at.bernhardberger.tvheadend.sdk.core.cache.CacheNamespace
+import at.bernhardberger.tvheadend.sdk.core.cache.FileArtworkCacheStore
 import at.bernhardberger.tvheadend.sdk.core.cache.CachedCatalog
 import at.bernhardberger.tvheadend.sdk.core.cache.CachedEpg
 import at.bernhardberger.tvheadend.sdk.core.MetadataCachePolicy
@@ -90,6 +94,7 @@ import java.util.concurrent.CancellationException
 import java.util.concurrent.CountDownLatch
 import kotlin.time.Clock
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
@@ -117,8 +122,10 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotSame
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
@@ -439,6 +446,112 @@ internal class ConnectionOwnerTest {
         assertTrue(next.artwork.loadArtwork(otherProof, id) is at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult.Available)
         assertEquals(1, nextGateway.artworkCalls)
         next.shutdown()
+    }
+
+    @Test
+    fun `cached artwork is disk only and bound to its profile in every session state`(
+        @org.junit.jupiter.api.io.TempDir root: File,
+    ) = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val gateway = FakeProtocolGateway()
+        val metadata = PhaseOneSessionMetadata()
+        val owner = owner(
+            gateway = gateway,
+            metadata = metadata,
+            children = PlaybackSessionChildren(gateway, metadata, dispatcher, Clock.System),
+            cacheRuntime = MetadataCacheRuntime(
+                at.bernhardberger.tvheadend.sdk.core.cache.FileMetadataCacheStore(root),
+                MetadataCachePolicy.create(root), dispatcher, Clock.System,
+            ),
+        )
+        val id = ArtworkId(1)
+        val first = ServerProfile("fixture")
+        val second = ServerProfile("other")
+        val now = Clock.System.now()
+        FileArtworkCacheStore(root).apply {
+            store(first.cacheNamespace(), id, byteArrayOf(1), now, now - 1.days, Long.MAX_VALUE)
+            store(second.cacheNamespace(), id, byteArrayOf(2), now, now - 1.days, Long.MAX_VALUE)
+        }
+        suspend fun bytes(reference: CachedArtworkReference): ByteArray? =
+            (owner.artwork.loadCachedArtwork(reference) as? ArtworkLoadResult.Available)?.content?.openStream()?.readBytes()
+        suspend fun failure(reference: CachedArtworkReference): TvheadendFailure? =
+            (owner.artwork.loadCachedArtwork(reference) as? ArtworkLoadResult.Unavailable)?.failure
+
+        assertNull(owner.artwork.cachedArtwork(id), "No active profile")
+        owner.connect(first)
+        runCurrent()
+        assertTrue(owner.observation.value.sessionState is SessionState.Unavailable)
+        val reference = requireNotNull(owner.artwork.cachedArtwork(id))
+        assertArrayEquals(byteArrayOf(1), bytes(reference))
+        assertEquals(TvheadendFailure.NOT_READY, failure(requireNotNull(owner.artwork.cachedArtwork(ArtworkId(2)))))
+        assertEquals("CachedArtworkReference(<redacted>)", reference.toString())
+
+        val generation = GatewayGeneration()
+        gateway.connectResults += connected(generation)
+        assertEquals(SessionCommandResult.STARTED, owner.retry())
+        runCurrent()
+        assertTrue(owner.observation.value.sessionState is SessionState.Synchronizing)
+        assertEquals(reference, owner.artwork.cachedArtwork(id))
+        assertArrayEquals(byteArrayOf(1), bytes(reference))
+        gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        runCurrent()
+        val proof = requireNotNull(owner.observation.value.currentSession)
+        assertEquals(owner.artwork.cacheKey(proof, id), reference.cacheKey)
+
+        gateway.connectResults += connected(GatewayGeneration())
+        owner.connect(second)
+        runCurrent()
+        assertEquals(TvheadendFailure.OBSERVATION_EXPIRED, failure(reference), "Profile A never reads under B")
+        val switched = requireNotNull(owner.artwork.cachedArtwork(id))
+        assertNotEquals(reference, switched)
+        assertNotEquals(reference.cacheKey, switched.cacheKey)
+        assertArrayEquals(byteArrayOf(2), bytes(switched))
+
+        owner.cache.clear()
+        assertEquals(TvheadendFailure.NOT_READY, failure(switched))
+        owner.disconnect()
+        assertNull(owner.artwork.cachedArtwork(id))
+        assertEquals(TvheadendFailure.OBSERVATION_EXPIRED, failure(switched))
+        assertEquals(0, gateway.artworkCalls)
+        owner.shutdown()
+
+        val uncached = owner(FakeProtocolGateway())
+        uncached.connect(first)
+        runCurrent()
+        assertNull(uncached.artwork.cachedArtwork(id), "No cache policy")
+        assertEquals(
+            TvheadendFailure.OBSERVATION_EXPIRED,
+            (uncached.artwork.loadCachedArtwork(reference) as ArtworkLoadResult.Unavailable).failure,
+        )
+        uncached.shutdown()
+    }
+
+    @Test
+    fun `a profile switch racing a cached artwork read returns no bytes`(
+        @org.junit.jupiter.api.io.TempDir root: File,
+    ) = runTest {
+        val owner = owner(
+            FakeProtocolGateway(),
+            cacheRuntime = MetadataCacheRuntime(
+                at.bernhardberger.tvheadend.sdk.core.cache.FileMetadataCacheStore(root),
+                MetadataCachePolicy.create(root), StandardTestDispatcher(testScheduler), Clock.System,
+            ),
+        )
+        val id = ArtworkId(1)
+        val first = ServerProfile("fixture")
+        val now = Clock.System.now()
+        FileArtworkCacheStore(root).store(first.cacheNamespace(), id, byteArrayOf(1), now, now - 1.days, Long.MAX_VALUE)
+        owner.connect(first)
+        runCurrent()
+        val reference = requireNotNull(owner.artwork.cachedArtwork(id))
+        // Passes the entry check, then suspends while dispatching the read to the IO dispatcher.
+        val pending = async(start = CoroutineStart.UNDISPATCHED) { owner.artwork.loadCachedArtwork(reference) }
+        owner.connect(ServerProfile("other"))
+        assertEquals(
+            TvheadendFailure.CONNECTION_CHANGED,
+            (pending.await() as ArtworkLoadResult.Unavailable).failure,
+        )
+        owner.shutdown()
     }
 
     @Test

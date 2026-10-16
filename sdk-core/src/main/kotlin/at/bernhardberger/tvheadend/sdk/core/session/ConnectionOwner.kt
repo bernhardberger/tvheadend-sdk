@@ -5,8 +5,9 @@ package at.bernhardberger.tvheadend.sdk.core.session
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoader
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
+import at.bernhardberger.tvheadend.sdk.core.CachedArtworkReference
+import at.bernhardberger.tvheadend.sdk.core.artworkCacheKey
 import at.bernhardberger.tvheadend.sdk.core.cache.CacheNamespace
-import java.util.UUID
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
 import at.bernhardberger.tvheadend.sdk.core.DVR_PROGRESS_MINIMUM_PROTOCOL_VERSION
@@ -39,6 +40,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.ProtocolGateway
+import at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -103,9 +105,25 @@ internal class ConnectionOwner(
             val namespace = synchronized(stateLock) {
                 artworkNamespace?.takeIf { isCurrent(currentSession) }
             } ?: return null
-            return UUID.nameUUIDFromBytes(
-                "tvheadend-artwork:${namespace.value}:${artworkId.value}".toByteArray(Charsets.UTF_8),
-            ).toString()
+            return artworkCacheKey(namespace, artworkId)
+        }
+
+        @ExperimentalTvheadendApi
+        override fun cachedArtwork(artworkId: ArtworkId): CachedArtworkReference? {
+            val namespace = synchronized(stateLock) { artworkNamespace } ?: return null
+            return CachedArtworkReference.create(namespace, artworkId)
+        }
+
+        @ExperimentalTvheadendApi
+        override suspend fun loadCachedArtwork(reference: CachedArtworkReference): ArtworkLoadResult {
+            currentCoroutineContext().ensureActive()
+            // Namespaces are profile identities: a reference never reads under another profile.
+            val isCurrent = { synchronized(stateLock) { artworkNamespace == reference.namespace } }
+            val runtime = cacheRuntime
+            if (runtime == null || !isCurrent()) {
+                return ArtworkLoadResult.Unavailable(TvheadendFailure.OBSERVATION_EXPIRED)
+            }
+            return runtime.loadCachedArtwork(reference.namespace, reference.artworkId, isCurrent)
         }
 
         override suspend fun loadArtwork(

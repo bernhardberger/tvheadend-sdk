@@ -161,6 +161,16 @@ public object TvheadendTestResultFactory {
         progressCapability: RecordingProgressCapability,
     ): RecordingPlaybackAdmission.Growing = RecordingPlaybackAdmission.Growing(resumePosition, progressCapability)
 
+    /**
+     * Creates a cached-artwork reference for [profile] and [artworkId] so fake [ArtworkLoader]s can
+     * return it from [ArtworkLoader.cachedArtwork]. Its cache key matches the real session's key for
+     * the same profile and artwork.
+     */
+    @ExperimentalTvheadendApi
+    @JvmStatic
+    public fun cachedArtwork(profile: ServerProfile, artworkId: ArtworkId): CachedArtworkReference =
+        CachedArtworkReference.create(profile.cacheNamespace(), artworkId)
+
     private fun boundRecordingPlayback(
         session: TvheadendSession,
         currentSession: CurrentSessionObservation,

@@ -1,8 +1,11 @@
 package at.bernhardberger.tvheadend.sdk.core
 
+import at.bernhardberger.tvheadend.sdk.core.cache.CacheNamespace
+import at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
 import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.io.ByteArrayInputStream
 import java.io.InputStream
+import java.util.UUID
 
 /** Positive Tvheadend image-cache identifier. */
 @JvmInline
@@ -74,6 +77,43 @@ public sealed interface ArtworkLoadResult {
 }
 
 /**
+ * Opaque reference to one artwork entry in the persistent cache of the profile that was active
+ * when [ArtworkLoader.cachedArtwork] created it.
+ *
+ * It names neither a path, an endpoint nor the profile; equality is by captured profile and
+ * artwork identity. It is not load authority for the server.
+ */
+@ExperimentalTvheadendApi
+public class CachedArtworkReference internal constructor(
+    internal val namespace: CacheNamespace,
+    internal val artworkId: ArtworkId,
+    /**
+     * Opaque restart-stable image key, equal to [ArtworkLoader.cacheKey] for the same profile and
+     * artwork. It must not be logged or interpreted as a path or namespace.
+     */
+    public val cacheKey: String,
+) {
+    override fun equals(other: Any?): Boolean =
+        this === other ||
+            other is CachedArtworkReference && namespace == other.namespace && artworkId == other.artworkId
+
+    override fun hashCode(): Int = 31 * namespace.hashCode() + artworkId.hashCode()
+
+    override fun toString(): String = "CachedArtworkReference(<redacted>)"
+
+    internal companion object {
+        fun create(namespace: CacheNamespace, artworkId: ArtworkId): CachedArtworkReference =
+            CachedArtworkReference(namespace, artworkId, artworkCacheKey(namespace, artworkId))
+    }
+}
+
+/** Restart-stable image key for [artworkId] in the persistent cache [namespace]. */
+internal fun artworkCacheKey(namespace: CacheNamespace, artworkId: ArtworkId): String =
+    UUID.nameUUIDFromBytes(
+        "tvheadend-artwork:${namespace.value}:${artworkId.value}".toByteArray(Charsets.UTF_8),
+    ).toString()
+
+/**
  * Loads encoded image-cache artwork on the currently bound connection generation.
  *
  * Tvheadend requires recorder access for authenticated image-cache files and reports
@@ -92,4 +132,27 @@ public interface ArtworkLoader {
         currentSession: CurrentSessionObservation,
         artworkId: ArtworkId,
     ): ArtworkLoadResult
+
+    /**
+     * Captures [artworkId] in the active profile's persistent artwork cache, in any session state.
+     *
+     * Returns null without a cache policy or an active profile. The default returns null.
+     */
+    @ExperimentalTvheadendApi
+    public fun cachedArtwork(artworkId: ArtworkId): CachedArtworkReference? = null
+
+    /**
+     * Reads [reference] from the persistent artwork cache only, never from the server, and neither
+     * stores, refreshes nor removes entries beyond what a normal cache hit does.
+     *
+     * Bytes are returned only while the profile that created [reference] is still active:
+     * otherwise the result is [TvheadendFailure.OBSERVATION_EXPIRED], or
+     * [TvheadendFailure.CONNECTION_CHANGED] when the profile changed during the read. An absent,
+     * expired, corrupt or cleared entry is [TvheadendFailure.NOT_READY]; it implies nothing about
+     * the server, and [loadArtwork] may still succeed once the session is ready. The default
+     * returns [TvheadendFailure.NOT_SUPPORTED].
+     */
+    @ExperimentalTvheadendApi
+    public suspend fun loadCachedArtwork(reference: CachedArtworkReference): ArtworkLoadResult =
+        ArtworkLoadResult.Unavailable(TvheadendFailure.NOT_SUPPORTED)
 }
