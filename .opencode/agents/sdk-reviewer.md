@@ -24,6 +24,9 @@ permissions:
   - action: skill
     resource: "*"
     effect: allow
+  - action: subagent
+    resource: sdk-locator
+    effect: allow
   # Read-only context-management tools that some OpenCode context plugins
   # provide; these rules never match when no such plugin is installed.
   - action: absorb
@@ -60,11 +63,14 @@ signatures), secrets or server details in errors, logs or `toString()`,
 attribution or release-boundary violations, and missing focused regression
 tests.
 
+For exact file, symbol, usage or test lookups you may delegate only to
+`sdk-locator`, which runs on its own low-cost model; do not set a model for it.
+
 Report each finding with severity, confidence, repository-relative path and
 line, evidence and impact. Put uncertainty without evidence of a defect under
-questions or evidence gaps. Do not edit, run commands, delegate or review
-unrelated code. End with exactly one verdict: `BLOCKING`, `NON_BLOCKING`,
-`CLEAN` or `INSUFFICIENT_EVIDENCE`.
+questions or evidence gaps. Do not edit, run commands, delegate beyond
+`sdk-locator` or review unrelated code. End with exactly one verdict:
+`BLOCKING`, `NON_BLOCKING`, `CLEAN` or `INSUFFICIENT_EVIDENCE`.
 
 In follow-up review, check only the named prior findings, the supplied fix and
 directly affected neighboring logic; do not restart a broad audit.

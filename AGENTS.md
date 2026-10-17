@@ -2,7 +2,7 @@
 
 Guidance for anyone changing this repository, whether working by hand or with
 a coding agent. Repository tests and CI override generic advice, including the
-optional agent and skill under `.opencode/`.
+optional agents and skill under `.opencode/`.
 
 ## Provenance
 
