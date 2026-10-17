@@ -105,6 +105,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.awaitCancellation
@@ -582,6 +583,129 @@ internal class ConnectionOwnerTest {
             if (2L in channels) assertEquals(second.cacheNamespace(), identity, "Profile B data carries B identity")
         }
         assertNull(owner.observation.value.profileIdentity, "Shutdown clears the identity with the data")
+    }
+
+    @Test
+    fun `restored cache seeds carry their profile identity through disconnect and switches`(
+        @org.junit.jupiter.api.io.TempDir root: File,
+    ) = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val store = GatedMetadataCacheStore(at.bernhardberger.tvheadend.sdk.core.cache.FileMetadataCacheStore(root))
+        val gateway = FakeProtocolGateway()
+        val metadata = PhaseOneSessionMetadata()
+        val owner = owner(
+            gateway = gateway,
+            metadata = metadata,
+            children = PlaybackSessionChildren(gateway, metadata, dispatcher, Clock.System),
+            cacheRuntime = MetadataCacheRuntime(store, MetadataCachePolicy.create(root), dispatcher, Clock.System),
+        )
+        val id = ArtworkId(1)
+        val first = ServerProfile("fixture")
+        val second = ServerProfile("other")
+        val now = Clock.System.now()
+        // Both profiles saved a catalog and bytes for the same server-scoped artwork id.
+        for ((profile, channel) in listOf(first to 11L, second to 22L)) {
+            store.storeCatalog(
+                profile.cacheNamespace(),
+                CachedCatalog(ChannelCatalog.create(channels = listOf(Channel.create(SdkChannelId(channel), "Cached")))),
+                now,
+            )
+        }
+        FileArtworkCacheStore(root).apply {
+            store(first.cacheNamespace(), id, byteArrayOf(1), now, now - 1.days, Long.MAX_VALUE)
+            store(second.cacheNamespace(), id, byteArrayOf(2), now, now - 1.days, Long.MAX_VALUE)
+        }
+        val observed = mutableListOf<at.bernhardberger.tvheadend.sdk.core.SessionObservation>()
+        backgroundScope.launch(kotlinx.coroutines.test.UnconfinedTestDispatcher(testScheduler)) {
+            owner.observation.collect(observed::add)
+        }
+        fun channels(observation: at.bernhardberger.tvheadend.sdk.core.SessionObservation): List<Long> =
+            observation.channelCatalogForDisplay?.channels.orEmpty().map { it.id.value }
+        suspend fun bytes(reference: CachedArtworkReference): ByteArray? =
+            (owner.artwork.loadCachedArtwork(reference) as? ArtworkLoadResult.Available)?.content?.openStream()?.readBytes()
+        // Returns the observation published while synchronizing, which carries the restored seed.
+        suspend fun syncLive(profile: ServerProfile, channel: Long): at.bernhardberger.tvheadend.sdk.core.SessionObservation {
+            val generation = GatewayGeneration()
+            gateway.connectResults += connected(generation)
+            owner.connect(profile)
+            runCurrent()
+            val seeded = owner.observation.value
+            gateway.emitMetadata(MetadataEvent.ChannelAdded(generation, channelMetadata(channel)))
+            gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+            runCurrent()
+            return seeded
+        }
+
+        try {
+            // Restore finishing after Ready keeps A's identity with A's data.
+            val lateA = CompletableDeferred<Unit>().also { store.gates[first.cacheNamespace()] = it }
+            syncLive(first, 1)
+            assertTrue(owner.observation.value.sessionState is SessionState.Ready)
+            lateA.complete(Unit)
+            runCurrent()
+            val readyA = owner.observation.value
+            assertEquals(first.cacheNamespace(), readyA.profileIdentity)
+            val reference = requireNotNull(owner.artwork.cachedArtwork(readyA, id))
+            assertArrayEquals(byteArrayOf(1), bytes(reference))
+
+            // Disconnect retains A; connecting B takes the explicit clear path and restores B's seed.
+            owner.disconnect()
+            runCurrent()
+            assertEquals(first.cacheNamespace(), owner.observation.value.profileIdentity)
+            gateway.connectResults += connected(GatewayGeneration())
+            owner.connect(second)
+            runCurrent()
+            val seededB = owner.observation.value
+            assertEquals(listOf(22L), channels(seededB), "B's cache seed is published")
+            assertEquals(second.cacheNamespace(), seededB.profileIdentity)
+            assertNull(owner.artwork.cachedArtwork(readyA, id), "Profile A ids never map to profile B")
+            assertEquals(TvheadendFailure.OBSERVATION_EXPIRED, (owner.artwork.loadCachedArtwork(reference) as ArtworkLoadResult.Unavailable).failure)
+            assertArrayEquals(byteArrayOf(2), bytes(requireNotNull(owner.artwork.cachedArtwork(seededB, id))))
+
+            // Direct switches with a cache: B -> A seeds A's persisted catalog, A -> B seeds B's.
+            val seededA = syncLive(first, 1)
+            assertEquals(listOf(1L), channels(seededA), "A's persisted live catalog is restored")
+            assertEquals(first.cacheNamespace(), seededA.profileIdentity)
+            assertNull(owner.artwork.cachedArtwork(seededB, id))
+            val reseededB = syncLive(second, 2)
+            assertTrue(channels(reseededB).isNotEmpty(), "B's cache seed is published")
+            assertEquals(second.cacheNamespace(), reseededB.profileIdentity)
+            assertNull(owner.artwork.cachedArtwork(seededA, id), "A's seed never maps to profile B")
+            assertNull(owner.artwork.cachedArtwork(readyA, id))
+
+            // A's disk read finishing while the switch to B joins it never publishes A's seed under B.
+            val pendingA = CompletableDeferred<Unit>().also { store.gates[first.cacheNamespace()] = it }
+            gateway.connectResults += connected(GatewayGeneration())
+            owner.connect(first)
+            runCurrent()
+            val generation = GatewayGeneration()
+            gateway.connectResults += connected(generation)
+            val switching = async { owner.connect(second) }
+            runCurrent()
+            assertFalse(switching.isCompleted, "The switch joins the in-flight restore")
+            pendingA.complete(Unit)
+            runCurrent()
+            switching.await()
+            gateway.emitMetadata(MetadataEvent.ChannelAdded(generation, channelMetadata(2)))
+            gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+            runCurrent()
+            assertEquals(second.cacheNamespace(), owner.observation.value.profileIdentity)
+            assertEquals(listOf(2L), channels(owner.observation.value))
+        } finally {
+            store.gates.values.forEach { it.complete(Unit) }
+            owner.shutdown()
+        }
+
+        assertTrue(observed.any { it.profileIdentity == second.cacheNamespace() && 22L in channels(it) })
+        observed.forEach { observation ->
+            val ids = channels(observation)
+            if (ids.any { it == 1L || it == 11L }) {
+                assertEquals(first.cacheNamespace(), observation.profileIdentity, "Profile A data carries A identity")
+            }
+            if (ids.any { it == 2L || it == 22L }) {
+                assertEquals(second.cacheNamespace(), observation.profileIdentity, "Profile B data carries B identity")
+            }
+        }
     }
 
     @Test
@@ -3019,6 +3143,16 @@ private class InMemoryMetadataCacheStore(
     }
 
     override suspend fun statistics(): CacheStatistics = CacheStatistics.EMPTY
+}
+
+/** Delays one namespace's catalog restore until its gate completes, like an uninterruptible disk read. */
+private class GatedMetadataCacheStore(private val delegate: MetadataCacheStore) : MetadataCacheStore by delegate {
+    val gates = mutableMapOf<CacheNamespace, CompletableDeferred<Unit>>()
+
+    override suspend fun loadCatalog(namespace: CacheNamespace, notBefore: Instant): CachedCatalog? {
+        gates[namespace]?.let { gate -> withContext(NonCancellable) { gate.await() } }
+        return delegate.loadCatalog(namespace, notBefore)
+    }
 }
 
 private fun ConnectionOwner.currentCatalog(): ChannelCatalog =

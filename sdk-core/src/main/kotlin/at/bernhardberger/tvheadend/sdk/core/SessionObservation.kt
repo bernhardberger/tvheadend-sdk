@@ -402,7 +402,9 @@ internal class SessionObservationStore {
     // profile-bound lookups (saved artwork) never resolve one profile's ids under another. The
     // owner keeps it atomic with the data: a full clear drops it under the metadata lock before
     // publishing the emptied data, a new profile's identity is selected before that profile's
-    // worker exists, and same-profile reconnects retain both. Equality includes the identity,
+    // worker exists, and same-profile reconnects retain both. A publication between dropping the
+    // identity and publishing the emptied data is intentionally safe: it pairs the old data with
+    // no identity, and a null identity resolves nothing. Equality includes the identity,
     // so a MutableStateFlow never keeps an equal instance carrying a stale one.
     private var profileIdentity: CacheNamespace? = null
 

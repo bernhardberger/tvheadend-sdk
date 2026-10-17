@@ -13,7 +13,9 @@ Unreleased; development target.
   id)` by `TvheadendArtwork.cached(session, observation, id)`; after a profile
   switch, models built from the previous profile's observations return `null`
   instead of the new profile's bytes for an equal `ArtworkId`.
-  `SessionObservation` equality now also distinguishes the observed profile.
+  `SessionObservation` equality now also distinguishes the observed profile,
+  and selecting a different profile emits one additional observation that
+  differs only in that internal profile identity.
   `FakeTvheadendSession` and `SessionGenerationTestAuthority` gain experimental
   `publish(observation, profile)` and `replaceGeneration(observation, profile)`
   overloads, and `TvheadendTestResultFactory.cachedArtwork(observation, id)`
