@@ -216,6 +216,9 @@ internal class TvheadendArtworkTest {
         assertNull(TvheadendArtwork.cached(session, SessionObservation.create(), ArtworkId(5)))
         val current = requireNotNull(TvheadendArtwork.cached(session, profileObservation(active), ArtworkId(5)))
         assertEquals(loader.cachedReference?.cacheKey, current.memoryCacheKey())
+        val later = requireNotNull(TvheadendArtwork.cached(session, profileObservation(active), ArtworkId(5)))
+        assertEquals(current, later)
+        assertEquals(current.hashCode(), later.hashCode())
     }
 
     @Test

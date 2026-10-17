@@ -77,7 +77,9 @@ public class TvheadendArtwork private constructor(
          * Returns null without a cache policy, when [observation] carries no profile data, or when
          * its profile is not active. The memory key equals that of [create] for the same profile
          * and artwork, so switching to [create] once a current session exists reuses the decoded
-         * image. Fetches never reach the server and fail with [TvheadendArtworkLoadException] on a
+         * image. Models for the same session, profile and artwork are equal whichever observation
+         * of that profile created them, so recreating them on every observation emission does not
+         * restart an image request. Fetches never reach the server and fail with [TvheadendArtworkLoadException] on a
          * cache miss, once another profile is active, briefly while an explicit connect or retry
          * restarts the session, and after disconnect until the next connect. Images already
          * decoded into Coil's memory cache are unaffected.
