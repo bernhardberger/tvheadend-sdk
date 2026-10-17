@@ -134,9 +134,23 @@ public class FakeTvheadendSession(
     public fun publish(observation: SessionObservation) {
         authority.publish(observation)
     }
+    /**
+     * Publishes state like [publish], stamped as data of [profile] (or of none when null), so
+     * profile-bound lookups such as [ArtworkLoader.cachedArtwork] resolve against it. Later
+     * publications keep that profile until another one is selected.
+     */
+    @ExperimentalTvheadendApi
+    public fun publish(observation: SessionObservation, profile: ServerProfile?) {
+        authority.publish(observation, profile)
+    }
     /** Publishes ready state under replacement generation authority. */
     public fun replaceGeneration(observation: SessionObservation) {
         authority.replaceGeneration(observation)
+    }
+    /** Publishes like [replaceGeneration], stamped as data of [profile] (see the profile [publish]). */
+    @ExperimentalTvheadendApi
+    public fun replaceGeneration(observation: SessionObservation, profile: ServerProfile?) {
+        authority.replaceGeneration(observation, profile)
     }
     /** Retires current proof with a complete non-current observation. */
     public fun retire(observation: SessionObservation = SessionObservation.create()) {
@@ -702,10 +716,11 @@ public class FakeArtworkLoader internal constructor(
     private val issuedCachedIds = mutableMapOf<String, ArtworkId>()
 
     /**
-     * Scripts the disk-only cached path. References are issued for [profile], or not at all when
-     * it is null (no cache policy or active profile). Like a real session, loads return [result]
-     * while the scripted profile has the same cache identity (host, port and username) as the one
-     * a reference was issued under, and [TvheadendFailure.OBSERVATION_EXPIRED] otherwise.
+     * Scripts the disk-only cached path with [profile] as the active profile, or none when null
+     * (no cache policy or active profile). Like a real session, references are issued only for
+     * observations published as data of the active profile's cache identity (host, port and
+     * username), and loads return [result] while the active profile still has the identity a
+     * reference was issued under, and [TvheadendFailure.OBSERVATION_EXPIRED] otherwise.
      */
     @ExperimentalTvheadendApi
     public fun scriptCached(
@@ -719,9 +734,14 @@ public class FakeArtworkLoader internal constructor(
     }
 
     @ExperimentalTvheadendApi
-    override fun cachedArtwork(artworkId: ArtworkId): CachedArtworkReference? = synchronized(lock) {
-        cachedProfile?.let { TvheadendTestResultFactory.cachedArtwork(it, artworkId) }
-            ?.also { issuedCachedIds[it.cacheKey] = artworkId }
+    override fun cachedArtwork(
+        observation: SessionObservation,
+        artworkId: ArtworkId,
+    ): CachedArtworkReference? = synchronized(lock) {
+        val profile = cachedProfile ?: return@synchronized null
+        TvheadendTestResultFactory.cachedArtwork(observation, artworkId)
+            ?.takeIf { reference -> reference == TvheadendTestResultFactory.cachedArtwork(profile, artworkId) }
+            ?.also { reference -> issuedCachedIds[reference.cacheKey] = artworkId }
     }
 
     @ExperimentalTvheadendApi

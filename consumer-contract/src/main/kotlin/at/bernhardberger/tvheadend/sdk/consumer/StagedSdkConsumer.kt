@@ -344,7 +344,8 @@ public class StagedSdkConsumer(
     public fun artworkFailure(failure: TvheadendArtworkLoadException): TvheadendFailure =
         failure.failure
 
-    public fun cachedArtwork(id: ArtworkId): TvheadendArtwork? = TvheadendArtwork.cached(session, id)
+    public fun cachedArtwork(observation: SessionObservation, id: ArtworkId): TvheadendArtwork? =
+        TvheadendArtwork.cached(session, observation, id)
 
     public fun channel(id: ChannelId): Channel? = observation.value.channel(id)
 

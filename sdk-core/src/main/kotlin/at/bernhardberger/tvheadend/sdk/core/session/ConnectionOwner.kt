@@ -109,8 +109,14 @@ internal class ConnectionOwner(
         }
 
         @ExperimentalTvheadendApi
-        override fun cachedArtwork(artworkId: ArtworkId): CachedArtworkReference? {
-            val namespace = synchronized(stateLock) { artworkNamespace } ?: return null
+        override fun cachedArtwork(
+            observation: SessionObservation,
+            artworkId: ArtworkId,
+        ): CachedArtworkReference? {
+            // The observation names the profile whose ids it carries; never map them to another.
+            val namespace = synchronized(stateLock) {
+                observation.profileIdentity?.takeIf { identity -> identity == artworkNamespace }
+            } ?: return null
             return CachedArtworkReference.create(namespace, artworkId)
         }
 
@@ -380,7 +386,13 @@ internal class ConnectionOwner(
             // username, so an account change alone cannot replace an equal StateFlow value.
             // Same-profile reconnect/retry retains both the account and its published snapshot.
             metadata.selectAccount((profile.authentication as? ServerAuthentication.Password)?.username)
-            artworkNamespace = if (cacheRuntime != null) profile.cacheNamespace() else null
+            // Observation profile identity: every caller cleared the previous profile's data and
+            // identity under this lock (or retained both for the same profile) and retired its
+            // worker, restore and generation. Selecting it here, before this profile's worker
+            // exists, means no publication pairs one profile's data with another's identity.
+            val namespace = profile.cacheNamespace()
+            metadata.selectProfile(namespace)
+            artworkNamespace = namespace.takeIf { cacheRuntime != null }
             latestDvrCapabilityRevision = null
             retryDisposition = null
         }

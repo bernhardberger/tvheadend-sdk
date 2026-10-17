@@ -126,6 +126,7 @@ import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNotSame
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
@@ -477,13 +478,14 @@ internal class ConnectionOwnerTest {
         suspend fun failure(reference: CachedArtworkReference): TvheadendFailure? =
             (owner.artwork.loadCachedArtwork(reference) as? ArtworkLoadResult.Unavailable)?.failure
 
-        assertNull(owner.artwork.cachedArtwork(id), "No active profile")
+        assertNull(owner.artwork.cachedArtwork(owner.observation.value, id), "No active profile")
         owner.connect(first)
         runCurrent()
         assertTrue(owner.observation.value.sessionState is SessionState.Unavailable)
-        val reference = requireNotNull(owner.artwork.cachedArtwork(id))
+        val observedA = owner.observation.value
+        val reference = requireNotNull(owner.artwork.cachedArtwork(observedA, id))
         assertArrayEquals(byteArrayOf(1), bytes(reference))
-        assertEquals(TvheadendFailure.NOT_READY, failure(requireNotNull(owner.artwork.cachedArtwork(ArtworkId(2)))))
+        assertEquals(TvheadendFailure.NOT_READY, failure(requireNotNull(owner.artwork.cachedArtwork(observedA, ArtworkId(2)))))
         assertEquals("CachedArtworkReference(<redacted>)", reference.toString())
 
         val generation = GatewayGeneration()
@@ -491,23 +493,31 @@ internal class ConnectionOwnerTest {
         assertEquals(SessionCommandResult.STARTED, owner.retry())
         runCurrent()
         assertTrue(owner.observation.value.sessionState is SessionState.Synchronizing)
-        assertEquals(reference, owner.artwork.cachedArtwork(id))
+        assertEquals(reference, owner.artwork.cachedArtwork(observedA, id), "Same-profile retry keeps the identity")
+        assertEquals(reference, owner.artwork.cachedArtwork(owner.observation.value, id))
         assertArrayEquals(byteArrayOf(1), bytes(reference))
         gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
         runCurrent()
-        val proof = requireNotNull(owner.observation.value.currentSession)
+        val readyA = owner.observation.value
+        val proof = requireNotNull(readyA.currentSession)
         assertEquals(owner.artwork.cacheKey(proof, id), reference.cacheKey)
 
         gateway.connectResults += connected(GatewayGeneration())
         owner.connect(second)
         runCurrent()
+        // Both profiles saved bytes for the same server-scoped id: A's models never resolve B's.
+        assertNull(owner.artwork.cachedArtwork(observedA, id), "Profile A ids never map to profile B")
+        assertNull(owner.artwork.cachedArtwork(readyA, id), "Profile A ids never map to profile B")
         assertEquals(TvheadendFailure.OBSERVATION_EXPIRED, failure(reference), "Profile A never reads under B")
-        val switched = requireNotNull(owner.artwork.cachedArtwork(id))
+        val observedB = owner.observation.value
+        val switched = requireNotNull(owner.artwork.cachedArtwork(observedB, id))
         assertNotEquals(reference, switched)
         assertNotEquals(reference.cacheKey, switched.cacheKey)
         assertArrayEquals(byteArrayOf(2), bytes(switched))
         owner.connect(first)
         runCurrent()
+        assertEquals(reference, owner.artwork.cachedArtwork(readyA, id), "A observations resolve once A is active")
+        assertNull(owner.artwork.cachedArtwork(observedB, id))
         assertArrayEquals(byteArrayOf(1), bytes(reference), "A reference reads again once A is active")
         assertEquals(TvheadendFailure.OBSERVATION_EXPIRED, failure(switched))
         owner.connect(second)
@@ -516,7 +526,8 @@ internal class ConnectionOwnerTest {
         owner.cache.clear()
         assertEquals(TvheadendFailure.NOT_READY, failure(switched))
         owner.disconnect()
-        assertNull(owner.artwork.cachedArtwork(id))
+        assertNull(owner.artwork.cachedArtwork(owner.observation.value, id))
+        assertNull(owner.artwork.cachedArtwork(observedB, id))
         assertEquals(TvheadendFailure.OBSERVATION_EXPIRED, failure(switched))
         assertEquals(0, gateway.artworkCalls)
         owner.shutdown()
@@ -524,12 +535,53 @@ internal class ConnectionOwnerTest {
         val uncached = owner(FakeProtocolGateway())
         uncached.connect(first)
         runCurrent()
-        assertNull(uncached.artwork.cachedArtwork(id), "No cache policy")
+        assertNull(uncached.artwork.cachedArtwork(uncached.observation.value, id), "No cache policy")
         assertEquals(
             TvheadendFailure.OBSERVATION_EXPIRED,
             (uncached.artwork.loadCachedArtwork(reference) as ArtworkLoadResult.Unavailable).failure,
         )
         uncached.shutdown()
+    }
+
+    @Test
+    fun `observations never pair one profile's data with another profile's identity`() = runTest {
+        val gateway = FakeProtocolGateway()
+        val owner = owner(gateway)
+        val first = ServerProfile("fixture")
+        val second = ServerProfile("other")
+        val observed = mutableListOf<at.bernhardberger.tvheadend.sdk.core.SessionObservation>()
+        backgroundScope.launch(kotlinx.coroutines.test.UnconfinedTestDispatcher(testScheduler)) {
+            owner.observation.collect(observed::add)
+        }
+        for ((index, profile) in listOf(first, second, first).withIndex()) {
+            val generation = GatewayGeneration()
+            gateway.connectResults += connected(generation)
+            owner.connect(profile)
+            runCurrent()
+            gateway.emitMetadata(MetadataEvent.ChannelAdded(generation, channelMetadata(if (index == 1) 2 else 1)))
+            gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+            runCurrent()
+            assertEquals(profile.cacheNamespace(), owner.observation.value.profileIdentity)
+            if (index == 0) {
+                // A same-profile reconnect retains both the snapshot and its identity.
+                gateway.emitFailure(GatewayConnectionFailureEvent(GatewayConnectionFailure.TRANSPORT_UNAVAILABLE, generation))
+                runCurrent()
+                assertTrue(owner.observation.value.sessionState !is SessionState.Ready)
+                assertNotNull(owner.observation.value.channel(SdkChannelId(1)))
+                assertEquals(first.cacheNamespace(), owner.observation.value.profileIdentity)
+            }
+        }
+        owner.shutdown()
+
+        val identities = observed.map { observation ->
+            observation.profileIdentity to observation.channelCatalogForDisplay?.channels.orEmpty().map { it.id.value }
+        }
+        assertTrue(identities.any { (identity, channels) -> identity == second.cacheNamespace() && channels == listOf(2L) })
+        identities.forEach { (identity, channels) ->
+            if (1L in channels) assertEquals(first.cacheNamespace(), identity, "Profile A data carries A identity")
+            if (2L in channels) assertEquals(second.cacheNamespace(), identity, "Profile B data carries B identity")
+        }
+        assertNull(owner.observation.value.profileIdentity, "Shutdown clears the identity with the data")
     }
 
     @Test
@@ -549,7 +601,7 @@ internal class ConnectionOwnerTest {
         FileArtworkCacheStore(root).store(first.cacheNamespace(), id, byteArrayOf(1), now, now - 1.days, Long.MAX_VALUE)
         owner.connect(first)
         runCurrent()
-        val reference = requireNotNull(owner.artwork.cachedArtwork(id))
+        val reference = requireNotNull(owner.artwork.cachedArtwork(owner.observation.value, id))
         // Passes the entry check, then suspends while dispatching the read to the IO dispatcher.
         val pending = async(start = CoroutineStart.UNDISPATCHED) { owner.artwork.loadCachedArtwork(reference) }
         owner.connect(ServerProfile("other"))

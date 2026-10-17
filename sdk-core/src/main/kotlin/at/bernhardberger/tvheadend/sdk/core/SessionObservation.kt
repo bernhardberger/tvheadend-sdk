@@ -2,6 +2,7 @@
 
 package at.bernhardberger.tvheadend.sdk.core
 
+import at.bernhardberger.tvheadend.sdk.core.cache.CacheNamespace
 import at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
 
 import java.util.Collections
@@ -25,6 +26,8 @@ public class SessionObservation private constructor(
     @ExperimentalTvheadendApi public val dvrRefreshTimes: MetadataRefreshTimes,
     queryTimes: Map<ChannelId, Instant>,
     private val ownAccountUsername: String?,
+    /** Opaque identity of the profile whose data this observation contains, if any. */
+    internal val profileIdentity: CacheNamespace?,
 ) {
     /** Last locally accepted successful query per channel; absence means unknown. */
     @ExperimentalTvheadendApi
@@ -211,6 +214,7 @@ public class SessionObservation private constructor(
             epgRefreshTimes == other.epgRefreshTimes &&
             dvrRefreshTimes == other.dvrRefreshTimes &&
             epgLastQueriedAt == other.epgLastQueriedAt &&
+            profileIdentity == other.profileIdentity &&
             currentSession === other.currentSession
 
     override fun hashCode(): Int {
@@ -225,6 +229,7 @@ public class SessionObservation private constructor(
         result = 31 * result + epgRefreshTimes.hashCode()
         result = 31 * result + dvrRefreshTimes.hashCode()
         result = 31 * result + epgLastQueriedAt.hashCode()
+        result = 31 * result + profileIdentity.hashCode()
         result = 31 * result + (currentSession?.let(System::identityHashCode) ?: 0)
         return result
     }
@@ -309,6 +314,7 @@ public class SessionObservation private constructor(
             dvrRefreshTimes: MetadataRefreshTimes = MetadataRefreshTimes(),
             epgLastQueriedAt: Map<ChannelId, Instant> = emptyMap(),
             ownAccountUsername: String? = null,
+            profileIdentity: CacheNamespace? = null,
         ): SessionObservation {
             val current = if (
                 generation != null &&
@@ -341,6 +347,7 @@ public class SessionObservation private constructor(
                 dvrRefreshTimes = dvrRefreshTimes,
                 queryTimes = epgLastQueriedAt,
                 ownAccountUsername = ownAccountUsername,
+                profileIdentity = profileIdentity,
             )
         }
     }
@@ -389,6 +396,26 @@ internal class SessionObservationStore {
     // Same-profile reconnects retain both the account and the published snapshot.
     internal fun selectAccount(username: String?) = synchronized(lock) {
         ownAccountUsername = username
+    }
+
+    // Every publication carries the identity of the profile whose data it contains, so
+    // profile-bound lookups (saved artwork) never resolve one profile's ids under another. The
+    // owner keeps it atomic with the data: a full clear drops it under the metadata lock before
+    // publishing the emptied data, a new profile's identity is selected before that profile's
+    // worker exists, and same-profile reconnects retain both. Equality includes the identity,
+    // so a MutableStateFlow never keeps an equal instance carrying a stale one.
+    private var profileIdentity: CacheNamespace? = null
+
+    /** Selects the identity for subsequent publications and republishes when it changed. */
+    internal fun selectProfile(identity: CacheNamespace?) = synchronized(lock) {
+        if (profileIdentity == identity) return@synchronized
+        profileIdentity = identity
+        publishLocked()
+    }
+
+    /** Drops the identity without publishing; the caller's full clear publishes next. */
+    internal fun clearProfile() = synchronized(lock) {
+        profileIdentity = null
     }
 
     internal val observation: StateFlow<SessionObservation> = mutableObservation.asStateFlow()
@@ -501,6 +528,18 @@ internal class SessionObservationStore {
         }
     }
 
+    /** Publishes [observation] together with [profileIdentity] as one atomic replacement. */
+    internal fun publishObservation(
+        observation: SessionObservation,
+        generation: Any?,
+        profileIdentity: CacheNamespace?,
+    ) {
+        synchronized(lock) {
+            this.profileIdentity = profileIdentity
+            publishObservation(observation, generation)
+        }
+    }
+
     private fun publishLocked(
         channelRefreshTimes: MetadataRefreshTimes = mutableObservation.value.channelRefreshTimes,
         epgRefreshTimes: MetadataRefreshTimes = mutableObservation.value.epgRefreshTimes,
@@ -530,6 +569,7 @@ internal class SessionObservationStore {
             generationIdentity = readyGenerationIdentity,
             previousCurrent = previous.currentSession,
             ownAccountUsername = ownAccountUsername,
+            profileIdentity = profileIdentity,
             channelRefreshTimes = channelRefreshTimes,
             epgRefreshTimes = epgRefreshTimes,
             dvrRefreshTimes = dvrRefreshTimes,

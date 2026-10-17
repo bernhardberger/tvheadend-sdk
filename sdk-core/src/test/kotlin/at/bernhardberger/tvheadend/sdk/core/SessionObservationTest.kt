@@ -2,6 +2,7 @@
 
 package at.bernhardberger.tvheadend.sdk.core
 
+import at.bernhardberger.tvheadend.sdk.core.cache.cacheNamespace
 import java.lang.reflect.InvocationHandler
 import java.lang.reflect.Modifier
 import java.lang.reflect.Proxy
@@ -296,6 +297,38 @@ internal class SessionObservationTest {
         val replacement = SessionObservation.create(epgState = EpgRepositoryState.Current(EpgSnapshot.create()))
         assertNull(replacement.event(EventId(1)))
         assertSame(index[EventId(1)], retained.event(EventId(1)))
+    }
+
+    @Test
+    fun `profile identity separates equal data and changes only with a publication`() {
+        val first = cacheNamespace("a.invalid", 9982, "")
+        val second = cacheNamespace("b.invalid", 9982, "")
+        val store = SessionObservationStore()
+        val anonymous = store.observation.value
+        store.selectProfile(first)
+        val observedFirst = store.observation.value
+        assertNotSame(anonymous, observedFirst, "Selecting a profile republishes")
+        assertNotEquals(anonymous, observedFirst)
+        assertEquals(first, observedFirst.profileIdentity)
+        store.selectProfile(first)
+        assertSame(observedFirst, store.observation.value, "An unchanged profile does not republish")
+        store.publishSessionState(SessionState.Connecting, RecordingProgressCapability.UNKNOWN, null)
+        assertEquals(first, store.observation.value.profileIdentity, "Publications keep the profile")
+
+        val sameProfile = SessionObservationStore().apply { selectProfile(first) }.observation.value
+        val otherProfile = SessionObservationStore().apply { selectProfile(second) }.observation.value
+        assertEquals(observedFirst, sameProfile)
+        assertEquals(observedFirst.hashCode(), sameProfile.hashCode())
+        assertNotEquals(observedFirst, otherProfile, "Equal data from different profiles is not equal")
+        assertEquals("SessionObservation(<redacted>)", observedFirst.toString())
+
+        store.clearProfile()
+        assertEquals(first, store.observation.value.profileIdentity, "Clearing waits for the cleared data")
+        store.publishMetadata(
+            ChannelRepositoryState.Empty, EpgRepositoryState.Empty, DvrRepositoryState.Empty,
+            DvrConfigurationsState.Unknown, DvrDiskSpaceState.Unknown,
+        )
+        assertNull(store.observation.value.profileIdentity)
     }
 
     @Test

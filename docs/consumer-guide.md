@@ -1461,28 +1461,37 @@ integration; the SDK policy owns persistence. Catch
 exception text. Coil owns decoding and closes successful image sources. This
 component is not a URI factory or a generic image cache.
 
-Experimental `TvheadendArtwork.cached(session, id)` shows logos from the SDK's
-persistent artwork cache before `Ready` and while offline. It returns `null`
-without a cache policy or an active profile, and its fetches never reach the
-server. The model is bound to the profile active at creation: once another
-profile is active it fails with `OBSERVATION_EXPIRED` (or `CONNECTION_CHANGED`
-when the switch races the read) and never shows that profile's bytes, even for
-an equal `ArtworkId`. Fetches also fail briefly while an explicit `connect` or
-`retry` restarts the session, even for the same profile, and after `disconnect`
-until the next `connect`; an image Coil already decoded stays in its memory
-cache. A missing, expired or
-cleared entry fails with `NOT_READY`. Its memory key equals the `create` model's key for the same
-profile and artwork, so switching to `create` once a current session exists
-reuses the decoded image without a second load:
+Experimental `TvheadendArtwork.cached(session, observation, id)` shows logos
+from the SDK's persistent artwork cache before `Ready` and while offline. Pass
+the observation the `ArtworkId` came from: artwork ids are server-scoped, so the
+model is bound to that observation's profile, never to whichever profile is
+active when the model is mapped. It returns `null` without a cache policy, for
+an observation without profile data, or while the observation's profile is not
+active, so a screen still built from profile A's catalog after a switch to B
+gets `null` instead of B's bytes for an equal `ArtworkId`. Its fetches never
+reach the server. Once another profile is active an existing model fails with
+`OBSERVATION_EXPIRED` (or `CONNECTION_CHANGED` when the switch races the read)
+and never shows that profile's bytes. Fetches also fail briefly while an
+explicit `connect` or `retry` restarts the session, even for the same profile,
+and after `disconnect` until the next `connect`; an image Coil already decoded
+stays in its memory cache. A same-profile reconnect keeps earlier observations
+usable, and A's observations work again once A is active again. A missing,
+expired or cleared entry fails with `NOT_READY`. Its memory key equals the
+`create` model's key for the same profile and artwork, so switching to `create`
+once a current session exists reuses the decoded image without a second load:
 
 ```kotlin
 val artwork = observed.currentSession
     ?.let { TvheadendArtwork.create(session, it, icon) }
-    ?: TvheadendArtwork.cached(session, icon)
+    ?: TvheadendArtwork.cached(session, observed, icon)
 ```
 
-Without Coil, `ArtworkLoader.cachedArtwork` and `loadCachedArtwork` expose the
-same disk-only path; custom loaders default to `null` and `NOT_SUPPORTED`.
+Without Coil, `ArtworkLoader.cachedArtwork(observation, id)` and
+`loadCachedArtwork` expose the same disk-only path; custom loaders default to
+`null` and `NOT_SUPPORTED`. In tests, `FakeTvheadendSession.publish(observation,
+profile)` stamps published observations as data of a `ServerProfile`, and
+`artwork.scriptCached(profile)` selects the active profile, so two profiles can
+share an `ArtworkId` without resolving each other's references.
 
 ## Test a consumer
 

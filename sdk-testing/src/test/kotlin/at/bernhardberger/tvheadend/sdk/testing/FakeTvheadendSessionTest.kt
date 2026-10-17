@@ -63,6 +63,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -299,18 +300,35 @@ internal class FakeTvheadendSessionTest {
     }
 
     @Test
-    fun `scripts cached artwork bound to the scripted profile`() = runTest {
-        val fake = FakeTvheadendSession(currentObservation())
+    fun `scripts cached artwork bound to the observed profile`() = runTest {
+        val a = ServerProfile("a.invalid")
+        val b = ServerProfile("b.invalid")
+        val id = ArtworkId(1)
+        val fake = FakeTvheadendSession()
         val bytes = ArtworkLoadResult.Available(ArtworkContent.create(byteArrayOf(7)))
-        org.junit.jupiter.api.Assertions.assertNull(fake.artwork.cachedArtwork(ArtworkId(1)))
+        fake.artwork.scriptCached(a, bytes)
+        org.junit.jupiter.api.Assertions.assertNull(
+            fake.artwork.cachedArtwork(fake.observation.value, id),
+            "An observation without profile data resolves nothing",
+        )
 
-        fake.artwork.scriptCached(ServerProfile("a.invalid"), bytes)
-        val first = requireNotNull(fake.artwork.cachedArtwork(ArtworkId(1)))
-        assertEquals(first, fake.artwork.cachedArtwork(ArtworkId(1)))
+        fake.publish(SessionObservation.create(), a)
+        val observedA = fake.observation.value
+        val first = requireNotNull(fake.artwork.cachedArtwork(observedA, id))
+        assertEquals(first, fake.artwork.cachedArtwork(observedA, id))
         assertSame(bytes, fake.artwork.loadCachedArtwork(first))
+        fake.publish(SessionObservation.create(sessionState = SessionState.Connecting))
+        assertNotNull(fake.artwork.cachedArtwork(fake.observation.value, id), "Publishing keeps the profile")
 
-        fake.artwork.scriptCached(ServerProfile("b.invalid"), bytes)
-        val second = requireNotNull(fake.artwork.cachedArtwork(ArtworkId(1)))
+        fake.artwork.scriptCached(b, bytes)
+        fake.publish(SessionObservation.create(), b)
+        val observedB = fake.observation.value
+        org.junit.jupiter.api.Assertions.assertNotEquals(observedA, observedB, "Equal data, different profiles")
+        org.junit.jupiter.api.Assertions.assertNull(
+            fake.artwork.cachedArtwork(observedA, id),
+            "A's artwork id never maps to B's bytes",
+        )
+        val second = requireNotNull(fake.artwork.cachedArtwork(observedB, id))
         org.junit.jupiter.api.Assertions.assertNotEquals(first.cacheKey, second.cacheKey)
         assertEquals(
             TvheadendFailure.OBSERVATION_EXPIRED,
@@ -318,7 +336,8 @@ internal class FakeTvheadendSessionTest {
         )
         assertSame(bytes, fake.artwork.loadCachedArtwork(second))
 
-        fake.artwork.scriptCached(ServerProfile("a.invalid"), bytes)
+        fake.artwork.scriptCached(a, bytes)
+        assertEquals(first, fake.artwork.cachedArtwork(observedA, id), "A observations resolve once A is active")
         assertSame(bytes, fake.artwork.loadCachedArtwork(first), "Equal profile identity reads again")
         assertEquals(
             TvheadendFailure.OBSERVATION_EXPIRED,
@@ -326,7 +345,20 @@ internal class FakeTvheadendSessionTest {
         )
 
         fake.artwork.scriptCached(null)
-        org.junit.jupiter.api.Assertions.assertNull(fake.artwork.cachedArtwork(ArtworkId(1)))
+        org.junit.jupiter.api.Assertions.assertNull(fake.artwork.cachedArtwork(observedA, id))
+    }
+
+    @Test
+    fun `replacement generations can carry a profile`() {
+        val profile = ServerProfile("a.invalid")
+        val fake = FakeTvheadendSession()
+        fake.artwork.scriptCached(profile)
+        fake.replaceGeneration(currentObservation(), profile)
+        val first = fake.captureCurrentSession()
+        assertNotNull(fake.artwork.cachedArtwork(fake.observation.value, ArtworkId(1)))
+        fake.replaceGeneration(currentObservation(), null)
+        org.junit.jupiter.api.Assertions.assertNotSame(first, fake.captureCurrentSession())
+        org.junit.jupiter.api.Assertions.assertNull(fake.artwork.cachedArtwork(fake.observation.value, ArtworkId(1)))
     }
 
     @Test

@@ -4,6 +4,21 @@
 
 Unreleased; development target.
 
+### Changed
+
+- BREAKING (experimental API): saved-artwork lookups are bound to the profile
+  of the observation that named the artwork, not to the profile active when the
+  model is mapped. `ArtworkLoader.cachedArtwork(artworkId)` is replaced by
+  `cachedArtwork(observation, artworkId)` and `TvheadendArtwork.cached(session,
+  id)` by `TvheadendArtwork.cached(session, observation, id)`; after a profile
+  switch, models built from the previous profile's observations return `null`
+  instead of the new profile's bytes for an equal `ArtworkId`.
+  `SessionObservation` equality now also distinguishes the observed profile.
+  `FakeTvheadendSession` and `SessionGenerationTestAuthority` gain experimental
+  `publish(observation, profile)` and `replaceGeneration(observation, profile)`
+  overloads, and `TvheadendTestResultFactory.cachedArtwork(observation, id)`
+  supports custom fake loaders.
+
 ## [0.32.0]
 
 Released 2026-10-16.

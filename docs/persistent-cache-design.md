@@ -290,10 +290,15 @@ sdk-android `TvheadendArtwork` changes:
 - Update the KDoc at `:67-74` that currently states persistent caching is not
   authorised, and the `sdk-android` changelog.
 
-Experimental cached references (`ArtworkLoader.cachedArtwork`) read the disk
-store only, in any session state. A reference captures the active profile's
-namespace opaquely at creation; a load reads only that namespace and returns
-bytes only while it is still the active namespace. The namespace is checked
+Experimental cached references (`ArtworkLoader.cachedArtwork(observation, id)`)
+read the disk store only, in any session state. Every `SessionObservation`
+carries the namespace of the profile whose data it contains as an internal,
+redacted identity that participates in equality: a full clear drops it with the
+data, the next profile's identity is stamped before that profile's worker can
+publish, and same-profile reconnects retain it. A reference captures the
+observation's namespace, and only while it is the active namespace, so ids from
+one profile's observation never resolve under another; a load reads only that
+namespace and returns bytes only while it is still the active namespace. The namespace is checked
 before the read under the artwork mutex and again after the mutex is released.
 Misses never fetch, store or remove beyond a normal hit, so they are not
 authority for `FILE_UNAVAILABLE` removal. The reference's `cacheKey` is the

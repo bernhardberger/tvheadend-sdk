@@ -7,6 +7,7 @@ import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
 import at.bernhardberger.tvheadend.sdk.core.CachedArtworkReference
 import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
 import at.bernhardberger.tvheadend.sdk.core.SessionGenerationIdentity
+import at.bernhardberger.tvheadend.sdk.core.SessionObservation
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
 import at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
 import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
@@ -69,19 +70,25 @@ public class TvheadendArtwork private constructor(
         ): TvheadendArtwork = TvheadendArtwork(session, currentSession, id)
 
         /**
-         * Creates a disk-only model for [id] in the active profile's persistent artwork cache,
-         * usable in any session state, including before ready and offline.
+         * Creates a disk-only model for [id], as named by [observation], in the persistent artwork
+         * cache of [observation]'s profile, usable in any session state, including before ready
+         * and offline. A model built from one profile's data never shows another profile's bytes.
          *
-         * Returns null without a cache policy or an active profile. The memory key equals that of
-         * [create] for the same profile and artwork, so switching to [create] once a current
-         * session exists reuses the decoded image. Fetches never reach the server and fail with
-         * [TvheadendArtworkLoadException] on a cache miss, once another profile is active, briefly
-         * while an explicit connect or retry restarts the session, and after disconnect until the
-         * next connect. Images already decoded into Coil's memory cache are unaffected.
+         * Returns null without a cache policy, when [observation] carries no profile data, or when
+         * its profile is not active. The memory key equals that of [create] for the same profile
+         * and artwork, so switching to [create] once a current session exists reuses the decoded
+         * image. Fetches never reach the server and fail with [TvheadendArtworkLoadException] on a
+         * cache miss, once another profile is active, briefly while an explicit connect or retry
+         * restarts the session, and after disconnect until the next connect. Images already
+         * decoded into Coil's memory cache are unaffected.
          */
         @ExperimentalTvheadendApi
-        public fun cached(session: TvheadendSession, id: ArtworkId): TvheadendArtwork? =
-            session.artwork.cachedArtwork(id)?.let { TvheadendArtwork(session, null, id, it) }
+        public fun cached(
+            session: TvheadendSession,
+            observation: SessionObservation,
+            id: ArtworkId,
+        ): TvheadendArtwork? =
+            session.artwork.cachedArtwork(observation, id)?.let { TvheadendArtwork(session, null, id, it) }
     }
 }
 
@@ -94,7 +101,8 @@ public class TvheadendArtwork private constructor(
  * eviction and clearing. Coil memory hits may reuse already-decoded content without a fetch.
  *
  * Experimental [TvheadendArtwork.cached] models read only the SDK's persistent cache for the
- * profile active at creation, report [DataSource.DISK], and share the restart-stable key of
+ * profile of the observation they were created from, report [DataSource.DISK], and share the
+ * restart-stable key of
  * current-session models for the same profile and artwork.
  */
 public fun ComponentRegistry.Builder.addTvheadendArtwork(): ComponentRegistry.Builder = apply {

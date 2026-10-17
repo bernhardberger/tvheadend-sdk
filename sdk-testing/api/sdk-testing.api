@@ -12,7 +12,7 @@ public final class at/bernhardberger/tvheadend/sdk/testing/DvrRecordingFixture {
 
 public final class at/bernhardberger/tvheadend/sdk/testing/FakeArtworkLoader : at/bernhardberger/tvheadend/sdk/core/ArtworkLoader {
 	public fun cacheKey-noSgMNw (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;I)Ljava/lang/String;
-	public fun cachedArtwork-CvLOJc8 (I)Lat/bernhardberger/tvheadend/sdk/core/CachedArtworkReference;
+	public fun cachedArtwork-noSgMNw (Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;I)Lat/bernhardberger/tvheadend/sdk/core/CachedArtworkReference;
 	public fun loadArtwork-j_U-F9s (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;ILkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun loadCachedArtwork (Lat/bernhardberger/tvheadend/sdk/core/CachedArtworkReference;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun scriptCached (Lat/bernhardberger/tvheadend/sdk/core/ServerProfile;Lat/bernhardberger/tvheadend/sdk/core/ArtworkLoadResult;)V
@@ -188,7 +188,9 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeTvheadendSession 
 	public fun getStreamProfiles (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun isCurrent (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;)Z
 	public final fun publish (Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;)V
+	public final fun publish (Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;Lat/bernhardberger/tvheadend/sdk/core/ServerProfile;)V
 	public final fun replaceGeneration (Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;)V
+	public final fun replaceGeneration (Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;Lat/bernhardberger/tvheadend/sdk/core/ServerProfile;)V
 	public final fun retire (Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;)V
 	public static synthetic fun retire$default (Lat/bernhardberger/tvheadend/sdk/testing/FakeTvheadendSession;Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;ILjava/lang/Object;)V
 	public fun retry (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;

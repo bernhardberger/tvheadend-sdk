@@ -24,6 +24,7 @@ import at.bernhardberger.tvheadend.sdk.core.ServerCapabilities
 import at.bernhardberger.tvheadend.sdk.core.ServerProfile
 import at.bernhardberger.tvheadend.sdk.core.SessionCache
 import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
+import at.bernhardberger.tvheadend.sdk.core.SessionGenerationTestAuthority
 import at.bernhardberger.tvheadend.sdk.core.SessionObservation
 import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.TvheadendSession
@@ -177,11 +178,13 @@ internal class TvheadendArtworkTest {
             cachedReference = reference
             cachedResult = ArtworkLoadResult.Available(ArtworkContent.create(byteArrayOf(5, 6)))
         }
-        val session = sessionWith(loader, MutableStateFlow(SessionObservation.create()))
-        val uncached = sessionWith(FakeArtworkLoader(), MutableStateFlow(SessionObservation.create()))
-        assertNull(TvheadendArtwork.cached(uncached, ArtworkId(5)))
-        val artwork = requireNotNull(TvheadendArtwork.cached(session, ArtworkId(5)))
-        assertEquals(artwork, TvheadendArtwork.cached(session, ArtworkId(5)))
+        val observed = profileObservation(ServerProfile("fixture"))
+        val session = sessionWith(loader, MutableStateFlow(observed))
+        val uncached = sessionWith(FakeArtworkLoader(), MutableStateFlow(observed))
+        assertNull(TvheadendArtwork.cached(uncached, observed, ArtworkId(5)))
+        val artwork = requireNotNull(TvheadendArtwork.cached(session, observed, ArtworkId(5)))
+        assertSame(observed, loader.lastObservation)
+        assertEquals(artwork, TvheadendArtwork.cached(session, observed, ArtworkId(5)))
         assertEquals(reference.cacheKey, artwork.memoryCacheKey())
         assertEquals("TvheadendArtwork(<redacted>)", artwork.toString())
 
@@ -192,12 +195,27 @@ internal class TvheadendArtworkTest {
         } finally {
             result.source.close()
         }
-        assertSame(reference, loader.lastReference)
+        assertEquals(reference, loader.lastReference)
         assertNull(loader.lastCurrentSession)
 
         loader.cachedResult = ArtworkLoadResult.Unavailable(TvheadendFailure.NOT_READY)
         val failure = runCatching { TvheadendArtworkFetcher(artwork).fetch() }.exceptionOrNull()
         assertSame(TvheadendFailure.NOT_READY, (failure as TvheadendArtworkLoadException).failure)
+    }
+
+    @Test
+    fun `cached models never map another profile's artwork ids to the active profile`() = runTest {
+        val active = ServerProfile("active.invalid")
+        val loader = FakeArtworkLoader().apply {
+            cachedReference = TvheadendTestResultFactory.cachedArtwork(active, ArtworkId(5))
+        }
+        val session = sessionWith(loader, MutableStateFlow(SessionObservation.create()))
+        val previous = profileObservation(ServerProfile("previous.invalid"))
+
+        assertNull(TvheadendArtwork.cached(session, previous, ArtworkId(5)))
+        assertNull(TvheadendArtwork.cached(session, SessionObservation.create(), ArtworkId(5)))
+        val current = requireNotNull(TvheadendArtwork.cached(session, profileObservation(active), ArtworkId(5)))
+        assertEquals(loader.cachedReference?.cacheKey, current.memoryCacheKey())
     }
 
     @Test
@@ -300,6 +318,9 @@ private class FakeArtworkSession(
     private fun <T> unsupported(): T = error("Unexpected session call")
 }
 
+private fun profileObservation(profile: ServerProfile): SessionObservation =
+    SessionGenerationTestAuthority().apply { publish(SessionObservation.create(), profile) }.observation.value
+
 private class FakeArtworkLoader(
     internal var result: ArtworkLoadResult =
         ArtworkLoadResult.Unavailable(TvheadendFailure.FILE_UNAVAILABLE),
@@ -312,7 +333,14 @@ private class FakeArtworkLoader(
     internal var cachedResult: ArtworkLoadResult = ArtworkLoadResult.Unavailable(TvheadendFailure.NOT_READY)
     internal var lastReference: CachedArtworkReference? = null
 
-    override fun cachedArtwork(artworkId: ArtworkId): CachedArtworkReference? = cachedReference
+    internal var lastObservation: SessionObservation? = null
+
+    // Like a real session: only the active profile's observations resolve.
+    override fun cachedArtwork(observation: SessionObservation, artworkId: ArtworkId): CachedArtworkReference? {
+        lastObservation = observation
+        return TvheadendTestResultFactory.cachedArtwork(observation, artworkId)
+            ?.takeIf { reference -> reference == cachedReference }
+    }
 
     override suspend fun loadCachedArtwork(reference: CachedArtworkReference): ArtworkLoadResult {
         lastReference = reference

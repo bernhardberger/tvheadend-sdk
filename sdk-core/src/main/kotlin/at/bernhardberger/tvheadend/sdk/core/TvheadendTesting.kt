@@ -5,6 +5,7 @@
 
 package at.bernhardberger.tvheadend.sdk.core
 
+import at.bernhardberger.tvheadend.sdk.core.cache.CacheNamespace
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
@@ -37,6 +38,7 @@ public class SessionGenerationTestAuthority(
     private val lock = Any()
     private val store = SessionObservationStore()
     private var generation: Any? = null
+    private var profileIdentity: CacheNamespace? = null
     /** Atomic observations carrying proofs authored by this authority. */
     public val observation: StateFlow<SessionObservation> = store.observation
     init {
@@ -44,26 +46,43 @@ public class SessionGenerationTestAuthority(
     }
     /** Publishes state in the current generation, creating one when ready state first appears. */
     public fun publish(observation: SessionObservation) {
-        synchronized(lock) {
-            val publishedGeneration = if (observation.sessionState is SessionState.Ready) {
-                generation ?: Any().also { generation = it }
-            } else {
-                generation = null
-                null
-            }
-            store.publishObservation(observation, publishedGeneration)
-        }
+        synchronized(lock) { publishLocked(observation, profileIdentity) }
+    }
+    /**
+     * Publishes state like [publish], atomically stamped as data of [profile], or of no profile
+     * when null. Later publications keep that profile until another one is selected.
+     */
+    @ExperimentalTvheadendApi
+    public fun publish(observation: SessionObservation, profile: ServerProfile?) {
+        synchronized(lock) { publishLocked(observation, profile?.cacheNamespace()) }
     }
     /** Publishes ready state under a new generation and retires every prior proof. */
     public fun replaceGeneration(observation: SessionObservation) {
+        synchronized(lock) { replaceGenerationLocked(observation, profileIdentity) }
+    }
+    /** Publishes like [replaceGeneration], atomically stamped as data of [profile] (see [publish]). */
+    @ExperimentalTvheadendApi
+    public fun replaceGeneration(observation: SessionObservation, profile: ServerProfile?) {
+        synchronized(lock) { replaceGenerationLocked(observation, profile?.cacheNamespace()) }
+    }
+    private fun publishLocked(observation: SessionObservation, identity: CacheNamespace?) {
+        val publishedGeneration = if (observation.sessionState is SessionState.Ready) {
+            generation ?: Any().also { generation = it }
+        } else {
+            generation = null
+            null
+        }
+        profileIdentity = identity
+        store.publishObservation(observation, publishedGeneration, identity)
+    }
+    private fun replaceGenerationLocked(observation: SessionObservation, identity: CacheNamespace?) {
         require(observation.sessionState is SessionState.Ready) {
             "A replacement generation requires a ready session observation"
         }
-        synchronized(lock) {
-            val replacement = Any()
-            generation = replacement
-            store.publishObservation(observation, replacement)
-        }
+        val replacement = Any()
+        generation = replacement
+        profileIdentity = identity
+        store.publishObservation(observation, replacement, identity)
     }
 }
 /** Test-only factories for otherwise opaque playback bindings and admission values used by session fakes. */
@@ -170,6 +189,16 @@ public object TvheadendTestResultFactory {
     @JvmStatic
     public fun cachedArtwork(profile: ServerProfile, artworkId: ArtworkId): CachedArtworkReference =
         CachedArtworkReference.create(profile.cacheNamespace(), artworkId)
+
+    /**
+     * Creates the cached-artwork reference a real session would derive from [observation]'s
+     * profile, ignoring which profile is active, or null when [observation] carries no profile
+     * data. Fake [ArtworkLoader]s compare it with [cachedArtwork] for their active profile.
+     */
+    @ExperimentalTvheadendApi
+    @JvmStatic
+    public fun cachedArtwork(observation: SessionObservation, artworkId: ArtworkId): CachedArtworkReference? =
+        observation.profileIdentity?.let { namespace -> CachedArtworkReference.create(namespace, artworkId) }
 
     private fun boundRecordingPlayback(
         session: TvheadendSession,

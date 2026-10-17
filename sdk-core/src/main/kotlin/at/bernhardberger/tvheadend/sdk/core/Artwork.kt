@@ -77,8 +77,8 @@ public sealed interface ArtworkLoadResult {
 }
 
 /**
- * Opaque reference to one artwork entry in the persistent cache of the profile that was active
- * when [ArtworkLoader.cachedArtwork] created it.
+ * Opaque reference to one artwork entry in the persistent cache of the profile whose observation
+ * [ArtworkLoader.cachedArtwork] created it from.
  *
  * It names neither a path, an endpoint nor the profile; equality is by captured profile and
  * artwork identity. It is not load authority for the server.
@@ -134,12 +134,20 @@ public interface ArtworkLoader {
     ): ArtworkLoadResult
 
     /**
-     * Captures [artworkId] in the active profile's persistent artwork cache, in any session state.
+     * Captures [artworkId], as named by [observation], in the persistent artwork cache of the
+     * profile whose data [observation] contains, in any session state.
      *
-     * Returns null without a cache policy or an active profile. The default returns null.
+     * Artwork ids are server-scoped, so the reference is bound to [observation]'s profile, never
+     * to whichever profile is active when the model is mapped. Returns null without a cache
+     * policy, when [observation] carries no profile data, or when its profile is not the active
+     * one; an observation becomes usable again once its profile is active again. The default
+     * returns null.
      */
     @ExperimentalTvheadendApi
-    public fun cachedArtwork(artworkId: ArtworkId): CachedArtworkReference? = null
+    public fun cachedArtwork(
+        observation: SessionObservation,
+        artworkId: ArtworkId,
+    ): CachedArtworkReference? = null
 
     /**
      * Reads [reference] from the persistent artwork cache only, never from the server, and neither

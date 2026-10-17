@@ -49,6 +49,7 @@ import at.bernhardberger.tvheadend.sdk.core.SessionObservationStore
 import at.bernhardberger.tvheadend.sdk.core.SessionState
 import at.bernhardberger.tvheadend.sdk.core.StreamProfilesResult
 import at.bernhardberger.tvheadend.sdk.core.channelCatalogForDisplay
+import at.bernhardberger.tvheadend.sdk.core.cache.CacheNamespace
 import at.bernhardberger.tvheadend.sdk.core.cache.CachedCatalog
 import at.bernhardberger.tvheadend.sdk.core.cache.CachedEpg
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
@@ -155,6 +156,12 @@ internal interface SessionMetadata {
     )
 
     public fun selectAccount(username: String?)
+
+    /**
+     * Stamps [identity] on this and later observations. A full clear drops it with the data;
+     * a retained reset keeps it.
+     */
+    public fun selectProfile(identity: CacheNamespace)
 
     /**
      * Resets working state but keeps [publishedSnapshots].
@@ -614,6 +621,10 @@ internal class PhaseOneSessionMetadata(
         observationStore.selectAccount(username)
     }
 
+    override fun selectProfile(identity: CacheNamespace) {
+        observationStore.selectProfile(identity)
+    }
+
     override fun resetWorkingStateRetainingPublishedSnapshot(): PublishedSnapshots? =
         resetState(retainPublishedCatalog = true)
 
@@ -712,6 +723,8 @@ internal class PhaseOneSessionMetadata(
             if (!retainPublishedCatalog) {
                 epgRestorePending = false
                 observationStore.selectAccount(null)
+                // The emptied data below is published without the retired profile's identity.
+                observationStore.clearProfile()
                 channelRefreshTimes = MetadataRefreshTimes()
                 epgRefreshTimes = MetadataRefreshTimes()
                 dvrRefreshTimes = MetadataRefreshTimes()
