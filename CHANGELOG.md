@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.33.0]
+
+Unreleased; development target.
+
 ## [0.32.0]
 
 Released 2026-10-16.

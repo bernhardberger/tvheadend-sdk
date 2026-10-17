@@ -236,6 +236,13 @@ preserves DVR configurations during edits. See the changelog for consumer migrat
 the cached catalog and near guide window beside connecting, and watches
 connection failures through HTSP generation termination.
 
+### 0.32: short initial guide sync and saved artwork (released)
+
+0.32.0 was released on 2026-10-16. It requests a six-hour initial guide window,
+keeps the cached guide beyond live coverage as display carryover, shows saved
+artwork before `Ready` and offline, and times out the initial sync only when
+metadata stalls.
+
 ### Next 0.x minors: player-driven gaps
 
 The owner decided on 2026-10-12 not to start the 1.0 track yet. 0.x minors
