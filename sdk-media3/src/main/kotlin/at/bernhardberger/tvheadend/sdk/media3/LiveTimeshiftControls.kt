@@ -12,6 +12,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionState
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTracks
 import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.util.Collections
@@ -253,6 +254,12 @@ internal class LiveTimeshiftControlBridge(
     private val lock = Any()
     /** Installed on the application looper before the source can dispatch a command. */
     @Volatile internal var skipBuffering: (suspend (Any?, PlayerOperationTicket?, suspend () -> SubscriptionSeekResult) -> SubscriptionSeekResult)? = null
+    /**
+     * Installed on the application looper before the source can create a period. Receives the
+     * declared video frame duration of the bound period's tracks under this bridge's lock, so it
+     * must not call back into the bridge.
+     */
+    @Volatile internal var publishDeclaredVideoFrameDuration: ((Duration?) -> Unit)? = null
     private var nextAttachmentSequence = 0L
     private var newestBoundSequence = -1L
     private var newestTerminalAttachment: Attachment? = null
@@ -398,6 +405,7 @@ internal class LiveTimeshiftControlBridge(
             publishObservation(
                 LivePlaybackObservation.Active(LiveTimeshiftState.Unavailable, null, null),
             )
+            publishDeclaredVideoFrameDurationLocked()
         }
     }
 
@@ -789,7 +797,12 @@ internal class LiveTimeshiftControlBridge(
         internal var periodUid: Any? = null
         private var sampleOriginUs = 0L
         internal fun sampleOrigin(originUs: Long) { synchronized(lock) { sampleOriginUs = originUs } }
-        internal fun tracksReady(validated: SubscriptionTracks) { synchronized(lock) { tracks = validated } }
+        internal fun tracksReady(validated: SubscriptionTracks) {
+            synchronized(lock) {
+                tracks = validated
+                if (activeAttachment === this) publishDeclaredVideoFrameDurationLocked()
+            }
+        }
         internal var grant: Duration? = null
         private var latestStatus: SubscriptionEvent.Timeshift? = null
         private var wallClockMapping: TimeshiftWallClockMapping = TimeshiftWallClockMapping.Unavailable
@@ -1180,12 +1193,29 @@ internal class LiveTimeshiftControlBridge(
         issue: Boolean = true,
         diagnostics: Boolean = true,
     ) {
+        // Not deferred by an observation replacement: the Player adapter fences targets itself.
+        publishDeclaredVideoFrameDurationLocked()
         if (observationReplacement != null) return
         if (state) publishStateLocked(currentState)
         if (issue) publishIssueLocked(currentIssue)
         if (diagnostics) publishDiagnosticsLocked(currentDiagnostics)
         publishObservation(
             LivePlaybackObservation.Active(currentState, currentIssue, currentDiagnostics, serverStopped),
+        )
+    }
+
+    /** Only the bound, nonterminal period's own tracks declare the duration; stops and turnovers clear it. */
+    private fun publishDeclaredVideoFrameDurationLocked() {
+        val publish = publishDeclaredVideoFrameDuration ?: return
+        publish(
+            if (retired || !token.isActive()) {
+                null
+            } else {
+                activeAttachment
+                    ?.takeUnless { it.terminal || it.detached }
+                    ?.tracks
+                    ?.declaredVideoFrameDuration()
+            },
         )
     }
 
@@ -1211,6 +1241,21 @@ internal class LiveTimeshiftControlBridge(
         val tracks: SubscriptionTracks,
     )
 }
+
+/** The video stream with the lowest stream index decides; zero and absent durations are unknown. */
+private fun SubscriptionTracks.declaredVideoFrameDuration(): Duration? =
+    streams.filter { it.type in DECLARED_FRAME_DURATION_VIDEO_TYPES }
+        .minByOrNull { it.index.value }
+        ?.frameDuration
+        ?.takeIf { it > 0L }
+        ?.microseconds
+
+// Keep in sync with DECLARED_FRAME_DURATION_VIDEO_TYPES in sdk-core PlaybackBinding.kt.
+private val DECLARED_FRAME_DURATION_VIDEO_TYPES = setOf(
+    SubscriptionStreamType.MPEG2_VIDEO,
+    SubscriptionStreamType.H264,
+    SubscriptionStreamType.H265,
+)
 
 private fun SubscriptionEvent.isDiagnosticsObservation(): Boolean =
     this is SubscriptionEvent.Started ||

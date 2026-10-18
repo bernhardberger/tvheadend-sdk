@@ -26,7 +26,10 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -144,6 +147,51 @@ internal class PlaybackBindingTest {
             assertEquals(listOf(generationA), fixture.metadata.progressGenerations)
             assertEquals(listOf(generationA), fixture.metadata.cutpointGenerations)
         }
+
+    @Test
+    fun `recording binding declares the played file's first video frame duration while current`() {
+        val fixture = BindingFixture()
+        val generation = GatewayGeneration()
+        // Tvheadend plays the last file; earlier files never decide.
+        fun files(played: List<DvrRecordingStream>?) = listOf(
+            recordingFile(fileId = 1, streams = listOf(
+                DvrRecordingStream(SubscriptionStreamType.H264, frameDuration = 20.milliseconds),
+            )),
+            recordingFile(fileId = 2, streams = played),
+        )
+        fixture.publishReady(
+            generation,
+            recordingFiles = files(listOf(
+                DvrRecordingStream(SubscriptionStreamType.AAC, frameDuration = 21.milliseconds),
+                DvrRecordingStream(SubscriptionStreamType.MPEG2_VIDEO, frameDuration = 40.milliseconds),
+                DvrRecordingStream(SubscriptionStreamType.H265, frameDuration = 20.milliseconds),
+            )),
+        )
+        val binding = fixture.factory.bindRecording(fixture.currentSession, DvrEntryId(7)).requireBound()
+
+        assertEquals(40.milliseconds, binding.declaredVideoFrameDuration)
+        listOf(
+            listOf(DvrRecordingStream(SubscriptionStreamType.H264, frameDuration = Duration.ZERO)),
+            listOf(
+                DvrRecordingStream(SubscriptionStreamType.H264),
+                DvrRecordingStream(SubscriptionStreamType.H265, frameDuration = 20.milliseconds),
+            ),
+            listOf(DvrRecordingStream(SubscriptionStreamType.AAC, frameDuration = 21.milliseconds)),
+            null,
+        ).forEach { streams ->
+            fixture.updateCompletedProgress(generation, 37.seconds, files = files(streams))
+            assertTrue(binding.admission is RecordingPlaybackAdmission.Completed)
+            assertNull(binding.declaredVideoFrameDuration)
+        }
+
+        fixture.updateCompletedProgress(generation, 37.seconds, files = files(listOf(
+            DvrRecordingStream(SubscriptionStreamType.H264, frameDuration = 40.milliseconds),
+        )))
+        assertEquals(40.milliseconds, binding.declaredVideoFrameDuration)
+        fixture.publishReady(GatewayGeneration())
+        assertSame(RecordingPlaybackAdmission.ObservationExpired, binding.admission)
+        assertNull(binding.declaredVideoFrameDuration)
+    }
 
     @Test
     fun `completed playback remains admitted without progress support and starts over`() =
@@ -562,12 +610,14 @@ private fun recordingEntry(
 private fun recordingFile(
     fileId: Long = 1,
     path: String? = "/recording.ts",
+    streams: List<DvrRecordingStream>? = null,
 ): GatewayDvrRecordingFile = GatewayDvrRecordingFile(
     fileId = fileId,
     path = path,
     start = null,
     stop = null,
     sizeBytes = 1,
+    streams = streams,
 )
 
 private class CapturingBindingMetadata(

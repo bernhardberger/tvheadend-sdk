@@ -1240,16 +1240,17 @@ public final class at/bernhardberger/tvheadend/sdk/core/DvrRecordingFile$Compani
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/DvrRecordingStream {
-	public fun <init> ()V
-	public fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionStreamType;Ljava/lang/String;Ljava/lang/Integer;Ljava/lang/Integer;)V
-	public synthetic fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionStreamType;Ljava/lang/String;Ljava/lang/Integer;Ljava/lang/Integer;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionStreamType;Ljava/lang/String;Ljava/lang/Integer;Ljava/lang/Integer;Lkotlin/time/Duration;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionStreamType;Ljava/lang/String;Ljava/lang/Integer;Ljava/lang/Integer;Lkotlin/time/Duration;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun component1 ()Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionStreamType;
 	public final fun component2 ()Ljava/lang/String;
 	public final fun component3 ()Ljava/lang/Integer;
 	public final fun component4 ()Ljava/lang/Integer;
-	public final fun copy (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionStreamType;Ljava/lang/String;Ljava/lang/Integer;Ljava/lang/Integer;)Lat/bernhardberger/tvheadend/sdk/core/DvrRecordingStream;
-	public static synthetic fun copy$default (Lat/bernhardberger/tvheadend/sdk/core/DvrRecordingStream;Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionStreamType;Ljava/lang/String;Ljava/lang/Integer;Ljava/lang/Integer;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/DvrRecordingStream;
+	public final fun component5-FghU774 ()Lkotlin/time/Duration;
+	public final fun copy-jSaE0eg (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionStreamType;Ljava/lang/String;Ljava/lang/Integer;Ljava/lang/Integer;Lkotlin/time/Duration;)Lat/bernhardberger/tvheadend/sdk/core/DvrRecordingStream;
+	public static synthetic fun copy-jSaE0eg$default (Lat/bernhardberger/tvheadend/sdk/core/DvrRecordingStream;Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionStreamType;Ljava/lang/String;Ljava/lang/Integer;Ljava/lang/Integer;Lkotlin/time/Duration;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/DvrRecordingStream;
 	public fun equals (Ljava/lang/Object;)Z
+	public final fun getFrameDuration-FghU774 ()Lkotlin/time/Duration;
 	public final fun getHeight ()Ljava/lang/Integer;
 	public final fun getLanguage ()Ljava/lang/String;
 	public final fun getType ()Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionStreamType;
@@ -1917,6 +1918,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/PlaybackBinding$Recordin
 	public final fun bindGrowingRecording ()Lat/bernhardberger/tvheadend/sdk/playback/RecordingFileResult;
 	public final fun cutpoints (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun getAdmission ()Lat/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmission;
+	public final fun getDeclaredVideoFrameDuration-FghU774 ()Lkotlin/time/Duration;
 	public final fun getStartedGrowing ()Z
 	public final fun openRecording (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun reportProgress (Lat/bernhardberger/tvheadend/sdk/playback/GrowingRecordingFileLease;Lat/bernhardberger/tvheadend/sdk/core/DvrPlaybackProgress;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;

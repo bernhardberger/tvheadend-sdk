@@ -1078,6 +1078,26 @@ imply tuner data. Replacement, stop, termination, disconnect, close, and
 coordinator shutdown clear the state, and stale subscription generations cannot
 publish into a newer target.
 
+Experimental `declaredVideoFrameDuration` is the video frame duration the server
+declared for the coordinator's active target, for example to vote a display
+refresh rate while Media3 renders tunnelled. Live and timeshift targets use the
+lowest-indexed video stream of the currently bound period and follow the next
+stream declaration; recordings use the first video stream recorded in the entry's
+last file, which is the file Tvheadend plays, as observed at admission. The value
+is `null` without a target, after departure, while a live target has no bound
+period (including a server stop until the next start), and without a positive
+declaration; replacement, stop, shutdown and retirement clear it. A recording's
+value stays with the installed media item, whose frames may still play from
+buffer, until it is stopped, replaced or departs, or the coordinator shuts down,
+including after connection loss or a profile switch. A live value becomes `null`
+when the subscription period stops; consumers driving the display mode may keep
+the last non-null value across a brief `null` during a live restart. It is a display
+hint only and never changes Media3 formats. Tvheadend assumes 30 fps for H.264
+without VUI timing after about four seconds, indistinguishably from a real
+declaration, and reports interlaced content per frame (1080i50 is 40 ms, 720p50
+is 20 ms). `DvrRecordingStream.frameDuration` carries the same declaration for
+recording metadata.
+
 The staged Java consumer validates ordinary JVM linkage for the operation,
 aggregate getter, nested result, and explicit `Continuation` signature. It does
 not claim that Kotlin coroutine or `Flow` APIs are idiomatic Java ergonomics.

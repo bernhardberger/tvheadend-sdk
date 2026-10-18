@@ -100,6 +100,7 @@ internal sealed interface RecordingAdmission {
 internal interface PlaybackCoordinatorPlayer {
     val playerCleanupPending: StateFlow<Boolean>
     val pendingRecordingRecoveryPosition: StateFlow<Duration?>
+    val declaredVideoFrameDuration: StateFlow<Duration?>
 
     suspend fun installLive(
         ticket: PlayerOperationTicket,
@@ -214,7 +215,8 @@ internal class Media3PlaybackCoordinatorPlayer(
     private val admitRecording: (CoordinatorRecordingTarget, RecordingTargetStart) -> RecordingAdmission,
 ) : PlaybackCoordinatorPlayer {
     private val executor = PlayerLooperExecutor(access.looper)
-    private var active: InstalledPlayerTarget? = null
+    // Written on the looper; live frame-duration publication reads it under the cleanup lock.
+    @Volatile private var active: InstalledPlayerTarget? = null
     // Source identity only: retired targets must never regain observation or reporting ownership.
     private val cleanupLock = Any()
     private var cleanupAbandoned = false
@@ -223,6 +225,8 @@ internal class Media3PlaybackCoordinatorPlayer(
     override val playerCleanupPending: StateFlow<Boolean> = mutablePlayerCleanupPending.asStateFlow()
     private val mutablePendingRecoveryPosition = MutableStateFlow<Duration?>(null)
     override val pendingRecordingRecoveryPosition: StateFlow<Duration?> = mutablePendingRecoveryPosition.asStateFlow()
+    private val mutableDeclaredVideoFrameDuration = MutableStateFlow<Duration?>(null)
+    override val declaredVideoFrameDuration: StateFlow<Duration?> = mutableDeclaredVideoFrameDuration.asStateFlow()
 
     /** Looper-owned target state; the cleanup lock also fences unjoined late work after abandon. */
     private fun publishPendingRecovery() {
@@ -231,6 +235,24 @@ internal class Media3PlaybackCoordinatorPlayer(
                 (active as? InstalledPlayerTarget.Recording)?.takeIf {
                     it.token.isActive() && it.ownership != ItemOwnership.LOST
                 }?.pendingRecoveryPosition
+            publishDeclaredVideoFrameDurationLocked()
+        }
+    }
+
+    /**
+     * Publishes the active, still-owned target's declared duration. The token's atomic ownership
+     * mirrors [ItemOwnership.LOST], so live publication off the looper needs no looper state.
+     */
+    private fun publishDeclaredVideoFrameDurationLocked() {
+        mutableDeclaredVideoFrameDuration.value = if (cleanupAbandoned) null else
+            active?.takeIf { it.token.isActive() && it.token.ownsPlayerItem() }?.declaredVideoFrameDuration
+    }
+
+    /** Called under the bridge lock; retired or replaced targets only update their own snapshot. */
+    private fun publishLiveFrameDuration(installed: InstalledPlayerTarget.Live, duration: Duration?) {
+        synchronized(cleanupLock) {
+            installed.declaredVideoFrameDuration = duration
+            if (active === installed) publishDeclaredVideoFrameDurationLocked()
         }
     }
 
@@ -417,6 +439,7 @@ internal class Media3PlaybackCoordinatorPlayer(
             ?.beginObservationReplacement()
         val listener = targetListener(token, recording = false)
         val installed = InstalledPlayerTarget.Live(token, listener, source, timeshiftControls)
+        timeshiftControls.publishDeclaredVideoFrameDuration = { duration -> publishLiveFrameDuration(installed, duration) }
         active = installed
         publishPendingRecovery()
         return try {
@@ -499,7 +522,10 @@ internal class Media3PlaybackCoordinatorPlayer(
             is RecordingAdmission.Completed -> accepted.resumePosition
             is RecordingAdmission.Growing -> accepted.resumePosition
         }
-        val installed = InstalledPlayerTarget.Recording(token, listener, source, finality, resumePosition, accepted.recoveryPosition)
+        val installed = InstalledPlayerTarget.Recording(
+            token, listener, source, finality, resumePosition, accepted.recoveryPosition,
+            declaredVideoFrameDuration = target.declaredVideoFrameDuration,
+        )
         active = installed
         publishPendingRecovery()
         return try {
@@ -1064,6 +1090,7 @@ internal class Media3PlaybackCoordinatorPlayer(
             pendingCleanup = emptyList()
             mutablePlayerCleanupPending.value = false
             mutablePendingRecoveryPosition.value = null
+            mutableDeclaredVideoFrameDuration.value = null
         }
     }
 
@@ -1088,6 +1115,7 @@ internal class Media3PlaybackCoordinatorPlayer(
         var sourceInstalled: Boolean = false
         var ownership: ItemOwnership = ItemOwnership.PENDING
         var lastOwnedSnapshot: PlaybackPlayerSnapshot? = null
+        abstract val declaredVideoFrameDuration: Duration?
 
         class Live(
             token: PlaybackTargetToken,
@@ -1096,6 +1124,8 @@ internal class Media3PlaybackCoordinatorPlayer(
             val timeshiftControls: LiveTimeshiftControlBridge,
         ) : InstalledPlayerTarget(token, listener, source) {
             var recovery: CoordinatorPlaybackRecovery? = null
+            /** Latest value from [timeshiftControls], guarded by the cleanup lock. */
+            override var declaredVideoFrameDuration: Duration? = null
         }
 
         class Recording(
@@ -1105,6 +1135,7 @@ internal class Media3PlaybackCoordinatorPlayer(
             val finality: GrowingFinalitySignal?,
             private val initialResumePosition: Duration?,
             var pendingRecoveryPosition: Duration?,
+            override val declaredVideoFrameDuration: Duration?,
         ) : InstalledPlayerTarget(token, listener, source) {
             var resume: CoordinatorRecordingResume? = null
             var viewerSeekDuringInstall: Boolean = false

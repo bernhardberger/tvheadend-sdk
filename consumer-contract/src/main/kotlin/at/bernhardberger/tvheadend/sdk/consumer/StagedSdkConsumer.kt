@@ -213,6 +213,8 @@ public fun recordingStreamsForFake(): List<DvrRecordingStream> = DvrRecordingFix
 public fun recordingFileWithStreams(streams: List<DvrRecordingStream>): DvrRecordingFile =
     DvrRecordingFile.create(streams = streams)
 
+public fun recordingFrameDurations(): List<Duration?> = recordingStreamsForFake().map { it.frameDuration }
+
 public fun channelMediaLabel(channel: Channel): String = when (channel.mediaKind) {
     ChannelMediaKind.TV -> "TV"
     ChannelMediaKind.RADIO -> "Radio"
@@ -484,6 +486,9 @@ public class StagedSdkConsumer(
 
     public val pendingRecordingRecoveryPosition: StateFlow<Duration?>
         get() = coordinator.pendingRecordingRecoveryPosition
+
+    public val declaredVideoFrameDuration: StateFlow<Duration?>
+        get() = coordinator.declaredVideoFrameDuration
 
     public suspend fun startGrowing(recordingId: DvrEntryId): PlaybackTargetResult {
         val currentSession = observation.value.currentSession ?: return PlaybackTargetResult.NOT_READY

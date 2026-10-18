@@ -509,6 +509,35 @@ public class TvheadendPlaybackCoordinator internal constructor(
     public val pendingRecordingRecoveryPosition: StateFlow<Duration?> = player.pendingRecordingRecoveryPosition
 
     /**
+     * The video frame duration the server declared for the active target, or null.
+     *
+     * Use it only as a display hint, for example to choose a display refresh rate while Media3
+     * renders tunnelled; it never changes Media3 formats or playback. A live or timeshift target
+     * reports the video stream with the lowest stream index in the server's stream declaration
+     * for the currently bound period, and updates when the server declares the streams again.
+     * A recording reports the first video stream recorded in the file Tvheadend plays, which is
+     * the entry's last file, as observed when the target was admitted.
+     *
+     * Null without an active target, while the application owns the Player item, while a live
+     * target has no bound period (including a server stop until the next start), and when the
+     * selected stream declares no positive duration. Target replacement, [stop], [shutdown] and
+     * retirement clear it; a retired target's late events never set it.
+     *
+     * A recording's value describes the installed media item, whose frames may still play from
+     * buffer, so it stays until that item is stopped, replaced or departs, or the coordinator
+     * shuts down, including after connection loss or a profile switch. A live value becomes null
+     * when the subscription period stops, so consumers driving the display mode may keep the last
+     * non-null value across a brief null during a live restart.
+     *
+     * Tvheadend's value is a declaration, not a measurement. For H.264 without VUI timing it
+     * assumes 30 frames per second after about four seconds, which is indistinguishable from a
+     * real declaration. Interlaced content reports the frame duration, so 1080i50 is 40 ms while
+     * 720p50 is 20 ms. The server declares the streams again only after it has confirmed a change.
+     */
+    @ExperimentalTvheadendApi
+    public val declaredVideoFrameDuration: StateFlow<Duration?> = player.declaredVideoFrameDuration
+
+    /**
      * Launches this one-shot coordinator immediately as a child of [scope].
      *
      * Prefer [withLifetime] when the full consumer workflow fits in one suspending block.

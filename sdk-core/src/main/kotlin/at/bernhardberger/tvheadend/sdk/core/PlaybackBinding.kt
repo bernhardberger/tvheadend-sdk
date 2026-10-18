@@ -10,6 +10,7 @@ import at.bernhardberger.tvheadend.sdk.core.session.GenerationBoundGrowingRecord
 import at.bernhardberger.tvheadend.sdk.core.session.PlaybackRecordingLookup
 import at.bernhardberger.tvheadend.sdk.core.session.SessionChildren
 import at.bernhardberger.tvheadend.sdk.core.session.SessionMetadata
+import at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFile
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
@@ -18,6 +19,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEventConsumer
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import kotlin.time.Duration
 
@@ -59,10 +61,23 @@ public sealed class PlaybackBinding protected constructor() {
             DvrPlaybackProgress,
         ) -> DvrProgressResult,
         private val loadTargetCutpoints: suspend () -> DvrCutpointsResult,
+        private val observeDeclaredVideoFrameDuration: () -> Duration? = { null },
     ) : PlaybackBinding() {
         /** Current side-effect-free admission state of this exact recording target. */
         public val admission: RecordingPlaybackAdmission
             get() = observeAdmission()
+
+        /**
+         * Positive video frame duration declared in the current observation of this target, or null.
+         *
+         * It is read from the last recording file, which is the file Tvheadend opens for playback,
+         * and its first video stream in recorded order; null without such a stream or a positive
+         * declared duration, or once the target is no longer current.
+         */
+        @SubscriptionInfrastructureApi
+        @ExperimentalTvheadendApi
+        public val declaredVideoFrameDuration: Duration?
+            get() = observeDeclaredVideoFrameDuration()
 
         /** Retrieves cutpoints for this exact recording target. */
         public suspend fun cutpoints(): DvrCutpointsResult = loadTargetCutpoints()
@@ -121,7 +136,7 @@ public sealed interface RecordingPlaybackAdmission {
      * supported progress; it starts over without [resumePosition] or for an explicit start-over
      * request, and otherwise seeks near [resumePosition] once the growing timeline is seekable.
      */
-    @at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
+    @ExperimentalTvheadendApi
     public class Growing internal constructor(
         public val resumePosition: Duration?,
         public val progressCapability: RecordingProgressCapability,
@@ -275,6 +290,11 @@ internal class SessionPlaybackBindingFactory(
                         -> DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
                     }
                 },
+                observeDeclaredVideoFrameDuration = {
+                    (metadata.currentPlaybackRecording(target) as? PlaybackRecordingLookup.Current)
+                        ?.entry
+                        ?.declaredVideoFrameDuration()
+                },
                 loadTargetCutpoints = {
                     when (admission()) {
                         is RecordingPlaybackAdmission.Completed,
@@ -325,6 +345,21 @@ private fun recordingAdmission(
         else -> RecordingPlaybackAdmission.TargetUnavailable
     }
 }
+
+/** Tvheadend opens the last file of an entry; its first declared video stream in recorded order. */
+internal fun DvrEntry.declaredVideoFrameDuration(): Duration? =
+    files?.lastOrNull()
+        ?.streams
+        ?.firstOrNull { it.type in DECLARED_FRAME_DURATION_VIDEO_TYPES }
+        ?.frameDuration
+        ?.takeIf { it.isPositive() && it.isFinite() }
+
+// Keep in sync with DECLARED_FRAME_DURATION_VIDEO_TYPES in sdk-media3 LiveTimeshiftControls.kt.
+private val DECLARED_FRAME_DURATION_VIDEO_TYPES = setOf(
+    SubscriptionStreamType.MPEG2_VIDEO,
+    SubscriptionStreamType.H264,
+    SubscriptionStreamType.H265,
+)
 
 private fun GrowingRecordingFileLease.isBoundTo(
     generation: GatewayGeneration,

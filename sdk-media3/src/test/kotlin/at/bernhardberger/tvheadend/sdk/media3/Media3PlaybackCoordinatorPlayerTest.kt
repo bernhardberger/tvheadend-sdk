@@ -3076,6 +3076,196 @@ internal class Media3PlaybackCoordinatorPlayerTest {
     }
 
     @Test
+    fun `live target publishes the lowest indexed declared video frame duration and follows redeclaration`() = runTest {
+        val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
+        val events = PlaybackPlayerEventAccumulator()
+        val player = Media3PlaybackCoordinatorPlayer(access, events, admitRecording = ::admitRecordingTarget)
+        val coordinator = TvheadendPlaybackCoordinator(player, events, DvrProgressPolicy(), {}, SystemPlaybackCoordinatorTimeSource)
+        val owner = coordinator.launchIn(this)
+        try {
+            assertSame(PlaybackTargetResult.STARTED, coordinator.setLiveTarget(TestCoordinatorLiveTarget()))
+            val bridge = requireNotNull(access.liveControls)
+            val subscription = FakeTimeshiftSubscription(null)
+            val first = bridge.newAttachment().also { it.bind(subscription) }
+            assertNull(coordinator.declaredVideoFrameDuration.value, "Audio-only tracks declare no video frame duration")
+            first.tracksReady(declaredTracks(
+                declaredStream(0, SubscriptionStreamType.AAC, 21_333),
+                declaredStream(2, SubscriptionStreamType.H264, 20_000),
+                declaredStream(1, SubscriptionStreamType.H265, 40_000),
+            ))
+            assertEquals(40.milliseconds, coordinator.declaredVideoFrameDuration.value)
+
+            // A restart retires the period before the redeclared tracks reach its successor.
+            first.detach()
+            assertNull(coordinator.declaredVideoFrameDuration.value)
+            val second = bridge.newAttachment().also { it.bind(subscription) }
+            second.tracksReady(declaredTracks(declaredStream(0, SubscriptionStreamType.H264, 20_000)))
+            assertEquals(20.milliseconds, coordinator.declaredVideoFrameDuration.value)
+            first.tracksReady(declaredTracks(declaredStream(0, SubscriptionStreamType.H264, 40_000)))
+            first.accept(SubscriptionEvent.Started(streams = null, codecMetadata = null))
+            assertEquals(20.milliseconds, coordinator.declaredVideoFrameDuration.value, "A retired period cannot declare")
+
+            second.accept(SubscriptionEvent.Stopped(at.bernhardberger.tvheadend.sdk.playback.SubscriptionCondition.NO_DETAIL, null))
+            assertNull(coordinator.declaredVideoFrameDuration.value, "A server stop leaves no declared stream")
+        } finally {
+            owner.shutdown(1.seconds)
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource("0", "-1", "absent")
+    fun `live video stream without a positive declared duration publishes null`(duration: String) = runTest {
+        val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
+        val events = PlaybackPlayerEventAccumulator()
+        val player = Media3PlaybackCoordinatorPlayer(access, events, admitRecording = ::admitRecordingTarget)
+        val coordinator = TvheadendPlaybackCoordinator(player, events, DvrProgressPolicy(), {}, SystemPlaybackCoordinatorTimeSource)
+        val owner = coordinator.launchIn(this)
+        try {
+            coordinator.setLiveTarget(TestCoordinatorLiveTarget())
+            requireNotNull(access.liveControls).newAttachment().apply {
+                bind(FakeTimeshiftSubscription(null))
+                tracksReady(declaredTracks(
+                    declaredStream(0, SubscriptionStreamType.MPEG2_VIDEO, duration.toLongOrNull()),
+                    declaredStream(1, SubscriptionStreamType.H264, 40_000),
+                ))
+            }
+            assertNull(coordinator.declaredVideoFrameDuration.value)
+        } finally {
+            owner.shutdown(1.seconds)
+        }
+    }
+
+    @Test
+    fun `declared video frame duration never outlives its target`() = runTest {
+        val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
+        val events = PlaybackPlayerEventAccumulator()
+        val player = Media3PlaybackCoordinatorPlayer(access, events, admitRecording = ::admitRecordingTarget)
+        val coordinator = TvheadendPlaybackCoordinator(player, events, DvrProgressPolicy(), {}, SystemPlaybackCoordinatorTimeSource)
+        val owner = coordinator.launchIn(this)
+        val subscription = FakeTimeshiftSubscription(null)
+        fun bindLive(): LiveTimeshiftControlBridge.Attachment =
+            requireNotNull(access.liveControls).newAttachment().also {
+                it.bind(subscription)
+                it.tracksReady(declaredTracks(declaredStream(0, SubscriptionStreamType.H264, 40_000)))
+            }
+        try {
+            coordinator.setLiveTarget(TestCoordinatorLiveTarget())
+            val retired = bindLive()
+            assertEquals(40.milliseconds, coordinator.declaredVideoFrameDuration.value)
+
+            coordinator.setRecordingTarget(TestCoordinatorRecordingTarget(declaredVideoFrameDuration = 20.milliseconds))
+            assertEquals(20.milliseconds, coordinator.declaredVideoFrameDuration.value)
+            retired.tracksReady(declaredTracks(declaredStream(0, SubscriptionStreamType.H264, 40_000)))
+            retired.accept(SubscriptionEvent.Started(streams = null, codecMetadata = null))
+            assertEquals(20.milliseconds, coordinator.declaredVideoFrameDuration.value, "A retired live target cannot declare")
+
+            coordinator.setLiveTarget(TestCoordinatorLiveTarget())
+            assertNull(coordinator.declaredVideoFrameDuration.value, "A recording's duration does not describe live")
+            bindLive()
+            assertEquals(40.milliseconds, coordinator.declaredVideoFrameDuration.value)
+            coordinator.stop()
+            assertNull(coordinator.declaredVideoFrameDuration.value)
+
+            coordinator.setRecordingTarget(TestCoordinatorRecordingTarget(declaredVideoFrameDuration = 20.milliseconds))
+            access.replaceWithApplicationItem()
+            assertNull(coordinator.declaredVideoFrameDuration.value, "The application's item has no declared duration")
+
+            coordinator.setLiveTarget(TestCoordinatorLiveTarget())
+            val departed = bindLive()
+            access.replaceWithApplicationItem()
+            assertNull(coordinator.declaredVideoFrameDuration.value)
+            departed.accept(SubscriptionEvent.Started(streams = null, codecMetadata = null))
+            assertNull(coordinator.declaredVideoFrameDuration.value, "Departure is not undone by later live events")
+
+            coordinator.setRecordingTarget(TestCoordinatorRecordingTarget())
+            assertNull(coordinator.declaredVideoFrameDuration.value, "A recording without a declaration replaces the value")
+            coordinator.setLiveTarget(TestCoordinatorLiveTarget())
+            bindLive()
+            assertEquals(40.milliseconds, coordinator.declaredVideoFrameDuration.value)
+            assertSame(PlaybackShutdownResult.DRAINED, owner.shutdown(1.seconds))
+            assertNull(coordinator.declaredVideoFrameDuration.value)
+        } finally {
+            owner.shutdown(1.seconds)
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["stop", "shutdown"])
+    fun `recording declaration stays with its installed item after binding generation loss`(exit: String) = runTest {
+        val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
+        val events = PlaybackPlayerEventAccumulator()
+        val player = Media3PlaybackCoordinatorPlayer(access, events, admitRecording = ::admitRecordingTarget)
+        val coordinator = TvheadendPlaybackCoordinator(player, events, DvrProgressPolicy(), {}, SystemPlaybackCoordinatorTimeSource)
+        val owner = coordinator.launchIn(this)
+        val target = TestCoordinatorRecordingTarget(declaredVideoFrameDuration = 20.milliseconds)
+        fun pause(position: Duration) {
+            access.snapshot = access.snapshot.copy(position = position, duration = 100.seconds, playbackState = Player.STATE_READY)
+            access.deliver { it.onPlayWhenReadyChanged(true, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST) }
+            access.deliver { it.onPlayWhenReadyChanged(false, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST) }
+            runCurrent()
+        }
+        try {
+            assertSame(PlaybackTargetResult.STARTED, coordinator.setRecordingTarget(target, RecordingPlaybackStart.START_OVER))
+            pause(30.seconds)
+            assertEquals(1, target.reports.size)
+
+            // Like a real binding after connection loss or a profile switch, the target declares nothing.
+            target.admissionState = CoordinatorRecordingAdmission.ObservationExpired
+            target.declaredVideoFrameDuration = null
+            pause(40.seconds)
+            assertEquals(1, target.reports.size, "Generation loss invalidates the recording's progress epoch")
+            assertEquals(
+                20.milliseconds,
+                coordinator.declaredVideoFrameDuration.value,
+                "Buffered frames of the installed item keep their declaration",
+            )
+
+            when (exit) {
+                "stop" -> coordinator.stop()
+                else -> assertSame(PlaybackShutdownResult.DRAINED, owner.shutdown(1.seconds))
+            }
+            assertNull(coordinator.declaredVideoFrameDuration.value)
+        } finally {
+            owner.shutdown(1.seconds)
+        }
+    }
+
+    @Test
+    fun `failed live replacement restores the previous target's latest declaration`() = runTest {
+        val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
+        val events = PlaybackPlayerEventAccumulator()
+        val player = Media3PlaybackCoordinatorPlayer(access, events, admitRecording = ::admitRecordingTarget)
+        val coordinator = TvheadendPlaybackCoordinator(player, events, DvrProgressPolicy(), {}, SystemPlaybackCoordinatorTimeSource)
+        val owner = coordinator.launchIn(this)
+        val subscription = FakeTimeshiftSubscription(null)
+        try {
+            assertSame(PlaybackTargetResult.STARTED, coordinator.setLiveTarget(TestCoordinatorLiveTarget()))
+            val bridge = requireNotNull(access.liveControls)
+            val first = bridge.newAttachment().also {
+                it.bind(subscription)
+                it.tracksReady(declaredTracks(declaredStream(0, SubscriptionStreamType.H264, 40_000)))
+            }
+            assertEquals(40.milliseconds, coordinator.declaredVideoFrameDuration.value)
+            access.setMediaSourceAction = {
+                access.setMediaSourceAction = null
+                // The previous live target restarts and redeclares while its replacement is staged.
+                first.detach()
+                bridge.newAttachment().also {
+                    it.bind(subscription)
+                    it.tracksReady(declaredTracks(declaredStream(0, SubscriptionStreamType.H264, 20_000)))
+                }
+                assertNull(coordinator.declaredVideoFrameDuration.value, "The staged replacement declares nothing yet")
+            }
+            access.failNextSetMediaSource = true
+
+            assertSame(PlaybackTargetResult.PLAYER_UNAVAILABLE, coordinator.setLiveTarget(TestCoordinatorLiveTarget()))
+            assertEquals(20.milliseconds, coordinator.declaredVideoFrameDuration.value)
+        } finally {
+            owner.shutdown(1.seconds)
+        }
+    }
+
+    @Test
     fun `application seek from source installation prevents recovery from arming`() = runTest {
         val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
         val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator(), admitRecording = ::admitRecordingTarget)
@@ -3799,3 +3989,17 @@ private data object CurrentGrowingLease : GrowingRecordingFileLease {
 
 private fun controls(token: PlaybackTargetToken): LiveTimeshiftControlBridge =
     LiveTimeshiftControlBridge(token) {}
+
+private fun declaredTracks(
+    vararg streams: at.bernhardberger.tvheadend.sdk.playback.SubscriptionStream,
+): at.bernhardberger.tvheadend.sdk.playback.SubscriptionTracks =
+    at.bernhardberger.tvheadend.sdk.playback.SubscriptionTracks(streams.toList())
+
+private fun declaredStream(
+    index: Long,
+    type: SubscriptionStreamType,
+    frameDurationUs: Long?,
+): at.bernhardberger.tvheadend.sdk.playback.SubscriptionStream = at.bernhardberger.tvheadend.sdk.playback.SubscriptionStream(
+    at.bernhardberger.tvheadend.sdk.playback.StreamIndex(index), type, null, null, null, null, null,
+    frameDurationUs, null, null, null, null, null, null, null,
+)

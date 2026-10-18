@@ -57,6 +57,10 @@ internal interface CoordinatorRecordingTarget : RecordingFileOpener {
 
     val admission: CoordinatorRecordingAdmission
 
+    /** Server-declared video frame duration of the file played for this target, read at admission. */
+    val declaredVideoFrameDuration: Duration?
+        get() = null
+
     fun bindGrowingRecording(): RecordingFileResult<GrowingRecordingFileLease>
 
     suspend fun reportProgress(
@@ -73,6 +77,9 @@ internal class BoundCoordinatorRecordingTarget(
 
     override val admission: CoordinatorRecordingAdmission
         get() = binding.admission.toCoordinatorAdmission()
+
+    override val declaredVideoFrameDuration: Duration?
+        get() = binding.declaredVideoFrameDuration
 
     override suspend fun openRecording(): RecordingFileResult<RecordingFile> =
         binding.openRecording()

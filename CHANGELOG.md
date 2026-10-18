@@ -4,6 +4,31 @@
 
 Unreleased; development target.
 
+### Added
+
+- Experimental `TvheadendPlaybackCoordinator.declaredVideoFrameDuration`
+  publishes the server-declared video frame duration of the active target as a
+  display hint, for example for refresh-rate selection while Media3 renders
+  tunnelled. Live and timeshift targets follow the bound period's stream
+  declaration (lowest-indexed video stream); recordings use the first video
+  stream of the entry's last file at admission. Target replacement, stop,
+  shutdown, retirement and application departure clear it. Media3 formats and
+  playback are unchanged.
+- Experimental `DvrRecordingStream.frameDuration` maps the recording file's
+  declared video frame duration; absent or zero values are `null`.
+  `PlaybackBinding.Recording.declaredVideoFrameDuration` (subscription
+  infrastructure) exposes the played file's value to the coordinator, and
+  `TvheadendTestResultFactory.boundCompletedRecordingPlayback` derives it from the
+  faked entry.
+
+### Changed
+
+- BREAKING (experimental API): `DvrRecordingStream` gains a defaulted
+  `frameDuration` constructor parameter. Named Kotlin construction and existing
+  destructuring keep compiling; recompile callers, because the constructor and
+  generated `copy` JVM signatures change and Java can no longer call its
+  constructor directly. A new `component5` is added.
+
 ## [0.33.0]
 
 Released 2026-10-18.

@@ -44,6 +44,7 @@ internal class TestCoordinatorRecordingTarget(
     var growingResult: RecordingFileResult<GrowingRecordingFileLease> =
         RecordingFileResult.Failed(TvheadendFailure.NOT_SUPPORTED),
     var reportResult: DvrProgressResult = DvrProgressResult.Accepted,
+    override var declaredVideoFrameDuration: Duration? = null,
 ) : CoordinatorRecordingTarget {
     var bindGrowingAction: () -> RecordingFileResult<GrowingRecordingFileLease> = { growingResult }
     val reports: MutableList<Pair<GrowingRecordingFileLease?, DvrPlaybackProgress>> = mutableListOf()

@@ -64,6 +64,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -82,6 +83,7 @@ import at.bernhardberger.tvheadend.sdk.playback.createSubscriptionManager
 import kotlinx.coroutines.async
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
@@ -562,6 +564,43 @@ internal class FakeTvheadendSessionTest {
             PlaybackBindingResult.TargetUnavailable,
             unavailable.bindRecordingPlayback(unavailableProof, DvrEntryId(1)),
         )
+    }
+
+    @Test
+    @OptIn(at.bernhardberger.tvheadend.sdk.core.TvheadendTestingApi::class)
+    fun `completed recording binding declares its played file's video frame duration while current`() {
+        val observation = currentObservation().let { base ->
+            SessionObservation.create(
+                sessionState = base.sessionState,
+                channelState = base.channelState,
+                epgState = base.epgState,
+                dvrState = DvrRepositoryState.Current(DvrSnapshot.create(listOf(DvrEntry.create(
+                    DvrEntryId(1),
+                    state = DvrEntryState.COMPLETED,
+                    files = listOf(at.bernhardberger.tvheadend.sdk.core.DvrRecordingFile.create(
+                        fileId = 1,
+                        streams = listOf(
+                            at.bernhardberger.tvheadend.sdk.core.DvrRecordingStream(
+                                at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType.AAC,
+                                frameDuration = 21.milliseconds,
+                            ),
+                            at.bernhardberger.tvheadend.sdk.core.DvrRecordingStream(
+                                at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType.H264,
+                                frameDuration = 40.milliseconds,
+                            ),
+                        ),
+                    )),
+                )))),
+            )
+        }
+        val fake = FakeTvheadendSession(observation)
+        val binding = (at.bernhardberger.tvheadend.sdk.core.TvheadendTestResultFactory.boundCompletedRecordingPlayback(
+            fake, fake.captureCurrentSession(), DvrEntryId(1),
+        ) as PlaybackBindingResult.Bound).binding
+
+        assertEquals(40.milliseconds, binding.declaredVideoFrameDuration)
+        fake.replaceGeneration(currentObservation())
+        assertNull(binding.declaredVideoFrameDuration)
     }
 
     @Test

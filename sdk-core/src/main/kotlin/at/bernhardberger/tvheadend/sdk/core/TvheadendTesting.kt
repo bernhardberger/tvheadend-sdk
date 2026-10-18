@@ -236,6 +236,12 @@ public object TvheadendTestResultFactory {
                 observeAdmission = ::admission,
                 openTarget = { cancellationAware(::unavailableFile) },
                 bindGrowingTarget = { unavailableFile() },
+                observeDeclaredVideoFrameDuration = {
+                    currentObservation(session, currentSession)
+                        ?.dvrEntry(recordingId)
+                        ?.takeIf { it === target }
+                        ?.declaredVideoFrameDuration()
+                },
                 reportTargetProgress = { _, _ ->
                     cancellationAware {
                         when (val state = admission()) {

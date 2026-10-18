@@ -207,6 +207,7 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.microseconds
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
@@ -1754,6 +1755,8 @@ private fun HtspDvrRecordingFile.toGatewayFile(): GatewayDvrRecordingFile = Gate
             language = stream.language,
             width = stream.width?.takeIf { it in 1L..Int.MAX_VALUE }?.toInt(),
             height = stream.height?.takeIf { it in 1L..Int.MAX_VALUE }?.toInt(),
+            // The HTSP library already normalizes the file's 90 kHz value to microseconds.
+            frameDuration = stream.frameDurationUs?.takeIf { it > 0L }?.microseconds,
         )
     },
 )

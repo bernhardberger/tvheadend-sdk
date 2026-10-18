@@ -1604,13 +1604,14 @@ internal class HtspProtocolGatewayTest {
                 emptyMap<String, Any>(),
                 mapOf("info" to emptyList<Any>()),
                 mapOf("info" to listOf(
-                    mapOf("type" to "H264", "width" to 1920L, "height" to 1080L),
+                    // Recording files store Tvheadend's 90 kHz frame duration.
+                    mapOf("type" to "H264", "width" to 1920L, "height" to 1080L, "duration" to 3_600L),
                     mapOf("type" to "AAC", "language" to "private-language"),
                     mapOf("type" to "future-codec", "width" to 1L, "height" to Int.MAX_VALUE.toLong()),
                     "malformed",
                     mapOf("type" to 1L, "language" to 2L, "width" to 0L, "height" to -1L),
-                    mapOf("type" to "H265", "width" to 2_147_483_648L, "height" to 720L),
-                    mapOf("type" to "HEVC", "width" to 1280L, "height" to 0xffff_ffffL),
+                    mapOf("type" to "H265", "width" to 2_147_483_648L, "height" to 720L, "duration" to 1_800L),
+                    mapOf("type" to "HEVC", "width" to 1280L, "height" to 0xffff_ffffL, "duration" to 0L),
                 )),
             ),
         )
@@ -1645,6 +1646,10 @@ internal class HtspProtocolGatewayTest {
             assertEquals(listOf(1920, null, 1, null, null, null, 1280), streams.map { it.width })
             assertEquals(listOf(1080, null, Int.MAX_VALUE, null, null, 720, null), streams.map { it.height })
             assertEquals(listOf(null, "private-language", null, null, null, null, null), streams.map { it.language })
+            assertEquals(
+                listOf(40.milliseconds, null, null, null, null, 20.milliseconds, null),
+                streams.map { it.frameDuration },
+            )
             assertFalse(listOf(entry, files, streams).toString().contains("private"),
                 "Recording metadata rendering exposed server text")
         }
