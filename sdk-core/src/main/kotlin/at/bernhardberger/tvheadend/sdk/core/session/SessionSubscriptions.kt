@@ -11,6 +11,7 @@ import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.ChannelId as SdkChannelId
 import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
+import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId as SdkDvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.StreamProfileId
 import at.bernhardberger.tvheadend.sdk.core.StreamProfilesResult
@@ -50,13 +51,17 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 
 internal interface GenerationBoundGrowingRecordingFileLease : GrowingRecordingFileLease {
     public val boundGeneration: GatewayGeneration
@@ -404,9 +409,7 @@ internal class PlaybackSessionChildren(
                     }
                 },
                 backgroundScope.launch(start = CoroutineStart.LAZY) {
-                    runBackgroundEnrichment {
-                        metadata.applyDvrDiskSpace(generation, gateway.getDiskSpace(generation))
-                    }
+                    refreshDvrDiskSpace(generation)
                 },
             )
             ActiveBackgroundEnrichment(generation, worker, rootJob, jobs).also {
@@ -427,6 +430,40 @@ internal class PlaybackSessionChildren(
             active.rootJob.cancel()
         }
         return stillOwned
+    }
+
+    /**
+     * HTSP pushes no disk space and the server answers from figures it refreshes every 15 s, so
+     * query after sync, then once a burst of recording changes has settled or the periodic
+     * deadline passes, whichever comes first.
+     */
+    private suspend fun refreshDvrDiskSpace(generation: GatewayGeneration) {
+        val revisions = metadata.dvrRecordingRevisions(generation)
+        // Revision 0 is the synchronized state; a change accepted before this job ran still counts.
+        var handled = 0L
+        while (true) {
+            runBackgroundEnrichment {
+                metadata.applyDvrDiskSpace(generation, queryDvrDiskSpace(generation))
+            }
+            // A burst cut off by the deadline stays unhandled, so it still gets a settled query.
+            withTimeoutOrNull(DVR_DISK_SPACE_REFRESH_INTERVAL) {
+                var latest = revisions.first { revision -> revision != handled }
+                while (true) {
+                    latest = withTimeoutOrNull(DVR_DISK_SPACE_CHANGE_SETTLE_DELAY) {
+                        revisions.first { revision -> revision != latest }
+                    } ?: break
+                }
+                handled = latest
+            }
+        }
+    }
+
+    private suspend fun queryDvrDiskSpace(generation: GatewayGeneration): GatewayResult<DvrDiskSpace> = try {
+        gateway.getDiskSpace(generation)
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (_: Exception) {
+        GatewayResult.TransportUnavailable
     }
 
     override fun startBackgroundEnrichment(generation: GatewayGeneration): Boolean {
@@ -589,6 +626,11 @@ internal class GatewaySubscriptionConnection(
 }
 
 private const val RETURN_TO_LIVE_MARGIN_SECONDS = 3L
+
+private val DVR_DISK_SPACE_REFRESH_INTERVAL = 5.minutes
+
+// Longer than the server's 15 s statvfs refresh, so the query sees the settled change.
+private val DVR_DISK_SPACE_CHANGE_SETTLE_DELAY = 20.seconds
 
 private fun GatewayResult<ByteArray>.toArtworkLoadResult(): ArtworkLoadResult = when (this) {
     is GatewayResult.Ok -> ArtworkLoadResult.Available(ArtworkContent(value))

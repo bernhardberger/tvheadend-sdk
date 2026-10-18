@@ -673,6 +673,14 @@ separate:
 | `dvrDiskSpaceState` | `Unknown`, `Synchronizing`, `Current`, `Stale` |
 | `recordingProgressCapability` | `UNKNOWN`, `SUPPORTED`, `UNSUPPORTED` |
 
+HTSP does not push disk space, so the session queries it after initial
+synchronization, then at least every 5 minutes, and about 20 seconds after a
+burst of recording additions, updates, or deletions settles (statistics-only
+progress updates don't count). A burst that never settles still refreshes by
+the 5-minute deadline. The values are the server's cached figures, which it
+refreshes every 15 seconds. A failed refresh turns `Current` into `Stale` with
+the last known values until the next successful query.
+
 `TvheadendSession.dvrRepository` provides generation-bound commands to
 schedule, update, stop, cancel, or delete entries and to create, update, or
 delete automatic and time-based rules. For example:

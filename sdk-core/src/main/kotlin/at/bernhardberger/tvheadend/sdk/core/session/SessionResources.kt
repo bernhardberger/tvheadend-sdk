@@ -77,11 +77,13 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.mapNotNull
 import kotlin.time.Instant
 import kotlin.time.Clock
 import at.bernhardberger.tvheadend.sdk.core.MetadataRefreshTimes
@@ -239,6 +241,14 @@ internal interface SessionMetadata {
         generation: GatewayGeneration,
         result: GatewayResult<DvrDiskSpace>,
     )
+
+    /**
+     * Revision of the DVR entries [generation] accepted after initial sync: additions, deletions
+     * and full updates, never statistics patches. Starts at 0 when the generation is bound. Emits
+     * the current revision, then each later one, and never completes; emits nothing while another
+     * generation is bound.
+     */
+    public fun dvrRecordingRevisions(generation: GatewayGeneration): Flow<Long>
 
     public fun publishServerFacts(generation: GatewayGeneration, facts: GatewayServerFacts)
 
@@ -447,6 +457,7 @@ internal class PhaseOneSessionMetadata(
         DvrConfigurationsState.Unknown,
     )
     private val mutableDiskSpace = MutableStateFlow<DvrDiskSpaceState>(DvrDiskSpaceState.Unknown)
+    private val dvrRecordingRevision = MutableStateFlow(DvrRecordingRevision(generation = null, revision = 0L))
     private val stateBackedEpgRepository = object : EpgRepository {
         override suspend fun search(
             currentSession: CurrentSessionObservation,
@@ -784,6 +795,7 @@ internal class PhaseOneSessionMetadata(
             mutableDvr.value = DvrRepositoryState.Synchronizing(publishedDvrSnapshot)
             mutableConfigurations.value = DvrConfigurationsState.Synchronizing.create(publishedConfigurations)
             mutableDiskSpace.value = DvrDiskSpaceState.Synchronizing(publishedDiskSpace)
+            dvrRecordingRevision.value = DvrRecordingRevision(generation, revision = 0L)
             publishMetadataObservation()
             previousFence
         }
@@ -883,6 +895,9 @@ internal class PhaseOneSessionMetadata(
             publishMetadataObservation()
         }
     }
+
+    override fun dvrRecordingRevisions(generation: GatewayGeneration): Flow<Long> =
+        dvrRecordingRevision.mapNotNull { current -> current.revision.takeIf { current.generation === generation } }
 
     override fun publishServerFacts(generation: GatewayGeneration, facts: GatewayServerFacts) {
         synchronized(lock) {
@@ -1121,6 +1136,12 @@ internal class PhaseOneSessionMetadata(
                             }
                         }
                         if (event is MetadataEvent.ChannelDeleted) epgLastQueriedAt.remove(event.channelId)
+                        if (dvrEventAccepted && event.isDvrEntryChange()) {
+                            dvrRecordingRevision.value = DvrRecordingRevision(
+                                event.generation,
+                                dvrRecordingRevision.value.revision + 1,
+                            )
+                        }
                         if (event.isEpgEvent() && !epgEventAccepted) return@run null
                         if (deferEpgPublication && event.isEpgEvent()) {
                             epgPublicationDeferred = true
@@ -1509,6 +1530,17 @@ private class MetadataEffects(
 private fun MetadataEvent.isMetadataBarrier(): Boolean =
     this is MetadataEvent.InitialSyncCompleted || this is MetadataEvent.DvrEntryStatsUpdated ||
         isDvrMutationConfirmation()
+
+// Each instance is a distinct revision; the generation fences readers of a replaced binding.
+private class DvrRecordingRevision(
+    val generation: GatewayGeneration?,
+    val revision: Long,
+)
+
+private fun MetadataEvent.isDvrEntryChange(): Boolean =
+    this is MetadataEvent.DvrEntryAdded ||
+        this is MetadataEvent.DvrEntryUpdated ||
+        this is MetadataEvent.DvrEntryDeleted
 
 private fun MetadataEvent.isEpgEvent(): Boolean =
     this is MetadataEvent.EventAdded ||

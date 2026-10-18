@@ -18,6 +18,7 @@ import at.bernhardberger.tvheadend.sdk.core.SessionRegistry
 import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
 import at.bernhardberger.tvheadend.sdk.core.DvrCutpoint
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
+import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpaceState
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
@@ -42,6 +43,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.EventId
 import at.bernhardberger.tvheadend.sdk.core.gateway.ServerTimeEstimate
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrRecordingFile
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrStats
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayRecordingFile
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
@@ -84,6 +86,8 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -98,6 +102,7 @@ import kotlin.time.Clock
 import kotlin.time.TestTimeSource
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -1583,7 +1588,375 @@ class SessionSubscriptionsTest {
         assertTrue(propagated === cancellation || propagated.cause === cancellation)
         children.closeAndJoinSubscriptions()
     }
+
+    @Test
+    fun `deleted recording refreshes disk space once after the server cache settles`() = runTest {
+        val gateway = SubscriptionGateway()
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        val children = startDiskSpaceRefresh(gateway, metadata, generation)
+        try {
+            assertEquals(DvrDiskSpaceState.Current(INITIAL_DISK_SPACE), metadata.diskSpaceState())
+            gateway.diskSpace = GatewayResult.Ok(FREED_DISK_SPACE)
+            metadata.acceptMetadata(MetadataEvent.DvrEntryDeleted(generation, DvrEntryId(1)))
+            advanceTimeBy(20.seconds)
+            assertEquals(1, gateway.diskSpaceGenerations.size, "The refresh waits for the server's 15 s cache")
+            runCurrent()
+            assertEquals(listOf(generation, generation), gateway.diskSpaceGenerations)
+            assertEquals(DvrDiskSpaceState.Current(FREED_DISK_SPACE), metadata.diskSpaceState())
+            advanceTimeBy(5.minutes)
+            assertEquals(2, gateway.diskSpaceGenerations.size, "The change restarts the periodic interval")
+            runCurrent()
+            assertEquals(3, gateway.diskSpaceGenerations.size)
+        } finally {
+            children.cancelAndJoinBackgroundEnrichment()
+            children.closeAndJoinSubscriptions()
+        }
+    }
+
+    @Test
+    fun `a burst of recording changes refreshes disk space once after the last change`() = runTest {
+        val gateway = SubscriptionGateway()
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        val children = startDiskSpaceRefresh(gateway, metadata, generation)
+        try {
+            metadata.acceptMetadata(MetadataEvent.DvrEntryAdded(generation, scheduledRecording(2)))
+            advanceTimeBy(15.seconds)
+            metadata.updateCurrentRecording(generation, id = 1, path = "/moved.ts")
+            advanceTimeBy(15.seconds)
+            metadata.acceptMetadata(MetadataEvent.DvrEntryDeleted(generation, DvrEntryId(2)))
+            advanceTimeBy(20.seconds)
+            assertEquals(1, gateway.diskSpaceGenerations.size, "Each change restarts the settle delay")
+            runCurrent()
+            assertEquals(2, gateway.diskSpaceGenerations.size)
+            advanceTimeBy(4.minutes)
+            assertEquals(2, gateway.diskSpaceGenerations.size)
+        } finally {
+            children.cancelAndJoinBackgroundEnrichment()
+            children.closeAndJoinSubscriptions()
+        }
+    }
+
+    @Test
+    fun `recording statistics patches never refresh disk space`() = runTest {
+        val gateway = SubscriptionGateway()
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        val children = startDiskSpaceRefresh(gateway, metadata, generation)
+        try {
+            repeat(10) { index ->
+                metadata.acceptMetadata(MetadataEvent.DvrEntryStatsUpdated(
+                    generation,
+                    GatewayDvrStats(DvrEntryId(1), "recording-uuid", DvrEntryState.RECORDING, dataSizeBytes = 128L + index),
+                ))
+                advanceTimeBy(10.seconds)
+            }
+            advanceTimeBy(3.minutes)
+            assertEquals(1, gateway.diskSpaceGenerations.size)
+        } finally {
+            children.cancelAndJoinBackgroundEnrichment()
+            children.closeAndJoinSubscriptions()
+        }
+    }
+
+    @Test
+    fun `disk space refreshes every five minutes without recording changes`() = runTest {
+        val gateway = SubscriptionGateway()
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        val children = startDiskSpaceRefresh(gateway, metadata, generation)
+        try {
+            gateway.diskSpace = GatewayResult.Ok(FREED_DISK_SPACE)
+            advanceTimeBy(5.minutes)
+            assertEquals(1, gateway.diskSpaceGenerations.size)
+            runCurrent()
+            assertEquals(2, gateway.diskSpaceGenerations.size)
+            assertEquals(DvrDiskSpaceState.Current(FREED_DISK_SPACE), metadata.diskSpaceState())
+            advanceTimeBy(5.minutes)
+            runCurrent()
+            assertEquals(3, gateway.diskSpaceGenerations.size)
+        } finally {
+            children.cancelAndJoinBackgroundEnrichment()
+            children.closeAndJoinSubscriptions()
+        }
+    }
+
+    @Test
+    fun `teardown cancels a pending disk space refresh`() = runTest {
+        val gateway = SubscriptionGateway()
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        val children = startDiskSpaceRefresh(gateway, metadata, generation)
+        try {
+            metadata.acceptMetadata(MetadataEvent.DvrEntryDeleted(generation, DvrEntryId(1)))
+            advanceTimeBy(20.seconds)
+            runCurrent()
+            assertEquals(2, gateway.diskSpaceGenerations.size)
+            metadata.acceptMetadata(MetadataEvent.DvrEntryAdded(generation, scheduledRecording(2)))
+            advanceTimeBy(10.seconds)
+        } finally {
+            children.cancelAndJoinBackgroundEnrichment()
+            children.closeAndJoinSubscriptions()
+        }
+        advanceTimeBy(10.minutes)
+        runCurrent()
+        assertEquals(2, gateway.diskSpaceGenerations.size)
+    }
+
+    @Test
+    fun `a late disk space refresh never publishes into a replacement generation`() = runTest {
+        val gateway = SubscriptionGateway()
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        val children = startDiskSpaceRefresh(gateway, metadata, generation)
+        val release = CompletableDeferred<Unit>()
+        try {
+            gateway.diskSpaceAction = { _ ->
+                release.await()
+                GatewayResult.Ok(FREED_DISK_SPACE)
+            }
+            metadata.acceptMetadata(MetadataEvent.DvrEntryDeleted(generation, DvrEntryId(1)))
+            advanceTimeBy(20.seconds)
+            runCurrent()
+            assertEquals(2, gateway.diskSpaceGenerations.size)
+            val replacement = GatewayGeneration()
+            metadata.bindGeneration(replacement)
+            metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(replacement))
+            metadata.acceptMetadata(MetadataEvent.DvrEntryAdded(replacement, scheduledRecording(3)))
+            metadata.acceptMetadata(MetadataEvent.DvrEntryAdded(replacement, scheduledRecording(4)))
+            release.complete(Unit)
+            runCurrent()
+            assertEquals(DvrDiskSpaceState.Synchronizing(INITIAL_DISK_SPACE), metadata.diskSpaceState())
+            advanceTimeBy(1.minutes)
+            assertEquals(2, gateway.diskSpaceGenerations.size, "A replacement's changes never trigger the old job")
+        } finally {
+            children.cancelAndJoinBackgroundEnrichment()
+            children.closeAndJoinSubscriptions()
+        }
+    }
+
+    @Test
+    fun `a failed disk space refresh keeps the last value as stale until the next success`() = runTest {
+        val gateway = SubscriptionGateway()
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        val children = startDiskSpaceRefresh(gateway, metadata, generation)
+        try {
+            gateway.diskSpace = GatewayResult.Timeout
+            metadata.acceptMetadata(MetadataEvent.DvrEntryDeleted(generation, DvrEntryId(1)))
+            advanceTimeBy(20.seconds)
+            runCurrent()
+            assertEquals(2, gateway.diskSpaceGenerations.size)
+            assertEquals(DvrDiskSpaceState.Stale(INITIAL_DISK_SPACE), metadata.diskSpaceState())
+            gateway.diskSpace = GatewayResult.Ok(FREED_DISK_SPACE)
+            advanceTimeBy(5.minutes)
+            runCurrent()
+            assertEquals(3, gateway.diskSpaceGenerations.size)
+            assertEquals(DvrDiskSpaceState.Current(FREED_DISK_SPACE), metadata.diskSpaceState())
+        } finally {
+            children.cancelAndJoinBackgroundEnrichment()
+            children.closeAndJoinSubscriptions()
+        }
+    }
+
+    @Test
+    fun `a thrown disk space query keeps the last value as stale until the next success`() = runTest {
+        val gateway = SubscriptionGateway()
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        val children = startDiskSpaceRefresh(gateway, metadata, generation)
+        try {
+            gateway.diskSpaceAction = { _ -> throw IllegalStateException("private failure") }
+            metadata.acceptMetadata(MetadataEvent.DvrEntryDeleted(generation, DvrEntryId(1)))
+            advanceTimeBy(20.seconds)
+            runCurrent()
+            assertEquals(2, gateway.diskSpaceGenerations.size)
+            assertEquals(DvrDiskSpaceState.Stale(INITIAL_DISK_SPACE), metadata.diskSpaceState())
+            gateway.diskSpaceAction = { _ -> GatewayResult.Ok(FREED_DISK_SPACE) }
+            advanceTimeBy(5.minutes)
+            runCurrent()
+            assertEquals(3, gateway.diskSpaceGenerations.size)
+            assertEquals(DvrDiskSpaceState.Current(FREED_DISK_SPACE), metadata.diskSpaceState())
+        } finally {
+            children.cancelAndJoinBackgroundEnrichment()
+            children.closeAndJoinSubscriptions()
+        }
+    }
+
+    @Test
+    fun `continuous recording updates still refresh disk space at the periodic deadline`() = runTest {
+        val gateway = SubscriptionGateway()
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        val children = startDiskSpaceRefresh(gateway, metadata, generation)
+        var updates = 0
+        fun update() = metadata.updateCurrentRecording(generation, id = 1, path = "/moved-${updates++}.ts")
+        try {
+            advanceTimeBy(10.seconds)
+            update()
+            repeat(19) {
+                advanceTimeBy(15.seconds)
+                update()
+            }
+            advanceTimeBy(5.seconds)
+            assertEquals(1, gateway.diskSpaceGenerations.size, "Updates arrive faster than the settle delay")
+            runCurrent()
+            assertEquals(2, gateway.diskSpaceGenerations.size, "The deadline caps an unsettled burst")
+            repeat(20) {
+                advanceTimeBy(15.seconds)
+                update()
+            }
+            assertEquals(2, gateway.diskSpaceGenerations.size)
+            runCurrent()
+            assertEquals(3, gateway.diskSpaceGenerations.size, "The periodic cadence continues")
+            repeat(19) {
+                advanceTimeBy(15.seconds)
+                update()
+            }
+            advanceTimeBy(15.seconds)
+            runCurrent()
+            assertEquals(4, gateway.diskSpaceGenerations.size, "The deadline cuts off the burst 15 s after its last change")
+            advanceTimeBy(20.seconds)
+            runCurrent()
+            assertEquals(5, gateway.diskSpaceGenerations.size, "The cut-off burst still gets a settled query")
+        } finally {
+            children.cancelAndJoinBackgroundEnrichment()
+            children.closeAndJoinSubscriptions()
+        }
+    }
+
+    @Test
+    fun `recording changes during initial sync never cause an extra disk space query`() = runTest {
+        val gateway = SubscriptionGateway().apply { diskSpace = GatewayResult.Ok(INITIAL_DISK_SPACE) }
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        val children = PlaybackSessionChildren(gateway, metadata, StandardTestDispatcher(testScheduler))
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.DvrEntryAdded(generation, scheduledRecording(2)))
+        metadata.acceptMetadata(MetadataEvent.DvrEntryAdded(generation, scheduledRecording(3)))
+        metadata.acceptMetadata(
+            MetadataEvent.DvrEntryUpdated(
+                generation,
+                GatewayDvrEntry(id = DvrEntryId(2), uuid = "scheduled-2", state = DvrEntryState.RECORDING),
+            ),
+        )
+        metadata.acceptMetadata(MetadataEvent.DvrEntryDeleted(generation, DvrEntryId(3)))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        children.bindGeneration(generation)
+        try {
+            assertTrue(children.prepareBackgroundEnrichment(generation) {})
+            assertTrue(children.startBackgroundEnrichment(generation))
+            runCurrent()
+            assertEquals(1, gateway.diskSpaceGenerations.size)
+            advanceTimeBy(4.minutes)
+            assertEquals(1, gateway.diskSpaceGenerations.size, "The initial query covers the synchronized entries")
+        } finally {
+            children.cancelAndJoinBackgroundEnrichment()
+            children.closeAndJoinSubscriptions()
+        }
+    }
+
+    @Test
+    fun `a recording change before the enrichment starts refreshes disk space once settled`() = runTest {
+        val gateway = SubscriptionGateway().apply { diskSpace = GatewayResult.Ok(INITIAL_DISK_SPACE) }
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        val children = PlaybackSessionChildren(gateway, metadata, StandardTestDispatcher(testScheduler))
+        metadata.bindCurrentRecording(generation, id = 1, sizeBytes = 64)
+        children.bindGeneration(generation)
+        try {
+            assertTrue(children.prepareBackgroundEnrichment(generation) {})
+            metadata.acceptMetadata(MetadataEvent.DvrEntryDeleted(generation, DvrEntryId(1)))
+            assertTrue(children.startBackgroundEnrichment(generation))
+            runCurrent()
+            assertEquals(1, gateway.diskSpaceGenerations.size)
+            gateway.diskSpace = GatewayResult.Ok(FREED_DISK_SPACE)
+            advanceTimeBy(20.seconds)
+            assertEquals(1, gateway.diskSpaceGenerations.size)
+            runCurrent()
+            assertEquals(2, gateway.diskSpaceGenerations.size, "The early change is not absorbed")
+            assertEquals(DvrDiskSpaceState.Current(FREED_DISK_SPACE), metadata.diskSpaceState())
+            advanceTimeBy(4.minutes)
+            assertEquals(2, gateway.diskSpaceGenerations.size)
+        } finally {
+            children.cancelAndJoinBackgroundEnrichment()
+            children.closeAndJoinSubscriptions()
+        }
+    }
+
+    @Test
+    fun `an added recording refreshes disk space once after the server cache settles`() = runTest {
+        val gateway = SubscriptionGateway()
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        val children = startDiskSpaceRefresh(gateway, metadata, generation)
+        try {
+            metadata.acceptMetadata(MetadataEvent.DvrEntryAdded(generation, scheduledRecording(2)))
+            advanceTimeBy(20.seconds)
+            assertEquals(1, gateway.diskSpaceGenerations.size)
+            runCurrent()
+            assertEquals(2, gateway.diskSpaceGenerations.size)
+            advanceTimeBy(4.minutes)
+            assertEquals(2, gateway.diskSpaceGenerations.size)
+        } finally {
+            children.cancelAndJoinBackgroundEnrichment()
+            children.closeAndJoinSubscriptions()
+        }
+    }
+
+    @Test
+    fun `recording changes accepted in a batch refresh disk space once settled`() = runTest {
+        val gateway = SubscriptionGateway()
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        val children = startDiskSpaceRefresh(gateway, metadata, generation)
+        try {
+            metadata.acceptMetadataBatch(
+                listOf(
+                    MetadataEvent.DvrEntryAdded(generation, scheduledRecording(2)),
+                    MetadataEvent.DvrEntryDeleted(generation, DvrEntryId(2)),
+                ),
+            )
+            advanceTimeBy(20.seconds)
+            assertEquals(1, gateway.diskSpaceGenerations.size)
+            runCurrent()
+            assertEquals(2, gateway.diskSpaceGenerations.size)
+            advanceTimeBy(4.minutes)
+            assertEquals(2, gateway.diskSpaceGenerations.size)
+        } finally {
+            children.cancelAndJoinBackgroundEnrichment()
+            children.closeAndJoinSubscriptions()
+        }
+    }
+
+    private fun TestScope.startDiskSpaceRefresh(
+        gateway: SubscriptionGateway,
+        metadata: PhaseOneSessionMetadata,
+        generation: GatewayGeneration,
+    ): PlaybackSessionChildren {
+        gateway.diskSpace = GatewayResult.Ok(INITIAL_DISK_SPACE)
+        val children = PlaybackSessionChildren(gateway, metadata, StandardTestDispatcher(testScheduler))
+        metadata.bindCurrentRecording(generation, id = 1, sizeBytes = 64)
+        children.bindGeneration(generation)
+        assertTrue(children.prepareBackgroundEnrichment(generation) {})
+        assertTrue(children.startBackgroundEnrichment(generation))
+        runCurrent()
+        assertEquals(listOf(generation), gateway.diskSpaceGenerations, "The initial query runs once after sync")
+        return children
+    }
 }
+
+private val INITIAL_DISK_SPACE = DvrDiskSpace(freeBytes = 100L, usedBytes = 900L, totalBytes = 1_000L)
+private val FREED_DISK_SPACE = DvrDiskSpace(freeBytes = 600L, usedBytes = 400L, totalBytes = 1_000L)
+
+private fun SessionMetadata.diskSpaceState(): DvrDiskSpaceState = observation.value.dvrDiskSpaceState
+
+private fun scheduledRecording(id: Long): GatewayDvrEntry = GatewayDvrEntry(
+    id = DvrEntryId(id),
+    uuid = "scheduled-$id",
+    state = DvrEntryState.SCHEDULED,
+)
 
 private class SubscriptionGateway : ProtocolGateway {
     internal var serverTime: (GatewayGeneration) -> Instant? = { null }
@@ -1630,6 +2003,9 @@ private class SubscriptionGateway : ProtocolGateway {
     internal var streamProfilesAction: suspend (GatewayGeneration) -> GatewayResult<List<StreamProfile>> = {
         GatewayResult.NotSupported
     }
+    internal val diskSpaceGenerations = ArrayList<GatewayGeneration>()
+    internal var diskSpace: GatewayResult<DvrDiskSpace> = GatewayResult.Ok(DvrDiskSpace(0, 0, 0))
+    internal var diskSpaceAction: suspend (GatewayGeneration) -> GatewayResult<DvrDiskSpace> = { diskSpace }
     internal var grantedTimeshiftSeconds: Long? = null
     internal var nearLiveAction: suspend () -> SubscriptionOperationResult<Unit> = {
         SubscriptionOperationResult.Ok(Unit)
@@ -1674,7 +2050,10 @@ private class SubscriptionGateway : ProtocolGateway {
 
     override suspend fun getDiskSpace(
         generation: GatewayGeneration,
-    ): GatewayResult<DvrDiskSpace> = GatewayResult.Ok(DvrDiskSpace(0, 0, 0))
+    ): GatewayResult<DvrDiskSpace> {
+        diskSpaceGenerations += generation
+        return diskSpaceAction(generation)
+    }
 
     override suspend fun getStreamProfiles(
         generation: GatewayGeneration,
