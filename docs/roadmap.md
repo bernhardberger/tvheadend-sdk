@@ -243,6 +243,12 @@ keeps the cached guide beyond live coverage as display carryover, shows saved
 artwork before `Ready` and offline, and times out the initial sync only when
 metadata stalls.
 
+### 0.33: profile-bound saved artwork (released)
+
+0.33.0 was released on 2026-10-18. It binds saved-artwork lookups to the profile
+of the observation that named the artwork, so a model created under one server
+profile never shows another profile's bytes.
+
 ### Next 0.x minors: player-driven gaps
 
 The owner decided on 2026-10-12 not to start the 1.0 track yet. 0.x minors

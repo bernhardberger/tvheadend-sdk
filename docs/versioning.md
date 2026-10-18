@@ -1,22 +1,22 @@
 # Versioning and compatibility
 
-The source is configured for the provisional `0.33.0` release under these
+The source targets the unreleased provisional `0.34.0` release under these
 coordinates:
 
-- `at.bernhardberger.tvheadend:sdk-android:0.33.0`
-- `at.bernhardberger.tvheadend:sdk-core:0.33.0`
-- `at.bernhardberger.tvheadend:sdk-media3:0.33.0`
-- `at.bernhardberger.tvheadend:sdk-playback:0.33.0`
-- `at.bernhardberger.tvheadend:sdk-testing:0.33.0`
+- `at.bernhardberger.tvheadend:sdk-android:0.34.0`
+- `at.bernhardberger.tvheadend:sdk-core:0.34.0`
+- `at.bernhardberger.tvheadend:sdk-media3:0.34.0`
+- `at.bernhardberger.tvheadend:sdk-playback:0.34.0`
+- `at.bernhardberger.tvheadend:sdk-testing:0.34.0`
 
 Source, local staging, and CI
-do not establish that the configured `0.33.0` coordinates are publicly available;
+do not establish that the configured `0.34.0` coordinates are publicly available;
 check Maven Central before selecting them.
 
-The development baseline is `v0.32.0`. Local candidate verification may use
-`-PsdkCandidateVersion=0.33.0-artwork-profile-SNAPSHOT`; the existing release checks
-require a plain major-zero version in source. Candidate staging is not a
-publication claim. See [releasing](releasing.md).
+The development baseline is `v0.33.0`. Local prerelease builds may use
+`-PsdkCandidateVersion=0.34.0-frame-duration-SNAPSHOT`; the existing release checks
+require a plain major-zero version in source. This development target is not a
+release or publication claim. See [releasing](releasing.md).
 
 The signed `v0.3.3` tag is retained as development-release evidence after its
 Central deployment failed. No `0.3.3` Maven artifacts or GitHub release became
