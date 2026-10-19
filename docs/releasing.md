@@ -29,6 +29,15 @@ package is required for an ordinary release through this existing path. Obtain
 the exact publication/GitHub authorization first and retain the checks below.
 The release-prep commit replaces “Unreleased; development target.” with “Released YYYY-MM-DD.”; release-note extraction rejects an Unreleased section before signing, while `--check-setup` remains a development-safe structural check.
 
+## Release Cadence
+
+The owner decided on 2026-10-19 that an SDK version is published only when an
+upcoming application release needs it. Iterate through uniquely named staged
+candidates, which the application verifies against `build/local-maven` copies.
+Batch the accepted fixes into one development cycle, and publish a single SDK
+version once the application release that depends on it is about to ship and
+has accepted the candidate.
+
 ## Protected Setup
 
 The `central` GitHub Environment contains exactly:
