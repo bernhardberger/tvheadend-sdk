@@ -7,14 +7,15 @@ package at.bernhardberger.tvheadend.sdk.core.session
 
 import at.bernhardberger.tvheadend.sdk.core.DvrEntry
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
-import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
 import at.bernhardberger.tvheadend.sdk.core.DvrRecordingFile
 import at.bernhardberger.tvheadend.sdk.core.DvrRepositoryState
+import at.bernhardberger.tvheadend.sdk.core.GROWING_RECORDING_STATES
 import at.bernhardberger.tvheadend.sdk.core.SessionObservation
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayRecordingFile
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayRecordingFileStat
 import at.bernhardberger.tvheadend.sdk.core.gateway.ProtocolGateway
+import at.bernhardberger.tvheadend.sdk.core.isPlayableEndedRecording
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
 import at.bernhardberger.tvheadend.sdk.playback.MAX_RECORDING_READ_BYTES
 import at.bernhardberger.tvheadend.sdk.playback.RECORDING_END_OF_INPUT
@@ -165,9 +166,9 @@ internal class GrowingRecordingMetadataTracker(
         if (fileSize != null) maximumFileSizeBytes = fileSize
         if (dataSize != null) maximumDataSizeBytes = dataSize
 
-        val completed = when (entry.state) {
-            DvrEntryState.RECORDING -> false
-            DvrEntryState.COMPLETED -> true
+        val completed = when {
+            entry.state in GROWING_RECORDING_STATES -> false
+            entry.isPlayableEndedRecording() -> true
             else -> return GrowingMetadataValidation.Failed(TvheadendFailure.FILE_UNAVAILABLE)
         }
         if (completionObserved && !completed) {
@@ -206,8 +207,11 @@ internal fun DvrEntry.growingIdentity(): GrowingRecordingIdentity? {
 internal fun DvrEntry.preservesGrowingContinuity(next: DvrEntry): Boolean {
     val currentIdentity = growingIdentity() ?: return false
     if (next.growingIdentity() != currentIdentity) return false
-    if (state !in GROWING_DVR_STATES || next.state !in GROWING_DVR_STATES) return false
-    if (state == DvrEntryState.COMPLETED && next.state != DvrEntryState.COMPLETED) return false
+    val ended = isPlayableEndedRecording()
+    val nextEnded = next.isPlayableEndedRecording()
+    if (!ended && state !in GROWING_RECORDING_STATES) return false
+    if (!nextEnded && next.state !in GROWING_RECORDING_STATES) return false
+    if (ended && !nextEnded) return false
     val currentFileSize = files?.singleOrNull()?.sizeBytes
     val nextFileSize = next.files?.singleOrNull()?.sizeBytes
     if (nextFileSize != null && (nextFileSize < 0L || currentFileSize != null && nextFileSize < currentFileSize)) {
@@ -249,7 +253,7 @@ internal class CompletedPlaybackIdentity private constructor(
 
     internal companion object {
         internal fun create(entry: DvrEntry): CompletedPlaybackIdentity? {
-            if (entry.state != DvrEntryState.COMPLETED) return null
+            if (!entry.isPlayableEndedRecording()) return null
             return CompletedPlaybackIdentity(
                 uuid = entry.uuid?.takeUnless(String::isBlank),
                 entryPath = entry.path?.takeUnless(String::isBlank),
@@ -667,4 +671,3 @@ private fun failed(failure: TvheadendFailure): RecordingFileResult.Failed =
 private val CLOSED_GROWING_HANDLE = failed(TvheadendFailure.FILE_UNAVAILABLE)
 private const val STAT_INTERVAL_NANOS = 500_000_000L
 private const val NO_PROGRESS_TIMEOUT_NANOS = 30_000_000_000L
-private val GROWING_DVR_STATES = setOf(DvrEntryState.RECORDING, DvrEntryState.COMPLETED)

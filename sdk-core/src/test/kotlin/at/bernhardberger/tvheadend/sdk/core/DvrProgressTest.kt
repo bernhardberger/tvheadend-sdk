@@ -53,6 +53,22 @@ internal class DvrProgressTest {
     }
 
     @Test
+    fun `resume offers a failed completion's saved position but never a missed one`() {
+        val policy = DvrProgressPolicy()
+        assertEquals(
+            DvrResumeOffer.Resume(12.seconds),
+            policy.resumeOffer(entry(DvrEntryState.COMPLETED_ERROR, 12.seconds)),
+        )
+        assertSame(
+            DvrResumeOffer.StartOver,
+            policy.resumeOffer(entry(DvrEntryState.COMPLETED_ERROR, Duration.ZERO)),
+        )
+        listOf(DvrEntryState.MISSED, DvrEntryState.RECORDING_ERROR, DvrEntryState.FILE_MISSING).forEach { state ->
+            assertSame(DvrResumeOffer.StartOver, policy.resumeOffer(entry(state, 12.seconds)), "$state")
+        }
+    }
+
+    @Test
     fun `tracker uses one elapsed cadence and any positive movement`() {
         val tracker = DvrProgressPolicy().tracker()
         val origin = Instant.fromEpochSeconds(0)
@@ -137,6 +153,25 @@ internal class DvrProgressTest {
                 exit = DvrPlaybackExit.NATURAL_END,
             ).markWatched,
         )
+    }
+
+    @Test
+    fun `terminal completion marks a failed completion watched but never a missed one`() {
+        val policy = DvrProgressPolicy()
+        assertTrue(
+            policy.terminalProgress(
+                100.seconds,
+                100.seconds,
+                DvrEntryState.COMPLETED_ERROR,
+                DvrPlaybackExit.NATURAL_END,
+            ).markWatched,
+        )
+        listOf(DvrEntryState.MISSED, DvrEntryState.RECORDING_ERROR).forEach { state ->
+            assertFalse(
+                policy.terminalProgress(100.seconds, 100.seconds, state, DvrPlaybackExit.NATURAL_END).markWatched,
+                "$state",
+            )
+        }
     }
 
     @Test

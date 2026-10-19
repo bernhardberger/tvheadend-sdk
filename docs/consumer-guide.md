@@ -1112,6 +1112,26 @@ not claim that Kotlin coroutine or `Flow` APIs are idiomatic Java ergonomics.
 
 ### Recordings
 
+A recording binding admits playback by entry state. `COMPLETED` entries are
+admitted as `RecordingPlaybackAdmission.Completed`. `COMPLETED_ERROR` and
+`MISSED` entries are admitted the same way only when they list at least one
+recording file and their data size is not known to be zero (this includes
+recordings the user aborted, which Tvheadend reports as `COMPLETED_ERROR`);
+without a file they are `TargetUnavailable`, as are `FILE_MISSING` and the
+remaining states. `RECORDING_ERROR` entries are treated exactly like
+`RECORDING` ones, because Tvheadend may resume writing the same file, and a
+growing recording that ends as `COMPLETED_ERROR`, or as `MISSED` with a file,
+continues as a completed recording.
+
+`COMPLETED` and `COMPLETED_ERROR` are the ended states where
+`DvrProgressPolicy.resumeOffer` offers a saved position and `terminalProgress`
+marks playback watched. Among ended entries Tvheadend keeps the play position
+and play count only for those two. The Media3 coordinator reports a failed or
+missed file it admitted as completed like a completed recording, but Tvheadend
+ignores progress writes for `MISSED` entries, so they never carry a resume
+position (the binding drops one if present), always start over, and never show
+as watched.
+
 Completed recordings remain playable from the beginning when progress support
 is unknown or unsupported. `RecordingPlaybackStart.RESUME` uses a positive
 server position only when `recordingProgressCapability` is `SUPPORTED`; normal

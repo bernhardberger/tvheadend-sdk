@@ -42,6 +42,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.EventId
 import at.bernhardberger.tvheadend.sdk.core.gateway.ServerTimeEstimate
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrRecordingFile
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrStats
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
@@ -1229,12 +1230,16 @@ class SessionSubscriptionsTest {
         children.closeAndJoinSubscriptions()
     }
 
-    @Test
-    fun `growing recording reader binds file metadata and operations to one generation`() = runTest {
+    @ParameterizedTest
+    @ValueSource(strings = ["RECORDING", "RECORDING_ERROR"])
+    fun `growing recording reader binds file metadata and operations to one generation`(
+        stateName: String,
+    ) = runTest {
+        val state = dvrState(stateName)
         val gateway = SubscriptionGateway()
         val metadata = PhaseOneSessionMetadata()
         val generation = GatewayGeneration()
-        metadata.bindCurrentRecording(generation, id = 5L, sizeBytes = 64L)
+        metadata.bindCurrentRecording(generation, id = 5L, sizeBytes = 64L, state = state)
         val children = PlaybackSessionChildren(
             gateway,
             metadata,
@@ -1255,15 +1260,64 @@ class SessionSubscriptionsTest {
         assertEquals(listOf(4L), gateway.seekedRecordingPositions)
         assertEquals(listOf(generation), gateway.readRecordingGenerations)
         assertEquals(listOf(generation), gateway.closedRecordingGenerations)
+
+        // A growing file that finishes with an error stays the same incarnation and plays on as completed.
+        metadata.updateCurrentRecording(
+            generation,
+            id = 5L,
+            path = "/recording.ts",
+            state = DvrEntryState.COMPLETED,
+            failure = GatewayDvrFailure.PRESENT,
+        )
+        assertTrue(lease.isCurrent)
+        val finished = (lease.open(position = 0L) as RecordingFileResult.Ok).value
+        assertTrue(finished.close() is RecordingFileResult.Ok)
+        assertEquals(2, gateway.openedRecordingGenerations.size)
         children.closeAndJoinSubscriptions()
     }
 
     @Test
-    fun `growing lease refuses every reopen after its generation is replaced`() = runTest {
+    fun `a live growing lease keeps reading through a recording error and its recovery`() = runTest {
+        val gateway = SubscriptionGateway()
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        metadata.bindCurrentRecording(generation, id = 5L, sizeBytes = 64L)
+        val children = PlaybackSessionChildren(
+            gateway,
+            metadata,
+            StandardTestDispatcher(testScheduler),
+        )
+        children.bindGeneration(generation)
+        val lease = (
+            children.bindGrowingRecording(generation, DvrEntryId(5L)) as RecordingFileResult.Ok
+        ).value
+        val reader = (lease.open(position = 4L) as RecordingFileResult.Ok).value
+        assertEquals(2, (reader.read(ByteArray(2), 0, 2) as RecordingFileResult.Ok).value)
+
+        listOf(GatewayDvrFailure.PRESENT, null).forEach { failure ->
+            metadata.updateCurrentRecording(
+                generation,
+                id = 5L,
+                path = "/recording.ts",
+                failure = failure,
+            )
+            assertTrue(lease.isCurrent, "$failure")
+            assertEquals(2, (reader.read(ByteArray(2), 0, 2) as RecordingFileResult.Ok).value, "$failure")
+            assertFalse(reader.isFinal, "$failure")
+        }
+        assertEquals(3, gateway.readRecordingGenerations.size)
+        assertTrue(reader.close() is RecordingFileResult.Ok)
+        children.closeAndJoinSubscriptions()
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["RECORDING", "RECORDING_ERROR"])
+    fun `growing lease refuses every reopen after its generation is replaced`(stateName: String) = runTest {
+        val state = dvrState(stateName)
         val gateway = SubscriptionGateway()
         val metadata = PhaseOneSessionMetadata()
         val firstGeneration = GatewayGeneration()
-        metadata.bindCurrentRecording(firstGeneration, id = 5L, sizeBytes = 64L)
+        metadata.bindCurrentRecording(firstGeneration, id = 5L, sizeBytes = 64L, state = state)
         val children = PlaybackSessionChildren(
             gateway,
             metadata,
@@ -1280,7 +1334,7 @@ class SessionSubscriptionsTest {
 
         children.closeAndJoinSubscriptions()
         val secondGeneration = GatewayGeneration()
-        metadata.bindCurrentRecording(secondGeneration, id = 5L, sizeBytes = 64L)
+        metadata.bindCurrentRecording(secondGeneration, id = 5L, sizeBytes = 64L, state = state)
         children.bindGeneration(secondGeneration)
 
         assertFalse(lease.isCurrent)
@@ -1292,12 +1346,14 @@ class SessionSubscriptionsTest {
         children.closeAndJoinSubscriptions()
     }
 
-    @Test
-    fun `growing lease refuses a restored physical identity after incarnation drift`() = runTest {
+    @ParameterizedTest
+    @ValueSource(strings = ["RECORDING", "RECORDING_ERROR"])
+    fun `growing lease refuses a restored physical identity after incarnation drift`(stateName: String) = runTest {
+        val state = dvrState(stateName)
         val gateway = SubscriptionGateway()
         val metadata = PhaseOneSessionMetadata()
         val generation = GatewayGeneration()
-        metadata.bindCurrentRecording(generation, id = 5L, sizeBytes = 64L)
+        metadata.bindCurrentRecording(generation, id = 5L, sizeBytes = 64L, state = state)
         val children = PlaybackSessionChildren(
             gateway,
             metadata,
@@ -1310,8 +1366,8 @@ class SessionSubscriptionsTest {
         val firstReader = (lease.open(0L) as RecordingFileResult.Ok).value
         assertTrue(firstReader.close() is RecordingFileResult.Ok)
 
-        metadata.updateCurrentRecording(generation, id = 5L, path = "/replacement.ts")
-        metadata.updateCurrentRecording(generation, id = 5L, path = "/recording.ts")
+        metadata.updateCurrentRecording(generation, id = 5L, path = "/replacement.ts", state = state)
+        metadata.updateCurrentRecording(generation, id = 5L, path = "/recording.ts", state = state)
 
         assertFalse(lease.isCurrent)
         assertSame(
@@ -2402,6 +2458,7 @@ private fun PhaseOneSessionMetadata.bindCurrentRecording(
     generation: GatewayGeneration,
     id: Long,
     sizeBytes: Long,
+    state: DvrEntryState = DvrEntryState.RECORDING,
 ) {
     bindGeneration(generation)
     acceptMetadata(
@@ -2420,7 +2477,7 @@ private fun PhaseOneSessionMetadata.bindCurrentRecording(
                     ),
                 ),
                 path = "/recording.ts",
-                state = DvrEntryState.RECORDING,
+                state = state,
                 dataSizeBytes = sizeBytes,
             ),
         ),
@@ -2432,6 +2489,8 @@ private fun PhaseOneSessionMetadata.updateCurrentRecording(
     generation: GatewayGeneration,
     id: Long,
     path: String,
+    state: DvrEntryState = DvrEntryState.RECORDING,
+    failure: GatewayDvrFailure? = null,
 ) {
     acceptMetadata(
         MetadataEvent.DvrEntryUpdated(
@@ -2449,7 +2508,8 @@ private fun PhaseOneSessionMetadata.updateCurrentRecording(
                     ),
                 ),
                 path = path,
-                state = DvrEntryState.RECORDING,
+                state = state,
+                failure = failure,
                 dataSizeBytes = 64L,
             ),
         ),
@@ -2473,3 +2533,12 @@ private fun stream(): SubscriptionStream = SubscriptionStream(
     rate = null,
     rdsUecp = null,
 )
+
+private fun dvrState(name: String): DvrEntryState =
+    listOf(
+        DvrEntryState.RECORDING,
+        DvrEntryState.RECORDING_ERROR,
+        DvrEntryState.COMPLETED,
+        DvrEntryState.COMPLETED_ERROR,
+        DvrEntryState.MISSED,
+    ).single { state -> state.toString() == name }

@@ -4,6 +4,23 @@
 
 Unreleased; development target.
 
+### Changed
+
+- Recording playback admits failed entries that left a file. `RECORDING_ERROR`
+  plays exactly like `RECORDING` (growing). `COMPLETED_ERROR` entries
+  (including user-aborted recordings) and `MISSED` entries that list at least
+  one file, with a data size not known to be zero, are admitted as
+  `RecordingPlaybackAdmission.Completed`. A growing recording that ends as
+  `COMPLETED_ERROR`, or as `MISSED` with a file, continues as completed instead
+  of becoming unavailable. `FILE_MISSING` entries and failures without a file
+  stay `TargetUnavailable`.
+- `DvrProgressPolicy.resumeOffer` and `terminalProgress` treat `COMPLETED_ERROR`
+  like `COMPLETED`, so a failed recording resumes and can be marked watched.
+  `MISSED` entries never carry a resume position, and Tvheadend ignores
+  progress writes for them, so they always start over and never show as
+  watched. `TvheadendTestResultFactory.boundCompletedRecordingPlayback` admits
+  the same entries as the session binding.
+
 ### Fixed
 
 - `SessionObservation.dvrDiskSpaceState` now refreshes after initial sync: at

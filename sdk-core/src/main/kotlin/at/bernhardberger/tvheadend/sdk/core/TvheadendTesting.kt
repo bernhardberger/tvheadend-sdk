@@ -147,6 +147,8 @@ public object TvheadendTestResultFactory {
     }
     /**
      * Creates a completed-recording binding tied to [currentSession].
+     * Like the session binding, it admits completed entries and failed or missed entries that list a
+     * recording file whose data size is not known to be zero; other targets are unavailable.
      * [cutpoints] supplies test-owned responses while the same recording remains available.
      * The binding checks cancellation and authority before and after the suspending response.
      * Scripts must not return [TvheadendFailure.OBSERVATION_EXPIRED]; expiry belongs to the binding.
@@ -209,7 +211,7 @@ public object TvheadendTestResultFactory {
         val initial = currentObservation(session, currentSession)
             ?: return PlaybackBindingResult.ObservationExpired
         val target = initial.dvrEntry(recordingId)
-            ?.takeIf { entry -> entry.state == DvrEntryState.COMPLETED }
+            ?.takeIf(DvrEntry::isPlayableEndedRecording)
             ?: return PlaybackBindingResult.TargetUnavailable
         fun admission(): RecordingPlaybackAdmission {
             val observation = currentObservation(session, currentSession)
@@ -218,10 +220,7 @@ public object TvheadendTestResultFactory {
                 return RecordingPlaybackAdmission.TargetUnavailable
             }
             val capability = observation.recordingProgressCapability
-            return RecordingPlaybackAdmission.Completed(
-                target.playPosition?.takeIf { it.isPositive() && capability == RecordingProgressCapability.SUPPORTED },
-                capability,
-            )
+            return RecordingPlaybackAdmission.Completed(target.admittedResumePosition(capability), capability)
         }
         fun unavailableFile() = RecordingFileResult.Failed(
             if (admission() == RecordingPlaybackAdmission.ObservationExpired) {

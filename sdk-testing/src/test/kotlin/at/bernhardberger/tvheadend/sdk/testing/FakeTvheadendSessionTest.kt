@@ -568,6 +568,50 @@ internal class FakeTvheadendSessionTest {
 
     @Test
     @OptIn(at.bernhardberger.tvheadend.sdk.core.TvheadendTestingApi::class)
+    fun `completed recording binding admits failed and missed entries only with a file`() {
+        val file = at.bernhardberger.tvheadend.sdk.core.DvrRecordingFile.create(fileId = 1)
+        listOf(
+            Triple(DvrEntryState.COMPLETED_ERROR, listOf(file), 100L) to true,
+            Triple(DvrEntryState.MISSED, listOf(file), null) to true,
+            Triple(DvrEntryState.COMPLETED_ERROR, listOf(file), 0L) to false,
+            Triple(DvrEntryState.MISSED, null, null) to false,
+            Triple(DvrEntryState.FILE_MISSING, listOf(file), 100L) to false,
+        ).forEach { (target, playable) ->
+            val (state, files, dataSizeBytes) = target
+            val observation = currentObservation().let { base ->
+                SessionObservation.create(
+                    sessionState = base.sessionState,
+                    channelState = base.channelState,
+                    epgState = base.epgState,
+                    dvrState = DvrRepositoryState.Current(DvrSnapshot.create(listOf(DvrEntry.create(
+                        DvrEntryId(1),
+                        playPosition = 37.seconds,
+                        state = state,
+                        files = files,
+                        dataSizeBytes = dataSizeBytes,
+                    )))),
+                    recordingProgressCapability = at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability.SUPPORTED,
+                )
+            }
+            val fake = FakeTvheadendSession(observation)
+            val result = at.bernhardberger.tvheadend.sdk.core.TvheadendTestResultFactory.boundCompletedRecordingPlayback(
+                fake, fake.captureCurrentSession(), DvrEntryId(1),
+            )
+
+            if (playable) {
+                val binding = (result as PlaybackBindingResult.Bound).binding
+                val admission = binding.admission
+                    as at.bernhardberger.tvheadend.sdk.core.RecordingPlaybackAdmission.Completed
+                val expectedResume = if (state == DvrEntryState.MISSED) null else 37.seconds
+                assertEquals(expectedResume, admission.resumePosition, "$target")
+            } else {
+                assertSame(PlaybackBindingResult.TargetUnavailable, result, "$target")
+            }
+        }
+    }
+
+    @Test
+    @OptIn(at.bernhardberger.tvheadend.sdk.core.TvheadendTestingApi::class)
     fun `completed recording binding declares its played file's video frame duration while current`() {
         val observation = currentObservation().let { base ->
             SessionObservation.create(

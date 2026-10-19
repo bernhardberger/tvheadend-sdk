@@ -9,6 +9,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId as GatewayChannelI
 import at.bernhardberger.tvheadend.sdk.core.gateway.DvrEntryId as GatewayDvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrFailure
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrRecordingFile
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrStats
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
@@ -37,18 +38,22 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 
 internal class PlaybackBindingTest {
-    @Test
-    fun `stats shrink invalidates a recording playback target`() {
+    @ParameterizedTest
+    @ValueSource(strings = ["RECORDING", "RECORDING_ERROR"])
+    fun `stats shrink invalidates a recording playback target`(stateName: String) {
+        val state = dvrState(stateName)
         val generation = GatewayGeneration()
         val fixture = BindingFixture().apply {
-            publishReady(generation, recordingState = DvrEntryState.RECORDING)
+            publishReady(generation, recordingState = state)
         }
         fun stats(size: Long) = fixture.metadata.acceptMetadata(
             MetadataEvent.DvrEntryStatsUpdated(
                 generation,
-                GatewayDvrStats(DvrEntryId(7), "colliding-recording", DvrEntryState.RECORDING, dataSizeBytes = size),
+                GatewayDvrStats(DvrEntryId(7), "colliding-recording", state, dataSizeBytes = size),
             ),
         )
         stats(100L)
@@ -221,25 +226,27 @@ internal class PlaybackBindingTest {
             }
         }
 
-    @Test
-    fun `completed binding permanently rejects a same generation recording reincarnation`() =
+    @ParameterizedTest
+    @ValueSource(strings = ["COMPLETED", "COMPLETED_ERROR", "MISSED"])
+    fun `completed binding permanently rejects a same generation recording reincarnation`(stateName: String) =
         kotlinx.coroutines.test.runTest {
+            val state = dvrState(stateName)
             val fixture = BindingFixture()
             val generation = GatewayGeneration()
-            fixture.publishReady(generation)
+            fixture.publishReady(generation, recordingState = state)
             val currentSession = fixture.currentSession
             val binding = fixture.factory
                 .bindRecording(currentSession, DvrEntryId(7))
                 .requireBound()
 
-            fixture.updateCompletedProgress(generation, 48.seconds)
+            fixture.updateCompletedProgress(generation, 48.seconds, state = state)
             assertSame(currentSession, fixture.currentSession)
             assertEquals(
-                48.seconds,
+                48.seconds.takeUnless { state == DvrEntryState.MISSED },
                 (binding.admission as RecordingPlaybackAdmission.Completed).resumePosition,
             )
 
-            fixture.replaceCompletedRecording(generation)
+            fixture.replaceCompletedRecording(generation, state)
             assertSame(currentSession, fixture.currentSession)
             assertSame(RecordingPlaybackAdmission.TargetUnavailable, binding.admission)
             assertSame(
@@ -440,6 +447,185 @@ internal class PlaybackBindingTest {
         }
 
     @Test
+    fun `ended recordings with a failure play only when they left a file`() =
+        kotlinx.coroutines.test.runTest {
+            data class Case(
+                val name: String,
+                val state: DvrEntryState,
+                val files: List<GatewayDvrRecordingFile>?,
+                val dataSizeBytes: Long?,
+                val playable: Boolean,
+                val failure: GatewayDvrFailure? = null,
+            )
+            listOf(
+                Case("failed with file", DvrEntryState.COMPLETED_ERROR, listOf(recordingFile()), 100L, true),
+                Case("failed with unknown size", DvrEntryState.COMPLETED_ERROR, listOf(recordingFile()), null, true),
+                Case(
+                    "failure reported on completion",
+                    DvrEntryState.COMPLETED,
+                    listOf(recordingFile()),
+                    100L,
+                    true,
+                    GatewayDvrFailure.PRESENT,
+                ),
+                Case("failed with empty data", DvrEntryState.COMPLETED_ERROR, listOf(recordingFile()), 0L, false),
+                Case("failed without files", DvrEntryState.COMPLETED_ERROR, null, 100L, false),
+                Case("failed with empty files", DvrEntryState.COMPLETED_ERROR, emptyList(), 100L, false),
+                Case("missed with file", DvrEntryState.MISSED, listOf(recordingFile()), 100L, true),
+                Case("missed without files", DvrEntryState.MISSED, null, null, false),
+                Case(
+                    "file missing",
+                    DvrEntryState.COMPLETED,
+                    listOf(recordingFile()),
+                    100L,
+                    false,
+                    GatewayDvrFailure.FILE_MISSING,
+                ),
+            ).forEach { case ->
+                val fixture = BindingFixture().apply {
+                    publishReady(
+                        GatewayGeneration(),
+                        recordingState = case.state,
+                        recordingFiles = case.files,
+                        recordingFailure = case.failure,
+                        recordingDataSizeBytes = case.dataSizeBytes,
+                    )
+                }
+                val binding = fixture.factory
+                    .bindRecording(fixture.currentSession, DvrEntryId(7))
+                    .requireBound()
+
+                assertFalse(binding.startedGrowing, case.name)
+                if (case.playable) {
+                    val admission = binding.admission as? RecordingPlaybackAdmission.Completed
+                    val expectedResume = if (case.state == DvrEntryState.MISSED) null else 37.seconds
+                    assertTrue(admission != null, case.name)
+                    assertEquals(expectedResume, admission?.resumePosition, case.name)
+                    assertTrue(binding.openRecording() is RecordingFileResult.Ok, case.name)
+                    assertEquals(1, fixture.children.recordingGenerations.size, case.name)
+                } else {
+                    assertSame(RecordingPlaybackAdmission.TargetUnavailable, binding.admission, case.name)
+                    assertTrue(binding.openRecording() is RecordingFileResult.Failed, case.name)
+                    assertTrue(fixture.children.recordingGenerations.isEmpty(), case.name)
+                }
+            }
+        }
+
+    @Test
+    fun `in place updates of an ended recording follow its file and incarnation`() {
+        data class Step(val entry: GatewayDvrEntry, val playable: Boolean)
+        fun ended(
+            state: DvrEntryState,
+            failure: GatewayDvrFailure? = null,
+            files: List<GatewayDvrRecordingFile>? = listOf(recordingFile()),
+        ) = recordingEntry(state = state, failure = failure, files = files, dataSizeBytes = 100L)
+        listOf(
+            "failed then file missing" to listOf(
+                Step(ended(DvrEntryState.COMPLETED_ERROR), true),
+                Step(ended(DvrEntryState.COMPLETED, GatewayDvrFailure.FILE_MISSING), false),
+            ),
+            "failed updated again" to listOf(
+                Step(ended(DvrEntryState.COMPLETED_ERROR), true),
+                Step(ended(DvrEntryState.COMPLETED_ERROR), true),
+            ),
+            // Losing the file ends the incarnation; restoring it never revives the binding.
+            "missed loses then regains its file" to listOf(
+                Step(ended(DvrEntryState.MISSED), true),
+                Step(ended(DvrEntryState.MISSED, files = emptyList()), false),
+                Step(ended(DvrEntryState.MISSED), false),
+            ),
+            "completed then failed on the same file" to listOf(
+                Step(ended(DvrEntryState.COMPLETED), true),
+                Step(ended(DvrEntryState.COMPLETED, GatewayDvrFailure.PRESENT), true),
+            ),
+            "growing then missed with its file" to listOf(
+                Step(ended(DvrEntryState.RECORDING), true),
+                Step(ended(DvrEntryState.MISSED), true),
+            ),
+        ).forEach { (name, steps) ->
+            val generation = GatewayGeneration()
+            val fixture = BindingFixture().apply {
+                publishReady(
+                    generation,
+                    recordingState = steps.first().entry.state!!,
+                    recordingDataSizeBytes = 100L,
+                )
+            }
+            val binding = fixture.factory
+                .bindRecording(fixture.currentSession, DvrEntryId(7))
+                .requireBound()
+            steps.forEachIndexed { index, step ->
+                if (index > 0) {
+                    fixture.metadata.acceptMetadata(MetadataEvent.DvrEntryUpdated(generation, step.entry))
+                }
+                val admission = binding.admission
+                if (step.playable) {
+                    val expected = if (index == 0 && step.entry.state == DvrEntryState.RECORDING) {
+                        RecordingPlaybackAdmission.Growing::class
+                    } else {
+                        RecordingPlaybackAdmission.Completed::class
+                    }
+                    assertEquals(expected, admission::class, "$name step $index")
+                } else {
+                    assertSame(RecordingPlaybackAdmission.TargetUnavailable, admission, "$name step $index")
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `recording error is admitted like an active recording`() {
+        listOf(
+            "/recording.ts" to RecordingPlaybackAdmission.Growing::class,
+            "/recording.mkv" to RecordingPlaybackAdmission.GrowingDeferred::class,
+            " " to RecordingPlaybackAdmission.TargetUnavailable::class,
+        ).forEach { (path, expected) ->
+            val fixture = BindingFixture().apply {
+                publishReady(
+                    GatewayGeneration(),
+                    recordingState = DvrEntryState.RECORDING_ERROR,
+                    recordingPath = path,
+                    recordingFiles = listOf(recordingFile(path = path)),
+                )
+            }
+            val binding = fixture.factory
+                .bindRecording(fixture.currentSession, DvrEntryId(7))
+                .requireBound()
+
+            assertTrue(binding.startedGrowing, path)
+            assertEquals(expected, binding.admission::class, path)
+        }
+    }
+
+    @Test
+    fun `growing playback that ends with a failure continues as a completed recording`() {
+        listOf(DvrEntryState.RECORDING, DvrEntryState.RECORDING_ERROR).forEach { startState ->
+            val generation = GatewayGeneration()
+            val fixture = BindingFixture().apply {
+                publishReady(generation, recordingState = startState, recordingDataSizeBytes = 100L)
+            }
+            val binding = fixture.factory
+                .bindRecording(fixture.currentSession, DvrEntryId(7))
+                .requireBound()
+            assertTrue(binding.admission is RecordingPlaybackAdmission.Growing, "$startState")
+
+            fixture.metadata.acceptMetadata(
+                MetadataEvent.DvrEntryUpdated(
+                    generation,
+                    recordingEntry(
+                        state = DvrEntryState.COMPLETED,
+                        failure = GatewayDvrFailure.PRESENT,
+                        dataSizeBytes = 100L,
+                    ),
+                ),
+            )
+
+            assertTrue(binding.startedGrowing, "$startState")
+            assertTrue(binding.admission is RecordingPlaybackAdmission.Completed, "$startState")
+        }
+    }
+
+    @Test
     fun `growing progress rejects a lease from another target or generation`() =
         kotlinx.coroutines.test.runTest {
             val fixture = BindingFixture()
@@ -510,6 +696,8 @@ private class BindingFixture {
         recordingUuid: String? = "colliding-recording",
         recordingPath: String? = "/recording.ts",
         recordingFiles: List<GatewayDvrRecordingFile>? = listOf(recordingFile()),
+        recordingFailure: GatewayDvrFailure? = null,
+        recordingDataSizeBytes: Long? = null,
     ) {
         metadata.bindGeneration(generation)
         metadata.acceptMetadata(
@@ -537,6 +725,8 @@ private class BindingFixture {
                     uuid = recordingUuid,
                     path = recordingPath,
                     files = recordingFiles,
+                    failure = recordingFailure,
+                    dataSizeBytes = recordingDataSizeBytes,
                 ),
             ),
         )
@@ -559,12 +749,13 @@ private class BindingFixture {
         path: String? = "/recording.ts",
         files: List<GatewayDvrRecordingFile>? = listOf(recordingFile()),
         uuid: String? = "colliding-recording",
+        state: DvrEntryState = DvrEntryState.COMPLETED,
     ) {
         metadata.acceptMetadata(
             MetadataEvent.DvrEntryUpdated(
                 generation,
                 recordingEntry(
-                    state = DvrEntryState.COMPLETED,
+                    state = state,
                     playPosition = position,
                     uuid = uuid,
                     path = path,
@@ -574,13 +765,13 @@ private class BindingFixture {
         )
     }
 
-    fun replaceCompletedRecording(generation: GatewayGeneration) {
+    fun replaceCompletedRecording(generation: GatewayGeneration, state: DvrEntryState = DvrEntryState.COMPLETED) {
         metadata.acceptMetadata(MetadataEvent.DvrEntryDeleted(generation, GatewayDvrEntryId(7)))
         metadata.acceptMetadata(
             MetadataEvent.DvrEntryAdded(
                 generation,
                 recordingEntry(
-                    state = DvrEntryState.COMPLETED,
+                    state = state,
                     uuid = "replacement-recording",
                     fileId = 2,
                     path = "/replacement.ts",
@@ -598,6 +789,8 @@ private fun recordingEntry(
     fileId: Long = 1,
     path: String? = "/recording.ts",
     files: List<GatewayDvrRecordingFile>? = listOf(recordingFile(fileId, path)),
+    failure: GatewayDvrFailure? = null,
+    dataSizeBytes: Long? = null,
 ): GatewayDvrEntry = GatewayDvrEntry(
     id = GatewayDvrEntryId(7),
     uuid = uuid,
@@ -605,6 +798,8 @@ private fun recordingEntry(
     files = files,
     path = path,
     state = state,
+    failure = failure,
+    dataSizeBytes = dataSizeBytes,
 )
 
 private fun recordingFile(
@@ -737,3 +932,12 @@ private data object PublicGrowingLease : GrowingRecordingFileLease {
 
 private fun <T : PlaybackBinding> PlaybackBindingResult<T>.requireBound(): T =
     (this as PlaybackBindingResult.Bound).binding
+
+private fun dvrState(name: String): DvrEntryState =
+    listOf(
+        DvrEntryState.RECORDING,
+        DvrEntryState.RECORDING_ERROR,
+        DvrEntryState.COMPLETED,
+        DvrEntryState.COMPLETED_ERROR,
+        DvrEntryState.MISSED,
+    ).single { state -> state.toString() == name }

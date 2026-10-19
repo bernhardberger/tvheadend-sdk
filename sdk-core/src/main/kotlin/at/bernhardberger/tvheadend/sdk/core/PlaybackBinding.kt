@@ -120,7 +120,14 @@ public sealed interface PlaybackBindingResult<out T : PlaybackBinding> {
 
 /** Current side-effect-free admission state of one observation-bound recording target. */
 public sealed interface RecordingPlaybackAdmission {
-    /** A completed file may play; resume/reporting are enabled only when progress is supported. */
+    /**
+     * A finished file may play; resume/reporting are enabled only when progress is supported.
+     *
+     * Completed entries are always admitted. Failed (`COMPLETED_ERROR`) and missed entries are admitted
+     * only when they list a recording file and their data size is not known to be zero; `FILE_MISSING` and
+     * file-less failures are [TargetUnavailable]. A missed entry never has a [resumePosition]: Tvheadend
+     * ignores its progress writes, so it always starts over and never shows as watched.
+     */
     public class Completed internal constructor(
         public val resumePosition: Duration?,
         public val progressCapability: RecordingProgressCapability,
@@ -130,6 +137,8 @@ public sealed interface RecordingPlaybackAdmission {
 
     /**
      * An active single-file MPEG-TS target may play while Tvheadend is still appending to it.
+     * Recording entries in an error state are admitted exactly like recording ones, because Tvheadend may
+     * resume writing the same file.
      *
      * [resumePosition] is the positive saved server position and is present only when [progressCapability] is
      * supported, exactly as for [Completed]. The Media3 coordinator plays this target only with
@@ -209,7 +218,7 @@ internal class SessionPlaybackBindingFactory(
         }
         val entry = initial.entry
         val target = initial.target
-        val startedGrowing = entry.state == DvrEntryState.RECORDING
+        val startedGrowing = entry.state in GROWING_RECORDING_STATES
 
         fun admission(): RecordingPlaybackAdmission = when (
             val lookup = metadata.currentPlaybackRecording(target)
@@ -316,17 +325,13 @@ private fun recordingAdmission(
     observation: SessionObservation,
     entry: DvrEntry,
 ): RecordingPlaybackAdmission {
-    val resumePosition = entry.playPosition
-        ?.takeIf { position ->
-            observation.recordingProgressCapability == RecordingProgressCapability.SUPPORTED &&
-                position.isPositive()
-        }
-    return when (entry.state) {
-        DvrEntryState.COMPLETED -> RecordingPlaybackAdmission.Completed(
+    val resumePosition = entry.admittedResumePosition(observation.recordingProgressCapability)
+    return when {
+        entry.isPlayableEndedRecording() -> RecordingPlaybackAdmission.Completed(
             resumePosition = resumePosition,
             progressCapability = observation.recordingProgressCapability,
         )
-        DvrEntryState.RECORDING -> {
+        entry.state in GROWING_RECORDING_STATES -> {
             val file = entry.files?.singleOrNull()
                 ?: return RecordingPlaybackAdmission.TargetUnavailable
             val path = file.path ?: entry.path
@@ -344,6 +349,33 @@ private fun recordingAdmission(
         }
         else -> RecordingPlaybackAdmission.TargetUnavailable
     }
+}
+
+/**
+ * The positive saved position an admission may resume from when progress is supported. Missed entries never
+ * resume: Tvheadend ignores their progress writes, so any position they carry is not playback progress.
+ */
+internal fun DvrEntry.admittedResumePosition(capability: RecordingProgressCapability): Duration? =
+    playPosition?.takeIf { position ->
+        state != DvrEntryState.MISSED &&
+            capability == RecordingProgressCapability.SUPPORTED &&
+            position.isPositive()
+    }
+
+/** States whose single recording file Tvheadend may still append to; an error may resume the same file. */
+internal val GROWING_RECORDING_STATES: Set<DvrEntryState> =
+    setOf(DvrEntryState.RECORDING, DvrEntryState.RECORDING_ERROR)
+
+/**
+ * Whether an ended entry may play as a finished file. Completed entries keep their existing admission;
+ * failed and missed entries play only when they list a file and their data size is not known to be zero.
+ */
+internal fun DvrEntry.isPlayableEndedRecording(): Boolean = when (state) {
+    DvrEntryState.COMPLETED -> true
+    DvrEntryState.COMPLETED_ERROR,
+    DvrEntryState.MISSED,
+    -> !files.isNullOrEmpty() && dataSizeBytes != 0L
+    else -> false
 }
 
 /** Tvheadend opens the last file of an entry; its first declared video stream in recorded order. */

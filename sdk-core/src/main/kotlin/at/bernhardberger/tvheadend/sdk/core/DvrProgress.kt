@@ -109,10 +109,14 @@ public data class DvrProgressPolicy(
     /** Creates a caller-driven tracker that applies this policy. */
     public fun tracker(): DvrProgressTracker = DvrProgressTracker(this)
 
-    /** Offers every positive saved position for a completed recording. */
+    /**
+     * Offers every positive saved position for a completed recording, including one that completed
+     * with an error. Among ended entries Tvheadend keeps the play position only for these two; missed and
+     * active recordings start over, and Tvheadend ignores progress writes for missed entries.
+     */
     public fun resumeOffer(entry: DvrEntry): DvrResumeOffer {
         val position = entry.playPosition
-        if (entry.state != DvrEntryState.COMPLETED || position == null || !position.isPositive()) {
+        if (entry.state !in PROGRESS_KEEPING_ENDED_STATES || position == null || !position.isPositive()) {
             return DvrResumeOffer.StartOver
         }
         return DvrResumeOffer.Resume(position)
@@ -121,8 +125,11 @@ public data class DvrProgressPolicy(
     /**
      * Creates one terminal report from actual playback measurements.
      *
-     * A natural end marks a completed recording watched. An orderly exit does so only at the
-     * configured fraction of a known positive duration. Errors and growing recordings never do.
+     * A natural end marks a completed recording watched, including one that completed with an error.
+     * An orderly exit does so only at the configured fraction of a known positive duration. Errors and
+     * growing recordings never do. The Media3 coordinator reports a failed or missed file it admitted as
+     * completed like a completed recording; Tvheadend ignores progress writes for missed entries, so they
+     * always start over and never show as watched.
      */
     public fun terminalProgress(
         position: Duration,
@@ -131,7 +138,7 @@ public data class DvrProgressPolicy(
         exit: DvrPlaybackExit,
     ): DvrPlaybackProgress {
         val observation = position.toPlaybackProgress(markWatched = false)
-        val markWatched = state == DvrEntryState.COMPLETED && when (exit) {
+        val markWatched = state in PROGRESS_KEEPING_ENDED_STATES && when (exit) {
             DvrPlaybackExit.NATURAL_END -> true
             DvrPlaybackExit.ORDERLY ->
                 duration != null &&
@@ -246,3 +253,9 @@ internal interface DvrProgressCommands {
         ): DvrProgressResult = DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
     }
 }
+
+/**
+ * Ended states where the SDK offers resume and marks playback watched. Among ended entries Tvheadend keeps
+ * and reports play position and play count only for these; it ignores progress writes for missed entries.
+ */
+private val PROGRESS_KEEPING_ENDED_STATES = setOf(DvrEntryState.COMPLETED, DvrEntryState.COMPLETED_ERROR)

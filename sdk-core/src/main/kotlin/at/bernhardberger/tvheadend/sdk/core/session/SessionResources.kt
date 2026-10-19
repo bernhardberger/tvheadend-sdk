@@ -24,7 +24,6 @@ import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpaceState
 import at.bernhardberger.tvheadend.sdk.core.DvrEntry
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
-import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
 import at.bernhardberger.tvheadend.sdk.core.DvrMutationCommands
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
 import at.bernhardberger.tvheadend.sdk.core.DvrProgressCommands
@@ -57,6 +56,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayServerFacts
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
+import at.bernhardberger.tvheadend.sdk.core.isPlayableEndedRecording
 import at.bernhardberger.tvheadend.sdk.core.metadata.ChannelTagReducer
 import at.bernhardberger.tvheadend.sdk.core.metadata.DvrReducer
 import at.bernhardberger.tvheadend.sdk.core.metadata.EpgQueryAcceptance
@@ -343,7 +343,7 @@ internal class DvrEntryIncarnation(initialEntry: DvrEntry? = null) {
     private var completedIdentity = initialEntry?.let(CompletedPlaybackIdentity::create)
 
     internal fun preservesUpdate(previous: DvrEntry, next: DvrEntry): Boolean {
-        if (previous.state == DvrEntryState.COMPLETED && next.state == DvrEntryState.COMPLETED) {
+        if (previous.isPlayableEndedRecording() && next.isPlayableEndedRecording()) {
             val established = completedIdentity
                 ?: CompletedPlaybackIdentity.create(previous)
                 ?: return false

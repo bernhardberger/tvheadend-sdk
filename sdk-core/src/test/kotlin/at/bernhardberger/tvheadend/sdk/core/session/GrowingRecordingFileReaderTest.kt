@@ -36,17 +36,21 @@ import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class GrowingRecordingFileReaderTest {
-    @Test
-    fun `stats shrink then recovery before read permanently retires reader`() = runTest {
-        val fixture = GrowingFixture(fileSizeBytes = 100L, readCounts = listOf(1))
+    @ParameterizedTest
+    @ValueSource(strings = ["RECORDING", "RECORDING_ERROR"])
+    fun `stats shrink then recovery before read permanently retires reader`(stateName: String) = runTest {
+        val state = dvrState(stateName)
+        val fixture = GrowingFixture(state = state, fileSizeBytes = 100L, readCounts = listOf(1))
         assertOk(100L, fixture.reader.refreshSize())
         fun stats(size: Long) = fixture.metadata.acceptMetadata(
             MetadataEvent.DvrEntryStatsUpdated(
                 fixture.generation,
-                GatewayDvrStats(RECORDING_ID, "recording-uuid", DvrEntryState.RECORDING, dataSizeBytes = size),
+                GatewayDvrStats(RECORDING_ID, "recording-uuid", state, dataSizeBytes = size),
             ),
         )
         stats(50L)
@@ -236,6 +240,21 @@ class GrowingRecordingFileReaderTest {
         assertEquals(listOf(0L, STAT_INTERVAL_NANOS_FOR_TEST), fixture.transport.statStartNanos)
         assertOk(RECORDING_END_OF_INPUT, fixture.reader.read(ByteArray(1), 0, 1))
         assertEquals(2, fixture.transport.readPositions.size)
+    }
+
+    @Test
+    fun `recording error keeps growing and a failed finish confirms finality`() = runTest {
+        val fixture = GrowingFixture(
+            state = DvrEntryState.RECORDING_ERROR,
+            fileSizeBytes = 64L,
+            statSizeBytes = 64L,
+        )
+        assertOk(64L, fixture.reader.refreshSize())
+        assertFalse(fixture.reader.isFinal)
+
+        fixture.update(state = DvrEntryState.COMPLETED_ERROR, fileSizeBytes = 64L)
+        assertOk(64L, fixture.reader.refreshSize())
+        assertTrue(fixture.reader.isFinal)
     }
 
     @Test
@@ -785,3 +804,12 @@ private fun assertFailed(expected: TvheadendFailure, actual: RecordingFileResult
 private val RECORDING_ID = DvrEntryId(7L)
 private const val STAT_INTERVAL_NANOS_FOR_TEST = 500_000_000L
 private const val NO_PROGRESS_TIMEOUT_NANOS_FOR_TEST = 30_000_000_000L
+
+private fun dvrState(name: String): DvrEntryState =
+    listOf(
+        DvrEntryState.RECORDING,
+        DvrEntryState.RECORDING_ERROR,
+        DvrEntryState.COMPLETED,
+        DvrEntryState.COMPLETED_ERROR,
+        DvrEntryState.MISSED,
+    ).single { state -> state.toString() == name }
