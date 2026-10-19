@@ -2253,6 +2253,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/SessionObservation {
 	public final fun getSessionState ()Lat/bernhardberger/tvheadend/sdk/core/SessionState;
 	public fun hashCode ()I
 	public final fun nextEvent-RL2hoTo (JLkotlin/time/Instant;)Lat/bernhardberger/tvheadend/sdk/core/EpgEvent;
+	public final fun recordingPlaybackAdmission (Lat/bernhardberger/tvheadend/sdk/core/DvrEntry;)Lat/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmission;
 	public fun toString ()Ljava/lang/String;
 }
 
@@ -2554,6 +2555,8 @@ public final class at/bernhardberger/tvheadend/sdk/core/TvheadendTestResultFacto
 	public static final fun cachedArtwork-noSgMNw (Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;I)Lat/bernhardberger/tvheadend/sdk/core/CachedArtworkReference;
 	public static final fun completedRecordingAdmission-dnQKTGw (Lkotlin/time/Duration;Lat/bernhardberger/tvheadend/sdk/core/RecordingProgressCapability;)Lat/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmission$Completed;
 	public static final fun growingRecordingAdmission-dnQKTGw (Lkotlin/time/Duration;Lat/bernhardberger/tvheadend/sdk/core/RecordingProgressCapability;)Lat/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmission$Growing;
+	public static final fun recordingFile (Ljava/lang/Long;Ljava/lang/String;Lkotlin/time/Instant;Lkotlin/time/Instant;Ljava/lang/Long;)Lat/bernhardberger/tvheadend/sdk/core/DvrRecordingFile;
+	public static synthetic fun recordingFile$default (Ljava/lang/Long;Ljava/lang/String;Lkotlin/time/Instant;Lkotlin/time/Instant;Ljava/lang/Long;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/DvrRecordingFile;
 }
 
 public abstract interface annotation class at/bernhardberger/tvheadend/sdk/core/TvheadendTestingApi : java/lang/annotation/Annotation {

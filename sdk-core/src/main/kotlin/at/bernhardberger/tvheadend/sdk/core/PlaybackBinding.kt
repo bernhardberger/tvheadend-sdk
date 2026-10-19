@@ -227,10 +227,8 @@ internal class SessionPlaybackBindingFactory(
                 RecordingPlaybackAdmission.ObservationExpired
             PlaybackRecordingLookup.TargetUnavailable ->
                 RecordingPlaybackAdmission.TargetUnavailable
-            is PlaybackRecordingLookup.Current -> recordingAdmission(
-                lookup.observation,
-                lookup.entry,
-            )
+            is PlaybackRecordingLookup.Current ->
+                lookup.observation.recordingPlaybackAdmission(lookup.entry)
         }
 
         return PlaybackBindingResult.Bound(
@@ -321,27 +319,28 @@ internal class SessionPlaybackBindingFactory(
     }
 }
 
-private fun recordingAdmission(
-    observation: SessionObservation,
-    entry: DvrEntry,
-): RecordingPlaybackAdmission {
-    val resumePosition = entry.admittedResumePosition(observation.recordingProgressCapability)
+/**
+ * The single admission rule for one recording entry under [capability]: the session binding and
+ * [SessionObservation.recordingPlaybackAdmission] both evaluate it.
+ */
+internal fun DvrEntry.playbackAdmission(capability: RecordingProgressCapability): RecordingPlaybackAdmission {
+    val resumePosition = admittedResumePosition(capability)
     return when {
-        entry.isPlayableEndedRecording() -> RecordingPlaybackAdmission.Completed(
+        isPlayableEndedRecording() -> RecordingPlaybackAdmission.Completed(
             resumePosition = resumePosition,
-            progressCapability = observation.recordingProgressCapability,
+            progressCapability = capability,
         )
-        entry.state in GROWING_RECORDING_STATES -> {
-            val file = entry.files?.singleOrNull()
+        state in GROWING_RECORDING_STATES -> {
+            val file = files?.singleOrNull()
                 ?: return RecordingPlaybackAdmission.TargetUnavailable
-            val path = file.path ?: entry.path
+            val growingPath = file.path ?: path
                 ?: return RecordingPlaybackAdmission.TargetUnavailable
-            if (path.isBlank()) {
+            if (growingPath.isBlank()) {
                 RecordingPlaybackAdmission.TargetUnavailable
-            } else if (path.endsWith(".ts", ignoreCase = true)) {
+            } else if (growingPath.endsWith(".ts", ignoreCase = true)) {
                 RecordingPlaybackAdmission.Growing(
                     resumePosition = resumePosition,
-                    progressCapability = observation.recordingProgressCapability,
+                    progressCapability = capability,
                 )
             } else {
                 RecordingPlaybackAdmission.GrowingDeferred

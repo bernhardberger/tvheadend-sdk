@@ -29,6 +29,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
+import kotlin.reflect.KClass
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -652,6 +653,81 @@ internal class PlaybackBindingTest {
             assertSame(DvrProgressResult.Accepted, binding.reportProgress(exactLease, progress))
             assertEquals(listOf(exactLease), fixture.metadata.progressLeases)
         }
+
+    @Test
+    fun `binding admission equals the observation predicate for the same observation`() {
+        data class Case(
+            val name: String,
+            val state: DvrEntryState,
+            val path: String,
+            val expected: KClass<*>,
+        )
+        listOf(
+            Case("growing", DvrEntryState.RECORDING, "/recording.ts", RecordingPlaybackAdmission.Growing::class),
+            Case(
+                "growing error",
+                DvrEntryState.RECORDING_ERROR,
+                "/recording.TS",
+                RecordingPlaybackAdmission.Growing::class,
+            ),
+            Case(
+                "deferred",
+                DvrEntryState.RECORDING,
+                "/recording.mkv",
+                RecordingPlaybackAdmission.GrowingDeferred::class,
+            ),
+            Case("completed", DvrEntryState.COMPLETED, "/recording.ts", RecordingPlaybackAdmission.Completed::class),
+            Case(
+                "blank path",
+                DvrEntryState.RECORDING_ERROR,
+                " ",
+                RecordingPlaybackAdmission.TargetUnavailable::class,
+            ),
+        ).forEach { case ->
+            RecordingProgressCapability.entries.forEach { capability ->
+                val label = "${case.name} / $capability"
+                val fixture = BindingFixture().apply {
+                    publishReady(
+                        GatewayGeneration(),
+                        capability,
+                        recordingState = case.state,
+                        recordingPath = case.path,
+                        recordingFiles = listOf(recordingFile(path = case.path)),
+                    )
+                }
+                val binding = fixture.factory
+                    .bindRecording(fixture.currentSession, DvrEntryId(7))
+                    .requireBound()
+                val observation = fixture.metadata.observation.value
+                val entry = requireNotNull(observation.dvrEntry(DvrEntryId(7)))
+                val predicate = observation.recordingPlaybackAdmission(entry)
+
+                assertEquals(case.expected, predicate::class, label)
+                assertSameAdmission(predicate, binding.admission, label)
+            }
+        }
+    }
+
+    private fun assertSameAdmission(
+        expected: RecordingPlaybackAdmission,
+        actual: RecordingPlaybackAdmission,
+        label: String,
+    ) {
+        assertEquals(expected::class, actual::class, label)
+        when (expected) {
+            is RecordingPlaybackAdmission.Completed -> {
+                actual as RecordingPlaybackAdmission.Completed
+                assertEquals(expected.resumePosition, actual.resumePosition, label)
+                assertSame(expected.progressCapability, actual.progressCapability, label)
+            }
+            is RecordingPlaybackAdmission.Growing -> {
+                actual as RecordingPlaybackAdmission.Growing
+                assertEquals(expected.resumePosition, actual.resumePosition, label)
+                assertSame(expected.progressCapability, actual.progressCapability, label)
+            }
+            else -> assertSame(expected, actual, label)
+        }
+    }
 
     @Test
     fun `binding identities and admissions redact target details`() {

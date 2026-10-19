@@ -21,6 +21,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.StateFlow
 import kotlin.time.Duration
+import kotlin.time.Instant
 
 /** Marks narrowly scoped construction APIs intended only for fake-backed tests. */
 @RequiresOptIn(
@@ -183,6 +184,21 @@ public object TvheadendTestResultFactory {
     ): RecordingPlaybackAdmission.Growing = RecordingPlaybackAdmission.Growing(resumePosition, progressCapability)
 
     /**
+     * Creates a recording file whose private server path is [serverPath] (blank is allowed), so fake
+     * sessions can build entries that [SessionObservation.recordingPlaybackAdmission] admits like real
+     * ones. The path is write-only: it has no getter and never appears in [DvrRecordingFile.toString].
+     * As documented for [DvrEntry.folder], a path-bearing file does feed that display-only folder.
+     */
+    @JvmStatic
+    public fun recordingFile(
+        fileId: Long? = null,
+        serverPath: String,
+        start: Instant? = null,
+        stop: Instant? = null,
+        sizeBytes: Long? = null,
+    ): DvrRecordingFile = DvrRecordingFile(fileId, serverPath, start, stop, sizeBytes)
+
+    /**
      * Creates a cached-artwork reference for [profile] and [artworkId] so fake [ArtworkLoader]s can
      * return it from [ArtworkLoader.cachedArtwork]. Its cache key matches the real session's key for
      * the same profile and artwork.
@@ -219,8 +235,7 @@ public object TvheadendTestResultFactory {
             if (observation.dvrEntry(recordingId) !== target) {
                 return RecordingPlaybackAdmission.TargetUnavailable
             }
-            val capability = observation.recordingProgressCapability
-            return RecordingPlaybackAdmission.Completed(target.admittedResumePosition(capability), capability)
+            return observation.recordingPlaybackAdmission(target)
         }
         fun unavailableFile() = RecordingFileResult.Failed(
             if (admission() == RecordingPlaybackAdmission.ObservationExpired) {

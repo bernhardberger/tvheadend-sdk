@@ -192,6 +192,40 @@ public class SessionObservation private constructor(
         return matched.sortedWith(ranking)
     }
 
+    /**
+     * The SDK's playback admission for [entry], evaluated with this observation's
+     * [recordingProgressCapability]. Applications use it to decide whether to offer Watch, Play or Resume
+     * before binding.
+     *
+     * This is the rule the session's playback binding applies. It is pure: it performs no network or
+     * session access and never returns [RecordingPlaybackAdmission.ObservationExpired]. The result carries
+     * no server path. [entry] is not checked against this observation, so pass entries read from it.
+     *
+     * Play stays authoritative. The binding re-evaluates the entry against the current observation when it
+     * binds and again at play time, so an entry held from an older observation may be admitted differently
+     * later.
+     *
+     * Outcomes by entry state:
+     * - `RECORDING` and `RECORDING_ERROR` with exactly one file: its path (or, when the file has none, the
+     *   entry's path) decides. A `.ts` suffix (case-insensitive) is [RecordingPlaybackAdmission.Growing];
+     *   any other suffix is [RecordingPlaybackAdmission.GrowingDeferred]. A missing or blank path, or any
+     *   other number of files, is [RecordingPlaybackAdmission.TargetUnavailable].
+     * - `COMPLETED`, and `COMPLETED_ERROR` or `MISSED` with at least one file and a data size not known to
+     *   be zero: [RecordingPlaybackAdmission.Completed]. `MISSED` never carries a resume position.
+     * - Every other state: [RecordingPlaybackAdmission.TargetUnavailable].
+     *
+     * A resume position is present only when the capability is supported and the saved position is
+     * positive. Offer Resume only when it is non-null.
+     *
+     * Offer Play for [RecordingPlaybackAdmission.Completed]. Offer it for
+     * [RecordingPlaybackAdmission.Growing] only when its `progressCapability` is `SUPPORTED`, because the
+     * Media3 coordinator refuses a growing target otherwise. [RecordingPlaybackAdmission.GrowingDeferred]
+     * and [RecordingPlaybackAdmission.TargetUnavailable] are not playable.
+     */
+    @ExperimentalTvheadendApi
+    public fun recordingPlaybackAdmission(entry: DvrEntry): RecordingPlaybackAdmission =
+        entry.playbackAdmission(recordingProgressCapability)
+
     /** Selects the unique EPG event related to [entryId] within this aggregate observation. */
     public fun epgEventForDvrEntry(entryId: DvrEntryId): EpgEvent? {
         val entry = dvrEntry(entryId) ?: return null

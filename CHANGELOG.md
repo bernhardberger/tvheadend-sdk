@@ -4,6 +4,15 @@
 
 Unreleased; development target.
 
+### Added
+
+- Experimental `SessionObservation.recordingPlaybackAdmission(entry)` exposes
+  the SDK's own playback admission for a DVR entry, so applications can decide
+  whether to offer Watch, Play or Resume before binding instead of copying the
+  rule. The session binding evaluates the same function; Play stays
+  authoritative. Testing-only `TvheadendTestResultFactory.recordingFile(...)`
+  builds recording files with a write-only server path for fakes.
+
 ### Changed
 
 - Recording playback admits failed entries that left a file. `RECORDING_ERROR`

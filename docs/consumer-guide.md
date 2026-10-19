@@ -1132,6 +1132,22 @@ ignores progress writes for `MISSED` entries, so they never carry a resume
 position (the binding drops one if present), always start over, and never show
 as watched.
 
+To decide whether lists, menus and details offer Watch, Play or Resume before
+binding, ask the observation you already render from. With
+`@OptIn(ExperimentalTvheadendApi::class)`,
+`observation.recordingPlaybackAdmission(entry)` applies the same rule as the
+binding, using that observation's `recordingProgressCapability`. It is pure,
+never returns `ObservationExpired`, and exposes no server path, so there is no
+need to copy the rule or read paths. Pass entries read from that observation.
+Offer Play for `Completed`, and for `Growing` only when its `progressCapability`
+is `SUPPORTED`, because the Media3 coordinator refuses a growing target
+otherwise. Offer Resume only when `resumePosition` is non-null. Do not offer
+playback for `GrowingDeferred` or `TargetUnavailable`. Play stays authoritative:
+the binding re-evaluates against the current observation when it binds and when
+playback starts, so an entry held from an older observation may be admitted
+differently later. Fakes build path-bearing entries with
+`TvheadendTestResultFactory.recordingFile(serverPath = ...)`.
+
 Completed recordings remain playable from the beginning when progress support
 is unknown or unsupported. `RecordingPlaybackStart.RESUME` uses a positive
 server position only when `recordingProgressCapability` is `SUPPORTED`; normal
