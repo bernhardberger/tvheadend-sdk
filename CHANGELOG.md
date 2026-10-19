@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.35.0]
+
+Unreleased; development target.
+
+### Fixed
+
+- `SessionObservation.dvrDiskSpaceState` now refreshes after initial sync: at
+  least every 5 minutes, and about 20 s after a burst of recording additions,
+  updates or deletions settles. Previously it was queried once per connection
+  and never changed after recordings were deleted. Values are the server's
+  cached figures, refreshed every 15 s; a failed or throwing query shows the
+  last value as `Stale` until the next success.
+
 ## [0.34.0]
 
 Released 2026-10-18.

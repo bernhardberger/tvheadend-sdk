@@ -249,6 +249,12 @@ metadata stalls.
 of the observation that named the artwork, so a model created under one server
 profile never shows another profile's bytes.
 
+### 0.34: declared video frame duration (released)
+
+0.34.0 was released on 2026-10-18. It publishes the server-declared video frame
+duration of the active playback target as an experimental display hint, for
+example for refresh-rate selection.
+
 ### Next 0.x minors: player-driven gaps
 
 The owner decided on 2026-10-12 not to start the 1.0 track yet. 0.x minors
