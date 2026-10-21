@@ -269,8 +269,11 @@ internal interface SessionMetadata {
         events.forEach(::acceptMetadataDeferringEpg)
     }
 
-    /** Publishes EPG changes accepted through [acceptMetadataDeferringEpg] since the last publication. */
+    /** Publishes deferred EPG changes since the last publication. */
     public fun flushDeferredMetadata() {}
+
+    /** Flushes only while [generation] remains bound, including during worker cancellation. */
+    public fun flushDeferredMetadata(generation: GatewayGeneration) {}
 
     public suspend fun awaitMetadataCurrent(generation: GatewayGeneration)
 
@@ -310,6 +313,7 @@ internal interface SessionMetadata {
         query: EpgQueryFence,
         queriedTo: Instant,
         events: List<GatewayEpgQueryEvent>,
+        deferPublication: Boolean = false,
     ): EpgQueryAcceptance
 
     public fun retainEpgEvents(generation: GatewayGeneration, bounds: EpgRetentionBounds)
@@ -521,7 +525,7 @@ internal class PhaseOneSessionMetadata(
     private var publishedConfigurations: List<DvrConfiguration>? = null
     private var publishedDiskSpace: DvrDiskSpace? = null
     private var synchronizedCurrent = false
-    private var epgPublicationDeferred = false
+    @Volatile private var epgPublicationDeferred = false
     // The running cache restore, whose guide may arrive after initial sync. Survives retained
     // resets and binds across retries; a profile switch retires it.
     private var epgRestoreTicket = 0L
@@ -955,6 +959,14 @@ internal class PhaseOneSessionMetadata(
         }
     }
 
+    override fun flushDeferredMetadata(generation: GatewayGeneration) {
+        // Coverage registration must not wait behind a writer when nothing is deferred yet.
+        if (!epgPublicationDeferred) return
+        synchronized(lock) {
+            if (this.generation === generation) flushDeferredMetadata()
+        }
+    }
+
     private fun acceptMetadata(event: MetadataEvent, deferEpgPublication: Boolean) {
         val effects = synchronized(lock) {
             if (event.generation !== generation) return@synchronized null
@@ -1307,6 +1319,7 @@ internal class PhaseOneSessionMetadata(
         query: EpgQueryFence,
         queriedTo: Instant,
         events: List<GatewayEpgQueryEvent>,
+        deferPublication: Boolean,
     ): EpgQueryAcceptance = synchronized(lock) {
         if (this.generation === generation && synchronizedCurrent) {
             epgRetentionBounds?.refresh(estimatedServerTime(generation))
@@ -1316,7 +1329,11 @@ internal class PhaseOneSessionMetadata(
                     val now = acceptanceTime()
                     pendingEpgUpdatedAt = now
                     epgLastQueriedAt[query.channelId] = now
-                    publishCurrentEpg(epgReducer.snapshot())
+                    if (deferPublication) {
+                        epgPublicationDeferred = true
+                    } else {
+                        publishCurrentEpg(epgReducer.snapshot())
+                    }
                 }
             }
         } else {

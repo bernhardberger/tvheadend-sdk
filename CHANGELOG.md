@@ -4,6 +4,12 @@
 
 Unreleased; development target.
 
+### Changed
+
+- Background EPG query results publish once per completed worker batch, reducing
+  `EpgRepositoryState` emissions during guide warm-up. Priority coverage
+  acquisitions still publish and settle immediately when their results arrive.
+
 ## [0.35.0]
 
 Released 2026-10-19.

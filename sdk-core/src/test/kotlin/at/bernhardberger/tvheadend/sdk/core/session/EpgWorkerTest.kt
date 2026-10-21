@@ -26,8 +26,10 @@ import at.bernhardberger.tvheadend.sdk.core.metadata.EpgQueryAcceptance
 import at.bernhardberger.tvheadend.sdk.core.metadata.EpgQueryFence
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -53,6 +55,171 @@ import kotlin.time.Instant
 
 @OptIn(ExperimentalCoroutinesApi::class)
 internal class EpgWorkerTest {
+    @Test
+    fun `ordinary query batches publish once with every accepted result`() = runTest {
+        val generation = GatewayGeneration()
+        val metadata = synchronizedMetadata(generation, 1L..6L)
+        val publications = mutableListOf<EpgRepositoryState>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            metadata.observation.collect { observation ->
+                if (publications.lastOrNull() != observation.epgState) publications += observation.epgState
+            }
+        }
+        val worker = EpgWorker(generation, metadata, MutableClock(instant(0)), queryEpg = { _, channelId, _ ->
+            GatewayResult.Ok(listOf(queryEvent(channelId.value, channelId.value, 10, 20)))
+        })
+        val job = backgroundScope.launch { worker.run() }
+
+        advanceTimeBy(1_500.milliseconds)
+        runCurrent()
+        assertEquals(1, publications.size - 1, "One EPG publication per completed ordinary batch")
+        val first = (publications.last() as EpgRepositoryState.Current).snapshot
+        assertEquals((1L..6L).toList(), first.events.map { it.id.value })
+        assertEquals(6, first.coverages.count { it.queriedTo == instant(0) + 4.hours })
+
+        advanceTimeBy(500.milliseconds)
+        runCurrent()
+        assertEquals(1, publications.size - 1)
+        job.cancelAndJoin()
+    }
+
+    @Test
+    fun `priority query publishes and settles before the rest of its batch`() = runTest {
+        val generation = GatewayGeneration()
+        val metadata = synchronizedMetadata(generation, 1L..2L)
+        val worker = EpgWorker(generation, metadata, MutableClock(instant(0)), queryEpg = { _, channelId, _ ->
+            if (channelId == ChannelId(1)) GatewayResult.Ok(emptyList()) else awaitCancellation()
+        })
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
+        val acquisition = backgroundScope.async {
+            worker.acquireCoverage(currentSession, ChannelId(1), instant(0) + 8.hours)
+        }
+        runCurrent()
+        val job = backgroundScope.launch { worker.run() }
+        runCurrent()
+
+        assertEquals(0L, testScheduler.currentTime)
+        assertTrue(acquisition.isCompleted)
+        val covered = acquisition.await() as EpgCoverageAcquisitionResult.CoveredEmpty
+        assertSame(metadata.observation.value, covered.observation)
+        assertEquals(instant(0) + 8.hours, covered.observation.coverage(ChannelId(1))!!.queriedTo)
+        job.cancelAndJoin()
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["in-flight", "during-apply", "after-apply"])
+    fun `waiter joining ordinary query settles without waiting for its batch`(timing: String) = runTest {
+        val generation = GatewayGeneration()
+        val delegate = synchronizedMetadata(generation, 1L..2L)
+        var onApply: () -> Unit = {}
+        val metadata = object : SessionMetadata by delegate {
+            override fun applySuccessfulEpgQuery(
+                generation: GatewayGeneration,
+                query: EpgQueryFence,
+                queriedTo: Instant,
+                events: List<GatewayEpgQueryEvent>,
+                deferPublication: Boolean,
+            ): EpgQueryAcceptance {
+                onApply()
+                return delegate.applySuccessfulEpgQuery(generation, query, queriedTo, events, deferPublication)
+            }
+        }
+        val release = CompletableDeferred<Unit>()
+        val worker = EpgWorker(generation, metadata, MutableClock(instant(0)), queryEpg = { _, channelId, _ ->
+            if (channelId == ChannelId(1)) {
+                release.await()
+                GatewayResult.Ok(emptyList())
+            } else {
+                awaitCancellation()
+            }
+        })
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
+        lateinit var acquisition: Deferred<EpgCoverageAcquisitionResult>
+        val acquire = {
+            acquisition = backgroundScope.async(UnconfinedTestDispatcher(testScheduler)) {
+                worker.acquireCoverage(currentSession, ChannelId(1), instant(0) + 4.hours)
+            }
+        }
+        val job = backgroundScope.launch { worker.run() }
+        advanceTimeBy(500.milliseconds)
+        runCurrent()
+        when (timing) {
+            "in-flight" -> acquire()
+            "during-apply" -> onApply = acquire
+        }
+        release.complete(Unit)
+        runCurrent()
+        if (timing == "after-apply") acquire()
+        runCurrent()
+
+        assertTrue(acquisition.isCompleted, "Coverage must not wait for an unrelated unfinished query")
+        assertTrue(acquisition.await() is EpgCoverageAcquisitionResult.CoveredEmpty)
+        assertEquals(500L, testScheduler.currentTime)
+        job.cancelAndJoin()
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `worker cancellation flushes accepted results only for its bound generation`(replaceGeneration: Boolean) = runTest {
+        val generation = GatewayGeneration()
+        val metadata = synchronizedMetadata(generation, 1L..2L)
+        val worker = EpgWorker(generation, metadata, MutableClock(instant(0)), queryEpg = { _, channelId, _ ->
+            if (channelId == ChannelId(1)) {
+                GatewayResult.Ok(listOf(queryEvent(1, 1, 10, 20)))
+            } else {
+                awaitCancellation()
+            }
+        })
+        val job = backgroundScope.launch { worker.run() }
+        advanceTimeBy(500.milliseconds)
+        runCurrent()
+        assertTrue(metadata.observation.value.epgSnapshotForDisplay!!.events.isEmpty())
+
+        val replacement = GatewayGeneration()
+        if (replaceGeneration) {
+            metadata.resetWorkingStateRetainingPublishedSnapshot()
+            metadata.bindGeneration(replacement)
+            metadata.acceptMetadata(MetadataEvent.ChannelAdded(replacement, channel(2)))
+            metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(replacement))
+            metadata.acceptMetadataDeferringEpg(MetadataEvent.EventAdded(replacement, event(2, 2, 10, 20)))
+        }
+        val beforeCancellation = metadata.observation.value
+        job.cancelAndJoin()
+
+        if (replaceGeneration) {
+            assertSame(beforeCancellation, metadata.observation.value)
+            metadata.flushDeferredMetadata(replacement)
+            assertEquals(listOf(EventId(2)), metadata.observation.value.epgSnapshotForDisplay!!.events.map { it.id })
+        } else {
+            assertEquals(listOf(EventId(1)), metadata.observation.value.epgSnapshotForDisplay!!.events.map { it.id })
+            assertEquals(instant(0) + 4.hours, metadata.observation.value.coverage(ChannelId(1))!!.queriedTo)
+        }
+    }
+
+    @Test
+    fun `deferred query receipt times publish with the completed batch`() = runTest {
+        val generation = GatewayGeneration()
+        val clock = MutableClock(instant(0))
+        val metadata = synchronizedMetadata(generation, 1L..2L, clock = clock)
+        val before = metadata.observation.value
+        val worker = EpgWorker(generation, metadata, clock, queryEpg = { _, channelId, _ ->
+            clock.now = instant(channelId.value)
+            GatewayResult.Ok(emptyList())
+        })
+        val job = backgroundScope.launch { worker.run() }
+        advanceTimeBy(250.milliseconds)
+        runCurrent()
+        assertEquals(before.epgRefreshTimes, metadata.observation.value.epgRefreshTimes)
+        assertTrue(metadata.observation.value.epgLastQueriedAt.isEmpty())
+
+        advanceTimeBy(250.milliseconds)
+        runCurrent()
+        assertEquals(instant(2), metadata.observation.value.epgRefreshTimes.lastUpdatedAt)
+        assertEquals(before.epgRefreshTimes.lastSynchronizedAt, metadata.observation.value.epgRefreshTimes.lastSynchronizedAt)
+        assertEquals(mapOf(ChannelId(1) to instant(1), ChannelId(2) to instant(2)), metadata.observation.value.epgLastQueriedAt)
+        job.cancelAndJoin()
+    }
+
     @Test
     fun `completed sync suppresses ordinary queries without changing public acquisition`() = runTest {
         val generation = GatewayGeneration()
@@ -830,9 +997,10 @@ internal class EpgWorkerTest {
                 query: EpgQueryFence,
                 queriedTo: Instant,
                 events: List<GatewayEpgQueryEvent>,
+                deferPublication: Boolean,
             ): EpgQueryAcceptance {
                 if (!retireAfterReduction) delegate.resetWorkingStateRetainingPublishedSnapshot()
-                return delegate.applySuccessfulEpgQuery(generation, query, queriedTo, events).also {
+                return delegate.applySuccessfulEpgQuery(generation, query, queriedTo, events, deferPublication).also {
                     if (retireAfterReduction) delegate.resetWorkingStateRetainingPublishedSnapshot()
                 }
             }
@@ -963,6 +1131,7 @@ internal class EpgWorkerTest {
         assertTrue(dispatched.isCompleted)
         metadata.acceptMetadata(MetadataEvent.EventDeleted(generation, EventId(1)))
         release.complete(Unit)
+        advanceTimeBy(250.milliseconds)
         runCurrent()
 
         val snapshot = (metadata.observation.value.epgState as EpgRepositoryState.Current).snapshot
@@ -1005,6 +1174,7 @@ internal class EpgWorkerTest {
             ),
         )
         release.complete(Unit)
+        advanceTimeBy(250.milliseconds)
         runCurrent()
 
         val snapshot = (metadata.observation.value.epgState as EpgRepositoryState.Current).snapshot
@@ -1498,8 +1668,11 @@ private fun synchronizedMetadata(
     coveragePolicy: EpgCoveragePolicy = EpgCoveragePolicy.create(),
     syncThrough: Instant? = null,
     estimatedServerTime: (GatewayGeneration) -> Instant? = { null },
+    clock: Clock = Clock.System,
     beforeFence: PhaseOneSessionMetadata.() -> Unit = {},
-): PhaseOneSessionMetadata = PhaseOneSessionMetadata(epgCoveragePolicy = coveragePolicy, estimatedServerTime = estimatedServerTime).apply {
+): PhaseOneSessionMetadata = PhaseOneSessionMetadata(
+    epgCoveragePolicy = coveragePolicy, estimatedServerTime = estimatedServerTime, clock = clock,
+).apply {
     bindGeneration(generation)
     channelIds.forEach { id ->
         acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(id)))

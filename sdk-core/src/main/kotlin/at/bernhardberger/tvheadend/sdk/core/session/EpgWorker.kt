@@ -206,6 +206,9 @@ internal class EpgWorker(
             }
         }
         return try {
+            // A result may already be reduced but waiting for the rest of its ordinary batch.
+            metadata.flushDeferredMetadata(generation)
+            settleCoveredWaiters(channelId)
             waiter.settlement.await()
         } finally {
             removeWaiter(waiter)
@@ -347,60 +350,77 @@ internal class EpgWorker(
     }
 
     private suspend fun CoroutineScope.dispatchBatch(plans: List<EpgQueryPlan>) {
-        val requests = ArrayList<Deferred<Unit>>(plans.size)
-        plans.forEach { plan ->
-            synchronized(activityLock) { coolingDown += plan.channelId }
-            launch {
-                try {
-                    delay(settings.channelCooldown)
-                } finally {
-                    synchronized(activityLock) { coolingDown -= plan.channelId }
-                    wake.trySend(Unit)
-                }
-            }
-            requests += async {
-                try {
-                    val query = metadata.beginEpgQuery(generation, plan.channelId) ?: return@async
-                    try {
-                        when (val result = queryEpg(generation, plan.channelId, plan.target)) {
-                            is GatewayResult.Ok -> metadata.applySuccessfulEpgQuery(
-                                generation = generation,
-                                query = query,
-                                queriedTo = plan.target,
-                                events = result.value,
-                            ).also { acceptance ->
-                                settleCoveredWaiters(plan.channelId)
-                                if (acceptance == EpgQueryAcceptance.CAPACITY_REJECTED) {
-                                    settleIneligible(plan.channelId, rememberIneligible = false)
-                                }
-                            }
-                            GatewayResult.AccessDenied,
-                            GatewayResult.NotSupported,
-                            GatewayResult.ObservationExpired,
-                            GatewayResult.MalformedReply,
-                            -> settleIneligible(plan.channelId)
-                            is GatewayResult.ServerRejected,
-                            GatewayResult.ConnectionLimit,
-                            GatewayResult.Timeout,
-                            GatewayResult.TransportUnavailable,
-                            -> Unit
+        try {
+            coroutineScope {
+                val requests = ArrayList<Deferred<Unit>>(plans.size)
+                plans.forEach { plan ->
+                    synchronized(activityLock) { coolingDown += plan.channelId }
+                    this@dispatchBatch.launch {
+                        try {
+                            delay(settings.channelCooldown)
+                        } finally {
+                            synchronized(activityLock) { coolingDown -= plan.channelId }
+                            wake.trySend(Unit)
                         }
-                    } finally {
-                        metadata.abandonEpgQuery(generation, query)
                     }
-                } catch (cancellation: CancellationException) {
-                    currentCoroutineContext().ensureActive()
-                } catch (_: Exception) {
-                    // A channel-local failure must not terminate the worker.
-                } finally {
-                    synchronized(activityLock) { inFlight -= plan.channelId }
-                    wake.trySend(Unit)
+                    requests += async { dispatchQuery(plan) }
+                    delay(settings.requestSpacing)
                 }
+                requests.awaitAll()
+                metadata.flushDeferredMetadata(generation)
+                currentCoroutineContext().ensureActive()
             }
-            delay(settings.requestSpacing)
+        } finally {
+            // The request scope has joined its children, so no accepted result can arrive after this flush.
+            metadata.flushDeferredMetadata(generation)
         }
-        requests.awaitAll()
-        currentCoroutineContext().ensureActive()
+    }
+
+    private suspend fun dispatchQuery(plan: EpgQueryPlan) {
+        try {
+            val query = metadata.beginEpgQuery(generation, plan.channelId) ?: return
+            try {
+                when (val result = queryEpg(generation, plan.channelId, plan.target)) {
+                    is GatewayResult.Ok -> metadata.applySuccessfulEpgQuery(
+                        generation = generation,
+                        query = query,
+                        queriedTo = plan.target,
+                        events = result.value,
+                        deferPublication = synchronized(activityLock) {
+                            plan.channelId !in priorityTargets && waiters[plan.channelId].isNullOrEmpty()
+                        },
+                    ).also { acceptance ->
+                        val hasWaiters = synchronized(activityLock) { !waiters[plan.channelId].isNullOrEmpty() }
+                        if (acceptance == EpgQueryAcceptance.APPLIED && hasWaiters) {
+                            metadata.flushDeferredMetadata(generation)
+                        }
+                        settleCoveredWaiters(plan.channelId)
+                        if (acceptance == EpgQueryAcceptance.CAPACITY_REJECTED) {
+                            settleIneligible(plan.channelId, rememberIneligible = false)
+                        }
+                    }
+                    GatewayResult.AccessDenied,
+                    GatewayResult.NotSupported,
+                    GatewayResult.ObservationExpired,
+                    GatewayResult.MalformedReply,
+                    -> settleIneligible(plan.channelId)
+                    is GatewayResult.ServerRejected,
+                    GatewayResult.ConnectionLimit,
+                    GatewayResult.Timeout,
+                    GatewayResult.TransportUnavailable,
+                    -> Unit
+                }
+            } finally {
+                metadata.abandonEpgQuery(generation, query)
+            }
+        } catch (cancellation: CancellationException) {
+            currentCoroutineContext().ensureActive()
+        } catch (_: Exception) {
+            // A channel-local failure must not terminate the worker.
+        } finally {
+            synchronized(activityLock) { inFlight -= plan.channelId }
+            wake.trySend(Unit)
+        }
     }
 
     private fun settleCoveredWaiters(channelId: ChannelId? = null) {

@@ -237,6 +237,9 @@ switch never carries guide data over. Ordinary queries extend each channel in
 four-hour steps to about 20 hours ahead over roughly 30 minutes; later
 programmes, up to the configured `EpgCoveragePolicy.futureHorizon`, need
 explicit coverage acquisition.
+Ordinary background query results are published together at the end of each
+worker batch, including their receipt times. Coverage acquisitions publish as
+soon as their query results arrive, without waiting for the rest of the batch.
 Tvheadend pushes programme updates only for programmes starting within its
 sliding six-hour window. Programmes further ahead are refreshed when the worker
 queries them again or when they enter the window, so late schedule changes can
