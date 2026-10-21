@@ -257,6 +257,45 @@ internal class EpgWorkerTest {
         assertEquals(mapOf(ChannelId(1) to instant(1)), metadata.observation.value.epgLastQueriedAt)
     }
 
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `publication preserves query deferred by an inline collector`(epgOnly: Boolean) = runTest {
+        val generation = GatewayGeneration()
+        val clock = MutableClock(instant(0))
+        val metadata = synchronizedMetadata(generation, 1L..2L, clock = clock)
+        var acceptedDuringPublication = false
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            metadata.publishedSnapshots.collect { published ->
+                if (published?.epgLastQueriedAt?.containsKey(ChannelId(1)) == true && !acceptedDuringPublication) {
+                    acceptedDuringPublication = true
+                    clock.now = instant(2)
+                    val query = requireNotNull(metadata.beginEpgQuery(generation, ChannelId(2)))
+                    assertEquals(EpgQueryAcceptance.APPLIED, metadata.applySuccessfulEpgQuery(
+                        generation, query, instant(0) + 4.hours, listOf(queryEvent(2, 2, 10, 20)),
+                        deferPublication = true,
+                    ))
+                }
+            }
+        }
+        clock.now = instant(1)
+        val query = requireNotNull(metadata.beginEpgQuery(generation, ChannelId(1)))
+        assertEquals(EpgQueryAcceptance.APPLIED, metadata.applySuccessfulEpgQuery(
+            generation, query, instant(0) + 4.hours, listOf(queryEvent(1, 1, 10, 20)),
+            deferPublication = !epgOnly,
+        ))
+        if (!epgOnly) metadata.flushDeferredMetadata(generation)
+        assertTrue(acceptedDuringPublication)
+        assertEquals(listOf(EventId(1)), metadata.observation.value.epgSnapshotForDisplay!!.events.map { it.id })
+        assertEquals(mapOf(ChannelId(1) to instant(1)), metadata.observation.value.epgLastQueriedAt)
+
+        metadata.flushDeferredMetadata(generation)
+
+        assertEquals(listOf(EventId(1), EventId(2)), metadata.observation.value.epgSnapshotForDisplay!!.events.map { it.id },
+            "Explicit flush must publish the query deferred during publication")
+        assertEquals(mapOf(ChannelId(1) to instant(1), ChannelId(2) to instant(2)), metadata.observation.value.epgLastQueriedAt)
+        assertEquals(instant(2), metadata.observation.value.epgRefreshTimes.lastUpdatedAt)
+    }
+
     @Test
     fun `deferred query receipt times publish with the completed batch`() = runTest {
         val generation = GatewayGeneration()

@@ -527,6 +527,8 @@ internal class PhaseOneSessionMetadata(
     private var publishedDiskSpace: DvrDiskSpace? = null
     private var synchronizedCurrent = false
     @Volatile private var epgPublicationDeferred = false
+    // Preserve deferrals accepted reentrantly by inline collectors during publication.
+    private var epgDeferralRevision = 0L
     // The running cache restore, whose guide may arrive after initial sync. Survives retained
     // resets and binds across retries; a profile switch retires it.
     private var epgRestoreTicket = 0L
@@ -956,10 +958,11 @@ internal class PhaseOneSessionMetadata(
     override fun flushDeferredMetadata() {
         synchronized(lock) {
             if (!epgPublicationDeferred) return
+            val deferralRevision = epgDeferralRevision
             if (synchronizedCurrent) {
                 publishCurrent(reducer.snapshot(), epgReducer.snapshot(), dvrReducer.snapshot())
             }
-            epgPublicationDeferred = false
+            if (epgDeferralRevision == deferralRevision) epgPublicationDeferred = false
         }
     }
 
@@ -1166,6 +1169,7 @@ internal class PhaseOneSessionMetadata(
                         }
                         if (event.isEpgEvent() && !epgEventAccepted) return@run null
                         if (deferEpgPublication && event.isEpgEvent()) {
+                            epgDeferralRevision += 1
                             epgPublicationDeferred = true
                         } else {
                             publishCurrent(reducer.snapshot(), epgReducer.snapshot(), checkNotNull(dvrSnapshot))
@@ -1340,6 +1344,7 @@ internal class PhaseOneSessionMetadata(
                     pendingEpgUpdatedAt = now
                     pendingEpgLastQueriedAt[query.channelId] = now
                     if (deferPublication) {
+                        epgDeferralRevision += 1
                         epgPublicationDeferred = true
                     } else {
                         publishCurrentEpg(epgReducer.snapshot())
@@ -1416,6 +1421,7 @@ internal class PhaseOneSessionMetadata(
         epgSnapshot: EpgSnapshot,
         dvrSnapshot: DvrSnapshot,
     ) {
+        val deferralRevision = epgDeferralRevision
         val preparedEpg = prepareEpgForPublication(epgSnapshot)
         mutableChannelsAndTags.value = ChannelRepositoryState.Current(catalog)
         publishedCatalog = (mutableChannelsAndTags.value as ChannelRepositoryState.Current).catalog
@@ -1425,10 +1431,11 @@ internal class PhaseOneSessionMetadata(
         publishedDvrSnapshot = (mutableDvr.value as DvrRepositoryState.Current).snapshot
         publishCachedSnapshots(catalog, preparedEpg)
         publishMetadataObservation()
-        epgPublicationDeferred = false
+        if (epgDeferralRevision == deferralRevision) epgPublicationDeferred = false
     }
 
     private fun publishCurrentEpg(snapshot: EpgSnapshot) {
+        val deferralRevision = epgDeferralRevision
         val preparedEpg = prepareEpgForPublication(snapshot)
         mutableEpg.value = EpgRepositoryState.Current(preparedEpg)
         publishedEpgSnapshot = (mutableEpg.value as EpgRepositoryState.Current).snapshot
@@ -1436,7 +1443,7 @@ internal class PhaseOneSessionMetadata(
             publishCachedSnapshots(catalog, preparedEpg)
         }
         publishMetadataObservation()
-        epgPublicationDeferred = false
+        if (epgDeferralRevision == deferralRevision) epgPublicationDeferred = false
     }
 
     private fun prepareEpgForPublication(candidate: EpgSnapshot): EpgSnapshot {
