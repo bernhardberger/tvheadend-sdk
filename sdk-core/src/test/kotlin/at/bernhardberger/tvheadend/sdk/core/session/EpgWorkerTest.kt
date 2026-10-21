@@ -26,6 +26,7 @@ import at.bernhardberger.tvheadend.sdk.core.metadata.EpgQueryAcceptance
 import at.bernhardberger.tvheadend.sdk.core.metadata.EpgQueryFence
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
@@ -194,6 +195,66 @@ internal class EpgWorkerTest {
             assertEquals(listOf(EventId(1)), metadata.observation.value.epgSnapshotForDisplay!!.events.map { it.id })
             assertEquals(instant(0) + 4.hours, metadata.observation.value.coverage(ChannelId(1))!!.queriedTo)
         }
+    }
+
+    @Test
+    fun `waiter joining an in-progress flush settles before the unfinished batch`() = runTest {
+        val generation = GatewayGeneration()
+        val metadata = synchronizedMetadata(generation, 1L..2L)
+        val worker = EpgWorker(generation, metadata, MutableClock(instant(0)), queryEpg = { _, channelId, _ ->
+            if (channelId == ChannelId(1)) GatewayResult.Ok(emptyList()) else awaitCancellation()
+        })
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
+        val job = backgroundScope.launch { worker.run() }
+        advanceTimeBy(500.milliseconds)
+        runCurrent()
+        var acquisition: Deferred<EpgCoverageAcquisitionResult>? = null
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            metadata.publishedSnapshots.collect { published ->
+                if (published?.epgSnapshot?.coverages?.any { it.queriedTo != null } == true && acquisition == null) {
+                    acquisition = backgroundScope.async(start = CoroutineStart.UNDISPATCHED) {
+                        worker.acquireCoverage(currentSession, ChannelId(1), instant(0) + 4.hours)
+                    }
+                }
+            }
+        }
+
+        metadata.flushDeferredMetadata(generation)
+        runCurrent()
+
+        val enrolled = requireNotNull(acquisition)
+        assertTrue(enrolled.isCompleted, "A waiter joining an in-progress flush must settle before the batch completes")
+        assertTrue(enrolled.await() is EpgCoverageAcquisitionResult.CoveredEmpty)
+        job.cancelAndJoin()
+    }
+
+    @Test
+    fun `non EPG publication does not expose deferred query receipt times`() = runTest {
+        val generation = GatewayGeneration()
+        val clock = MutableClock(instant(0))
+        val metadata = synchronizedMetadata(generation, 1L..2L, clock = clock)
+        val before = metadata.observation.value
+        val worker = EpgWorker(generation, metadata, clock, queryEpg = { _, channelId, _ ->
+            if (channelId == ChannelId(1)) {
+                clock.now = instant(1)
+                GatewayResult.Ok(emptyList())
+            } else {
+                awaitCancellation()
+            }
+        })
+        val job = backgroundScope.launch { worker.run() }
+        advanceTimeBy(500.milliseconds)
+        runCurrent()
+
+        metadata.applyDvrDiskSpace(generation, GatewayResult.Timeout)
+        assertEquals(before.epgState, metadata.observation.value.epgState)
+        assertEquals(before.epgRefreshTimes, metadata.observation.value.epgRefreshTimes)
+        assertEquals(before.epgLastQueriedAt, metadata.observation.value.epgLastQueriedAt,
+            "Query receipt times must remain pending until their EPG publication")
+
+        job.cancelAndJoin()
+        assertEquals(instant(1), metadata.observation.value.epgRefreshTimes.lastUpdatedAt)
+        assertEquals(mapOf(ChannelId(1) to instant(1)), metadata.observation.value.epgLastQueriedAt)
     }
 
     @Test
