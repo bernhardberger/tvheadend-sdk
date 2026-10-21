@@ -255,6 +255,12 @@ profile never shows another profile's bytes.
 duration of the active playback target as an experimental display hint, for
 example for refresh-rate selection.
 
+### 0.35: failed recording playback and disk-space refresh (released)
+
+0.35.0 was released on 2026-10-19. It admits failed recordings with retained
+files, exposes recording playback admission, and refreshes DVR disk space after
+initial sync.
+
 ### Next 0.x minors: player-driven gaps
 
 The owner decided on 2026-10-12 not to start the 1.0 track yet. 0.x minors
