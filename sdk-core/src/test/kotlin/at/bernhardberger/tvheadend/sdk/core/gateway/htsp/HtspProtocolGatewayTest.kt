@@ -140,6 +140,8 @@ import at.bernhardberger.tvheadend.sdk.core.DvrDiskSpace
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
 import at.bernhardberger.tvheadend.sdk.core.DVR_PROGRESS_INCR_PLAY_COUNT
+import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackExit
+import at.bernhardberger.tvheadend.sdk.core.DvrProgressPolicy
 import at.bernhardberger.tvheadend.sdk.core.DVR_PROGRESS_KEEP_PLAY_COUNT
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
@@ -2849,8 +2851,31 @@ internal class HtspProtocolGatewayTest {
         val increment = fake.lastRequest as UpdateDvrEntryRequest
         assertEquals(before + 2, fake.expectedGenerations.size)
         assertEquals(null, increment.configName)
-        assertEquals(120L, increment.playPositionSeconds)
+        assertEquals(0L, increment.playPositionSeconds)
         assertEquals(DVR_PROGRESS_INCR_PLAY_COUNT, increment.playCount)
+
+        val policy = DvrProgressPolicy()
+        listOf(
+            DvrPlaybackExit.NATURAL_END to 3_000.seconds,
+            DvrPlaybackExit.ORDERLY to 5_700.seconds,
+            DvrPlaybackExit.ORDERLY to 5_900.seconds,
+        ).forEach { (exit, position) ->
+            val watched = policy.terminalProgress(position, 6_000.seconds, DvrEntryState.COMPLETED, exit)
+            assertTrue(gateway.reportDvrProgress(generation, DvrEntryId(7), watched) is GatewayResult.Ok)
+            val request = fake.lastRequest as UpdateDvrEntryRequest
+            assertEquals(0L, request.playPositionSeconds, "$exit at $position")
+            assertEquals(DVR_PROGRESS_INCR_PLAY_COUNT, request.playCount, "$exit at $position")
+        }
+        val unfinished = policy.terminalProgress(
+            5_699.seconds,
+            6_000.seconds,
+            DvrEntryState.COMPLETED,
+            DvrPlaybackExit.ORDERLY,
+        )
+        assertTrue(gateway.reportDvrProgress(generation, DvrEntryId(7), unfinished) is GatewayResult.Ok)
+        val resumable = fake.lastRequest as UpdateDvrEntryRequest
+        assertEquals(5_699L, resumable.playPositionSeconds)
+        assertEquals(DVR_PROGRESS_KEEP_PLAY_COUNT, resumable.playCount)
 
         fake.executeResult = HtspResult.ServerError("private rejected")
         assertEquals(

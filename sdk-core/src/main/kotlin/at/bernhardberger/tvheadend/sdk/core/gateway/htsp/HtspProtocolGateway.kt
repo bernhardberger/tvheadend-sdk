@@ -936,7 +936,8 @@ internal class HtspProtocolGateway internal constructor(
         } else {
             DVR_PROGRESS_KEEP_PLAY_COUNT
         },
-        playPositionSeconds = progress.position.inWholeSeconds,
+        // A watched recording starts over, like updateDvrWatchState(watched = true).
+        playPositionSeconds = if (progress.markWatched) 0L else progress.position.inWholeSeconds,
         expectedGeneration = htspGenerationFor(generation),
     ).toGatewayResult {}
 

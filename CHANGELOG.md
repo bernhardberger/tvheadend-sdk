@@ -15,6 +15,11 @@ Unreleased; development target.
 - `DvrEntry.contentGenre` decodes the major content category that Tvheadend
   sends for recordings (`contentType` 1–15, no subgenre). It was previously
   decoded as a full EPG descriptor byte and was `null` for every recording.
+- A progress report that marks a recording watched, including the automatic
+  `terminalProgress` mark at a natural end or an orderly exit at the completion
+  fraction, now persists position zero like `updateWatchState(watched = true)`.
+  It previously kept the final position, so a watched recording still offered
+  to resume near its end.
 
 ## [0.35.0]
 

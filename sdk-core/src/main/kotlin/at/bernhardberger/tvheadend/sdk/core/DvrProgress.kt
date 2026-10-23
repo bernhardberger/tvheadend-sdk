@@ -15,7 +15,12 @@ internal const val DVR_PROGRESS_INCR_PLAY_COUNT: Long = Int.MAX_VALUE.toLong()
 internal const val DVR_PROGRESS_MINIMUM_PROTOCOL_VERSION: Int = 27
 private const val DVR_PROGRESS_POSITION_MAX_SECONDS: Long = Int.MAX_VALUE.toLong()
 
-/** One playback-progress observation to persist for a DVR entry. */
+/**
+ * One playback-progress observation to persist for a DVR entry.
+ *
+ * A report with [markWatched] increments the play count and persists a zero position instead of
+ * [position], so a watched recording offers no resume point, as with `updateWatchState(watched = true)`.
+ */
 public data class DvrPlaybackProgress(
     public val position: Duration,
     public val markWatched: Boolean = false,
