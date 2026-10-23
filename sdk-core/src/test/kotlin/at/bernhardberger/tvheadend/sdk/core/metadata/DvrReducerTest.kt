@@ -2,6 +2,7 @@
 
 package at.bernhardberger.tvheadend.sdk.core.metadata
 
+import at.bernhardberger.tvheadend.sdk.core.ContentCategory
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
 import at.bernhardberger.tvheadend.sdk.core.DvrRecordingStream
@@ -22,6 +23,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.TimerecRuleId
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotSame
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
@@ -170,6 +172,18 @@ internal class DvrReducerTest {
     }
 
     @Test
+    fun `dvr content type decodes as the major category Tvheadend sends for recordings`() {
+        val reducer = DvrReducer()
+        reducer.accept(MetadataEvent.DvrEntryAdded(generation, entry(id = 1, contentType = 6)))
+        reducer.accept(MetadataEvent.DvrEntryAdded(generation, entry(id = 2, contentType = 0)))
+
+        val entries = reducer.snapshot().entries.associateBy { it.id.value }
+        assertEquals(ContentCategory.MUSIC_BALLET_DANCE, entries.getValue(1).contentGenre?.category)
+        assertNull(entries.getValue(1).contentGenre?.subgenre)
+        assertNull(entries.getValue(2).contentGenre)
+    }
+
+    @Test
     fun `dvr replacement clears browse scalars while stats patch touches only stats`() {
         val reducer = DvrReducer()
         reducer.accept(
@@ -204,7 +218,7 @@ internal class DvrReducerTest {
         var snapshot = reducer.snapshot().entries.single()
         assertEquals("old", snapshot.title)
         assertEquals(true, snapshot.enabled)
-        assertEquals(null, snapshot.contentGenre)
+        assertEquals(ContentCategory.SOCIAL_POLITICAL_ECONOMICS, snapshot.contentGenre?.category)
         assertEquals(120.seconds, snapshot.startExtraMinutes)
         assertEquals(180.seconds, snapshot.stopExtraMinutes)
         assertEquals(null, snapshot.subscriptionError)

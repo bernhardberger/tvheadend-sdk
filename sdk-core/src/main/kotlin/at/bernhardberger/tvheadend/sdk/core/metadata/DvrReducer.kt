@@ -121,7 +121,7 @@ internal data class ReducedDvrEntry private constructor(
             retentionDays = retentionDays,
             removalDays = removalDays,
             priority = priority?.let(DvrPriority::fromWire),
-            contentGenre = ContentGenre.fromContentType(contentType),
+            contentGenre = ContentGenre.fromDvrContentType(contentType),
             rating = ratingOrNull(),
             playCount = playCount,
             playPosition = playPosition,

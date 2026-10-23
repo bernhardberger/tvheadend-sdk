@@ -291,7 +291,23 @@ public data class ContentGenre private constructor(
             return ContentGenre(category, ContentSubgenre.entries.firstOrNull { it.code == code })
         }
 
+        /**
+         * Decodes a DVR entry `contentType`. Tvheadend stores and sends only the level-1 class
+         * nibble for recordings (`genre->code / 16`), so `1`–`0xB` decode to a category without a
+         * subgenre, not even for `0xB`, whose `0xB0` byte is [ContentSubgenre.ORIGINAL_LANGUAGE].
+         * Full descriptor bytes, which Tvheadend never sends here, keep EPG decoding; the ranges
+         * cannot collide because a full byte below `0x10` has the undefined class.
+         */
+        internal fun fromDvrContentType(contentType: Long?): ContentGenre? = when (contentType) {
+            null -> null
+            in 0L..LEVEL_ONE_MAX -> ContentCategory.entries
+                .firstOrNull { it.code.toLong() == contentType }
+                ?.let { ContentGenre(it, subgenre = null) }
+            else -> fromContentType(contentType)
+        }
+
         private const val CONTENT_TYPE_MAX: Long = 0xFF
+        private const val LEVEL_ONE_MAX: Long = 0xF
         private const val LEVEL_ONE_SHIFT: Int = 4
     }
 }

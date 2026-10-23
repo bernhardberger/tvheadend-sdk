@@ -10,6 +10,12 @@ Unreleased; development target.
   `EpgRepositoryState` emissions during guide warm-up. Priority coverage
   acquisitions still publish and settle immediately when their results arrive.
 
+### Fixed
+
+- `DvrEntry.contentGenre` decodes the major content category that Tvheadend
+  sends for recordings (`contentType` 1–15, no subgenre). It was previously
+  decoded as a full EPG descriptor byte and was `null` for every recording.
+
 ## [0.35.0]
 
 Released 2026-10-19.

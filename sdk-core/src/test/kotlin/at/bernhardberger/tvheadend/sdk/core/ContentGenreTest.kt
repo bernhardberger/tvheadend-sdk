@@ -67,6 +67,20 @@ internal class ContentGenreTest {
     }
 
     @Test
+    fun `dvr content types decode the major category and keep full bytes as a fallback`() {
+        ContentCategory.entries.forEach { category ->
+            val genre = ContentGenre.fromDvrContentType(category.code.toLong())
+            assertEquals(category, genre?.category, "category=$category")
+            assertNull(genre?.subgenre, "category=$category")
+        }
+        listOf(null, -1L, 0x0L, 0xCL, 0xDL, 0xEL, 0x100L).forEach { contentType ->
+            assertNull(ContentGenre.fromDvrContentType(contentType), "contentType=$contentType")
+        }
+        assertEquals(ContentGenre.fromContentType(0x43), ContentGenre.fromDvrContentType(0x43))
+        assertEquals(ContentGenre.fromContentType(0x60), ContentGenre.fromDvrContentType(0x6))
+    }
+
+    @Test
     fun `genres compare by category and subgenre`() {
         assertEquals(ContentGenre.fromContentType(0x43), ContentGenre.fromContentType(0x43))
         assertEquals(ContentGenre.fromContentType(0x43).hashCode(), ContentGenre.fromContentType(0x43).hashCode())
