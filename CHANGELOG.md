@@ -30,6 +30,7 @@ Unreleased; development target.
 - Background EPG query results publish once per completed worker batch, reducing
   `EpgRepositoryState` emissions during guide warm-up. Priority coverage
   acquisitions still publish and settle immediately when their results arrive.
+- Move the protocol dependency to HTSP 1.0.0-rc.1. No public SDK API changes.
 
 ### Fixed
 

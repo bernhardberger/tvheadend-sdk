@@ -4355,7 +4355,7 @@ internal class HtspProtocolGatewayTest {
                             audioType = null,
                             audioVersion = null,
                             channelCount = null,
-                            sampleRate = null,
+                            sampleRateIndex = null,
                             rdsUecp = true,
                         ),
                         HtspSubscriptionStream(
@@ -4372,7 +4372,7 @@ internal class HtspProtocolGatewayTest {
                             audioType = null,
                             audioVersion = null,
                             channelCount = null,
-                            sampleRate = null,
+                            sampleRateIndex = null,
                             rdsUecp = null,
                         ),
                         HtspSubscriptionStream(
@@ -4389,7 +4389,7 @@ internal class HtspProtocolGatewayTest {
                             audioType = null,
                             audioVersion = null,
                             channelCount = null,
-                            sampleRate = null,
+                            sampleRateIndex = null,
                             rdsUecp = null,
                         ),
                     ),

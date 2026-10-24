@@ -1954,7 +1954,7 @@ private fun HtspSubscriptionStream.toGatewayStream(): SubscriptionStream = Subsc
     audioType = audioType,
     audioVersion = audioVersion,
     channelCount = channelCount,
-    rate = sampleRate,
+    rate = sampleRateIndex,
     rdsUecp = rdsUecp?.toWireFlag(),
 )
 
