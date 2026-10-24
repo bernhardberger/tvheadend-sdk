@@ -6,6 +6,7 @@ import org.gradle.api.artifacts.ProjectDependency
 import org.gradle.api.artifacts.VersionCatalogsExtension
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier
 import org.gradle.api.artifacts.component.ProjectComponentIdentifier
+import org.gradle.api.credentials.PasswordCredentials
 import org.gradle.api.publish.PublishingExtension
 import org.gradle.api.publish.maven.MavenPublication
 import org.gradle.api.publish.maven.tasks.PublishToMavenLocal
@@ -33,7 +34,18 @@ plugins {
 
 group = "at.bernhardberger.tvheadend"
 version = "0.36.0"
-providers.gradleProperty("sdkCandidateVersion").orNull?.let { candidate ->
+val sdkCandidateVersion = providers.gradleProperty("sdkCandidateVersion").orNull
+val sdkSnapshotVersion = providers.gradleProperty("sdkSnapshotVersion").orNull
+require(sdkCandidateVersion == null || sdkSnapshotVersion == null) {
+    "sdkCandidateVersion and sdkSnapshotVersion are mutually exclusive"
+}
+sdkSnapshotVersion?.let { snapshot ->
+    require(snapshot == "$version-SNAPSHOT") {
+        "sdkSnapshotVersion must be the configured version followed by -SNAPSHOT"
+    }
+    version = snapshot
+}
+sdkCandidateVersion?.let { candidate ->
     require(candidate.matches(Regex("[0-9]+\\.[0-9]+\\.[0-9]+-[A-Za-z0-9.-]+-SNAPSHOT"))) {
         "sdkCandidateVersion must be a uniquely named snapshot candidate"
     }
@@ -576,6 +588,14 @@ subprojects {
                 maven {
                     name = "checkoutLocal"
                     url = rootProject.layout.buildDirectory.dir("local-maven").get().asFile.toURI()
+                }
+                // Development snapshots only; releases go through tools/publish-central-release.
+                if (sdkSnapshotVersion != null) {
+                    maven {
+                        name = "centralSnapshots"
+                        url = uri("https://central.sonatype.com/repository/maven-snapshots/")
+                        credentials(PasswordCredentials::class)
+                    }
                 }
             }
             publications.withType<MavenPublication>().configureEach {
