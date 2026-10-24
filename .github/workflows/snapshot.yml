@@ -1,0 +1,167 @@
+name: Snapshot
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Explicit bash runs steps with -eo pipefail, so a failed command inside a pipe fails the step.
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: snapshot
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    # Same guard as publish, so the gate never runs where publication would be skipped.
+    if: >-
+      github.repository == 'bernhardberger/tvheadend-sdk' &&
+      github.ref == 'refs/heads/main' &&
+      github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      - name: Set up Temurin 21
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Restore Gradle dependencies
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.gradle/wrapper/dists
+          key: sdk-dependencies-v1-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', '**/gradle.properties', 'gradle/libs.versions.toml', 'gradle/verification-metadata.xml', 'gradle/wrapper/gradle-wrapper.properties') }}-${{ github.sha }}
+          restore-keys: sdk-dependencies-v1-${{ runner.os }}-
+      - name: Install pinned Android SDK packages
+        run: '"$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0"'
+      - name: Verify release tool self-tests
+        run: |
+          ./tools/check-staged-publication --self-test
+          ./tools/publish-central-release --self-test
+      - name: Build, check, and stage all SDK modules
+        run: ./gradlew --no-daemon clean build check stageLocalPublication
+      - name: Verify staged SDK publication
+        run: ./tools/check-staged-publication --write-manifest build/staged-publication.json
+      - name: Verify staged consumer contract
+        run: ./gradlew --no-daemon -p consumer-contract clean test verifyConsumerDependencyGraph assembleRelease lintDebug
+      - name: Check release setup
+        run: ./tools/publish-central-release --check-setup
+  publish:
+    needs: gate
+    # The central Environment has no branch policy; only a first attempt on main may publish snapshots.
+    if: >-
+      github.repository == 'bernhardberger/tvheadend-sdk' &&
+      github.ref == 'refs/heads/main' &&
+      github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: central
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      - name: Set up Temurin 21
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Restore Gradle dependencies
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.gradle/wrapper/dists
+          key: sdk-dependencies-v1-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', '**/gradle.properties', 'gradle/libs.versions.toml', 'gradle/verification-metadata.xml', 'gradle/wrapper/gradle-wrapper.properties') }}-${{ github.sha }}
+          restore-keys: sdk-dependencies-v1-${{ runner.os }}-
+      - name: Install pinned Android SDK packages
+        run: '"$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0"'
+      - name: Derive snapshot version
+        id: version
+        run: |
+          version=$(sed -n 's/^version = "\([^"]*\)"$/\1/p' build.gradle.kts)
+          if ! [[ "$version" =~ ^0\.[0-9]+\.[0-9]+$ ]]; then
+            echo "build.gradle.kts must declare exactly one plain major-zero version" >&2
+            exit 1
+          fi
+          echo "snapshot_version=$version-SNAPSHOT" >> "$GITHUB_OUTPUT"
+      - name: Publish snapshot to Central
+        env:
+          CENTRAL_PORTAL_TOKEN: ${{ secrets.CENTRAL_PORTAL_TOKEN }}
+          SNAPSHOT_VERSION: ${{ steps.version.outputs.snapshot_version }}
+        run: |
+          # The Portal user token is base64 username:password; the snapshot repository takes it as basic auth.
+          credentials=$(printf '%s' "$CENTRAL_PORTAL_TOKEN" | base64 --decode 2>/dev/null) || {
+            echo "CENTRAL_PORTAL_TOKEN is not valid base64" >&2
+            exit 1
+          }
+          unset CENTRAL_PORTAL_TOKEN
+          if ! [[ "$credentials" =~ ^[^:[:space:]]+:[^:[:space:]]+$ ]]; then
+            echo "CENTRAL_PORTAL_TOKEN must encode username:password" >&2
+            exit 1
+          fi
+          username=${credentials%%:*}
+          password=${credentials#*:}
+          echo "::add-mask::$username"
+          echo "::add-mask::$password"
+          unset credentials
+          export ORG_GRADLE_PROJECT_centralSnapshotsUsername="$username"
+          export ORG_GRADLE_PROJECT_centralSnapshotsPassword="$password"
+          unset username password
+          ./gradlew --no-daemon "-PsdkSnapshotVersion=$SNAPSHOT_VERSION" \
+            stageLocalPublication publishAllPublicationsToCentralSnapshotsRepository
+      - name: Read back published snapshot
+        env:
+          SNAPSHOT_VERSION: ${{ steps.version.outputs.snapshot_version }}
+          SNAPSHOT_REPOSITORY: https://central.sonatype.com/repository/maven-snapshots
+        run: |
+          group=at/bernhardberger/tvheadend
+          base=${SNAPSHOT_VERSION%-SNAPSHOT}
+          field() { sed -n "s:.*<$1>\([^<]*\)</$1>.*:\1:p" <<<"$2"; }
+          # Gradle stamps every repository in one build with the build start time.
+          stamp=$(field timestamp "$(<"build/local-maven/$group/sdk-core/$SNAPSHOT_VERSION/maven-metadata.xml")")
+          failed=0
+          rows=
+          declare -A uniques=()
+          for module in sdk-core sdk-playback sdk-testing sdk-android sdk-media3; do
+            case $module in sdk-android | sdk-media3) extension=aar ;; *) extension=jar ;; esac
+            staged=build/local-maven/$group/$module/$SNAPSHOT_VERSION
+            local_unique=$base-$stamp-$(field buildNumber "$(<"$staged/maven-metadata.xml")")
+            remote=$(curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 10 \
+              "$SNAPSHOT_REPOSITORY/$group/$module/$SNAPSHOT_VERSION/maven-metadata.xml") || remote=
+            number=$(field buildNumber "$remote")
+            if [[ -z "$stamp" || "$(field timestamp "$remote")" != "$stamp" || -z "$number" ]]; then
+              echo "::error::$module: remote snapshot metadata does not describe this upload"
+              failed=1
+              continue
+            fi
+            unique=$base-$stamp-$number
+            uniques[$unique]=1
+            main=$(sha256sum "$staged/$module-$local_unique.$extension" | cut -d' ' -f1)
+            sources=$(sha256sum "$staged/$module-$local_unique-sources.jar" | cut -d' ' -f1)
+            rows+="| \`$module\` | \`$unique\` | \`$main\` | \`$sources\` |"$'\n'
+          done
+          # An earlier partial upload leaves build numbers apart; this run's timestamp still binds every module.
+          drift="Modules received different build numbers; consumers must pin each module's own unique version."
+          {
+            printf '## SDK snapshot %s\n\nCommit: %s\n\n' "$SNAPSHOT_VERSION" "\`$GITHUB_SHA\`"
+            if (( ${#uniques[@]} > 1 )); then printf '> [!WARNING]\n> %s\n\n' "$drift"; fi
+            printf '| Module | Unique version | Staged main SHA-256 | Staged sources SHA-256 |\n| --- | --- | --- | --- |\n%s' "$rows"
+            if (( failed )); then printf '\n**Readback failed.**\n'; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if (( ${#uniques[@]} > 1 )); then echo "::warning::$drift"; fi
+          exit "$failed"

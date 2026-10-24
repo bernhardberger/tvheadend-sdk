@@ -38,6 +38,53 @@ Batch the accepted fixes into one development cycle, and publish a single SDK
 version once the application release that depends on it is about to ship and
 has accepted the candidate.
 
+## Development snapshots
+
+`.github/workflows/snapshot.yml` publishes `main` to Central's public snapshot
+repository, `https://central.sonatype.com/repository/maven-snapshots/`, as
+`<configured version>-SNAPSHOT`. Dispatching it is publication: it needs the
+same explicit owner authority as a release. It runs only for the first attempt
+of a `refs/heads/main` dispatch, with no inputs; re-dispatch instead of
+re-running, so an old commit is never republished as the newest snapshot:
+
+```bash
+gh workflow run snapshot.yml --ref main
+```
+
+The `gate` job runs the full CI gate without an environment or secrets. The
+`publish` job then runs in the `central` environment, rebuilds the same commit
+at the snapshot version, and stages and uploads all five modules in one Gradle
+build with `-PsdkSnapshotVersion=<version>-SNAPSHOT`. The archives are
+reproducible, but the uploaded bytes come from that rebuild, not from the gated
+build. The property must equal the configured version plus `-SNAPSHOT`; it alone
+registers the `centralSnapshots` repository, which reads basic-auth credentials
+decoded from `CENTRAL_PORTAL_TOKEN` in the publish step only. Snapshots are
+unsigned and do not pass through `tools/publish-central-release`.
+
+The job then reads each module's remote snapshot metadata and fails if it lacks
+this run's timestamp. Its summary records the commit, each module's unique
+version from the remote metadata, and the SHA-256 of each staged main and
+sources archive: the bytes Gradle uploaded. Consumers verify what they resolve
+through their own Gradle dependency verification.
+
+Consumers pin the unique version from the summary, for example
+`0.36.0-20261024.143000-1`, never the moving `-SNAPSHOT`. The published POMs and
+Gradle module metadata point SDK modules at each other's `-SNAPSHOT`, so a
+consumer declares all five modules, each at its own unique version from the
+same run, even modules it uses only transitively. Normally all five share one
+unique version. A run that failed partway through an upload leaves the
+modules' build numbers apart, and Central keeps counting from there. Later runs
+still pass when every module carries that run's timestamp, but the summary and
+job log then warn that the build numbers differ. Nothing needs deleting or
+renaming; the drift ends when the configured version changes.
+
+Central removes snapshots after about 90 days. Snapshots are tied to public
+`main` commits only by the run summary, so `main` history must never be
+rewritten. Releases are unaffected: they still publish only from a `v*` tag
+through the tag workflow below. Because the `central` environment has no
+deployment-branch policy, the workflow guards the ref itself; the owner is
+advised to restrict `central` to `main` and `v*` tags.
+
 ## Protected Setup
 
 The `central` GitHub Environment contains exactly:
@@ -48,6 +95,7 @@ The `central` GitHub Environment contains exactly:
 
 The tag workflow is read-only to the repository. The prepare step receives only
 the OpenPGP key and passphrase; the upload step receives only the Central token.
+The snapshot workflow's publish step receives only the Central token.
 No normal CI step, workflow artifact, command argument, or generated output may
 contain a release credential.
 
