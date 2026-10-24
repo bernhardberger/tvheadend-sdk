@@ -60,6 +60,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotSame
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -1408,6 +1409,43 @@ internal class PhaseOneSessionMetadataTest {
         assertEquals(listOf(1L, 3L), snapshot.events.map { event -> event.id.value })
         assertNull(snapshot.coverages.first { it.channelId == ChannelId(2) }.knownTo)
         assertEquals(Instant.fromEpochSeconds(tailStart - 1), metadata.initialEpgCoverage(generation)[ChannelId(2)])
+    }
+
+    @Test
+    fun `explicit request protection ends with its generation`() {
+        val metadata = PhaseOneSessionMetadata(
+            epgCoveragePolicy = EpgCoveragePolicy.create(48.hours, maximumRetainedEvents = 2),
+            clock = object : Clock { override fun now() = Instant.fromEpochSeconds(0) },
+        )
+        val tailStart = 30.hours.inWholeSeconds
+        val through = Instant.fromEpochSeconds(tailStart + 3_600)
+        fun fullStore(generation: GatewayGeneration) {
+            metadata.bindGeneration(generation)
+            metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(id = 1)))
+            metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(id = 2)))
+            metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(1, 1, 0, 10)))
+            metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(2, 2, tailStart, tailStart + 3_600)))
+            metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        }
+        fun addNearProgramme(generation: GatewayGeneration): List<Long>? {
+            metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(3, 1, 10, 20)))
+            return metadata.currentEpgSnapshot(generation)?.events?.map { event -> event.id.value }
+        }
+
+        val first = GatewayGeneration()
+        fullStore(first)
+        assertNotNull(metadata.rememberEpgCoverageRequest(first, listOf(ChannelId(2)), through))
+        // The request protects channel 2's far tail, and nothing else may yield.
+        assertEquals(listOf(1L, 2L), addNearProgramme(first))
+
+        val second = GatewayGeneration()
+        fullStore(second)
+        assertNull(metadata.rememberEpgCoverageRequest(first, listOf(ChannelId(2)), through))
+        assertEquals(listOf(1L, 3L), addNearProgramme(second))
+
+        assertNotNull(metadata.rememberEpgCoverageRequest(second, listOf(ChannelId(2)), through))
+        metadata.resetWorkingStateRetainingPublishedSnapshot()
+        assertNull(metadata.rememberEpgCoverageRequest(second, listOf(ChannelId(2)), through))
     }
 
     @Test

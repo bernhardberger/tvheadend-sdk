@@ -833,6 +833,38 @@ internal class EpgReducerTest {
     }
 
     @Test
+    fun `coverage requests keep the recent eight calls and every pending one per owner`() {
+        val owner = Any()
+        val requests = EpgCoverageRequests()
+        requests.reset(owner)
+        val batch = (1L..10L).map(::ChannelId)
+        val pending = requireNotNull(requests.remember(owner, batch, instant(500)))
+        requests.remember(owner, listOf(ChannelId(1)), instant(400))
+        assertEquals(batch.associateWith { instant(500) }, requests.bounds())
+        requests.release(owner, pending)
+
+        // A settled batch is one call: with seven later calls it is still among the recent eight.
+        (11L..16L).forEach { requests.remember(owner, listOf(ChannelId(it)), instant(it * 100)) }
+        assertEquals(batch.toSet() + (11L..16L).map(::ChannelId), requests.bounds().keys)
+        requests.remember(owner, listOf(ChannelId(17)), instant(1700))
+        assertEquals(setOf(ChannelId(1)) + (11L..17L).map(::ChannelId), requests.bounds().keys)
+        assertEquals(instant(400), requests.bounds()[ChannelId(1)])
+
+        // A pending call stays protected however many calls follow.
+        val waiting = requireNotNull(requests.remember(owner, listOf(ChannelId(20)), instant(2000)))
+        (21L..30L).forEach { requests.remember(owner, listOf(ChannelId(it)), instant(it * 100)) }
+        assertEquals(instant(2000), requests.bounds()[ChannelId(20)])
+        requests.release(owner, waiting)
+        assertEquals(null, requests.bounds()[ChannelId(20)])
+        assertEquals(null, requests.remember(Any(), listOf(ChannelId(31)), instant(3100)))
+
+        requests.reset(Any())
+        assertEquals(emptyMap<ChannelId, Instant>(), requests.bounds())
+        assertEquals(null, requests.remember(owner, listOf(ChannelId(1)), instant(500)))
+        assertEquals(emptyMap<ChannelId, Instant>(), requests.bounds())
+    }
+
+    @Test
     fun `channel migration and deletion update events and actual coverage`() {
         val reducer = EpgReducer()
         addChannel(reducer, 1)

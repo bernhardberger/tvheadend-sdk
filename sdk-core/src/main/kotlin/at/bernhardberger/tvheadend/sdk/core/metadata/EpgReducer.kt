@@ -264,6 +264,65 @@ internal class EpgCapacityWindow(
     override fun toString(): String = "EpgCapacityWindow(<redacted>)"
 }
 
+private const val RECENT_COVERAGE_REQUESTS = 8
+
+/**
+ * Explicit coverage requests of one generation, which protect their channels through the
+ * requested end against eviction: those of the most recent calls (a batch is one call; an entry
+ * leaves only when newer calls displace it) and those of every pending call. Its own lock keeps
+ * callers off the metadata lock, so coverage requests and their cancellation never wait for a
+ * query publication.
+ */
+internal class EpgCoverageRequests {
+    private val lock = Any()
+    private var owner: Any? = null
+    private val recent = ArrayDeque<Request>()
+    private val pending = HashSet<Request>()
+
+    // Identity matters: equal calls are separate entries.
+    private class Request(val channelIds: List<ChannelId>, val through: Instant) {
+        override fun toString(): String = "EpgCoverageRequest(<redacted>)"
+    }
+
+    /** Forgets every request and accepts new ones only for [owner]. */
+    internal fun reset(owner: Any?): Unit = synchronized(lock) {
+        this.owner = owner
+        recent.clear()
+        pending.clear()
+    }
+
+    /**
+     * Records one call protecting [channelIds] through [through] and returns its handle for
+     * [release], or null when [owner] is not current.
+     */
+    internal fun remember(owner: Any, channelIds: Collection<ChannelId>, through: Instant): Any? =
+        synchronized(lock) {
+            if (this.owner !== owner || channelIds.isEmpty()) return null
+            val request = Request(channelIds.toList(), through)
+            recent.addLast(request)
+            if (recent.size > RECENT_COVERAGE_REQUESTS) recent.removeFirst()
+            pending += request
+            request
+        }
+
+    /** Ends the pending protection of [request]; it stays protected while among the recent calls. */
+    internal fun release(owner: Any, request: Any): Unit = synchronized(lock) {
+        if (this.owner === owner) pending.remove(request)
+    }
+
+    /** The furthest protected request end per channel. */
+    internal fun bounds(): Map<ChannelId, Instant> = synchronized(lock) {
+        if (recent.isEmpty() && pending.isEmpty()) return emptyMap()
+        val bounds = HashMap<ChannelId, Instant>()
+        (recent.asSequence() + pending.asSequence()).forEach { request ->
+            request.channelIds.forEach { channelId -> bounds.merge(channelId, request.through, ::maxOf) }
+        }
+        bounds
+    }
+
+    override fun toString(): String = "EpgCoverageRequests(<redacted>)"
+}
+
 // A channel whose far end eviction cut proves nothing past [ceiling], one second before the
 // earliest evicted start (query coverage is inclusive), until a query reaches [evictedThrough],
 // the latest evicted start.

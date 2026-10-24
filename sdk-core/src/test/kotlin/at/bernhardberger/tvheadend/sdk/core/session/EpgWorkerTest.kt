@@ -895,6 +895,66 @@ internal class EpgWorkerTest {
     }
 
     @Test
+    fun `full store reaches a far explicit window by evicting another channel's far tail`() = runTest {
+        val generation = GatewayGeneration()
+        val policy = EpgCoveragePolicy.create(7.days, maximumRetainedEvents = 3)
+        val hour = 1.hours.inWholeSeconds
+        val farStart = 4.days.inWholeSeconds
+        val metadata = synchronizedMetadata(generation, 1L..2L, policy,
+            clock = SchedulerClock { testScheduler.currentTime }) {
+            acceptMetadata(MetadataEvent.EventAdded(generation, event(1, 1, 0, hour)))
+            acceptMetadata(MetadataEvent.EventAdded(generation, event(2, 2, 0, hour)))
+            acceptMetadata(MetadataEvent.EventAdded(generation, event(3, 2, farStart, farStart + hour)))
+        }
+        val queries = mutableListOf<Pair<ChannelId, Instant>>()
+        val worker = EpgWorker(
+            generation = generation,
+            metadata = metadata,
+            clock = SchedulerClock { testScheduler.currentTime },
+            settings = EpgWorkerSettings(coveragePolicy = policy, requestSpacing = 1.milliseconds),
+            queryEpg = { _, channelId, target ->
+                queries += channelId to target
+                GatewayResult.Ok(when {
+                    target < instant(0) + 1.days -> emptyList()
+                    channelId == ChannelId(1) -> listOf(queryEvent(4, 1, 2.days.inWholeSeconds, 2.days.inWholeSeconds + hour))
+                    else -> listOf(queryEvent(3, 2, farStart, farStart + hour))
+                })
+            },
+        )
+        assertTrue(metadata.bindEpgCoverageRequester(generation, worker))
+        val repository = metadata.epgRepository
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
+        val job = backgroundScope.launch { worker.run() }
+        runCurrent()
+
+        val far = backgroundScope.async { repository.acquireCoverage(currentSession, ChannelId(1), instant(0) + 3.days) }
+        runCurrent()
+        advanceTimeBy(2.milliseconds)
+        runCurrent()
+
+        assertTrue(far.await() is EpgCoverageAcquisitionResult.CoveredWithData)
+        var snapshot = requireNotNull(metadata.currentEpgSnapshot(generation))
+        assertEquals(listOf(1L, 2L, 4L), snapshot.events.map { it.id.value }.sorted())
+        // Only channel 2's ordinary warm-up proof remains; its far tail's coverage went with it.
+        assertEquals(instant(0) + 4.hours, snapshot.coverages.first { it.channelId == ChannelId(2) }.knownTo)
+
+        // The evicted window is no longer proven, so asking for it queries again. The previous
+        // request still protects channel 1, and the rest is protected too: nothing may yield.
+        val evicted = backgroundScope.async {
+            repository.acquireCoverage(currentSession, ChannelId(2), instant(farStart + hour))
+        }
+        runCurrent()
+        advanceTimeBy(2.milliseconds)
+        runCurrent()
+
+        assertSame(EpgCoverageAcquisitionResult.CapacityExhausted, evicted.await())
+        assertEquals(ChannelId(2) to instant(farStart + hour), queries.last())
+        snapshot = requireNotNull(metadata.currentEpgSnapshot(generation))
+        assertEquals(listOf(1L, 2L, 4L), snapshot.events.map { it.id.value }.sorted())
+        job.cancelAndJoin()
+    }
+
+    @Test
     fun `programme admitted past an eviction cut never proves the evicted window`() = runTest {
         val generation = GatewayGeneration()
         val policy = EpgCoveragePolicy.create(7.days, maximumRetainedEvents = 3)
@@ -950,6 +1010,77 @@ internal class EpgWorkerTest {
         assertEquals(listOf(1L, 2L, 5L), snapshot.events.map { it.id.value }.sorted())
         // The query reached only the evicted start, so later evicted programmes stay unproven.
         assertEquals(instant(cut), snapshot.coverages.first { it.channelId == ChannelId(2) }.knownTo)
+        job.cancelAndJoin()
+    }
+
+    @Test
+    fun `explicit calls stay protected while pending and are released when they end`() = runTest {
+        val generation = GatewayGeneration()
+        val policy = EpgCoveragePolicy.create(7.days, maximumRetainedEvents = 2)
+        val hour = 1.hours.inWholeSeconds
+        val farStart = 2.days.inWholeSeconds
+        val metadata = synchronizedMetadata(generation, 1L..2L, policy,
+            clock = SchedulerClock { testScheduler.currentTime }) {
+            acceptMetadata(MetadataEvent.EventAdded(generation, event(1, 1, farStart, farStart + hour)))
+            acceptMetadata(MetadataEvent.EventAdded(generation, event(2, 2, 0, hour)))
+        }
+        val remembered = mutableListOf<Pair<List<ChannelId>, Instant>>()
+        val handles = mutableListOf<Any>()
+        val released = mutableListOf<Any>()
+        val recording = object : SessionMetadata by metadata {
+            override fun rememberEpgCoverageRequest(
+                generation: GatewayGeneration,
+                channelIds: Collection<ChannelId>,
+                through: Instant,
+            ): Any? {
+                remembered += channelIds.toList() to through
+                return metadata.rememberEpgCoverageRequest(generation, channelIds, through)?.also { handles += it }
+            }
+
+            override fun releaseEpgCoverageRequest(generation: GatewayGeneration, request: Any) {
+                released += request
+                metadata.releaseEpgCoverageRequest(generation, request)
+            }
+        }
+        val worker = EpgWorker(
+            generation = generation,
+            metadata = recording,
+            clock = SchedulerClock { testScheduler.currentTime },
+            settings = EpgWorkerSettings(coveragePolicy = policy, requestSpacing = 1.milliseconds),
+            queryEpg = { _, channelId, _ ->
+                if (channelId == ChannelId(1)) awaitCancellation()
+                GatewayResult.Ok(emptyList())
+            },
+        )
+        assertTrue(metadata.bindEpgCoverageRequester(generation, worker))
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
+        val job = backgroundScope.launch { worker.run() }
+        runCurrent()
+
+        val target = instant(0) + 3.days
+        val pending = backgroundScope.async {
+            metadata.epgRepository.acquireCoverage(currentSession, ChannelId(1), target)
+        }
+        runCurrent()
+        advanceTimeBy(2.milliseconds)
+        runCurrent()
+        assertEquals(listOf(listOf(ChannelId(1)) to target), remembered)
+
+        // Channel 1's far programme lies inside the waiting call's window and may not yield.
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, event(3, 2, hour, 2 * hour)))
+        assertEquals(listOf(1L, 2L), requireNotNull(metadata.currentEpgSnapshot(generation)).events.map { it.id.value })
+        assertEquals(emptyList<Any>(), released)
+
+        pending.cancelAndJoin()
+        assertEquals(handles, released)
+
+        // A batch is one call over its present channels.
+        metadata.epgRepository.acquireCoverageBatch(
+            currentSession, listOf(ChannelId(1), ChannelId(2), ChannelId(9)), instant(hour),
+        )
+        assertEquals(listOf(ChannelId(1), ChannelId(2)) to instant(hour), remembered.last())
+        assertEquals(2, handles.size)
+        assertEquals(handles, released)
         job.cancelAndJoin()
     }
 

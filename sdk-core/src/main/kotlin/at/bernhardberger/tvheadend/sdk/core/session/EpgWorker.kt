@@ -173,6 +173,36 @@ internal class EpgWorker(
         through: Instant,
     ): EpgCoverageAcquisitionResult {
         currentCoroutineContext().ensureActive()
+        return protectingRequest(listOf(channelId), through) {
+            acquireChannelCoverage(currentSession, channelId, through)
+        }
+    }
+
+    // A requested window may be the one on screen: keep it out of eviction while the call is
+    // pending, and afterwards while it is among the most recent calls.
+    private suspend fun <T> protectingRequest(
+        channelIds: Collection<ChannelId>,
+        through: Instant,
+        acquire: suspend () -> T,
+    ): T {
+        val target = through.toWholeSecond()
+        val request = if (target <= queryTime() + settings.coveragePolicy.futureHorizon) {
+            metadata.rememberEpgCoverageRequest(generation, channelIds, target)
+        } else {
+            null
+        }
+        return try {
+            acquire()
+        } finally {
+            request?.let { metadata.releaseEpgCoverageRequest(generation, it) }
+        }
+    }
+
+    private suspend fun acquireChannelCoverage(
+        currentSession: CurrentSessionObservation,
+        channelId: ChannelId,
+        through: Instant,
+    ): EpgCoverageAcquisitionResult {
         val observation = metadata.currentObservation(generation, currentSession)
             ?: return EpgCoverageAcquisitionResult.ObservationExpired
         val coverage = observation.coverage(channelId)
@@ -185,7 +215,14 @@ internal class EpgWorker(
         if (target <= now || target > now + settings.coveragePolicy.futureHorizon) {
             return EpgCoverageAcquisitionResult.Ineligible
         }
+        return awaitCoverage(currentSession, channelId, target)
+    }
 
+    private suspend fun awaitCoverage(
+        currentSession: CurrentSessionObservation,
+        channelId: ChannelId,
+        target: Instant,
+    ): EpgCoverageAcquisitionResult {
         val waiter = EpgCoverageWaiter(currentSession, channelId, target)
         val immediate = synchronized(activityLock) {
             when {
@@ -228,15 +265,19 @@ internal class EpgWorker(
         currentCoroutineContext().ensureActive()
         val originatingObservation = metadata.currentObservation(generation, currentSession)
             ?: return@coroutineScope expiredBatch(channelIds)
-        val settlements = channelIds.distinct().map { channelId ->
-            async(start = CoroutineStart.UNDISPATCHED) {
-                if (originatingObservation.coverage(channelId) == null) {
-                    EpgCoverageBatchSettlement.TargetAbsent(channelId)
-                } else {
-                    acquireCoverage(currentSession, channelId, through).toBatchSettlement(channelId)
+        val distinct = channelIds.distinct()
+        val present = distinct.filter { channelId -> originatingObservation.coverage(channelId) != null }
+        val settlements = protectingRequest(present, through) {
+            distinct.map { channelId ->
+                async(start = CoroutineStart.UNDISPATCHED) {
+                    if (originatingObservation.coverage(channelId) == null) {
+                        EpgCoverageBatchSettlement.TargetAbsent(channelId)
+                    } else {
+                        acquireChannelCoverage(currentSession, channelId, through).toBatchSettlement(channelId)
+                    }
                 }
-            }
-        }.awaitAll()
+            }.awaitAll()
+        }
         EpgCoverageBatchResult.create(settlements)
     }
 

@@ -60,6 +60,7 @@ import at.bernhardberger.tvheadend.sdk.core.isPlayableEndedRecording
 import at.bernhardberger.tvheadend.sdk.core.metadata.ChannelTagReducer
 import at.bernhardberger.tvheadend.sdk.core.metadata.DvrReducer
 import at.bernhardberger.tvheadend.sdk.core.metadata.EpgCapacityWindow
+import at.bernhardberger.tvheadend.sdk.core.metadata.EpgCoverageRequests
 import at.bernhardberger.tvheadend.sdk.core.metadata.EpgQueryAcceptance
 import at.bernhardberger.tvheadend.sdk.core.metadata.EpgQueryFence
 import at.bernhardberger.tvheadend.sdk.core.metadata.EpgReducer
@@ -302,6 +303,19 @@ internal interface SessionMetadata {
 
     public fun initialEpgCoverage(generation: GatewayGeneration): Map<ChannelId, Instant> = emptyMap()
 
+    /**
+     * Protects [channelIds] through [through] against EPG eviction as one explicit coverage call of
+     * [generation]: until [releaseEpgCoverageRequest] with the returned handle, and afterwards while
+     * the call is among the most recent ones.
+     */
+    public fun rememberEpgCoverageRequest(
+        generation: GatewayGeneration,
+        channelIds: Collection<ChannelId>,
+        through: Instant,
+    ): Any? = null
+
+    public fun releaseEpgCoverageRequest(generation: GatewayGeneration, request: Any) {}
+
     public fun beginEpgQuery(
         generation: GatewayGeneration,
         channelId: ChannelId,
@@ -447,6 +461,7 @@ internal class PhaseOneSessionMetadata(
     private val pendingEpgLastQueriedAt = linkedMapOf<ChannelId, Instant>()
     private val reducer = ChannelTagReducer()
     private val epgReducer = EpgReducer(epgCoveragePolicy.maximumRetainedEvents)
+    private val epgCoverageRequests = EpgCoverageRequests()
     // Eviction never reaches into the window ordinary top-up maintains.
     private val epgProtectedFuture = (epgWorkerSettings ?: EpgWorkerSettings(coveragePolicy = epgCoveragePolicy)).steadyMinimum
     private val dvrReducer = DvrReducer()
@@ -740,6 +755,7 @@ internal class PhaseOneSessionMetadata(
             epgCoverageRequester = null
             reducer.clear()
             epgReducer.clear()
+            epgCoverageRequests.reset(this.generation)
             dvrReducer.clear()
             dvrFailuresReported.clear()
             dvrEntryIncarnations.clear()
@@ -800,6 +816,7 @@ internal class PhaseOneSessionMetadata(
             epgCoverageRequester = null
             reducer.clear()
             epgReducer.clear()
+            epgCoverageRequests.reset(this.generation)
             dvrReducer.clear()
             dvrFailuresReported.clear()
             dvrEntryIncarnations.clear()
@@ -1321,6 +1338,16 @@ internal class PhaseOneSessionMetadata(
         }
     }
 
+    override fun rememberEpgCoverageRequest(
+        generation: GatewayGeneration,
+        channelIds: Collection<ChannelId>,
+        through: Instant,
+    ): Any? = epgCoverageRequests.remember(generation, channelIds, through)
+
+    override fun releaseEpgCoverageRequest(generation: GatewayGeneration, request: Any) {
+        epgCoverageRequests.release(generation, request)
+    }
+
     // Read only when room is needed. Ended means ended on both clocks; protection reaches from
     // the later one.
     private fun epgCapacityWindow(serverNow: Instant?): EpgCapacityWindow {
@@ -1328,6 +1355,7 @@ internal class PhaseOneSessionMetadata(
         return EpgCapacityWindow(
             endedBefore = serverNow?.let { minOf(it, deviceNow) } ?: deviceNow,
             protectedThrough = (serverNow?.let { maxOf(it, deviceNow) } ?: deviceNow) + epgProtectedFuture,
+            requestBounds = epgCoverageRequests.bounds(),
         )
     }
 
