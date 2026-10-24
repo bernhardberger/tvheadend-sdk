@@ -20,8 +20,11 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import java.util.Collections
+import java.util.PriorityQueue
+import kotlin.time.Duration
 import kotlin.time.Instant
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.seconds
 
 @ConsistentCopyVisibility
 internal data class ReducedEpgEvent private constructor(
@@ -248,6 +251,60 @@ internal enum class EpgQueryAcceptance {
     STALE,
 }
 
+/**
+ * Time anchors for making room at the retained-event limit: programmes that ended by
+ * [endedBefore] yield first, and no channel loses a programme starting by [protectedThrough]
+ * (or by its bound in [requestBounds], from explicit coverage requests) to eviction.
+ */
+internal class EpgCapacityWindow(
+    internal val endedBefore: Instant,
+    internal val protectedThrough: Instant,
+    internal val requestBounds: Map<ChannelId, Instant> = emptyMap(),
+) {
+    override fun toString(): String = "EpgCapacityWindow(<redacted>)"
+}
+
+// A channel whose far end eviction cut proves nothing past [ceiling], one second before the
+// earliest evicted start (query coverage is inclusive), until a query reaches [evictedThrough],
+// the latest evicted start.
+private class EpgProofCap(var ceiling: Instant, var evictedThrough: Instant)
+
+private class EpgEvictionPlan(
+    val eventIds: Set<EventId>,
+    val cuts: Map<ChannelId, EpgProofCap>,
+)
+
+private class EpgTailCandidate(val event: ReducedEpgEvent, val distance: Duration)
+
+private val earliestEndFirst = compareBy<ReducedEpgEvent>({ it.stop }, { it.start }, { it.id.value })
+
+// Per channel this is latest start first, so a channel only ever loses its far end.
+private val farthestTailFirst = compareByDescending<EpgTailCandidate> { it.distance }
+    .thenByDescending { it.event.start }
+    .thenByDescending { it.event.id.value }
+
+// Keeps the [limit] offered items that come first in [order] without sorting them all.
+private class FirstInOrder<T>(private val limit: Int, private val order: Comparator<T>) {
+    private val kept = PriorityQueue(maxOf(1, limit), order.reversed())
+
+    fun offer(item: T) {
+        when {
+            limit <= 0 -> Unit
+            kept.size < limit -> kept += item
+            order.compare(item, kept.peek()) < 0 -> {
+                kept.poll()
+                kept += item
+            }
+        }
+    }
+
+    /** The first [count] kept items, in no particular order. */
+    fun first(count: Int): Collection<T> {
+        while (kept.size > count) kept.poll()
+        return kept
+    }
+}
+
 internal class EpgReducer(
     private val maximumRetainedEvents: Int = EpgCoveragePolicy.create().maximumRetainedEvents,
 ) {
@@ -286,6 +343,11 @@ internal class EpgReducer(
     // The last published snapshot stays valid until retained events, channels or query
     // coverage change, so unrelated metadata traffic republishes the identical instance.
     private var cachedSnapshot: EpgSnapshot? = null
+    // Proofs cut back by far-end eviction; neither published coverage nor a completed-sync proof
+    // reaches past a cap until a query proves the evicted range again.
+    private val proofCaps = hashMapOf<ChannelId, EpgProofCap>()
+    // Making room evicts down to this low-water mark, so one plan serves many admissions.
+    private val evictionLowWater = maximumRetainedEvents - maxOf(1, maximumRetainedEvents / 100)
     internal var lastEventRefusedForCapacity: Boolean = false
         private set
 
@@ -314,10 +376,19 @@ internal class EpgReducer(
         channelAuthorityRevisions.clear()
         authorityRevision = 0L
         queriesInvalidAfterRevision = null
+        proofCaps.clear()
     }
 
+    /** The latest instant any proof for [channelId] may reach after far-end eviction, if capped. */
+    internal fun proofCeiling(channelId: ChannelId): Instant? = proofCaps[channelId]?.ceiling
+
     /** Returns whether this reducer accepted the event (including no-ops) or pruned display history. */
-    internal fun accept(event: MetadataEvent, serverNow: Instant? = null, retainFrom: Long = Long.MIN_VALUE): Boolean {
+    internal fun accept(
+        event: MetadataEvent,
+        serverNow: Instant? = null,
+        retainFrom: Long = Long.MIN_VALUE,
+        capacity: (() -> EpgCapacityWindow)? = null,
+    ): Boolean {
         lastEventRefusedForCapacity = false
         val previousHistorySize = history.size
         serverNow?.let(::pruneHistory)
@@ -347,14 +418,14 @@ internal class EpgReducer(
             is MetadataEvent.EventAdded -> {
                 recordEventAuthority(event.event.id)
                 val carryoverChanged = removeCarryover(event.event.id)
-                val accepted = acceptEvent(event.event, retainFrom)
+                val accepted = acceptEvent(event.event, retainFrom, capacity)
                 excludeFromCarryover(event.event.id)
                 return accepted || historyChanged || carryoverChanged
             }
             is MetadataEvent.EventUpdated -> {
                 recordEventAuthority(event.event.id)
                 val carryoverChanged = removeCarryover(event.event.id)
-                val accepted = acceptEvent(event.event, retainFrom)
+                val accepted = acceptEvent(event.event, retainFrom, capacity)
                 excludeFromCarryover(event.event.id)
                 return accepted || historyChanged || carryoverChanged
             }
@@ -414,6 +485,7 @@ internal class EpgReducer(
         }
         history.entries.removeIf { it.value.channelId !in valid }
         queriedToByChannel.keys.retainAll(valid)
+        proofCaps.keys.retainAll(valid)
         carryover.values.removeIf { it.channelId !in valid }
         carryoverEarliestStart.keys.retainAll(valid)
         carryoverReachedBefore.keys.retainAll(valid)
@@ -552,6 +624,7 @@ internal class EpgReducer(
         queriedTo: Instant,
         queriedEvents: List<GatewayEpgQueryEvent>,
         retainFrom: Long = Long.MIN_VALUE,
+        capacity: (() -> EpgCapacityWindow)? = null,
     ): EpgQueryAcceptance {
         if (!activeQueries.remove(query)) return EpgQueryAcceptance.STALE
         return try {
@@ -584,7 +657,18 @@ internal class EpgReducer(
                     if (eventId in events) retainedCount -= 1
                     if (event.stop.epochSeconds >= retainFrom) retainedCount += 1
                 }
-                if (retainedCount > maximumRetainedEvents) return EpgQueryAcceptance.CAPACITY_REJECTED
+                // Plan room over the would-be retained set before mutating, so a query that only
+                // protected events would overflow is rejected atomically.
+                val eviction = if (retainedCount <= maximumRetainedEvents) {
+                    null
+                } else {
+                    val window = capacity ?: return EpgQueryAcceptance.CAPACITY_REJECTED
+                    val pool = events.values.asSequence().filter { event -> event.id !in stagedEvents } +
+                        stagedEvents.values.asSequence().filter { event -> event.stop.epochSeconds >= retainFrom }
+                    planEviction(pool, retainedCount - maximumRetainedEvents, retainedCount - evictionLowWater, window())
+                        ?: return EpgQueryAcceptance.CAPACITY_REJECTED
+                }
+                eviction?.let(::evictEvents)
                 var liveEnd: Instant? = null
                 stagedEvents.forEach { (eventId, event) ->
                     removeCarryover(eventId)
@@ -592,7 +676,8 @@ internal class EpgReducer(
                     if (event.stop.epochSeconds < retainFrom) {
                         if (events.remove(eventId) != null) cachedSnapshot = null
                     } else {
-                        if (events[eventId] != event) {
+                        // An evicted reply event still reached its start: carryover there stays gone.
+                        if (eviction?.eventIds?.contains(eventId) != true && events[eventId] != event) {
                             cachedSnapshot = null
                             events[eventId] = event
                         }
@@ -606,6 +691,8 @@ internal class EpgReducer(
                     recordCarryoverReach(query.channelId, end)
                 }
                 recordSuccessfulQuery(query.channelId, queriedTo)
+                liftProofCap(query.channelId, queriedTo)
+                eviction?.let { plan -> pullBackCoverage(plan.cuts) }
                 trimCarryover()
                 EpgQueryAcceptance.APPLIED
             }
@@ -672,13 +759,17 @@ internal class EpgReducer(
             visibleEvents.add(event)
         }
         val coverages = channelIds.map { channelId ->
-            val queriedTo = queriedToByChannel[channelId]
-            when (val bounds = boundsByChannel[channelId]) {
-                null -> EpgCoverage.empty(channelId, queriedTo)
-                else -> EpgCoverage.create(
+            // Programmes admitted past a cut are shown, but only a query lifts the cap.
+            val ceiling = proofCaps[channelId]?.ceiling
+            val queriedTo = queriedToByChannel[channelId]?.let { queried -> ceiling?.let { minOf(it, queried) } ?: queried }
+            val bounds = boundsByChannel[channelId]
+            if (bounds == null || ceiling != null && bounds.from > ceiling) {
+                EpgCoverage.empty(channelId, queriedTo)
+            } else {
+                EpgCoverage.create(
                     channelId = channelId,
                     coveredFrom = bounds.from,
-                    coveredTo = bounds.to,
+                    coveredTo = ceiling?.let { minOf(it, bounds.to) } ?: bounds.to,
                     queriedTo = queriedTo,
                 )
             }
@@ -742,7 +833,7 @@ internal class EpgReducer(
         }
     }
 
-    private fun acceptEvent(event: GatewayEpgEvent, retainFrom: Long): Boolean {
+    private fun acceptEvent(event: GatewayEpgEvent, retainFrom: Long, capacity: (() -> EpgCapacityWindow)?): Boolean {
         val candidate = ReducedEpgEvent.fromEvent(event) ?: return false
         val historyChanged = supersedeHistory(candidate)
         if (candidate.stop.epochSeconds < retainFrom) {
@@ -751,10 +842,28 @@ internal class EpgReducer(
             return removed || historyChanged
         }
         if (event.id !in events && events.size >= maximumRetainedEvents) {
-            lastEventRefusedForCapacity = true
-            if (carryoverAwaitingSeed) carryoverPeakLiveCount = maximumRetainedEvents
-            invalidateActiveQueriesAfterCapacityDrop()
-            return historyChanged
+            val eviction = capacity?.let { window ->
+                planEviction(
+                    events.values.asSequence() + candidate,
+                    events.size + 1 - maximumRetainedEvents,
+                    events.size + 1 - evictionLowWater,
+                    window(),
+                )
+            }
+            if (eviction == null) {
+                lastEventRefusedForCapacity = true
+                if (carryoverAwaitingSeed) carryoverPeakLiveCount = maximumRetainedEvents
+                invalidateActiveQueriesAfterCapacityDrop()
+                return historyChanged
+            }
+            evictEvents(eviction)
+            pullBackCoverage(eviction.cuts)
+            if (candidate.id in eviction.eventIds) {
+                // The newcomer is itself the farthest far end: admitted and evicted at once.
+                dropCarryoverBefore(candidate.channelId, candidate.stop, inclusive = false)
+                recordCarryoverReach(candidate.channelId, candidate.stop)
+                return true
+            }
         }
         // Identical full entities still supersede history without rebuilding an unchanged snapshot.
         if (events[event.id] != candidate) {
@@ -766,6 +875,81 @@ internal class EpgReducer(
         recordCarryoverReach(candidate.channelId, candidate.stop)
         trimCarryover()
         return true
+    }
+
+    /**
+     * Plans room in [pool], the would-be retained set, without mutating it: at least [needed] and
+     * up to [wanted] evictions. Ended programmes go first, earliest end first. Then programmes
+     * starting beyond their channel's protected window, farthest beyond it first (ties: latest
+     * start, then id), so each channel only loses its far end. Returns null when protected
+     * programmes alone leave too little room.
+     */
+    private fun planEviction(
+        pool: Sequence<ReducedEpgEvent>,
+        needed: Int,
+        wanted: Int,
+        window: EpgCapacityWindow,
+    ): EpgEvictionPlan? {
+        val ended = FirstInOrder(wanted, earliestEndFirst)
+        val tails = FirstInOrder(wanted, farthestTailFirst)
+        for (event in pool) {
+            if (event.stop <= window.endedBefore) {
+                ended.offer(event)
+                continue
+            }
+            val requestBound = event.channelId?.let(window.requestBounds::get)
+            val bound = requestBound?.let { maxOf(it, window.protectedThrough) } ?: window.protectedThrough
+            if (event.start > bound) tails.offer(EpgTailCandidate(event, event.start - bound))
+        }
+        val endedFirst = ended.first(wanted)
+        val tailFirst = tails.first(wanted - endedFirst.size)
+        if (endedFirst.size + tailFirst.size < needed) return null
+        val evicted = HashSet<EventId>(endedFirst.size + tailFirst.size)
+        endedFirst.forEach { event -> evicted += event.id }
+        val cuts = HashMap<ChannelId, EpgProofCap>()
+        tailFirst.forEach { candidate ->
+            val event = candidate.event
+            evicted += event.id
+            val channelId = event.channelId ?: return@forEach
+            val ceiling = event.start - 1.seconds
+            val cut = cuts.getOrPut(channelId) { EpgProofCap(ceiling, event.start) }
+            if (ceiling < cut.ceiling) cut.ceiling = ceiling
+            if (event.start > cut.evictedThrough) cut.evictedThrough = event.start
+        }
+        return EpgEvictionPlan(evicted, cuts)
+    }
+
+    private fun evictEvents(plan: EpgEvictionPlan) {
+        plan.eventIds.forEach { eventId ->
+            if (events.remove(eventId) != null) {
+                cachedSnapshot = null
+                // A pending seed must not revive what live data held.
+                excludeFromCarryover(eventId)
+            }
+        }
+    }
+
+    // Coverage is a proof: a channel cut at its far end proves nothing from the cut on, and an
+    // older in-flight query for it may have skipped newer copies of what was evicted, so it
+    // must not re-advance the channel.
+    private fun pullBackCoverage(cuts: Map<ChannelId, EpgProofCap>) {
+        cuts.forEach { (channelId, cut) ->
+            cachedSnapshot = null
+            recordChannelAuthority(channelId)
+            val cap = proofCaps.getOrPut(channelId) { cut }
+            if (cut.ceiling < cap.ceiling) cap.ceiling = cut.ceiling
+            if (cut.evictedThrough > cap.evictedThrough) cap.evictedThrough = cut.evictedThrough
+            if (queriedToByChannel[channelId]?.let { it > cap.ceiling } == true) queriedToByChannel[channelId] = cap.ceiling
+        }
+    }
+
+    // A query through [queriedTo] proves the channel again up to there; evicted programmes
+    // beyond it stay unproven, as do later admissions past the cap.
+    private fun liftProofCap(channelId: ChannelId, queriedTo: Instant) {
+        val cap = proofCaps[channelId] ?: return
+        if (queriedTo <= cap.ceiling) return
+        cachedSnapshot = null
+        if (queriedTo >= cap.evictedThrough) proofCaps.remove(channelId) else cap.ceiling = queriedTo
     }
 
     private fun invalidateActiveQueriesAfterCapacityDrop() {
@@ -825,6 +1009,7 @@ internal class EpgReducer(
         channelIds.remove(channelId)
         currentEventByChannel.remove(channelId)
         queriedToByChannel.remove(channelId)
+        proofCaps.remove(channelId)
         carryover.values.removeIf { event -> event.channelId == channelId }
         carryoverEarliestStart.remove(channelId)
         carryoverReachedBefore.remove(channelId)

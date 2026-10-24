@@ -59,6 +59,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.isPlayableEndedRecording
 import at.bernhardberger.tvheadend.sdk.core.metadata.ChannelTagReducer
 import at.bernhardberger.tvheadend.sdk.core.metadata.DvrReducer
+import at.bernhardberger.tvheadend.sdk.core.metadata.EpgCapacityWindow
 import at.bernhardberger.tvheadend.sdk.core.metadata.EpgQueryAcceptance
 import at.bernhardberger.tvheadend.sdk.core.metadata.EpgQueryFence
 import at.bernhardberger.tvheadend.sdk.core.metadata.EpgReducer
@@ -446,6 +447,8 @@ internal class PhaseOneSessionMetadata(
     private val pendingEpgLastQueriedAt = linkedMapOf<ChannelId, Instant>()
     private val reducer = ChannelTagReducer()
     private val epgReducer = EpgReducer(epgCoveragePolicy.maximumRetainedEvents)
+    // Eviction never reaches into the window ordinary top-up maintains.
+    private val epgProtectedFuture = (epgWorkerSettings ?: EpgWorkerSettings(coveragePolicy = epgCoveragePolicy)).steadyMinimum
     private val dvrReducer = DvrReducer()
     private val dvrFailuresReported = mutableSetOf<DvrEntryId>()
     private val mutableDvrChanges = MutableSharedFlow<DvrChange>(
@@ -1082,7 +1085,7 @@ internal class PhaseOneSessionMetadata(
                     val serverNow = estimatedServerTime(event.generation)
                     if (event.isEpgEvent()) epgRetentionBounds?.refresh(serverNow)
                     val epgEventAccepted = epgReducer.accept(event, serverNow,
-                        epgRetentionBounds?.fromEpochSeconds ?: Long.MIN_VALUE)
+                        epgRetentionBounds?.fromEpochSeconds ?: Long.MIN_VALUE) { epgCapacityWindow(serverNow) }
                     if (epgReducer.lastEventRefusedForCapacity) {
                         val channelId = when (event) {
                             is MetadataEvent.EventAdded -> event.event.channelId
@@ -1308,7 +1311,24 @@ internal class PhaseOneSessionMetadata(
      * Periodic server window advances have no completion fence, so this is not extrapolated.
      */
     override fun initialEpgCoverage(generation: GatewayGeneration): Map<ChannelId, Instant> = synchronized(lock) {
-        if (this.generation === generation && synchronizedCurrent) initialEpgCoverage else emptyMap()
+        if (this.generation === generation && synchronizedCurrent) {
+            // Eviction cuts far ends only beyond the protected window, but a proof never outlives a cut.
+            initialEpgCoverage.mapValues { (channelId, through) ->
+                epgReducer.proofCeiling(channelId)?.let { ceiling -> minOf(ceiling, through) } ?: through
+            }
+        } else {
+            emptyMap()
+        }
+    }
+
+    // Read only when room is needed. Ended means ended on both clocks; protection reaches from
+    // the later one.
+    private fun epgCapacityWindow(serverNow: Instant?): EpgCapacityWindow {
+        val deviceNow = clock.now()
+        return EpgCapacityWindow(
+            endedBefore = serverNow?.let { minOf(it, deviceNow) } ?: deviceNow,
+            protectedThrough = (serverNow?.let { maxOf(it, deviceNow) } ?: deviceNow) + epgProtectedFuture,
+        )
     }
 
     override fun beginEpgQuery(
@@ -1336,9 +1356,10 @@ internal class PhaseOneSessionMetadata(
         deferPublication: Boolean,
     ): EpgQueryAcceptance = synchronized(lock) {
         if (this.generation === generation && synchronizedCurrent) {
-            epgRetentionBounds?.refresh(estimatedServerTime(generation))
+            val serverNow = estimatedServerTime(generation)
+            epgRetentionBounds?.refresh(serverNow)
             epgReducer.acceptSuccessfulQuery(query, queriedTo, events,
-                epgRetentionBounds?.fromEpochSeconds ?: Long.MIN_VALUE).also { acceptance ->
+                epgRetentionBounds?.fromEpochSeconds ?: Long.MIN_VALUE) { epgCapacityWindow(serverNow) }.also { acceptance ->
                 if (acceptance == EpgQueryAcceptance.APPLIED) {
                     val now = acceptanceTime()
                     pendingEpgUpdatedAt = now

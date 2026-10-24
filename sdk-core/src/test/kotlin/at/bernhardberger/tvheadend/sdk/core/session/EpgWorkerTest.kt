@@ -895,6 +895,65 @@ internal class EpgWorkerTest {
     }
 
     @Test
+    fun `programme admitted past an eviction cut never proves the evicted window`() = runTest {
+        val generation = GatewayGeneration()
+        val policy = EpgCoveragePolicy.create(7.days, maximumRetainedEvents = 3)
+        val hour = 1.hours.inWholeSeconds
+        val cut = 30 * hour
+        val metadata = synchronizedMetadata(generation, 1L..2L, policy,
+            clock = SchedulerClock { testScheduler.currentTime }) {
+            acceptMetadata(MetadataEvent.EventAdded(generation, event(1, 1, 0, hour)))
+        }
+        val fence = requireNotNull(metadata.beginEpgQuery(generation, ChannelId(2)))
+        assertEquals(EpgQueryAcceptance.APPLIED, metadata.applySuccessfulEpgQuery(
+            generation, fence, instant(cut + 2 * hour),
+            listOf(queryEvent(2, 2, cut, cut + hour), queryEvent(3, 2, cut + hour, cut + 2 * hour)),
+        ))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, event(4, 1, hour, 2 * hour)))
+        metadata.acceptMetadata(MetadataEvent.EventDeleted(generation, EventId(4)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, event(5, 2, cut + 2 * hour, cut + 3 * hour)))
+
+        // Channel 2's far tail went for the near addition; the later programme is shown but
+        // proves nothing, and neither does the evicted start itself.
+        var snapshot = requireNotNull(metadata.currentEpgSnapshot(generation))
+        assertEquals(listOf(1L, 5L), snapshot.events.map { it.id.value })
+        assertEquals(instant(cut - 1), snapshot.coverages.first { it.channelId == ChannelId(2) }.knownTo)
+
+        val queries = mutableListOf<Pair<ChannelId, Instant>>()
+        val worker = EpgWorker(
+            generation = generation,
+            metadata = metadata,
+            clock = SchedulerClock { testScheduler.currentTime },
+            settings = EpgWorkerSettings(coveragePolicy = policy, requestSpacing = 1.milliseconds),
+            queryEpg = { _, channelId, target ->
+                queries += channelId to target
+                GatewayResult.Ok(
+                    if (channelId == ChannelId(2)) listOf(queryEvent(2, 2, cut, cut + hour)) else emptyList(),
+                )
+            },
+        )
+        assertTrue(metadata.bindEpgCoverageRequester(generation, worker))
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
+        val job = backgroundScope.launch { worker.run() }
+        runCurrent()
+
+        val boundary = backgroundScope.async {
+            metadata.epgRepository.acquireCoverage(currentSession, ChannelId(2), instant(cut))
+        }
+        runCurrent()
+        advanceTimeBy(2.milliseconds)
+        runCurrent()
+
+        assertTrue(boundary.await() is EpgCoverageAcquisitionResult.CoveredWithData)
+        assertEquals(ChannelId(2) to instant(cut), queries.last())
+        snapshot = requireNotNull(metadata.currentEpgSnapshot(generation))
+        assertEquals(listOf(1L, 2L, 5L), snapshot.events.map { it.id.value }.sorted())
+        // The query reached only the evicted start, so later evicted programmes stay unproven.
+        assertEquals(instant(cut), snapshot.coverages.first { it.channelId == ChannelId(2) }.knownTo)
+        job.cancelAndJoin()
+    }
+
+    @Test
     fun `failed priority target waits for cooldown while a further jump skips it`() = runTest {
         val generation = GatewayGeneration()
         val metadata = synchronizedMetadata(generation, 1L..1L)
@@ -1082,7 +1141,9 @@ internal class EpgWorkerTest {
     fun `capacity exhaustion settles repository single and batch waiters atomically and retries after cooldown`() = runTest {
         val generation = GatewayGeneration()
         val policy = EpgCoveragePolicy.create(24.hours, maximumRetainedEvents = 2)
-        val metadata = synchronizedMetadata(generation, 1L..2L, policy) {
+        // Every retained programme is upcoming and protected, so nothing can be evicted.
+        val metadata = synchronizedMetadata(generation, 1L..2L, policy,
+            clock = SchedulerClock { testScheduler.currentTime }) {
             acceptMetadata(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20)))
             acceptMetadata(MetadataEvent.EventAdded(generation, event(2, 1, 20, 30)))
         }
@@ -1171,7 +1232,8 @@ internal class EpgWorkerTest {
     fun `stale query authority at full capacity keeps repository acquisition pending until retry`() = runTest {
         val generation = GatewayGeneration()
         val policy = EpgCoveragePolicy.create(24.hours, maximumRetainedEvents = 1)
-        val metadata = synchronizedMetadata(generation, 1L..1L, policy) {
+        val metadata = synchronizedMetadata(generation, 1L..1L, policy,
+            clock = SchedulerClock { testScheduler.currentTime }) {
             acceptMetadata(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20)))
         }
         val before = requireNotNull(metadata.currentEpgSnapshot(generation))
@@ -1658,7 +1720,8 @@ internal class EpgWorkerTest {
     fun `post sync capacity refusal revokes scheduling proof`(unattributed: Boolean) = runTest {
         val generation = GatewayGeneration()
         val policy = EpgCoveragePolicy.create(24.hours, maximumRetainedEvents = 1)
-        val metadata = synchronizedMetadata(generation, 1L..2L, policy, instant(0) + 24.hours) {
+        val metadata = synchronizedMetadata(generation, 1L..2L, policy, instant(0) + 24.hours,
+            clock = MutableClock(instant(0))) {
             acceptMetadata(MetadataEvent.EventAdded(generation, event(1, 1, 0, 100)))
         }
         val refused = GatewayEpgEvent(EventId(2), if (unattributed) null else ChannelId(2), instant(0), instant(100))
@@ -1702,7 +1765,8 @@ internal class EpgWorkerTest {
     fun `capacity refused sync channel warms up after capacity frees`() = runTest {
         val generation = GatewayGeneration()
         val policy = EpgCoveragePolicy.create(24.hours, maximumRetainedEvents = 1)
-        val metadata = synchronizedMetadata(generation, 1L..2L, policy, instant(0) + 24.hours) {
+        val metadata = synchronizedMetadata(generation, 1L..2L, policy, instant(0) + 24.hours,
+            clock = MutableClock(instant(0))) {
             acceptMetadata(MetadataEvent.EventAdded(generation, event(1, 1, 0, 100)))
             acceptMetadata(MetadataEvent.EventAdded(generation, event(2, 2, 0, 100)))
         }

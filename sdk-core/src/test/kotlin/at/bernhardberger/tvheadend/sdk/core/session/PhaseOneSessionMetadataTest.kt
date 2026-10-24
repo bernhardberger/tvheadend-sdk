@@ -1352,6 +1352,8 @@ internal class PhaseOneSessionMetadataTest {
     fun `configured retained event limit bounds async and query ingestion`() {
         val metadata = PhaseOneSessionMetadata(
             epgCoveragePolicy = EpgCoveragePolicy.create(24.hours, maximumRetainedEvents = 1),
+            // Both programmes are upcoming and protected, so neither can be evicted for room.
+            clock = object : Clock { override fun now() = Instant.fromEpochSeconds(0) },
         )
         val generation = GatewayGeneration()
         metadata.bindGeneration(generation)
@@ -1381,6 +1383,31 @@ internal class PhaseOneSessionMetadataTest {
         snapshot = metadata.currentEpgSnapshot(generation)
         assertEquals(listOf(1L), snapshot?.events?.map { event -> event.id.value })
         assertNull(snapshot?.coverages?.single()?.queriedTo)
+    }
+
+    @Test
+    fun `full store evicts a far tail for an async addition and pulls back every proof`() {
+        val metadata = PhaseOneSessionMetadata(
+            epgCoveragePolicy = EpgCoveragePolicy.create(48.hours, maximumRetainedEvents = 2),
+            clock = object : Clock { override fun now() = Instant.fromEpochSeconds(0) },
+        )
+        val generation = GatewayGeneration()
+        val tailStart = 30.hours.inWholeSeconds
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(id = 1)))
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(id = 2)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(1, 1, 0, 10)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(2, 2, tailStart, tailStart + 3_600)))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation, Instant.fromEpochSeconds(0) + 40.hours))
+        assertEquals(Instant.fromEpochSeconds(0) + 40.hours, metadata.initialEpgCoverage(generation)[ChannelId(2)])
+
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(3, 1, 10, 20)))
+
+        // The published snapshot is what the persistent cache stores, so it never claims the cut.
+        val snapshot = requireNotNull(metadata.currentEpgSnapshot(generation))
+        assertEquals(listOf(1L, 3L), snapshot.events.map { event -> event.id.value })
+        assertNull(snapshot.coverages.first { it.channelId == ChannelId(2) }.knownTo)
+        assertEquals(Instant.fromEpochSeconds(tailStart - 1), metadata.initialEpgCoverage(generation)[ChannelId(2)])
     }
 
     @Test

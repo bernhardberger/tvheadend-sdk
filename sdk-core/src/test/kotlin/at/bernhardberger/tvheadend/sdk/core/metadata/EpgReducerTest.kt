@@ -560,6 +560,279 @@ internal class EpgReducerTest {
     }
 
     @Test
+    fun `explicit request at capacity evicts the farthest far tails and pulls back their proof`() {
+        val reducer = EpgReducer(maximumRetainedEvents = 6)
+        (1L..3L).forEach { addChannel(reducer, it) }
+        reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 0, 50)))
+        reducer.accept(MetadataEvent.EventAdded(generation, event(2, 2, 0, 50)))
+        reducer.accept(MetadataEvent.EventAdded(generation, event(5, 3, 150, 250)))
+        assertEquals(EpgQueryAcceptance.APPLIED, reducer.acceptSuccessfulQuery(
+            requireNotNull(reducer.beginQuery(ChannelId(2))), instant(500),
+            listOf(queryEvent(3, 2, 200, 300), queryEvent(4, 2, 300, 400), queryEvent(8, 2, 400, 500)),
+        ))
+        val untouched = reducer.snapshot().coverages.first { it.channelId == ChannelId(3) }
+
+        assertEquals(EpgQueryAcceptance.APPLIED, reducer.acceptSuccessfulQuery(
+            requireNotNull(reducer.beginQuery(ChannelId(1))), instant(1000),
+            listOf(queryEvent(6, 1, 500, 600), queryEvent(7, 1, 600, 700)),
+            capacity = window(requests = mapOf(1L to 1000)),
+        ))
+
+        val snapshot = reducer.snapshot()
+        // Two must go and one more makes room ahead; channel 2's end lies farthest beyond the
+        // protected window each time.
+        assertEquals(listOf(1L, 2L, 5L, 6L, 7L), snapshot.events.map { it.id.value }.sorted())
+        assertEquals(instant(1000), snapshot.coverages.first { it.channelId == ChannelId(1) }.queriedTo)
+        val trimmed = snapshot.coverages.first { it.channelId == ChannelId(2) }
+        // Query coverage is inclusive: the proof ends just before the earliest evicted start.
+        assertEquals(instant(199), trimmed.queriedTo)
+        assertEquals(instant(199), trimmed.knownTo)
+        assertEquals(instant(199), reducer.proofCeiling(ChannelId(2)))
+        assertEquals(untouched, snapshot.coverages.first { it.channelId == ChannelId(3) })
+        assertEquals(null, reducer.proofCeiling(ChannelId(3)))
+    }
+
+    @Test
+    fun `cut past an overlapping programme caps coverage below the evicted start`() {
+        val reducer = EpgReducer(maximumRetainedEvents = 2)
+        addChannel(reducer, 1)
+        addChannel(reducer, 2)
+        // The protected programme runs past the tail's start; the cut still frees room.
+        reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 0, 260)))
+        reducer.accept(MetadataEvent.EventAdded(generation, event(2, 1, 250, 270)))
+
+        assertEquals(EpgQueryAcceptance.APPLIED, reducer.acceptSuccessfulQuery(
+            requireNotNull(reducer.beginQuery(ChannelId(2))), instant(100), listOf(queryEvent(3, 2, 0, 10)),
+            capacity = window(protectedThrough = 200),
+        ))
+
+        val snapshot = reducer.snapshot()
+        assertEquals(listOf(1L, 3L), snapshot.events.map { it.id.value })
+        val capped = snapshot.coverages.first { it.channelId == ChannelId(1) }
+        assertEquals(instant(0), capped.coveredFrom)
+        assertEquals(instant(249), capped.coveredTo)
+        assertEquals(instant(249), capped.knownTo)
+    }
+
+    @Test
+    fun `protected programmes alone exceeding capacity reject a query atomically`() {
+        val reducer = EpgReducer(maximumRetainedEvents = 3)
+        addChannel(reducer, 1)
+        addChannel(reducer, 2)
+        reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 0, 50)))
+        reducer.accept(MetadataEvent.EventAdded(generation, event(2, 2, 0, 50)))
+        assertEquals(EpgQueryAcceptance.APPLIED, reducer.acceptSuccessfulQuery(
+            requireNotNull(reducer.beginQuery(ChannelId(2))), instant(300), listOf(queryEvent(3, 2, 200, 300)),
+        ))
+        val before = reducer.snapshot()
+
+        assertEquals(EpgQueryAcceptance.CAPACITY_REJECTED, reducer.acceptSuccessfulQuery(
+            requireNotNull(reducer.beginQuery(ChannelId(1))), instant(1000),
+            listOf(queryEvent(6, 1, 500, 600), queryEvent(7, 1, 600, 700)),
+            capacity = window(requests = mapOf(1L to 1000)),
+        ))
+
+        assertSame(before, reducer.snapshot())
+        assertEquals(null, reducer.proofCeiling(ChannelId(2)))
+    }
+
+    @Test
+    fun `recent request window protects its channel tail from the next request`() {
+        for (protectChannel2 in listOf(false, true)) {
+            val reducer = EpgReducer(maximumRetainedEvents = 3)
+            (1L..3L).forEach { addChannel(reducer, it) }
+            reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 0, 50)))
+            reducer.accept(MetadataEvent.EventAdded(generation, event(3, 2, 300, 400)))
+            reducer.accept(MetadataEvent.EventAdded(generation, event(4, 3, 150, 250)))
+            val requests = if (protectChannel2) mapOf(1L to 1000L, 2L to 400L) else mapOf(1L to 1000L)
+
+            assertEquals(EpgQueryAcceptance.APPLIED, reducer.acceptSuccessfulQuery(
+                requireNotNull(reducer.beginQuery(ChannelId(1))), instant(1000),
+                listOf(queryEvent(6, 1, 500, 600)),
+                capacity = window(requests = requests),
+            ))
+
+            val expected = if (protectChannel2) listOf(1L, 3L, 6L) else listOf(1L, 6L)
+            assertEquals(expected, reducer.snapshot().events.map { it.id.value }.sorted())
+        }
+    }
+
+    @Test
+    fun `async addition at capacity evicts a far tail instead of being refused`() {
+        val reducer = EpgReducer(maximumRetainedEvents = 2)
+        (1L..3L).forEach { addChannel(reducer, it) }
+        reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 0, 50)))
+        assertEquals(EpgQueryAcceptance.APPLIED, reducer.acceptSuccessfulQuery(
+            requireNotNull(reducer.beginQuery(ChannelId(2))), instant(300), listOf(queryEvent(2, 2, 200, 300)),
+        ))
+
+        assertTrue(reducer.accept(MetadataEvent.EventAdded(generation, event(3, 1, 50, 60)), capacity = window()))
+
+        assertFalse(reducer.lastEventRefusedForCapacity)
+        var snapshot = reducer.snapshot()
+        assertEquals(listOf(1L, 3L), snapshot.events.map { it.id.value })
+        assertEquals(instant(199), snapshot.coverages.first { it.channelId == ChannelId(2) }.queriedTo)
+
+        // The newcomer is the farthest far end itself: admitted, evicted at once, nothing else lost.
+        assertTrue(reducer.accept(MetadataEvent.EventAdded(generation, event(4, 3, 900, 1000)), capacity = window()))
+        assertFalse(reducer.lastEventRefusedForCapacity)
+        snapshot = reducer.snapshot()
+        assertEquals(listOf(1L, 3L), snapshot.events.map { it.id.value })
+        assertEquals(instant(899), reducer.proofCeiling(ChannelId(3)))
+    }
+
+    @Test
+    fun `programme admitted past a cut never lifts the proof until a query reaches the evicted range`() {
+        val reducer = EpgReducer(maximumRetainedEvents = 4)
+        addChannel(reducer, 1)
+        addChannel(reducer, 2)
+        reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 0, 50)))
+        assertEquals(EpgQueryAcceptance.APPLIED, reducer.acceptSuccessfulQuery(
+            requireNotNull(reducer.beginQuery(ChannelId(2))), instant(500),
+            listOf(queryEvent(2, 2, 0, 50), queryEvent(3, 2, 300, 310), queryEvent(6, 2, 350, 360)),
+        ))
+        reducer.accept(MetadataEvent.EventAdded(generation, event(4, 1, 50, 60)), capacity = window())
+        reducer.accept(MetadataEvent.EventDeleted(generation, EventId(4)))
+        reducer.accept(MetadataEvent.EventAdded(generation, event(5, 2, 400, 410)), capacity = window())
+
+        // Shown, but past the cut: the proof still ends just before the earliest evicted programme.
+        assertEquals(listOf(1L, 2L, 5L), reducer.snapshot().events.map { it.id.value }.sorted())
+        assertEquals(instant(299), reducer.snapshot().coverages.first { it.channelId == ChannelId(2) }.knownTo)
+        assertEquals(EpgQueryAcceptance.APPLIED, reducer.acceptSuccessfulQuery(
+            requireNotNull(reducer.beginQuery(ChannelId(2))), instant(299), listOf(queryEvent(2, 2, 0, 50)),
+        ))
+        assertEquals(instant(299), reducer.snapshot().coverages.first { it.channelId == ChannelId(2) }.knownTo)
+
+        // A query short of the latest evicted start proves only through its own end.
+        assertEquals(EpgQueryAcceptance.APPLIED, reducer.acceptSuccessfulQuery(
+            requireNotNull(reducer.beginQuery(ChannelId(2))), instant(320), listOf(queryEvent(2, 2, 0, 50)),
+        ))
+        assertEquals(instant(320), reducer.snapshot().coverages.first { it.channelId == ChannelId(2) }.knownTo)
+
+        // Reaching it proves the whole evicted range again; the server no longer lists either.
+        assertEquals(EpgQueryAcceptance.APPLIED, reducer.acceptSuccessfulQuery(
+            requireNotNull(reducer.beginQuery(ChannelId(2))), instant(350), listOf(queryEvent(2, 2, 0, 50)),
+        ))
+        assertEquals(null, reducer.proofCeiling(ChannelId(2)))
+        assertEquals(instant(410), reducer.snapshot().coverages.first { it.channelId == ChannelId(2) }.knownTo)
+    }
+
+    @Test
+    fun `query whose own far reply is trimmed proves only up to the cut`() {
+        val reducer = EpgReducer(maximumRetainedEvents = 3)
+        addChannel(reducer, 1)
+        addChannel(reducer, 2)
+        reducer.accept(MetadataEvent.EventAdded(generation, event(1, 2, 0, 50)))
+
+        assertEquals(EpgQueryAcceptance.APPLIED, reducer.acceptSuccessfulQuery(
+            requireNotNull(reducer.beginQuery(ChannelId(1))), instant(400),
+            listOf(queryEvent(2, 1, 50, 150), queryEvent(3, 1, 150, 250), queryEvent(4, 1, 250, 350)),
+            capacity = window(),
+        ))
+
+        val snapshot = reducer.snapshot()
+        assertEquals(listOf(1L, 2L), snapshot.events.map { it.id.value }.sorted())
+        val trimmed = snapshot.coverages.first { it.channelId == ChannelId(1) }
+        assertEquals(instant(149), trimmed.queriedTo)
+        assertEquals(instant(149), trimmed.coveredTo)
+        assertEquals(instant(149), reducer.proofCeiling(ChannelId(1)))
+    }
+
+    @Test
+    fun `async flood at capacity plans room far less than once per admission`() {
+        val limit = 1_000
+        val reducer = EpgReducer(maximumRetainedEvents = limit)
+        addChannel(reducer, 1)
+        addChannel(reducer, 2)
+        (1L..limit).forEach { id ->
+            reducer.accept(MetadataEvent.EventAdded(generation, event(id, 2, 10_000 + id, 10_001 + id)))
+        }
+        var plans = 0
+        val capacity = { plans += 1; window(protectedThrough = 5_000).invoke() }
+
+        (1L..limit).forEach { offset ->
+            val id = limit + offset
+            assertTrue(reducer.accept(MetadataEvent.EventAdded(generation, event(id, 1, 100 + offset, 101 + offset)), capacity = capacity))
+            assertFalse(reducer.lastEventRefusedForCapacity)
+        }
+
+        val snapshot = reducer.snapshot()
+        assertTrue(snapshot.events.size <= limit)
+        assertEquals(limit, snapshot.events.count { it.channelId == ChannelId(1) })
+        assertTrue(plans <= limit / 10, "planned $plans times")
+    }
+
+    @Test
+    fun `ended programmes yield before any far tail`() {
+        val reducer = EpgReducer(maximumRetainedEvents = 3)
+        addChannel(reducer, 1)
+        addChannel(reducer, 2)
+        reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, -100, -50)))
+        reducer.accept(MetadataEvent.EventAdded(generation, event(4, 1, -50, -10)))
+        reducer.accept(MetadataEvent.EventAdded(generation, event(2, 2, 200, 300)))
+
+        assertTrue(reducer.accept(MetadataEvent.EventAdded(generation, event(3, 1, 0, 50)), capacity = window()))
+
+        assertEquals(listOf(2L, 3L), reducer.snapshot().events.map { it.id.value })
+        assertEquals(null, reducer.proofCeiling(ChannelId(2)))
+    }
+
+    @Test
+    fun `eviction fences an older in flight query for the trimmed channel`() {
+        val reducer = EpgReducer(maximumRetainedEvents = 2)
+        addChannel(reducer, 1)
+        addChannel(reducer, 2)
+        reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 0, 50)))
+        reducer.accept(MetadataEvent.EventAdded(generation, event(2, 2, 200, 300)))
+        val overtaken = requireNotNull(reducer.beginQuery(ChannelId(2)))
+        val unaffected = requireNotNull(reducer.beginQuery(ChannelId(1)))
+
+        assertTrue(reducer.accept(MetadataEvent.EventAdded(generation, event(3, 1, 50, 60)), capacity = window()))
+        // An older reply may predate updates of what was evicted; it must not re-advance the proof.
+        assertEquals(EpgQueryAcceptance.STALE, reducer.acceptSuccessfulQuery(
+            overtaken, instant(400), listOf(queryEvent(2, 2, 200, 300)), capacity = window(),
+        ))
+        assertEquals(listOf(1L, 3L), reducer.snapshot().events.map { it.id.value })
+        assertEquals(null, reducer.snapshot().coverages.first { it.channelId == ChannelId(2) }.knownTo)
+        assertEquals(EpgQueryAcceptance.APPLIED, reducer.acceptSuccessfulQuery(
+            unaffected, instant(60), emptyList(), capacity = window(),
+        ))
+
+        assertEquals(EpgQueryAcceptance.APPLIED, reducer.acceptSuccessfulQuery(
+            requireNotNull(reducer.beginQuery(ChannelId(2))), instant(400), listOf(queryEvent(2, 2, 200, 300)),
+            capacity = window(protectedThrough = 40, requests = mapOf(2L to 400)),
+        ))
+        val snapshot = reducer.snapshot()
+        assertEquals(listOf(1L, 2L), snapshot.events.map { it.id.value })
+        assertEquals(instant(400), snapshot.coverages.first { it.channelId == ChannelId(2) }.queriedTo)
+        assertEquals(instant(49), snapshot.coverages.first { it.channelId == ChannelId(1) }.queriedTo)
+    }
+
+    @Test
+    fun `carryover yields first and never resurrects evicted live programmes`() {
+        val reducer = EpgReducer(maximumRetainedEvents = 4)
+        addChannel(reducer, 1)
+        addChannel(reducer, 2)
+        reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 0, 50)))
+        reducer.accept(MetadataEvent.EventAdded(generation, event(2, 2, 0, 50)))
+        reducer.accept(MetadataEvent.EventAdded(generation, event(3, 2, 200, 300)))
+        reducer.accept(MetadataEvent.EventAdded(generation, event(4, 2, 300, 400)))
+        val evicted = reducer.snapshot().events.first { it.id == EventId(4) }
+        reducer.accept(MetadataEvent.EventAdded(generation, event(5, 1, 50, 60)), capacity = window())
+        reducer.accept(MetadataEvent.EventAdded(generation, event(6, 1, 60, 70)), capacity = window())
+        assertEquals(listOf(1L, 2L, 5L, 6L), reducer.snapshot().events.map { it.id.value }.sorted())
+        reducer.accept(MetadataEvent.EventDeleted(generation, EventId(6)))
+
+        reducer.installCarryover(listOf(evicted, publicEvent(event(9, 2, 500, 600))), mapOf(ChannelId(2) to instant(100)))
+        assertEquals(listOf(1L, 2L, 5L, 9L), reducer.snapshot().events.map { it.id.value }.sorted())
+
+        // Carryover only borrows free room: it goes before any live programme is evicted.
+        reducer.accept(MetadataEvent.EventAdded(generation, event(7, 1, 70, 80)), capacity = window())
+        assertEquals(listOf(1L, 2L, 5L, 7L), reducer.snapshot().events.map { it.id.value }.sorted())
+        assertEquals(instant(199), reducer.proofCeiling(ChannelId(2)))
+    }
+
+    @Test
     fun `channel migration and deletion update events and actual coverage`() {
         val reducer = EpgReducer()
         addChannel(reducer, 1)
@@ -833,6 +1106,20 @@ internal class EpgReducerTest {
         stop = instant(stop),
         title = title,
     )
+
+    private fun window(
+        protectedThrough: Long = 100,
+        requests: Map<Long, Long> = emptyMap(),
+    ): () -> EpgCapacityWindow = {
+        EpgCapacityWindow(
+            endedBefore = instant(0),
+            protectedThrough = instant(protectedThrough),
+            requestBounds = requests.entries.associate { (channelId, through) -> ChannelId(channelId) to instant(through) },
+        )
+    }
+
+    private fun publicEvent(event: GatewayEpgEvent): EpgEvent =
+        requireNotNull(ReducedEpgEvent.fromEvent(event)?.toPublicOrNull())
 
     private fun instant(seconds: Long): Instant = Instant.fromEpochSeconds(seconds)
 }
