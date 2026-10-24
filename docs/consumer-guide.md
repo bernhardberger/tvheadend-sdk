@@ -232,7 +232,8 @@ programmes up to the configured horizon. `event(id)`, `eventAt`, `nextEvent` and
 the DVR lookups by event ID may return a carryover event for display; DVR
 mutations remain server validated. Retention and
 `EpgCoveragePolicy.maximumRetainedEvents` apply to carryover too, which is
-evicted before live events and never causes a live capacity refusal. A profile
+evicted before live events and never causes a live capacity refusal; live
+programmes evicted for capacity never return as carryover. A profile
 switch never carries guide data over. Ordinary queries extend each channel in
 four-hour steps to about 20 hours ahead over roughly 30 minutes; later
 programmes, up to the configured `EpgCoveragePolicy.futureHorizon`, need
@@ -474,17 +475,37 @@ the answer; use that observation rather than recapturing a potentially newer
 one. `CoveredEmpty` proves the query succeeded without retained programmes.
 `Ineligible` covers an unknown channel, a boundary outside policy, or missing
 server query capability. `CapacityExhausted` (batch:
-`EpgCoverageBatchSettlement.CapacityExhausted`) means the policy's retained-event
-limit is full: the query result was rejected atomically and coverage did not
-advance. It is not latched; a later request may succeed once retention or server
-deletions free capacity. A repeated request for the same or an earlier boundary
-waits for the channel cooldown before it queries again; a later boundary queries
-at once.
+`EpgCoverageBatchSettlement.CapacityExhausted`) means the query's programmes
+would not fit the policy's retained-event limit even after evicting everything
+outside the protected windows below: the query result was rejected atomically
+and coverage did not advance. It is not latched; a later request may succeed
+once time passes, newer coverage calls displace the protected request windows,
+or server deletions free capacity. A repeated request for the same or an earlier boundary waits for the
+channel cooldown before it queries again; a later boundary queries at once.
 
 The default `EpgCoveragePolicy` keeps a 24-hour future horizon and at most
 100,000 events. A custom policy supplied to `createTvheadendSession(policy)` can
 request 24 hours through 7 days and 1 through 250,000 retained events. The
 policy configures a fresh process-wide session owner; a conflicting active policy is rejected.
+
+The limit counts live programmes only; history and carryover do not consume it.
+A full store makes room instead of refusing: after carryover, it evicts
+programmes that have already ended, then trims the far ends of channel
+schedules, farthest from a protected window first, down to 1% below the limit
+(at least one programme) so one pass serves many additions. Protected are the
+next 20 hours of every channel and, up to the call's boundary, every channel of
+the eight most recent explicit coverage calls and of every pending one. A batch
+call counts once for all its channels. A call leaves the recent eight only when
+newer calls displace it or the session generation changes. Eviction only
+removes a channel's far end and caps that channel's coverage one second before
+the earliest evicted start, so `knownTo` never claims an evicted programme and
+a later acquisition for it queries again. Programmes the server adds beyond the
+cap are shown but do not extend coverage; only a successful query for that
+channel past the cap raises it. Asynchronous additions are dropped, and
+queries return `CapacityExhausted`, only when protected programmes alone would
+exceed the limit. A guide that jumps several days ahead on a large server can
+therefore always reach the window it is showing, at the cost of far ends of
+channels the user is not looking at.
 
 ### Already-received programme history
 

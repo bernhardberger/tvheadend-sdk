@@ -14,6 +14,19 @@ Unreleased; development target.
   after retention or server deletions free capacity. `Ineligible` and
   `Rejected` now cover only the channel, horizon, and server query capability.
   Exhaustive `when` expressions over either type need a new branch.
+- BREAKING (behavioural): a full `EpgCoveragePolicy.maximumRetainedEvents`
+  store makes room instead of refusing programmes. It evicts ended programmes,
+  then the far ends of channel schedules, farthest from a protected window
+  first, down to 1% below the limit. The next 20 hours of every channel and
+  the windows of the eight most recent explicit coverage calls (a batch counts
+  once) and of every pending call are protected. A trimmed channel's coverage,
+  including persisted coverage, stays capped before the earliest evicted start
+  until a query for that channel reaches past it; programmes added beyond the
+  cap do not extend it, so a later request for that range queries again.
+  Asynchronous additions are dropped, and acquisitions return
+  `CapacityExhausted`, only when protected programmes alone exceed the limit.
+  Evicted live programmes never return as carryover. Guides on large servers
+  can now jump several days ahead at a full store.
 - Background EPG query results publish once per completed worker batch, reducing
   `EpgRepositoryState` emissions during guide warm-up. Priority coverage
   acquisitions still publish and settle immediately when their results arrive.

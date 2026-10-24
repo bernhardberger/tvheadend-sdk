@@ -218,7 +218,7 @@ previous same-profile generation's retained publication, supplies carryover for
 channels the initial sync proved: per channel, events that start after the
 initial-sync window, at or after the last live programme's end and after any
 successful query boundary stay visible. IDs the server named during initial sync
-without a live copy, such as deletions, capacity refusals, programmes expired
+without a live copy, such as deletions, capacity refusals or evictions, programmes expired
 before retention or removed with their channel, are excluded, also when the
 restore itself ended during initial sync. When that first live
 publication has no seed while this attempt's restore is still running, the
@@ -241,7 +241,11 @@ live event IDs,
 server deletions, live programmes or query boundaries reaching an event's start,
 retention and capacity (carryover first) remove carryover permanently during
 reduction, independent of how publications are batched. Carryover is kept
-outside coverage, so the worker still queries that range. Persistence writes the
+outside coverage, so the worker still queries that range. Live programmes
+evicted for capacity are excluded from carryover the same way, and their
+channel's coverage stays capped before the earliest evicted start until a query
+reaches past it, so the persisted snapshot coverage never claims an evicted
+range. Persistence writes the
 visible carryover events with the live snapshot but no coverage for them, and
 restore bounds them by the same near window and retention. Carryover is replaced
 once its start falls within the six-hour live window or a query reaches it, so

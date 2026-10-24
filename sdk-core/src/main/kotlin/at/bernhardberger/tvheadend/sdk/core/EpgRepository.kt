@@ -374,9 +374,21 @@ public data class EpgSnapshot private constructor(
  *
  * The default remains 24 hours with at most 100,000 retained events. Configured horizons use
  * whole-second precision and range from 24 hours through seven days, inclusive. Retained-event
- * limits range from 1 through 250,000, inclusive. When the event limit is full, asynchronous
- * additions are ignored and a query requiring more capacity is rejected atomically without
- * advancing its coverage boundary; time-window retention or server deletion frees capacity.
+ * limits range from 1 through 250,000, inclusive. The limit counts current programmes only;
+ * display-only carryover uses spare room and yields first.
+ *
+ * When the event limit is full, the SDK makes room instead of refusing new programmes. It evicts
+ * programmes that have already ended, then the far ends of channel schedules, farthest from a
+ * protected window first, down to slightly below the limit so one pass serves many additions.
+ * Protected are the next 20 hours of every channel and, up to its boundary, every channel of the
+ * eight most recent explicit coverage calls and of every pending one; a batch call counts once
+ * for all its channels. A call stays among the recent eight until newer calls displace it or the
+ * session generation changes. Eviction removes a channel's far end only and caps that channel's
+ * coverage just before the earliest evicted start, so coverage never claims an evicted programme
+ * and a later request for it queries again. Programmes added beyond the cap are kept but never
+ * extend coverage; only a successful query for that channel past the cap raises it. Only when the
+ * protected programmes alone would exceed the limit is an asynchronous addition ignored, or a
+ * query rejected atomically without advancing its coverage boundary.
  * Policies compare by their horizon and retained-event limit.
  */
 public class EpgCoveragePolicy private constructor(
@@ -507,12 +519,13 @@ public sealed interface EpgCoverageAcquisitionResult {
     public data object Ineligible : EpgCoverageAcquisitionResult
 
     /**
-     * The configured retained-event limit is full.
+     * The configured retained-event limit cannot hold this request's programmes.
      *
-     * The query result was rejected atomically and coverage did not advance. A later request may
-     * succeed once retention or server deletions free capacity. A repeated request for the same or
-     * an earlier boundary waits for the channel cooldown before it queries again; a later boundary
-     * queries at once.
+     * The query result would not fit even after evicting every programme outside the protected
+     * windows described by [EpgCoveragePolicy], so it was rejected atomically and coverage did not
+     * advance. A later request may succeed once time passes, newer coverage calls displace the
+     * protected request windows, or server deletions free capacity. A repeated request for the same or an earlier boundary waits
+     * for the channel cooldown before it queries again; a later boundary queries at once.
      */
     public data object CapacityExhausted : EpgCoverageAcquisitionResult
 
@@ -556,12 +569,13 @@ public sealed interface EpgCoverageBatchSettlement {
     }
 
     /**
-     * The configured retained-event limit is full.
+     * The configured retained-event limit cannot hold this channel request's programmes.
      *
-     * The query result was rejected atomically and coverage did not advance. A later request may
-     * succeed once retention or server deletions free capacity. A repeated request for the same or
-     * an earlier boundary waits for the channel cooldown before it queries again; a later boundary
-     * queries at once.
+     * The query result would not fit even after evicting every programme outside the protected
+     * windows described by [EpgCoveragePolicy], so it was rejected atomically and coverage did not
+     * advance. A later request may succeed once time passes, newer coverage calls displace the
+     * protected request windows, or server deletions free capacity. A repeated request for the same or an earlier boundary waits
+     * for the channel cooldown before it queries again; a later boundary queries at once.
      */
     public class CapacityExhausted(
         override val channelId: ChannelId,
