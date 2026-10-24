@@ -156,7 +156,7 @@ jobs:
             rows+="| \`$module\` | \`$unique\` | \`$main\` | \`$sources\` |"$'\n'
           done
           # An earlier partial upload leaves build numbers apart; this run's timestamp still binds every module.
-          drift="Modules received different build numbers; consumers must pin each module's own unique version."
+          drift="Modules received different build numbers; single-version consumers cannot resolve this run; move main to the next development version and publish again (docs/releasing.md)."
           {
             printf '## SDK snapshot %s\n\nCommit: %s\n\n' "$SNAPSHOT_VERSION" "\`$GITHUB_SHA\`"
             if (( ${#uniques[@]} > 1 )); then printf '> [!WARNING]\n> %s\n\n' "$drift"; fi

@@ -75,8 +75,10 @@ same run, even modules it uses only transitively. Normally all five share one
 unique version. A run that failed partway through an upload leaves the
 modules' build numbers apart, and Central keeps counting from there. Later runs
 still pass when every module carries that run's timestamp, but the summary and
-job log then warn that the build numbers differ. Nothing needs deleting or
-renaming; the drift ends when the configured version changes.
+job log then warn that the build numbers differ. Re-running does not realign
+them. Consumers that pin one version for all modules, like the Player, cannot
+resolve such a run; recover by moving `main` to the next development version
+(for example `0.36.1`), which restarts the numbering, and publishing again.
 
 Central removes snapshots after about 90 days. Snapshots are tied to public
 `main` commits only by the run summary, so `main` history must never be
