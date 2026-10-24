@@ -6,6 +6,14 @@ Unreleased; development target.
 
 ### Changed
 
+- BREAKING: EPG coverage acquisition reports a full retained-event limit as
+  `EpgCoverageAcquisitionResult.CapacityExhausted` and, in batches,
+  `EpgCoverageBatchSettlement.CapacityExhausted` instead of `Ineligible` and
+  `Rejected`. The query result is still rejected atomically, coverage does not
+  advance, and the condition is not latched, so a later request may succeed
+  after retention or server deletions free capacity. `Ineligible` and
+  `Rejected` now cover only the channel, horizon, and server query capability.
+  Exhaustive `when` expressions over either type need a new branch.
 - Background EPG query results publish once per completed worker batch, reducing
   `EpgRepositoryState` emissions during guide warm-up. Priority coverage
   acquisitions still publish and settle immediately when their results arrive.

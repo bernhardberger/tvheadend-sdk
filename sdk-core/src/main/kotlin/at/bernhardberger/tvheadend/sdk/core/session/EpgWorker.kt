@@ -424,14 +424,14 @@ internal class EpgWorker(
                         }
                         settleCoveredWaiters(plan.channelId)
                         if (acceptance == EpgQueryAcceptance.CAPACITY_REJECTED) {
-                            settleIneligible(plan.channelId, rememberIneligible = false)
+                            settleRejected(plan.channelId, EpgCoverageAcquisitionResult.CapacityExhausted)
                         }
                     }
                     GatewayResult.AccessDenied,
                     GatewayResult.NotSupported,
                     GatewayResult.ObservationExpired,
                     GatewayResult.MalformedReply,
-                    -> settleIneligible(plan.channelId)
+                    -> settleRejected(plan.channelId)
                     is GatewayResult.ServerRejected,
                     GatewayResult.ConnectionLimit,
                     GatewayResult.Timeout,
@@ -477,10 +477,13 @@ internal class EpgWorker(
         }
     }
 
-    private fun settleIneligible(channelId: ChannelId, rememberIneligible: Boolean = true) {
+    private fun settleRejected(
+        channelId: ChannelId,
+        rejection: EpgCoverageAcquisitionResult = EpgCoverageAcquisitionResult.Ineligible,
+    ) {
         val retired = synchronized(activityLock) {
             // Capacity can become available later; only server capability denial is latched.
-            if (rememberIneligible) ineligible += channelId
+            if (rejection === EpgCoverageAcquisitionResult.Ineligible) ineligible += channelId
             priorityTargets.remove(channelId)
             waiters.remove(channelId)?.toList().orEmpty()
         }
@@ -488,7 +491,7 @@ internal class EpgWorker(
             val result = if (metadata.currentObservation(generation, waiter.currentSession) == null) {
                 EpgCoverageAcquisitionResult.ObservationExpired
             } else {
-                EpgCoverageAcquisitionResult.Ineligible
+                rejection
             }
             waiter.settlement.complete(result)
         }
@@ -575,6 +578,7 @@ private fun EpgCoverageAcquisitionResult.toBatchSettlement(
     is EpgCoverageAcquisitionResult.CoveredEmpty ->
         EpgCoverageBatchSettlement.CoveredEmpty(channelId, observation)
     EpgCoverageAcquisitionResult.Ineligible -> EpgCoverageBatchSettlement.Rejected(channelId)
+    EpgCoverageAcquisitionResult.CapacityExhausted -> EpgCoverageBatchSettlement.CapacityExhausted(channelId)
     EpgCoverageAcquisitionResult.ObservationExpired ->
         EpgCoverageBatchSettlement.ObservationExpired(channelId)
 }

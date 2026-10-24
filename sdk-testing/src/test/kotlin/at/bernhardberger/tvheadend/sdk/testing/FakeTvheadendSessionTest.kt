@@ -465,6 +465,20 @@ internal class FakeTvheadendSessionTest {
     }
 
     @Test
+    fun `scripted capacity exhaustion settles single and batch coverage`() = runTest {
+        val fake = FakeTvheadendSession(currentObservation())
+        val current = fake.captureCurrentSession()
+        fake.epgRepository.scriptCoverage(EpgCoverageAcquisitionResult.CapacityExhausted)
+
+        assertSame(
+            EpgCoverageAcquisitionResult.CapacityExhausted,
+            fake.epgRepository.acquireCoverage(current, ChannelId(1), Instant.fromEpochSeconds(1)),
+        )
+        val batch = fake.epgRepository.acquireCoverageBatch(current, listOf(ChannelId(1)), Instant.fromEpochSeconds(1))
+        assertTrue(batch.settlements.single() is EpgCoverageBatchSettlement.CapacityExhausted)
+    }
+
+    @Test
     fun `scripts every failure and DVR command without provenance bypass`() = runTest {
         val fake = FakeTvheadendSession(currentObservation())
         val current = fake.captureCurrentSession()

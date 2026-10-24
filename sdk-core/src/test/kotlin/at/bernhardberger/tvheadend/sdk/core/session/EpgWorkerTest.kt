@@ -1079,7 +1079,7 @@ internal class EpgWorkerTest {
     }
 
     @Test
-    fun `capacity rejection settles repository single and batch waiters atomically and retries after cooldown`() = runTest {
+    fun `capacity exhaustion settles repository single and batch waiters atomically and retries after cooldown`() = runTest {
         val generation = GatewayGeneration()
         val policy = EpgCoveragePolicy.create(24.hours, maximumRetainedEvents = 2)
         val metadata = synchronizedMetadata(generation, 1L..2L, policy) {
@@ -1132,10 +1132,11 @@ internal class EpgWorkerTest {
 
         assertTrue(single.isCompleted, "Capacity rejection must settle without waiting for cooldown")
         assertTrue(batch.isCompleted, "A rejected channel must not hold the batch open")
-        assertSame(EpgCoverageAcquisitionResult.Ineligible, single.await())
+        assertSame(EpgCoverageAcquisitionResult.CapacityExhausted, single.await())
         val settlements = batch.await().settlements
         assertEquals(listOf(ChannelId(1), ChannelId(2)), settlements.map { it.channelId })
-        assertTrue(settlements[0] is EpgCoverageBatchSettlement.Rejected)
+        assertTrue(settlements[0] is EpgCoverageBatchSettlement.CapacityExhausted)
+        assertEquals("EpgCoverageBatchSettlement.CapacityExhausted(<redacted>)", settlements[0].toString())
         assertTrue(settlements[1] is EpgCoverageBatchSettlement.CoveredEmpty)
         assertTrue(cancelled.isCancelled)
         val rejected = requireNotNull(metadata.currentEpgSnapshot(generation))

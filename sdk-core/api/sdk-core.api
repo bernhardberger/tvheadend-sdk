@@ -1467,6 +1467,13 @@ public final class at/bernhardberger/tvheadend/sdk/core/EpgCoverage$Companion {
 public abstract interface class at/bernhardberger/tvheadend/sdk/core/EpgCoverageAcquisitionResult {
 }
 
+public final class at/bernhardberger/tvheadend/sdk/core/EpgCoverageAcquisitionResult$CapacityExhausted : at/bernhardberger/tvheadend/sdk/core/EpgCoverageAcquisitionResult {
+	public static final field INSTANCE Lat/bernhardberger/tvheadend/sdk/core/EpgCoverageAcquisitionResult$CapacityExhausted;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class at/bernhardberger/tvheadend/sdk/core/EpgCoverageAcquisitionResult$CoveredEmpty : at/bernhardberger/tvheadend/sdk/core/EpgCoverageAcquisitionResult {
 	public fun <init> (Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;)V
 	public final fun getObservation ()Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;
@@ -1508,6 +1515,12 @@ public final class at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchResult$C
 
 public abstract interface class at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchSettlement {
 	public abstract fun getChannelId-X9YaTts ()J
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchSettlement$CapacityExhausted : at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchSettlement {
+	public synthetic fun <init> (JLkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun getChannelId-X9YaTts ()J
+	public fun toString ()Ljava/lang/String;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchSettlement$CoveredEmpty : at/bernhardberger/tvheadend/sdk/core/EpgCoverageBatchSettlement {

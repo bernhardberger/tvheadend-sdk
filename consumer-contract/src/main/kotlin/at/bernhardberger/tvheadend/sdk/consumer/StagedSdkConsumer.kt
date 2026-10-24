@@ -607,9 +607,15 @@ public fun stagedTestingFake(
     epgRepository.scriptCoverage(
         at.bernhardberger.tvheadend.sdk.core.EpgCoverageAcquisitionResult.Ineligible,
     )
+    epgRepository.scriptCoverage(
+        at.bernhardberger.tvheadend.sdk.core.EpgCoverageAcquisitionResult.CapacityExhausted,
+    )
     epgRepository.scriptCoverageBatch(
         EpgCoverageBatchResult.create(
-            listOf(EpgCoverageBatchSettlement.Rejected(ChannelId(1))),
+            listOf(
+                EpgCoverageBatchSettlement.Rejected(ChannelId(1)),
+                EpgCoverageBatchSettlement.CapacityExhausted(ChannelId(2)),
+            ),
         ),
     )
     dvrRepository.scriptScheduleEntry(DvrMutationResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false))

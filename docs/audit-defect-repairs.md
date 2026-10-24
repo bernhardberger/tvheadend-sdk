@@ -79,6 +79,11 @@ and caller cancellation retain their existing precedence.
 batch channels, atomic rejection, cooldown retry, stale query authority, and
 retirement before and after reduction. No public result types or ABI changed.
 
+0.36.0 later replaced these capacity settlements with the dedicated
+`EpgCoverageAcquisitionResult.CapacityExhausted` and
+`EpgCoverageBatchSettlement.CapacityExhausted` results; the record above
+describes the repair as it shipped.
+
 ## Remaining Boundaries
 
 SDK-06, SDK-07, SDK-11, performance qualification, and application findings remain

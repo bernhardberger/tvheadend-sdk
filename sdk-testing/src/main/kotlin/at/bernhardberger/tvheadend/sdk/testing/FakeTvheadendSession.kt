@@ -434,6 +434,7 @@ private fun EpgCoverageAcquisitionResult.boundTo(
         is EpgCoverageAcquisitionResult.CoveredWithData -> observation
         is EpgCoverageAcquisitionResult.CoveredEmpty -> observation
         EpgCoverageAcquisitionResult.Ineligible,
+        EpgCoverageAcquisitionResult.CapacityExhausted,
         EpgCoverageAcquisitionResult.ObservationExpired,
         -> null
     }
@@ -458,6 +459,7 @@ private fun EpgCoverageBatchResult.boundTo(
             is EpgCoverageBatchSettlement.CoveredEmpty -> settlement.observation
             is EpgCoverageBatchSettlement.TargetAbsent,
             is EpgCoverageBatchSettlement.Rejected,
+            is EpgCoverageBatchSettlement.CapacityExhausted,
             is EpgCoverageBatchSettlement.ObservationExpired,
             -> null
         }
@@ -482,6 +484,7 @@ private fun EpgCoverageAcquisitionResult.toBatchSettlement(
     is EpgCoverageAcquisitionResult.CoveredEmpty ->
         EpgCoverageBatchSettlement.CoveredEmpty(channelId, observation)
     EpgCoverageAcquisitionResult.Ineligible -> EpgCoverageBatchSettlement.Rejected(channelId)
+    EpgCoverageAcquisitionResult.CapacityExhausted -> EpgCoverageBatchSettlement.CapacityExhausted(channelId)
     EpgCoverageAcquisitionResult.ObservationExpired ->
         EpgCoverageBatchSettlement.ObservationExpired(channelId)
 }

@@ -434,6 +434,7 @@ when (
     is EpgCoverageAcquisitionResult.CoveredWithData -> consume(result.observation)
     is EpgCoverageAcquisitionResult.CoveredEmpty -> consume(result.observation)
     EpgCoverageAcquisitionResult.Ineligible -> Unit
+    EpgCoverageAcquisitionResult.CapacityExhausted -> Unit
     EpgCoverageAcquisitionResult.ObservationExpired -> Unit
 }
 ```
@@ -454,6 +455,7 @@ result.settlements.forEach { settlement ->
         is EpgCoverageBatchSettlement.CoveredEmpty -> consume(settlement.observation)
         is EpgCoverageBatchSettlement.TargetAbsent -> Unit
         is EpgCoverageBatchSettlement.Rejected -> Unit
+        is EpgCoverageBatchSettlement.CapacityExhausted -> Unit
         is EpgCoverageBatchSettlement.ObservationExpired -> Unit
     }
 }
@@ -471,7 +473,13 @@ Covered results carry the exact immutable `SessionObservation` that established
 the answer; use that observation rather than recapturing a potentially newer
 one. `CoveredEmpty` proves the query succeeded without retained programmes.
 `Ineligible` covers an unknown channel, a boundary outside policy, or missing
-server query capability.
+server query capability. `CapacityExhausted` (batch:
+`EpgCoverageBatchSettlement.CapacityExhausted`) means the policy's retained-event
+limit is full: the query result was rejected atomically and coverage did not
+advance. It is not latched; a later request may succeed once retention or server
+deletions free capacity. A repeated request for the same or an earlier boundary
+waits for the channel cooldown before it queries again; a later boundary queries
+at once.
 
 The default `EpgCoveragePolicy` keeps a 24-hour future horizon and at most
 100,000 events. A custom policy supplied to `createTvheadendSession(policy)` can

@@ -1514,6 +1514,7 @@ private fun EpgCoverageAcquisitionResult.toBatchSettlement(
     is EpgCoverageAcquisitionResult.CoveredEmpty ->
         EpgCoverageBatchSettlement.CoveredEmpty(channelId, observation)
     EpgCoverageAcquisitionResult.Ineligible -> EpgCoverageBatchSettlement.Rejected(channelId)
+    EpgCoverageAcquisitionResult.CapacityExhausted -> EpgCoverageBatchSettlement.CapacityExhausted(channelId)
     EpgCoverageAcquisitionResult.ObservationExpired ->
         EpgCoverageBatchSettlement.ObservationExpired(channelId)
 }

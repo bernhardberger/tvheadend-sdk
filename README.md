@@ -197,8 +197,8 @@ val result = session.epgRepository.acquireCoverage(currentSession, channel.id, p
 ```
 
 `EpgCoverageAcquisitionResult` settles as covered-with-data, covered-empty,
-ineligible, or observation-expired. Covered results retain the exact immutable
-observation that established the coverage.
+ineligible, capacity-exhausted, or observation-expired. Covered results retain
+the exact immutable observation that established the coverage.
 
 See [the build matrix](docs/build-matrix.md) for the pinned toolchain and test
 runtime split, and [JVM benchmarks](docs/benchmarking.md) for EPG scaling,

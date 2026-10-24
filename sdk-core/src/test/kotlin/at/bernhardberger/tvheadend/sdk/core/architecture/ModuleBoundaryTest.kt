@@ -251,6 +251,7 @@ internal class ModuleBoundaryTest {
             "TargetAbsent",
             "Rejected",
             "Ineligible",
+            "CapacityExhausted",
             "ObservationExpired",
             "EpgSearchRequest",
             "EpgSearchResult",

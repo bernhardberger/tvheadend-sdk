@@ -503,8 +503,18 @@ public sealed interface EpgCoverageAcquisitionResult {
         override fun toString(): String = "EpgCoverageAcquisitionResult.CoveredEmpty(<redacted>)"
     }
 
-    /** The channel, configured future window or retention capacity, or server query capability is not eligible. */
+    /** The channel, configured future window, or server query capability is not eligible. */
     public data object Ineligible : EpgCoverageAcquisitionResult
+
+    /**
+     * The configured retained-event limit is full.
+     *
+     * The query result was rejected atomically and coverage did not advance. A later request may
+     * succeed once retention or server deletions free capacity. A repeated request for the same or
+     * an earlier boundary waits for the channel cooldown before it queries again; a later boundary
+     * queries at once.
+     */
+    public data object CapacityExhausted : EpgCoverageAcquisitionResult
 
     /** The originating observation is no longer current for its owning session. */
     public data object ObservationExpired : EpgCoverageAcquisitionResult
@@ -538,11 +548,25 @@ public sealed interface EpgCoverageBatchSettlement {
         override fun toString(): String = "EpgCoverageBatchSettlement.TargetAbsent(<redacted>)"
     }
 
-    /** The target horizon, configured retention capacity, or server query capability rejected this channel request. */
+    /** The target horizon, channel, or server query capability rejected this channel request. */
     public class Rejected(
         override val channelId: ChannelId,
     ) : EpgCoverageBatchSettlement {
         override fun toString(): String = "EpgCoverageBatchSettlement.Rejected(<redacted>)"
+    }
+
+    /**
+     * The configured retained-event limit is full.
+     *
+     * The query result was rejected atomically and coverage did not advance. A later request may
+     * succeed once retention or server deletions free capacity. A repeated request for the same or
+     * an earlier boundary waits for the channel cooldown before it queries again; a later boundary
+     * queries at once.
+     */
+    public class CapacityExhausted(
+        override val channelId: ChannelId,
+    ) : EpgCoverageBatchSettlement {
+        override fun toString(): String = "EpgCoverageBatchSettlement.CapacityExhausted(<redacted>)"
     }
 
     /** The originating observation expired before this channel settled. */
