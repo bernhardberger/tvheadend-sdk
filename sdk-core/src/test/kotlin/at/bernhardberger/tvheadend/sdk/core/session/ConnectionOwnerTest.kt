@@ -96,7 +96,6 @@ import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
-import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Instant
@@ -2238,9 +2237,7 @@ internal class ConnectionOwnerTest {
                 )
             }
             runCurrent()
-            advanceTimeBy(10.minutes)
-            runCurrent()
-            assertEquals(2, queryAttempts)
+            assertEquals(2, queryAttempts, "An explicit request must not wait for the top-up cooldown")
             assertTrue(acquisition.await() is EpgCoverageAcquisitionResult.CoveredEmpty)
             assertTrue(owner.observation.value.sessionState is SessionState.Ready)
         } finally {

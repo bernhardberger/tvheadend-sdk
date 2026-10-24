@@ -460,7 +460,9 @@ result.settlements.forEach { settlement ->
 ```
 
 Duplicate IDs settle once at their first position. The session's EPG worker retains ownership of
-cooldown, fairness, spacing, coalescing, and bounded query concurrency. Cancelling the batch
+cooldown, fairness, spacing, coalescing, and bounded query concurrency. Explicit requests do not
+wait for a channel's background top-up cooldown; after an unsuccessful attempt, only a later
+boundary dispatches again before that cooldown ends. Cancelling the batch
 promptly removes only its waiters; shared worker work remains available to other callers. Visible
 channel selection, horizon choice, paging, pending UI, timeout copy, and retry policy stay in the
 application. `acquireCoverage` remains available for focused callers.

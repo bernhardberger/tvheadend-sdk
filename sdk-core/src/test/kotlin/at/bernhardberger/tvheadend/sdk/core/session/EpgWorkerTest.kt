@@ -861,7 +861,41 @@ internal class EpgWorkerTest {
     }
 
     @Test
-    fun `cooling priority retains one promoted hint until the channel is eligible`() = runTest {
+    fun `explicit coverage request skips the ordinary top-up cooldown`() = runTest {
+        val generation = GatewayGeneration()
+        val policy = EpgCoveragePolicy.create(7.days)
+        val metadata = synchronizedMetadata(generation, 1L..1L, policy)
+        val targets = mutableListOf<Instant>()
+        val worker = EpgWorker(
+            generation = generation,
+            metadata = metadata,
+            clock = SchedulerClock { testScheduler.currentTime },
+            settings = EpgWorkerSettings(coveragePolicy = policy),
+            queryEpg = { _, _, target ->
+                targets += target
+                GatewayResult.Ok(emptyList())
+            },
+        )
+        val job = backgroundScope.launch { worker.run() }
+        runCurrent()
+        advanceTimeBy(250.milliseconds)
+        runCurrent()
+        assertEquals(listOf(instant(0) + 4.hours), targets)
+
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
+        val through = instant(0) + 3.days
+        val acquisition = backgroundScope.async {
+            worker.acquireCoverage(currentSession, ChannelId(1), through)
+        }
+        runCurrent()
+
+        assertEquals(listOf(instant(0) + 4.hours, through), targets)
+        assertTrue(acquisition.await() is EpgCoverageAcquisitionResult.CoveredEmpty)
+        job.cancelAndJoin()
+    }
+
+    @Test
+    fun `failed priority target waits for cooldown while a further jump skips it`() = runTest {
         val generation = GatewayGeneration()
         val metadata = synchronizedMetadata(generation, 1L..1L)
         val targets = mutableListOf<Instant>()
@@ -875,11 +909,11 @@ internal class EpgWorkerTest {
             ),
             queryEpg = { _, _, target ->
                 targets += target
-                if (targets.size == 1) GatewayResult.Timeout else GatewayResult.Ok(emptyList())
+                if (targets.size <= 2) GatewayResult.Timeout else GatewayResult.Ok(emptyList())
             },
         )
         val currentSession = requireNotNull(metadata.observation.value.currentSession)
-        backgroundScope.async {
+        val first = backgroundScope.async {
             worker.acquireCoverage(currentSession, ChannelId(1), instant(0) + 8.hours)
         }
         runCurrent()
@@ -887,17 +921,117 @@ internal class EpgWorkerTest {
         runCurrent()
         assertEquals(listOf(instant(0) + 8.hours), targets)
 
-        backgroundScope.async {
-            worker.acquireCoverage(currentSession, ChannelId(1), instant(0) + 12.hours)
+        val repeated = backgroundScope.async {
+            worker.acquireCoverage(currentSession, ChannelId(1), instant(0) + 8.hours)
         }
         runCurrent()
         advanceTimeBy(999.milliseconds)
         runCurrent()
-        assertEquals(1, targets.size)
+        assertEquals(1, targets.size, "A failed target must not be retried before the cooldown ends")
+
+        val jump = backgroundScope.async {
+            worker.acquireCoverage(currentSession, ChannelId(1), instant(0) + 12.hours)
+        }
+        runCurrent()
+        assertEquals(listOf(instant(0) + 8.hours, instant(0) + 12.hours), targets)
+        advanceTimeBy(999.milliseconds)
+        runCurrent()
+        assertEquals(2, targets.size, "A failed jump must wait for the cooldown its own query started")
         advanceTimeBy(1.milliseconds)
         runCurrent()
 
-        assertEquals(listOf(instant(0) + 8.hours, instant(0) + 12.hours), targets)
+        assertEquals(listOf(instant(0) + 8.hours, instant(0) + 12.hours, instant(0) + 12.hours), targets)
+        assertTrue(first.await() is EpgCoverageAcquisitionResult.CoveredEmpty)
+        assertTrue(repeated.await() is EpgCoverageAcquisitionResult.CoveredEmpty)
+        assertTrue(jump.await() is EpgCoverageAcquisitionResult.CoveredEmpty)
+        job.cancelAndJoin()
+    }
+
+    @Test
+    fun `staggered priority attempt survives the expiry of its previous cooldown`() = runTest {
+        val generation = GatewayGeneration()
+        val metadata = synchronizedMetadata(generation, 1L..2L)
+        val through = instant(0) + 23.hours
+        val starts = mutableListOf<Pair<ChannelId, Long>>()
+        val worker = EpgWorker(
+            generation = generation,
+            metadata = metadata,
+            clock = SchedulerClock { testScheduler.currentTime },
+            settings = EpgWorkerSettings(
+                requestSpacing = 100.milliseconds,
+                channelCooldown = 1.seconds,
+            ),
+            queryEpg = { _, channelId, target ->
+                starts += channelId to testScheduler.currentTime
+                if (channelId == ChannelId(1) && target == through) GatewayResult.Timeout else GatewayResult.Ok(emptyList())
+            },
+        )
+        val job = backgroundScope.launch { worker.run() }
+        runCurrent()
+        advanceTimeBy(950.milliseconds)
+        runCurrent()
+        assertEquals(listOf(ChannelId(1) to 0L, ChannelId(2) to 100L), starts)
+
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
+        val second = backgroundScope.async { worker.acquireCoverage(currentSession, ChannelId(2), through) }
+        val first = backgroundScope.async { worker.acquireCoverage(currentSession, ChannelId(1), through) }
+        runCurrent()
+        // Channel 1's earlier cooldown ends at 1000 ms, between selection and its 1050 ms dispatch.
+        advanceTimeBy(1_099.milliseconds)
+        runCurrent()
+        assertTrue(second.await() is EpgCoverageAcquisitionResult.CoveredEmpty)
+        assertEquals(
+            listOf(1050L),
+            starts.drop(2).filter { (channelId, _) -> channelId == ChannelId(1) }.map { (_, time) -> time },
+            "A failed target must wait for the cooldown its own query started",
+        )
+        advanceTimeBy(1.milliseconds)
+        runCurrent()
+
+        assertEquals(
+            listOf(1050L, 2050L),
+            starts.drop(2).filter { (channelId, _) -> channelId == ChannelId(1) }.map { (_, time) -> time },
+        )
+        assertFalse(first.isCompleted)
+        job.cancelAndJoin()
+    }
+
+    @Test
+    fun `priority for an in flight channel dispatches after that query without waiting for cooldown`() = runTest {
+        val generation = GatewayGeneration()
+        val metadata = synchronizedMetadata(generation, 1L..1L)
+        val release = CompletableDeferred<Unit>()
+        val targets = mutableListOf<Instant>()
+        val worker = EpgWorker(
+            generation = generation,
+            metadata = metadata,
+            clock = SchedulerClock { testScheduler.currentTime },
+            settings = EpgWorkerSettings(
+                requestSpacing = 1.milliseconds,
+                channelCooldown = 1.hours,
+            ),
+            queryEpg = { _, _, target ->
+                targets += target
+                if (targets.size == 1) release.await()
+                GatewayResult.Ok(emptyList())
+            },
+        )
+        val job = backgroundScope.launch { worker.run() }
+        runCurrent()
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
+        val acquisition = backgroundScope.async {
+            worker.acquireCoverage(currentSession, ChannelId(1), instant(0) + 12.hours)
+        }
+        runCurrent()
+        advanceTimeBy(1.seconds)
+        runCurrent()
+        assertEquals(listOf(instant(0) + 4.hours), targets, "One query per channel may be in flight")
+
+        release.complete(Unit)
+        runCurrent()
+
+        assertEquals(listOf(instant(0) + 4.hours, instant(0) + 12.hours), targets)
+        assertTrue(acquisition.await() is EpgCoverageAcquisitionResult.CoveredEmpty)
         job.cancelAndJoin()
     }
 

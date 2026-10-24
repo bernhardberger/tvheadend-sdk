@@ -76,6 +76,7 @@ internal data class EpgWorkerSettings(
 internal data class EpgQueryPlan(
     internal val channelId: ChannelId,
     internal val target: Instant,
+    internal val priority: Boolean = false,
 )
 
 // Cover the upstream 30 s slide timer plus whole-second estimate and transport lag.
@@ -154,9 +155,13 @@ internal class EpgWorker(
     private val activityLock = Any()
     private val wake = Channel<Unit>(Channel.CONFLATED)
     private val inFlight = mutableSetOf<ChannelId>()
-    private val coolingDown = mutableSetOf<ChannelId>()
+    // Each dispatch replaces its channel's period token, so only the latest period's timer ends it.
+    private val coolingDown = mutableMapOf<ChannelId, Any>()
     private val ineligible = mutableSetOf<ChannelId>()
     private val priorityTargets = linkedMapOf<ChannelId, Instant>()
+
+    // Highest priority query target dispatched per channel in its current cooldown period.
+    private val priorityAttempts = mutableMapOf<ChannelId, Instant>()
     private val waiters = linkedMapOf<ChannelId, LinkedHashSet<EpgCoverageWaiter>>()
     private var singleSlotPriorityTurn = true
     private var acceptingPriorities = true
@@ -284,6 +289,7 @@ internal class EpgWorker(
                 synchronized(activityLock) {
                     inFlight.clear()
                     coolingDown.clear()
+                    priorityAttempts.clear()
                     ineligible.clear()
                     priorityTargets.clear()
                     waiters.clear()
@@ -303,20 +309,28 @@ internal class EpgWorker(
                     coverage.knownTo?.let { knownTo -> knownTo >= target } == true
             }
             EpgSchedulingSnapshot(
-                excluded = inFlight + coolingDown + ineligible,
+                excluded = inFlight + coolingDown.keys + ineligible,
+                // An explicit target may skip the top-up cooldown unless this period already queried
+                // through it; a repeated unsatisfied target therefore waits for the period to end.
+                priorityExcluded = inFlight + ineligible + coolingDown.keys.filter { channelId ->
+                    val attempted = priorityAttempts[channelId]
+                    val target = priorityTargets[channelId]
+                    attempted != null && target != null && attempted >= target
+                },
                 priorities = LinkedHashMap(priorityTargets),
                 priorityTurn = singleSlotPriorityTurn,
             )
         }
         val priorityPlans = scheduling.priorities.mapNotNull { (channelId, target) ->
             val coverage = coverageByChannel[channelId]
-            if (coverage == null || channelId in scheduling.excluded) {
+            if (coverage == null || channelId in scheduling.priorityExcluded) {
                 null
             } else {
                 val ordinaryTarget = epgQueryTarget(coverage, now, settings)
                 EpgQueryPlan(
                     channelId = channelId,
                     target = maxOf(target, ordinaryTarget ?: target).toWholeSecond(),
+                    priority = true,
                 )
             }
         }
@@ -354,12 +368,26 @@ internal class EpgWorker(
             coroutineScope {
                 val requests = ArrayList<Deferred<Unit>>(plans.size)
                 plans.forEach { plan ->
-                    synchronized(activityLock) { coolingDown += plan.channelId }
+                    val period = Any()
+                    synchronized(activityLock) {
+                        // Record the attempt with its period: an earlier period's timer may expire
+                        // during request spacing and must not clear an attempt it did not start.
+                        coolingDown[plan.channelId] = period
+                        if (plan.priority) {
+                            priorityAttempts[plan.channelId] = priorityAttempts[plan.channelId]
+                                ?.let { attempted -> maxOf(attempted, plan.target) }
+                                ?: plan.target
+                        }
+                    }
                     this@dispatchBatch.launch {
                         try {
                             delay(settings.channelCooldown)
                         } finally {
-                            synchronized(activityLock) { coolingDown -= plan.channelId }
+                            synchronized(activityLock) {
+                                if (coolingDown.remove(plan.channelId, period)) {
+                                    priorityAttempts -= plan.channelId
+                                }
+                            }
                             wake.trySend(Unit)
                         }
                     }
@@ -525,6 +553,7 @@ private class EpgCoverageWaiter(
 
 private data class EpgSchedulingSnapshot(
     internal val excluded: Set<ChannelId>,
+    internal val priorityExcluded: Set<ChannelId>,
     internal val priorities: Map<ChannelId, Instant>,
     internal val priorityTurn: Boolean,
 )

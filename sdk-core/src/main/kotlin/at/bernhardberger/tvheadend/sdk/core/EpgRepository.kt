@@ -707,9 +707,11 @@ public interface EpgRepository {
      *
      * The boundary is floored to the protocol's whole-second precision. An uncovered boundary at
      * or before the current second, or beyond the session's configured [EpgCoveragePolicy], is
-     * ineligible. Priority never bypasses channel cooldown, repeated requests deduplicate, and
-     * ordinary catalog work keeps a fair share of each batch. Cancellation remains owned by the
-     * caller.
+     * ineligible. A request may dispatch during the channel's background top-up cooldown, but
+     * never beside another query for that channel; after an unsuccessful attempt, an equal or
+     * smaller boundary waits for the cooldown its query started, while a later boundary may
+     * dispatch again. Repeated requests deduplicate, and ordinary catalog work keeps a fair share
+     * of each batch. Cancellation remains owned by the caller.
      */
     public suspend fun acquireCoverage(
         currentSession: CurrentSessionObservation,

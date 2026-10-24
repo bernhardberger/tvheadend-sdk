@@ -20,6 +20,12 @@ Unreleased; development target.
   fraction, now persists position zero like `updateWatchState(watched = true)`.
   It previously kept the final position, so a watched recording still offered
   to resume near its end.
+- `acquireCoverage` and `acquireCoverageBatch` no longer wait up to ten minutes
+  when the channel had a recent background top-up query. An explicit boundary
+  now dispatches as soon as no other query for the channel is in flight. After
+  an unsuccessful attempt, an equal or earlier boundary still waits for the
+  channel cooldown, so a failing request cannot loop. A later boundary may
+  dispatch again.
 
 ## [0.35.0]
 
