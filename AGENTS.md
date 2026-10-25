@@ -2,7 +2,7 @@
 
 Guidance for anyone changing this repository, whether working by hand or with
 a coding agent. Repository tests and CI override generic advice, including the
-optional agents and skill under `.opencode/`.
+optional agents and skills under `.opencode/`.
 
 ## Provenance
 
@@ -42,6 +42,13 @@ notices, and do not describe this project as official Tvheadend software.
 | Offline checks and live-test selection | `docs/offline-verification.md` |
 | Versioning and compatibility | `docs/versioning.md` |
 | Release preparation, signing, publication | `docs/releasing.md` |
+| README, `CHANGELOG.md`, consumer guide and other `docs/` prose | `.opencode/skills/grounded-writing/SKILL.md` |
+| KDoc on public declarations | `.opencode/skills/ktdoc-quality/SKILL.md` and `.opencode/skills/kotlin-api-design/SKILL.md` |
+| Kotlin API shape, coroutines, Flow or control flow | `.opencode/skills/kotlin-api-design/`, `kotlin-concurrency-and-flow/`, `kotlin-control-flow/` |
+
+The vendored skills under `.opencode/skills/` keep their upstream licenses; see
+`.opencode/skills/UPSTREAM.md`. Where they disagree with this guide, this guide
+wins.
 
 ## Module boundaries
 
