@@ -25,8 +25,11 @@ import androidx.media3.exoplayer.video.VideoRendererEventListener
  * format. Video extension renderers (libvpx, libdav1d, FFmpeg video) are not installed. The SDK
  * bundles no extension decoder.
  * Includes finite paused H.264 sample draining for the SDK live sample streams. A tunnelled video
- * renderer returns no output buffers, so it neither drains nor gates output; it relies on tunnel
+ * renderer returns no output buffers, so it neither drains nor gates output. It requests tunnel
  * peek to show the first decodable picture while paused and reports the tunnel's rendered frames.
+ * From API 31, while paused, it also reports a key frame handed to the decoder, because some devices
+ * never report a peeked frame. That report is made before the codec accepts the frame and does not
+ * mean that it was decoded or drawn.
  */
 @androidx.media3.common.util.UnstableApi
 public fun createTvheadendRenderersFactory(
@@ -72,10 +75,23 @@ public fun createTvheadendRenderersFactory(
  * Platform-codec video renderer that drives finite paused H.264 previews and reports rendered
  * frames to SDK live sample streams. Other streams render exactly as [MediaCodecVideoRenderer].
  */
-internal class TvheadendVideoRenderer(builder: MediaCodecVideoRenderer.Builder) : MediaCodecVideoRenderer(builder) {
+internal class TvheadendVideoRenderer(
+    builder: MediaCodecVideoRenderer.Builder,
+    private val sdkInt: Int = Build.VERSION.SDK_INT,
+) : MediaCodecVideoRenderer(builder) {
     override fun onQueueInputBuffer(buffer: DecoderInputBuffer) {
         super.onQueueInputBuffer(buffer)
-        (stream as? FinitePreviewSampleStream)?.inputQueued()
+        val live = stream as? FinitePreviewSampleStream ?: return
+        live.inputQueued()
+        // Some tunnelled decoders never report a peeked frame while paused. From API 31, where peek is
+        // requested, handing a key frame to the codec stands in for that report. This runs before
+        // the codec accepts the buffer, and does not prove that the frame was decoded or drawn.
+        if (configuration.tunneling && sdkInt >= Build.VERSION_CODES.S && state == Renderer.STATE_ENABLED &&
+            buffer.isKeyFrame
+        ) {
+            // The read stream's offset, which readSource added to this buffer's timestamp.
+            live.frameRendered(buffer.timeUs - streamOffsetUs)
+        }
     }
 
     override fun shouldReinitCodec(): Boolean {
@@ -120,7 +136,7 @@ internal class TvheadendVideoRenderer(builder: MediaCodecVideoRenderer.Builder) 
 
     /** Media3 enables peek from API 33; Android 12 leaves an unset peek to the device. */
     private fun enableTunnelPeek() {
-        if (Build.VERSION.SDK_INT !in Build.VERSION_CODES.S..Build.VERSION_CODES.S_V2 ||
+        if (sdkInt !in Build.VERSION_CODES.S..Build.VERSION_CODES.S_V2 ||
             !configuration.tunneling
         ) {
             return
@@ -149,5 +165,11 @@ internal interface FinitePreviewSampleStream {
 
     /** Lets a tunnelled decoder keep a queued finite preview as decoding state, without a rewind. */
     fun keepQueuedPreview()
+
+    /**
+     * Reports a video frame at its period time [presentationTimeUs]: released for display, rendered
+     * by the tunnel, or, for a paused tunnelled decoder from API 31, a key frame handed to the codec
+     * with peek requested.
+     */
     fun frameRendered(presentationTimeUs: Long)
 }

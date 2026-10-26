@@ -36,12 +36,15 @@ Unreleased; development target.
 
 - A timeshift seek issued while paused now completes when Media3 renders
   tunnelled video. The coordinator waited for a decoded-output callback that a
-  tunnelled codec never makes, so the seek always timed out. It now accepts the
-  tunnel's own render signal for the post-seek frame. On API 31 and later the
-  renderer requests tunnel peek, so a device can show the nearest decodable
-  picture while paused, which may differ from the exact seek target. Whether a
-  paused frame renders is up to the device: the seek completes when the device
-  reports the rendered frame, and otherwise times out as before. Untunnelled
+  tunnelled codec never makes, so the seek always timed out. On API 31 and later
+  the renderer requests tunnel peek, so a device can show the nearest decodable
+  picture while paused, which may differ from the exact seek target. The seek
+  completes when the device reports the rendered post-seek frame or, on API 31
+  and later while paused, when the post-seek key frame is handed to the
+  tunnelled decoder. Some devices never report a peeked frame while paused, so
+  the second signal means only that the frame was handed to the decoder, not
+  that it was decoded or is on screen. Below API 31 only a rendered-frame report
+  completes the seek. Without a signal the seek times out as before. Untunnelled
   playback is unchanged.
 - `DvrEntry.contentGenre` decodes the major content category that Tvheadend
   sends for recordings (`contentType` 1–15, no subgenre). It was previously

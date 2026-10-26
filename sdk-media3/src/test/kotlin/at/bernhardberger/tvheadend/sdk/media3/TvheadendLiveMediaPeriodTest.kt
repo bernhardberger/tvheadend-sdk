@@ -239,6 +239,43 @@ internal class TvheadendLiveMediaPeriodTest {
         }
     }
 
+    @Test
+    fun `frame reported before the seek discontinuity is read cannot render the new seek`() = runTest {
+        val bridge = LiveTimeshiftControlBridge(PlaybackTargetToken()) {}
+        val attachment = bridge.newAttachment()
+        val harness = PeriodHarness(this, attachment)
+        try {
+            harness.start(SubscriptionStreamType.MPEG2_AUDIO, SubscriptionStreamType.H264)
+            harness.audio()
+            harness.video()
+            harness.looper.runAll()
+            val stream = harness.select(1) as FinitePreviewSampleStream
+            harness.connection.emit(SubscriptionEvent.Timeshift(0, 0, 0, 120_000_000, 0))
+            runCurrent()
+            val seek = TimeshiftSeekToken(attachment)
+            attachment.pendingSeeks.add(LiveTimeshiftControlBridge.SeekAttempt(seek))
+            attachment.bufferingSeek = true
+            harness.seek(0.seconds)
+            // Outside finite paused input, the reader emits an access unit once the next one starts.
+            harness.video()
+            harness.video()
+
+            // Both packets carry one timestamp, so the queued sample is also the resume position.
+            val resumedUs = harness.period.bufferedPositionUs
+
+            // Before the discontinuity is read, even a post-seek timestamp, such as a tunnel render or
+            // a key frame handed to the codec, carries no seek.
+            stream.frameRendered(resumedUs)
+            assertNull(attachment.renderedSeek)
+
+            assertEquals(resumedUs, harness.period.readDiscontinuity())
+            stream.frameRendered(resumedUs)
+            assertSame(seek, attachment.renderedSeek)
+        } finally {
+            harness.close()
+        }
+    }
+
     @ParameterizedTest
     @ValueSource(longs = [0, 120])
     fun `accepted edge seek discards old queues and waits for complete new samples`(edge: Long) = runTest {

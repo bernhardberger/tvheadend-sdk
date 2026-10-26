@@ -61,8 +61,20 @@ that the device can display it while paused: Media3 1.11.1 sets
 `PARAMETER_KEY_TUNNEL_PEEK` from API 33, and the SDK renderer sets it on API 31
 and 32. A peeked picture is the nearest decodable frame, not necessarily the
 exact seek target. Whether it is shown is up to the device, and below API 31
-the device alone decides. A paused seek completes only when the device reports
-the rendered frame, and otherwise times out.
+the device alone decides.
+
+A paused tunnelled seek completes on the first of two signals for a post-seek
+frame: the device reports the rendered frame, or, from API 31, a key frame is
+handed to the codec while the renderer is not started. Some decoders report no
+peeked frame while paused; one API 31 decoder took the post-seek IDR and 147
+later inputs without a render report until playback resumed. The second signal
+is raised before the codec accepts the buffer, so it means only that the key
+frame was handed to the codec with peek requested, not that it was decoded or
+drawn. Key frames handed over while the renderer is started do not count. While
+it is not started, for example during rebuffering, they are reported, but only a
+paused seek in progress can use them. Below API 31 only the device's render
+report completes the seek, and untunnelled playback still requires a released
+output frame. Without a signal the seek times out.
 
 IDR NAL classification is not proof of a complete frame. Media3's public SPS
 parser exposes `frameMbsOnlyFlag`, but its actual slice field/frame parser remains
