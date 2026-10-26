@@ -643,6 +643,10 @@ private class QueueSampleStream(
         if (output.trackType == C.TRACK_TYPE_VIDEO && outputAllowed()) onFrameRendered(presentationTimeUs)
     }
 
+    override fun keepQueuedPreview(): Unit = synchronized(lock) {
+        if (!invalidated() && output.preview?.queued == true) output.preview = null
+    }
+
     override fun drainAndRewind(): Boolean = synchronized(lock) {
         val preview = output.preview ?: return false
         if (invalidated() || !preview.queued) return false

@@ -206,6 +206,39 @@ internal class TvheadendLiveMediaPeriodTest {
         }
     }
 
+    @Test
+    fun `tunnelled decoder keeps a queued finite IDR without a rewind`() = runTest {
+        val bridge = LiveTimeshiftControlBridge(PlaybackTargetToken()) {}
+        val harness = PeriodHarness(this, bridge.newAttachment())
+        try {
+            harness.start(SubscriptionStreamType.MPEG2_AUDIO, SubscriptionStreamType.H264)
+            harness.audio()
+            harness.video()
+            harness.looper.runAll()
+            val stream = harness.select(1)
+            val preview = stream as FinitePreviewSampleStream
+            harness.connection.emit(SubscriptionEvent.Timeshift(0, 0, 0, 120_000_000, 0))
+            runCurrent()
+            harness.seek(0.seconds)
+            harness.video()
+            assertTrue(harness.period.readDiscontinuity() != C.TIME_UNSET)
+            val holder = FormatHolder()
+            val buffer = DecoderInputBuffer(DecoderInputBuffer.BUFFER_REPLACEMENT_MODE_NORMAL)
+            assertEquals(C.RESULT_FORMAT_READ, stream.readData(holder, buffer, 0))
+            assertEquals(C.RESULT_BUFFER_READ, stream.readData(holder, buffer, 0))
+            preview.keepQueuedPreview()
+            preview.inputQueued()
+            preview.keepQueuedPreview()
+            assertFalse(preview.drainAndRewind())
+            harness.period.discardBuffer(Long.MAX_VALUE, true)
+            buffer.clear()
+            assertEquals(C.RESULT_NOTHING_READ, stream.readData(holder, buffer, 0))
+            assertTrue(preview.outputAllowed())
+        } finally {
+            harness.close()
+        }
+    }
+
     @ParameterizedTest
     @ValueSource(longs = [0, 120])
     fun `accepted edge seek discards old queues and waits for complete new samples`(edge: Long) = runTest {

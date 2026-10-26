@@ -53,6 +53,17 @@ protected output operation. Already submitted surface buffers cannot be recalled
 Normal audio buffering and application ownership of Player remain unchanged.
 Applications must use `createTvheadendRenderersFactory` for this integration.
 
+Tunnelled video skips the drain and rewind. Media3 does not dequeue output
+buffers from a tunnelled codec, and releasing that codec would discard its
+picture. Once the retained IDR has been queued to the codec, the queue drops the
+rewind request and the codec keeps the IDR. The renderer requests tunnel peek so
+that the device can display it while paused: Media3 1.11.1 sets
+`PARAMETER_KEY_TUNNEL_PEEK` from API 33, and the SDK renderer sets it on API 31
+and 32. A peeked picture is the nearest decodable frame, not necessarily the
+exact seek target. Whether it is shown is up to the device, and below API 31
+the device alone decides. A paused seek completes only when the device reports
+the rendered frame, and otherwise times out.
+
 IDR NAL classification is not proof of a complete frame. Media3's public SPS
 parser exposes `frameMbsOnlyFlag`, but its actual slice field/frame parser remains
 private inside `H264Reader`. The SDK does not reproduce that parser. The recorded
