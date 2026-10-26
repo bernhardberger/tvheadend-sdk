@@ -467,6 +467,7 @@ internal class ModuleBoundaryTest {
             "PlaybackOutcomeCategory",
             "TimeshiftCommandResult",
             "PlaybackShutdownResult",
+            "PausedSeekConfirmation",
             "PlaybackCoordinatorLifetime",
             "PlaybackRecoveryPolicy",
             "PlaybackRecoveryReason",

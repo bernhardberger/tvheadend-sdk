@@ -4,6 +4,19 @@
 
 Unreleased; development target.
 
+### Added
+
+- Experimental `TvheadendPlaybackCoordinator.pausedSeekConfirmation` tells how
+  the last paused timeshift seek confirmed its video picture:
+  `PausedSeekConfirmation.FRAME_RENDERED` when the decoder reported the
+  post-seek frame rendered, or `KEY_FRAME_QUEUED` when the post-seek key frame
+  was only handed to a tunnelled decoder and the screen may still show the
+  previous picture. It is set before the seek call returns, upgrades to
+  `FRAME_RENDERED` on a later render report for the same seek while paused, and
+  is `null` when no confirmed paused seek is current, including after a failed
+  seek and once the application replaces the Player item; `null` does not mean
+  the picture is fresh. `TimeshiftCommandResult` values are unchanged.
+
 ### Changed
 
 - BREAKING: EPG coverage acquisition reports a full retained-event limit as

@@ -780,7 +780,10 @@ internal class Media3PlaybackCoordinatorPlayer(
         installed.token.releasePlayerItem()
         publishPendingRecovery()
         events.fenceItemReplacement(installed.token)
-        (installed as? InstalledPlayerTarget.Live)?.timeshiftControls?.publishCurrent()
+        (installed as? InstalledPlayerTarget.Live)?.timeshiftControls?.let { controls ->
+            controls.clearPausedSeekConfirmation()
+            controls.publishCurrent()
+        }
     }
 
     /**

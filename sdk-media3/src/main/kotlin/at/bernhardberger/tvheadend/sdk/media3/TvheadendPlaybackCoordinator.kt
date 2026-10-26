@@ -379,6 +379,38 @@ public class PlaybackShutdownResult private constructor(private val label: Strin
 }
 
 /**
+ * Tells how a paused timeshift seek confirmed its video picture.
+ *
+ * Read it from [TvheadendPlaybackCoordinator.pausedSeekConfirmation]. This is an open set: handle
+ * values added in future releases, for example by treating them like [KEY_FRAME_QUEUED].
+ */
+@ExperimentalTvheadendApi
+public class PausedSeekConfirmation private constructor(private val label: String) {
+    override fun toString(): String = label
+
+    /** Known confirmation bases. */
+    public companion object {
+        /**
+         * The decoder reported the post-seek frame as rendered.
+         *
+         * Without tunnelling, Media3 released the decoded frame for display. With tunnelling, the
+         * tunnel reported the frame rendered.
+         */
+        @JvmField
+        public val FRAME_RENDERED: PausedSeekConfirmation = PausedSeekConfirmation("FRAME_RENDERED")
+
+        /**
+         * The post-seek key frame went to the tunnelled decoder, but no render was reported.
+         *
+         * The screen may still show the picture from before the seek until playback starts. The SDK
+         * uses this basis only from API 31, while paused, after requesting tunnel peek.
+         */
+        @JvmField
+        public val KEY_FRAME_QUEUED: PausedSeekConfirmation = PausedSeekConfirmation("KEY_FRAME_QUEUED")
+    }
+}
+
+/**
  * One launched, non-restartable playback-coordinator lifetime.
  *
  * [shutdown] combines the coordinator's typed terminal request with actor completion. [join] only
@@ -467,6 +499,7 @@ public class TvheadendPlaybackCoordinator internal constructor(
     )
     private val mutableSubscriptionIssue = MutableStateFlow<SubscriptionIssue?>(null)
     private val mutableLiveDiagnostics = MutableStateFlow<LiveSubscriptionDiagnostics?>(null)
+    private val mutablePausedSeekConfirmation = MutableStateFlow<PausedSeekConfirmation?>(null)
     private val mutableLivePlaybackObservation = MutableStateFlow<LivePlaybackObservation>(
         LivePlaybackObservation.NoTarget,
     )
@@ -536,6 +569,38 @@ public class TvheadendPlaybackCoordinator internal constructor(
      */
     @ExperimentalTvheadendApi
     public val declaredVideoFrameDuration: StateFlow<Duration?> = player.declaredVideoFrameDuration
+
+    /**
+     * Shows how the last paused timeshift seek confirmed its video picture, or null.
+     *
+     * A [seekTimeshift], [seekTimeshiftBy] or [returnToLive] call made while timeshift is paused,
+     * that is, while [timeshiftState] reports [LiveTimeshiftState.Available.playbackPaused] after
+     * [pauseTimeshift] or a server-side pause, buffers the seek and completes as
+     * [TimeshiftCommandResult.ACCEPTED] once a post-seek video frame is reported. Such a call sets
+     * this value before it returns. Pausing only the Media3 `Player` does not make a seek paused.
+     * If the decoder later reports a post-seek frame rendered while still paused,
+     * [PausedSeekConfirmation.KEY_FRAME_QUEUED] becomes [PausedSeekConfirmation.FRAME_RENDERED];
+     * a value never moves back.
+     *
+     * Use it to decide whether the paused picture may be stale. Covering that picture, or briefly
+     * playing to refresh it, is application policy: the SDK never plays, pauses or changes volume
+     * because of this value.
+     *
+     * Null does not mean the picture is fresh. An application covering a possibly stale picture
+     * ends the cover when playback starts, not when this value becomes null. It is null when no
+     * confirmed paused seek is current:
+     * * before the first one, and after a seek that is rejected, fails, times out or changes
+     *   nothing, even if an earlier seek had set a value;
+     * * for seeks accepted while timeshift plays, and for seeks, such as audio-only ones, accepted
+     *   without a selected video track;
+     * * once the video renderer starts, that is, playback starts;
+     * * once a later command starts, except [timeshiftPlaybackPosition] and [setLivePriority];
+     * * once the application replaces the Player item of the target;
+     * * after target replacement, [stop], [shutdown], retirement, or release of the playing period.
+     */
+    @ExperimentalTvheadendApi
+    public val pausedSeekConfirmation: StateFlow<PausedSeekConfirmation?> =
+        mutablePausedSeekConfirmation.asStateFlow()
 
     /**
      * Launches this one-shot coordinator immediately as a child of [scope].
@@ -609,6 +674,7 @@ public class TvheadendPlaybackCoordinator internal constructor(
                 publishLiveObservation = ::publishLiveObservation,
                 activateTimeshift = ::activateTimeshift,
                 deactivateTimeshift = ::deactivateTimeshift,
+                pausedSeekConfirmation = mutablePausedSeekConfirmation,
             ).run()
         } finally {
             withContext(NonCancellable) {
@@ -1143,6 +1209,7 @@ private class CoordinatorActor(
     private val publishLiveObservation: (PlaybackTargetToken, LivePlaybackObservation.Active) -> Unit,
     private val activateTimeshift: (PlaybackTargetToken, LiveTimeshiftControlBridge) -> Unit,
     private val deactivateTimeshift: (PlaybackTargetToken) -> SubscriptionIssue?,
+    private val pausedSeekConfirmation: MutableStateFlow<PausedSeekConfirmation?>,
 ) {
     private val mailbox = PlaybackProgressMailbox()
     private val ticks = Channel<PlaybackTargetToken>(Channel.CONFLATED)
@@ -1151,6 +1218,9 @@ private class CoordinatorActor(
     private var ticker: Job? = null
     private var pausedSeek: PausedSeekBuffer? = null
     private var owedPause: OwedPause? = null
+
+    /** The attachment that may still upgrade or clear [pausedSeekConfirmation]. */
+    private var confirmedAttachment: LiveTimeshiftControlBridge.Attachment? = null
 
     suspend fun run(): Unit = coroutineScope {
         val reportWorker = launch { runReportWorker() }
@@ -1201,6 +1271,7 @@ private class CoordinatorActor(
             }
             owedPause?.watcher?.cancel()
             owedPause = null
+            clearPausedSeekConfirmation()
             activeTarget?.token?.retire()
             (activeTarget as? ActorTarget.Live)?.let { target ->
                 deactivateTimeshift(target.token)
@@ -1226,6 +1297,7 @@ private class CoordinatorActor(
         reportWorker: Job,
         scope: CoroutineScope,
     ): Boolean {
+        if (command.supersedesPausedSeek) clearPausedSeekConfirmation()
         val buffer = pausedSeek?.takeIf { command.supersedesPausedSeek }
             ?: return processCommand(command, reportWorker, scope)
         buffer.timer?.cancel()
@@ -1514,7 +1586,7 @@ private class CoordinatorActor(
             snapshot.playbackState == Player.STATE_READY &&
                 (position as? TimeshiftPlaybackPosition.Estimate)?.seek === seek &&
                 (!snapshot.videoSelected || attachment.hasRenderedSeek(seek))
-        }
+        }?.also { buffer.videoConfirmed = snapshot.videoSelected }
     }
 
     private suspend fun finishPausedSeek(
@@ -1533,6 +1605,13 @@ private class CoordinatorActor(
             buffer.command.ticket.complete()
             buffer.command.rejectAfterShutdown()
             throw failure
+        }
+        if (!superseded && buffer.videoConfirmed && result.command === TimeshiftCommandResult.ACCEPTED) {
+            val attachment = buffer.transport.attachment
+            // Visible before the seek's caller resumes; the attachment refuses a seek it no longer shows.
+            if (attachment.publishConfirmation(checkNotNull(buffer.accepted.seek), pausedSeekConfirmation)) {
+                confirmedAttachment = attachment
+            }
         }
         buffer.command.ticket.complete()
         buffer.answer(result)
@@ -1662,11 +1741,18 @@ private class CoordinatorActor(
         }
     }
 
+    private fun clearPausedSeekConfirmation() {
+        confirmedAttachment?.clearConfirmation()
+        confirmedAttachment = null
+        pausedSeekConfirmation.value = null
+    }
+
     private suspend fun applyRetirement(
         retiredTarget: Boolean,
         retiredRecording: RetiredRecordingTarget?,
     ): SubscriptionIssue? {
         if (!retiredTarget) return null
+        clearPausedSeekConfirmation()
         val old = activeTarget
         // A retired target's transport is closed with it and owes no pause.
         owedPause?.takeIf { it.target === old }?.let { owed ->
@@ -1940,6 +2026,9 @@ private class CoordinatorActor(
         /** Signals the timer that the actor handled a poll that found the player still refilling. */
         val polled = Channel<Unit>(Channel.CONFLATED)
         var timer: Job? = null
+
+        /** Whether readiness waited for a post-seek video frame. */
+        var videoConfirmed = false
     }
 
     /** A paused seek's transport whose pause a server stop interrupted; retried once it is playable. */

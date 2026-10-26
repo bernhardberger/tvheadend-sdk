@@ -1,5 +1,8 @@
 @file:androidx.media3.common.util.UnstableApi
-@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class)
+@file:OptIn(
+    at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class,
+    at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class,
+)
 
 package at.bernhardberger.tvheadend.sdk.media3
 
@@ -153,7 +156,8 @@ internal class TvheadendLiveMediaPeriod(
                 output.queue.seekTo(positionUs, true)
                 streams[index] = QueueSampleStream(output, lock, { cleanEndOfStream }, ::currentError,
                     { interrupted || released || seekDiscontinuityPending },
-                    { timeUs -> timeshiftControls?.frameRendered(timeUs) })
+                    { timeUs, confirmation -> timeshiftControls?.frameRendered(timeUs, confirmation) },
+                    { started -> timeshiftControls?.videoRendererStarted(started) })
                 streamResetFlags[index] = true
             }
         }
@@ -625,7 +629,8 @@ private class QueueSampleStream(
     private val loadingFinished: () -> Boolean,
     private val sourceError: () -> IOException?,
     private val invalidated: () -> Boolean,
-    private val onFrameRendered: (Long) -> Unit,
+    private val onFrameRendered: (Long, PausedSeekConfirmation) -> Unit,
+    private val onRendererStarted: (Boolean) -> Unit,
 ) : SampleStream, FinitePreviewSampleStream {
     val queue: SampleQueue get() = output.queue
     private var readPreview: FinitePreview? = null
@@ -639,8 +644,13 @@ private class QueueSampleStream(
         readPreview = null
     }
 
-    override fun frameRendered(presentationTimeUs: Long): Unit = synchronized(lock) {
-        if (output.trackType == C.TRACK_TYPE_VIDEO && outputAllowed()) onFrameRendered(presentationTimeUs)
+    override fun frameRendered(presentationTimeUs: Long, confirmation: PausedSeekConfirmation): Unit =
+        synchronized(lock) {
+            if (output.trackType == C.TRACK_TYPE_VIDEO && outputAllowed()) onFrameRendered(presentationTimeUs, confirmation)
+        }
+
+    override fun rendererStarted(started: Boolean): Unit = synchronized(lock) {
+        if (output.trackType == C.TRACK_TYPE_VIDEO) onRendererStarted(started)
     }
 
     override fun keepQueuedPreview(): Unit = synchronized(lock) {

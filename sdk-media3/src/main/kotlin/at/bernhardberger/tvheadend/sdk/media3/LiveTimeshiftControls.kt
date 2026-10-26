@@ -1,4 +1,7 @@
-@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class)
+@file:OptIn(
+    at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class,
+    at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class,
+)
 
 package at.bernhardberger.tvheadend.sdk.media3
 
@@ -17,6 +20,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionTracks
 import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.util.Collections
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -386,6 +390,7 @@ internal class LiveTimeshiftControlBridge(
         synchronized(lock) {
             if (retired && currentState === LiveTimeshiftState.Unavailable) return
             retired = true
+            confirmingAttachment?.clearConfirmationLocked()
             activeAttachment = null
             prioritySubscription = null
             acknowledgedPause = null
@@ -753,6 +758,14 @@ internal class LiveTimeshiftControlBridge(
 
     internal class SeekAttempt(val token: TimeshiftSeekToken?)
 
+    /** The attachment whose paused-seek confirmation is published, if any. */
+    private var confirmingAttachment: Attachment? = null
+
+    /** Clears the published paused-seek confirmation, for example once the target loses its item. */
+    internal fun clearPausedSeekConfirmation(): Unit = synchronized(lock) {
+        confirmingAttachment?.clearConfirmationLocked()
+    }
+
     internal fun mappingAttachment(): Attachment? = synchronized(lock) {
         currentHandle()?.attachment?.takeIf { attachedPeriodCount == 1 }
     }
@@ -815,14 +828,68 @@ internal class LiveTimeshiftControlBridge(
         internal val pendingSeeks = ArrayDeque<SeekAttempt>()
         internal var appliedSeek: TimeshiftSeekToken? = null
         internal var renderedSeek: TimeshiftSeekToken? = null
+
+        /** The strongest basis reported for [renderedSeek]. */
+        @Volatile private var renderedSeekConfirmation: PausedSeekConfirmation? = null
+
+        /** The paused seek whose basis [confirmationSink] shows, until playback starts or it is cleared. */
+        private var confirmedSeek: TimeshiftSeekToken? = null
+        private var confirmationSink: MutableStateFlow<PausedSeekConfirmation?>? = null
+        private var videoRendererStarted = false
         internal fun hasRenderedSeek(seek: TimeshiftSeekToken): Boolean = synchronized(lock) { renderedSeek === seek }
-        internal fun frameRendered(presentationTimeUs: Long) {
-            if (!bufferingSeek) return
+        internal fun frameRendered(presentationTimeUs: Long, confirmation: PausedSeekConfirmation) {
+            // After buffering ends, only a render report can still upgrade a key-frame handoff.
+            if (!bufferingSeek && renderedSeekConfirmation !== PausedSeekConfirmation.KEY_FRAME_QUEUED) return
             synchronized(lock) {
                 val position = playbackPosition(this, presentationTimeUs.microseconds)
                     as? TimeshiftPlaybackPosition.Estimate ?: return
-                renderedSeek = position.seek
+                if (bufferingSeek && renderedSeek !== position.seek) {
+                    renderedSeek = position.seek
+                    renderedSeekConfirmation = confirmation
+                }
+                if (position.seek === renderedSeek && confirmation === PausedSeekConfirmation.FRAME_RENDERED) {
+                    renderedSeekConfirmation = confirmation
+                    if (position.seek === confirmedSeek && showsOwnedItem()) confirmationSink?.value = confirmation
+                }
             }
+        }
+
+        /**
+         * Shows in [sink] how [seek]'s paused picture was confirmed. Returns false, leaving [sink]
+         * unchanged, when [seek] has no reported frame, the video renderer has started, or this
+         * attachment no longer maps the item of an active target that still owns it.
+         */
+        internal fun publishConfirmation(
+            seek: TimeshiftSeekToken,
+            sink: MutableStateFlow<PausedSeekConfirmation?>,
+        ): Boolean = synchronized(lock) {
+            val confirmation = renderedSeekConfirmation
+                ?.takeIf { renderedSeek === seek && !videoRendererStarted && showsOwnedItem() }
+                ?: return@synchronized false
+            confirmingAttachment?.takeIf { it !== this }?.clearConfirmationLocked()
+            confirmingAttachment = this
+            confirmedSeek = seek
+            confirmationSink = sink
+            sink.value = confirmation
+            true
+        }
+
+        internal fun clearConfirmation(): Unit = synchronized(lock) { clearConfirmationLocked() }
+
+        internal fun clearConfirmationLocked() {
+            confirmationSink?.value = null
+            confirmationSink = null
+            confirmedSeek = null
+            if (confirmingAttachment === this) confirmingAttachment = null
+        }
+
+        /** The application may replace its item before this attachment's period detaches. */
+        private fun showsOwnedItem(): Boolean =
+            !detached && token.isActive() && token.ownsPlayerItem() && mappingAttachment() === this
+
+        internal fun videoRendererStarted(started: Boolean): Unit = synchronized(lock) {
+            videoRendererStarted = started
+            if (started) clearConfirmationLocked()
         }
         internal var requestedPaused: Boolean? = null
         @Volatile internal var bufferingCapacityAvailable: Boolean = true
@@ -935,6 +1002,8 @@ internal class LiveTimeshiftControlBridge(
                         if (event.outcome == at.bernhardberger.tvheadend.sdk.playback.SkipOutcome.ACCEPTED) {
                             appliedSeek = attempt?.token
                             renderedSeek = null
+                            renderedSeekConfirmation = null
+                            clearConfirmationLocked()
                             packetMapping.clear()
                             pendingPlaybackDiscontinuity = true
                         }
@@ -1037,6 +1106,7 @@ internal class LiveTimeshiftControlBridge(
             synchronized(lock) {
                 if (detached) return
                 detached = true
+                clearConfirmationLocked()
                 attachedPeriodCount--
                 subscription = null
                 diagnosticsObserved = true

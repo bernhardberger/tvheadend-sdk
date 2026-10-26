@@ -1,5 +1,6 @@
 @file:androidx.media3.common.util.UnstableApi
 @file:OptIn(
+    at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class,
     at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class,
     kotlinx.coroutines.ExperimentalCoroutinesApi::class,
 )
@@ -46,6 +47,7 @@ import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -265,12 +267,54 @@ internal class TvheadendLiveMediaPeriodTest {
 
             // Before the discontinuity is read, even a post-seek timestamp, such as a tunnel render or
             // a key frame handed to the codec, carries no seek.
-            stream.frameRendered(resumedUs)
+            stream.frameRendered(resumedUs, PausedSeekConfirmation.FRAME_RENDERED)
             assertNull(attachment.renderedSeek)
 
             assertEquals(resumedUs, harness.period.readDiscontinuity())
-            stream.frameRendered(resumedUs)
+            stream.frameRendered(resumedUs, PausedSeekConfirmation.FRAME_RENDERED)
             assertSame(seek, attachment.renderedSeek)
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `started video renderer withdraws the paused seek confirmation of its stream`() = runTest {
+        val bridge = LiveTimeshiftControlBridge(PlaybackTargetToken()) {}
+        val attachment = bridge.newAttachment()
+        val harness = PeriodHarness(this, attachment)
+        try {
+            harness.start(SubscriptionStreamType.MPEG2_AUDIO, SubscriptionStreamType.H264)
+            harness.audio()
+            harness.video()
+            harness.looper.runAll()
+            val stream = harness.select(1) as FinitePreviewSampleStream
+            harness.connection.emit(SubscriptionEvent.Timeshift(0, 0, 0, 120_000_000, 0))
+            runCurrent()
+            val seek = TimeshiftSeekToken(attachment)
+            attachment.pendingSeeks.add(LiveTimeshiftControlBridge.SeekAttempt(seek))
+            attachment.bufferingSeek = true
+            harness.seek(0.seconds)
+            harness.video()
+            harness.video()
+            val resumedUs = harness.period.bufferedPositionUs
+            assertEquals(resumedUs, harness.period.readDiscontinuity())
+            stream.frameRendered(resumedUs, PausedSeekConfirmation.FRAME_RENDERED)
+            attachment.bufferingSeek = false
+            val sink = MutableStateFlow<PausedSeekConfirmation?>(null)
+            assertTrue(attachment.publishConfirmation(seek, sink))
+            assertSame(PausedSeekConfirmation.FRAME_RENDERED, sink.value)
+
+            stream.rendererStarted(true)
+            assertNull(sink.value)
+            assertFalse(attachment.publishConfirmation(seek, sink))
+            assertNull(sink.value)
+
+            stream.rendererStarted(false)
+            assertTrue(attachment.publishConfirmation(seek, sink))
+            harness.period.interrupt()
+            assertNull(sink.value, "A detached period withdraws its confirmation")
+            assertFalse(attachment.publishConfirmation(seek, sink))
         } finally {
             harness.close()
         }

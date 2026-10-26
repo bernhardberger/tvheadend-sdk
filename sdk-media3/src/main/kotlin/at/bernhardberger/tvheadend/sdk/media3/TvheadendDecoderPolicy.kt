@@ -1,4 +1,5 @@
 @file:androidx.media3.common.util.UnstableApi
+@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class)
 
 package at.bernhardberger.tvheadend.sdk.media3
 
@@ -16,6 +17,7 @@ import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.mediacodec.MediaCodecAdapter
+import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.video.MediaCodecVideoRenderer
 import androidx.media3.exoplayer.video.VideoRendererEventListener
 
@@ -90,8 +92,26 @@ internal class TvheadendVideoRenderer(
             buffer.isKeyFrame
         ) {
             // The read stream's offset, which readSource added to this buffer's timestamp.
-            live.frameRendered(buffer.timeUs - streamOffsetUs)
+            live.frameRendered(buffer.timeUs - streamOffsetUs, PausedSeekConfirmation.KEY_FRAME_QUEUED)
         }
+    }
+
+    override fun onStreamChanged(
+        formats: Array<Format>, startPositionUs: Long, offsetUs: Long, mediaPeriodId: MediaSource.MediaPeriodId,
+    ) {
+        super.onStreamChanged(formats, startPositionUs, offsetUs, mediaPeriodId)
+        // A stream installed during playback never sees this renderer start.
+        (stream as? FinitePreviewSampleStream)?.rendererStarted(state == Renderer.STATE_STARTED)
+    }
+
+    override fun onStarted() {
+        super.onStarted()
+        (stream as? FinitePreviewSampleStream)?.rendererStarted(true)
+    }
+
+    override fun onStopped() {
+        super.onStopped()
+        (stream as? FinitePreviewSampleStream)?.rendererStarted(false)
     }
 
     override fun shouldReinitCodec(): Boolean {
@@ -110,7 +130,7 @@ internal class TvheadendVideoRenderer(
     ) {
         super.renderOutputBufferV21(codec, index, presentationTimeUs, releaseTimeNs)
         // Use the released frame's period coordinate, not a possibly stale Player position.
-        (stream as? FinitePreviewSampleStream)?.frameRendered(presentationTimeUs)
+        (stream as? FinitePreviewSampleStream)?.frameRendered(presentationTimeUs, PausedSeekConfirmation.FRAME_RENDERED)
     }
 
     override fun onProcessedTunneledBuffer(presentationTimeUs: Long) {
@@ -118,7 +138,9 @@ internal class TvheadendVideoRenderer(
         // first: the last frame of a stream lets super apply the next stream's offset.
         val offsetUs = outputStreamOffsetUs
         super.onProcessedTunneledBuffer(presentationTimeUs)
-        (stream as? FinitePreviewSampleStream)?.frameRendered(presentationTimeUs - offsetUs)
+        (stream as? FinitePreviewSampleStream)?.frameRendered(
+            presentationTimeUs - offsetUs, PausedSeekConfirmation.FRAME_RENDERED,
+        )
     }
 
     override fun onCodecInitialized(
@@ -167,9 +189,13 @@ internal interface FinitePreviewSampleStream {
     fun keepQueuedPreview()
 
     /**
-     * Reports a video frame at its period time [presentationTimeUs]: released for display, rendered
-     * by the tunnel, or, for a paused tunnelled decoder from API 31, a key frame handed to the codec
-     * with peek requested.
+     * Reports a video frame at its period time [presentationTimeUs]: released for display or rendered
+     * by the tunnel ([PausedSeekConfirmation.FRAME_RENDERED]), or, for a paused tunnelled decoder from
+     * API 31, a key frame handed to the codec with peek requested
+     * ([PausedSeekConfirmation.KEY_FRAME_QUEUED]).
      */
-    fun frameRendered(presentationTimeUs: Long)
+    fun frameRendered(presentationTimeUs: Long, confirmation: PausedSeekConfirmation)
+
+    /** Reports whether the video renderer reading this stream is started, that is, playing. */
+    fun rendererStarted(started: Boolean)
 }

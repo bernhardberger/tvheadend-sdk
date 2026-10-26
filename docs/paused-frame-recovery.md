@@ -76,6 +76,15 @@ paused seek in progress can use them. Below API 31 only the device's render
 report completes the seek, and untunnelled playback still requires a released
 output frame. Without a signal the seek times out.
 
+The handoff signal does not prove that the screen changed. On one API 31
+tunnelled decoder, a paused seek confirmed by the handoff left the previous
+frame on screen; the decoder ignored the peek request, and the picture updated
+only when playback started. Experimental
+`TvheadendPlaybackCoordinator.pausedSeekConfirmation` therefore reports
+`KEY_FRAME_QUEUED` for that basis and `FRAME_RENDERED` for a render report, so
+the application can decide whether to cover the picture. The SDK takes no
+action of its own.
+
 IDR NAL classification is not proof of a complete frame. Media3's public SPS
 parser exposes `frameMbsOnlyFlag`, but its actual slice field/frame parser remains
 private inside `H264Reader`. The SDK does not reproduce that parser. The recorded

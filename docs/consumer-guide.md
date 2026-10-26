@@ -954,6 +954,42 @@ cannot prove whether the server accepted the command; those outcomes are also
 uncertain. Acceptance and categories are independent: for example, an accepted
 seek can still be terminal when its resumed segment cannot be anchored safely.
 
+#### Paused seek confirmation (experimental)
+
+A seek issued while timeshift is paused, that is, while `timeshiftState`
+reports `playbackPaused` after `pauseTimeshift()` or a server-side pause,
+completes as `ACCEPTED` only after the video renderer reports a post-seek
+frame. Pausing only the Media3 `Player` does not make a seek paused. For such a
+seek, experimental `pausedSeekConfirmation` says which report it was, and is set
+before the seek call returns:
+
+- `FRAME_RENDERED`: the decoder reported the post-seek frame rendered, either as
+  a released output buffer or through the tunnel's render callback.
+- `KEY_FRAME_QUEUED`: with tunnelled video on API 31 or later, the post-seek key
+  frame was handed to the decoder, but no render was reported. The screen may
+  still show the picture from before the seek until playback starts.
+
+A later render report for the same seek, while still paused, changes
+`KEY_FRAME_QUEUED` to `FRAME_RENDERED`; the value never moves back. The set is
+open, so handle unknown values, for example like `KEY_FRAME_QUEUED`.
+
+`null` does not mean the picture is fresh. The value is `null`:
+
+- before the first paused seek, and after a seek that is rejected, fails, times
+  out or changes nothing, even if an earlier seek had set a value;
+- for seeks accepted while timeshift plays, and for audio-only seeks, which
+  are accepted without a video report;
+- once playback starts;
+- once another command starts, except `timeshiftPlaybackPosition()` and
+  `setLivePriority()`;
+- once the application replaces the target's Player item, or the target is
+  replaced, stopped, shut down or retired.
+
+Whether to cover a possibly stale picture, or to play briefly to refresh it, is
+application policy. An application that covers the picture ends the cover when
+playback starts, not when the value becomes `null`. The SDK never plays, pauses
+or changes volume because of this value.
+
 `livePlaybackObservation` is the conflated-latest aggregate for consumers that
 need timeshift state, subscription issue, and diagnostics from one target-fenced
 publication. While the target owns the Player item it emits `Active` when any of

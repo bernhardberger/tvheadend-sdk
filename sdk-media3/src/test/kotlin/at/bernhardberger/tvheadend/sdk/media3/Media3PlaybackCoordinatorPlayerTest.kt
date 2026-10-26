@@ -36,6 +36,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.TestScope
@@ -204,6 +205,34 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         result.await()
         assertEquals(mode == "uncertain", control.shouldStartPlayback(parameters))
         assertFalse(control.shouldStartPlayback(parameters))
+        player.abandon()
+    }
+
+    @Test
+    fun `replacing the live item withdraws its paused seek confirmation`() = runTest {
+        val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
+        val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator()) { _, _ -> RecordingAdmission.Completed(null) }
+        val token = PlaybackTargetToken()
+        val bridge = controls(token)
+        player.installLive(PlayerOperationTicket(), token, TestCoordinatorLiveTarget(), timeshiftControls = bridge)
+        val subscription = FakeTimeshiftSubscription(120.seconds)
+        val attachment = bridge.newAttachment().also { it.bind(subscription) }
+        attachment.tracksReady((subscription.state.value as SubscriptionState.Playable).tracks)
+        attachment.accept(SubscriptionEvent.Timeshift(0, 0, 0, 100_000_000, 100))
+        val seek = TimeshiftSeekToken(attachment)
+        attachment.appliedSeek = seek
+        attachment.packetMapping.accept(10_000_000, 5_000_000)
+        attachment.bufferingSeek = true
+        attachment.frameRendered(10_000_000, PausedSeekConfirmation.FRAME_RENDERED)
+        attachment.bufferingSeek = false
+        val sink = MutableStateFlow<PausedSeekConfirmation?>(null)
+        assertTrue(attachment.publishConfirmation(seek, sink))
+
+        access.replaceWithApplicationItem()
+
+        assertFalse(token.ownsPlayerItem())
+        assertNull(sink.value, "The departed item's confirmation must not outlive its ownership")
+        assertFalse(attachment.publishConfirmation(seek, sink))
         player.abandon()
     }
 

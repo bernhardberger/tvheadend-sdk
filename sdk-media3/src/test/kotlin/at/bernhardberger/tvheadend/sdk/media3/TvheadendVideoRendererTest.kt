@@ -1,4 +1,5 @@
 @file:androidx.media3.common.util.UnstableApi
+@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class)
 
 package at.bernhardberger.tvheadend.sdk.media3
 
@@ -13,11 +14,13 @@ import androidx.media3.exoplayer.FormatHolder
 import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.RendererConfiguration
 import androidx.media3.exoplayer.analytics.PlayerId
+import androidx.media3.exoplayer.mediacodec.MediaCodecAdapter
 import androidx.media3.exoplayer.mediacodec.MediaCodecInfo
 import androidx.media3.exoplayer.mediacodec.MediaCodecRenderer
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.SampleStream
 import androidx.media3.exoplayer.video.MediaCodecVideoRenderer
+import java.lang.reflect.Proxy
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Test
@@ -31,6 +34,31 @@ internal class TvheadendVideoRendererTest {
         renderer.callProtected("onProcessedTunneledBuffer", STREAM_OFFSET_US + 250_000L)
 
         assertEquals(listOf(250_000L), stream.rendered)
+        assertEquals(listOf(PausedSeekConfirmation.FRAME_RENDERED), stream.confirmations)
+    }
+
+    @Test
+    fun `untunnelled released frame reaches the live stream as rendered`() {
+        val stream = RecordingPreviewStream()
+        val renderer = enabledRenderer(stream, tunneling = false)
+        // Media3 releases the output buffer to the codec; nothing else here needs a platform codec.
+        val codec = Proxy.newProxyInstance(javaClass.classLoader, arrayOf(MediaCodecAdapter::class.java)) { _, _, _ ->
+            null
+        } as MediaCodecAdapter
+
+        MediaCodecVideoRenderer::class.java.getDeclaredMethod(
+            "renderOutputBufferV21",
+            MediaCodecAdapter::class.java,
+            Int::class.javaPrimitiveType,
+            Long::class.javaPrimitiveType,
+            Long::class.javaPrimitiveType,
+        ).apply {
+            isAccessible = true
+            invoke(renderer, codec, 0, 250_000L, 0L)
+        }
+
+        assertEquals(listOf(250_000L), stream.rendered)
+        assertEquals(listOf(PausedSeekConfirmation.FRAME_RENDERED), stream.confirmations)
     }
 
     @Test
@@ -41,6 +69,37 @@ internal class TvheadendVideoRendererTest {
         renderer.queueInput(STREAM_OFFSET_US + 250_000L, keyFrame = true)
 
         assertEquals(listOf(250_000L), stream.rendered)
+        assertEquals(listOf(PausedSeekConfirmation.KEY_FRAME_QUEUED), stream.confirmations)
+    }
+
+    @Test
+    fun `renderer start and stop reach the live stream`() {
+        val stream = RecordingPreviewStream()
+        val renderer = enabledRenderer(stream, tunneling = true)
+
+        renderer.start()
+        renderer.stop()
+
+        // Enabling installs the stream while the renderer is not started.
+        assertEquals(listOf(false, true, false), stream.started)
+    }
+
+    @Test
+    fun `stream installed while started learns that the renderer is started`() {
+        val stream = RecordingPreviewStream()
+        val renderer = enabledRenderer(stream, tunneling = true)
+        renderer.start()
+        val next = RecordingPreviewStream()
+
+        renderer.replaceStream(
+            arrayOf(Format.Builder().setSampleMimeType(MimeTypes.VIDEO_H264).build()),
+            next,
+            0L,
+            NEXT_STREAM_OFFSET_US,
+            MediaSource.MediaPeriodId(Any()),
+        )
+
+        assertEquals(listOf(true), next.started)
     }
 
     @Test
@@ -207,6 +266,8 @@ internal class TvheadendVideoRendererTest {
 
     private class RecordingPreviewStream(private val drains: Boolean = false) : SampleStream, FinitePreviewSampleStream {
         val rendered = mutableListOf<Long>()
+        val confirmations = mutableListOf<PausedSeekConfirmation>()
+        val started = mutableListOf<Boolean>()
         var drainCalls = 0
         var keepCalls = 0
 
@@ -219,8 +280,12 @@ internal class TvheadendVideoRendererTest {
         override fun keepQueuedPreview() {
             keepCalls++
         }
-        override fun frameRendered(presentationTimeUs: Long) {
+        override fun frameRendered(presentationTimeUs: Long, confirmation: PausedSeekConfirmation) {
             rendered += presentationTimeUs
+            confirmations += confirmation
+        }
+        override fun rendererStarted(started: Boolean) {
+            this.started += started
         }
         override fun isReady(): Boolean = false
         override fun maybeThrowError(): Unit = Unit

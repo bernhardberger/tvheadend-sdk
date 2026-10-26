@@ -1742,6 +1742,155 @@ internal class TvheadendPlaybackCoordinatorTest {
     }
 
     @Test
+    fun `paused seek confirmation tells how the post-seek picture was confirmed`() = runTest {
+        val key = PausedSeekConfirmation.KEY_FRAME_QUEUED
+        val frame = PausedSeekConfirmation.FRAME_RENDERED
+        for (case in listOf("handoff", "render", "upgrade", "play", "resume", "next-seek", "stale", "audio")) {
+            val fixture = CoordinatorFixture()
+            val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+            try {
+                val confirmation = fixture.coordinator.pausedSeekConfirmation
+                preparePausedSeek(fixture, FakeTimeshiftSubscription(120.seconds))
+                val attachment = fixture.player.requireTimeshiftControls()
+                fun seek() = async {
+                    val target = attachment.timeline()!!.select(5.seconds)!!
+                    val result = fixture.coordinator.seekTimeshift(target) as TimeshiftContentSeekResult.Completed
+                    // Read as soon as the call returns, before anything else runs.
+                    result to confirmation.value
+                }
+                suspend fun reach(seconds: Long, video: Boolean, report: PausedSeekConfirmation?) {
+                    attachment.packetMapping.accept(seconds * 1_000_000L, 5_000_000)
+                    attachment.playbackDiscontinuity()
+                    fixture.player.snapshot = snapshot(seconds, null).copy(
+                        periodUid = attachment.periodUid, videoSelected = video,
+                    )
+                    report?.let(fixture.player::renderedFirstFrame)
+                    advanceTimeBy(21)
+                    runCurrent()
+                }
+                assertNull(confirmation.value, case)
+                val first = seek()
+                runCurrent()
+                assertFalse(first.isCompleted, case)
+                reach(10, video = case != "audio", report = when (case) {
+                    "audio" -> null
+                    "render" -> frame
+                    else -> key
+                })
+                val (result, seen) = first.getCompleted()
+                assertSame(TimeshiftCommandResult.ACCEPTED, result.buffering, case)
+                assertSame(when (case) {
+                    "audio" -> null
+                    "render" -> frame
+                    else -> key
+                }, seen, case)
+                when (case) {
+                    "upgrade" -> {
+                        fixture.player.renderedFirstFrame(frame)
+                        assertSame(frame, confirmation.value, case)
+                    }
+                    "play" -> {
+                        attachment.videoRendererStarted(true)
+                        assertNull(confirmation.value, case)
+                    }
+                    "resume" -> {
+                        assertSame(TimeshiftCommandResult.ACCEPTED, fixture.coordinator.resumeTimeshift(), case)
+                        assertNull(confirmation.value, case)
+                    }
+                    "next-seek", "stale" -> {
+                        val second = seek()
+                        runCurrent()
+                        assertFalse(second.isCompleted, case)
+                        assertNull(confirmation.value, "$case: a new seek clears the previous basis")
+                        if (case == "stale") {
+                            // The first seek's picture renders late, before the second seek's discontinuity.
+                            fixture.player.renderedFirstFrame(frame)
+                            assertNull(confirmation.value, case)
+                            reach(20, video = true, report = key)
+                            val (secondResult, secondSeen) = second.getCompleted()
+                            assertSame(TimeshiftCommandResult.ACCEPTED, secondResult.buffering, case)
+                            assertSame(key, secondSeen, "$case: the stale render must not confirm the new seek")
+                        }
+                    }
+                    else -> assertSame(seen, confirmation.value, case)
+                }
+            } finally {
+                fixture.coordinator.shutdown(1.seconds)
+                owner.join()
+            }
+            assertNull(fixture.coordinator.pausedSeekConfirmation.value, "$case: shutdown clears the basis")
+        }
+    }
+
+    @Test
+    fun `paused seek confirmation follows the item while the pause is restored`() = runTest {
+        val key = PausedSeekConfirmation.KEY_FRAME_QUEUED
+        val frame = PausedSeekConfirmation.FRAME_RENDERED
+        for (case in listOf("depart", "upgrade", "no-downgrade", "depart-after")) {
+            val fixture = CoordinatorFixture()
+            val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
+            try {
+                val confirmation = fixture.coordinator.pausedSeekConfirmation
+                val subscription = FakeTimeshiftSubscription(120.seconds)
+                preparePausedSeek(fixture, subscription)
+                val attachment = fixture.player.requireTimeshiftControls()
+                val restoration = CompletableDeferred<Unit>()
+                subscription.speedAction = { speed ->
+                    if (speed == 0) restoration.await()
+                    SubscriptionOperationResult.Ok(Unit)
+                }
+                val seek = async {
+                    val target = attachment.timeline()!!.select(5.seconds)!!
+                    val result = fixture.coordinator.seekTimeshift(target) as TimeshiftContentSeekResult.Completed
+                    result to confirmation.value
+                }
+                runCurrent()
+                attachment.packetMapping.accept(10_000_000, 5_000_000)
+                attachment.playbackDiscontinuity()
+                fixture.player.snapshot = snapshot(10, null).copy(periodUid = attachment.periodUid, videoSelected = true)
+                fixture.player.renderedFirstFrame(if (case == "no-downgrade") frame else key)
+                advanceTimeBy(21)
+                runCurrent()
+                assertFalse(seek.isCompleted, "$case: the pause restoration is still pending")
+                when (case) {
+                    "depart" -> fixture.player.replaceWithApplicationItem()
+                    "upgrade" -> fixture.player.renderedFirstFrame(frame)
+                    "no-downgrade" -> fixture.player.renderedFirstFrame(key)
+                }
+                restoration.complete(Unit)
+                runCurrent()
+                val (result, seen) = seek.getCompleted()
+                assertSame(TimeshiftCommandResult.ACCEPTED, result.buffering, case)
+                assertSame(when (case) {
+                    "depart" -> null
+                    "upgrade", "no-downgrade" -> frame
+                    else -> key
+                }, seen, case)
+                when (case) {
+                    "depart" -> {
+                        fixture.player.renderedFirstFrame(frame)
+                        assertNull(confirmation.value, "$case: a departed item cannot upgrade the basis")
+                    }
+                    "no-downgrade" -> {
+                        fixture.player.renderedFirstFrame(key)
+                        assertSame(frame, confirmation.value, case)
+                    }
+                    "depart-after" -> {
+                        fixture.player.replaceWithApplicationItem()
+                        assertNull(confirmation.value, case)
+                        fixture.player.renderedFirstFrame(frame)
+                        assertNull(confirmation.value, "$case: a departed item cannot upgrade the basis")
+                    }
+                    else -> assertSame(seen, confirmation.value, case)
+                }
+            } finally {
+                fixture.coordinator.shutdown(1.seconds)
+                owner.join()
+            }
+        }
+    }
+
+    @Test
     fun `pause resume intent publishes immediately regardless of speed observation ordering`() = runTest {
         for (eventFirst in listOf(false, true)) {
             val fixture = CoordinatorFixture()
@@ -4035,6 +4184,7 @@ private class TestCoordinatorHarness(
     val subscriptionIssue = delegate.subscriptionIssue
     val liveDiagnostics = delegate.liveDiagnostics
     val livePlaybackObservation = delegate.livePlaybackObservation
+    val pausedSeekConfirmation = delegate.pausedSeekConfirmation
 
     suspend fun run() = delegate.run()
 
@@ -4342,8 +4492,14 @@ private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
     fun requireTimeshiftControls(): LiveTimeshiftControlBridge.Attachment =
         checkNotNull(timeshiftAttachment)
 
-    fun renderedFirstFrame() {
-        checkNotNull(timeshiftControls).mappingAttachment()?.frameRendered(snapshot.position.inWholeMicroseconds)
+    fun renderedFirstFrame(confirmation: PausedSeekConfirmation = PausedSeekConfirmation.FRAME_RENDERED) {
+        checkNotNull(timeshiftControls).mappingAttachment()?.frameRendered(snapshot.position.inWholeMicroseconds, confirmation)
+    }
+
+    /** Mirrors the application replacing the live item before its period detaches. */
+    fun replaceWithApplicationItem() {
+        requireActiveToken().releasePlayerItem()
+        checkNotNull(timeshiftControls).clearPausedSeekConfirmation()
     }
 
     fun attachTimeshift(subscription: ActiveSubscription) {
