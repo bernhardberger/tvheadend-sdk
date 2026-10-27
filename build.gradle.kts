@@ -194,11 +194,11 @@ val coreResolved = (commonResolved - "org.jetbrains:annotations:13.0") + setOf(
     "org.jetbrains.kotlinx:kotlinx-coroutines-bom:1.11.0",
     "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0",
     "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.11.0",
-    "org.jetbrains.kotlinx:kotlinx-serialization-bom:1.11.0",
-    "org.jetbrains.kotlinx:kotlinx-serialization-core:1.11.0",
-    "org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.11.0",
-    "org.jetbrains.kotlinx:kotlinx-serialization-protobuf:1.11.0",
-    "org.jetbrains.kotlinx:kotlinx-serialization-protobuf-jvm:1.11.0",
+    "org.jetbrains.kotlinx:kotlinx-serialization-bom:1.12.0",
+    "org.jetbrains.kotlinx:kotlinx-serialization-core:1.12.0",
+    "org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.12.0",
+    "org.jetbrains.kotlinx:kotlinx-serialization-protobuf:1.12.0",
+    "org.jetbrains.kotlinx:kotlinx-serialization-protobuf-jvm:1.12.0",
 )
 val serializationResolved = coreResolved.filter { "kotlinx-serialization" in it }.toSet()
 val coroutineResolved = (coreResolved - "at.bernhardberger.tvheadend:htsp:1.0.0-rc.1") - serializationResolved
@@ -219,7 +219,7 @@ val productionGraphs = sdkModules.associateWith {
             "project::sdk-playback",
             "at.bernhardberger.tvheadend:htsp:1.0.0-rc.1",
             "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0",
-            "org.jetbrains.kotlinx:kotlinx-serialization-protobuf:1.11.0",
+            "org.jetbrains.kotlinx:kotlinx-serialization-protobuf:1.12.0",
         ),
         resolved = (if (useHtspComposite) {
             (coreResolved - "at.bernhardberger.tvheadend:htsp:1.0.0-rc.1") + "project::tvheadend-htsp"
@@ -352,7 +352,7 @@ val scopedDirectDependencies = sdkModules.associateWith { emptySet<String>() }.t
         "api=project::sdk-playback",
         "api=org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0",
         "implementation=at.bernhardberger.tvheadend:htsp:1.0.0-rc.1",
-        "implementation=org.jetbrains.kotlinx:kotlinx-serialization-protobuf:1.11.0",
+        "implementation=org.jetbrains.kotlinx:kotlinx-serialization-protobuf:1.12.0",
     )
     this["sdk-android"] = setOf(
         "api=project::sdk-core",

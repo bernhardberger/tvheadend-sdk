@@ -4,6 +4,17 @@
 
 Unreleased; development target.
 
+### Changed
+
+- Move build dependencies that consumers resolve transitively: kotlin-stdlib
+  2.4.21 (Kotlin 2.4.21), kotlinx-serialization 1.12.0 in `sdk-core`, and Tink
+  1.24.0 and AndroidX DataStore 1.3.0 in `sdk-android`. DataStore 1.3.0 also
+  resolves androidx.tracing 2.0.1, androidx.collection 1.6.0 and kotlinx.atomicfu
+  0.28.0, and no longer resolves kotlinx-serialization-json. Kotlin 2.4.21 adds a
+  public no-argument constructor to `AutorecRuleUpdate`, `DvrEntryUpdate`,
+  `DvrProgressPolicy`, `DvrRecordingStream` and `TimerecRuleUpdate` in `sdk-core`
+  and to two `sdk-playback` classes; no existing declaration changes.
+
 ## [0.36.0]
 
 Released 2026-10-26.
