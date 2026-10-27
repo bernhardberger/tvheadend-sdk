@@ -16,8 +16,8 @@ Android modules use AGP's built-in Kotlin support and never apply
 | Coroutines | 1.11.0 |
 | Coil core | 3.6.3 |
 | Okio (sdk-android constraint) | 3.18.2 |
-| AndroidX DataStore Preferences | 1.2.1 |
-| Google Tink Android | 1.23.0 |
+| AndroidX DataStore Preferences | 1.3.0 |
+| Google Tink Android | 1.24.0 |
 | HTSP | 1.0.0-rc.1 |
 | Media3 | 1.11.1 |
 | JUnit Jupiter | 6.1.3 |
