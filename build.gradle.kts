@@ -101,8 +101,8 @@ val requiredVersions = mapOf(
     "jdk" to "21",
     "junit" to "6.1.3",
     "jvmTarget" to "17",
-    "konsist" to "0.18.0",
-    "kotlin" to "2.4.10",
+    "konsist" to "0.18.1",
+    "kotlin" to "2.4.21",
     "kotlinxBenchmark" to "0.5.0",
     "media3" to "1.11.1",
     "minSdk" to "28",
@@ -140,8 +140,8 @@ val verifyBuildMatrix = tasks.register("verifyBuildMatrix") {
         val loadedAgpVersion = values.getValue("loadedAgpVersion") as String
         val loadedKotlinPluginVersion = values.getValue("loadedKotlinPluginVersion") as String
 
-        check(runningGradleVersion == "9.8.1") {
-            "Gradle $runningGradleVersion is running; expected 9.8.1"
+        check(runningGradleVersion == "9.8.2") {
+            "Gradle $runningGradleVersion is running; expected 9.8.2"
         }
         check(runningJavaVersion == "21") {
             "The build must run on JDK 21, found $runningJavaVersion"
@@ -149,8 +149,8 @@ val verifyBuildMatrix = tasks.register("verifyBuildMatrix") {
         check(loadedAgpVersion == "9.4.1") {
             "AGP $loadedAgpVersion is loaded; expected 9.4.1"
         }
-        check(loadedKotlinPluginVersion == "2.4.10") {
-            "Kotlin Gradle plugin $loadedKotlinPluginVersion is loaded; expected 2.4.10"
+        check(loadedKotlinPluginVersion == "2.4.21") {
+            "Kotlin Gradle plugin $loadedKotlinPluginVersion is loaded; expected 2.4.21"
         }
         check(selected == required) {
             "The selected version matrix differs from the required matrix: $selected"
@@ -186,7 +186,7 @@ data class ProductionGraph(
 val commonDirect = emptySet<String>()
 val commonResolved = setOf(
     "org.jetbrains:annotations:13.0",
-    "org.jetbrains.kotlin:kotlin-stdlib:2.4.10",
+    "org.jetbrains.kotlin:kotlin-stdlib:2.4.21",
 )
 val coreResolved = (commonResolved - "org.jetbrains:annotations:13.0") + setOf(
     "at.bernhardberger.tvheadend:htsp:1.0.0-rc.1",
@@ -328,7 +328,7 @@ val productionGraphs = sdkModules.associateWith {
             "com.google.guava:failureaccess:1.0.2",
             "com.google.guava:guava:33.3.1-android",
             "com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava",
-            "org.jetbrains.kotlin:kotlin-stdlib:2.4.10",
+            "org.jetbrains.kotlin:kotlin-stdlib:2.4.21",
             "org.jetbrains.kotlinx:kotlinx-coroutines-bom:1.11.0",
             "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.11.0",
             "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0",

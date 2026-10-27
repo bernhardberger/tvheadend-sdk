@@ -73,6 +73,7 @@ public final class at/bernhardberger/tvheadend/sdk/playback/LiveQueueDiagnostics
 }
 
 public final class at/bernhardberger/tvheadend/sdk/playback/LiveRetuneBudget {
+	public fun <init> ()V
 	public synthetic fun <init> (Ljava/util/List;JLkotlin/time/TimeSource$WithComparableMarks;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public synthetic fun <init> (Ljava/util/List;JLkotlin/time/TimeSource$WithComparableMarks;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun nextAttempt ()Lat/bernhardberger/tvheadend/sdk/playback/LiveRetuneDecision;
@@ -565,6 +566,7 @@ public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionOperatio
 }
 
 public final class at/bernhardberger/tvheadend/sdk/playback/SubscriptionOptions {
+	public fun <init> ()V
 	public synthetic fun <init> (Ljava/lang/String;JLat/bernhardberger/tvheadend/sdk/playback/LiveSubscriptionPriority;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public synthetic fun <init> (Ljava/lang/String;JLat/bernhardberger/tvheadend/sdk/playback/LiveSubscriptionPriority;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getPriority ()Lat/bernhardberger/tvheadend/sdk/playback/LiveSubscriptionPriority;

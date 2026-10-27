@@ -113,14 +113,14 @@ def pom_dependencies(module: str, version: str) -> set[tuple[str, str, str, str]
             (GROUP, "sdk-core", version, "compile"),
             ("io.coil-kt.coil3", "coil-core", "3.6.3", "compile"),
             ("org.jetbrains.kotlinx", "kotlinx-coroutines-core", "1.11.0", "compile"),
-            ("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.10", "compile"),
+            ("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.21", "compile"),
             ("androidx.datastore", "datastore-preferences", "1.2.1", "runtime"),
             ("com.google.crypto.tink", "tink-android", "1.23.0", "runtime"),
         },
         "sdk-core": {
             ("org.jetbrains.kotlinx", "kotlinx-coroutines-core-jvm", "1.11.0", "compile"),
             (GROUP, "sdk-playback", version, "compile"),
-            ("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.10", "compile"),
+            ("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.21", "compile"),
             (GROUP, "htsp", "1.0.0-rc.1", "runtime"),
             ("org.jetbrains.kotlinx", "kotlinx-serialization-protobuf-jvm", "1.11.0", "runtime"),
         },
@@ -128,18 +128,18 @@ def pom_dependencies(module: str, version: str) -> set[tuple[str, str, str, str]
             (GROUP, "sdk-core", version, "compile"),
             (GROUP, "sdk-playback", version, "compile"),
             ("androidx.media3", "media3-exoplayer", "1.11.1", "compile"),
-            ("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.10", "compile"),
+            ("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.21", "compile"),
             ("androidx.media3", "media3-extractor", "1.11.1", "runtime"),
             ("org.jetbrains.kotlinx", "kotlinx-coroutines-core", "1.11.0", "runtime"),
         },
         "sdk-playback": {
             ("org.jetbrains.kotlinx", "kotlinx-coroutines-core-jvm", "1.11.0", "compile"),
-            ("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.10", "compile"),
+            ("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.21", "compile"),
         },
         "sdk-testing": {
             (GROUP, "sdk-core", version, "compile"),
             (GROUP, "sdk-playback", version, "compile"),
-            ("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.10", "compile"),
+            ("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.21", "compile"),
         },
     }[module]
 
@@ -497,7 +497,7 @@ def self_test() -> list[str]:
     core_dependencies = [
         ("org.jetbrains.kotlinx", "kotlinx-coroutines-core-jvm", "1.11.0", "compile"),
         (GROUP, "sdk-playback", "0.8.0", "compile"),
-        ("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.10", "compile"),
+        ("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.21", "compile"),
         (GROUP, "htsp", "1.0.0-rc.1", "runtime"),
         ("org.jetbrains.kotlinx", "kotlinx-serialization-protobuf-jvm", "1.11.0", "runtime"),
     ]

@@ -183,7 +183,7 @@ and [Kotlin binary evolution](https://kotlinlang.org/docs/kotlin-evolution-princ
 | Android `compileSdk` | 37 | Minor. Publish any new consumer minimum compile SDK; this does not by itself raise runtime `minSdk`. |
 | JVM target / class-file major | Java 17 / 61 | Major when the runtime or bytecode floor rises. |
 | SDK build JDK / toolchain | 21 | Minor; keep the JVM target independent. A build JDK increase alone is not a runtime requirement increase. |
-| Kotlin compiler | 2.4.10 | Minor for a new language/metadata line or higher consumer minimum. A compiler patch may ship in an SDK patch only with unchanged requirements and compatible output. |
+| Kotlin compiler | 2.4.21 | Minor for a new language/metadata line or higher consumer minimum. A compiler patch may ship in an SDK patch only with unchanged requirements and compatible output. |
 | SDK build AGP | 9.4.1, built-in Kotlin | Minor for a new AGP line or consumer minimum. A compatible AGP patch may ship in an SDK patch if requirements stay unchanged. |
 
 Pins and bytecode checks are recorded in `gradle/libs.versions.toml:2-24`,
@@ -197,7 +197,7 @@ Kotlin guarantees that newer stable JVM compilers read older binaries. Forward
 compatibility with the next language release is best-effort, not guaranteed;
 older compilers may reject new features. Thus a 2.3 compiler may read some 2.4
 metadata, but **2.3 is not a guaranteed minimum for this SDK**. Use the pinned
-2.4.10 compiler as the verified baseline until an older consumer is tested.
+2.4.21 compiler as the verified baseline until an older consumer is tested.
 Do not infer support for 2.2 or earlier, or use skipped metadata checks as proof.
 Lower `languageVersion`/`apiVersion` settings can preserve older consumer
 compatibility, but require explicit configuration and verification.

@@ -78,7 +78,7 @@ wins.
 
 - Use explicit Kotlin APIs and track every hand-written public declaration in
   ABI dumps where the pinned toolchain supports them. With AGP 9.4.1's built-in
-  Kotlin path, KGP 2.4.10's experimental ABI tasks register no Android variant
+  Kotlin path, KGP 2.4.21's experimental ABI tasks register no Android variant
   binaries (KT-83410), while binary-compatibility-validator 0.18.1 requires the
   absent `kotlin-android` plugin. Keep Android public APIs explicit and re-enable
   their ABI dumps only after maintained tooling supports built-in Kotlin.

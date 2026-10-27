@@ -201,6 +201,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/AutorecRuleId {
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/AutorecRuleUpdate {
+	public fun <init> ()V
 	public synthetic fun <init> (Lat/bernhardberger/tvheadend/sdk/core/RecordingRuleChannel;Lkotlin/time/Duration;Lkotlin/time/Duration;Ljava/lang/Boolean;Ljava/lang/Boolean;Lat/bernhardberger/tvheadend/sdk/core/DuplicateDetection;Ljava/lang/Long;Lat/bernhardberger/tvheadend/sdk/core/BroadcastType;Lkotlin/time/Duration;Lkotlin/time/Duration;Ljava/lang/String;Lat/bernhardberger/tvheadend/sdk/core/AutorecTime;Lat/bernhardberger/tvheadend/sdk/core/AutorecTime;Ljava/lang/Boolean;Ljava/lang/Long;Ljava/lang/Long;Lat/bernhardberger/tvheadend/sdk/core/DvrPriority;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/Set;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public synthetic fun <init> (Lat/bernhardberger/tvheadend/sdk/core/RecordingRuleChannel;Lkotlin/time/Duration;Lkotlin/time/Duration;Ljava/lang/Boolean;Ljava/lang/Boolean;Lat/bernhardberger/tvheadend/sdk/core/DuplicateDetection;Ljava/lang/Long;Lat/bernhardberger/tvheadend/sdk/core/BroadcastType;Lkotlin/time/Duration;Lkotlin/time/Duration;Ljava/lang/String;Lat/bernhardberger/tvheadend/sdk/core/AutorecTime;Lat/bernhardberger/tvheadend/sdk/core/AutorecTime;Ljava/lang/Boolean;Ljava/lang/Long;Ljava/lang/Long;Lat/bernhardberger/tvheadend/sdk/core/DvrPriority;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/Set;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun component1 ()Lat/bernhardberger/tvheadend/sdk/core/RecordingRuleChannel;
@@ -1032,6 +1033,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/DvrEntryState$Companion 
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/DvrEntryUpdate {
+	public fun <init> ()V
 	public synthetic fun <init> (Lat/bernhardberger/tvheadend/sdk/core/ChannelId;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Boolean;Lkotlin/time/Instant;Lkotlin/time/Instant;Lkotlin/time/Duration;Lkotlin/time/Duration;Ljava/lang/Long;Ljava/lang/Long;Lat/bernhardberger/tvheadend/sdk/core/DvrPriority;Ljava/lang/Long;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public synthetic fun <init> (Lat/bernhardberger/tvheadend/sdk/core/ChannelId;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Boolean;Lkotlin/time/Instant;Lkotlin/time/Instant;Lkotlin/time/Duration;Lkotlin/time/Duration;Ljava/lang/Long;Ljava/lang/Long;Lat/bernhardberger/tvheadend/sdk/core/DvrPriority;Ljava/lang/Long;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun component1-tg-tQzc ()Lat/bernhardberger/tvheadend/sdk/core/ChannelId;
@@ -1165,6 +1167,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/DvrPriority$Companion {
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/DvrProgressPolicy {
+	public fun <init> ()V
 	public synthetic fun <init> (JDILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public synthetic fun <init> (JDLkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun component1-UwyO8pc ()J
@@ -1240,6 +1243,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/DvrRecordingFile$Compani
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/DvrRecordingStream {
+	public fun <init> ()V
 	public synthetic fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionStreamType;Ljava/lang/String;Ljava/lang/Integer;Ljava/lang/Integer;Lkotlin/time/Duration;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public synthetic fun <init> (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionStreamType;Ljava/lang/String;Ljava/lang/Integer;Ljava/lang/Integer;Lkotlin/time/Duration;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun component1 ()Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionStreamType;
@@ -2490,6 +2494,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/TimerecRuleId {
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/TimerecRuleUpdate {
+	public fun <init> ()V
 	public synthetic fun <init> (Lat/bernhardberger/tvheadend/sdk/core/RecordingRuleChannel;Ljava/time/LocalTime;Ljava/time/LocalTime;Ljava/lang/Boolean;Ljava/lang/Long;Ljava/lang/Long;Lat/bernhardberger/tvheadend/sdk/core/DvrPriority;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/Set;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public synthetic fun <init> (Lat/bernhardberger/tvheadend/sdk/core/RecordingRuleChannel;Ljava/time/LocalTime;Ljava/time/LocalTime;Ljava/lang/Boolean;Ljava/lang/Long;Ljava/lang/Long;Lat/bernhardberger/tvheadend/sdk/core/DvrPriority;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/Set;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun component1 ()Lat/bernhardberger/tvheadend/sdk/core/RecordingRuleChannel;
