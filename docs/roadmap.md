@@ -261,6 +261,12 @@ example for refresh-rate selection.
 files, exposes recording playback admission, and refreshes DVR disk space after
 initial sync.
 
+### 0.36: EPG capacity and paused timeshift seeks (released)
+
+0.36.0 was released on 2026-10-26. It reports a full retained-event limit as
+`CapacityExhausted`, makes room at a full guide store, and completes timeshift
+seeks issued while paused under tunnelled playback.
+
 ### Next 0.x minors: player-driven gaps
 
 The owner decided on 2026-10-12 not to start the 1.0 track yet. 0.x minors
