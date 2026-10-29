@@ -1382,6 +1382,40 @@ internal class HtspProtocolGatewayTest {
     }
 
     @Test
+    fun `channel and tag icon selectors survive HTSP add and update mapping`() = runTest {
+        val generation = HtspConnectionGeneration()
+        val selectors = listOf(
+            "http://example.invalid/logo.png",
+            "https://example.invalid/logo%20two.png?size=2",
+            "imagecache/12",
+            "file:///unsupported.png",
+            "https://",
+            null,
+        )
+        val messages = selectors.flatMap { selector ->
+            listOf(
+                HtspChannelAddMessage(channelFixture().copy(channelIcon = selector)),
+                HtspChannelUpdateMessage(channelFixture().copy(channelIcon = selector)),
+                HtspTagAddMessage(tagFixture().copy(tagIcon = selector)),
+                HtspTagUpdateMessage(tagFixture().copy(tagIcon = selector)),
+            )
+        }
+        val fake = FakeHtspConnection().apply {
+            eventsFlow = flowOf(*messages.mapIndexed { index, message ->
+                HtspTransportEvent.ServerMessage(message, generation, index + 1L)
+            }.toTypedArray())
+        }
+        val events = HtspProtocolGateway(fake).metadata.toList()
+        events.chunked(4).zip(selectors).forEach { (mapped, selector) ->
+            // Gateway keeps the raw selector; ChannelTagReducer validates the public icon.
+            assertTrue((mapped[0] as MetadataEvent.ChannelAdded).channel.icon == selector)
+            assertTrue((mapped[1] as MetadataEvent.ChannelUpdated).channel.icon == selector)
+            assertTrue((mapped[2] as MetadataEvent.TagAdded).tag.icon == selector)
+            assertTrue((mapped[3] as MetadataEvent.TagUpdated).tag.icon == selector)
+        }
+    }
+
+    @Test
     fun `service classification content survives gateway mapping without defaulting missing services`() = runTest {
         val generation = HtspConnectionGeneration()
         val contents = listOf(0L, 1L, 2L, 3L, 0xffff_ffffL)

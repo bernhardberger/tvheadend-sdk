@@ -27,8 +27,10 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertSame
+import org.junit.jupiter.api.Assertions.assertNotSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.milliseconds
@@ -37,7 +39,61 @@ import kotlin.time.Instant
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class MetadataCacheRuntimeTest {
+    @TempDir lateinit var root: File
     private val namespace = cacheNamespace("server", 9_982, "user")
+
+    @Test
+    fun `EPG only publication with equal new catalog does not rewrite catalog`() = runTest {
+        val store = RecordingStore()
+        val runtime = runtime(store, clock = TestClock(this))
+        val first = PublishedSnapshots(catalog(1), EpgSnapshot.create())
+        val publications = MutableStateFlow<PublishedSnapshots?>(first)
+        runtime.start(namespace, publications)
+        runCurrent()
+        val equalCatalog = catalog(1)
+        assertNotSame(first.catalog, equalCatalog)
+        assertEquals(first.catalog, equalCatalog)
+        publications.value = PublishedSnapshots(equalCatalog, EpgSnapshot.create(),
+            channelRefreshTimes = first.channelRefreshTimes,
+            epgRefreshTimes = MetadataRefreshTimes(lastUpdatedAt = START), epgLastQueriedAt = emptyMap())
+        runCurrent()
+        advanceTimeBy(60.seconds)
+        runCurrent()
+        assertEquals(1, store.calls.filterIsInstance<Call.StoreCatalog>().size)
+        assertEquals(1, store.calls.filterIsInstance<Call.StoreEpg>().size)
+        runtime.shutdown()
+        assertEquals(1, store.calls.filterIsInstance<Call.StoreCatalog>().size)
+    }
+
+    @Test
+    fun `catalog persistence lists metadata namespaces but never artwork directories`() = runTest {
+        var namespaceListings = 0
+        var artworkListings = 0
+        val store = FileMetadataCacheStore(root, FixedClock) { directory ->
+            if (directory.name == "artwork") artworkListings++ else namespaceListings++
+            directory.listFiles()
+        }
+        val artwork = File(root, "tvheadend-sdk/${namespace.value}/artwork/1")
+        artwork.parentFile.mkdirs()
+        artwork.writeBytes(byteArrayOf(1, 2, 3))
+        // Positive control proves that the counter sees the full-statistics traversal.
+        assertEquals(1, store.statistics().artworkEntryCount)
+        assertEquals(1, artworkListings)
+        namespaceListings = 0
+        artworkListings = 0
+        val runtime = runtime(store)
+        val publications = MutableStateFlow<PublishedSnapshots?>(PublishedSnapshots(catalog(1), EpgSnapshot.create()))
+        runtime.start(namespace, publications)
+        runCurrent()
+        publications.value = PublishedSnapshots(catalog(2), EpgSnapshot.create())
+        runCurrent()
+        assertEquals(2, namespaceListings)
+        assertEquals(0, artworkListings)
+        assertEquals(File(root, "tvheadend-sdk/${namespace.value}/catalog.bin").length(),
+            runtime.statistics.value.metadataBytes)
+        runtime.shutdown()
+        assertEquals(0, artworkListings)
+    }
 
     @Test
     fun `first EPG write waits sixty seconds from sync while catalog is immediate`() = runTest {

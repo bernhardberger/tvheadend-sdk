@@ -283,6 +283,69 @@ opt-in.
 - Keep the Media3-derived `androidx.media3.extractor.ts` classes as internal
   implementation, and re-sync them on Media3 upgrades.
 
+### 0.37: cache performance and device measurements (in progress)
+
+The first 0.37 staged checkpoint addresses audit findings 1–2: reuse a strict UTF-8
+decoder during guide restore, skip equal catalog writes, and measure metadata
+file sizes without walking artwork. The standalone device benchmark now covers
+the checkpoint. Findings 3–8 also belong to 0.37. Device run2 set the initial
+implementation order: 3, 7, 4, 6, 5, then 8. Protected-capacity and history fixes
+are accepted, along with bounded buffer reuse during saved-guide restore.
+In a matched device ABBA comparison, buffer reuse reduced 100,000-event restore
+wall time by 14.6–18.8% and cumulative allocation by about 47%. Remaining restore
+cost needs fresh attribution; the earlier decoder/JSON profile predates that fix.
+Player 0.3.2 waits for this work; the checkpoint is not an early release.
+The audit identifies scaling risks, not measured contributions to startup time.
+
+- **3 — Serialization versions:** select kotlinx.serialization 1.11.0, subject
+  to SDK and consumer gates. With identical run2 workloads, artwork operations
+  on 1.12.0 took 2.1–2.6 times as long and allocated about 4.6 times as much.
+  The effect also appeared with the earlier harness and opposite version order.
+  Other version effects remain inconclusive. These are standalone debug-device
+  measurements, not Player startup timings; cross-harness timing differences
+  have no established cause. JSON event records do not use the protobuf
+  descriptor path identified by the audit.
+- **Residual restore:** reusing converted model timestamps for frame validation
+  showed no convincing host improvement and was reverted. Strict UTF-8 decoding
+  remains; replacing it with the library's replacement-mode stream decoder would
+  change corrupt-record handling. Further JSON/model changes need new attribution.
+- **4 — Artwork scaling:** namespace discovery and unnecessary eviction sorting
+  are reduced. Immediate data/index persistence remains. Matched device runs
+  showed timing drift in the old candidate too; no latency gain is attributed
+  solely to this change.
+- **5 — Guide publication:** coverage-only publications now reuse event indexes.
+  At 100,000 events, three host run medians fell from 8.567–12.652 ms to
+  3.752–3.871 ms, with publication allocation falling from 6.97 MB to 0.41 MB.
+  One-event changes still rebuild indexes and showed no clear timing improvement.
+  Combined device qualification remains pending.
+- **6 — History maintenance:** end-time and channel indexes remove repeated
+  full-history scans. A separate carryover fixture supports a per-channel index:
+  512 updates at 100,000 installed events fell from 617 ms to 9.28 ms on the host.
+  The index adds O(R) storage. A small empty-control slowdown remains unexplained;
+  device timing and memory qualification are pending. The original device history
+  workload does not install carryover.
+- **7 — Protected capacity:** repeated refused arrivals reuse the protected-pool
+  eligibility result until its inputs change. In the 100,000-event device case,
+  the arrival phase fell from about 23.1 seconds to 97 ms.
+- **8 — Metadata copies:** gateway-owned immutable category/keyword lists are
+  reused by the reducer. The focused host fixture saves 104 bytes/event, or
+  10.4 MB at 100,000 events. Timings vary across repeats, so no latency gain is
+  claimed. Public model copies and credits keep their ownership boundaries;
+  combined device qualification remains pending.
+- The on-device benchmark uses 143 channels, roughly 5,000 events and 400+
+  logos, plus a large 100,000-event fixture at the default guide limit. Cover
+  saved-guide restore, catalog writes and statistics, first logo read and batch
+  stores, EPG bursts with six-hour history, arrivals into a full protected guide,
+  and HTSP initial-sync decode and reduction. It reports actual SDK call boundaries
+  and cumulative allocation. Separate host probes and sampled device traces
+  investigate restore subphases; their measurements are not interchangeable.
+  Compare identical fixtures with
+  recorded compilation/profile state, warm/cold state and SDK versions.
+  Produce one JSON report and a short table, rerunnable for each SDK release
+  candidate. Report numbers only; do not introduce pass/fail timing thresholds.
+  The owner runs the G10 commands; connect-to-Ready remains part of the Player's
+  server-backed cold-start measurement.
+
 ### 1.0 groundwork (parked)
 
 Starts when the player is close to its release candidate and, if it is built,

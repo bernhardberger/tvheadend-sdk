@@ -2,18 +2,62 @@
 
 ## [0.37.0]
 
-Unreleased; development target.
+Released 2026-10-29.
 
 ### Changed
 
+- BREAKING: `Channel.icon` and `ChannelTag.icon` now use `ChannelIcon?`:
+  `ImageCache(artworkId)` or `RemoteUrl(url)`. HTTP(S) icon URLs survive live
+  metadata and saved-catalog restore when Tvheadend's image cache is disabled.
+  The application loads and caches remote URLs; SDK artwork loading and saved-logo
+  preloading accept only image-cache IDs. Invalid authorities, control characters
+  and other URL schemes are dropped; unescaped path/query characters and userinfo
+  are preserved for the app loader. Programme and recording images remain image-cache only.
 - Move build dependencies that consumers resolve transitively: kotlin-stdlib
-  2.4.21 (Kotlin 2.4.21), kotlinx-serialization 1.12.0 in `sdk-core`, and Tink
+  2.4.21 (Kotlin 2.4.21), and Tink
   1.24.0 and AndroidX DataStore 1.3.0 in `sdk-android`. DataStore 1.3.0 also
   resolves androidx.tracing 2.0.1, androidx.collection 1.6.0 and kotlinx.atomicfu
   0.28.0, and no longer resolves kotlinx-serialization-json. Kotlin 2.4.21 adds a
   public no-argument constructor to `AutorecRuleUpdate`, `DvrEntryUpdate`,
   `DvrProgressPolicy`, `DvrRecordingStream` and `TimerecRuleUpdate` in `sdk-core`
   and to two `sdk-playback` classes; no existing declaration changes.
+
+### Fixed
+
+- Saved artwork hits reuse the in-memory index and read unrelated files outside
+  the cache mutex. Access-time writes are batched, avoiding an index reload,
+  file-stat scan and index rewrite for every logo. Retention, eviction and clear
+  still apply; retention remains measured from storage time.
+- Artwork stores reuse namespace discovery and skip full eviction sorting when
+  no entries have expired and the cache is within its byte budget. New artwork
+  and its index are still persisted before the store returns.
+- Keep kotlinx-serialization at 1.11.0 after device comparisons found higher
+  artwork-index latency and allocation with 1.12.0.
+- Saved guide restore uses kotlinx-serialization JSON for event records
+  and discards expired payloads before decoding or model construction. The
+  catalog and small guide metadata records remain protobuf. The `EPG5` cache
+  format invalidates older guide files once; normal synchronization repopulates
+  them. Catalog, artwork, guide windows and live-sync replacement are unaffected.
+- Saved guide restore reuses one strict UTF-8 decoder and bounded input/output
+  buffers across retained records, reducing temporary allocation;
+  malformed text still invalidates the saved guide. Equal catalog publications
+  no longer trigger catalog rewrites unless receipt times change. Metadata size
+  accounting reads catalog and guide file lengths without listing artwork.
+- Repeated asynchronous arrivals at a full, fully protected guide no longer scan
+  every retained programme on each refusal. Programmes remain protected by the
+  same capacity policy; clock, coverage-window and retained-content changes
+  trigger a fresh eligibility check.
+- Guide updates expire display history in end-time order and check overlapping
+  historical programmes only on the affected channel. The six-hour history
+  window, size limit and same-ID replacement behavior are unchanged.
+- Guide publications reuse event lists and lookup indexes when only coverage
+  changes. Event changes still rebuild the affected indexes; previously returned
+  snapshots remain immutable.
+- Guide metadata reduction avoids redundant category and keyword list copies.
+  Caller-owned lists remain isolated from stored metadata and public events.
+- Live guide updates discard shadowed cached-guide entries through a per-channel
+  index rather than scanning unrelated channels. Carryover ordering and coverage
+  boundaries are preserved.
 
 ## [0.36.0]
 

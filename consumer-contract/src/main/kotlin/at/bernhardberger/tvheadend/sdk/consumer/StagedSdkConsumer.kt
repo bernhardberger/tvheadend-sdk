@@ -26,6 +26,7 @@ import at.bernhardberger.tvheadend.sdk.android.addTvheadendArtwork
 import at.bernhardberger.tvheadend.sdk.core.Channel
 import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
+import at.bernhardberger.tvheadend.sdk.core.ChannelIcon
 import at.bernhardberger.tvheadend.sdk.core.ChannelMediaKind
 import at.bernhardberger.tvheadend.sdk.core.mediaKind
 import at.bernhardberger.tvheadend.sdk.core.ChannelRepositoryState
@@ -348,6 +349,15 @@ public class StagedSdkConsumer(
 
     public fun cachedArtwork(observation: SessionObservation, id: ArtworkId): TvheadendArtwork? =
         TvheadendArtwork.cached(session, observation, id)
+
+    public fun channelIconModel(observation: SessionObservation, channel: Channel): Any? =
+        when (val icon = channel.icon) {
+            is ChannelIcon.ImageCache -> observation.currentSession
+                ?.let { TvheadendArtwork.create(session, it, icon.artworkId) }
+                ?: TvheadendArtwork.cached(session, observation, icon.artworkId)
+            is ChannelIcon.RemoteUrl -> icon.url
+            null -> null
+        }
 
     public fun channel(id: ChannelId): Channel? = observation.value.channel(id)
 

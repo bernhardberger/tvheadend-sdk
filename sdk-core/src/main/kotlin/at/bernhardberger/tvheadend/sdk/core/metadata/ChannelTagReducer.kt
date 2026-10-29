@@ -1,6 +1,6 @@
 package at.bernhardberger.tvheadend.sdk.core.metadata
 
-import at.bernhardberger.tvheadend.sdk.core.ArtworkId
+import at.bernhardberger.tvheadend.sdk.core.ChannelIcon
 import at.bernhardberger.tvheadend.sdk.core.Channel
 import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
 import at.bernhardberger.tvheadend.sdk.core.ChannelService
@@ -264,7 +264,7 @@ private fun ReducedChannel.toPublic(): Channel = Channel.create(
     uuid = uuid,
     number = number,
     numberMinor = numberMinor,
-    icon = ArtworkId.parse(icon),
+    icon = ChannelIcon.parse(icon),
     currentEventId = currentEventId,
     nextEventId = nextEventId,
     services = services?.map(ReducedChannelService::toPublic),
@@ -285,7 +285,7 @@ private fun ReducedChannelTag.toPublic(): ChannelTag = ChannelTag.create(
     name = name,
     uuid = uuid,
     index = index,
-    icon = ArtworkId.parse(icon),
+    icon = ChannelIcon.parse(icon),
     titledIcon = titledIcon,
     channelIds = channelIds,
 )

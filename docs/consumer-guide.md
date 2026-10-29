@@ -254,11 +254,13 @@ not supply live initial-sync scheduling proof. Persistence still writes the full
 live guide, including its far-future events, plus any visible carryover events
 without coverage, so a short session does not shorten the next warm start.
 
-Guide persistence streams individual protobuf records rather than buffering an
-encoded copy of the entire guide. The `EPG4` record stream orders events by start
-time and ID, allowing restore to stop before decoding the far-future tail. Live
-insertion order is not retained in restored stale event lists. Earlier
-formats, including `EPG3`, are discarded once and repopulated by normal
+Guide persistence streams individual records rather than buffering an encoded
+copy of the entire guide. The `EPG5` record stream uses kotlinx-serialization JSON
+for events and protobuf for the small coverage and receipt-time records. Start
+and stop times in the framing let restore discard expired payloads before
+decoding, and stop before the far-future tail. Events are ordered by start time
+and ID; live insertion order is not retained in restored stale event lists.
+Earlier formats, including `EPG4`, are discarded once and repopulated by normal
 synchronization, without affecting the catalog, artwork or application settings.
 Cache records are bounded to 1 MiB each and 250,000 events/coverage entries per
 snapshot. An oversized replacement is not persisted; the last complete cache
@@ -271,6 +273,11 @@ evicted after writes, and expired entries are pruned on restore and writes.
 Oversized artwork is returned but not persisted. Corrupt bytes and indexes are
 discarded. The root must be app-private storage; cached bytes are not encrypted.
 Use one owning session runtime per root, not multiple application processes.
+Within that runtime, the artwork index is loaded once and updated in memory.
+Warm hits read and digest-check only their own file; unrelated reads do not hold
+the cache mutex. Last-access bookkeeping is flushed in five-second batches and
+at orderly shutdown. An abrupt process exit may lose recent LRU touches, but
+does not extend retention or lose stored bytes.
 Version 0.9.1 discards recognized legacy SDK namespaces on restore rather than
 migrating ambiguous identities. `ArtworkLoader.cacheKey` values change once on
 upgrade, causing one-time misses in application-owned artwork caches; those
@@ -1566,7 +1573,7 @@ val imageLoader = ImageLoader.Builder(context)
 
 val observed = session.observation.value
 val currentSession = observed.currentSession ?: return
-val icon = observed.channel(channelId)?.icon ?: return
+val icon = (observed.channel(channelId)?.icon as? ChannelIcon.ImageCache)?.artworkId ?: return
 val artwork = TvheadendArtwork.create(
     session = session,
     currentSession = currentSession,
@@ -1574,9 +1581,22 @@ val artwork = TvheadendArtwork.create(
 )
 ```
 
-`Channel.icon` and `ChannelTag.icon` are typed `ArtworkId` values; the SDK
-already drops external URLs and malformed selectors. For other image-cache
-selector strings, such as `EpgEvent.image`, use `ArtworkId.parse`, which accepts
+`Channel.icon` and `ChannelTag.icon` are `ChannelIcon?` values. An
+`ImageCache(artworkId)` uses SDK artwork loading as above. Remote URLs retain
+their original spelling, including userinfo and unescaped spaces, non-ASCII
+characters and `|` in paths or queries. Validation checks the HTTP(S) scheme
+and server authority and rejects control characters; URL encoding for a request
+belongs to the application's loader. A `RemoteUrl(url)`
+contains an absolute HTTP(S) URL for the application to load through its own
+network image loader, such as Coil's network module and disk cache. The SDK
+preserves the URL in the saved channel catalog, so it is also available before
+`Ready`; it never fetches it or preloads it into the SDK artwork cache. The app
+owns network policy, including whether to allow cleartext HTTP. Do not log the
+URL. Missing icons, malformed URLs and other schemes are dropped.
+
+`ChannelIcon.parse` accepts either supported icon kind. Programme and recording
+images remain image-cache only. For other image-cache selector strings, such as
+`EpgEvent.image`, use `ArtworkId.parse`, which accepts
 only positive `imagecache/<id>` selectors (a leading `/` is tolerated) and
 returns `null` for absent, external, malformed, or unsupported values. The opaque model
 binds the authenticated load to the captured session generation. Tvheadend
@@ -1590,7 +1610,8 @@ when its observation retires, but a new fetch rejects the retired proof. Coil
 memory hits may reuse already-decoded images; retention and `clear()` govern SDK
 disk bytes, not application-owned decoded memory. Fetches return stream sources
 without Coil disk identities. Do not configure Coil disk caching for this
-integration; the SDK policy owns persistence. Catch
+image-cache integration; the SDK policy owns persistence. Remote URLs instead
+use the application's network module and disk cache. Catch
 `TvheadendArtworkLoadException` and inspect its typed `failure`; do not parse
 exception text. Coil owns decoding and closes successful image sources. This
 component is not a URI factory or a generic image cache.

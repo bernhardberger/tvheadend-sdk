@@ -54,8 +54,7 @@ public data class ChannelService(
 /**
  * Immutable channel metadata.
  *
- * [icon] is the channel's Tvheadend image-cache artwork; external icon URLs and malformed
- * selectors are not exposed.
+ * [icon] identifies Tvheadend image-cache artwork or a remote HTTP(S) URL for the app to load.
  */
 @ConsistentCopyVisibility
 public data class Channel private constructor(
@@ -64,7 +63,7 @@ public data class Channel private constructor(
     public val uuid: String?,
     public val number: Long?,
     public val numberMinor: Long?,
-    public val icon: ArtworkId?,
+    public val icon: ChannelIcon?,
     public val currentEventId: EventId?,
     public val nextEventId: EventId?,
     public val services: List<ChannelService>?,
@@ -80,7 +79,7 @@ public data class Channel private constructor(
             uuid: String? = null,
             number: Long? = null,
             numberMinor: Long? = null,
-            icon: ArtworkId? = null,
+            icon: ChannelIcon? = null,
             currentEventId: EventId? = null,
             nextEventId: EventId? = null,
             services: List<ChannelService>? = null,
@@ -107,8 +106,7 @@ public data class Channel private constructor(
 /**
  * Immutable channel-tag metadata.
  *
- * [icon] is the tag's Tvheadend image-cache artwork; external icon URLs and malformed
- * selectors are not exposed.
+ * [icon] identifies Tvheadend image-cache artwork or a remote HTTP(S) URL for the app to load.
  */
 @ConsistentCopyVisibility
 public data class ChannelTag private constructor(
@@ -116,7 +114,7 @@ public data class ChannelTag private constructor(
     public val name: String?,
     public val uuid: String?,
     public val index: Long?,
-    public val icon: ArtworkId?,
+    public val icon: ChannelIcon?,
     public val titledIcon: Boolean?,
     public val channelIds: List<ChannelId>?,
 ) {
@@ -129,7 +127,7 @@ public data class ChannelTag private constructor(
             name: String? = null,
             uuid: String? = null,
             index: Long? = null,
-            icon: ArtworkId? = null,
+            icon: ChannelIcon? = null,
             titledIcon: Boolean? = null,
             channelIds: List<ChannelId>? = null,
         ): ChannelTag {

@@ -763,6 +763,193 @@ internal class EpgReducerTest {
     }
 
     @Test
+    fun `protected flood checks retained eligibility once while sampling every capacity window`() {
+        val limit = 1_000
+        val reducer = EpgReducer(maximumRetainedEvents = limit)
+        addChannel(reducer, 1)
+        repeat(limit) { index ->
+            reducer.accept(MetadataEvent.EventAdded(generation, event(index.toLong() + 1, 1, 10, 10_000)))
+        }
+        val before = reducer.snapshot()
+        var lookups = 0
+        var windows = 0
+        val capacity = {
+            // Fresh equal maps, like coverage requests supply; count eligibility reads without
+            // exposing reducer instrumentation or depending on wall-clock timings.
+            val bounds = object : Map<ChannelId, Instant> by mapOf(ChannelId(1) to instant(100)) {
+                override fun get(key: ChannelId): Instant? {
+                    lookups += 1
+                    return instant(100).takeIf { key == ChannelId(1) }
+                }
+            }
+            EpgCapacityWindow(instant(windows++.toLong()), instant(100), bounds)
+        }
+        assertFalse(reducer.accept(MetadataEvent.EventAdded(generation, event(2_000, 1, 10, 20)), capacity = capacity))
+        assertEquals(limit + 1, lookups)
+        val query = requireNotNull(reducer.beginQuery(ChannelId(1)))
+        repeat(512) { index ->
+            assertFalse(reducer.accept(MetadataEvent.EventAdded(generation,
+                event(2_001L + index, 1, 10, 10_000)), capacity = capacity))
+            assertTrue(reducer.lastEventRefusedForCapacity)
+        }
+        assertEquals(513, windows)
+        assertEquals(limit + 1 + 512 * 2, lookups, "one bound comparison and one newcomer lookup per refusal")
+        assertSame(before, reducer.snapshot())
+        assertEquals(EpgQueryAcceptance.STALE, reducer.acceptSuccessfulQuery(query, instant(20_000), emptyList()))
+    }
+
+    @Test
+    fun `cached protection still admits and evicts ended and far tail newcomers`() {
+        val reducer = EpgReducer(maximumRetainedEvents = 1)
+        addChannel(reducer, 1)
+        reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 10, 100)))
+        assertFalse(reducer.accept(MetadataEvent.EventAdded(generation, event(2, 1, 20, 30)), capacity = window()))
+
+        assertTrue(reducer.accept(MetadataEvent.EventAdded(generation, event(3, 1, 200, 300)), capacity = window()))
+        assertFalse(reducer.lastEventRefusedForCapacity)
+        assertEquals(instant(199), reducer.proofCeiling(ChannelId(1)))
+        assertTrue(reducer.accept(MetadataEvent.EventAdded(generation, event(4, 1, -10, 0)), capacity = window()))
+        assertFalse(reducer.lastEventRefusedForCapacity)
+        assertEquals(listOf(EventId(1)), reducer.snapshot().events.map { it.id })
+        assertFalse(reducer.accept(MetadataEvent.EventAdded(generation, event(5, 1, 20, 30)), capacity = window()))
+        assertTrue(reducer.lastEventRefusedForCapacity)
+    }
+
+    @Test
+    fun `cached protection expires at the inclusive earliest stop and tolerates clock reversal`() {
+        val reducer = EpgReducer(maximumRetainedEvents = 1)
+        addChannel(reducer, 1)
+        reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20)))
+        var now = instant(10)
+        val capacity = { EpgCapacityWindow(now, instant(100)) }
+        for (second in listOf(10L, 0L, 19L)) {
+            now = instant(second)
+            assertFalse(reducer.accept(MetadataEvent.EventAdded(generation, event(2, 1, 20, 30)), capacity = capacity))
+        }
+        now = instant(20)
+        assertTrue(reducer.accept(MetadataEvent.EventAdded(generation, event(2, 1, 20, 30)), capacity = capacity))
+        assertEquals(listOf(EventId(2)), reducer.snapshot().events.map { it.id })
+        now = instant(0)
+        assertFalse(reducer.accept(MetadataEvent.EventAdded(generation, event(3, 1, 10, 20)), capacity = capacity))
+    }
+
+    @Test
+    fun `retreating horizon and changed request bounds invalidate cached protection`() {
+        for (change in listOf("horizon", "request", "removed request")) {
+            val reducer = EpgReducer(maximumRetainedEvents = 1)
+            addChannel(reducer, 1)
+            reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 150, 200)))
+            var horizon = if (change == "horizon") 150L else 100L
+            val requests = mutableMapOf<ChannelId, Instant>()
+            if (change != "horizon") requests[ChannelId(1)] = instant(150)
+            val capacity = { EpgCapacityWindow(instant(0), instant(horizon), requests) }
+            assertFalse(reducer.accept(MetadataEvent.EventAdded(generation, event(2, 1, 10, 20)), capacity = capacity))
+            when (change) {
+                "horizon" -> horizon = 149
+                "request" -> requests[ChannelId(1)] = instant(149)
+                else -> requests.clear()
+            }
+            assertTrue(reducer.accept(MetadataEvent.EventAdded(generation, event(2, 1, 10, 20)), capacity = capacity), change)
+            assertEquals(listOf(EventId(2)), reducer.snapshot().events.map { it.id }, change)
+            assertEquals(instant(149), reducer.proofCeiling(ChannelId(1)), change)
+        }
+    }
+
+    @Test
+    fun `event and query replacements invalidate cached protection at unchanged cardinality`() {
+        for (queryUpdate in listOf(false, true)) {
+            for (replacement in listOf(event(1, 1, 200, 300), event(1, 1, -10, 0), event(1, 2, 50, 100))) {
+                val reducer = EpgReducer(maximumRetainedEvents = 1)
+                addChannel(reducer, 1)
+                addChannel(reducer, 2)
+                reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 50, 100)))
+                val capacity = window(protectedThrough = 0, requests = mapOf(1L to 100))
+                assertFalse(reducer.accept(MetadataEvent.EventAdded(generation, event(2, 1, 10, 20)), capacity = capacity))
+                if (queryUpdate) {
+                    val channel = requireNotNull(replacement.channelId)
+                    assertEquals(EpgQueryAcceptance.APPLIED, reducer.acceptSuccessfulQuery(
+                        requireNotNull(reducer.beginQuery(channel)), instant(300), listOf(
+                            GatewayEpgQueryEvent(replacement.id, channel, replacement.start, replacement.stop),
+                        ),
+                    ))
+                } else {
+                    reducer.accept(MetadataEvent.EventUpdated(generation, replacement))
+                }
+                assertTrue(reducer.accept(MetadataEvent.EventAdded(generation, event(2, 1, 10, 20)), capacity = capacity))
+                assertFalse(reducer.lastEventRefusedForCapacity)
+                assertEquals(listOf(EventId(2)), reducer.snapshot().events.map { it.id })
+            }
+        }
+    }
+
+    @Test
+    fun `removal and generation reset cannot reuse protection for a refilled pool`() {
+        for (removal in listOf("delete", "retention", "released retention", "expired update", "expired query", "channel", "reconcile", "clear")) {
+            val reducer = EpgReducer(maximumRetainedEvents = 1)
+            addChannel(reducer, 1)
+            reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20)))
+            val capacity = window()
+            assertFalse(reducer.accept(MetadataEvent.EventAdded(generation, event(2, 1, 20, 30)), capacity = capacity))
+            when (removal) {
+                "delete" -> reducer.accept(MetadataEvent.EventDeleted(generation, EventId(1)))
+                "retention" -> reducer.retainOverlapping(instant(30), instant(400))
+                "released retention" -> {
+                    reducer.releaseCarryoverTracking()
+                    reducer.retainOverlapping(instant(30), instant(400))
+                }
+                "expired update" -> reducer.accept(MetadataEvent.EventUpdated(generation, event(1)), retainFrom = 30)
+                "expired query" -> reducer.acceptSuccessfulQuery(
+                    requireNotNull(reducer.beginQuery(ChannelId(1))), instant(30), listOf(queryEvent(1, 1, 10, 20)), retainFrom = 30,
+                )
+                "channel" -> reducer.accept(MetadataEvent.ChannelDeleted(generation, ChannelId(1)))
+                "reconcile" -> reducer.reconcileChannels(emptyList())
+                else -> reducer.clear()
+            }
+            addChannel(reducer, 1)
+            reducer.accept(MetadataEvent.EventAdded(generation, event(3, 1, 200, 300)))
+            assertTrue(reducer.accept(MetadataEvent.EventAdded(generation, event(4, 1, 10, 20)), capacity = capacity), removal)
+            assertEquals(listOf(EventId(4)), reducer.snapshot().events.map { it.id }, removal)
+        }
+    }
+
+    @Test
+    fun `cached refusal still supersedes history`() {
+        val reducer = EpgReducer(maximumRetainedEvents = 2)
+        addChannel(reducer, 1)
+        reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20)))
+        reducer.accept(MetadataEvent.EventDeleted(generation, EventId(1)), instant(20))
+        reducer.accept(MetadataEvent.EventAdded(generation, event(2, 1, 30, 40)))
+        reducer.accept(MetadataEvent.EventAdded(generation, event(4, 1, 40, 50)))
+        assertFalse(reducer.accept(MetadataEvent.EventAdded(generation, event(5, 1, 80, 90)), capacity = window()))
+        assertEquals(listOf(EventId(1)), reducer.snapshot().historicalEvents.map { it.id })
+        assertTrue(reducer.accept(MetadataEvent.EventUpdated(generation, event(6, 1, 10, 20)), capacity = window()))
+        assertTrue(reducer.lastEventRefusedForCapacity)
+        assertTrue(reducer.snapshot().historicalEvents.isEmpty())
+        assertEquals(listOf(EventId(2), EventId(4)), reducer.snapshot().events.map { it.id })
+    }
+
+    @Test
+    fun `query plans its staged replacements independently of cached async protection`() {
+        val reducer = EpgReducer(maximumRetainedEvents = 1)
+        addChannel(reducer, 1)
+        reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20)))
+        assertFalse(reducer.accept(MetadataEvent.EventAdded(generation, event(2, 1, 20, 30)), capacity = window()))
+        val before = reducer.snapshot()
+        assertEquals(EpgQueryAcceptance.CAPACITY_REJECTED, reducer.acceptSuccessfulQuery(
+            requireNotNull(reducer.beginQuery(ChannelId(1))), instant(400),
+            listOf(queryEvent(2, 1, 30, 40), queryEvent(3, 1, 200, 300)), capacity = window(),
+        ))
+        assertSame(before, reducer.snapshot())
+        assertEquals(null, reducer.proofCeiling(ChannelId(1)))
+        assertEquals(EpgQueryAcceptance.APPLIED, reducer.acceptSuccessfulQuery(
+            requireNotNull(reducer.beginQuery(ChannelId(1))), instant(400),
+            listOf(queryEvent(1, 1, 200, 300), queryEvent(2, 1, 30, 40)), capacity = window(),
+        ))
+        assertEquals(listOf(EventId(2)), reducer.snapshot().events.map { it.id })
+        assertEquals(instant(199), reducer.proofCeiling(ChannelId(1)))
+    }
+
+    @Test
     fun `ended programmes yield before any far tail`() {
         val reducer = EpgReducer(maximumRetainedEvents = 3)
         addChannel(reducer, 1)

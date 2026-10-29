@@ -3,6 +3,7 @@
 package at.bernhardberger.tvheadend.sdk.core.cache
 
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
+import at.bernhardberger.tvheadend.sdk.core.ChannelIcon
 import at.bernhardberger.tvheadend.sdk.core.ContentGenre
 import at.bernhardberger.tvheadend.sdk.core.Channel
 import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
@@ -206,7 +207,7 @@ internal fun Channel.toDto(): ChannelDto = ChannelDto(
     uuid = uuid,
     number = number,
     numberMinor = numberMinor,
-    icon = icon?.toImageCacheSelector(),
+    icon = icon?.toSelector(),
     currentEventId = currentEventId?.value,
     nextEventId = nextEventId?.value,
     services = services?.map { service -> service.toDto() },
@@ -219,7 +220,7 @@ internal fun ChannelDto.toModel(): Channel = Channel.create(
     uuid = uuid,
     number = number,
     numberMinor = numberMinor,
-    icon = ArtworkId.parse(icon),
+    icon = ChannelIcon.parse(icon),
     currentEventId = currentEventId?.let(::EventId),
     nextEventId = nextEventId?.let(::EventId),
     services = services?.map { service -> service.toModel() },
@@ -231,7 +232,7 @@ internal fun ChannelTag.toDto(): ChannelTagDto = ChannelTagDto(
     name = name,
     uuid = uuid,
     index = index,
-    icon = icon?.toImageCacheSelector(),
+    icon = icon?.toSelector(),
     titledIcon = titledIcon,
     channelIds = channelIds?.map { channelId -> channelId.value },
 )
@@ -241,12 +242,17 @@ internal fun ChannelTagDto.toModel(): ChannelTag = ChannelTag.create(
     name = name,
     uuid = uuid,
     index = index,
-    icon = ArtworkId.parse(icon),
+    icon = ChannelIcon.parse(icon),
     titledIcon = titledIcon,
     channelIds = channelIds?.map { channelId -> ChannelId(channelId) },
 )
 
 private fun ArtworkId.toImageCacheSelector(): String = "imagecache/$value"
+
+private fun ChannelIcon.toSelector(): String = when (this) {
+    is ChannelIcon.ImageCache -> artworkId.toImageCacheSelector()
+    is ChannelIcon.RemoteUrl -> url
+}
 
 internal fun ChannelCatalog.toDto(): ChannelCatalogDto = ChannelCatalogDto(
     channels = channels.map { channel -> channel.toDto() },

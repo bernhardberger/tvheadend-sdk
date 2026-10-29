@@ -330,13 +330,13 @@ public final class at/bernhardberger/tvheadend/sdk/core/Channel {
 	public final fun component3 ()Ljava/lang/String;
 	public final fun component4 ()Ljava/lang/Long;
 	public final fun component5 ()Ljava/lang/Long;
-	public final fun component6-qky1Ors ()Lat/bernhardberger/tvheadend/sdk/core/ArtworkId;
+	public final fun component6 ()Lat/bernhardberger/tvheadend/sdk/core/ChannelIcon;
 	public final fun component7-IwUpMHo ()Lat/bernhardberger/tvheadend/sdk/core/EventId;
 	public final fun component8-IwUpMHo ()Lat/bernhardberger/tvheadend/sdk/core/EventId;
 	public final fun component9 ()Ljava/util/List;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getCurrentEventId-IwUpMHo ()Lat/bernhardberger/tvheadend/sdk/core/EventId;
-	public final fun getIcon-qky1Ors ()Lat/bernhardberger/tvheadend/sdk/core/ArtworkId;
+	public final fun getIcon ()Lat/bernhardberger/tvheadend/sdk/core/ChannelIcon;
 	public final fun getId-X9YaTts ()J
 	public final fun getName ()Ljava/lang/String;
 	public final fun getNextEventId-IwUpMHo ()Lat/bernhardberger/tvheadend/sdk/core/EventId;
@@ -350,8 +350,8 @@ public final class at/bernhardberger/tvheadend/sdk/core/Channel {
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/Channel$Companion {
-	public final fun create-O_F1qG8 (JLjava/lang/String;Ljava/lang/String;Ljava/lang/Long;Ljava/lang/Long;Lat/bernhardberger/tvheadend/sdk/core/ArtworkId;Lat/bernhardberger/tvheadend/sdk/core/EventId;Lat/bernhardberger/tvheadend/sdk/core/EventId;Ljava/util/List;Ljava/util/List;)Lat/bernhardberger/tvheadend/sdk/core/Channel;
-	public static synthetic fun create-O_F1qG8$default (Lat/bernhardberger/tvheadend/sdk/core/Channel$Companion;JLjava/lang/String;Ljava/lang/String;Ljava/lang/Long;Ljava/lang/Long;Lat/bernhardberger/tvheadend/sdk/core/ArtworkId;Lat/bernhardberger/tvheadend/sdk/core/EventId;Lat/bernhardberger/tvheadend/sdk/core/EventId;Ljava/util/List;Ljava/util/List;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/Channel;
+	public final fun create-J0Iu09U (JLjava/lang/String;Ljava/lang/String;Ljava/lang/Long;Ljava/lang/Long;Lat/bernhardberger/tvheadend/sdk/core/ChannelIcon;Lat/bernhardberger/tvheadend/sdk/core/EventId;Lat/bernhardberger/tvheadend/sdk/core/EventId;Ljava/util/List;Ljava/util/List;)Lat/bernhardberger/tvheadend/sdk/core/Channel;
+	public static synthetic fun create-J0Iu09U$default (Lat/bernhardberger/tvheadend/sdk/core/Channel$Companion;JLjava/lang/String;Ljava/lang/String;Ljava/lang/Long;Ljava/lang/Long;Lat/bernhardberger/tvheadend/sdk/core/ChannelIcon;Lat/bernhardberger/tvheadend/sdk/core/EventId;Lat/bernhardberger/tvheadend/sdk/core/EventId;Ljava/util/List;Ljava/util/List;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/Channel;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/ChannelCatalog {
@@ -368,6 +368,33 @@ public final class at/bernhardberger/tvheadend/sdk/core/ChannelCatalog {
 public final class at/bernhardberger/tvheadend/sdk/core/ChannelCatalog$Companion {
 	public final fun create (Ljava/util/List;Ljava/util/List;)Lat/bernhardberger/tvheadend/sdk/core/ChannelCatalog;
 	public static synthetic fun create$default (Lat/bernhardberger/tvheadend/sdk/core/ChannelCatalog$Companion;Ljava/util/List;Ljava/util/List;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/ChannelCatalog;
+}
+
+public abstract interface class at/bernhardberger/tvheadend/sdk/core/ChannelIcon {
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/ChannelIcon$Companion;
+	public static fun parse (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/ChannelIcon;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ChannelIcon$Companion {
+	public final fun parse (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/ChannelIcon;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ChannelIcon$ImageCache : at/bernhardberger/tvheadend/sdk/core/ChannelIcon {
+	public synthetic fun <init> (ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1-RUv0v6Y ()I
+	public final fun copy-CvLOJc8 (I)Lat/bernhardberger/tvheadend/sdk/core/ChannelIcon$ImageCache;
+	public static synthetic fun copy-CvLOJc8$default (Lat/bernhardberger/tvheadend/sdk/core/ChannelIcon$ImageCache;IILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/ChannelIcon$ImageCache;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getArtworkId-RUv0v6Y ()I
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/ChannelIcon$RemoteUrl : at/bernhardberger/tvheadend/sdk/core/ChannelIcon {
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getUrl ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/ChannelId {
@@ -482,12 +509,12 @@ public final class at/bernhardberger/tvheadend/sdk/core/ChannelTag {
 	public final fun component2 ()Ljava/lang/String;
 	public final fun component3 ()Ljava/lang/String;
 	public final fun component4 ()Ljava/lang/Long;
-	public final fun component5-qky1Ors ()Lat/bernhardberger/tvheadend/sdk/core/ArtworkId;
+	public final fun component5 ()Lat/bernhardberger/tvheadend/sdk/core/ChannelIcon;
 	public final fun component6 ()Ljava/lang/Boolean;
 	public final fun component7 ()Ljava/util/List;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getChannelIds ()Ljava/util/List;
-	public final fun getIcon-qky1Ors ()Lat/bernhardberger/tvheadend/sdk/core/ArtworkId;
+	public final fun getIcon ()Lat/bernhardberger/tvheadend/sdk/core/ChannelIcon;
 	public final fun getId-JMqym6k ()J
 	public final fun getIndex ()Ljava/lang/Long;
 	public final fun getName ()Ljava/lang/String;
@@ -498,8 +525,8 @@ public final class at/bernhardberger/tvheadend/sdk/core/ChannelTag {
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/ChannelTag$Companion {
-	public final fun create-ii3Ohrc (JLjava/lang/String;Ljava/lang/String;Ljava/lang/Long;Lat/bernhardberger/tvheadend/sdk/core/ArtworkId;Ljava/lang/Boolean;Ljava/util/List;)Lat/bernhardberger/tvheadend/sdk/core/ChannelTag;
-	public static synthetic fun create-ii3Ohrc$default (Lat/bernhardberger/tvheadend/sdk/core/ChannelTag$Companion;JLjava/lang/String;Ljava/lang/String;Ljava/lang/Long;Lat/bernhardberger/tvheadend/sdk/core/ArtworkId;Ljava/lang/Boolean;Ljava/util/List;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/ChannelTag;
+	public final fun create-YrdoeHo (JLjava/lang/String;Ljava/lang/String;Ljava/lang/Long;Lat/bernhardberger/tvheadend/sdk/core/ChannelIcon;Ljava/lang/Boolean;Ljava/util/List;)Lat/bernhardberger/tvheadend/sdk/core/ChannelTag;
+	public static synthetic fun create-YrdoeHo$default (Lat/bernhardberger/tvheadend/sdk/core/ChannelTag$Companion;JLjava/lang/String;Ljava/lang/String;Ljava/lang/Long;Lat/bernhardberger/tvheadend/sdk/core/ChannelIcon;Ljava/lang/Boolean;Ljava/util/List;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/ChannelTag;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/ChannelTagId {

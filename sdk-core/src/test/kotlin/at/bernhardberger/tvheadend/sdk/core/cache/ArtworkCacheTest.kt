@@ -126,10 +126,13 @@ internal class ArtworkCacheTest {
         assertSame(unavailable, runtime.loadArtwork(namespace, id, { true }) { unavailable })
         assertEquals(CacheStatistics.EMPTY, runtime.statistics.value)
         runtime.loadArtwork(namespace, id, { true }) { available() }
-        File(directory, "index.bin").writeBytes(byteArrayOf(0))
-        assertSame(unavailable, runtime.loadArtwork(namespace, id, { true }) { unavailable })
-        assertEquals(CacheStatistics.EMPTY, runtime.statistics.value)
         runtime.shutdown()
+        File(directory, "index.bin").writeBytes(byteArrayOf(0))
+        // The index is disposable startup state, held in memory for the lifetime of one runtime.
+        val restarted = runtime()
+        assertSame(unavailable, restarted.loadArtwork(namespace, id, { true }) { unavailable })
+        assertEquals(CacheStatistics.EMPTY, restarted.statistics.value)
+        restarted.shutdown()
     }
 
     @Test
@@ -167,7 +170,7 @@ internal class ArtworkCacheTest {
         val encoded = index.readBytes()
         for (length in encoded.indices) {
             index.writeBytes(encoded.copyOf(length))
-            assertNull(store.load(namespace, id, now, now - 10.seconds))
+            assertNull(FileArtworkCacheStore(root).load(namespace, id, now, now - 10.seconds))
             store.store(namespace, id, bytes, now, now - 10.seconds, 6)
         }
         now += 9.seconds

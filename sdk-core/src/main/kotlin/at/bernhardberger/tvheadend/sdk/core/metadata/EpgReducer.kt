@@ -21,6 +21,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import java.util.Collections
 import java.util.PriorityQueue
+import java.util.TreeSet
 import kotlin.time.Duration
 import kotlin.time.Instant
 import kotlin.time.Duration.Companion.hours
@@ -164,8 +165,8 @@ internal data class ReducedEpgEvent private constructor(
                 summary = event.summary,
                 description = event.description,
                 genre = event.genre,
-                categories = event.categories?.toImmutableList(),
-                keywords = event.keywords?.toImmutableList(),
+                categories = event.categories,
+                keywords = event.keywords,
                 credits = event.credits?.toImmutableList(),
                 seriesLinkUri = event.seriesLinkUri,
                 episodeUri = event.episodeUri,
@@ -206,8 +207,8 @@ internal data class ReducedEpgEvent private constructor(
                 summary = event.summary,
                 description = event.description,
                 genre = null,
-                categories = event.categories?.toImmutableList(),
-                keywords = event.keywords?.toImmutableList(),
+                categories = event.categories,
+                keywords = event.keywords,
                 credits = event.credits?.toImmutableList(),
                 seriesLinkUri = event.seriesLinkUri,
                 episodeUri = event.episodeUri,
@@ -335,6 +336,17 @@ private class EpgEvictionPlan(
 
 private class EpgTailCandidate(val event: ReducedEpgEvent, val distance: Duration)
 
+// A failed single-event admission proves every retained event is protected. Until the
+// first retained stop, an advancing protection horizon cannot make one evictable.
+private class EpgProtectedPool(val earliestStop: Instant, window: EpgCapacityWindow) {
+    private val protectedThrough = window.protectedThrough
+    private val requestBounds = window.requestBounds.toMap()
+
+    fun stillProtected(window: EpgCapacityWindow): Boolean =
+        window.endedBefore < earliestStop && window.protectedThrough >= protectedThrough &&
+            requestBounds == window.requestBounds
+}
+
 private val earliestEndFirst = compareBy<ReducedEpgEvent>({ it.stop }, { it.start }, { it.id.value })
 
 // Per channel this is latest start first, so a channel only ever loses its far end.
@@ -369,6 +381,10 @@ internal class EpgReducer(
 ) {
     private val events = linkedMapOf<EventId, ReducedEpgEvent>()
     private val history = linkedMapOf<EventId, ReducedEpgEvent>()
+    // Exact indexes: every removal goes through removeHistory, so neither index accumulates
+    // stale entries. Expiry/trim use stop then id; overlap checks visit only one channel.
+    private val historyByEnd = TreeSet(compareBy<ReducedEpgEvent>({ it.stop }, { it.id.value }))
+    private val historyByChannel = hashMapOf<ChannelId, MutableMap<EventId, ReducedEpgEvent>>()
     private val currentEventByChannel = linkedMapOf<ChannelId, EventId>()
     private val channelIds = linkedSetOf<ChannelId>()
     private val queriedToByChannel = linkedMapOf<ChannelId, Instant>()
@@ -376,6 +392,8 @@ internal class EpgReducer(
     // only beyond live coverage, never counted as live coverage or capacity, and once live data
     // shadows them they are discarded for good.
     private val carryover = linkedMapOf<EventId, EpgEvent>()
+    // The primary map keeps publication order; bound advances only scan the affected channel.
+    private val carryoverByChannel = hashMapOf<ChannelId, MutableMap<EventId, EpgEvent>>()
     // Lower bound of each channel's earliest carryover start; a live end at or before it cannot
     // reach any carryover. Removals elsewhere may leave it low, which only costs one rescan.
     private val carryoverEarliestStart = hashMapOf<ChannelId, Instant>()
@@ -402,11 +420,14 @@ internal class EpgReducer(
     // The last published snapshot stays valid until retained events, channels or query
     // coverage change, so unrelated metadata traffic republishes the identical instance.
     private var cachedSnapshot: EpgSnapshot? = null
+    // Keep one prior immutable publication for exact event-list/index reuse after invalidation.
+    private var previousSnapshot: EpgSnapshot? = null
     // Proofs cut back by far-end eviction; neither published coverage nor a completed-sync proof
     // reaches past a cap until a query proves the evicted range again.
     private val proofCaps = hashMapOf<ChannelId, EpgProofCap>()
     // Making room evicts down to this low-water mark, so one plan serves many admissions.
     private val evictionLowWater = maximumRetainedEvents - maxOf(1, maximumRetainedEvents / 100)
+    private var protectedPool: EpgProtectedPool? = null
     internal var lastEventRefusedForCapacity: Boolean = false
         private set
 
@@ -415,15 +436,18 @@ internal class EpgReducer(
     }
 
     internal fun clear() {
+        protectedPool = null
         cachedSnapshot = null
         lastEventRefusedForCapacity = false
+        previousSnapshot = null
         events.clear()
         history.clear()
+        historyByEnd.clear()
+        historyByChannel.clear()
         currentEventByChannel.clear()
         channelIds.clear()
         queriedToByChannel.clear()
-        carryover.clear()
-        carryoverEarliestStart.clear()
+        clearCarryover()
         carryoverExcluded = HashSet()
         carryoverDisabled = false
         carryoverInstalled = false
@@ -494,6 +518,7 @@ internal class EpgReducer(
                 currentEventByChannel.entries.removeIf { it.value == event.eventId }
                 removeCarryover(event.eventId)
                 val removed = events.remove(event.eventId)
+                if (removed != null) protectedPool = null
                 excludeFromCarryover(event.eventId)
                 if (removed != null && serverNow != null) {
                     val programme = removed.toPublicOrNull()
@@ -508,8 +533,7 @@ internal class EpgReducer(
                         programme.channelId in channelIds &&
                         events.values.none { overlaps(it, removed) }
                     ) {
-                        history[event.eventId] = removed
-                        trimHistory()
+                        addHistory(removed)
                     }
                 }
             }
@@ -538,15 +562,14 @@ internal class EpgReducer(
         channelIds.clear()
         channelIds.addAll(validChannelIds)
         currentEventByChannel.keys.retainAll(valid)
-        events.entries.removeIf { entry ->
+        if (events.entries.removeIf { entry ->
             entry.value.toPublicOrNull() == null ||
                 entry.value.channelId?.let { it !in valid } == true
-        }
-        history.entries.removeIf { it.value.channelId !in valid }
+        }) protectedPool = null
+        historyByChannel.keys.filter { it !in valid }.forEach(::removeChannelHistory)
         queriedToByChannel.keys.retainAll(valid)
         proofCaps.keys.retainAll(valid)
-        carryover.values.removeIf { it.channelId !in valid }
-        carryoverEarliestStart.keys.retainAll(valid)
+        carryoverByChannel.keys.filter { it !in valid }.forEach(::removeChannelCarryover)
         carryoverReachedBefore.keys.retainAll(valid)
     }
 
@@ -568,8 +591,7 @@ internal class EpgReducer(
         retainTo: Long = Long.MAX_VALUE,
         awaitLateSeed: Boolean = false,
     ) {
-        carryover.clear()
-        carryoverEarliestStart.clear()
+        clearCarryover()
         cachedSnapshot = null
         val liveEnds = liveEnds()
         if (awaitLateSeed) {
@@ -586,10 +608,7 @@ internal class EpgReducer(
                 if (event.start <= proven || liveEnds[channelId]?.let { event.start < it } == true) continue
                 if (queriedToByChannel[channelId]?.let { event.start <= it } == true) continue
                 if (event.stop.epochSeconds < retainFrom || event.start.epochSeconds > retainTo) continue
-                carryover[event.id] = event
-                if (carryoverEarliestStart[channelId]?.let { event.start >= it } != true) {
-                    carryoverEarliestStart[channelId] = event.start
-                }
+                addCarryover(event, channelId)
             }
         }
         releaseCarryoverTracking()
@@ -733,11 +752,15 @@ internal class EpgReducer(
                     removeCarryover(eventId)
                     supersedeHistory(event)
                     if (event.stop.epochSeconds < retainFrom) {
-                        if (events.remove(eventId) != null) cachedSnapshot = null
+                        if (events.remove(eventId) != null) {
+                            cachedSnapshot = null
+                            protectedPool = null
+                        }
                     } else {
                         // An evicted reply event still reached its start: carryover there stays gone.
                         if (eviction?.eventIds?.contains(eventId) != true && events[eventId] != event) {
                             cachedSnapshot = null
+                            protectedPool = null
                             events[eventId] = event
                         }
                         if (event.channelId != null && liveEnd?.let { event.stop <= it } != true) liveEnd = event.stop
@@ -763,31 +786,58 @@ internal class EpgReducer(
     internal fun retainOverlapping(from: Instant, to: Instant) {
         require(to >= from) { "EPG retention stop must not precede start" }
         if (!carryoverTracking) {
-            if (events.values.removeIf { event -> !event.shouldRetain(from, to) }) cachedSnapshot = null
+            if (events.values.removeIf { event -> !event.shouldRetain(from, to) }) {
+                cachedSnapshot = null
+                protectedPool = null
+            }
         } else {
             // A pending seed must not revive an id live data held.
             val pruned = events.values.filterNot { event -> event.shouldRetain(from, to) }
-            if (pruned.isNotEmpty()) cachedSnapshot = null
+            if (pruned.isNotEmpty()) {
+                cachedSnapshot = null
+                protectedPool = null
+            }
             pruned.forEach { event -> events.remove(event.id) }
             pruned.forEach { event -> excludeFromCarryover(event.id) }
         }
-        if (carryover.values.removeIf { event -> event.stop < from || event.start > to }) {
-            cachedSnapshot = null
-        }
+        carryover.values.filter { event -> event.stop < from || event.start > to }
+            .forEach { removeCarryover(it.id) }
     }
 
     internal fun pruneHistory(serverNow: Instant) {
-        if (history.entries.removeIf { (_, event) ->
-                event.stop <= serverNow - 6.hours
-            }
-        ) cachedSnapshot = null
+        val expiredThrough = serverNow - 6.hours
+        while (historyByEnd.isNotEmpty()) {
+            val oldest = historyByEnd.first()
+            if (oldest.stop > expiredThrough) break
+            removeHistory(oldest.id)
+        }
     }
 
-    private fun trimHistory() {
+    private fun addHistory(event: ReducedEpgEvent) {
+        val channelId = event.channelId ?: return
+        removeHistory(event.id)
+        history[event.id] = event
+        historyByEnd.add(event)
+        historyByChannel.getOrPut(channelId) { linkedMapOf() }[event.id] = event
+        cachedSnapshot = null
         while (history.size > maximumRetainedEvents) {
-            val oldest = history.values.minWith(compareBy({ it.stop }, { it.id.value }))
-            history.remove(oldest.id)
+            removeHistory(historyByEnd.first().id)
         }
+    }
+
+    private fun removeHistory(eventId: EventId): Boolean {
+        val removed = history.remove(eventId) ?: return false
+        historyByEnd.remove(removed)
+        historyByChannel[removed.channelId]?.let { channel ->
+            channel.remove(eventId)
+            if (channel.isEmpty()) historyByChannel.remove(removed.channelId)
+        }
+        cachedSnapshot = null
+        return true
+    }
+
+    private fun removeChannelHistory(channelId: ChannelId) {
+        historyByChannel[channelId]?.keys?.toList()?.forEach(::removeHistory)
     }
 
     private fun overlaps(left: ReducedEpgEvent, right: ReducedEpgEvent): Boolean =
@@ -795,11 +845,11 @@ internal class EpgReducer(
             left.start < right.stop && right.start < left.stop
 
     private fun supersedeHistory(event: ReducedEpgEvent): Boolean {
-        val changed = history.entries.removeIf { it.key == event.id || overlaps(it.value, event) }
-        if (changed) {
-            cachedSnapshot = null
-        }
-        return changed
+        // The id may have moved channels or lost its channel; remove it independently.
+        val sameIdRemoved = removeHistory(event.id)
+        val overlapping = historyByChannel[event.channelId]?.values?.filter { overlaps(it, event) }.orEmpty()
+        overlapping.forEach { removeHistory(it.id) }
+        return sameIdRemoved || overlapping.isNotEmpty()
     }
 
     internal fun snapshot(): EpgSnapshot {
@@ -834,22 +884,54 @@ internal class EpgReducer(
             }
         }
         visibleEvents.addAll(carryover.values)
-        return EpgSnapshot.create(
-            visibleEvents, coverages,
-            history.values.mapNotNull { it.toPublicOrNull() }.sortedWith(
-                compareBy({ it.start }, { it.stop }, { it.id.value }),
-            ),
-        ).also { cachedSnapshot = it }
+        val historicalEvents = history.values.mapNotNull { it.toPublicOrNull() }.sortedWith(
+            compareBy({ it.start }, { it.stop }, { it.id.value }),
+        )
+        return (previousSnapshot?.withUpdatedContent(visibleEvents, coverages, historicalEvents)
+            ?: EpgSnapshot.create(visibleEvents, coverages, historicalEvents)).also {
+            cachedSnapshot = it
+            previousSnapshot = it
+        }
     }
 
     private class CoverageBounds(var from: Instant, var to: Instant)
 
     // Live wins, irreversibly and independently of publication batching: once live data names an
     // id or reaches a start time, the carryover there is gone even if live data later recedes.
+    private fun addCarryover(event: EpgEvent, channelId: ChannelId) {
+        // Replacing an id may move channels, but must keep its original publication position.
+        carryover.put(event.id, event)?.let(::unindexCarryover)
+        carryoverByChannel.getOrPut(channelId) { linkedMapOf() }[event.id] = event
+        if (carryoverEarliestStart[channelId]?.let { event.start >= it } != true) {
+            carryoverEarliestStart[channelId] = event.start
+        }
+    }
+
+    private fun clearCarryover() {
+        carryover.clear()
+        carryoverByChannel.clear()
+        carryoverEarliestStart.clear()
+    }
+
+    private fun unindexCarryover(event: EpgEvent) {
+        carryoverByChannel[event.channelId]?.let { channel ->
+            channel.remove(event.id)
+            if (channel.isEmpty()) {
+                carryoverByChannel.remove(event.channelId)
+                carryoverEarliestStart.remove(event.channelId)
+            }
+        }
+    }
+
     private fun removeCarryover(eventId: EventId): Boolean {
-        if (carryover.remove(eventId) == null) return false
+        val removed = carryover.remove(eventId) ?: return false
+        unindexCarryover(removed)
         cachedSnapshot = null
         return true
+    }
+
+    private fun removeChannelCarryover(channelId: ChannelId) {
+        carryoverByChannel[channelId]?.keys?.toList()?.forEach(::removeCarryover)
     }
 
     private fun excludeFromCarryover(eventId: EventId) {
@@ -868,14 +950,14 @@ internal class EpgReducer(
         if (channelId == null) return
         val earliest = carryoverEarliestStart[channelId] ?: return
         if (earliest > bound || !inclusive && earliest == bound) return
+        val channel = carryoverByChannel[channelId] ?: return
         var remaining: Instant? = null
-        if (carryover.values.removeIf { event ->
-                if (event.channelId != channelId) return@removeIf false
-                val reached = event.start < bound || inclusive && event.start == bound
-                if (!reached && remaining?.let { event.start >= it } != true) remaining = event.start
-                reached
-            }
-        ) cachedSnapshot = null
+        val reachedEvents = channel.values.filter { event ->
+            val reached = event.start < bound || inclusive && event.start == bound
+            if (!reached && remaining?.let { event.start >= it } != true) remaining = event.start
+            reached
+        }
+        reachedEvents.forEach { removeCarryover(it.id) }
         remaining?.let { carryoverEarliestStart[channelId] = it } ?: carryoverEarliestStart.remove(channelId)
     }
 
@@ -886,9 +968,9 @@ internal class EpgReducer(
         cachedSnapshot = null
         val latestFirst = compareByDescending<EpgEvent> { it.start }.thenByDescending { it.id.value }
         if (excess == 1) {
-            carryover.remove(carryover.values.minWith(latestFirst).id)
+            removeCarryover(carryover.values.minWith(latestFirst).id)
         } else {
-            carryover.values.sortedWith(latestFirst).take(excess).forEach { carryover.remove(it.id) }
+            carryover.values.sortedWith(latestFirst).take(excess).forEach { removeCarryover(it.id) }
         }
     }
 
@@ -897,17 +979,15 @@ internal class EpgReducer(
         val historyChanged = supersedeHistory(candidate)
         if (candidate.stop.epochSeconds < retainFrom) {
             val removed = events.remove(event.id) != null
-            if (removed) cachedSnapshot = null
+            if (removed) {
+                cachedSnapshot = null
+                protectedPool = null
+            }
             return removed || historyChanged
         }
         if (event.id !in events && events.size >= maximumRetainedEvents) {
             val eviction = capacity?.let { window ->
-                planEviction(
-                    events.values.asSequence() + candidate,
-                    events.size + 1 - maximumRetainedEvents,
-                    events.size + 1 - evictionLowWater,
-                    window(),
-                )
+                planAdmissionEviction(candidate, window())
             }
             if (eviction == null) {
                 lastEventRefusedForCapacity = true
@@ -927,6 +1007,7 @@ internal class EpgReducer(
         // Identical full entities still supersede history without rebuilding an unchanged snapshot.
         if (events[event.id] != candidate) {
             cachedSnapshot = null
+            protectedPool = null
             events[event.id] = candidate
         }
         recordCarryoverLiveCount()
@@ -934,6 +1015,27 @@ internal class EpgReducer(
         recordCarryoverReach(candidate.channelId, candidate.stop)
         trimCarryover()
         return true
+    }
+
+    private fun planAdmissionEviction(candidate: ReducedEpgEvent, window: EpgCapacityWindow): EpgEvictionPlan? {
+        if (protectedPool?.stillProtected(window) == true) {
+            // The newcomer can still yield (including its proof cut and carryover effects).
+            // There is only one eligible candidate, regardless of the low-water target.
+            return planEviction(sequenceOf(candidate), 1, 1, window)
+        }
+        protectedPool = null
+        val plan = planEviction(
+            events.values.asSequence() + candidate,
+            1,
+            events.size + 1 - evictionLowWater,
+            window,
+        )
+        if (plan == null) {
+            // This one-time second pass keeps the proof independent of the refused newcomer.
+            // Queries plan a different would-be pool and never establish or reuse this proof.
+            protectedPool = EpgProtectedPool(events.values.minOf { it.stop }, window)
+        }
+        return plan
     }
 
     /**
@@ -982,6 +1084,7 @@ internal class EpgReducer(
         plan.eventIds.forEach { eventId ->
             if (events.remove(eventId) != null) {
                 cachedSnapshot = null
+                protectedPool = null
                 // A pending seed must not revive what live data held.
                 excludeFromCarryover(eventId)
             }
@@ -1065,12 +1168,12 @@ internal class EpgReducer(
     }
 
     private fun removeChannel(channelId: ChannelId) {
+        protectedPool = null
         channelIds.remove(channelId)
         currentEventByChannel.remove(channelId)
         queriedToByChannel.remove(channelId)
         proofCaps.remove(channelId)
-        carryover.values.removeIf { event -> event.channelId == channelId }
-        carryoverEarliestStart.remove(channelId)
+        removeChannelCarryover(channelId)
         carryoverReachedBefore.remove(channelId)
         if (!carryoverTracking) {
             events.entries.removeIf { entry -> entry.value.channelId == channelId }
@@ -1080,7 +1183,7 @@ internal class EpgReducer(
             removed.forEach(events::remove)
             removed.forEach(::excludeFromCarryover)
         }
-        history.entries.removeIf { entry -> entry.value.channelId == channelId }
+        removeChannelHistory(channelId)
     }
 
 }

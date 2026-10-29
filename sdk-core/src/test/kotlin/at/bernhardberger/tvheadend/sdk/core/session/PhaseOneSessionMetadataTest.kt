@@ -11,6 +11,7 @@ import kotlin.time.Clock
 import kotlin.time.Duration.Companion.seconds
 
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
+import at.bernhardberger.tvheadend.sdk.core.ChannelIcon
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.Channel
 import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
@@ -209,7 +210,7 @@ internal class PhaseOneSessionMetadataTest {
     @Test
     fun `cached fields are display only and neither sparse patches nor fresh sync resurrect them`() {
         val metadata = PhaseOneSessionMetadata()
-        val cachedChannel = Channel.create(ChannelId(1), name = "Cached", icon = ArtworkId(1))
+        val cachedChannel = Channel.create(ChannelId(1), name = "Cached", icon = ChannelIcon.ImageCache(ArtworkId(1)))
         val cachedEvent = EpgEvent.create(EventId(1), ChannelId(1), Instant.fromEpochSeconds(0),
             Instant.fromEpochSeconds(10), title = "Cached")
         val cachedCatalog = ChannelCatalog.create(channels = listOf(cachedChannel))
@@ -231,7 +232,7 @@ internal class PhaseOneSessionMetadataTest {
         assertEquals("Fresh", metadata.currentEpgSnapshot().events.single().title)
         assertTrue(metadata.currentDvrSnapshot().entries.isEmpty())
         assertEquals("Cached", cachedEvent.title)
-        assertEquals(ArtworkId(1), cachedChannel.icon)
+        assertEquals(ChannelIcon.ImageCache(ArtworkId(1)), cachedChannel.icon)
         val current = metadata.observation.value
         metadata.acceptMetadata(MetadataEvent.ChannelNowNextUpdated(generation, ChannelId(99), EventId(1), null))
         metadata.acceptMetadata(MetadataEvent.DvrEntryStatsUpdated(generation,
@@ -1502,11 +1503,19 @@ internal class PhaseOneSessionMetadataTest {
     }
 
     private fun assertIndexesPrepared(snapshot: EpgSnapshot) {
-        for (name in listOf("eventsById", "eventsByChannel")) {
-            val field = EpgSnapshot::class.java.getDeclaredField("$name\$delegate")
-            field.isAccessible = true
-            assertTrue((field.get(snapshot) as Lazy<*>).isInitialized(),
-                "Published $name must not defer a full-guide allocation to its first UI consumer")
+        for ((holderName, indexNames) in listOf(
+            "eventIndexes" to listOf("byId", "byChannel"),
+            "historyIndexes" to listOf("byChannel"),
+        )) {
+            val holderField = EpgSnapshot::class.java.getDeclaredField(holderName)
+            holderField.isAccessible = true
+            val holder = holderField.get(snapshot)
+            for (name in indexNames) {
+                val field = holder.javaClass.getDeclaredField("$name\$delegate")
+                field.isAccessible = true
+                assertTrue((field.get(holder) as Lazy<*>).isInitialized(),
+                    "Published $holderName.$name must not defer a full-guide allocation to its first UI consumer")
+            }
         }
     }
 

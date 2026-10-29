@@ -3,6 +3,7 @@
 package at.bernhardberger.tvheadend.sdk.core.metadata
 
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
+import at.bernhardberger.tvheadend.sdk.core.ChannelIcon
 import at.bernhardberger.tvheadend.sdk.core.ChannelMediaKind
 import at.bernhardberger.tvheadend.sdk.core.mediaKind
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
@@ -17,11 +18,12 @@ import org.junit.jupiter.api.Test
 
 internal class ChannelTagReducerTest {
     @Test
-    fun `channel and tag icons expose only positive image cache artwork IDs`() {
+    fun `channel and tag icons distinguish image cache IDs and remote URLs`() {
         val cases = listOf(
-            "imagecache/12" to ArtworkId(12),
-            "/imagecache/12" to ArtworkId(12),
-            "http://example.invalid/imagecache/12" to null,
+            "imagecache/12" to ChannelIcon.ImageCache(ArtworkId(12)),
+            "/imagecache/12" to ChannelIcon.ImageCache(ArtworkId(12)),
+            "http://example.invalid/imagecache/12" to ChannelIcon.parse("http://example.invalid/imagecache/12"),
+            "https://example.invalid/logo.png" to ChannelIcon.parse("https://example.invalid/logo.png"),
             "imagecache/0" to null,
             "picon/x" to null,
             null to null,
@@ -40,13 +42,20 @@ internal class ChannelTagReducerTest {
     }
 
     @Test
-    fun `a full update without an icon clears the previous artwork ID`() {
+    fun `full updates replace remote icons with image cache IDs and clear absent icons`() {
         val generation = GatewayGeneration()
         val reducer = ChannelTagReducer()
-        reducer.accept(MetadataEvent.ChannelAdded(generation, channel(1, "imagecache/7")))
+        reducer.accept(MetadataEvent.ChannelAdded(generation, channel(1, "https://example.invalid/logo.png")))
+        reducer.accept(MetadataEvent.TagAdded(generation, tag(1, "http://example.invalid/logo.png")))
+        reducer.accept(MetadataEvent.ChannelUpdated(generation, channel(1, "imagecache/7")))
+        reducer.accept(MetadataEvent.TagUpdated(generation, tag(1, "imagecache/8")))
+        assertEquals(ChannelIcon.ImageCache(ArtworkId(7)), reducer.snapshot().channels.single().icon)
+        assertEquals(ChannelIcon.ImageCache(ArtworkId(8)), reducer.snapshot().tags.single().icon)
         reducer.accept(MetadataEvent.ChannelUpdated(generation, channel(1, null)))
+        reducer.accept(MetadataEvent.TagUpdated(generation, tag(1, null)))
 
         assertEquals(null, reducer.snapshot().channels.single().icon)
+        assertEquals(null, reducer.snapshot().tags.single().icon)
     }
 
     @Test

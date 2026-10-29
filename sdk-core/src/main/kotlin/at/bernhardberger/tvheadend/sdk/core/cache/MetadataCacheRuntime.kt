@@ -22,6 +22,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -61,7 +62,8 @@ internal class RestoredSnapshots(
  * throws for IO problems, so a failing cache cannot fail the session.
  *
  * Catalog and EPG files are guarded by `metadataAccess`, artwork files and `clearEpoch` by
- * `artworkAccess`, so artwork reads never wait for a guide decode. Locks are only taken in the
+ * `artworkAccess`, so artwork reads never wait for a guide decode. Artwork index admission and
+ * completion hold that lock, but independent artwork file reads run outside it. Locks are only taken in the
  * order `lifecycle`, `metadataAccess`, `artworkAccess`; only [clear] holds more than one store lock.
  * Each lock refreshes only its own part of [statistics].
  */
@@ -71,6 +73,7 @@ internal class MetadataCacheRuntime(
     private val ioDispatcher: CoroutineDispatcher,
     private val clock: Clock,
     private val epgWriteInterval: Duration = DEFAULT_EPG_WRITE_INTERVAL,
+    private val artworkStore: FileArtworkCacheStore = FileArtworkCacheStore(policy.root),
 ) : SessionCache {
     private val rootJob = SupervisorJob()
     private val scope = CoroutineScope(ioDispatcher + rootJob)
@@ -80,7 +83,7 @@ internal class MetadataCacheRuntime(
     private val restoreRevision = AtomicLong()
     // Namespaces whose restore may still accept a guide; a writer's first EPG write waits for them.
     private val restoring = MutableStateFlow<List<CacheNamespace>>(emptyList())
-    private val artworkStore = FileArtworkCacheStore(policy.root)
+    private var artworkFlush: Job? = null
     private var clearEpoch = 0L
     private val mutableStatistics = MutableStateFlow(CacheStatistics.EMPTY)
     private var writer: Writer? = null
@@ -149,14 +152,7 @@ internal class MetadataCacheRuntime(
         isCurrent: () -> Boolean,
         fetch: suspend () -> ArtworkLoadResult,
     ): ArtworkLoadResult {
-        var epoch = 0L
-        val cached = accessArtwork {
-            epoch = clearEpoch
-            val now = clock.now()
-            val bytes = artworkStore.load(namespace, id, now, now - policy.artworkRetention)
-            refreshArtworkStatistics()
-            bytes
-        }
+        val (epoch, cached) = readArtwork(namespace, id)
         if (!isCurrent()) return ArtworkLoadResult.Unavailable(TvheadendFailure.CONNECTION_CHANGED)
         if (cached != null) return ArtworkLoadResult.Available(ArtworkContent.create(cached))
         val result = fetch()
@@ -188,11 +184,7 @@ internal class MetadataCacheRuntime(
         id: ArtworkId,
         isCurrent: () -> Boolean,
     ): ArtworkLoadResult {
-        val cached = accessArtwork {
-            if (!isCurrent()) return@accessArtwork null
-            val now = clock.now()
-            artworkStore.load(namespace, id, now, now - policy.artworkRetention).also { refreshArtworkStatistics() }
-        }
+        val (_, cached) = readArtwork(namespace, id, isCurrent)
         return when {
             !isCurrent() -> ArtworkLoadResult.Unavailable(TvheadendFailure.CONNECTION_CHANGED)
             cached == null -> ArtworkLoadResult.Unavailable(TvheadendFailure.NOT_READY)
@@ -206,6 +198,45 @@ internal class MetadataCacheRuntime(
 
     private suspend fun <T> accessArtwork(block: suspend () -> T): T = withContext(ioDispatcher) {
         artworkAccess.withLock { block() }
+    }
+
+    private suspend fun readArtwork(
+        namespace: CacheNamespace,
+        id: ArtworkId,
+        isCurrent: () -> Boolean = { true },
+    ): Pair<Long, ByteArray?> {
+        val (epoch, pending) = accessArtwork {
+            val before = artworkStore.revision
+            val pending = if (isCurrent()) {
+                artworkStore.prepare(namespace, id, clock.now() - policy.artworkRetention)
+            } else null
+            if (before != artworkStore.revision) refreshArtworkStatistics()
+            scheduleArtworkFlush()
+            clearEpoch to pending
+        }
+        if (pending == null) return epoch to null
+        val bytes = withContext(ioDispatcher) { artworkStore.read(pending) }
+        accessArtwork {
+            if (clearEpoch == epoch) {
+                val before = artworkStore.revision
+                artworkStore.complete(pending, bytes, clock.now())
+                if (before != artworkStore.revision) refreshArtworkStatistics()
+                scheduleArtworkFlush()
+            }
+        }
+        return epoch to bytes
+    }
+
+    // Called under artworkAccess. One bounded batch, rather than an index rewrite per logo.
+    private fun scheduleArtworkFlush() {
+        if (artworkFlush != null) return
+        artworkFlush = scope.launch {
+            delay(5.seconds)
+            accessArtwork {
+                artworkStore.flush()
+                artworkFlush = null
+            }
+        }
     }
 
     /** Starts writing [publications] for [namespace]; a previous writer is stopped first. */
@@ -234,6 +265,11 @@ internal class MetadataCacheRuntime(
         lifecycle.withLock {
             writer?.stop(retiredPublication)
             writer = null
+            accessArtwork {
+                artworkFlush?.cancel()
+                artworkFlush = null
+                artworkStore.flush()
+            }
         }
     }
 
@@ -254,6 +290,9 @@ internal class MetadataCacheRuntime(
                 accessMetadata {
                     artworkAccess.withLock {
                         clearEpoch++
+                        artworkFlush?.cancel()
+                        artworkFlush = null
+                        artworkStore.invalidate()
                         store.clear()
                         mutableStatistics.value = store.statistics()
                     }
@@ -276,7 +315,7 @@ internal class MetadataCacheRuntime(
     }
 
     private suspend fun refreshMetadataStatistics() {
-        val metadataBytes = store.statistics().metadataBytes
+        val metadataBytes = store.metadataBytes()
         mutableStatistics.update { CacheStatistics(metadataBytes, it.artworkBytes, it.artworkEntryCount) }
     }
 
@@ -355,7 +394,7 @@ internal class MetadataCacheRuntime(
             isNewCatalog(snapshots) || isNewEpg(snapshots)
 
         private fun isNewCatalog(snapshots: PublishedSnapshots): Boolean =
-            snapshots.catalog !== writtenCatalog ||
+            (snapshots.catalog !== writtenCatalog && snapshots.catalog != writtenCatalog) ||
                 snapshots.channelRefreshTimes != writtenCatalogTimes
 
         private fun isNewEpg(snapshots: PublishedSnapshots): Boolean =

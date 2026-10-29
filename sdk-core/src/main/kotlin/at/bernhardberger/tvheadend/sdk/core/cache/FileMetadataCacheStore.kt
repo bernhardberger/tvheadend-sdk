@@ -13,11 +13,15 @@ import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
 import java.io.IOException
+import java.nio.ByteBuffer
+import java.nio.CharBuffer
+import java.nio.charset.CodingErrorAction
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.protobuf.ProtoBuf
+import kotlinx.serialization.json.Json
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -31,8 +35,8 @@ private const val CATALOG_FILE_NAME = "catalog.bin"
 private const val EPG_FILE_NAME = "epg.bin"
 private const val TMP_FILE_SUFFIX = ".tmp"
 internal val LEGACY_NAMESPACE_PATTERN = Regex("[0-9a-f]{32}")
-// EPG4 puts coverage/receipt times before start-ordered events, permitting a bounded restore.
-private const val EPG_STREAM_MAGIC = 0x45504734
+// EPG5 uses JSON event records and start/stop framing to skip expired payloads before decoding.
+private const val EPG_STREAM_MAGIC = 0x45504735
 private const val MAX_EPG_CACHE_RECORDS = 250_000
 private const val MAX_EPG_CACHE_RECORD_BYTES = 1_048_576
 
@@ -40,19 +44,24 @@ private const val MAX_EPG_CACHE_RECORD_BYTES = 1_048_576
  * File-backed [MetadataCacheStore] rooted at `<root>/tvheadend-sdk/<namespace>/`.
  *
  * Every namespace stores its catalog as `catalog.bin` and its EPG snapshot as `epg.bin`.
- * EPG protobuf records are length-prefixed with standard data streams: kotlinx ProtoBuf only
- * encodes byte arrays, so one whole-guide envelope would multiply the live guide's memory use.
+ * EPG records are length-prefixed with standard data streams, keeping decoding bounded to one
+ * record. Event DTOs use kotlinx JSON: measured decoding is cheaper than kotlinx ProtoBuf here.
+ * The small coverage/receipt records and the catalog retain their protobuf representation.
  * Both files are written atomically through a same-directory `.tmp`
  * file and [Files.move] with [StandardCopyOption.ATOMIC_MOVE]. Read and write failures never
  * throw: missing, expired, schema-mismatched, or corrupt files are deleted and treated as absent.
  */
-internal class FileMetadataCacheStore(root: File, private val clock: Clock = Clock.System) : MetadataCacheStore {
+internal class FileMetadataCacheStore(
+    root: File,
+    private val clock: Clock = Clock.System,
+    private val listFiles: (File) -> Array<File>? = File::listFiles,
+) : MetadataCacheStore {
 
     private val namespacesRoot: File = File(root, CACHE_ROOT_DIR_NAME)
 
     override suspend fun loadCatalog(namespace: CacheNamespace, notBefore: Instant): CachedCatalog? {
         // Legacy identities cannot be restored safely and would otherwise never age out.
-        namespacesRoot.listFiles().orEmpty()
+        listFiles(namespacesRoot).orEmpty()
             .filter { LEGACY_NAMESPACE_PATTERN.matches(it.name) }
             .forEach {
                 try {
@@ -157,9 +166,10 @@ internal class FileMetadataCacheStore(root: File, private val clock: Clock = Clo
                 output.writeInt(snapshot.snapshot.events.size)
                 for (event in snapshot.snapshot.events.sortedWith(compareBy<EpgEvent> { it.start }.thenBy { it.id.value })) {
                     currentCoroutineContext().ensureActive()
-                    // Standard framing keeps the first far event's protobuf payload unread.
+                    // Standard framing keeps expired and far event payloads out of the decoder.
                     output.writeLong(event.start.epochSeconds)
-                    output.writeRecord(EpgEventDto.serializer(), event.toDto())
+                    output.writeLong(event.stop.epochSeconds)
+                    output.writeRecordBytes(Json.encodeToString(EpgEventDto.serializer(), event.toDto()).encodeToByteArray())
                 }
             }
             currentCoroutineContext().ensureActive()
@@ -186,15 +196,19 @@ internal class FileMetadataCacheStore(root: File, private val clock: Clock = Clo
     }
 
     override suspend fun statistics(): CacheStatistics {
-        val namespaceDirs = namespacesRoot.listFiles()?.filter { entry -> entry.isDirectory } ?: emptyList()
+        val namespaceDirs = listFiles(namespacesRoot)?.filter { entry -> entry.isDirectory } ?: emptyList()
         val metadataBytes = namespaceDirs.sumOf { dir ->
             File(dir, CATALOG_FILE_NAME).lengthIfFile() + File(dir, EPG_FILE_NAME).lengthIfFile()
         }
         val artwork = namespaceDirs.flatMap { dir ->
-            File(dir, "artwork").listFiles().orEmpty().filter { it.isFile && it.name.toIntOrNull()?.let { id -> id > 0 } == true }
+            listFiles(File(dir, "artwork")).orEmpty().filter { it.isFile && it.name.toIntOrNull()?.let { id -> id > 0 } == true }
         }
         return CacheStatistics(metadataBytes, artwork.sumOf { it.length() }, artwork.size)
     }
+
+    override suspend fun metadataBytes(): Long = listFiles(namespacesRoot).orEmpty()
+        .filter { it.isDirectory }
+        .sumOf { File(it, CATALOG_FILE_NAME).lengthIfFile() + File(it, EPG_FILE_NAME).lengthIfFile() }
 
     private fun catalogFile(namespace: CacheNamespace): File = File(namespaceDir(namespace), CATALOG_FILE_NAME)
 
@@ -252,6 +266,13 @@ internal class FileMetadataCacheStore(root: File, private val clock: Clock = Clo
     private suspend fun DataInputStream.readNearEvents(past: Instant, through: Instant): List<EpgEvent> {
         val count = readRecordCount()
         val events = ArrayList<EpgEvent>()
+        val discardBuffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        // Decoder and buffers belong to this restore, not to individual event records.
+        val decoder = Charsets.UTF_8.newDecoder()
+            .onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT)
+        var bytes = ByteBuffer.allocate(0)
+        var chars = CharBuffer.allocate(0)
         var previousStart = Long.MIN_VALUE
         repeat(count) {
             currentCoroutineContext().ensureActive()
@@ -259,24 +280,64 @@ internal class FileMetadataCacheStore(root: File, private val clock: Clock = Clo
             require(start >= previousStart)
             if (start > through.epochSeconds) return events
             previousStart = start
-            val event = readRecord(EpgEventDto.serializer()).toModel()
-            require(event.start.epochSeconds == start)
-            if (event.stop >= past) events.add(event)
+            val stop = readLong()
+            require(stop >= start)
+            val size = readRecordSize()
+            if (stop < past.epochSeconds) {
+                // FileInputStream.skip can seek past EOF; readFully also detects a truncated tail.
+                discardRecordBytes(size, discardBuffer)
+            } else {
+                if (bytes.capacity() < size) {
+                    bytes = ByteBuffer.allocate(size)
+                    // UTF-8 produces at most one UTF-16 code unit per byte (including surrogate
+                    // pairs). Both capacities stay within the validated record-size bound.
+                    chars = CharBuffer.allocate(size)
+                }
+                readFully(bytes.array(), 0, size)
+                bytes.clear().limit(size)
+                chars.clear().limit(size)
+                decoder.reset()
+                val decoded = decoder.decode(bytes, chars, true)
+                if (!decoded.isUnderflow) decoded.throwException()
+                require(!bytes.hasRemaining())
+                val flushed = decoder.flush(chars)
+                if (!flushed.isUnderflow) flushed.throwException()
+                chars.flip()
+                // Only the written characters become an immutable String; no buffer view escapes.
+                val dto = Json.decodeFromString(EpgEventDto.serializer(), chars.toString())
+                require(Instant.fromEpochMilliseconds(dto.start).epochSeconds == start &&
+                    Instant.fromEpochMilliseconds(dto.stop).epochSeconds == stop)
+                events.add(dto.toModel())
+            }
         }
         require(read() == -1)
         return events
     }
 
     private fun <T> DataInputStream.readRecord(serializer: KSerializer<T>): T {
-        val size = readInt()
-        require(size in 0..MAX_EPG_CACHE_RECORD_BYTES)
+        val size = readRecordSize()
         val bytes = ByteArray(size)
         readFully(bytes)
         return ProtoBuf.decodeFromByteArray(serializer, bytes)
     }
 
     private fun <T> DataOutputStream.writeRecord(serializer: KSerializer<T>, value: T) {
-        val bytes = ProtoBuf.encodeToByteArray(serializer, value)
+        writeRecordBytes(ProtoBuf.encodeToByteArray(serializer, value))
+    }
+
+    private fun DataInputStream.readRecordSize(): Int =
+        readInt().also { require(it in 0..MAX_EPG_CACHE_RECORD_BYTES) }
+
+    private fun DataInputStream.discardRecordBytes(size: Int, buffer: ByteArray) {
+        var remaining = size
+        while (remaining > 0) {
+            val count = minOf(remaining, buffer.size)
+            readFully(buffer, 0, count)
+            remaining -= count
+        }
+    }
+
+    private fun DataOutputStream.writeRecordBytes(bytes: ByteArray) {
         require(bytes.size <= MAX_EPG_CACHE_RECORD_BYTES)
         writeInt(bytes.size)
         write(bytes)

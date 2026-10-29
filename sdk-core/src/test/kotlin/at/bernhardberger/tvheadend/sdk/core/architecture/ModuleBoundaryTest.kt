@@ -135,6 +135,9 @@ internal class ModuleBoundaryTest {
         val expected = setOf(
             "ChannelId",
             "ArtworkId",
+            "ChannelIcon",
+            "ImageCache",
+            "RemoteUrl",
             "ArtworkContent",
             "ArtworkLoadResult",
             "ArtworkLoader",

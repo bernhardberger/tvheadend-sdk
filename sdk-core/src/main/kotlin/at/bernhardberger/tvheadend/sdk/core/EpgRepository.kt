@@ -316,25 +316,19 @@ public data class EpgSnapshot private constructor(
     // that unequal snapshots are rejected without walking both event lists.
     private val contentHash: Int = 31 * (31 * events.hashCode() + coverages.hashCode()) + historicalEvents.hashCode()
 
-    // Built only when queried, shared by every observation retaining this exact snapshot.
-    // Null values preserve singleOrNull semantics for duplicate IDs in consumer-created snapshots.
-    @get:JvmSynthetic
-    internal val eventsById: Map<EventId, EpgEvent?> by lazy {
-        buildMap(events.size) {
-            val duplicates = HashSet<EventId>()
-            for (event in events) {
-                if (put(event.id, event) != null) duplicates.add(event.id)
-            }
-            // Mark ambiguity only after insertion so third and later duplicates stay ambiguous.
-            for (id in duplicates) put(id, null)
-        }
-    }
+    // Shared only for equal, ordered immutable event lists. Holders capture the lists rather
+    // than earlier snapshots, so an unprepared index cannot retain a chain of publications.
+    private var eventIndexes = EpgEventIndexes(events)
+    private var historyIndexes = EpgEventIndexes(historicalEvents)
 
     @get:JvmSynthetic
-    internal val eventsByChannel: Map<ChannelId?, List<EpgEvent>> by lazy { events.groupBy(EpgEvent::channelId) }
+    internal val eventsById: Map<EventId, EpgEvent?> get() = eventIndexes.byId
 
     @get:JvmSynthetic
-    internal val historyByChannel: Map<ChannelId?, List<EpgEvent>> by lazy { historicalEvents.groupBy(EpgEvent::channelId) }
+    internal val eventsByChannel: Map<ChannelId?, List<EpgEvent>> get() = eventIndexes.byChannel
+
+    @get:JvmSynthetic
+    internal val historyByChannel: Map<ChannelId?, List<EpgEvent>> get() = historyIndexes.byChannel
 
     /** Session producers prepare lookup storage before exposing a snapshot to UI observers. */
     internal fun prepareForObservation() {
@@ -355,6 +349,25 @@ public data class EpgSnapshot private constructor(
 
     override fun toString(): String = "EpgSnapshot(<redacted>)"
 
+    // Coverage changes still rebuild the snapshot, but need no new event storage or indexes.
+    // Exact list equality (including order and duplicates), never hashes alone, proves reuse.
+    internal fun withUpdatedContent(
+        events: List<EpgEvent>,
+        coverages: List<EpgCoverage>,
+        historicalEvents: List<EpgEvent>,
+    ): EpgSnapshot {
+        val sameEvents = this.events == events
+        val sameHistory = this.historicalEvents == historicalEvents
+        return EpgSnapshot(
+            events = if (sameEvents) this.events else events.toEpgImmutableList(),
+            coverages = coverages.toEpgImmutableList(),
+            historicalEvents = if (sameHistory) this.historicalEvents else historicalEvents.toEpgImmutableList(),
+        ).also { snapshot ->
+            if (sameEvents) snapshot.eventIndexes = eventIndexes
+            if (sameHistory) snapshot.historyIndexes = historyIndexes
+        }
+    }
+
     public companion object {
         /** Creates a snapshot while defensively copying both lists. */
         public fun create(
@@ -367,6 +380,22 @@ public data class EpgSnapshot private constructor(
             historicalEvents = historicalEvents.toEpgImmutableList(),
         )
     }
+}
+
+private class EpgEventIndexes(private val events: List<EpgEvent>) {
+    // Null values preserve singleOrNull semantics for duplicate IDs in consumer-created snapshots.
+    val byId: Map<EventId, EpgEvent?> by lazy {
+        buildMap(events.size) {
+            val duplicates = HashSet<EventId>()
+            for (event in events) {
+                if (put(event.id, event) != null) duplicates.add(event.id)
+            }
+            // Mark ambiguity only after insertion so third and later duplicates stay ambiguous.
+            for (id in duplicates) put(id, null)
+        }
+    }
+
+    val byChannel: Map<ChannelId?, List<EpgEvent>> by lazy { events.groupBy(EpgEvent::channelId) }
 }
 
 /**

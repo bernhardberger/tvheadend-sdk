@@ -71,4 +71,7 @@ internal interface MetadataCacheStore {
 
     /** Measures current usage by walking the root. */
     suspend fun statistics(): CacheStatistics
+
+    /** Measures metadata files only; production stores must not inspect artwork here. */
+    suspend fun metadataBytes(): Long = statistics().metadataBytes
 }

@@ -125,6 +125,7 @@ dependencies {
     api(project(":sdk-playback"))
     implementation(libs.htsp)
     implementation(libs.kotlinx.serialization.protobuf)
+    implementation(libs.kotlinx.serialization.json)
 
     testImplementation(libs.junit)
     testImplementation(libs.konsist)

@@ -3,6 +3,7 @@
 package at.bernhardberger.tvheadend.sdk.core.cache
 
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
+import at.bernhardberger.tvheadend.sdk.core.ChannelIcon
 import at.bernhardberger.tvheadend.sdk.core.Channel
 import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
@@ -51,7 +52,7 @@ internal class CacheDtosTest {
             uuid = "uuid-1",
             number = 1L,
             numberMinor = 0L,
-            icon = ArtworkId(12),
+            icon = ChannelIcon.ImageCache(ArtworkId(12)),
             currentEventId = EventId(100L),
             nextEventId = EventId(101L),
             services = listOf(serviceWithConditionalAccess, serviceWithoutConditionalAccess),
@@ -63,7 +64,7 @@ internal class CacheDtosTest {
             name = "Tag One",
             uuid = "tag-uuid-1",
             index = 1L,
-            icon = ArtworkId(34),
+            icon = ChannelIcon.ImageCache(ArtworkId(34)),
             titledIcon = true,
             channelIds = listOf(ChannelId(1L)),
         )
@@ -79,12 +80,15 @@ internal class CacheDtosTest {
     }
 
     @Test
-    fun `cached icon selectors restore image cache artwork and drop external or malformed icons`() {
-        assertEquals("imagecache/12", Channel.create(ChannelId(1L), icon = ArtworkId(12)).toDto().icon)
-        assertEquals("imagecache/34", ChannelTag.create(ChannelTagId(1L), icon = ArtworkId(34)).toDto().icon)
-        assertEquals(ArtworkId(12), ChannelDto(id = 1L, icon = "/imagecache/12").toModel().icon)
-        assertNull(ChannelDto(id = 1L, icon = "http://example.invalid/logo.png").toModel().icon)
+    fun `cached icon selectors restore image cache artwork and remote URLs but drop malformed icons`() {
+        assertEquals("imagecache/12", Channel.create(ChannelId(1L), icon = ChannelIcon.ImageCache(ArtworkId(12))).toDto().icon)
+        assertEquals("imagecache/34", ChannelTag.create(ChannelTagId(1L), icon = ChannelIcon.ImageCache(ArtworkId(34))).toDto().icon)
+        assertEquals(ChannelIcon.ImageCache(ArtworkId(12)), ChannelDto(id = 1L, icon = "/imagecache/12").toModel().icon)
+        val url = "http://example.invalid/logo.png"
+        assertEquals(ChannelIcon.parse(url), ChannelDto(id = 1L, icon = url).toModel().icon)
         assertNull(ChannelTagDto(id = 1L, icon = "picon/x").toModel().icon)
+        assertNull(ChannelDto(id = 1L, icon = "https://").toModel().icon)
+        assertNull(ChannelTagDto(id = 1L, icon = "file:///logo.png").toModel().icon)
     }
 
     @Test
@@ -155,7 +159,10 @@ internal class CacheDtosTest {
         )
 
         val restored = EpgSnapshot.create(
-            events = snapshot.events.map { it.toDto().toModel() },
+            events = snapshot.events.map {
+                kotlinx.serialization.json.Json.decodeFromString(EpgEventDto.serializer(),
+                    kotlinx.serialization.json.Json.encodeToString(EpgEventDto.serializer(), it.toDto())).toModel()
+            },
             coverages = snapshot.coverages.map { it.toDto().toModel() },
         )
 

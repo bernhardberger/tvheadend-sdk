@@ -122,7 +122,8 @@ def pom_dependencies(module: str, version: str) -> set[tuple[str, str, str, str]
             (GROUP, "sdk-playback", version, "compile"),
             ("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.21", "compile"),
             (GROUP, "htsp", "1.0.0-rc.1", "runtime"),
-            ("org.jetbrains.kotlinx", "kotlinx-serialization-protobuf-jvm", "1.12.0", "runtime"),
+            ("org.jetbrains.kotlinx", "kotlinx-serialization-json-jvm", "1.11.0", "runtime"),
+            ("org.jetbrains.kotlinx", "kotlinx-serialization-protobuf-jvm", "1.11.0", "runtime"),
         },
         "sdk-media3": {
             (GROUP, "sdk-core", version, "compile"),
@@ -156,7 +157,9 @@ def module_variants(module: str, version: str) -> dict[str, tuple[str, set[tuple
         if scope == "compile"
     }
     runtime = api | {
-        (group, "kotlinx-serialization-protobuf" if artifact == "kotlinx-serialization-protobuf-jvm" else artifact, dependency_version)
+        (group, artifact.removesuffix("-jvm") if artifact in {
+            "kotlinx-serialization-protobuf-jvm", "kotlinx-serialization-json-jvm",
+        } else artifact, dependency_version)
         for group, artifact, dependency_version, scope in pom
         if scope == "runtime"
     }
@@ -499,7 +502,8 @@ def self_test() -> list[str]:
         (GROUP, "sdk-playback", "0.8.0", "compile"),
         ("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.21", "compile"),
         (GROUP, "htsp", "1.0.0-rc.1", "runtime"),
-        ("org.jetbrains.kotlinx", "kotlinx-serialization-protobuf-jvm", "1.12.0", "runtime"),
+        ("org.jetbrains.kotlinx", "kotlinx-serialization-json-jvm", "1.11.0", "runtime"),
+        ("org.jetbrains.kotlinx", "kotlinx-serialization-protobuf-jvm", "1.11.0", "runtime"),
     ]
     core_pom = ET.fromstring(f"""<project>
         <modelVersion>4.0.0</modelVersion><groupId>{GROUP}</groupId><artifactId>sdk-core</artifactId>
@@ -566,7 +570,7 @@ def self_test() -> list[str]:
     protobuf_dependency = variants[1]["dependencies"][-1]
     protobuf_dependency["version"]["requires"] = "1.10.0"
     expect_error(errors, "wrong protobuf module version", verify_core_metadata)
-    protobuf_dependency["version"]["requires"] = "1.12.0"
+    protobuf_dependency["version"]["requires"] = "1.11.0"
     variants[1]["dependencies"].remove(protobuf_dependency)
     expect_error(errors, "missing protobuf module dependency", verify_core_metadata)
 

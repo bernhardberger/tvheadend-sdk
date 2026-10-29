@@ -3,6 +3,7 @@
 package at.bernhardberger.tvheadend.sdk.core.gateway
 
 import at.bernhardberger.tvheadend.sdk.core.EpgCredit
+import java.util.Collections
 import kotlin.time.Duration
 import kotlin.time.Instant
 
@@ -220,8 +221,8 @@ internal class GatewayEpgEvent(
     internal val dvrEntryId: DvrEntryId? = null,
     internal val nextEventId: EventId? = null,
 ) {
-    internal val categories: List<String>? = categories?.toList()
-    internal val keywords: List<String>? = keywords?.toList()
+    internal val categories: List<String>? = categories?.toOwnedImmutableList()
+    internal val keywords: List<String>? = keywords?.toOwnedImmutableList()
     internal val credits: List<EpgCredit>? = credits?.toList()
 
     override fun toString(): String = "GatewayEpgEvent(<redacted>)"
@@ -262,11 +263,18 @@ internal class GatewayEpgQueryEvent(
     internal val dvrEntryId: DvrEntryId? = null,
     internal val nextEventId: EventId? = null,
 ) {
-    internal val categories: List<String>? = categories?.toList()
-    internal val keywords: List<String>? = keywords?.toList()
+    internal val categories: List<String>? = categories?.toOwnedImmutableList()
+    internal val keywords: List<String>? = keywords?.toOwnedImmutableList()
     internal val credits: List<EpgCredit>? = credits?.toList()
 
     override fun toString(): String = "GatewayEpgQueryEvent(<redacted>)"
+}
+
+// These owned values can be shared with the reducer without trusting caller-owned lists.
+private fun List<String>.toOwnedImmutableList(): List<String> = when (size) {
+    0 -> emptyList()
+    1 -> listOf(this[0])
+    else -> Collections.unmodifiableList(ArrayList(this))
 }
 
 internal class GatewayChannelMetadata(

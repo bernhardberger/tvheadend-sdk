@@ -7,6 +7,10 @@ import at.bernhardberger.tvheadend.sdk.core.CacheStatistics
 import at.bernhardberger.tvheadend.sdk.core.Channel
 import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
 import at.bernhardberger.tvheadend.sdk.core.ChannelId
+import at.bernhardberger.tvheadend.sdk.core.ChannelIcon
+import at.bernhardberger.tvheadend.sdk.core.ChannelTag
+import at.bernhardberger.tvheadend.sdk.core.ChannelTagId
+import at.bernhardberger.tvheadend.sdk.core.ArtworkId
 import at.bernhardberger.tvheadend.sdk.core.EpgEvent
 import at.bernhardberger.tvheadend.sdk.core.EpgCredit
 import at.bernhardberger.tvheadend.sdk.core.EpgCreditRole
@@ -72,6 +76,25 @@ internal class FileMetadataCacheStoreTest {
     private fun catalogFile(): File = File(File(File(root, "tvheadend-sdk"), namespace.value), "catalog.bin")
 
     private fun epgFile(): File = File(File(File(root, "tvheadend-sdk"), namespace.value), "epg.bin")
+
+    @Test
+    fun `saved catalog restores remote channel and tag URLs beside image cache IDs`() = runTest {
+        val icons = listOf(
+            ChannelIcon.parse("http://example.invalid/logo.png"),
+            ChannelIcon.parse("https://example.invalid:8443/logo%20two.png?size=2"),
+            ChannelIcon.parse("https://user:password@example.invalid/Das Erste Österreich|HD.png?name=Schöne Welt"),
+            ChannelIcon.ImageCache(ArtworkId(12)),
+            null,
+        )
+        val catalog = CachedCatalog(ChannelCatalog.create(
+            channels = icons.mapIndexed { index, icon -> Channel.create(ChannelId(index.toLong()), icon = icon) },
+            tags = icons.mapIndexed { index, icon -> ChannelTag.create(ChannelTagId(index.toLong()), icon = icon) },
+        ))
+        store().storeCatalog(namespace, catalog, storedAt)
+
+        // A new store instance restores the same values, before any server connection exists.
+        assertEquals(catalog, store().loadCatalog(namespace, storedAt))
+    }
 
     @Test
     fun `credits round trip with unknown roles order absence and explicit empty preserved`() = runTest {
@@ -168,6 +191,24 @@ internal class FileMetadataCacheStoreTest {
     }
 
     @Test
+    fun `millisecond timestamps round trip across whole second restore boundaries`() = runTest {
+        val past = storedAt - 6.hours
+        val through = storedAt + 24.hours
+        val events = listOf(
+            EpgEvent.create(EventId(1), start = past - 1.hours, stop = past - 1.milliseconds),
+            EpgEvent.create(EventId(2), start = past - 1.hours + 123.milliseconds, stop = past),
+            EpgEvent.create(EventId(3), start = through + 999.milliseconds, stop = through + 1.hours),
+            EpgEvent.create(EventId(4), start = through + 1_000.milliseconds, stop = through + 1.hours),
+        )
+        val cache = store()
+        cache.storeEpg(namespace, CachedEpg(EpgSnapshot.create(events)), storedAt)
+        restoreNow = storedAt + 999.milliseconds
+
+        // The cutoff compares whole seconds, while DTOs preserve millisecond precision.
+        assertEquals(events.subList(1, 3), requireNotNull(cache.loadEpg(namespace, storedAt)).snapshot.events)
+    }
+
+    @Test
     fun `intersected coverage preserves proven gaps even when no events remain in the window`() = runTest {
         val cache = store()
         val cut = storedAt + 24.hours
@@ -203,9 +244,10 @@ internal class FileMetadataCacheStoreTest {
                     val records = List(2) {
                         val offset = file.filePointer
                         file.readLong()
+                        file.readLong()
                         val length = file.readInt()
                         file.seek(offset)
-                        ByteArray(12 + length).also(file::readFully)
+                        ByteArray(20 + length).also(file::readFully)
                     }
                     file.seek(28)
                     file.write(records[1])
@@ -220,7 +262,7 @@ internal class FileMetadataCacheStoreTest {
     }
 
     @Test
-    fun `EPG4 writes all events ordered by start then id and does not decode the far tail`() = runTest {
+    fun `EPG5 writes all events ordered by start then id and does not decode the far tail`() = runTest {
         val cache = store()
         val events = listOf(3L, 2L, 1L).map { id ->
             val start = if (id == 3L) storedAt + 25.hours else storedAt
@@ -228,7 +270,7 @@ internal class FileMetadataCacheStoreTest {
         }
         cache.storeEpg(namespace, CachedEpg(EpgSnapshot.create(events)), storedAt)
         RandomAccessFile(epgFile(), "rw").use { file ->
-            assertEquals(0x45504734, file.readInt())
+            assertEquals(0x45504735, file.readInt())
             file.readLong()
             file.seek(file.filePointer + 4 + file.readInt()) // Empty refresh-times record.
             assertEquals(0, file.readInt()) // Coverage count.
@@ -237,14 +279,16 @@ internal class FileMetadataCacheStoreTest {
             val ids = mutableListOf<Long>()
             repeat(2) {
                 assertEquals(storedAt.epochSeconds, file.readLong())
+                assertEquals(storedAt.epochSeconds, file.readLong())
                 val record = ByteArray(file.readInt()).also(file::readFully)
-                ids += ProtoBuf.decodeFromByteArray(EpgEventDto.serializer(), record).id
+                ids += kotlinx.serialization.json.Json.decodeFromString(EpgEventDto.serializer(), record.decodeToString()).id
             }
             assertEquals(listOf(1L, 2L), ids)
             assertEquals((storedAt + 25.hours).epochSeconds, file.readLong())
             val tail = file.filePointer
+            file.readLong()
             val record = ByteArray(file.readInt()).also(file::readFully)
-            assertEquals(3L, ProtoBuf.decodeFromByteArray(EpgEventDto.serializer(), record).id)
+            assertEquals(3L, kotlinx.serialization.json.Json.decodeFromString(EpgEventDto.serializer(), record.decodeToString()).id)
             // No readable payload remains after the first out-of-window start. A decoder/read
             // crossing this boundary would reject the file instead of returning the near guide.
             file.setLength(tail)
@@ -284,7 +328,7 @@ internal class FileMetadataCacheStoreTest {
     }
 
     @Test
-    fun `EPG4 and catalog preserve receipt times independently of storedAt`() = runTest {
+    fun `EPG5 and catalog preserve receipt times independently of storedAt`() = runTest {
         val times = MetadataRefreshTimes(Instant.fromEpochMilliseconds(100), Instant.fromEpochMilliseconds(234))
         val queries = mapOf(ChannelId(1) to Instant.fromEpochMilliseconds(234), ChannelId(2) to storedAt)
         val catalog = sampleCatalog().copy(refreshTimes = times)
@@ -294,7 +338,70 @@ internal class FileMetadataCacheStoreTest {
         cache.storeEpg(namespace, epg, storedAt)
         assertEquals(catalog, cache.loadCatalog(namespace, storedAt))
         assertEquals(epg, cache.loadEpg(namespace, storedAt))
-        RandomAccessFile(epgFile(), "r").use { assertEquals(0x45504734, it.readInt()) }
+        RandomAccessFile(epgFile(), "r").use { assertEquals(0x45504735, it.readInt()) }
+    }
+
+    @Test
+    fun `expired payloads are skipped without decoding and the history boundary is inclusive`() = runTest {
+        val cache = store()
+        val events = listOf(
+            EpgEvent.create(EventId(1), start = storedAt - 8.hours, stop = storedAt - 7.hours),
+            EpgEvent.create(EventId(2), start = storedAt - 7.hours, stop = storedAt - 6.hours),
+            EpgEvent.create(EventId(3), start = storedAt, stop = storedAt + 1.hours),
+        )
+        cache.storeEpg(namespace, CachedEpg(EpgSnapshot.create(events)), storedAt)
+        RandomAccessFile(epgFile(), "rw").use { file ->
+            file.seek(28 + 16) // Header, then expired record's start/stop framing.
+            val length = file.readInt()
+            file.write(ByteArray(length) { 0 }) // Invalid JSON must never reach the decoder.
+        }
+        assertEquals(events.drop(1), requireNotNull(cache.loadEpg(namespace, storedAt)).snapshot.events)
+        assertTrue(epgFile().exists())
+    }
+
+    @Test
+    fun `expired payload skip still rejects truncated files and invalid lengths`() = runTest {
+        val cache = store()
+        val expired = CachedEpg(EpgSnapshot.create(listOf(
+            EpgEvent.create(EventId(1), start = storedAt - 8.hours, stop = storedAt - 7.hours),
+        )))
+        for (length in listOf<Int?>(null, -1, Int.MAX_VALUE)) {
+            cache.storeEpg(namespace, expired, storedAt)
+            RandomAccessFile(epgFile(), "rw").use { file ->
+                if (length == null) file.setLength(file.length() - 1)
+                else { file.seek(28 + 16); file.writeInt(length) }
+            }
+            assertNull(cache.loadEpg(namespace, storedAt))
+            assertFalse(epgFile().exists())
+        }
+    }
+
+    @Test
+    fun `EPG4 is invalidated without discarding catalog or refresh times`() = runTest {
+        val cache = store()
+        val catalog = sampleCatalog().copy(refreshTimes = MetadataRefreshTimes(storedAt, storedAt))
+        cache.storeCatalog(namespace, catalog, storedAt)
+        cache.storeEpg(namespace, sampleSnapshot(), storedAt)
+        RandomAccessFile(epgFile(), "rw").use { it.writeInt(0x45504734) }
+        assertNull(cache.loadEpg(namespace, storedAt))
+        assertFalse(epgFile().exists())
+        assertEquals(catalog, cache.loadCatalog(namespace, storedAt))
+    }
+
+    @Test
+    fun `stop prefix mismatch and invalid UTF8 event payloads invalidate the file`() = runTest {
+        val cache = store()
+        for (badUtf8 in listOf(false, true)) {
+            cache.storeEpg(namespace, CachedEpg(EpgSnapshot.create(listOf(
+                EpgEvent.create(EventId(1), start = storedAt, stop = storedAt),
+            ))), storedAt)
+            RandomAccessFile(epgFile(), "rw").use { file ->
+                if (badUtf8) { file.seek(28 + 20); file.writeByte(0xff) }
+                else { file.seek(28 + 8); file.writeLong(storedAt.epochSeconds + 1) }
+            }
+            assertNull(cache.loadEpg(namespace, storedAt))
+            assertFalse(epgFile().exists())
+        }
     }
 
     @Test
@@ -308,6 +415,134 @@ internal class FileMetadataCacheStoreTest {
                 assertNull(cache.loadEpg(namespace, storedAt))
                 assertFalse(epgFile().exists())
             }
+        }
+    }
+
+    @Test
+    fun `strict decoder rejects malformed text after valid unicode records`() = runTest {
+        val cache = store()
+        val events = listOf("Grüße 世界 🎬".repeat(100), "é", "BAD").mapIndexed { index, title ->
+            EpgEvent.create(EventId(index.toLong() + 1), start = storedAt, stop = storedAt, title = title)
+        }
+        val saved = CachedEpg(EpgSnapshot.create(events))
+        // All replacements are inside a JSON string: lenient UTF-8 would silently accept them.
+        for (malformed in listOf(byteArrayOf(0xc0.toByte(), 0xaf.toByte(), 0x21),
+            byteArrayOf(0xed.toByte(), 0xa0.toByte(), 0x80.toByte()),
+            byteArrayOf(0x80.toByte(), 0x21, 0x21))) {
+            cache.storeEpg(namespace, saved, storedAt)
+            assertEquals(events, requireNotNull(cache.loadEpg(namespace, storedAt)).snapshot.events)
+            RandomAccessFile(epgFile(), "rw").use { file ->
+                file.seek(28) // Empty receipt/coverage/query header.
+                repeat(2) {
+                    file.skipBytes(16)
+                    val length = file.readInt()
+                    file.skipBytes(length)
+                }
+                file.skipBytes(16)
+                val length = file.readInt()
+                val payloadStart = file.filePointer
+                val payload = ByteArray(length).also(file::readFully)
+                val marker = payload.decodeToString().indexOf("BAD")
+                assertTrue(marker >= 0)
+                file.seek(payloadStart + marker)
+                file.write(malformed)
+            }
+            assertNull(cache.loadEpg(namespace, storedAt))
+            assertFalse(epgFile().exists())
+        }
+        cache.storeEpg(namespace, saved, storedAt)
+        assertEquals(events, requireNotNull(cache.loadEpg(namespace, storedAt)).snapshot.events)
+    }
+
+    @Test
+    fun `restore keeps long short empty and growing unicode records independent`() = runTest {
+        val titles = listOf(
+            "ASCII".repeat(2_000), "x", "", "é", "世界", "🎬", "Grüße 世界 🎬".repeat(2_000),
+            "short", "", "🎬".repeat(20_000), "é", "last",
+        )
+        val events = titles.mapIndexed { index, title ->
+            EpgEvent.create(EventId(index.toLong() + 1), start = storedAt, stop = storedAt, title = title)
+        }
+        val cache = store()
+        cache.storeEpg(namespace, CachedEpg(EpgSnapshot.create(events)), storedAt)
+
+        val restored = requireNotNull(cache.loadEpg(namespace, storedAt)).snapshot.events
+        assertEquals(events, restored)
+        assertEquals(titles, restored.map { it.title })
+        // Reusing the store for another restore cannot alter strings retained by the first one.
+        assertEquals(events, requireNotNull(cache.loadEpg(namespace, storedAt)).snapshot.events)
+        assertEquals(titles, restored.map { it.title })
+    }
+
+    @Test
+    fun `empty record after a valid record cannot reuse previous decoded text`() = runTest {
+        val cache = store()
+        val events = listOf("long".repeat(1_000), "short").mapIndexed { index, title ->
+            EpgEvent.create(EventId(index.toLong() + 1), start = storedAt, stop = storedAt, title = title)
+        }
+        cache.storeEpg(namespace, CachedEpg(EpgSnapshot.create(events)), storedAt)
+        RandomAccessFile(epgFile(), "rw").use { file ->
+            file.seek(28 + 16)
+            val firstSize = file.readInt()
+            file.skipBytes(firstSize + 16)
+            file.writeInt(0)
+            file.setLength(file.filePointer)
+        }
+        assertNull(cache.loadEpg(namespace, storedAt))
+        assertFalse(epgFile().exists())
+    }
+
+    @Test
+    fun `incomplete UTF8 at complete record end is rejected after valid records`() = runTest {
+        val cache = store()
+        val events = listOf("long".repeat(1_000), "short").mapIndexed { index, title ->
+            EpgEvent.create(EventId(index.toLong() + 1), start = storedAt, stop = storedAt, title = title)
+        }
+        // A valid JSON object followed by an incomplete sequence must not be accepted as a
+        // successfully decoded prefix, nor completed with bytes left over from the long record.
+        for (suffix in listOf(byteArrayOf(0xc3.toByte()), byteArrayOf(0xe4.toByte(), 0xb8.toByte()),
+            byteArrayOf(0xf0.toByte(), 0x9f.toByte(), 0x8e.toByte()))) {
+            cache.storeEpg(namespace, CachedEpg(EpgSnapshot.create(events)), storedAt)
+            RandomAccessFile(epgFile(), "rw").use { file ->
+                file.seek(28 + 16)
+                val firstSize = file.readInt()
+                file.skipBytes(firstSize + 16)
+                val sizeOffset = file.filePointer
+                val size = file.readInt()
+                file.seek(sizeOffset)
+                file.writeInt(size + suffix.size)
+                file.seek(file.length())
+                file.write(suffix)
+            }
+            assertNull(cache.loadEpg(namespace, storedAt))
+            assertFalse(epgFile().exists())
+        }
+    }
+
+    @Test
+    fun `short record truncated within UTF8 or at record end cannot read old buffer tail`() = runTest {
+        val cache = store()
+        val events = listOf("long".repeat(1_000), "🎬").mapIndexed { index, title ->
+            EpgEvent.create(EventId(index.toLong() + 1), start = storedAt, stop = storedAt, title = title)
+        }
+        for (insideSequence in listOf(false, true)) {
+            cache.storeEpg(namespace, CachedEpg(EpgSnapshot.create(events)), storedAt)
+            RandomAccessFile(epgFile(), "rw").use { file ->
+                file.seek(28 + 16)
+                val firstSize = file.readInt()
+                file.skipBytes(firstSize + 16)
+                val size = file.readInt()
+                val payloadStart = file.filePointer
+                val payload = ByteArray(size).also(file::readFully)
+                val cut = if (insideSequence) {
+                    val sequenceStart = payload.indexOf(0xf0.toByte())
+                    assertTrue(sequenceStart >= 0)
+                    sequenceStart + 2
+                } else size - 1
+                file.setLength(payloadStart + cut)
+            }
+            assertNull(cache.loadEpg(namespace, storedAt))
+            assertFalse(epgFile().exists())
         }
     }
 
