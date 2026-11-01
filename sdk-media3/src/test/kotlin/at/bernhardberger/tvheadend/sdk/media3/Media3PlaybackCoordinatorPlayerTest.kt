@@ -237,7 +237,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
     }
 
     private fun skipLoadControl(clock: () -> Long = { 10_000 }): LiveStartLoadControl = LiveStartLoadControl(
-        object : androidx.media3.exoplayer.LoadControl by createTvheadendLoadControl() {
+        object : androidx.media3.exoplayer.LoadControl by createDefaultTvheadendLoadControl() {
             override fun shouldStartPlayback(parameters: androidx.media3.exoplayer.LoadControl.Parameters): Boolean = false
         }, TvheadendLiveStartBuffer(500.milliseconds), clock,
     )

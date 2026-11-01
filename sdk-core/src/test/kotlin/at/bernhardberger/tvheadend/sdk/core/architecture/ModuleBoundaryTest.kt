@@ -493,6 +493,7 @@ internal class ModuleBoundaryTest {
         val expectedAndroid = setOf(
             "ServerProfileEditReadResult",
             "TvheadendDiscovery",
+            "TvheadendDiscoveryTestFactory",
             "DiscoveredTvheadendServer",
             "TvheadendDiscoveryState",
             "TvheadendDiscoveryFailure",
@@ -504,7 +505,7 @@ internal class ModuleBoundaryTest {
             "addTvheadendArtwork",
         )
 
-        assertPublicInfrastructure("sdk-android", expectedAndroid, unannotatedCount = expectedAndroid.size)
+        assertPublicInfrastructure("sdk-android", expectedAndroid, unannotatedCount = expectedAndroid.size - 1)
         // The codec classification and live priority are intentionally stable for sdk-media3 callers.
         assertPublicInfrastructure("sdk-playback", expectedPlayback, unannotatedCount = 12)
         assertPublicInfrastructure("sdk-testing", expectedTesting, unannotatedCount = 10)
@@ -525,8 +526,8 @@ internal class ModuleBoundaryTest {
             ),
             fakePlaybackFunctions,
         )
-        // The load-control and coordinator factories retain stable names with experimental overloads.
-        assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 31, annotatedOverloadCount = 2)
+        // The coordinator factory retains stable and experimental overloads under the same name.
+        assertPublicInfrastructure("sdk-media3", expectedMedia3, unannotatedCount = 30, annotatedOverloadCount = 1)
 
         val coordinatorApi = File(
             "../sdk-media3/src/main/kotlin/at/bernhardberger/tvheadend/sdk/media3/" +
@@ -660,6 +661,7 @@ internal class ModuleBoundaryTest {
             "at.bernhardberger.tvheadend.sdk.testing.FakeServerProfileStore",
             "at.bernhardberger.tvheadend.sdk.core.SessionGenerationTestAuthority",
             "at.bernhardberger.tvheadend.sdk.core.TvheadendTestResultFactory",
+            "at.bernhardberger.tvheadend.sdk.android.TvheadendDiscoveryTestFactory",
             "at.bernhardberger.tvheadend.sdk.core.TvheadendTestingApi",
             "at.bernhardberger.tvheadend.sdk.testing.FakePlaybackApi",
         ).forEach { name -> enqueue(publicTypes[name]) }

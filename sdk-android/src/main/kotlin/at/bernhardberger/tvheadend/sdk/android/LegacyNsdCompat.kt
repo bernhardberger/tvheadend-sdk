@@ -21,8 +21,8 @@ internal object LegacyNsdCompat {
         )
     }
 
-    fun hostAddress(serviceInfo: NsdServiceInfo): String? =
-        (invoke(serviceInfo, "getHost", emptyArray()) as InetAddress?)?.hostAddress
+    fun host(serviceInfo: NsdServiceInfo): InetAddress? =
+        invoke(serviceInfo, "getHost", emptyArray()) as InetAddress?
 
     private fun invoke(
         receiver: Any,

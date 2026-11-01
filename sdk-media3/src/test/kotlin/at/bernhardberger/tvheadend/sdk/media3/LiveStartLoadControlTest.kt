@@ -37,7 +37,7 @@ internal class LiveStartLoadControlTest {
             val consumed = CountDownLatch(1)
             val nextDecision = CountDownLatch(1)
             val intercept = AtomicBoolean(true)
-            val control = LiveStartLoadControl(createTvheadendLoadControl(), TvheadendLiveStartBuffer(500.milliseconds)) {
+            val control = LiveStartLoadControl(createDefaultTvheadendLoadControl(), TvheadendLiveStartBuffer(500.milliseconds)) {
                 if (Thread.currentThread() !== applicationThread && intercept.compareAndSet(true, false)) {
                     snapshotRead.countDown()
                     check(resumeDecision.await(5, TimeUnit.SECONDS))
@@ -77,7 +77,7 @@ internal class LiveStartLoadControlTest {
     fun `CAS retry rechecks completion and cancellation injected while eligibility reads the clock`() {
         for (cancel in listOf(false, true)) {
             var duringClock: (() -> Unit)? = null
-            val control = LiveStartLoadControl(createTvheadendLoadControl(), TvheadendLiveStartBuffer(500.milliseconds)) {
+            val control = LiveStartLoadControl(createDefaultTvheadendLoadControl(), TvheadendLiveStartBuffer(500.milliseconds)) {
                 val action = duringClock
                 duringClock = null
                 action?.invoke()
@@ -96,7 +96,7 @@ internal class LiveStartLoadControlTest {
 
     @Test
     fun `rebuffer predating skip remains eligible in flight and after acknowledgement`() {
-        val control = LiveStartLoadControl(createTvheadendLoadControl(), TvheadendLiveStartBuffer(500.milliseconds)) { 10_000 }
+        val control = LiveStartLoadControl(createDefaultTvheadendLoadControl(), TvheadendLiveStartBuffer(500.milliseconds)) { 10_000 }
         control.onPrepared(playerId)
         for (acknowledged in listOf(false, true)) {
             val mark = control.beginSkip(PlaybackTargetToken(), live.getUidOfPeriod(0))
@@ -109,7 +109,7 @@ internal class LiveStartLoadControlTest {
     @Test
     fun `grace bounds restart onset not the final readiness decision and preserves unconfirmed skips`() {
         var now = 10_000L
-        val control = LiveStartLoadControl(createTvheadendLoadControl(), TvheadendLiveStartBuffer(500.milliseconds)) { now }
+        val control = LiveStartLoadControl(createDefaultTvheadendLoadControl(), TvheadendLiveStartBuffer(500.milliseconds)) { now }
         control.onPrepared(playerId)
         for (disposition in listOf(TimeshiftCommandDisposition.ACCEPTED, TimeshiftCommandDisposition.UNCONFIRMED)) {
             val mark = control.beginSkip(PlaybackTargetToken(), live.getUidOfPeriod(0))
@@ -127,7 +127,7 @@ internal class LiveStartLoadControlTest {
 
     @Test
     fun `refusal cancellation retirement and mismatched periods clear marks without late result revival`() {
-        val control = LiveStartLoadControl(createTvheadendLoadControl(), TvheadendLiveStartBuffer(500.milliseconds)) { 10_000 }
+        val control = LiveStartLoadControl(createDefaultTvheadendLoadControl(), TvheadendLiveStartBuffer(500.milliseconds)) { 10_000 }
         control.onPrepared(playerId)
         for (mode in listOf("refused", "cancelled", "retired", "period", "recording")) {
             val token = PlaybackTargetToken()
@@ -139,7 +139,7 @@ internal class LiveStartLoadControlTest {
                 "period" -> {
                     val other = parameters(500, rebuffering = true, periodUid = Any())
                     // Unknown periods delegate; the fake delegate avoids Media3's own unknown-UID rejection.
-                    val fake = LiveStartLoadControl(object : LoadControl by createTvheadendLoadControl() {
+                    val fake = LiveStartLoadControl(object : LoadControl by createDefaultTvheadendLoadControl() {
                         override fun shouldStartPlayback(parameters: LoadControl.Parameters) = false
                     }, TvheadendLiveStartBuffer(500.milliseconds)) { 10_000 }
                     val old = fake.beginSkip(token, live.getUidOfPeriod(0))
@@ -157,7 +157,7 @@ internal class LiveStartLoadControlTest {
 
     @Test
     fun `old completion and cancellation cannot change an overlapping newer skip`() {
-        val control = LiveStartLoadControl(createTvheadendLoadControl(), TvheadendLiveStartBuffer(500.milliseconds)) { 10_000 }
+        val control = LiveStartLoadControl(createDefaultTvheadendLoadControl(), TvheadendLiveStartBuffer(500.milliseconds)) { 10_000 }
         control.onPrepared(playerId)
         val old = control.beginSkip(PlaybackTargetToken(), live.getUidOfPeriod(0))
         val newer = control.beginSkip(PlaybackTargetToken(), live.getUidOfPeriod(0))
@@ -195,7 +195,7 @@ internal class LiveStartLoadControlTest {
         val deciding = CountDownLatch(1)
         val updated = CountDownLatch(1)
         val buffer = TvheadendLiveStartBuffer(500.milliseconds)
-        val control = LiveStartLoadControl(createTvheadendLoadControl(), buffer) {
+        val control = LiveStartLoadControl(createDefaultTvheadendLoadControl(), buffer) {
             deciding.countDown()
             check(updated.await(5, TimeUnit.SECONDS))
             10_000
@@ -254,7 +254,7 @@ internal class LiveStartLoadControlTest {
     @Test
     fun `every current callback explicitly forwards including unknown periods`() {
         val calls = mutableListOf<String>()
-        val allocator = createTvheadendLoadControl().getAllocator(playerId)
+        val allocator = createDefaultTvheadendLoadControl().getAllocator(playerId)
         val parameters = parameters(100, timeline = Timeline.EMPTY)
         val delegate = object : LoadControl {
             override fun onPrepared(playerId: PlayerId) { calls += "prepared" }

@@ -291,7 +291,7 @@ internal class ArtworkCacheReadTest {
             }
 
             override fun writeAtomically(file: File, bytes: ByteArray) {
-                if (refuseIndex && file.name == "index.bin") throw IOException("Synthetic index failure")
+                if (refuseIndex && file.name.startsWith("index-")) throw IOException("Synthetic index failure")
                 DiskArtworkCacheFiles.writeAtomically(file, bytes)
             }
         }

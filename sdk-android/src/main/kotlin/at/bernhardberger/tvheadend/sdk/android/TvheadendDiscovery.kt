@@ -3,9 +3,14 @@
 package at.bernhardberger.tvheadend.sdk.android
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import android.os.Build
+import java.net.InetAddress
 import java.util.Collections
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -20,10 +25,20 @@ public class TvheadendDiscovery internal constructor(
             requireNotNull((context.applicationContext ?: context).getSystemService(NsdManager::class.java)) {
                 "NSD service is unavailable"
             },
+            requireNotNull((context.applicationContext ?: context).getSystemService(ConnectivityManager::class.java)) {
+                "Connectivity service is unavailable"
+            },
         ),
     )
 
-    /** Cold discovery state; collection owns NSD registration, resolution, and cleanup. */
+    /**
+     * Emits reachable LAN endpoints, preferring IPv4, for each cold collection.
+     *
+     * Collection owns NSD registration, bounded address recovery, TCP probes, and cleanup.
+     * A successful probe sends no credentials or payload and only checks reachability at that
+     * instant; later connection and authentication can still fail. Unreachable services are omitted.
+     * After publication, NSD loss removes an entry; network/TCP reachability is not continuously monitored.
+     */
     public val state: Flow<TvheadendDiscoveryState> = callbackFlow {
         val lock = Any()
         val resolved = linkedMapOf<String, DiscoveredTvheadendServer>()
@@ -140,16 +155,20 @@ internal interface NsdDiscoveryListener {
 
 private class AndroidNsdDiscoveryBackend(
     private val manager: NsdManager,
+    private val connectivity: ConnectivityManager,
 ) : NsdDiscoveryBackend {
     override fun start(
         serviceType: String,
         listener: NsdDiscoveryListener,
     ): CallbackRegistration {
+        val workers = DiscoveryWorkers().also { it.start() }
         val registration = NsdDiscoveryRegistration(
             platform = AndroidNsdPlatform(manager),
             coordinator = sharedNsdResolutionCoordinator,
             serviceType = serviceType,
             listener = listener,
+            endpoints = DiscoveryEndpointSelector(AndroidDiscoveryNetworks(connectivity)),
+            workers = workers,
         )
         registration.start()
         return registration
@@ -161,6 +180,8 @@ internal class NsdDiscoveryRegistration(
     private val coordinator: NsdResolutionCoordinator,
     private val serviceType: String,
     private val listener: NsdDiscoveryListener,
+    private val endpoints: DiscoveryEndpointSelector,
+    private val workers: DiscoveryWorkQueue,
 ) : CallbackRegistration {
     private val lock = Any()
     private val pending = ArrayDeque<PendingResolution>()
@@ -169,6 +190,7 @@ internal class NsdDiscoveryRegistration(
     private var discoveryRequested = false
     private var discoveryStarted = false
     private var stopRequested = false
+    @Volatile
     private var closed = false
 
     private var stopAttempts = 0
@@ -203,7 +225,7 @@ internal class NsdDiscoveryRegistration(
             }
             val pendingResolution = PendingResolution(key, service)
             val shouldResolve = synchronized(lock) {
-                if (closed || key in presentServices) {
+                if (closed || key in presentServices || presentServices.size >= MAX_PRESENT_SERVICES) {
                     false
                 } else {
                     presentServices[key] = pendingResolution
@@ -218,12 +240,11 @@ internal class NsdDiscoveryRegistration(
 
         override fun onServiceLost(service: NsdServiceRecord) {
             val key = service.key
-            val wasPresent = synchronized(lock) {
+            synchronized(lock) {
                 pending.removeAll { it.key == key }
-                presentServices.remove(key) != null
-            }
-            if (wasPresent) {
-                listener.onLost(key)
+                val removed = presentServices.remove(key)
+                removed?.cancellation?.close()
+                if (removed != null && !closed) listener.onLost(key)
             }
         }
 
@@ -268,11 +289,13 @@ internal class NsdDiscoveryRegistration(
             } else {
                 closed = true
                 pending.clear()
+                presentServices.values.forEach { it.cancellation.close() }
                 presentServices.clear()
                 discoveryStarted && !stopRequested
             }
         }
         coordinator.cancel(this)
+        workers.close()
         if (shouldStop) {
             stopDiscovery()
         }
@@ -288,7 +311,9 @@ internal class NsdDiscoveryRegistration(
 
         coordinator.resolve(
             owner = this,
-            isCancelled = { synchronized(lock) { closed } },
+            // The coordinator holds its monitor while reading this predicate. Never take ours:
+            // publication callbacks can reentrantly close this registration and cancel its queue.
+            isCancelled = { closed },
         ) { completion ->
             val shouldStart = synchronized(lock) {
                 !closed && resolving === next && presentServices[next.key] === next
@@ -321,41 +346,69 @@ internal class NsdDiscoveryRegistration(
         completion: CallbackRegistration,
     ): NsdPlatformResolveListener =
         object : NsdPlatformResolveListener {
+            private var completed = false
+
+            private fun accept(): Boolean = synchronized(lock) {
+                if (completed) false else {
+                    completed = true
+                    true
+                }
+            }
+
             override fun onResolveFailed() {
+                if (!accept()) return
                 retryOrRetireResolution(pendingResolution)
                 completion.close()
                 resolveNext()
             }
 
             override fun onServiceResolved(service: ResolvedNsdService) {
-                val host = service.host
-                val valid =
-                    service.name.isNotBlank() &&
-                        !host.isNullOrBlank() &&
-                        service.port in 1..65_535
+                if (!accept()) return
+                val valid = service.name.isNotBlank() && service.port in 1..65_535
                 val stillPresent = if (valid) {
                     finishResolution(pendingResolution)
                 } else {
                     retryOrRetireResolution(pendingResolution)
                     false
                 }
-                try {
-                    if (stillPresent) {
-                        listener.onResolved(
-                            pendingResolution.key,
-                            DiscoveredTvheadendServer(
-                                name = service.name,
-                                host = host.orEmpty(),
-                                port = service.port,
-                            ),
-                        )
-                    }
-                } finally {
-                    completion.close()
-                    resolveNext()
+                // The global legacy NSD slot is released before any network work is admitted.
+                completion.close()
+                resolveNext()
+                if (stillPresent && !workers.offer { selectEndpoint(pendingResolution, service) }) {
+                    retireResolution(pendingResolution)
                 }
             }
         }
+
+    private fun selectEndpoint(pendingResolution: PendingResolution, service: ResolvedNsdService) {
+        try {
+            selectAndPublishEndpoint(pendingResolution, service)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: RuntimeException) {
+            // A platform failure must not escape a worker with private endpoint details.
+            retireResolution(pendingResolution)
+        }
+    }
+
+    private fun selectAndPublishEndpoint(pendingResolution: PendingResolution, service: ResolvedNsdService) {
+        val endpoint = endpoints.select(service, pendingResolution.cancellation) { candidate ->
+            synchronized(lock) {
+                if (closed || presentServices[pendingResolution.key] !== pendingResolution) {
+                    return@synchronized false
+                }
+                val host = candidate.takeIf { it.isCurrent() }?.address?.hostAddress
+                    ?: return@synchronized false
+                // isCurrent is a platform call and can reenter loss/close callbacks.
+                if (closed || presentServices[pendingResolution.key] !== pendingResolution) {
+                    return@synchronized false
+                }
+                listener.onResolved(pendingResolution.key, DiscoveredTvheadendServer(service.name, host, service.port))
+                true
+            }
+        }
+        if (endpoint == null) retireResolution(pendingResolution)
+    }
 
     private fun finishResolution(pendingResolution: PendingResolution): Boolean = synchronized(lock) {
         if (resolving === pendingResolution) {
@@ -371,6 +424,7 @@ internal class NsdDiscoveryRegistration(
             }
             if (presentServices[pendingResolution.key] === pendingResolution) {
                 presentServices.remove(pendingResolution.key)
+                pendingResolution.cancellation.close()
             }
         }
     }
@@ -389,6 +443,7 @@ internal class NsdDiscoveryRegistration(
                 pending += pendingResolution
             } else if (presentServices[pendingResolution.key] === pendingResolution) {
                 presentServices.remove(pendingResolution.key)
+                pendingResolution.cancellation.close()
             }
         }
     }
@@ -403,6 +458,7 @@ internal class NsdDiscoveryRegistration(
             } else {
                 closed = true
                 pending.clear()
+                presentServices.values.forEach { it.cancellation.close() }
                 presentServices.clear()
                 FailurePlan(
                     notify = true,
@@ -412,6 +468,7 @@ internal class NsdDiscoveryRegistration(
         }
         if (plan.notify) {
             coordinator.cancel(this)
+            workers.close()
             listener.onFailed(failure)
         }
         if (plan.stop) {
@@ -477,18 +534,19 @@ internal data class NsdServiceRecord(
 
 internal data class ResolvedNsdService(
     val name: String,
-    val host: String?,
+    val addresses: List<InetAddress>,
     val port: Int,
+    val network: Network? = null,
 ) {
     override fun toString(): String = "ResolvedNsdService(<redacted>)"
 }
 
-internal class NsdResolutionCoordinator {
+internal open class NsdResolutionCoordinator {
     private val lock = Any()
     private val pending = ArrayDeque<ResolutionRequest>()
     private var active = false
 
-    fun resolve(
+    open fun resolve(
         owner: Any,
         isCancelled: () -> Boolean,
         start: (CallbackRegistration) -> Unit,
@@ -613,8 +671,13 @@ private class AndroidNsdPlatform(
                     val resolved = try {
                         ResolvedNsdService(
                             name = serviceInfo.serviceName,
-                            host = LegacyNsdCompat.hostAddress(serviceInfo),
+                            addresses = if (Build.VERSION.SDK_INT >= 34) {
+                                serviceInfo.hostAddresses
+                            } else {
+                                listOfNotNull(LegacyNsdCompat.host(serviceInfo))
+                            },
                             port = serviceInfo.port,
+                            network = if (Build.VERSION.SDK_INT >= 33) serviceInfo.network else null,
                         )
                     } catch (_: RuntimeException) {
                         listener.onResolveFailed()
@@ -631,6 +694,7 @@ internal data class PendingResolution(
     val key: String,
     val service: NsdServiceRecord,
     var attempts: Int = 1,
+    val cancellation: DiscoveryCancellation = DiscoveryCancellation(),
 ) {
     override fun toString(): String = "PendingResolution(<redacted>)"
 }
@@ -642,6 +706,7 @@ private data class FailurePlan(
 
 private const val MAX_STOP_ATTEMPTS: Int = 2
 private const val MAX_RESOLVE_ATTEMPTS: Int = 2
+private const val MAX_PRESENT_SERVICES: Int = 64
 
 private val sharedNsdResolutionCoordinator = NsdResolutionCoordinator()
 

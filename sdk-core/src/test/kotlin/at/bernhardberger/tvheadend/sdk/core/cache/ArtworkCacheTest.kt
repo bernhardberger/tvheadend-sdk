@@ -127,7 +127,7 @@ internal class ArtworkCacheTest {
         assertEquals(CacheStatistics.EMPTY, runtime.statistics.value)
         runtime.loadArtwork(namespace, id, { true }) { available() }
         runtime.shutdown()
-        File(directory, "index.bin").writeBytes(byteArrayOf(0))
+        File(directory, "index-1.bin").writeBytes(byteArrayOf(0))
         // The index is disposable startup state, held in memory for the lifetime of one runtime.
         val restarted = runtime()
         assertSame(unavailable, restarted.loadArtwork(namespace, id, { true }) { unavailable })
@@ -166,7 +166,7 @@ internal class ArtworkCacheTest {
     fun `truncated indexes are disposable and replacing an entry resets retention`() = runTest {
         val store = FileArtworkCacheStore(root)
         store.store(namespace, id, bytes, now, now - 10.seconds, 6)
-        val index = File(root, "tvheadend-sdk/${namespace.value}/artwork/index.bin")
+        val index = File(root, "tvheadend-sdk/${namespace.value}/artwork/index-1.bin")
         val encoded = index.readBytes()
         for (length in encoded.indices) {
             index.writeBytes(encoded.copyOf(length))

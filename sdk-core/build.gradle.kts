@@ -137,6 +137,7 @@ dependencies {
 }
 
 tasks.named<Test>("test") {
+    systemProperty("tvh.restore.profile", providers.gradleProperty("tvh.restore.profile").getOrElse("false"))
     // Architecture tests inspect sibling source directly, outside this module's test classpath.
     inputs.files(rootProject.fileTree(".") {
         include("sdk-*/src/main/**/*.kt", "sdk-*/src/main/**/*.java")

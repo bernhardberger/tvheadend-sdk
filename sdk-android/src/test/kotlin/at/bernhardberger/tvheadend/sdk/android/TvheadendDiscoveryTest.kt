@@ -4,6 +4,7 @@ package at.bernhardberger.tvheadend.sdk.android
 
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import java.net.InetAddress
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
@@ -110,7 +111,7 @@ internal class TvheadendDiscoveryTest {
 
         assertEquals(3, platform.resolutions.size)
         platform.resolutions.last().listener.onServiceResolved(
-            ResolvedNsdService("Tvheadend", "192.0.2.20", 9_982),
+            resolvedService("Tvheadend", "192.0.2.20"),
         )
         assertEquals(listOf("Tvheadend"), events.resolvedKeys)
     }
@@ -126,12 +127,12 @@ internal class TvheadendDiscoveryTest {
         platform.started()
         platform.found(first)
         platform.resolutions.single().listener.onServiceResolved(
-            ResolvedNsdService("Tvheadend", null, 9_982),
+            ResolvedNsdService("Tvheadend", emptyList(), 0),
         )
 
         assertEquals(2, platform.resolutions.size)
         platform.resolutions.last().listener.onServiceResolved(
-            ResolvedNsdService("Tvheadend", "192.0.2.20", 9_982),
+            resolvedService("Tvheadend", "192.0.2.20"),
         )
         assertEquals(listOf("Tvheadend"), events.resolvedKeys)
     }
@@ -150,13 +151,13 @@ internal class TvheadendDiscoveryTest {
         platform.lost(old)
         platform.found(replacement)
         platform.resolutions.first().listener.onServiceResolved(
-            ResolvedNsdService("Old", "192.0.2.10", 9_982),
+            resolvedService("Old", "192.0.2.10"),
         )
 
         assertTrue(events.resolvedKeys.isEmpty())
         assertEquals(2, platform.resolutions.size)
         platform.resolutions.last().listener.onServiceResolved(
-            ResolvedNsdService("Replacement", "192.0.2.11", 9_982),
+            resolvedService("Replacement", "192.0.2.11"),
         )
         assertEquals(listOf("Tvheadend"), events.resolvedKeys)
         assertEquals("Replacement", events.resolvedServers.single().name)
@@ -198,7 +199,7 @@ internal class TvheadendDiscoveryTest {
         assertEquals(listOf("First"), platform.resolutions.map { it.service.key })
         second.close()
         platform.resolutions.single().listener.onServiceResolved(
-            ResolvedNsdService("First", "192.0.2.20", 9_982),
+            resolvedService("First", "192.0.2.20"),
         )
         assertEquals(listOf("First"), platform.resolutions.map { it.service.key })
     }
@@ -268,7 +269,7 @@ internal class TvheadendDiscoveryTest {
         )
         val rendered = listOf(
             record.toString(),
-            ResolvedNsdService("Tvheadend on secret.invalid", "192.0.2.20", 9_982).toString(),
+            resolvedService("Tvheadend on secret.invalid", "192.0.2.20").toString(),
             PendingResolution(record.key, record).toString(),
         )
 
@@ -312,7 +313,7 @@ private class FakeNsdDiscoveryBackend : NsdDiscoveryBackend {
     }
 }
 
-private class FakeNsdPlatform(
+internal class FakeNsdPlatform(
     private var stopFailures: Int = 0,
 ) : NsdPlatform {
     internal data class Resolution(
@@ -363,7 +364,7 @@ private class FakeNsdPlatform(
     }
 }
 
-private class RecordingNsdDiscoveryListener : NsdDiscoveryListener {
+internal class RecordingNsdDiscoveryListener : NsdDiscoveryListener {
     internal val resolvedKeys = mutableListOf<String>()
     internal val resolvedServers = mutableListOf<DiscoveredTvheadendServer>()
     internal val failures = mutableListOf<TvheadendDiscoveryFailure>()
@@ -380,19 +381,23 @@ private class RecordingNsdDiscoveryListener : NsdDiscoveryListener {
     }
 }
 
-private fun registration(
+internal fun registration(
     platform: NsdPlatform,
     listener: NsdDiscoveryListener,
     coordinator: NsdResolutionCoordinator = NsdResolutionCoordinator(),
+    network: DiscoveryNetwork = FakeDiscoveryNetwork(),
+    workers: DiscoveryWorkQueue = ImmediateDiscoveryWork(),
 ): NsdDiscoveryRegistration =
     NsdDiscoveryRegistration(
         platform = platform,
         coordinator = coordinator,
         serviceType = HTSP_SERVICE_TYPE,
         listener = listener,
+        endpoints = DiscoveryEndpointSelector { listOf(network) },
+        workers = workers,
     )
 
-private fun serviceRecord(
+internal fun serviceRecord(
     name: String,
     serviceType: String = "_HTSP._TCP",
 ): NsdServiceRecord =
@@ -404,3 +409,35 @@ private fun serviceRecord(
 
 private fun server(name: String, host: String): DiscoveredTvheadendServer =
     DiscoveredTvheadendServer(name = name, host = host, port = 9_982)
+
+internal fun resolvedService(name: String, vararg hosts: String): ResolvedNsdService =
+    ResolvedNsdService(name, hosts.map(InetAddress::getByName), 9_982)
+
+internal class ImmediateDiscoveryWork : DiscoveryWorkQueue {
+    override fun offer(work: () -> Unit): Boolean {
+        work()
+        return true
+    }
+
+    override fun close() = Unit
+}
+
+internal class FakeDiscoveryNetwork : DiscoveryNetwork {
+    var current: () -> Boolean = { true }
+    var recovered: List<InetAddress> = emptyList()
+    var reachable: (InetAddress) -> Boolean = { true }
+    val probes = mutableListOf<InetAddress>()
+    var recoveries = 0
+
+    override fun isCurrent(): Boolean = current()
+
+    override fun recoverIpv4(name: String, port: Int, cancellation: DiscoveryCancellation): List<InetAddress> {
+        recoveries += 1
+        return recovered
+    }
+
+    override fun connects(address: InetAddress, port: Int, cancellation: DiscoveryCancellation): Boolean {
+        probes += address
+        return reachable(address)
+    }
+}

@@ -9,6 +9,7 @@ package at.bernhardberger.tvheadend.sdk.consumer
 import android.content.Context
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
+import at.bernhardberger.tvheadend.sdk.android.DiscoveredTvheadendServer
 import at.bernhardberger.tvheadend.sdk.android.TvheadendConnectivity
 import at.bernhardberger.tvheadend.sdk.android.TvheadendConnectivityStatus
 import at.bernhardberger.tvheadend.sdk.android.TvheadendDiscovery
@@ -133,6 +134,9 @@ public fun stagedSession(context: Context): TvheadendSession = createTvheadendSe
 
 public fun stagedDiscovery(context: Context): Flow<TvheadendDiscoveryState> =
     TvheadendDiscovery(context).state
+
+public fun stagedDiscoveredServer(name: String, host: String, port: Int): DiscoveredTvheadendServer =
+    DiscoveredTvheadendServer(name, host, port)
 
 public fun stagedConnectivity(context: Context): Flow<TvheadendConnectivityStatus> =
     TvheadendConnectivity(context).status

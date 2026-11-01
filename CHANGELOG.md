@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.38.0]
+
+Released 2026-11-01.
+
+### Added
+
+- Add `TvheadendDiscoveryTestFactory.discovering(servers)` in `sdk-android` behind
+  `TvheadendTestingApi`. Consumer tests can construct immutable discovery snapshots
+  without reflection or Android discovery. The factory copies the supplied list.
+
+### Changed
+
+- BREAKING: remove the no-argument `createTvheadendLoadControl(): LoadControl`
+  factory. Pass a `TvheadendLiveStartBuffer` to the remaining experimental factory,
+  then use the returned handle's `configure(builder)` when building the app-owned
+  player. Buffer thresholds and the existing live-start policy are unchanged.
+
+### Fixed
+
+- Prefer reachable IPv4 endpoints in Android discovery, including an IPv4 mDNS
+  fallback when older Android NSD returns only IPv6. Discovery omits endpoints
+  that fail a bounded TCP-connect check and rejects unscoped link-local IPv6.
+  Legacy discovery tries each eligible LAN instead of omitting ambiguous
+  multi-LAN results. Missing local IPv4 prefixes disable mDNS recovery on that
+  LAN without preventing probes of already known addresses or other LANs.
+- Persist artwork metadata in 32 fixed protobuf shards instead of rewriting the
+  full index for each store. Existing indexes migrate on admission; interrupted
+  migration preserves completed bucket replacements and deletion tombstones.
+  Stores still persist payload and index before returning. Cold admission reads
+  more index files, and access-time flushing can write multiple shards.
+- Strengthen saved-guide regressions for malformed later records, literal
+  replacement characters, buffer reuse and cancellation. The strict reusable-buffer
+  decoder and guide format are unchanged after evaluating alternative readers.
+
 ## [0.37.0]
 
 Released 2026-10-29.

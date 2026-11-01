@@ -13,7 +13,12 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.protobuf.ProtoBuf
 import kotlin.time.Instant
 
-/** Index operations are serialized by the runtime; [read] runs outside its artwork lock. */
+/**
+ * Index operations are serialized by the runtime; [read] runs outside its artwork lock.
+ * Each mutation publishes its payload before its index shard. Process interruption can lose
+ * the interrupted entry, but digest validation never accepts a mismatched payload. Completed
+ * writes survive process restart; atomic rename alone makes no power-loss/fsync guarantee.
+ */
 internal class FileArtworkCacheStore(root: File, private val files: ArtworkCacheFiles = DiskArtworkCacheFiles) {
     private val namespacesRoot = File(root, "tvheadend-sdk")
     private val indexes = mutableMapOf<File, Index>()
@@ -22,21 +27,30 @@ internal class FileArtworkCacheStore(root: File, private val files: ArtworkCache
         private set
 
     internal class Entry(var value: ArtworkEntryDto)
-    private class Index(val entries: MutableMap<Int, Entry>, var dirty: Boolean = false) {
+    private class Index(val entries: MutableMap<Int, Entry>, var legacy: Boolean = false) {
+        val shards = Array(INDEX_SHARDS) { mutableMapOf<Int, Entry>() }
+        val dirtyShards = mutableSetOf<Int>()
         var bytes = entries.values.sumOf { it.value.size }
         // Removing/replacing the oldest entry may leave a conservative lower bound until prune.
         var oldestStoredAt = entries.values.minOfOrNull { it.value.storedAt } ?: Long.MAX_VALUE
 
+        init {
+            entries.forEach { (id, entry) -> shards[shard(id)][id] = entry }
+            if (legacy) dirtyShards.addAll(shards.indices)
+        }
+
         fun put(id: Int, entry: Entry) {
             val previous = entries.put(id, entry)
+            shards[shard(id)][id] = entry
             bytes += entry.value.size - (previous?.value?.size ?: 0)
             oldestStoredAt = minOf(oldestStoredAt, entry.value.storedAt)
-            dirty = true
+            dirtyShards.add(shard(id))
         }
 
         fun remove(id: Int) {
             bytes -= entries.remove(id)?.value?.size ?: 0
-            dirty = true
+            shards[shard(id)].remove(id)
+            dirtyShards.add(shard(id))
         }
 
         fun refreshOldestStoredAt() {
@@ -87,15 +101,23 @@ internal class FileArtworkCacheStore(root: File, private val files: ArtworkCache
         } else {
             pending.entry.value = pending.entry.value.copy(lastAccess = now.toEpochMilliseconds())
         }
-        index.dirty = true
+        index.dirtyShards.add(shard(id))
     }
 
     /** Last-access updates are disposable; the runtime batches them and flushes at stop. */
     fun flush() {
         indexes.forEach { (directory, index) ->
-            if (index.dirty) safely {
-                writeIndex(directory, index.entries.mapValues { it.value.value })
-                index.dirty = false
+            val dirty = index.dirtyShards.iterator()
+            while (dirty.hasNext()) {
+                val shard = dirty.next()
+                safely {
+                    writeShard(directory, shard, index.shards[shard].mapValues { it.value.value })
+                    dirty.remove()
+                }
+            }
+            if (index.legacy && index.dirtyShards.isEmpty()) safely {
+                val legacy = File(directory, "index.bin")
+                if (files.delete(legacy) || files.length(legacy) == 0L) index.legacy = false
             }
         }
     }
@@ -120,7 +142,6 @@ internal class FileArtworkCacheStore(root: File, private val files: ArtworkCache
                 files.delete(File(directory, id.value.toString()))
                 index.remove(id.value)
             }
-            index.dirty = true
             revision++
         }
         prune(notBefore, maxBytes)
@@ -179,36 +200,55 @@ internal class FileArtworkCacheStore(root: File, private val files: ArtworkCache
     }
 
     private fun index(directory: File, notBefore: Instant): Index = indexes.getOrPut(directory) {
-        Index(readIndex(directory, notBefore).mapValues { Entry(it.value) }.toMutableMap()).also { revision++ }
+        readIndex(directory, notBefore).also { revision++ }
     }
 
-    private fun readIndex(directory: File, notBefore: Instant): MutableMap<Int, ArtworkEntryDto> {
-        val file = File(directory, "index.bin")
-        val index = safely {
-            ProtoBuf.decodeFromByteArray(ArtworkIndexDto.serializer(), files.read(file))
+    private fun readIndex(directory: File, notBefore: Instant): Index {
+        val children = files.list(directory).toSet()
+        val shardFiles = (0 until INDEX_SHARDS).map { shardFile(directory, it) }.toSet()
+        val legacy = children.any { it.name == "index.bin" }
+        val previous = if (legacy) safely {
+            ProtoBuf.decodeFromByteArray(ArtworkIndexDto.serializer(), files.read(File(directory, "index.bin")))
                 .takeIf { it.schemaVersion == 1 }
-        }?.entries.orEmpty().toMutableMap()
-        val changed = index.entries.removeAll { (id, entry) ->
+        } else null
+        val entries = previous?.entries.orEmpty().toMutableMap()
+
+        // A shard, including an empty/corrupt shard, supersedes its entire legacy bucket.
+        // Publish all buckets before deleting the legacy index: interruption is replay-safe.
+        for (bucket in 0 until INDEX_SHARDS) {
+            val file = shardFile(directory, bucket)
+            if (file !in children) continue
+            if (legacy) entries.keys.removeAll { shard(it) == bucket }
+            val restored = safely {
+                ProtoBuf.decodeFromByteArray(ArtworkIndexDto.serializer(), files.read(file))
+                    .takeIf { it.schemaVersion == SHARD_SCHEMA && it.entries.keys.all { id -> id > 0 && shard(id) == bucket } }
+            }
+            entries.putAll(restored?.entries.orEmpty())
+        }
+        val invalid = entries.filter { (id, entry) ->
             id <= 0 || entry.size <= 0 || entry.storedAt < notBefore.toEpochMilliseconds() ||
                 entry.digest.size != SHA256_BYTES || files.length(File(directory, id.toString())) != entry.size
         }
-        files.list(directory).forEach { child ->
-            if (child.name != "index.bin" && child.name.toIntOrNull() !in index) files.delete(child)
+        invalid.keys.forEach { entries.remove(it) }
+        children.forEach { child ->
+            if (child.name != "index.bin" && child !in shardFiles &&
+                child.name.toIntOrNull() !in entries) files.delete(child)
         }
-        if (changed || index.isEmpty()) writeIndex(directory, index)
-        return index
+        return Index(entries.mapValues { Entry(it.value) }.toMutableMap(), legacy).also { index ->
+            invalid.keys.filter { it > 0 }.forEach { index.dirtyShards.add(shard(it)) }
+        }
     }
 
-    private fun writeIndex(directory: File, entries: Map<Int, ArtworkEntryDto>) {
-        if (entries.isEmpty()) {
-            files.delete(File(directory, "index.bin"))
-        } else {
-            files.writeAtomically(
-                File(directory, "index.bin"),
-                ProtoBuf.encodeToByteArray(ArtworkIndexDto.serializer(), ArtworkIndexDto(1, entries)),
-            )
-        }
+    private fun writeShard(directory: File, shard: Int, entries: Map<Int, ArtworkEntryDto>) {
+        // Empty shards are tombstones during interrupted legacy migration. Keep them so a
+        // failed legacy-index deletion cannot resurrect removed entries on the next restart.
+        files.writeAtomically(
+            shardFile(directory, shard),
+            ProtoBuf.encodeToByteArray(ArtworkIndexDto.serializer(), ArtworkIndexDto(SHARD_SCHEMA, entries)),
+        )
     }
+
+    private fun shardFile(directory: File, shard: Int): File = File(directory, "index-$shard.bin")
 
     private fun directory(namespace: CacheNamespace): File = File(File(namespacesRoot, namespace.value), "artwork")
 
@@ -227,6 +267,9 @@ internal class FileArtworkCacheStore(root: File, private val files: ArtworkCache
 
     private companion object {
         const val SHA256_BYTES = 32
+        const val INDEX_SHARDS = 32
+        const val SHARD_SCHEMA = 2
+        fun shard(id: Int): Int = Math.floorMod(id, INDEX_SHARDS)
     }
 }
 

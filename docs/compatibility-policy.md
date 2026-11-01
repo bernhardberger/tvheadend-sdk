@@ -67,7 +67,7 @@ Every incompatible change gets a `BREAKING` entry and migration guidance.
 |---|---|---|
 | `ExperimentalTvheadendApi` | Application developers evaluating new SDK features. Provisional production API. | `sdk-playback/src/main/kotlin/at/bernhardberger/tvheadend/sdk/playback/ExperimentalTvheadendApi.kt:3-16` |
 | `SubscriptionInfrastructureApi` | Transport-neutral playback infrastructure and adapter composition, not ordinary application playback control. | `sdk-playback/src/main/kotlin/at/bernhardberger/tvheadend/sdk/playback/SubscriptionConnection.kt:7-20` |
-| `TvheadendTestingApi` | Fake-backed tests constructing session authority and playback results. Test-only API. | `sdk-core/src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/TvheadendTesting.kt:24-31` |
+| `TvheadendTestingApi` | Fake-backed tests constructing SDK state, session authority and playback results. Test-only API. | `sdk-core/src/main/kotlin/at/bernhardberger/tvheadend/sdk/core/TvheadendTesting.kt:26-33` |
 | `FakePlaybackApi` | Playback integration tests using fake playback authority bindings. Test-only API. | `sdk-testing/src/main/kotlin/at/bernhardberger/tvheadend/sdk/testing/FakeTvheadendSession.kt:60-67` |
 
 New player-driven features start experimental. After use in the player proves
@@ -106,11 +106,11 @@ These declarations directly expose types marked `@UnstableApi` in Media3 1.11.1:
 | Declaration | Exposed unstable type | Source |
 |---|---|---|
 | `createTvheadendRenderersFactory(context, audioOutputProvider)` | Return type `RenderersFactory` | `sdk-media3/src/main/kotlin/at/bernhardberger/tvheadend/sdk/media3/TvheadendDecoderPolicy.kt:26-30` |
-| `createTvheadendLoadControl()` | Return type `LoadControl` | `sdk-media3/src/main/kotlin/at/bernhardberger/tvheadend/sdk/media3/TvheadendLoadControl.kt:27-28` |
 
-The no-argument factory is scheduled for removal in a coming 0.x minor
-(see the [roadmap](roadmap.md#next-0x-minors-player-driven-gaps)); update this inventory then. Its replacement takes
-`TvheadendLiveStartBuffer` and returns experimental `TvheadendLoadControl`.
+The 0.38 candidate removes the no-argument `createTvheadendLoadControl()` factory.
+Its replacement takes `TvheadendLiveStartBuffer` and returns experimental
+`TvheadendLoadControl`; configure the app-owned builder through that handle.
+The replacement's opt-in tier is unchanged.
 
 Other public Media3-facing signatures follow. Using unstable members internally
 does not mean every type in a declaration's signature is itself unstable:

@@ -25,7 +25,7 @@ import kotlin.time.Instant
 
 /** Marks narrowly scoped construction APIs intended only for fake-backed tests. */
 @RequiresOptIn(
-    message = "This API constructs test-only session authority and playback results.",
+    message = "This API constructs test-only SDK state, session authority and playback results.",
     level = RequiresOptIn.Level.ERROR,
 )
 @Retention(AnnotationRetention.BINARY)

@@ -23,8 +23,9 @@ The default is 2 seconds; 500 ms is an explicit application policy. Settings
 and learning remain application-owned. Updates are thread-safe and apply to the
 next live-start decision. Values must be finite, non-negative whole milliseconds
 within `Int.MAX_VALUE`. Recordings (including growing ones) and ordinary
-1.5-second rebuffers retain their existing policy. The zero-argument unstable
-factory remains available with its original behaviour.
+1.5-second rebuffers retain their existing policy. The 0.38 candidate removes
+the zero-argument factory: pass a `TvheadendLiveStartBuffer` and configure the
+builder through the returned handle as above. The replacement remains experimental.
 
 Live startup uses the configured time threshold without the delegate's byte-target
 startup escape. Loading decisions remain delegated; its 15/30-second recording
@@ -35,8 +36,7 @@ allows the next decision to recover without rebuilding the Player. The accepted
 integer range is not a practical buffer budget.
 
 Pass that same handle to the coordinator overload to enable skip-aware restart
-buffering (the coordinator type still has its existing Media3 unstable marker
-until 0.28). Relative/absolute server seeks and return-to-live arm one restart,
+buffering. Relative/absolute server seeks and return-to-live arm one restart,
 including an already-running rebuffer. A restart begun while the command is in
 flight or within 3 seconds after its completion uses the current live-start
 buffer. Refusal, cancellation, target/period replacement, departure and teardown
@@ -47,8 +47,7 @@ wire settlement immediately through the atomic fence on its actor. The 3-second
 grace starts at command settlement, even if the application looper is busy.
 The playback thread atomically consumes marks. Neither applications nor their learning
 controllers should signal skips to load control themselves. One handle belongs
-to one Player/coordinator pair. These overloads are the source-compatible bridge
-to 0.28's broader SDK-owned configuration.
+to one Player/coordinator pair.
 
 ## Choose artifacts
 
@@ -1551,6 +1550,39 @@ a cold flow: collection owns Android NSD registration, resolution, and cleanup.
 `TvheadendDiscoveryState.Discovering` carries the current immutable server
 snapshot. `Unavailable` reports only `PERMISSION_DENIED` or `START_FAILED` and
 ends that collection.
+
+Discovery prefers a reachable IPv4 address and checks that the advertised port
+accepts a TCP connection before publishing an endpoint. Scoped link-local and
+other usable IPv6 addresses remain eligible; unscoped link-local IPv6 addresses
+are excluded. A service can therefore be absent from the snapshot when no usable
+endpoint responds. A successful check does not authenticate the server or
+guarantee that a later connection will succeed. The result remains
+`DiscoveredTvheadendServer(name, host, port)`.
+
+On older Android versions that do not identify the service's network, discovery
+tries each eligible Wi-Fi or Ethernet LAN with bounded, IPv4-first connection
+checks rather than omitting a service because several LANs are available. An
+explicitly identified service network remains pinned. IPv4 mDNS recovery requires
+local-subnet information from Android to validate replies; missing information
+disables that recovery on the affected LAN, not connection checks for addresses
+already supplied by NSD or attempts on other LANs. Discovery is not continuous
+TCP health monitoring of endpoints already published in the snapshot.
+
+Consumer tests can construct a discovery snapshot without reflection or Android
+calls. The helper lives in `sdk-android`, since the JVM-only `sdk-testing` module
+does not depend on Android:
+
+```kotlin
+@OptIn(TvheadendTestingApi::class)
+fun discoveringForTest(servers: List<DiscoveredTvheadendServer>): TvheadendDiscoveryState.Discovering =
+    TvheadendDiscoveryTestFactory.discovering(servers)
+```
+
+Import the factory from `at.bernhardberger.tvheadend.sdk.android` and the opt-in
+from `at.bernhardberger.tvheadend.sdk.core`. The factory copies the list, preserves
+its order and contents, and exposes an immutable snapshot. An empty list is the
+default. It does not prove that a supplied endpoint is reachable. Use the existing
+public `TvheadendDiscoveryState.Unavailable(failure)` for failure fixtures.
 
 `TvheadendConnectivity(context).status` is another cold flow with `UNKNOWN`,
 `AVAILABLE`, and `UNAVAILABLE` states. Running

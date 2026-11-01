@@ -1,4 +1,5 @@
 @file:androidx.media3.common.util.UnstableApi
+@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class)
 
 package at.bernhardberger.tvheadend.sdk.media3
 
@@ -9,6 +10,7 @@ import androidx.media3.exoplayer.analytics.PlayerId
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.SinglePeriodTimeline
 import androidx.media3.exoplayer.source.TrackGroupArray
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -17,6 +19,19 @@ internal class TvheadendLoadControlTest {
     private val playerId = PlayerId("tvheadend-load-control-test")
     private val timeline = SinglePeriodTimeline(C.TIME_UNSET, false, true, false, null, MediaItem.EMPTY)
     private val mediaPeriodId = MediaSource.MediaPeriodId(timeline.getUidOfPeriod(0))
+
+    @Test
+    fun `load control factory exposes only the explicit live start buffer overload`() {
+        val factories = listOf(
+            Class.forName("at.bernhardberger.tvheadend.sdk.media3.TvheadendLoadControlKt"),
+            Class.forName("at.bernhardberger.tvheadend.sdk.media3.TvheadendLoadControlConfigurationKt"),
+        ).flatMap { it.methods.toList() }
+            .filter { it.name.startsWith("createTvheadendLoadControl") }
+
+        assertEquals(1, factories.size)
+        assertEquals(listOf(TvheadendLiveStartBuffer::class.java), factories.single().parameterTypes.toList())
+        assertEquals(TvheadendLoadControl::class.java, factories.single().returnType)
+    }
 
     @Test
     fun `recommended load control starts after the tuned playback buffers`() {
@@ -40,7 +55,7 @@ internal class TvheadendLoadControlTest {
     }
 
     private fun preparedLoadControl(): LoadControl =
-        createTvheadendLoadControl().apply {
+        createDefaultTvheadendLoadControl().apply {
             onPrepared(playerId)
             onTracksSelected(parameters(bufferedMs = 0), TrackGroupArray.EMPTY, emptyArray())
         }

@@ -11,7 +11,7 @@ private const val BUFFER_FOR_PLAYBACK_MS = 2_000
 private const val BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS = 1_500
 
 /**
- * Creates the recommended [LoadControl] for players that host Tvheadend sources.
+ * Creates the internal default [LoadControl] delegate for Tvheadend sources.
  *
  * The values are tuned together with the [PlaybackRecoveryPolicy] defaults:
  *
@@ -25,7 +25,7 @@ private const val BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS = 1_500
  *   are not backpressure and do not bound what a live subscription pushes.
  */
 @androidx.media3.common.util.UnstableApi
-public fun createTvheadendLoadControl(): LoadControl =
+internal fun createDefaultTvheadendLoadControl(): LoadControl =
     DefaultLoadControl.Builder()
         .setBufferDurationsMs(
             MIN_BUFFER_MS,

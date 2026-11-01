@@ -22,6 +22,10 @@ import java.io.File
 import java.io.RandomAccessFile
 import java.nio.file.Files
 import java.nio.file.LinkOption
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.job
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.protobuf.ProtoBuf
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -421,14 +425,17 @@ internal class FileMetadataCacheStoreTest {
     @Test
     fun `strict decoder rejects malformed text after valid unicode records`() = runTest {
         val cache = store()
-        val events = listOf("Grüße 世界 🎬".repeat(100), "é", "BAD").mapIndexed { index, title ->
+        val events = listOf("Grüße 世界 🎬 �".repeat(100), "é", "BAD!").mapIndexed { index, title ->
             EpgEvent.create(EventId(index.toLong() + 1), start = storedAt, stop = storedAt, title = title)
         }
         val saved = CachedEpg(EpgSnapshot.create(events))
         // All replacements are inside a JSON string: lenient UTF-8 would silently accept them.
         for (malformed in listOf(byteArrayOf(0xc0.toByte(), 0xaf.toByte(), 0x21),
             byteArrayOf(0xed.toByte(), 0xa0.toByte(), 0x80.toByte()),
-            byteArrayOf(0x80.toByte(), 0x21, 0x21))) {
+            byteArrayOf(0x80.toByte(), 0x21, 0x21),
+            byteArrayOf(0xf4.toByte(), 0x90.toByte(), 0x80.toByte(), 0x80.toByte()),
+            byteArrayOf(0xf0.toByte(), 0x80.toByte(), 0x80.toByte(), 0xaf.toByte()),
+            byteArrayOf(0xff.toByte(), 0x21, 0x21))) {
             cache.storeEpg(namespace, saved, storedAt)
             assertEquals(events, requireNotNull(cache.loadEpg(namespace, storedAt)).snapshot.events)
             RandomAccessFile(epgFile(), "rw").use { file ->
@@ -458,7 +465,7 @@ internal class FileMetadataCacheStoreTest {
     fun `restore keeps long short empty and growing unicode records independent`() = runTest {
         val titles = listOf(
             "ASCII".repeat(2_000), "x", "", "é", "世界", "🎬", "Grüße 世界 🎬".repeat(2_000),
-            "short", "", "🎬".repeat(20_000), "é", "last",
+            "short", "", "🎬".repeat(20_000), "é", "�", "�".repeat(30_000), "x", "�", "last",
         )
         val events = titles.mapIndexed { index, title ->
             EpgEvent.create(EventId(index.toLong() + 1), start = storedAt, stop = storedAt, title = title)
@@ -472,6 +479,34 @@ internal class FileMetadataCacheStoreTest {
         // Reusing the store for another restore cannot alter strings retained by the first one.
         assertEquals(events, requireNotNull(cache.loadEpg(namespace, storedAt)).snapshot.events)
         assertEquals(titles, restored.map { it.title })
+    }
+
+    @Test
+    fun `cancellation during restore propagates and preserves the saved guide`() = runTest {
+        val saved = sampleSnapshot()
+        store().storeEpg(namespace, saved, storedAt)
+        var returned = false
+        val restore = async {
+            val job = currentCoroutineContext().job
+            val cache = FileMetadataCacheStore(root, object : Clock {
+                override fun now(): Instant {
+                    job.cancel()
+                    return storedAt
+                }
+            })
+            cache.loadEpg(namespace, storedAt).also { returned = true }
+        }
+
+        val cancelled = try {
+            restore.await()
+            false
+        } catch (_: CancellationException) {
+            true
+        }
+        assertTrue(cancelled)
+        assertFalse(returned)
+        assertTrue(epgFile().exists())
+        assertEquals(saved, store().loadEpg(namespace, storedAt))
     }
 
     @Test

@@ -1,6 +1,11 @@
 import org.gradle.api.artifacts.ExternalModuleDependency
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier
 import org.gradle.api.artifacts.component.ProjectComponentIdentifier
+import javax.xml.XMLConstants
+import javax.xml.parsers.DocumentBuilderFactory
+import javax.xml.xpath.XPathConstants
+import javax.xml.xpath.XPathFactory
+import org.w3c.dom.NodeList
 
 plugins {
     alias(libs.plugins.android.application)
@@ -42,12 +47,17 @@ kotlin {
     }
 }
 
-val sdkVersion = Regex("""(?m)^version = "([^"]+)"[ \t]*$""")
+val configuredSdkVersion = Regex("""(?m)^version = "([^"]+)"[ \t]*$""")
     .findAll(file("../build.gradle.kts").readText())
     .singleOrNull()
     ?.groupValues
     ?.get(1)
     ?: error("The root project must declare exactly one literal version")
+val sdkVersion = providers.gradleProperty("sdkCandidateVersion").orNull?.also { candidate ->
+    require(candidate.matches(Regex("[0-9]+\\.[0-9]+\\.[0-9]+-[A-Za-z0-9.-]+-SNAPSHOT"))) {
+        "sdkCandidateVersion must be a uniquely named snapshot candidate"
+    }
+} ?: configuredSdkVersion
 
 dependencies {
     implementation("at.bernhardberger.tvheadend:sdk-android") {
@@ -186,7 +196,31 @@ tasks.register("verifyConsumerDependencyGraph") {
             val stagedDirectory = rootDir.resolve(
                 "../build/local-maven/${sdkGroup.replace('.', '/')}/$module/$sdkVersion",
             )
-            val staged = stagedDirectory.resolve("$module-$sdkVersion.$extension")
+            val artifactVersion = if (sdkVersion.endsWith("-SNAPSHOT")) {
+                // Use Maven's selected snapshot value rather than guessing a timestamped filename.
+                val factory = DocumentBuilderFactory.newInstance().apply {
+                    setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true)
+                    setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+                    setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "")
+                    setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "")
+                }
+                val metadata = factory.newDocumentBuilder().parse(stagedDirectory.resolve("maven-metadata.xml"))
+                val values = XPathFactory.newInstance().newXPath().evaluate(
+                    "/metadata/versioning/snapshotVersions/snapshotVersion[extension='$extension' and not(classifier)]/value",
+                    metadata,
+                    XPathConstants.NODESET,
+                ) as NodeList
+                check(values.length == 1) { "Expected exactly one unclassified staged snapshot for $module" }
+                values.item(0).textContent.trim().also { value ->
+                    val base = Regex.escape(sdkVersion.removeSuffix("-SNAPSHOT"))
+                    check(value.matches(Regex("$base-[0-9]{8}\\.[0-9]{6}-[0-9]+"))) {
+                        "Unexpected staged snapshot version for $module"
+                    }
+                }
+            } else {
+                sdkVersion
+            }
+            val staged = stagedDirectory.resolve("$module-$artifactVersion.$extension")
             check(staged.isFile && resolved.readBytes().contentEquals(staged.readBytes())) {
                 "The resolved $module bytes do not match the staged artifact"
             }

@@ -72,6 +72,21 @@ Inspect only the sanitized run's reports. Preserve prior incident evidence by
 its immutable result reference; do not publish raw live logs or mistake a failure
 before readiness for proof that the server was unaffected.
 
+## Saved-guide profiling
+
+The exploratory decoder, saved-guide load and save timing experiments in
+`EpgRestoreOptionsProfileTest` are opt-in. Run them explicitly on the host:
+
+```sh
+./tools/verify :sdk-core:test -Ptvh.restore.profile=true --tests '*EpgRestoreOptionsProfileTest' --rerun
+```
+
+Gradle forwards this project property to the test JVM; it does not depend on an
+inherited environment variable. The malformed-UTF-8 decoder probe and cache
+correctness regressions remain enabled in ordinary checks. Preserve the XML
+results before another run overwrites them. These host measurements have no
+timing pass/fail thresholds and do not establish Android performance.
+
 ## Staged consumer and R8
 
 After staging and checking the SDK publication, run the consumer gate locally:
@@ -92,6 +107,19 @@ HTSP-only repository; it does not substitute the sibling source checkout. Use
 The release validator rejects non-release dependencies, so candidate staging
 does not produce a verified release manifest. The consumer gate can still verify
 those locally staged bytes directly.
+
+For a uniquely named SDK candidate, pass the same `-PsdkCandidateVersion` to
+staging and the consumer build:
+
+```sh
+./tools/verify -PsdkCandidateVersion=0.38.0-cache-candidate-SNAPSHOT stageLocalPublication
+./tools/verify -p consumer-contract -PsdkCandidateVersion=0.38.0-cache-candidate-SNAPSHOT test verifyConsumerDependencyGraph assembleRelease lintDebug
+```
+
+Choose a fresh candidate name before freezing its artifacts. The consumer checks
+the exact candidate coordinates and compares resolved bytes against the artifact
+selected by the local Maven snapshot metadata. This does not change the declared
+release version or make the release-only publication validator accept snapshots.
 
 The unsigned release APK enables R8's default full mode without signing credentials.
 The compile-only app has no manifest entry point, so its three Java/Kotlin fixture

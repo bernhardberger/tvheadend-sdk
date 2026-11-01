@@ -82,7 +82,7 @@ public class TvheadendLoadControl internal constructor(internal val delegate: Li
 @OptIn(UnstableApi::class)
 @ExperimentalTvheadendApi
 public fun createTvheadendLoadControl(liveStartBuffer: TvheadendLiveStartBuffer): TvheadendLoadControl =
-    TvheadendLoadControl(LiveStartLoadControl(createTvheadendLoadControl(), liveStartBuffer))
+    TvheadendLoadControl(LiveStartLoadControl(createDefaultTvheadendLoadControl(), liveStartBuffer))
 
 /**
  * Creates a coordinator using the same [loadControl] handle that configured [player]'s builder.

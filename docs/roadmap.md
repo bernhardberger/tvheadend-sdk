@@ -278,12 +278,12 @@ opt-in.
   what Android TV does not: picture-in-picture (a second coordinator per
   session), background playback from a media service with deep sleep, and
   network changes between Wi-Fi and mobile data.
-- Remove the `createTvheadendLoadControl(): LoadControl` overload that the
-  0.27 `TvheadendLoadControl` replaces.
+- Add multiple saved server profiles in the minor after 0.38, before Player 1.0,
+  with exactly one still active. This is not part of 0.38.
 - Keep the Media3-derived `androidx.media3.extractor.ts` classes as internal
   implementation, and re-sync them on Media3 upgrades.
 
-### 0.37: cache performance and device measurements (in progress)
+### 0.37: cache performance and device measurements (released)
 
 The first 0.37 staged checkpoint addresses audit findings 1–2: reuse a strict UTF-8
 decoder during guide restore, skip equal catalog writes, and measure metadata
@@ -294,11 +294,11 @@ are accepted, along with bounded buffer reuse during saved-guide restore.
 In a matched device ABBA comparison, buffer reuse reduced 100,000-event restore
 wall time by 14.6–18.8% and cumulative allocation by about 47%. Remaining restore
 cost needs fresh attribution; the earlier decoder/JSON profile predates that fix.
-Player 0.3.2 waits for this work; the checkpoint is not an early release.
+The combined candidate passed device qualification before 0.37.0 was published.
 The audit identifies scaling risks, not measured contributions to startup time.
 
-- **3 — Serialization versions:** select kotlinx.serialization 1.11.0, subject
-  to SDK and consumer gates. With identical run2 workloads, artwork operations
+- **3 — Serialization versions:** retained kotlinx.serialization 1.11.0 after
+  SDK and consumer gates. With identical run2 workloads, artwork operations
   on 1.12.0 took 2.1–2.6 times as long and allocated about 4.6 times as much.
   The effect also appeared with the earlier harness and opposite version order.
   Other version effects remain inconclusive. These are standalone debug-device
@@ -317,12 +317,14 @@ The audit identifies scaling risks, not measured contributions to startup time.
   At 100,000 events, three host run medians fell from 8.567–12.652 ms to
   3.752–3.871 ms, with publication allocation falling from 6.97 MB to 0.41 MB.
   One-event changes still rebuild indexes and showed no clear timing improvement.
-  Combined device qualification remains pending.
+  Device qualification confirmed lower coverage-only publication cost; it did
+  not establish a one-event improvement.
 - **6 — History maintenance:** end-time and channel indexes remove repeated
   full-history scans. A separate carryover fixture supports a per-channel index:
   512 updates at 100,000 installed events fell from 617 ms to 9.28 ms on the host.
   The index adds O(R) storage. A small empty-control slowdown remains unexplained;
-  device timing and memory qualification are pending. The original device history
+  device qualification measured an additional 5.15 MiB retained at 100,000
+  carryover events, released with the reducer. The original device history
   workload does not install carryover.
 - **7 — Protected capacity:** repeated refused arrivals reuse the protected-pool
   eligibility result until its inputs change. In the 100,000-event device case,
@@ -331,7 +333,8 @@ The audit identifies scaling risks, not measured contributions to startup time.
   reused by the reducer. The focused host fixture saves 104 bytes/event, or
   10.4 MB at 100,000 events. Timings vary across repeats, so no latency gain is
   claimed. Public model copies and credits keep their ownership boundaries;
-  combined device qualification remains pending.
+  device qualification measured about 9.6 MB less allocation at 100,000 events,
+  without establishing a consistent latency improvement.
 - The on-device benchmark uses 143 channels, roughly 5,000 events and 400+
   logos, plus a large 100,000-event fixture at the default guide limit. Cover
   saved-guide restore, catalog writes and statistics, first logo read and batch
@@ -345,6 +348,38 @@ The audit identifies scaling risks, not measured contributions to startup time.
   candidate. Report numbers only; do not introduce pass/fail timing thresholds.
   The owner runs the G10 commands; connect-to-Ready remains part of the Player's
   server-backed cold-start measurement.
+
+### 0.38: discovery, cache follow-up and API cleanup (candidate only)
+
+- Keep IPv4-first Android discovery, bounded mDNS recovery and attempts on each
+  eligible LAN. An explicitly identified network stays pinned; missing local
+  IPv4 prefixes disable only mDNS recovery on that LAN, not known-address probes.
+- Add a test-only discovery-state factory in `sdk-android`, behind
+  `TvheadendTestingApi`, so consumer tests no longer need reflection.
+- Remove the no-argument `createTvheadendLoadControl(): LoadControl` overload.
+  The configured `TvheadendLoadControl` replacement retains its experimental tier
+  and existing buffer policy. Media3 stays at 1.11.1, HTSP at 1.0.0-rc.1 and
+  kotlinx.serialization at 1.11.0.
+- Keep the strict restore reader after host and owner-run G10 comparisons.
+  Strict streaming and canonical ProtoBuf were slower on G10. String improved
+  100k restore by 14.5–24.2%, but 5k results reversed direction and literal U+FFFD
+  fallback remains unmeasured on-device. Resolve those two uncertainties before
+  adopting String. The large-guide restore latency remains open.
+- Retain single SDK publication. Verified staged v1 validated every retained
+  record before near-window publication; at 100k its first-observation medians
+  arrived after the strict reader's full-observation medians. Completion was
+  1.9–2.6% slower. This experiment did not measure rendered frames.
+- Keep 32 fixed protobuf artwork shards in the frozen candidate. Matched G10
+  first-read-plus-32-store calls improved 75–86% with about 80% less allocation,
+  while first reads cost roughly 11–18 ms more by later-sample medians. Legacy
+  migration, touch flushing and extra map storage retain their documented costs.
+  Combined gates and owner-run device qualification passed. Atomic replacement
+  addresses process interruption, not power-loss durability.
+- Keep the remaining audit decisions and measurement limits in
+  [Cache performance decisions](cache-performance-decisions.md).
+- Iterate through uniquely named local candidates with checksums. Release, tagging, publication and a
+  release-preparation commit require fresh owner approval for the exact version
+  through the Player primary immediately beforehand.
 
 ### 1.0 groundwork (parked)
 
@@ -394,7 +429,6 @@ planned:
 - descrambling diagnostics;
 - trick-play speeds;
 - start-over anchored to the EPG;
-- multiple saved server profiles, with exactly one still active;
 - a Linux playback adapter module.
 
 ## Open questions
