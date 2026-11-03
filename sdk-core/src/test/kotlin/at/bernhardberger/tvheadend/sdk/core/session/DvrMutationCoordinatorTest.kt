@@ -776,13 +776,13 @@ internal class DvrMutationCoordinatorTest {
     }
 
     @Test
-    fun `delete confirms a full file-missing update before or after acknowledgement`() = runTest {
+    fun `delete confirms declared file removal before or after acknowledgement`() = runTest {
         for (beforeReply in listOf(false, true)) {
             val generation = GatewayGeneration()
             val gateway = MutationGateway()
             val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> null })
             val update = dvrUpdated(generation, 1, DvrEntryState.COMPLETED,
-                failure = GatewayDvrFailure.FILE_MISSING)
+                failure = GatewayDvrFailure.FILE_MISSING, files = emptyList())
             gateway.deleteBehavior = { _, _ ->
                 if (beforeReply) coordinator.acceptMetadata(update)
                 GatewayResult.Ok(Unit)
@@ -812,6 +812,11 @@ internal class DvrMutationCoordinatorTest {
         coordinator.acceptMetadata(dvrUpdated(generation, 1, failure = GatewayDvrFailure.FILE_MISSING))
         val deleted = async { coordinator.deleteEntry(generation, DvrEntryId(1)) }
         runCurrent()
+        coordinator.acceptMetadata(dvrUpdated(generation, 1, DvrEntryState.COMPLETED,
+            failure = GatewayDvrFailure.FILE_MISSING,
+            files = listOf(at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrRecordingFile(1, null, null, null, null))))
+        coordinator.acceptMetadata(dvrUpdated(generation, 1, DvrEntryState.COMPLETED,
+            failure = GatewayDvrFailure.FILE_MISSING))
         coordinator.acceptMetadata(dvrUpdated(generation, 1, DvrEntryState.COMPLETED,
             true, GatewayDvrFailure.FILE_MISSING))
         coordinator.acceptMetadata(dvrUpdated(generation, 2, failure = GatewayDvrFailure.FILE_MISSING))
@@ -1026,12 +1031,13 @@ private fun dvrUpdated(
     state: DvrEntryState? = null,
     statsOnly: Boolean = false,
     failure: GatewayDvrFailure? = null,
+    files: List<at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrRecordingFile>? = null,
 ): MetadataEvent = if (statsOnly) {
     MetadataEvent.DvrEntryStatsUpdated(generation, GatewayDvrStats(DvrEntryId(id), null, checkNotNull(state), failure = failure))
 } else {
     MetadataEvent.DvrEntryUpdated(
         generation,
-        GatewayDvrEntry(DvrEntryId(id), state = state, failure = failure),
+        GatewayDvrEntry(DvrEntryId(id), state = state, failure = failure, files = files),
     )
 }
 

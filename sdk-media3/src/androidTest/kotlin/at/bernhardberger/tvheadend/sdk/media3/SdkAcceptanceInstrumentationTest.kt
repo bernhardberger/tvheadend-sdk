@@ -787,7 +787,7 @@ private suspend fun cleanupRecording(session: TvheadendSession, state: Acceptanc
     val existing = session.observation.value.dvrEntry(id) ?: return true
     if (state.recordingUuid == null) return false
     existing.requireOwnedBy(state)
-    if (existing.state == DvrEntryState.FILE_MISSING) return true
+    if (existing.state == DvrEntryState.DELETED) return true
     if (existing.state == DvrEntryState.RECORDING) {
         dvr.stopEntry(currentSession, id).requireConfirmed()
         requireOwnedEntry(session, state)
@@ -802,7 +802,7 @@ private suspend fun cleanupRecording(session: TvheadendSession, state: Acceptanc
 }
 
 /** Server log retention may keep a deleted recording's entry as file-missing instead of removing it. */
-private fun DvrEntry?.isDeletedRecording(): Boolean = this == null || state == DvrEntryState.FILE_MISSING
+private fun DvrEntry?.isDeletedRecording(): Boolean = this == null || state == DvrEntryState.DELETED
 
 private fun requireOwnedEntry(session: TvheadendSession, state: AcceptanceState): DvrEntry {
     val current = session.observation.value.dvrState as? DvrRepositoryState.Current

@@ -77,9 +77,17 @@ public class DvrEntryState private constructor(private val label: String) {
         /** Recording completed with an error. */
         @JvmField
         public val COMPLETED_ERROR: DvrEntryState = DvrEntryState("COMPLETED_ERROR")
-        /** The recording file is missing. */
+        /** The server still lists the recording file but cannot find it. */
         @JvmField
         public val FILE_MISSING: DvrEntryState = DvrEntryState("FILE_MISSING")
+        /**
+         * The server kept the entry after removing its recording files.
+         *
+         * A user delete from any client or the retention removal timer can cause this state.
+         * The entry is not playable and this state is not a failure.
+         */
+        @JvmField
+        public val DELETED: DvrEntryState = DvrEntryState("DELETED")
         /** An unrecognized wire state. */
         @JvmField
         public val UNKNOWN: DvrEntryState = DvrEntryState("UNKNOWN")
@@ -1070,12 +1078,12 @@ public interface DvrRepository {
     ): DvrMutationResult<Unit>
 
     /**
-     * Deletes one DVR entry and waits for entry removal or a full file-missing update.
+     * Deletes one DVR entry and waits for entry removal or a retained deleted entry.
      *
      * Server log retention may keep a deleted recording's entry after its file is removed, so a
      * [DvrMutationResult.Confirmed] result can leave the entry observable as
-     * [DvrEntryState.FILE_MISSING]. Deleting an entry that is already file-missing may confirm on
-     * the next full update for that entry.
+     * [DvrEntryState.DELETED], or leave no entry. Deleting an already deleted entry may confirm
+     * on the next full update carrying the deleted shape.
      */
     public suspend fun deleteEntry(
         currentSession: CurrentSessionObservation,

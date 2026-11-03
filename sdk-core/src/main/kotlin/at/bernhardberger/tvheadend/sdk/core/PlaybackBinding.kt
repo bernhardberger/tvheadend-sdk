@@ -124,7 +124,7 @@ public sealed interface RecordingPlaybackAdmission {
      * A finished file may play; resume/reporting are enabled only when progress is supported.
      *
      * Completed entries are always admitted. Failed (`COMPLETED_ERROR`) and missed entries are admitted
-     * only when they list a recording file and their data size is not known to be zero; `FILE_MISSING` and
+     * only when they list a recording file and their data size is not known to be zero; `DELETED`, `FILE_MISSING` and
      * file-less failures are [TargetUnavailable]. A missed entry never has a [resumePosition]: Tvheadend
      * ignores its progress writes, so it always starts over and never shows as watched.
      */

@@ -49,7 +49,12 @@ public class DvrChangeKind private constructor(private val label: String) {
         /** Recording was missed. */
         @JvmField
         public val MISSED: DvrChangeKind = DvrChangeKind("MISSED")
-        /** The entry was removed. */
+        /**
+         * The entry was removed, or retained after its recording files were removed.
+         *
+         * [DvrChange.current] is null for a removed entry and a [DvrEntryState.DELETED] entry for a
+         * retained one.
+         */
         @JvmField
         public val REMOVED: DvrChangeKind = DvrChangeKind("REMOVED")
     }

@@ -151,7 +151,7 @@ internal data class ReducedDvrEntry private constructor(
     private fun hasInvalidTiming(): Boolean = start != null && stop != null && stop < start
 
     private fun resolvedState(): DvrEntryState? = when (failure) {
-        GatewayDvrFailure.FILE_MISSING -> DvrEntryState.FILE_MISSING
+        GatewayDvrFailure.FILE_MISSING -> if (hasRemovedRecordingFiles(failure, files)) DvrEntryState.DELETED else DvrEntryState.FILE_MISSING
         GatewayDvrFailure.ABORTED, GatewayDvrFailure.PRESENT -> when (state) {
             DvrEntryState.RECORDING -> DvrEntryState.RECORDING_ERROR
             DvrEntryState.COMPLETED -> DvrEntryState.COMPLETED_ERROR
@@ -522,6 +522,11 @@ internal class DvrReducer {
         return true
     }
 }
+
+internal fun hasRemovedRecordingFiles(
+    failure: GatewayDvrFailure?,
+    files: List<GatewayDvrRecordingFile>?,
+): Boolean = failure == GatewayDvrFailure.FILE_MISSING && files != null && files.isEmpty()
 
 private fun GatewayDvrRecordingFile.toPublicOrNull(): DvrRecordingFile? {
     if (start != null && stop != null && stop < start) return null

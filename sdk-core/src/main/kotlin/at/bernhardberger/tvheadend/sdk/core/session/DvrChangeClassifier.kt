@@ -58,6 +58,7 @@ private fun transition(
     if (before == null || after == null || before.state == after.state) return null
     if (before.state == DvrEntryState.INVALID || after.state == DvrEntryState.INVALID) return null
     return when {
+        after.state == DvrEntryState.DELETED -> if (before.state != null) DvrChangeKind.REMOVED else null
         failure == GatewayDvrFailure.ABORTED && after.state in terminalStates -> DvrChangeKind.RECORDING_ABORTED
         failure == GatewayDvrFailure.ABORTED -> null
         before.state in setOf(DvrEntryState.SCHEDULED, DvrEntryState.RECORDING) && after.state in errorStates -> DvrChangeKind.RECORDING_FAILED

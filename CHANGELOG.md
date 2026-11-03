@@ -4,6 +4,20 @@
 
 Unreleased; development target.
 
+### Changed
+
+- BREAKING: add `DvrEntryState.DELETED` for retained entries whose recording files
+  the server removed. Deleted recordings no longer report `FILE_MISSING`, which
+  remains for files the server still lists but cannot find. Add `DELETED` to
+  exhaustive client state handling and replace FILE_MISSING-plus-empty-files
+  deletion heuristics with `state == DvrEntryState.DELETED`. A recording transition
+  to DELETED emits `REMOVED`, not `RECORDING_FAILED`; such a `REMOVED` change
+  carries the retained entry as `current`, so do not assume `current` is null.
+  Event selectors rank every
+  non-DELETED entry above deleted entries, before ownership or event-link preference.
+  Delete confirmation now requires entry removal or a full update with file-missing
+  failure and an explicitly empty files list; absent or non-empty files do not confirm.
+
 ## [0.38.0]
 
 Released 2026-11-01.

@@ -34,6 +34,26 @@ internal class DvrReducerTest {
     private val generation = GatewayGeneration()
 
     @Test
+    fun `only declared removed files resolve as deleted and stats retain that shape`() {
+        for ((files, expected) in listOf(
+            emptyList<GatewayDvrRecordingFile>() to DvrEntryState.DELETED,
+            listOf(GatewayDvrRecordingFile(1, null, null, null, null)) to DvrEntryState.FILE_MISSING,
+            null to DvrEntryState.FILE_MISSING,
+        )) {
+            val reducer = DvrReducer()
+            reducer.accept(MetadataEvent.DvrEntryAdded(generation, GatewayDvrEntry(
+                DvrEntryId(1), state = DvrEntryState.COMPLETED,
+                failure = GatewayDvrFailure.FILE_MISSING, files = files,
+            )))
+            assertEquals(expected, reducer.snapshot().entries.single().state)
+            reducer.accept(MetadataEvent.DvrEntryStatsUpdated(generation, GatewayDvrStats(
+                DvrEntryId(1), null, DvrEntryState.COMPLETED, failure = GatewayDvrFailure.FILE_MISSING,
+            )))
+            assertEquals(expected, reducer.snapshot().entries.single().state)
+        }
+    }
+
+    @Test
     fun `DVR episode grouping and ownership clear on full replacement and accept explicit updates`() {
         val reducer = DvrReducer()
         val id = DvrEntryId(1)

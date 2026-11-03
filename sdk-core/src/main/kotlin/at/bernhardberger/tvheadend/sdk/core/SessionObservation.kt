@@ -121,10 +121,11 @@ public class SessionObservation private constructor(
         dvrSnapshotForDisplay?.entries?.singleOrNull { entry -> entry.id == id }
 
     /**
-     * Selects the highest-ranked linked DVR entry: own account, recording (including recording
+     * Selects the highest-ranked linked DVR entry: non-deleted, own account, recording (including recording
      * error), scheduled, event's DVR link, latest stop, then lowest entry ID, in that order.
      * Ownership uses exact comparison with the normalized session username; anonymous sessions
      * and absent owners receive no ownership preference. Unknown stops rank last.
+     * A [DvrEntryState.DELETED] entry still matches when no non-deleted entry matches.
      * Tvheadend's event DVR link is only the first visible broadcast match, not an authority
      * (`src/htsp_server.c`, event serialization). Multiple entries per broadcast are normal.
      * Returns null for an unknown or ambiguous event ID, when no linked entry exists,
@@ -178,7 +179,9 @@ public class SessionObservation private constructor(
             entry.eventId == event.id || event.dvrEntryId == entry.id
         }
         if (matched.map { it.id }.toSet().size != matched.size) return emptyList()
-        val ranking = compareByDescending<DvrEntry> { entry ->
+        val ranking = compareBy<DvrEntry> { entry ->
+            entry.state == DvrEntryState.DELETED
+        }.thenByDescending { entry ->
             ownAccountUsername != null && entry.owner == ownAccountUsername
         }.thenBy { entry ->
             when (entry.state) {

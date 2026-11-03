@@ -338,7 +338,7 @@ Use observation point selectors when selecting related entities:
 | `dvrEntryForEvent(event)` / `dvrEntriesForEvent(event)` | Experimental ranking for a held EPG event, including search results and historical programmes |
 | `epgEventForDvrEntry(entryId)` | The unique event linked to a recording |
 
-`dvrEntryForEvent` ranks matches lexicographically: entries owned by the session's
+`dvrEntryForEvent` ranks matches lexicographically: non-DELETED entries first, then entries owned by the session's
 account first, then RECORDING/RECORDING_ERROR, then SCHEDULED, then the event's
 `dvrEntryId` link, latest stop (unknown last), and lowest entry ID. Owner comparison
 is exact after the SDK's username normalization; anonymous sessions and missing
@@ -347,6 +347,11 @@ visible broadcast match and is not authoritative. The selector returns null when
 the event ID is unknown or ambiguous, no linked entries exist, or matched entries
 are ambiguous because they contain duplicate DVR entry IDs. Unlinked time-window
 matches are not considered. Standalone observations and testing factories have no own account.
+
+A DELETED entry still matches when it is the only linked entry. It means the server
+kept the entry after its recording files were removed, not a recording failure.
+Replace deletion heuristics based on FILE_MISSING plus empty files with
+`state == DvrEntryState.DELETED`.
 
 With `@OptIn(ExperimentalTvheadendApi::class)`, `dvrEntriesForEvent(eventId)` returns
 `DvrEventEntries` with the same `selected` entry and an immutable `otherActive`
@@ -604,7 +609,9 @@ An event attributed before a command later fails is not retracted. Edits do not
 create lifecycle intents. A programme schedule remains correlated through its
 `SCHEDULED` add and subsequent `RECORDING_STARTED` (or expiry), bound to that entry
 ID after the add. A delete may attribute both the terminal recording update and
-`REMOVED`; its intent is consumed only by removal (or expires).
+`REMOVED`; its intent is consumed only by removal (or expires). When the server
+keeps the entry after removing its files, `REMOVED` carries that `DELETED` entry as
+`current`; otherwise `current` is null.
 
 A server user-abort marker emits `RECORDING_ABORTED`, never `RECORDING_FAILED`.
 Its snapshot state remains `COMPLETED_ERROR` for compatibility. A local `STOP`
@@ -1193,7 +1200,7 @@ admitted as `RecordingPlaybackAdmission.Completed`. `COMPLETED_ERROR` and
 `MISSED` entries are admitted the same way only when they list at least one
 recording file and their data size is not known to be zero (this includes
 recordings the user aborted, which Tvheadend reports as `COMPLETED_ERROR`);
-without a file they are `TargetUnavailable`, as are `FILE_MISSING` and the
+without a file they are `TargetUnavailable`, as are `DELETED`, `FILE_MISSING` and the
 remaining states. `RECORDING_ERROR` entries are treated exactly like
 `RECORDING` ones, because Tvheadend may resume writing the same file, and a
 growing recording that ends as `COMPLETED_ERROR`, or as `MISSED` with a file,

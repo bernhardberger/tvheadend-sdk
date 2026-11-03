@@ -16,7 +16,7 @@ import at.bernhardberger.tvheadend.sdk.core.EventId
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleUpdate
-import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrFailure
+import at.bernhardberger.tvheadend.sdk.core.metadata.hasRemovedRecordingFiles
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
@@ -237,7 +237,7 @@ internal class DvrMutationCoordinator(
         expectedGeneration = generation,
         confirmations = setOf(
             ConfirmationKey(ConfirmationKind.ENTRY_DELETED, id),
-            ConfirmationKey(ConfirmationKind.ENTRY_FILE_MISSING, id),
+            ConfirmationKey(ConfirmationKind.ENTRY_FILE_REMOVED, id),
         ),
         command = { generation ->
             withIntent(generation, DvrMutationKind.DELETE, entryId = id) { gateway.deleteDvrEntry(generation, id) }
@@ -648,7 +648,7 @@ private enum class ConfirmationKind {
     ENTRY_ENDED,
     ENTRY_DELETED,
     /** File deletion may retain the DVR log entry and report a missing file instead of removal. */
-    ENTRY_FILE_MISSING,
+    ENTRY_FILE_REMOVED,
     AUTOREC_ADDED,
     AUTOREC_UPDATED,
     AUTOREC_DELETED,
@@ -682,8 +682,9 @@ private fun MetadataEvent.confirmationKeys(): List<ConfirmationKey> = when (this
     is MetadataEvent.DvrEntryUpdated -> buildList {
         add(ConfirmationKey(ConfirmationKind.ENTRY_UPDATED, entry.id))
         if (entry.state in endedEntryStates) add(ConfirmationKey(ConfirmationKind.ENTRY_ENDED, entry.id))
-        if (entry.failure == GatewayDvrFailure.FILE_MISSING) {
-            add(ConfirmationKey(ConfirmationKind.ENTRY_FILE_MISSING, entry.id))
+        // An omitted files field cannot confirm deletion; require declared file removal.
+        if (hasRemovedRecordingFiles(entry.failure, entry.files)) {
+            add(ConfirmationKey(ConfirmationKind.ENTRY_FILE_REMOVED, entry.id))
         }
     }
     is MetadataEvent.DvrEntryDeleted -> listOf(ConfirmationKey(ConfirmationKind.ENTRY_DELETED, entryId))

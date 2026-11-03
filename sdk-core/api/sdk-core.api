@@ -1046,6 +1046,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/DvrEntryState {
 	public static final field COMPLETED Lat/bernhardberger/tvheadend/sdk/core/DvrEntryState;
 	public static final field COMPLETED_ERROR Lat/bernhardberger/tvheadend/sdk/core/DvrEntryState;
 	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/DvrEntryState$Companion;
+	public static final field DELETED Lat/bernhardberger/tvheadend/sdk/core/DvrEntryState;
 	public static final field FILE_MISSING Lat/bernhardberger/tvheadend/sdk/core/DvrEntryState;
 	public static final field INVALID Lat/bernhardberger/tvheadend/sdk/core/DvrEntryState;
 	public static final field MISSED Lat/bernhardberger/tvheadend/sdk/core/DvrEntryState;

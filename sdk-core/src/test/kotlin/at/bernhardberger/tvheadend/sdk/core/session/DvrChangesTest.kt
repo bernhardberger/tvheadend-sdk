@@ -103,6 +103,49 @@ internal class DvrChangesTest {
     }
 
     @Test
+    fun `retained deletion without a prior valid state emits no lifecycle change`() = runTest {
+        for (before in listOf(null, DvrEntryState.INVALID, DvrEntryState.DELETED)) {
+            val fixture = Fixture()
+            fixture.accept(MetadataEvent.DvrEntryAdded(fixture.generation,
+                GatewayDvrEntry(DvrEntryId(7), state = before)))
+            fixture.ready()
+            val changes = collect(fixture)
+            fixture.accept(MetadataEvent.DvrEntryUpdated(fixture.generation, entry(
+                state = DvrEntryState.COMPLETED, failure = GatewayDvrFailure.FILE_MISSING, files = emptyList(),
+            )))
+            runCurrent()
+            assertTrue(changes.isEmpty())
+        }
+    }
+
+    @Test
+    fun `retained deletion emits removed attributes delete and never consumes stop`() = runTest {
+        for (before in listOf(DvrEntryState.RECORDING, DvrEntryState.COMPLETED)) {
+            val ledger = DvrIntentLedger()
+            val fixture = Fixture(ledger = ledger)
+            fixture.accept(MetadataEvent.DvrEntryAdded(fixture.generation, entry(state = before)))
+            fixture.ready()
+            val changes = collect(fixture)
+            ledger.record(fixture.generation, DvrMutationKind.DELETE, entryId = DvrEntryId(7))
+            ledger.record(fixture.generation, DvrMutationKind.STOP, entryId = DvrEntryId(7))
+            val deleted = MetadataEvent.DvrEntryUpdated(fixture.generation, entry(
+                state = DvrEntryState.COMPLETED, failure = GatewayDvrFailure.FILE_MISSING, files = emptyList(),
+            ))
+            fixture.accept(deleted)
+            runCurrent()
+            val change = changes.single()
+            assertEquals(DvrChangeKind.REMOVED, change.kind)
+            assertEquals(DvrEntryState.DELETED, change.current!!.state)
+            assertEquals(DvrChangeOrigin.ThisClient(DvrMutationKind.DELETE), change.origin)
+            assertEquals(DvrChangeOrigin.ThisClient(DvrMutationKind.STOP),
+                ledger.takeStop(fixture.generation, change.current))
+            fixture.accept(deleted)
+            runCurrent()
+            assertEquals(1, changes.size)
+        }
+    }
+
+    @Test
     fun `full completion clears an omitted prior failure before classifying the transition`() = runTest {
         val fixture = Fixture(serverTime = Instant.fromEpochSeconds(1000))
         fixture.accept(MetadataEvent.DvrEntryAdded(fixture.generation,

@@ -171,6 +171,21 @@ internal class DvrEventRankingTest {
     }
 
     @Test
+    fun `deleted own linked entry ranks below every non-deleted match but remains a sole match`() {
+        val deleted = entry(1, DvrEntryState.DELETED, owner = "test-account")
+        for (state in listOf(DvrEntryState.COMPLETED, DvrEntryState.SCHEDULED)) {
+            val available = entry(2, state)
+            for (entries in listOf(listOf(deleted, available), listOf(available, deleted))) {
+                val observed = observation(entries, link = deleted.id, username = "test-account")
+                assertSame(available, observed.dvrEntryForEvent(EventId(10)))
+                assertSame(available, observed.dvrEntryForEvent(requireNotNull(observed.event(EventId(10)))))
+            }
+        }
+        assertSame(deleted, observation(listOf(deleted), link = deleted.id, username = "test-account")
+            .dvrEntryForEvent(EventId(10)))
+    }
+
+    @Test
     fun `own scheduled entry outranks other recording while anonymous and unknown owners receive no preference`() {
         val own = entry(1, DvrEntryState.SCHEDULED, owner = "test-account")
         val other = entry(2, DvrEntryState.RECORDING, owner = "other-account")
