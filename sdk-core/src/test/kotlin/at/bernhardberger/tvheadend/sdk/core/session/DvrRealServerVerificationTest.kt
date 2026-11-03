@@ -323,7 +323,7 @@ internal class DvrRealServerVerificationTest {
             withTimeout(2.minutes) {
                 session.observation.first { observation ->
                     val entry = observation.dvrEntry(liveId)
-                    entry == null || entry.state == DvrEntryState.DELETED
+                    entry == null || entry.state == DvrEntryState.REMOVED
                 }
             }
             createdEntries.remove(liveId)

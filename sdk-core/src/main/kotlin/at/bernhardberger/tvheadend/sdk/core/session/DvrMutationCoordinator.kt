@@ -16,7 +16,7 @@ import at.bernhardberger.tvheadend.sdk.core.EventId
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleUpdate
-import at.bernhardberger.tvheadend.sdk.core.metadata.hasRemovedRecordingFiles
+import at.bernhardberger.tvheadend.sdk.core.metadata.isRemovedRecording
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
@@ -242,6 +242,8 @@ internal class DvrMutationCoordinator(
         command = { generation ->
             withIntent(generation, DvrMutationKind.DELETE, entryId = id) { gateway.deleteDvrEntry(generation, id) }
         },
+        // Tvheadend's delete changes nothing, and sends nothing, when no file is left to remove.
+        confirmedOnAcceptance = { generation -> currentEntry(generation, id)?.state == DvrEntryState.REMOVED },
     )
 
     override suspend fun createAutorecRule(
@@ -370,6 +372,7 @@ internal class DvrMutationCoordinator(
         confirmations: Set<ConfirmationKey>,
         prepare: (suspend (GatewayGeneration) -> GatewayResult<Unit>)? = null,
         command: suspend (GatewayGeneration) -> GatewayResult<Unit>,
+        confirmedOnAcceptance: ((GatewayGeneration) -> Boolean)? = null,
     ): DvrMutationResult<Unit> = operationMutex.withLock {
         val operation = when (
             val registration = register(expectedGeneration, confirmations = if (prepare == null) confirmations else emptySet())
@@ -402,6 +405,8 @@ internal class DvrMutationCoordinator(
                     is GatewayResult.Ok -> {
                         if (!applyProof(operation, allowed = true)) {
                             DvrMutationResult.Failed(TvheadendFailure.CONNECTION_CHANGED, mayHaveApplied = true)
+                        } else if (confirmedOnAcceptance?.invoke(operation.generation) == true && isActive(operation)) {
+                            DvrMutationResult.Confirmed(Unit)
                         } else {
                             awaitConfirmation(operation, Unit)
                         }
@@ -682,8 +687,8 @@ private fun MetadataEvent.confirmationKeys(): List<ConfirmationKey> = when (this
     is MetadataEvent.DvrEntryUpdated -> buildList {
         add(ConfirmationKey(ConfirmationKind.ENTRY_UPDATED, entry.id))
         if (entry.state in endedEntryStates) add(ConfirmationKey(ConfirmationKind.ENTRY_ENDED, entry.id))
-        // Stats-only updates never get here; a listed file means it vanished externally.
-        if (hasRemovedRecordingFiles(entry.failure, entry.files)) {
+        // Stats-only updates never get here, so a stale failure cannot confirm a delete.
+        if (isRemovedRecording(entry.failure)) {
             add(ConfirmationKey(ConfirmationKind.ENTRY_FILE_REMOVED, entry.id))
         }
     }

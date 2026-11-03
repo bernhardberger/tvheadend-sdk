@@ -63,7 +63,7 @@ internal class DvrProgressTest {
             DvrResumeOffer.StartOver,
             policy.resumeOffer(entry(DvrEntryState.COMPLETED_ERROR, Duration.ZERO)),
         )
-        listOf(DvrEntryState.MISSED, DvrEntryState.RECORDING_ERROR, DvrEntryState.FILE_MISSING).forEach { state ->
+        listOf(DvrEntryState.MISSED, DvrEntryState.RECORDING_ERROR, DvrEntryState.REMOVED).forEach { state ->
             assertSame(DvrResumeOffer.StartOver, policy.resumeOffer(entry(state, 12.seconds)), "$state")
         }
     }

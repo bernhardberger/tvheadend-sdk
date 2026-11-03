@@ -589,8 +589,8 @@ internal class FakeTvheadendSessionTest {
             Triple(DvrEntryState.MISSED, listOf(file), null) to true,
             Triple(DvrEntryState.COMPLETED_ERROR, listOf(file), 0L) to false,
             Triple(DvrEntryState.MISSED, null, null) to false,
-            Triple(DvrEntryState.FILE_MISSING, listOf(file), 100L) to false,
-            Triple(DvrEntryState.DELETED, emptyList<at.bernhardberger.tvheadend.sdk.core.DvrRecordingFile>(), null) to false,
+            Triple(DvrEntryState.REMOVED, listOf(file), 100L) to false,
+            Triple(DvrEntryState.REMOVED, emptyList<at.bernhardberger.tvheadend.sdk.core.DvrRecordingFile>(), null) to false,
         ).forEach { (target, playable) ->
             val (state, files, dataSizeBytes) = target
             val observation = currentObservation().let { base ->

@@ -39,7 +39,7 @@ internal class DvrWatchStateTest {
         metadata.bindGeneration(generation)
         val states = listOf(
             DvrEntryState.SCHEDULED, DvrEntryState.RECORDING, DvrEntryState.RECORDING_ERROR,
-            DvrEntryState.COMPLETED, DvrEntryState.COMPLETED_ERROR, DvrEntryState.FILE_MISSING,
+            DvrEntryState.COMPLETED, DvrEntryState.COMPLETED_ERROR, DvrEntryState.REMOVED,
             DvrEntryState.MISSED, DvrEntryState.INVALID, DvrEntryState.UNKNOWN,
         )
         states.forEachIndexed { index, state ->

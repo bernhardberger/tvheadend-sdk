@@ -342,7 +342,7 @@ Use observation point selectors when selecting related entities:
 | `dvrEntryForEvent(event)` / `dvrEntriesForEvent(event)` | Experimental ranking for a held EPG event, including search results and historical programmes |
 | `epgEventForDvrEntry(entryId)` | The unique event linked to a recording |
 
-`dvrEntryForEvent` ranks matches lexicographically: non-DELETED entries first, then entries owned by the session's
+`dvrEntryForEvent` ranks matches lexicographically: entries other than REMOVED first, then entries owned by the session's
 account first, then RECORDING/RECORDING_ERROR, then SCHEDULED, then the event's
 `dvrEntryId` link, latest stop (unknown last), and lowest entry ID. Owner comparison
 is exact after the SDK's username normalization; anonymous sessions and missing
@@ -352,18 +352,20 @@ the event ID is unknown or ambiguous, no linked entries exist, or matched entrie
 are ambiguous because they contain duplicate DVR entry IDs. Unlinked time-window
 matches are not considered. Standalone observations and testing factories have no own account.
 
-A DELETED entry still matches when it is the only linked entry. It means the server
-kept the entry after its recording files were removed, not a recording failure.
-Replace deletion heuristics based on FILE_MISSING plus empty files with
-`state == DvrEntryState.DELETED`.
+A REMOVED entry still matches when it is the only linked entry. It means the server
+kept a completed entry whose file is gone, not a recording failure. Use
+`state == DvrEntryState.REMOVED` instead of checking the files list.
 
-The SDK reports DELETED for a completed entry with a missing file and no listed
-files. Tvheadend sends an empty files list until it restarts and omits the field
-afterwards; both mean DELETED. `FILE_MISSING` means the server still lists the
-file, usually because it was removed outside Tvheadend. Tvheadend sends the same
-data, and does not say whether files were removed, for a recording whose file it
-could not create and, after a restart, for a recording that ended without writing
-a file. The SDK reports both as DELETED.
+The SDK reports REMOVED for every completed entry whose file is missing, the
+entries Tvheadend's web interface lists under "Removed". Tvheadend does not say
+why the file is gone, so REMOVED covers a delete from any client or by retention,
+a file removed outside Tvheadend, a recording marked as previously recorded, a
+recording whose file Tvheadend could not create, and, after a restart, a recording
+that ended without writing a file. Missed entries stay MISSED.
+
+Deleting an entry that is already REMOVED usually changes nothing on the server and
+produces no update. `deleteEntry` then confirms once the server accepts the command,
+and the entry stays until Tvheadend's retention removes it.
 
 With `@OptIn(ExperimentalTvheadendApi::class)`, `dvrEntriesForEvent(eventId)` returns
 `DvrEventEntries` with the same `selected` entry and an immutable `otherActive`
@@ -622,9 +624,10 @@ create lifecycle intents. A programme schedule remains correlated through its
 `SCHEDULED` add and subsequent `RECORDING_STARTED` (or expiry), bound to that entry
 ID after the add. A delete may attribute both the terminal recording update and
 `REMOVED`; its intent is consumed only by removal (or expires). When the server
-keeps the entry after removing its files, `REMOVED` carries that `DELETED` entry as
-`current`; otherwise `current` is null. Any transition into `DELETED` from a valid
-state, including `COMPLETED` and `FILE_MISSING`, emits `REMOVED`.
+keeps the entry after removing its files, `REMOVED` carries that entry, in state
+`REMOVED`, as `current`; otherwise `current` is null. Any transition into the
+`REMOVED` state from a valid state, including `COMPLETED` and the recording states,
+emits `REMOVED`, never `RECORDING_FAILED`.
 
 A server user-abort marker emits `RECORDING_ABORTED`, never `RECORDING_FAILED`.
 Its snapshot state remains `COMPLETED_ERROR` for compatibility. A local `STOP`
@@ -1213,7 +1216,7 @@ admitted as `RecordingPlaybackAdmission.Completed`. `COMPLETED_ERROR` and
 `MISSED` entries are admitted the same way only when they list at least one
 recording file and their data size is not known to be zero (this includes
 recordings the user aborted, which Tvheadend reports as `COMPLETED_ERROR`);
-without a file they are `TargetUnavailable`, as are `DELETED`, `FILE_MISSING` and the
+without a file they are `TargetUnavailable`, as are `REMOVED` and the
 remaining states. `RECORDING_ERROR` entries are treated exactly like
 `RECORDING` ones, because Tvheadend may resume writing the same file, and a
 growing recording that ends as `COMPLETED_ERROR`, or as `MISSED` with a file,

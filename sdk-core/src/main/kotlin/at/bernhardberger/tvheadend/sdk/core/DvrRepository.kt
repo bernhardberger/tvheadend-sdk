@@ -78,29 +78,23 @@ public class DvrEntryState private constructor(private val label: String) {
         @JvmField
         public val COMPLETED_ERROR: DvrEntryState = DvrEntryState("COMPLETED_ERROR")
         /**
-         * The server still lists the recording file but reports it missing.
+         * A completed recording whose file is gone; the server keeps only the entry.
          *
-         * This usually means the file was removed or moved outside Tvheadend. See [DELETED] for
-         * entries the server lists without files.
-         */
-        @JvmField
-        public val FILE_MISSING: DvrEntryState = DvrEntryState("FILE_MISSING")
-        /**
-         * The server kept the entry after removing its recording files.
+         * This matches the entries Tvheadend's web interface lists under "Removed" for completed
+         * recordings. The entry is not playable and this state is not a failure.
          *
-         * A user delete from any client or the retention removal timer can cause this state.
-         * The entry is not playable and this state is not a failure.
-         *
-         * The SDK reports this state for a completed entry with a missing file and no listed
-         * files. Tvheadend sends the same data, and does not say whether the files were removed,
-         * for two other entries, which are also reported as `DELETED`:
-         * - a recording whose file Tvheadend could not create (shown as "File not created" in
-         *   Tvheadend's web interface)
+         * Tvheadend does not say why the file is gone, so this state covers:
+         * - a delete from any client, or the retention removal timer
+         * - a file removed or moved outside Tvheadend
+         * - a recording marked as previously recorded
+         * - a recording whose file Tvheadend could not create ("File not created")
          * - after a Tvheadend restart, a recording that ended without writing a file, which was
-         *   missed before the restart
+         *   [MISSED] before the restart
+         *
+         * A missed entry stays [MISSED], even where the web interface lists it under "Removed".
          */
         @JvmField
-        public val DELETED: DvrEntryState = DvrEntryState("DELETED")
+        public val REMOVED: DvrEntryState = DvrEntryState("REMOVED")
         /** An unrecognized wire state. */
         @JvmField
         public val UNKNOWN: DvrEntryState = DvrEntryState("UNKNOWN")
@@ -1091,12 +1085,15 @@ public interface DvrRepository {
     ): DvrMutationResult<Unit>
 
     /**
-     * Deletes one DVR entry and waits for entry removal or a retained deleted entry.
+     * Deletes one DVR entry and waits for entry removal or a retained removed entry.
      *
      * Server log retention may keep a deleted recording's entry after its file is removed, so a
      * [DvrMutationResult.Confirmed] result can leave the entry observable as
-     * [DvrEntryState.DELETED], or leave no entry. Deleting an already deleted entry may confirm
-     * on the next full update carrying the deleted shape.
+     * [DvrEntryState.REMOVED], or leave no entry.
+     *
+     * For an entry that is already [DvrEntryState.REMOVED], Tvheadend usually does nothing and
+     * sends no update. The result is then [DvrMutationResult.Confirmed] as soon as the server
+     * accepts the command, and the entry stays until retention removes it.
      */
     public suspend fun deleteEntry(
         currentSession: CurrentSessionObservation,

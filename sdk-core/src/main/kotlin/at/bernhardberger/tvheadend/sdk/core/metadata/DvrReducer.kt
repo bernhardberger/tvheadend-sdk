@@ -151,7 +151,7 @@ internal data class ReducedDvrEntry private constructor(
     private fun hasInvalidTiming(): Boolean = start != null && stop != null && stop < start
 
     private fun resolvedState(): DvrEntryState? = when (failure) {
-        GatewayDvrFailure.FILE_MISSING -> if (hasRemovedRecordingFiles(failure, files)) DvrEntryState.DELETED else DvrEntryState.FILE_MISSING
+        GatewayDvrFailure.FILE_MISSING -> DvrEntryState.REMOVED
         GatewayDvrFailure.ABORTED, GatewayDvrFailure.PRESENT -> when (state) {
             DvrEntryState.RECORDING -> DvrEntryState.RECORDING_ERROR
             DvrEntryState.COMPLETED -> DvrEntryState.COMPLETED_ERROR
@@ -524,22 +524,17 @@ internal class DvrReducer {
 }
 
 /**
- * Whether a full DVR entry carries Tvheadend's retained-deleted shape.
+ * Whether a full DVR entry is a completed recording without its file ([DvrEntryState.REMOVED]).
  *
- * Tvheadend drops every filename when it deletes a recording's files. Until it restarts, HTSP
- * sends `files` as an empty list; it saves no file entries, so after a restart it omits `files`.
- * A file lost outside Tvheadend keeps its filename and stays listed.
- *
- * Two other entries have the same wire shape and cannot be told apart, because the hidden
- * `fileremoved` property is not sent: one whose file Tvheadend could not create ("File not
- * created", `src/dvr/dvr_db.c` `dvr_stop_recording`), and, after a restart, one that ended
- * without writing a file ("Time missed" before the restart), which `dvr_entry_set_timer`
- * reloads as completed because `dvr_stop_recording` set `de_dont_reschedule`.
+ * HTSP sends "File missing" only for a completed entry whose file size cannot be read
+ * (`src/htsp_server.c`, `htsp_build_dvrentry`). Tvheadend's web interface lists such entries
+ * under "Removed" (`dvr_entry_is_finished` in `src/dvr/dvr_db.c`). The hidden `fileremoved`
+ * property is not sent, and the `files` field does not tell a user delete apart from a file
+ * lost outside Tvheadend, a recording that never wrote a file, or a previously-recorded mark.
+ * The web interface reads cached file sizes while HTSP refreshes them, so the two can briefly
+ * disagree.
  */
-internal fun hasRemovedRecordingFiles(
-    failure: GatewayDvrFailure?,
-    files: List<GatewayDvrRecordingFile>?,
-): Boolean = failure == GatewayDvrFailure.FILE_MISSING && files.isNullOrEmpty()
+internal fun isRemovedRecording(failure: GatewayDvrFailure?): Boolean = failure == GatewayDvrFailure.FILE_MISSING
 
 private fun GatewayDvrRecordingFile.toPublicOrNull(): DvrRecordingFile? {
     if (start != null && stop != null && stop < start) return null

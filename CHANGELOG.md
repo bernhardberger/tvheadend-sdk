@@ -46,27 +46,28 @@ Unreleased; development target.
   connected. If password credentials are unavailable, its namespace cannot be
   computed and its cache ages out under normal retention and budget limits.
 
-- BREAKING: add `DvrEntryState.DELETED` for retained entries whose recording files
-  the server removed. A completed entry with a missing file and no listed files
-  is `DELETED`, whether Tvheadend sends an empty files list (before it restarts)
-  or omits the field (after a restart). `FILE_MISSING` remains only for a missing
-  file the server still lists, usually one removed outside Tvheadend. Tvheadend
-  sends the same data for a recording whose file it could not create and, after a
-  restart, for a recording that ended without writing a file; both are also
-  reported as `DELETED`. Add `DELETED` to exhaustive client state handling and
-  replace FILE_MISSING-plus-empty-files deletion heuristics with
-  `state == DvrEntryState.DELETED`.
-- BREAKING: any transition into DELETED from a valid state, including COMPLETED
-  and FILE_MISSING, now emits `DvrChangeKind.REMOVED`. Previously it emitted no
-  change, or `RECORDING_FAILED` from a recording state. This includes a recording
-  whose file Tvheadend could not create. Such a `REMOVED` change
-  carries the retained entry as `current`, so do not assume `current` is null.
-- BREAKING: event selectors rank every non-DELETED entry above deleted entries,
-  before ownership or event-link preference. A DELETED entry is still selected
+- BREAKING: replace `DvrEntryState.FILE_MISSING` with `DvrEntryState.REMOVED`.
+  Every completed entry whose file is gone is now `REMOVED`, whatever its files
+  list holds. This matches the entries Tvheadend's web interface lists under
+  "Removed". Tvheadend does not say why the file is gone, so `REMOVED` covers a
+  delete from any client or by retention, a file removed outside Tvheadend, a
+  recording marked as previously recorded, a recording whose file Tvheadend could
+  not create, and, after a restart, a recording that ended without writing a file.
+  It is not a failure. Missed entries stay `MISSED`. Replace `FILE_MISSING`
+  handling and file-list deletion heuristics with `state == DvrEntryState.REMOVED`.
+- BREAKING: any transition into `REMOVED` from a valid state emits
+  `DvrChangeKind.REMOVED`, including one from `COMPLETED` or from a recording
+  state. Previously a recording that ended without its file emitted
+  `RECORDING_FAILED`, and a completed recording that lost its file emitted no
+  change. A `REMOVED` change carries the retained entry as `current`, so do not
+  assume `current` is null.
+- BREAKING: event selectors rank every other entry above `REMOVED` entries,
+  before ownership or event-link preference. A `REMOVED` entry is still selected
   when it is the only match.
-- BREAKING: delete confirmation now requires entry removal or a full update in the
-  `DELETED` shape: a file-missing failure with an empty or absent files list. A
-  full update that still lists a file no longer confirms a delete.
+- BREAKING: `deleteEntry` confirms on entry removal or a full update reporting
+  the file missing. For an entry that is already `REMOVED`, Tvheadend usually does
+  nothing and sends no update, so the delete confirms as soon as the server
+  accepts it, and the entry stays until retention removes it.
 
 ## [0.38.0]
 

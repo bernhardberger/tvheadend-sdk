@@ -58,7 +58,7 @@ private fun transition(
     if (before == null || after == null || before.state == after.state) return null
     if (before.state == DvrEntryState.INVALID || after.state == DvrEntryState.INVALID) return null
     return when {
-        after.state == DvrEntryState.DELETED -> if (before.state != null) DvrChangeKind.REMOVED else null
+        after.state == DvrEntryState.REMOVED -> if (before.state != null) DvrChangeKind.REMOVED else null
         failure == GatewayDvrFailure.ABORTED && after.state in terminalStates -> DvrChangeKind.RECORDING_ABORTED
         failure == GatewayDvrFailure.ABORTED -> null
         before.state in setOf(DvrEntryState.SCHEDULED, DvrEntryState.RECORDING) && after.state in errorStates -> DvrChangeKind.RECORDING_FAILED
@@ -75,5 +75,5 @@ private fun transition(
 }
 
 private val recordingStates = setOf(DvrEntryState.RECORDING, DvrEntryState.RECORDING_ERROR)
-private val errorStates = setOf(DvrEntryState.RECORDING_ERROR, DvrEntryState.COMPLETED_ERROR, DvrEntryState.FILE_MISSING)
-private val terminalStates = setOf(DvrEntryState.COMPLETED, DvrEntryState.COMPLETED_ERROR, DvrEntryState.FILE_MISSING, DvrEntryState.MISSED)
+private val errorStates = setOf(DvrEntryState.RECORDING_ERROR, DvrEntryState.COMPLETED_ERROR)
+private val terminalStates = setOf(DvrEntryState.COMPLETED, DvrEntryState.COMPLETED_ERROR, DvrEntryState.MISSED)

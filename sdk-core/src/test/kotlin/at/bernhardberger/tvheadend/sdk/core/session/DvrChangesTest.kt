@@ -103,8 +103,8 @@ internal class DvrChangesTest {
     }
 
     @Test
-    fun `retained deletion without a prior valid state emits no lifecycle change`() = runTest {
-        for (files in deletedFileShapes) for (before in listOf(null, DvrEntryState.INVALID, DvrEntryState.DELETED)) {
+    fun `removal without a prior valid state emits no lifecycle change`() = runTest {
+        for (files in removedFileShapes) for (before in listOf(null, DvrEntryState.INVALID, DvrEntryState.REMOVED)) {
             val fixture = Fixture()
             fixture.accept(MetadataEvent.DvrEntryAdded(fixture.generation,
                 GatewayDvrEntry(DvrEntryId(7), state = before)))
@@ -119,9 +119,9 @@ internal class DvrChangesTest {
     }
 
     @Test
-    fun `entry first seen already deleted emits no lifecycle change`() = runTest {
+    fun `entry first seen already removed emits no lifecycle change`() = runTest {
         // The absent shape is what initial sync delivers after a Tvheadend restart.
-        for (files in deletedFileShapes) {
+        for (files in removedFileShapes) {
             val fixture = Fixture()
             fixture.ready()
             val changes = collect(fixture)
@@ -134,13 +134,13 @@ internal class DvrChangesTest {
     }
 
     @Test
-    fun `retained deletion emits removed attributes delete and never consumes stop`() = runTest {
+    fun `retained removal emits removed attributes delete and never consumes stop`() = runTest {
         val priors = listOf(
             entry(state = DvrEntryState.RECORDING),
             entry(state = DvrEntryState.COMPLETED),
-            entry(state = DvrEntryState.COMPLETED, failure = GatewayDvrFailure.FILE_MISSING, files = listOf(listedFile)),
+            entry(state = DvrEntryState.COMPLETED, failure = GatewayDvrFailure.PRESENT),
         )
-        for (files in deletedFileShapes) for (before in priors) {
+        for (files in removedFileShapes) for (before in priors) {
             val ledger = DvrIntentLedger()
             val fixture = Fixture(ledger = ledger)
             fixture.accept(MetadataEvent.DvrEntryAdded(fixture.generation, before))
@@ -155,7 +155,7 @@ internal class DvrChangesTest {
             runCurrent()
             val change = changes.single()
             assertEquals(DvrChangeKind.REMOVED, change.kind)
-            assertEquals(DvrEntryState.DELETED, change.current!!.state)
+            assertEquals(DvrEntryState.REMOVED, change.current!!.state)
             assertEquals(DvrChangeOrigin.ThisClient(DvrMutationKind.DELETE), change.origin)
             assertEquals(DvrChangeOrigin.ThisClient(DvrMutationKind.STOP),
                 ledger.takeStop(fixture.generation, change.current))
@@ -199,10 +199,10 @@ internal class DvrChangesTest {
             Case(DvrEntryState.RECORDING_ERROR, DvrEntryState.COMPLETED, expected = DvrChangeKind.RECORDING_COMPLETED),
             Case(DvrEntryState.RECORDING, DvrEntryState.RECORDING, GatewayDvrFailure.PRESENT, DvrChangeKind.RECORDING_FAILED),
             Case(DvrEntryState.RECORDING, DvrEntryState.COMPLETED, GatewayDvrFailure.PRESENT, DvrChangeKind.RECORDING_FAILED),
-            Case(DvrEntryState.RECORDING, DvrEntryState.COMPLETED, GatewayDvrFailure.FILE_MISSING, DvrChangeKind.RECORDING_FAILED),
-            Case(DvrEntryState.COMPLETED, DvrEntryState.COMPLETED, GatewayDvrFailure.FILE_MISSING, null),
+            Case(DvrEntryState.RECORDING, DvrEntryState.COMPLETED, GatewayDvrFailure.FILE_MISSING, DvrChangeKind.REMOVED),
+            Case(DvrEntryState.COMPLETED, DvrEntryState.COMPLETED, GatewayDvrFailure.FILE_MISSING, DvrChangeKind.REMOVED),
             Case(DvrEntryState.RECORDING_ERROR, DvrEntryState.COMPLETED, GatewayDvrFailure.PRESENT, null),
-            Case(DvrEntryState.COMPLETED_ERROR, DvrEntryState.COMPLETED, GatewayDvrFailure.FILE_MISSING, null),
+            Case(DvrEntryState.COMPLETED_ERROR, DvrEntryState.COMPLETED, GatewayDvrFailure.FILE_MISSING, DvrChangeKind.REMOVED),
             Case(DvrEntryState.RECORDING, DvrEntryState.COMPLETED, GatewayDvrFailure.ABORTED, DvrChangeKind.RECORDING_ABORTED),
             Case(DvrEntryState.RECORDING_ERROR, DvrEntryState.COMPLETED, GatewayDvrFailure.ABORTED, DvrChangeKind.RECORDING_ABORTED),
             Case(DvrEntryState.SCHEDULED, DvrEntryState.MISSED, expected = DvrChangeKind.MISSED),
@@ -216,7 +216,7 @@ internal class DvrChangesTest {
             case.before?.let { fixture.accept(MetadataEvent.DvrEntryAdded(fixture.generation, entry(state = it))) }
             fixture.ready()
             val changes = collect(fixture)
-            // FILE_MISSING cases list their file; without one the entry resolves as DELETED.
+            // FILE_MISSING cases list their file: a listed file still resolves as REMOVED.
             val files = if (case.failure == GatewayDvrFailure.FILE_MISSING) listOf(listedFile) else null
             val current = entry(state = case.after, failure = case.failure, files = files)
             fixture.accept(if (case.before == null) MetadataEvent.DvrEntryAdded(fixture.generation, current)
@@ -658,8 +658,8 @@ internal class DvrChangesTest {
 
     private val listedFile = GatewayDvrRecordingFile(1, null, null, null, null)
 
-    /** Empty before a Tvheadend restart, absent after it. */
-    private val deletedFileShapes = listOf<List<GatewayDvrRecordingFile>?>(emptyList(), null)
+    /** Empty after a delete, absent after a Tvheadend restart, listed when lost outside Tvheadend. */
+    private val removedFileShapes = listOf<List<GatewayDvrRecordingFile>?>(emptyList(), null, listOf(listedFile))
 
     private fun entry(
         id: Long = 7,
