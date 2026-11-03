@@ -78,10 +78,10 @@ public class DvrEntryState private constructor(private val label: String) {
         @JvmField
         public val COMPLETED_ERROR: DvrEntryState = DvrEntryState("COMPLETED_ERROR")
         /**
-         * The server reports the recording file missing without declaring it removed.
+         * The server still lists the recording file but reports it missing.
          *
-         * The server either still lists the file or sent no file information. See [DELETED] for
-         * files the server removed.
+         * This usually means the file was removed or moved outside Tvheadend. See [DELETED] for
+         * entries the server lists without files.
          */
         @JvmField
         public val FILE_MISSING: DvrEntryState = DvrEntryState("FILE_MISSING")
@@ -90,6 +90,14 @@ public class DvrEntryState private constructor(private val label: String) {
          *
          * A user delete from any client or the retention removal timer can cause this state.
          * The entry is not playable and this state is not a failure.
+         *
+         * The SDK reports this state for a completed entry with a missing file and no listed
+         * files. Tvheadend sends the same data, and does not say whether the files were removed,
+         * for two other entries, which are also reported as `DELETED`:
+         * - a recording whose file Tvheadend could not create (shown as "File not created" in
+         *   Tvheadend's web interface)
+         * - after a Tvheadend restart, a recording that ended without writing a file, which was
+         *   missed before the restart
          */
         @JvmField
         public val DELETED: DvrEntryState = DvrEntryState("DELETED")

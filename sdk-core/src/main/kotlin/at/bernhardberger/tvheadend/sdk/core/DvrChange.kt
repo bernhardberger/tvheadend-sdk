@@ -53,7 +53,9 @@ public class DvrChangeKind private constructor(private val label: String) {
          * The entry was removed, or retained after its recording files were removed.
          *
          * [DvrChange.current] is null for a removed entry and a [DvrEntryState.DELETED] entry for a
-         * retained one.
+         * retained one. A recording whose file the server could not create also ends as
+         * [DvrEntryState.DELETED], and that move emits this kind, not [RECORDING_FAILED]; see
+         * [DvrEntryState.DELETED] for the entries the server does not distinguish.
          */
         @JvmField
         public val REMOVED: DvrChangeKind = DvrChangeKind("REMOVED")

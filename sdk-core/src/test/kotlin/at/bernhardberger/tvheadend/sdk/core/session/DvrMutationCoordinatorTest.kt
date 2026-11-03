@@ -776,13 +776,15 @@ internal class DvrMutationCoordinatorTest {
     }
 
     @Test
-    fun `delete confirms declared file removal before or after acknowledgement`() = runTest {
-        for (beforeReply in listOf(false, true)) {
+    fun `delete confirms empty or absent files before or after acknowledgement`() = runTest {
+        // Empty before a Tvheadend restart, absent after it.
+        val shapes = listOf<List<at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrRecordingFile>?>(emptyList(), null)
+        for (files in shapes) for (beforeReply in listOf(false, true)) {
             val generation = GatewayGeneration()
             val gateway = MutationGateway()
             val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> null })
             val update = dvrUpdated(generation, 1, DvrEntryState.COMPLETED,
-                failure = GatewayDvrFailure.FILE_MISSING, files = emptyList())
+                failure = GatewayDvrFailure.FILE_MISSING, files = files)
             gateway.deleteBehavior = { _, _ ->
                 if (beforeReply) coordinator.acceptMetadata(update)
                 GatewayResult.Ok(Unit)
@@ -802,7 +804,7 @@ internal class DvrMutationCoordinatorTest {
     }
 
     @Test
-    fun `delete ignores stats-only file-missing and unrelated full updates`() = runTest {
+    fun `delete ignores stats-only and listed-file file-missing and unrelated full updates`() = runTest {
         val generation = GatewayGeneration()
         val gateway = MutationGateway().apply { deleteBehavior = { _, _ -> GatewayResult.Ok(Unit) } }
         val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, _ -> null })
@@ -815,8 +817,6 @@ internal class DvrMutationCoordinatorTest {
         coordinator.acceptMetadata(dvrUpdated(generation, 1, DvrEntryState.COMPLETED,
             failure = GatewayDvrFailure.FILE_MISSING,
             files = listOf(at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrRecordingFile(1, null, null, null, null))))
-        coordinator.acceptMetadata(dvrUpdated(generation, 1, DvrEntryState.COMPLETED,
-            failure = GatewayDvrFailure.FILE_MISSING))
         coordinator.acceptMetadata(dvrUpdated(generation, 1, DvrEntryState.COMPLETED,
             true, GatewayDvrFailure.FILE_MISSING))
         coordinator.acceptMetadata(dvrUpdated(generation, 2, failure = GatewayDvrFailure.FILE_MISSING))
