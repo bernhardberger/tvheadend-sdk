@@ -129,6 +129,12 @@ internal class FileArtworkCacheStore(root: File, private val files: ArtworkCache
         revision++
     }
 
+    /** Invalidates only the deleted namespace, preserving other pending index writes. */
+    fun invalidate(namespace: CacheNamespace) {
+        indexes.remove(directory(namespace))
+        revision++
+    }
+
     fun store(namespace: CacheNamespace, id: ArtworkId, bytes: ByteArray, now: Instant, notBefore: Instant, maxBytes: Long) {
         safely {
             val directory = directory(namespace)

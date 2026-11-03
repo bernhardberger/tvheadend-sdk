@@ -195,6 +195,14 @@ internal class FileMetadataCacheStore(
         }
     }
 
+    override suspend fun clear(namespace: CacheNamespace) {
+        try {
+            namespaceDir(namespace).toPath().deleteRecursively()
+        } catch (_: IOException) {
+            // Optional persistence: retry any remaining files on the next clear.
+        }
+    }
+
     override suspend fun statistics(): CacheStatistics {
         val namespaceDirs = listFiles(namespacesRoot)?.filter { entry -> entry.isDirectory } ?: emptyList()
         val metadataBytes = namespaceDirs.sumOf { dir ->

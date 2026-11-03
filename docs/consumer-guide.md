@@ -282,7 +282,11 @@ migrating ambiguous identities. `ArtworkLoader.cacheKey` values change once on
 upgrade, causing one-time misses in application-owned artwork caches; those
 caches retain their own eviction policy and are not cleared by the SDK.
 Removed profiles' files remain subject to retention and the byte budget until
-pruned by cache activity, or can be deleted immediately with the root-wide `clear()`.
+pruned by cache activity, or can be deleted immediately with `session.cache.clear(profile)`.
+This removes only that profile's metadata and artwork. Profiles sharing host, port
+and username share a namespace, even if their stored ids differ. Clearing the
+current namespace rewrites its current metadata publication immediately; other
+namespaces survive. Removing a stored profile does not evict its cache automatically.
 
 `session.cache` exposes `SessionCache.statistics` for a storage screen and
 `clear()` to delete every cached namespace. Statistics are measured once the
@@ -1477,31 +1481,46 @@ once. Caller cancellation and owner close take precedence over that wait.
 ### Profiles
 
 The Android-free `ServerProfileStore` contract is implemented by
-`TvheadendServerProfileStore`, which atomically persists one selected profile
-for one application process. `loadProfile()` returns `Missing`, `Unavailable`, or an
+`TvheadendServerProfileStore`, which atomically persists an ordered collection of profiles
+and one optional active selection for one application process. `loadActive()` returns `Missing`, `Unavailable`, or an
 `Available` result containing an opaque connectable `ServerProfile` plus
 non-secret endpoint fields. It does not expose password fields:
 
 ```kotlin
-when (val stored = profileStore.loadProfile()) {
+when (val stored = profileStore.loadActive()) {
     ServerProfileReadResult.Missing -> Unit
     ServerProfileReadResult.Unavailable -> Unit
     is ServerProfileReadResult.Available -> session.connect(stored.profile)
 }
 ```
 
-`storeAnonymous` and `storePassword` return the locally normalized `Available`
-profile after persistence, so it can be passed explicitly to `session.connect`
-without a readback. `clearProfile` returns authoritative `Missing` state after
-local removal. Any mutation can return typed `Unavailable` state. Success says
+`addAnonymous` and `addPassword` return `ServerProfileWriteResult.Applied(id)`
+after local persistence. They leave the active selection unchanged unless
+`activate = true`. `profiles()` lists summaries in insertion order without exposing
+credentials. Labels are optional, trimmed, limited to 64 characters and cannot
+contain control characters. IDs are stable canonical UUIDs; use `ServerProfileId.from`
+to restore an application-owned key. Edits through `updateAnonymous` or `updatePassword`
+keep the id and can change authentication mode; a null label clears it.
+
+To switch servers, call `setActive(id)`, then `loadActive()` and
+`session.connect(stored.profile)`. Selection alone does not change the connection.
+`remove(id)` removes one profile; removing the active profile chooses no successor.
+`clearAll()` deletes every profile and the active pointer, including unreadable data.
+Mutations return `NotFound` for a missing id and `Unavailable` for unreadable storage.
+Success says
 nothing about server reachability, authentication, or session readiness.
 Anonymous profiles do not use the Android Keystore. Password profiles are
-encrypted at rest with endpoint-bound associated data. JVM consumer tests can
+encrypted at rest with profile-id- and endpoint-bound associated data. Duplicate
+endpoints are allowed. Existing format-2 single profiles migrate once to format 3,
+with a new id and active selection. Password credentials are decrypted with their
+old context and re-encrypted with the new id. If decryption fails, the endpoint
+remains listed but reads as unavailable until updated or removed. Unknown formats,
+including format 1, stay unavailable until `clearAll()`. JVM consumer tests can
 use `FakeServerProfileStore` for positive and unavailable behavior without an
 Android `Context`.
 
-`loadProfileForEditing()` additionally distinguishes `Anonymous` and
-`Password`. The password result contains immutable plaintext username and
+`loadForEditing(id)` additionally distinguishes `Anonymous` and
+`Password`, both including the label. The password result contains immutable plaintext username and
 password strings that cannot be zeroed. Keep it only in private memory while an
 active secure edit surface needs it, then drop every reference. Never serialize
 it, save it in instance state, log it, or use it as diagnostic data. The store

@@ -64,25 +64,31 @@ AC-3, E-AC-3, or MP3 decoding add the Media3 FFmpeg audio extension themselves; 
 
 ## Server profile storage
 
-`sdk-android` persists one selected server profile through the application-scoped
+`sdk-android` persists an ordered collection of server profiles, one active at a time, through the application-scoped
 `TvheadendServerProfileStore`. Normal connection reads return password
 authentication only inside an opaque, connectable `ServerProfile`:
 
 ```kotlin
 val profiles: ServerProfileStore = TvheadendServerProfileStore(context)
-when (val stored = profiles.storePassword(
+when (val written = profiles.addPassword(
     host = enteredHost,
     port = enteredPort,
     username = enteredUsername,
     password = enteredPassword,
+    activate = true,
 )) {
-    ServerProfileReadResult.Missing -> error("A successful write cannot be missing")
-    ServerProfileReadResult.Unavailable -> showStorageUnavailable()
-    is ServerProfileReadResult.Available -> session.connect(stored.profile)
+    ServerProfileWriteResult.NotFound -> Unit
+    ServerProfileWriteResult.Unavailable -> showStorageUnavailable()
+    is ServerProfileWriteResult.Applied -> {
+        val stored = profiles.loadActive()
+        if (stored is ServerProfileReadResult.Available) session.connect(stored.profile)
+    }
 }
 ```
 
-Settings screens can call `loadProfileForEditing()` to distinguish missing,
+Use `profiles()` to list summaries and `setActive(id)` to select a stored profile.
+Selection does not reconnect a session: call `loadActive()` and pass its profile to
+`session.connect`. Settings screens can call `loadForEditing(id)` to distinguish missing,
 unavailable, anonymous, and password profiles. Anonymous and password results
 expose the editable host and port; only the password result exposes the exact
 normalized username and exact password. Those credentials are immutable
@@ -91,11 +97,11 @@ while the active secure edit surface needs it, then drop every reference; never
 serialize it, place it in saved state, log it, or use it as a diagnostic.
 
 Anonymous profiles do not use the Android Keystore. Password fields remain
-encrypted at rest with endpoint-bound associated data. Legacy v1 credential
-records are unsupported and load as `Unavailable`; store a complete profile to replace them.
+encrypted at rest with profile-id- and endpoint-bound associated data. Existing format-2
+profiles migrate to one active format-3 record. Undecryptable credentials stay listed
+but unavailable until edited or removed. Other formats require `clearAll()` to recover.
 
-Successful writes return the locally normalized connectable profile, and a
-successful clear returns `Missing`; neither requires a follow-up read. This
+Successful mutations return `Applied(id)`; `clearAll()` removes the entire collection. This
 proves only local persistence, not server reachability, authentication, or
 session readiness. JVM tests can use `FakeServerProfileStore` to script stored,
 missing, and unavailable behavior without Android `Context` or Android runtime

@@ -1,8 +1,9 @@
 package at.bernhardberger.tvheadend.sdk.testing
 
-import at.bernhardberger.tvheadend.sdk.core.ServerProfileAuthenticationMode
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileId
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileListResult
 import at.bernhardberger.tvheadend.sdk.core.ServerProfileReadResult
-import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileWriteResult
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
@@ -14,77 +15,60 @@ import org.junit.jupiter.api.Test
 
 internal class FakeServerProfileStoreTest {
     @Test
-    fun `successful write returns normalized profile for explicit connection without readback`() = runTest {
-        val store = FakeServerProfileStore()
-        val session = FakeTvheadendSession()
-
-        val stored = store.storePassword(
-            host = "  test.invalid  ",
-            port = 4_242,
-            username = " user ",
-            password = "exact password",
-        ) as ServerProfileReadResult.Available
-
-        assertEquals("test.invalid", stored.host)
-        assertEquals(4_242, stored.port)
-        assertSame(ServerProfileAuthenticationMode.PASSWORD, stored.authenticationMode)
-        assertEquals(listOf(FakeServerProfileStoreCall.STORE_PASSWORD), store.calls)
-        assertSame(SessionCommandResult.STARTED, session.connect(stored.profile))
-        assertEquals(listOf(FakeSessionCall.CONNECT), session.calls)
-        assertSame(stored, store.loadProfile())
+    fun `ordered profiles keep ids across edits and active removal chooses no successor`() = runTest {
+        val ids = listOf(ServerProfileId.generate(), ServerProfileId.generate())
+        val source = ids.iterator()
+        val store = FakeServerProfileStore(idSource = { source.next() })
+        assertEquals(ServerProfileWriteResult.Applied(ids[0]), store.addAnonymous("test.invalid", label = " First "))
+        assertSame(ServerProfileReadResult.Missing, store.loadActive())
+        store.addPassword("test.invalid", username = "user", password = "password", activate = true)
+        val list = store.profiles() as ServerProfileListResult.Available
+        assertEquals(ids, list.profiles.map { it.id })
+        assertEquals(ids[1], list.activeId)
+        store.updateAnonymous(ids[1], "changed.invalid", 9982, null)
+        assertEquals(ids[1], (store.loadActive() as ServerProfileReadResult.Available).id)
+        store.setActive(ids[0])
+        assertEquals("First", (store.loadActive() as ServerProfileReadResult.Available).label)
+        store.remove(ids[0])
+        assertSame(ServerProfileReadResult.Missing, store.loadActive())
+        assertSame(ServerProfileWriteResult.NotFound, store.remove(ids[0]))
+        assertSame(ServerProfileWriteResult.NotFound, store.setActive(ids[0]))
+        store.clearAll()
+        assertTrue((store.profiles() as ServerProfileListResult.Available).profiles.isEmpty())
     }
 
     @Test
-    fun `scripts unavailable mutations preserves state and successful clear publishes missing`() = runTest {
-        val initial = ServerProfileReadResult.anonymous("stable.invalid")
+    fun `scripted unavailable preserves data and clear recovers unreadable collection`() = runTest {
+        val initial = ServerProfileReadResult.anonymous(ServerProfileId.generate(), "test.invalid")
         val store = FakeServerProfileStore(initial)
         store.scriptMutationUnavailable()
-
-        assertSame(
-            ServerProfileReadResult.Unavailable,
-            store.storeAnonymous("replacement.invalid"),
-        )
-        assertSame(ServerProfileReadResult.Unavailable, store.clearProfile())
-        assertSame(initial, store.loadProfile())
-
+        assertSame(ServerProfileWriteResult.Unavailable, store.addAnonymous("test.invalid"))
+        assertSame(initial, store.loadActive())
         store.scriptMutationSuccess()
-        assertSame(ServerProfileReadResult.Missing, store.clearProfile())
-        assertSame(ServerProfileReadResult.Missing, store.loadProfile())
-        assertTrue(store.calls.contains(FakeServerProfileStoreCall.CLEAR_PROFILE))
+        store.scriptProfile(ServerProfileReadResult.Unavailable)
+        assertSame(ServerProfileListResult.Unavailable, store.profiles())
+        store.clearAll()
+        assertSame(ServerProfileReadResult.Missing, store.loadActive())
+        store.scriptProfile(initial)
+        assertSame(initial, store.loadActive())
     }
 
     @Test
-    fun `cancelled calls neither record nor mutate stored state`() = runTest {
-        val initial = ServerProfileReadResult.anonymous("stable.invalid")
-        val store = FakeServerProfileStore(initial)
-        val calls: List<suspend () -> ServerProfileReadResult> = listOf(
-            { store.loadProfile() },
-            { store.storeAnonymous("replacement.invalid") },
-            { store.storePassword("replacement.invalid", 9_982, "user", "password") },
-            { store.clearProfile() },
+    fun `cancelled calls neither record nor mutate`() = runTest {
+        val store = FakeServerProfileStore()
+        val id = ServerProfileId.generate()
+        val calls: List<suspend () -> Any?> = listOf(
+            { store.profiles() }, { store.loadActive() }, { store.addAnonymous("test.invalid") },
+            { store.addPassword("test.invalid", username = "user", password = "password") },
+            { store.updateAnonymous(id, "test.invalid", 9982, null) },
+            { store.updatePassword(id, "test.invalid", 9982, "user", "password", null) },
+            { store.setActive(id) }, { store.remove(id) }, { store.clearAll() },
         )
         calls.forEach { call ->
-            val cancelled = launch(start = CoroutineStart.UNDISPATCHED) {
-                cancel()
-                call()
-            }
-            cancelled.join()
-            assertTrue(cancelled.isCancelled)
+            val job = launch(start = CoroutineStart.UNDISPATCHED) { cancel(); call() }
+            job.join()
+            assertTrue(job.isCancelled)
         }
-
-        assertEquals(emptyList<FakeServerProfileStoreCall>(), store.calls)
-        assertSame(initial, store.loadProfile())
-    }
-
-    @Test
-    fun `scripts positive and negative reads with supported results`() = runTest {
-        val store = FakeServerProfileStore(ServerProfileReadResult.Unavailable)
-        assertSame(ServerProfileReadResult.Unavailable, store.loadProfile())
-
-        val available = ServerProfileReadResult.anonymous("scripted.invalid")
-        store.scriptProfile(available)
-        assertSame(available, store.loadProfile())
-        store.scriptProfile(ServerProfileReadResult.Missing)
-        assertSame(ServerProfileReadResult.Missing, store.loadProfile())
+        assertTrue(store.calls.isEmpty())
     }
 }

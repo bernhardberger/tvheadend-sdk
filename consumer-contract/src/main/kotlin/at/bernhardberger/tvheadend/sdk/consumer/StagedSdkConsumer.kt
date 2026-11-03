@@ -248,10 +248,10 @@ public class StagedSdkConsumer(
         if (loadControl == null) createTvheadendPlaybackCoordinator(player)
         else createTvheadendPlaybackCoordinator(player, loadControl)
 
-    public suspend fun loadServerProfile(): ServerProfileReadResult = profileStore.loadProfile()
+    public suspend fun loadServerProfile(): ServerProfileReadResult = profileStore.loadActive()
 
-    public suspend fun loadServerProfileForEditing(): ServerProfileEditReadResult =
-        profileStore.loadProfileForEditing()
+    public suspend fun loadServerProfileForEditing(id: at.bernhardberger.tvheadend.sdk.core.ServerProfileId): ServerProfileEditReadResult =
+        profileStore.loadForEditing(id)
 
     public fun hasExpectedEditableFields(result: ServerProfileEditReadResult): Boolean = when (result) {
         ServerProfileEditReadResult.Missing,
@@ -268,17 +268,26 @@ public class StagedSdkConsumer(
     public suspend fun storeAnonymousServerProfile(
         host: String,
         port: Int,
-    ): ServerProfileReadResult = profileStore.storeAnonymous(host, port)
+    ): at.bernhardberger.tvheadend.sdk.core.ServerProfileWriteResult = profileStore.addAnonymous(host, port)
 
     public suspend fun storeAndConnect(
         store: ServerProfileStore,
         host: String,
         port: Int,
-    ): SessionCommandResult = when (val stored = store.storeAnonymous(host, port)) {
-        is ServerProfileReadResult.Available -> session.connect(stored.profile)
-        ServerProfileReadResult.Missing,
-        ServerProfileReadResult.Unavailable,
-        -> SessionCommandResult.NO_ACTIVE_PROFILE
+    ): SessionCommandResult {
+        val added = store.addAnonymous(host, port)
+        if (added !is at.bernhardberger.tvheadend.sdk.core.ServerProfileWriteResult.Applied) {
+            return SessionCommandResult.NO_ACTIVE_PROFILE
+        }
+        store.setActive(added.id)
+        store.profiles()
+        return when (val loaded = store.loadActive()) {
+            is ServerProfileReadResult.Available -> {
+                session.cache.clear(loaded.profile)
+                session.connect(loaded.profile)
+            }
+            ServerProfileReadResult.Missing, ServerProfileReadResult.Unavailable -> SessionCommandResult.NO_ACTIVE_PROFILE
+        }
     }
 
     public suspend fun run(): Unit = coordinator.run()
@@ -655,7 +664,7 @@ public fun stagedTestingFake(
 }
 
 public fun stagedProfileStoreFake(): FakeServerProfileStore = FakeServerProfileStore().apply {
-    scriptProfile(ServerProfileReadResult.anonymous("test.invalid"))
+    scriptProfile(ServerProfileReadResult.anonymous(at.bernhardberger.tvheadend.sdk.core.ServerProfileId.generate(), "test.invalid"))
     scriptMutationUnavailable()
     scriptMutationSuccess()
     calls

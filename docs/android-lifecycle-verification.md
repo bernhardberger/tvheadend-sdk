@@ -1,18 +1,19 @@
 # Android lifecycle verification
 
-`TvheadendServerProfileStore` now owns the single atomic selected-profile record.
+`TvheadendServerProfileStore` owns an atomic profile collection and active pointer.
 Its format stores normalized host, validated port, and authentication mode in the
 existing private Preferences DataStore. Password fields remain opaque inside a
-connectable `ServerProfile` and are encrypted with format-, field-, endpoint-,
+connectable `ServerProfile` and are encrypted with format-, profile-id-, field-, endpoint-,
 port-, and mode-bound associated data. Anonymous records contain no ciphertext
 and do not consult the Keystore. Legacy v1 records are unsupported and load as
-`Unavailable`; storing a complete profile replaces them.
+`Unavailable` until `clearAll()`. Existing format-2 single profiles migrate to one
+active format-3 profile; undecryptable credentials remain listed for repair or removal.
 
 Focused JVM tests cover strict record decoding, v1 rejection, failed-write
 preservation, cancellation, and associated-data mismatch.
 The instrumentation contract covers production DataStore, Tink, Keystore, and
 recreated-store round trips. The process-restart evidence below predates format 2;
-new format-2 process-restart device evidence was explicitly outside this change.
+new format-3 process-restart device evidence is outside this change.
 
 Phase 5 Android acceptance was run on 2026-08-24 using a TCL Smart TV Pro on
 Android API 31, firmware increment `AS50`.

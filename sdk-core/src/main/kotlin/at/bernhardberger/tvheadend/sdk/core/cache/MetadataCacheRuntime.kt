@@ -273,27 +273,38 @@ internal class MetadataCacheRuntime(
         }
     }
 
-    override suspend fun clear() {
+    override suspend fun clear() = clearNamespace(null)
+
+    override suspend fun clear(profile: at.bernhardberger.tvheadend.sdk.core.ServerProfile) =
+        clearNamespace(profile.cacheNamespace())
+
+    private suspend fun clearNamespace(namespace: CacheNamespace?) {
         currentCoroutineContext().ensureActive()
         // Never acquire a monitor here: an inline collector can call clear under publication
         // locks while a restore is waiting to take those locks. The atomic read at acceptance
         // linearizes the seed before clear, or rejects a load invalidated by clear.
         restoreRevision.incrementAndGet()
         lifecycle.withLock {
-            val active = writer
+            val active = writer?.takeIf { namespace == null || it.namespace == namespace }
             try {
                 // Clear need not flush bytes it will delete, but must finish retiring the old
                 // writer before a cancelled caller can restore persistence.
                 withContext(NonCancellable) { active?.job?.cancelAndJoin() }
-                writer = null
+                if (active != null) writer = null
                 // Store clear deletes artwork directories too, so it holds both locks in order.
                 accessMetadata {
                     artworkAccess.withLock {
                         clearEpoch++
                         artworkFlush?.cancel()
                         artworkFlush = null
-                        artworkStore.invalidate()
-                        store.clear()
+                        if (namespace == null) {
+                            artworkStore.invalidate()
+                            store.clear()
+                        } else {
+                            artworkStore.flush()
+                            artworkStore.invalidate(namespace)
+                            store.clear(namespace)
+                        }
                         mutableStatistics.value = store.statistics()
                     }
                 }
@@ -435,6 +446,9 @@ internal class MetadataCacheRuntime(
 
 /** Session cache exposed when no [MetadataCachePolicy] was supplied. */
 internal object DisabledSessionCache : SessionCache {
+    override suspend fun clear(profile: at.bernhardberger.tvheadend.sdk.core.ServerProfile) {
+        currentCoroutineContext().ensureActive()
+    }
     override val statistics: StateFlow<CacheStatistics> = MutableStateFlow(CacheStatistics.EMPTY)
 
     override suspend fun clear() {

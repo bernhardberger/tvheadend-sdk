@@ -1,100 +1,223 @@
 package at.bernhardberger.tvheadend.sdk.core
 
-/**
- * Persists the single server profile selected by an application.
- *
- * A successful mutation reports only locally normalized persistence. It does not prove server
- * reachability, authentication, or session readiness; pass the returned [ServerProfile] to
- * [TvheadendSession.connect] when the application is ready to establish a session.
- */
-public interface ServerProfileStore {
-    /** Loads the selected profile without exposing password fields. */
-    public suspend fun loadProfile(): ServerProfileReadResult
+import java.util.UUID
 
-    /** Stores and returns a locally normalized anonymous profile. */
-    public suspend fun storeAnonymous(
+/** Identifies a stored profile independently of edits to its connection fields. */
+public class ServerProfileId private constructor(
+    /** Canonical UUID suitable for application-owned per-profile state keys. */
+    public val value: String,
+) {
+    override fun equals(other: Any?): Boolean = other is ServerProfileId && value == other.value
+    override fun hashCode(): Int = value.hashCode()
+    override fun toString(): String = value
+
+    public companion object {
+        /** Restores a canonical lowercase UUID, rejecting other representations. */
+        @JvmStatic
+        public fun from(value: String): ServerProfileId {
+            val uuid = try {
+                UUID.fromString(value)
+            } catch (_: IllegalArgumentException) {
+                throw IllegalArgumentException("Invalid profile id")
+            }
+            require(uuid.toString() == value) { "Invalid profile id" }
+            return ServerProfileId(value)
+        }
+
+        /** Generates an opaque identifier for profile-store implementations. */
+        @JvmStatic
+        public fun generate(): ServerProfileId = ServerProfileId(UUID.randomUUID().toString())
+    }
+}
+
+/** Persists ordered server profiles with at most one active selection. */
+public interface ServerProfileStore {
+    /** Lists profiles in insertion order; only legacy migration needs credential decryption. */
+    public suspend fun profiles(): ServerProfileListResult
+
+    /** Loads the active profile, or [ServerProfileReadResult.Missing] when none is selected. */
+    public suspend fun loadActive(): ServerProfileReadResult
+
+    /** Adds a profile; success proves only local persistence, not server readiness. */
+    public suspend fun addAnonymous(
         host: String,
         port: Int = DEFAULT_HTSP_PORT,
-    ): ServerProfileReadResult
+        label: String? = null,
+        activate: Boolean = false,
+    ): ServerProfileWriteResult
 
-    /** Stores and returns a locally normalized password profile. */
-    public suspend fun storePassword(
+    /** Adds a password profile; success proves only local persistence, not authentication. */
+    public suspend fun addPassword(
         host: String,
         port: Int = DEFAULT_HTSP_PORT,
         username: String,
         password: String,
-    ): ServerProfileReadResult
+        label: String? = null,
+        activate: Boolean = false,
+    ): ServerProfileWriteResult
 
-    /** Clears the selected profile and returns authoritative local missing state. */
-    public suspend fun clearProfile(): ServerProfileReadResult
+    /** Replaces fields while keeping [id]; null [label] clears the label. */
+    public suspend fun updateAnonymous(
+        id: ServerProfileId,
+        host: String,
+        port: Int,
+        label: String?,
+    ): ServerProfileWriteResult
+
+    /** Replaces fields and authentication while keeping [id]; null [label] clears it. */
+    public suspend fun updatePassword(
+        id: ServerProfileId,
+        host: String,
+        port: Int,
+        username: String,
+        password: String,
+        label: String?,
+    ): ServerProfileWriteResult
+
+    /** Selects [id] locally without changing an existing session connection. */
+    public suspend fun setActive(id: ServerProfileId): ServerProfileWriteResult
+
+    /** Removes [id]; removing the active profile leaves no active selection. */
+    public suspend fun remove(id: ServerProfileId): ServerProfileWriteResult
+
+    /** Deletes all profiles and selection, including unreadable persisted data. */
+    public suspend fun clearAll()
 }
 
-/** Authentication mode associated with a selected server profile. */
+/** Describes authentication without exposing credentials. */
 public enum class ServerProfileAuthenticationMode {
     /** Connect without credentials. */
     ANONYMOUS,
-
     /** Connect with password authentication. */
     PASSWORD,
 }
 
-/** Safe selected-profile state returned by reads and local persistence mutations. */
+/** Lists non-secret profile fields, redacting endpoints in diagnostics. */
+public class ServerProfileSummary private constructor(
+    /** Stable profile identifier. */
+    public val id: ServerProfileId,
+    /** Optional normalized display label. */
+    public val label: String?,
+    /** Normalized server host. */
+    public val host: String,
+    /** HTSP port. */
+    public val port: Int,
+    /** Authentication mode, without credentials. */
+    public val authenticationMode: ServerProfileAuthenticationMode,
+) {
+    override fun toString(): String = "ServerProfileSummary(<redacted>)"
+
+    public companion object {
+        /** Constructs validated fields for store implementations and consumer fakes. */
+        @JvmStatic
+        public fun create(
+            id: ServerProfileId,
+            label: String?,
+            host: String,
+            port: Int,
+            authenticationMode: ServerProfileAuthenticationMode,
+        ): ServerProfileSummary {
+            val profile = ServerProfile(host, port)
+            val normalizedLabel = label?.trim()?.takeIf { it.isNotEmpty() }
+            require(label == null || label.none { it.isISOControl() }) { "Invalid profile label" }
+            require(normalizedLabel == null || normalizedLabel.length <= 64) { "Invalid profile label" }
+            return ServerProfileSummary(id, normalizedLabel, profile.host, profile.port, authenticationMode)
+        }
+    }
+}
+
+/** Reports the locally stored profile collection. */
+public sealed interface ServerProfileListResult {
+    /** Returns profiles in insertion order and their optional active selection. */
+    public class Available(
+        profiles: List<ServerProfileSummary>,
+        /** Selected profile identifier, or null when none is selected. */
+        public val activeId: ServerProfileId?,
+    ) : ServerProfileListResult {
+        /** Snapshot of profiles in insertion order. */
+        public val profiles: List<ServerProfileSummary> = profiles.toList()
+        override fun toString(): String = "ServerProfileListResult.Available(<redacted>)"
+    }
+
+    /** Reports unreadable data or an unsupported format. */
+    public data object Unavailable : ServerProfileListResult
+}
+
+/** Reports local persistence without claiming server reachability or authentication. */
+public sealed interface ServerProfileWriteResult {
+    /** Confirms local persistence for [id]. */
+    public data class Applied(
+        /** Stable identifier affected by the mutation. */
+        public val id: ServerProfileId,
+    ) : ServerProfileWriteResult
+    /** Reports that the requested identifier does not exist. */
+    public data object NotFound : ServerProfileWriteResult
+    /** Reports unreadable storage; [ServerProfileStore.clearAll] can discard it. */
+    public data object Unavailable : ServerProfileWriteResult
+}
+
+/** Reports a connectable profile without exposing password fields. */
 public sealed interface ServerProfileReadResult {
-    /** No server profile is stored. */
+    /** Reports no active profile or no matching profile. */
     public data object Missing : ServerProfileReadResult
 
-    /** A connectable profile and its non-secret endpoint fields are available. */
+    /** Returns a connectable profile with non-secret identifying fields. */
     public class Available private constructor(
+        /** Stable profile identifier. */
+        public val id: ServerProfileId,
+        /** Optional normalized display label. */
+        public val label: String?,
+        /** Opaque connection configuration. */
         public val profile: ServerProfile,
+        /** Normalized server host. */
         public val host: String,
+        /** HTSP port. */
         public val port: Int,
+        /** Authentication mode, without credentials. */
         public val authenticationMode: ServerProfileAuthenticationMode,
     ) : ServerProfileReadResult {
         override fun toString(): String = "ServerProfileReadResult.Available(<redacted>)"
 
         internal companion object {
-            @JvmSynthetic
             internal fun create(
+                id: ServerProfileId,
+                label: String?,
                 profile: ServerProfile,
-                authenticationMode: ServerProfileAuthenticationMode,
-            ): Available = Available(
-                profile = profile,
-                host = profile.host,
-                port = profile.port,
-                authenticationMode = authenticationMode,
-            )
+                mode: ServerProfileAuthenticationMode,
+            ): Available {
+                val summary = ServerProfileSummary.create(id, label, profile.host, profile.port, mode)
+                return Available(id, summary.label, profile, profile.host, profile.port, mode)
+            }
         }
     }
 
-    /** Profile data could not be read, validated, decrypted, or persisted. */
+    /** Reports data that could not be read, validated, or decrypted. */
     public data object Unavailable : ServerProfileReadResult
 
     public companion object {
         /** Constructs a validated anonymous result for implementations and consumer fakes. */
         @JvmStatic
         public fun anonymous(
+            id: ServerProfileId,
             host: String,
             port: Int = DEFAULT_HTSP_PORT,
+            label: String? = null,
         ): Available = Available.create(
-            profile = ServerProfile(host, port),
-            authenticationMode = ServerProfileAuthenticationMode.ANONYMOUS,
+            id, label, ServerProfile(host, port), ServerProfileAuthenticationMode.ANONYMOUS,
         )
 
-        /**
-         * Constructs a validated password result for implementations and consumer fakes.
-         *
-         * The returned result retains credentials only inside its opaque [ServerProfile]. Do not
-         * serialize or log the input credentials or retain extra copies after this call.
-         */
+        /** Constructs a password result retaining credentials only in its opaque [ServerProfile]. */
         @JvmStatic
         public fun password(
+            id: ServerProfileId,
             host: String,
             port: Int = DEFAULT_HTSP_PORT,
             username: String,
             password: String,
+            label: String? = null,
         ): Available = Available.create(
-            profile = ServerProfile(host, port, ServerAuthentication.Password(username, password)),
-            authenticationMode = ServerProfileAuthenticationMode.PASSWORD,
+            id, label, ServerProfile(host, port, ServerAuthentication.Password(username, password)),
+            ServerProfileAuthenticationMode.PASSWORD,
         )
     }
 }

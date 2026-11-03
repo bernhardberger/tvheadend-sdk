@@ -200,15 +200,17 @@ public final class StagedSdkJavaConsumer {
 
     public static Object loadServerProfileForEditing(
             TvheadendServerProfileStore store,
+            at.bernhardberger.tvheadend.sdk.core.ServerProfileId id,
             Continuation<? super ServerProfileEditReadResult> continuation) {
-        return store.loadProfileForEditing(continuation);
+        return store.loadForEditing(id, continuation);
     }
 
     public static FakeServerProfileStore stagedProfileStoreFake() {
         FakeServerProfileStore fake = new FakeServerProfileStore(
-                ServerProfileReadResult.anonymous("test.invalid", 9_982));
+                ServerProfileReadResult.anonymous(at.bernhardberger.tvheadend.sdk.core.ServerProfileId.generate(), "test.invalid", 9_982, null),
+                at.bernhardberger.tvheadend.sdk.core.ServerProfileId::generate);
         fake.scriptProfile(ServerProfileReadResult.password(
-                "test.invalid", 9_982, "user", "password"));
+                at.bernhardberger.tvheadend.sdk.core.ServerProfileId.generate(), "test.invalid", 9_982, "user", "password", null));
         fake.scriptMutationUnavailable();
         fake.scriptMutationSuccess();
         fake.getCalls();
@@ -219,8 +221,8 @@ public final class StagedSdkJavaConsumer {
             ServerProfileStore store,
             String host,
             int port,
-            Continuation<? super ServerProfileReadResult> continuation) {
-        return store.storeAnonymous(host, port, continuation);
+            Continuation<? super at.bernhardberger.tvheadend.sdk.core.ServerProfileWriteResult> continuation) {
+        return store.addAnonymous(host, port, null, false, continuation);
     }
 
     public static ServerProfile connectableProfile(ServerProfileReadResult result) {

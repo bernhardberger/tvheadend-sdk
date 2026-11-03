@@ -13,8 +13,9 @@ import org.junit.jupiter.api.Test
 internal class ServerProfileStoreTest {
     @Test
     fun `supported factories normalize and validate connectable profiles`() {
-        val anonymous = ServerProfileReadResult.anonymous("  test.invalid  ", 4_242)
+        val anonymous = ServerProfileReadResult.anonymous(ServerProfileId.generate(), "  test.invalid  ", 4_242)
         val password = ServerProfileReadResult.password(
+            id = ServerProfileId.generate(),
             host = "  secure.invalid  ",
             port = 5_353,
             username = " user ",
@@ -32,10 +33,11 @@ internal class ServerProfileStoreTest {
         assertEquals("user", authentication.username)
         assertEquals(" exact password ", authentication.password)
         assertThrows(IllegalArgumentException::class.java) {
-            ServerProfileReadResult.anonymous("  ")
+            ServerProfileReadResult.anonymous(ServerProfileId.generate(), "  ")
         }
         assertThrows(IllegalArgumentException::class.java) {
             ServerProfileReadResult.password(
+                ServerProfileId.generate(),
                 "test.invalid",
                 username = " ",
                 password = "password",
@@ -46,11 +48,13 @@ internal class ServerProfileStoreTest {
     @Test
     fun `available profile result has no generated credential-bearing value APIs`() {
         val first = ServerProfileReadResult.password(
+            ServerProfileId.generate(),
             "private.invalid",
             username = "private-user",
             password = "private-password",
         )
         val second = ServerProfileReadResult.password(
+            ServerProfileId.generate(),
             "private.invalid",
             username = "private-user",
             password = "private-password",
@@ -59,7 +63,7 @@ internal class ServerProfileStoreTest {
             .filterNot { method -> method.isSynthetic }
             .mapTo(mutableSetOf()) { method -> method.name }
 
-        assertEquals(setOf("getProfile", "getHost", "getPort", "getAuthenticationMode", "toString"), methods)
+        assertEquals(setOf("getId", "getLabel", "getProfile", "getHost", "getPort", "getAuthenticationMode", "toString"), methods)
         assertEquals(
             0,
             ServerProfileReadResult.Available::class.java.constructors
@@ -72,5 +76,26 @@ internal class ServerProfileStoreTest {
         assertEquals("ServerProfile(<redacted>)", first.profile.toString())
         assertFalse(first.toString().contains("private", ignoreCase = true))
         assertTrue(ServerProfileReadResult.Unavailable.toString().isNotBlank())
+    }
+
+    @Test
+    fun `ids require canonical UUID and labels normalize without leaking fields`() {
+        val id = ServerProfileId.from("12345678-1234-1234-1234-123456789abc")
+        assertEquals(id, ServerProfileId.from(id.value))
+        assertEquals(id.hashCode(), ServerProfileId.from(id.value).hashCode())
+        listOf("1-1-1-1-1", "invalid", id.value.uppercase()).forEach { invalid ->
+            assertThrows(IllegalArgumentException::class.java) { ServerProfileId.from(invalid) }
+        }
+        val profile = ServerProfileReadResult.anonymous(id, "private.invalid", label = "  Home  ")
+        assertEquals("Home", profile.label)
+        assertEquals(null, ServerProfileReadResult.anonymous(id, "private.invalid", label = "   ").label)
+        listOf("x".repeat(65), "a\nb", "\t").forEach { invalid ->
+            assertThrows(IllegalArgumentException::class.java) {
+                ServerProfileReadResult.anonymous(id, "private.invalid", label = invalid)
+            }
+        }
+        val summary = ServerProfileSummary.create(id, "Home", profile.host, profile.port, profile.authenticationMode)
+        assertEquals("ServerProfileSummary(<redacted>)", summary.toString())
+        assertEquals("ServerProfileListResult.Available(<redacted>)", ServerProfileListResult.Available(listOf(summary), id).toString())
     }
 }

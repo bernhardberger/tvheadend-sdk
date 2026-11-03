@@ -120,7 +120,5 @@ internal fun anonymousProfileRecord(
     credentials = null,
 )
 
-private fun contextPrefix(context: CredentialCipherContext): String = when (context) {
-    is CredentialCipherContext.Profile ->
-        "v2:${context.host}:${context.port}:${context.authenticationMode.serializedName}"
-}
+private fun contextPrefix(context: CredentialCipherContext): String =
+    java.util.Base64.getEncoder().encodeToString(credentialAssociatedData(context, CredentialField.USERNAME))

@@ -6,6 +6,27 @@ Unreleased; development target.
 
 ### Changed
 
+- BREAKING: replace the single-profile store with an ordered collection and one
+  optional active profile. Mutations return `ServerProfileWriteResult`, not a
+  connectable read result. IDs survive edits; removing the active profile leaves
+  no selection. Select with `setActive(id)`, then connect using `loadActive()`.
+
+  | Old API | New API |
+  | --- | --- |
+  | `loadProfile()` | `loadActive()`; `profiles()` lists summaries |
+  | `storeAnonymous(...)` | `addAnonymous(...)` or `updateAnonymous(id, ...)` |
+  | `storePassword(...)` | `addPassword(...)` or `updatePassword(id, ...)` |
+  | `clearProfile()` | `remove(id)` or `clearAll()` |
+  | `loadProfileForEditing()` | `loadForEditing(id)` |
+
+- Migrate Android format-2 single profiles to format-3 collections on first use,
+  assigning a new active id and re-encrypting credentials with id-bound associated
+  data. Undecryptable credentials remain listed but unavailable until edited or
+  removed. Unknown or malformed formats stay unavailable until `clearAll()`.
+- Add `SessionCache.clear(profile)` to evict only that profile's metadata and
+  artwork. Profiles with the same host, port and username share a namespace;
+  clearing the current namespace immediately rewrites its current metadata.
+
 - BREAKING: add `DvrEntryState.DELETED` for retained entries whose recording files
   the server removed. Deleted recordings no longer report `FILE_MISSING`, which
   remains for a missing file the server does not declare removed: it still lists

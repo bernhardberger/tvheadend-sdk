@@ -69,6 +69,9 @@ internal interface MetadataCacheStore {
     /** Deletes every namespace under the root. */
     suspend fun clear()
 
+    /** Deletes metadata and artwork for only [namespace]. */
+    suspend fun clear(namespace: CacheNamespace)
+
     /** Measures current usage by walking the root. */
     suspend fun statistics(): CacheStatistics
 

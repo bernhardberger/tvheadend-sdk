@@ -1,12 +1,14 @@
 package at.bernhardberger.tvheadend.sdk.android
 
 import android.content.Context
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileId
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileSummary
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileAuthenticationMode
 import androidx.datastore.core.DataStore
 import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.byteArrayPreferencesKey
 import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -47,6 +49,7 @@ internal sealed interface CredentialCipherContext {
         val host: String,
         val port: Int,
         val authenticationMode: StoredAuthenticationMode,
+        val id: ServerProfileId? = null,
     ) : CredentialCipherContext
 }
 
@@ -59,20 +62,37 @@ internal sealed interface StoredCredentialRead {
 }
 
 internal sealed interface StoredCredentialRecord {
+    class Collection(
+        val profiles: List<Profile>,
+        val activeId: ServerProfileId?,
+    ) : StoredCredentialRecord {
+        override fun toString(): String = "StoredCredentialRecord.Collection(<redacted>)"
+    }
+
     class Profile(
         val host: String,
         val port: Int,
         val authenticationMode: StoredAuthenticationMode,
         val credentials: EncryptedCredentials?,
+        val id: ServerProfileId? = null,
+        val label: String? = null,
+        val credentialsUnavailable: Boolean = false,
     ) : StoredCredentialRecord {
         init {
-            require((authenticationMode == StoredAuthenticationMode.PASSWORD) == (credentials != null))
+            require(
+                if (authenticationMode == StoredAuthenticationMode.PASSWORD) {
+                    (credentials != null) != credentialsUnavailable
+                } else {
+                    credentials == null && !credentialsUnavailable
+                },
+            )
         }
 
         fun cipherContext(): CredentialCipherContext.Profile = CredentialCipherContext.Profile(
             host = host,
             port = port,
             authenticationMode = authenticationMode,
+            id = id,
         )
 
         override fun toString(): String = "StoredCredentialRecord.Profile(<redacted>)"
@@ -107,6 +127,25 @@ internal class DataStoreCredentialStorage(
         dataStore.edit { preferences ->
             preferences.clear()
             when (record) {
+                is StoredCredentialRecord.Collection -> {
+                    preferences[CREDENTIAL_VERSION_KEY] = PROFILE_COLLECTION_FORMAT_VERSION
+                    preferences[PROFILE_ORDER_KEY] = record.profiles.joinToString("\n") { checkNotNull(it.id).value }
+                    record.activeId?.let { preferences[ACTIVE_PROFILE_KEY] = it.value }
+                    record.profiles.forEach { profile ->
+                        val prefix = "profile.${checkNotNull(profile.id).value}."
+                        preferences[stringPreferencesKey(prefix + "host")] = profile.host
+                        preferences[intPreferencesKey(prefix + "port")] = profile.port
+                        preferences[stringPreferencesKey(prefix + "mode")] = profile.authenticationMode.serializedName
+                        profile.label?.let { preferences[stringPreferencesKey(prefix + "label")] = it }
+                        if (profile.credentialsUnavailable) {
+                            preferences[stringPreferencesKey(prefix + "credentials_unavailable")] = "true"
+                        }
+                        profile.credentials?.let {
+                            preferences[byteArrayPreferencesKey(prefix + "username")] = it.copyUsername()
+                            preferences[byteArrayPreferencesKey(prefix + "password")] = it.copyPassword()
+                        }
+                    }
+                }
                 is StoredCredentialRecord.Profile -> {
                     preferences[CREDENTIAL_VERSION_KEY] = PROFILE_CREDENTIAL_FORMAT_VERSION
                     preferences[SERVER_HOST_KEY] = record.host
@@ -207,27 +246,43 @@ internal fun credentialAssociatedData(
 ): ByteArray = when (context) {
     is CredentialCipherContext.Profile -> {
         val hostBytes = context.host.encodeToByteArray()
+        val idBytes = context.id?.value?.encodeToByteArray()
         ByteBuffer.allocate(
             Int.SIZE_BYTES + CREDENTIAL_NAMESPACE.size +
                 Int.SIZE_BYTES + Byte.SIZE_BYTES +
                 Int.SIZE_BYTES + hostBytes.size +
-                Int.SIZE_BYTES + Byte.SIZE_BYTES,
+                Int.SIZE_BYTES + Byte.SIZE_BYTES +
+                (if (idBytes == null) 0 else Int.SIZE_BYTES + idBytes.size),
         )
             .putInt(CREDENTIAL_NAMESPACE.size)
             .put(CREDENTIAL_NAMESPACE)
-            .putInt(PROFILE_CREDENTIAL_FORMAT_VERSION)
+            .putInt(if (idBytes == null) PROFILE_CREDENTIAL_FORMAT_VERSION else PROFILE_COLLECTION_FORMAT_VERSION)
             .put(field.associatedDataCode)
             .putInt(hostBytes.size)
             .put(hostBytes)
             .putInt(context.port)
             .put(context.authenticationMode.associatedDataCode)
+            .apply { if (idBytes != null) putInt(idBytes.size).put(idBytes) }
             .array()
     }
 }
 
 internal fun decodeCredentialRecord(preferences: Preferences): StoredCredentialRead {
+    return try {
+        decodeStoredPreferences(preferences)
+    } catch (_: IllegalArgumentException) {
+        StoredCredentialRead.Unavailable
+    } catch (_: ClassCastException) {
+        StoredCredentialRead.Unavailable
+    }
+}
+
+private fun decodeStoredPreferences(preferences: Preferences): StoredCredentialRead {
     val storedKeys = preferences.asMap().keys
     if (storedKeys.isEmpty()) return StoredCredentialRead.Missing
+    if (preferences[CREDENTIAL_VERSION_KEY] == PROFILE_COLLECTION_FORMAT_VERSION) {
+        return decodeCollection(preferences)
+    }
     if (!KNOWN_CREDENTIAL_KEYS.containsAll(storedKeys)) return StoredCredentialRead.Unavailable
 
     val version = preferences[CREDENTIAL_VERSION_KEY]
@@ -241,6 +296,49 @@ internal fun decodeCredentialRecord(preferences: Preferences): StoredCredentialR
         PROFILE_CREDENTIAL_FORMAT_VERSION -> decodeProfileRecord(host, port, mode, username, password)
         else -> StoredCredentialRead.Unavailable
     }
+}
+
+private fun decodeCollection(preferences: Preferences): StoredCredentialRead {
+    val order = preferences[PROFILE_ORDER_KEY] ?: return StoredCredentialRead.Unavailable
+    val ids = if (order.isEmpty()) emptyList() else order.split('\n').map(ServerProfileId::from)
+    if (ids.distinct().size != ids.size) return StoredCredentialRead.Unavailable
+    val active = preferences[ACTIVE_PROFILE_KEY]?.let(ServerProfileId::from)
+    if (active != null && active !in ids) return StoredCredentialRead.Unavailable
+    val knownKeys = mutableSetOf<Preferences.Key<*>>(CREDENTIAL_VERSION_KEY, PROFILE_ORDER_KEY, ACTIVE_PROFILE_KEY)
+    val records = ids.map { id ->
+        val prefix = "profile.${id.value}."
+        val hostKey = stringPreferencesKey(prefix + "host")
+        val portKey = intPreferencesKey(prefix + "port")
+        val modeKey = stringPreferencesKey(prefix + "mode")
+        val labelKey = stringPreferencesKey(prefix + "label")
+        val unavailableKey = stringPreferencesKey(prefix + "credentials_unavailable")
+        val usernameKey = byteArrayPreferencesKey(prefix + "username")
+        val passwordKey = byteArrayPreferencesKey(prefix + "password")
+        knownKeys += listOf(hostKey, portKey, modeKey, labelKey, unavailableKey, usernameKey, passwordKey)
+        val host = preferences[hostKey] ?: return StoredCredentialRead.Unavailable
+        val port = preferences[portKey] ?: return StoredCredentialRead.Unavailable
+        val mode = StoredAuthenticationMode.entries.singleOrNull { it.serializedName == preferences[modeKey] }
+            ?: return StoredCredentialRead.Unavailable
+        val label = preferences[labelKey]
+        val summary = ServerProfileSummary.create(
+            id, label, host, port,
+            if (mode == StoredAuthenticationMode.ANONYMOUS) ServerProfileAuthenticationMode.ANONYMOUS
+            else ServerProfileAuthenticationMode.PASSWORD,
+        )
+        if (summary.host != host || summary.label != label) return StoredCredentialRead.Unavailable
+        val marker = preferences[unavailableKey]
+        if (marker != null && marker != "true") return StoredCredentialRead.Unavailable
+        val username = preferences[usernameKey]
+        val password = preferences[passwordKey]
+        val credentials = when {
+            username == null && password == null -> null
+            username != null && password != null -> EncryptedCredentials(username, password)
+            else -> return StoredCredentialRead.Unavailable
+        }
+        StoredCredentialRecord.Profile(host, port, mode, credentials, id, label, marker != null)
+    }
+    if (!knownKeys.containsAll(preferences.asMap().keys)) return StoredCredentialRead.Unavailable
+    return StoredCredentialRead.Available(StoredCredentialRecord.Collection(records, active))
 }
 
 private fun decodeProfileRecord(
@@ -276,7 +374,8 @@ internal fun productionCredentialStorage(context: Context): CredentialStorage =
 
 internal val credentialOperationMutex = Mutex()
 private const val PROFILE_CREDENTIAL_FORMAT_VERSION = 2
-// Existing format-2 profiles use this key; the alias is not the record format version.
+internal const val PROFILE_COLLECTION_FORMAT_VERSION = 3
+// Formats 2 and 3 share this key; the alias is not the record format version.
 private const val KEY_ALIAS = "at.bernhardberger.tvheadend.sdk.credentials.v1"
 internal val CREDENTIAL_VERSION_KEY = intPreferencesKey("format_version")
 internal val ENCRYPTED_USERNAME_KEY = byteArrayPreferencesKey("encrypted_username")
@@ -284,6 +383,8 @@ internal val ENCRYPTED_PASSWORD_KEY = byteArrayPreferencesKey("encrypted_passwor
 internal val SERVER_HOST_KEY = stringPreferencesKey("server_host")
 internal val SERVER_PORT_KEY = intPreferencesKey("server_port")
 internal val AUTHENTICATION_MODE_KEY = stringPreferencesKey("authentication_mode")
+internal val PROFILE_ORDER_KEY = stringPreferencesKey("profile_order")
+internal val ACTIVE_PROFILE_KEY = stringPreferencesKey("active")
 private val KNOWN_CREDENTIAL_KEYS = setOf(
     CREDENTIAL_VERSION_KEY,
     ENCRYPTED_USERNAME_KEY,
@@ -294,9 +395,9 @@ private val KNOWN_CREDENTIAL_KEYS = setOf(
 )
 private val CREDENTIAL_NAMESPACE = "at.bernhardberger.tvheadend.sdk.credentials".encodeToByteArray()
 
-// An unreadable file is replaced with an empty record so it reads as no profile and stays clearable.
+// Preserve an unavailable marker after corruption, while allowing an atomic clear to recover.
 internal val credentialCorruptionHandler: ReplaceFileCorruptionHandler<Preferences> =
-    ReplaceFileCorruptionHandler { emptyPreferences() }
+    ReplaceFileCorruptionHandler { androidx.datastore.preferences.core.mutablePreferencesOf(CREDENTIAL_VERSION_KEY to -1) }
 
 private val Context.tvheadendCredentialDataStore: DataStore<Preferences> by preferencesDataStore(
     name = "tvheadend_sdk_credentials",

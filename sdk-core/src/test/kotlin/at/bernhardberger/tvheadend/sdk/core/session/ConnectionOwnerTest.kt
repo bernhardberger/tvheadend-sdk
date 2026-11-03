@@ -3102,6 +3102,7 @@ private class InMemoryMetadataCacheStore(
     var epg: EpgSnapshot?,
     private val beforeLoad: suspend () -> Unit = {},
 ) : MetadataCacheStore {
+    override suspend fun clear(namespace: CacheNamespace) = clear()
     var beforeEpgLoad: suspend () -> Unit = {}
     val writes = mutableListOf<Any>()
     val writtenNamespaces = mutableSetOf<CacheNamespace>()

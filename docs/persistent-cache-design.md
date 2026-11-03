@@ -49,6 +49,7 @@ public interface TvheadendSession {
 public interface SessionCache {
     public val statistics: StateFlow<CacheStatistics>   // bytes, entry counts, lastWrite; no paths
     public suspend fun clear()                          // all namespaces under the root
+    public suspend fun clear(profile: ServerProfile)    // shared host/port/username namespace
 }
 ```
 
@@ -309,6 +310,13 @@ authority for `FILE_UNAVAILABLE` removal. The reference's `cacheKey` is the
 same digest as `ArtworkLoader.cacheKey`.
 
 ## Clear
+
+`SessionCache.clear(profile)` deletes only the namespace shared by that profile's
+host, port and username, including its artwork. Other namespaces remain. If it is
+the current writer's namespace, the writer retires and immediately rewrites the
+current metadata publication. It has the same cancellation and racing-read
+semantics as the root-wide clear below. Removing a stored profile does not evict
+its namespace automatically.
 
 `SessionCache.clear()` deletes every namespace under the root and resets
 statistics. While connected the in-memory state is untouched; the next write

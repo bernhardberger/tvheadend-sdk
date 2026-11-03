@@ -6,6 +6,7 @@ import android.os.Process
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import at.bernhardberger.tvheadend.sdk.core.ServerProfileReadResult
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileWriteResult
 import at.bernhardberger.tvheadend.sdk.core.ServerProfile
 import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
 import at.bernhardberger.tvheadend.sdk.core.SessionState
@@ -61,10 +62,10 @@ internal class AndroidLifecycleVerificationInstrumentationTest {
             check(markerFile.delete()) { "Stale lifecycle marker could not be removed" }
         }
         val store = TvheadendServerProfileStore(context)
-        assertEquals(ServerProfileReadResult.Missing, store.clearProfile())
+        store.clearAll()
         assertTrue(
-            store.storePassword(profile.host, profile.port, profile.username, profile.password)
-                is ServerProfileReadResult.Available,
+            store.addPassword(profile.host, profile.port, profile.username, profile.password, activate = true)
+                is ServerProfileWriteResult.Applied,
         )
         try {
             context.openFileOutput(PROCESS_MARKER_FILE_NAME, Context.MODE_PRIVATE).bufferedWriter().use { writer ->
@@ -78,7 +79,8 @@ internal class AndroidLifecycleVerificationInstrumentationTest {
             }
         } catch (_: Exception) {
             val markerRemoved = !markerFile.exists() || markerFile.delete()
-            val credentialsCleared = store.clearProfile() == ServerProfileReadResult.Missing
+            store.clearAll()
+            val credentialsCleared = store.loadActive() == ServerProfileReadResult.Missing
             if (!markerRemoved || !credentialsCleared) {
                 throw AssertionError("Process-restart marker failure cleanup failed")
             }
@@ -111,7 +113,7 @@ internal class AndroidLifecycleVerificationInstrumentationTest {
             val lifecycle = consumeLifecycleMarker(context.filesDir)
             assertNotEquals("Verification must resume in a new process", lifecycle.process, Process.myPid())
 
-            val loaded = store.loadProfile()
+            val loaded = store.loadActive()
             assertTrue(
                 "Encrypted credentials must survive the process restart",
                 loaded is ServerProfileReadResult.Available,
@@ -134,7 +136,8 @@ internal class AndroidLifecycleVerificationInstrumentationTest {
             throw failure
         } finally {
             var cleanupFailure = try {
-                if (store.clearProfile() == ServerProfileReadResult.Missing) {
+                store.clearAll()
+                if (store.loadActive() == ServerProfileReadResult.Missing) {
                     null
                 } else {
                     AssertionError("Credential cleanup failed")
@@ -163,7 +166,7 @@ internal class AndroidLifecycleVerificationInstrumentationTest {
 
         assertTrue(
             "Credential cleanup did not produce a missing state",
-            store.loadProfile() === ServerProfileReadResult.Missing,
+            store.loadActive() === ServerProfileReadResult.Missing,
         )
         instrumentation.sendStatus(
             0,

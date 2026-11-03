@@ -777,6 +777,7 @@ public class FakeArtworkLoader internal constructor(
 public class FakeSessionCache internal constructor(
     private val session: FakeTvheadendSession,
 ) : SessionCache {
+    override suspend fun clear(profile: ServerProfile): Unit = clear()
     private val mutableStatistics = MutableStateFlow(CacheStatistics.EMPTY)
     override val statistics: StateFlow<CacheStatistics> = mutableStatistics.asStateFlow()
 
