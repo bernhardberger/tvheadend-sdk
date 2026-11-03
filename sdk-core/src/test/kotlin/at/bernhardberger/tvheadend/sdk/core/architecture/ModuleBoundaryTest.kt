@@ -326,6 +326,7 @@ internal class ModuleBoundaryTest {
             "public suspend fun loadCachedArtwork(reference: CachedArtworkReference): ArtworkLoadResult",
             "public suspend fun profiles(): ServerProfileListResult",
             "public suspend fun loadActive(): ServerProfileReadResult",
+            "public suspend fun load(id: ServerProfileId): ServerProfileReadResult",
             "public suspend fun addAnonymous( host: String, port: Int = DEFAULT_HTSP_PORT, label: String? = null, activate: Boolean = false, ): ServerProfileWriteResult",
             "public suspend fun addPassword( host: String, port: Int = DEFAULT_HTSP_PORT, username: String, password: String, label: String? = null, activate: Boolean = false, ): ServerProfileWriteResult",
             "public suspend fun updateAnonymous( id: ServerProfileId, host: String, port: Int, label: String?, ): ServerProfileWriteResult",

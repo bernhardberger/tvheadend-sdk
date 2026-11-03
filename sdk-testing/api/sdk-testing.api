@@ -99,9 +99,11 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeServerProfileStor
 	public fun addPassword (Ljava/lang/String;ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;ZLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun clearAll (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun getCalls ()Ljava/util/List;
+	public fun load (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileId;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun loadActive (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun profiles (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun remove (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileId;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun scriptCredentialsUnavailable (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileId;)V
 	public final fun scriptMutationSuccess ()V
 	public final fun scriptMutationUnavailable ()V
 	public final fun scriptProfile (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileReadResult;)V
@@ -114,6 +116,7 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeServerProfileStor
 	public static final field ADD_ANONYMOUS Lat/bernhardberger/tvheadend/sdk/testing/FakeServerProfileStoreCall;
 	public static final field ADD_PASSWORD Lat/bernhardberger/tvheadend/sdk/testing/FakeServerProfileStoreCall;
 	public static final field CLEAR_ALL Lat/bernhardberger/tvheadend/sdk/testing/FakeServerProfileStoreCall;
+	public static final field LOAD Lat/bernhardberger/tvheadend/sdk/testing/FakeServerProfileStoreCall;
 	public static final field LOAD_ACTIVE Lat/bernhardberger/tvheadend/sdk/testing/FakeServerProfileStoreCall;
 	public static final field PROFILES Lat/bernhardberger/tvheadend/sdk/testing/FakeServerProfileStoreCall;
 	public static final field REMOVE Lat/bernhardberger/tvheadend/sdk/testing/FakeServerProfileStoreCall;
@@ -136,6 +139,7 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeSessionCall : jav
 	public static final field BIND_LIVE_PLAYBACK Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
 	public static final field BIND_RECORDING_PLAYBACK Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
 	public static final field CLEAR_CACHE Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
+	public static final field CLEAR_PROFILE_CACHE Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
 	public static final field CONNECT Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
 	public static final field DISCONNECT Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;
 	public static final field DVR_CANCEL_ENTRY Lat/bernhardberger/tvheadend/sdk/testing/FakeSessionCall;

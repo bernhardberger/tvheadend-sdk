@@ -15,6 +15,40 @@ import org.junit.jupiter.api.Test
 
 internal class FakeServerProfileStoreTest {
     @Test
+    fun `keyed reads and unavailable credentials keep a readable repairable collection`() = runTest {
+        val store = FakeServerProfileStore()
+        val id = (store.addPassword("test.invalid", username = "user", password = "password", activate = true) as ServerProfileWriteResult.Applied).id
+        assertEquals(id, (store.load(id) as ServerProfileReadResult.Available).id)
+        assertSame(ServerProfileReadResult.Missing, store.load(ServerProfileId.generate()))
+        store.scriptCredentialsUnavailable(id)
+        assertSame(ServerProfileReadResult.Unavailable, store.load(id))
+        assertSame(ServerProfileReadResult.Unavailable, store.loadActive())
+        assertEquals(false, (store.profiles() as ServerProfileListResult.Available).profiles.single().credentialsAvailable)
+        store.updatePassword(id, "test.invalid", 9982, "user", "replacement", null)
+        assertTrue(store.load(id) is ServerProfileReadResult.Available)
+        assertTrue((store.profiles() as ServerProfileListResult.Available).profiles.single().credentialsAvailable)
+    }
+
+    @Test
+    fun `added profile loads for explicit session connection`() = runTest {
+        val store = FakeServerProfileStore()
+        val id = (store.addPassword(" test.invalid ", 4242, " user ", "password") as ServerProfileWriteResult.Applied).id
+        val loaded = store.load(id) as ServerProfileReadResult.Available
+        assertEquals("test.invalid", loaded.host)
+        assertEquals(4242, loaded.port)
+        val session = FakeTvheadendSession()
+        assertSame(at.bernhardberger.tvheadend.sdk.core.SessionCommandResult.STARTED, session.connect(loaded.profile))
+        assertEquals(listOf(FakeSessionCall.CONNECT), session.calls)
+    }
+
+    @Test
+    fun `profile cache clear records a distinct value free call`() = runTest {
+        val session = FakeTvheadendSession()
+        session.cache.clear(at.bernhardberger.tvheadend.sdk.core.ServerProfile("test.invalid"))
+        session.cache.clear()
+        assertEquals(listOf(FakeSessionCall.CLEAR_PROFILE_CACHE, FakeSessionCall.CLEAR_CACHE), session.calls)
+    }
+    @Test
     fun `ordered profiles keep ids across edits and active removal chooses no successor`() = runTest {
         val ids = listOf(ServerProfileId.generate(), ServerProfileId.generate())
         val source = ids.iterator()
@@ -43,14 +77,23 @@ internal class FakeServerProfileStoreTest {
         val store = FakeServerProfileStore(initial)
         store.scriptMutationUnavailable()
         assertSame(ServerProfileWriteResult.Unavailable, store.addAnonymous("test.invalid"))
+        try {
+            store.clearAll()
+            org.junit.jupiter.api.Assertions.fail<Unit>("Unavailable clear was accepted")
+        } catch (_: IllegalStateException) {
+            assertSame(initial, store.loadActive())
+        }
         assertSame(initial, store.loadActive())
         store.scriptMutationSuccess()
         store.scriptProfile(ServerProfileReadResult.Unavailable)
+        assertSame(ServerProfileReadResult.Unavailable, store.load(initial.id))
         assertSame(ServerProfileListResult.Unavailable, store.profiles())
         store.clearAll()
         assertSame(ServerProfileReadResult.Missing, store.loadActive())
         store.scriptProfile(initial)
         assertSame(initial, store.loadActive())
+        store.scriptProfile(ServerProfileReadResult.Missing)
+        assertSame(ServerProfileReadResult.Missing, store.load(initial.id))
     }
 
     @Test
@@ -58,7 +101,7 @@ internal class FakeServerProfileStoreTest {
         val store = FakeServerProfileStore()
         val id = ServerProfileId.generate()
         val calls: List<suspend () -> Any?> = listOf(
-            { store.profiles() }, { store.loadActive() }, { store.addAnonymous("test.invalid") },
+            { store.profiles() }, { store.loadActive() }, { store.load(id) }, { store.addAnonymous("test.invalid") },
             { store.addPassword("test.invalid", username = "user", password = "password") },
             { store.updateAnonymous(id, "test.invalid", 9982, null) },
             { store.updatePassword(id, "test.invalid", 9982, "user", "password", null) },

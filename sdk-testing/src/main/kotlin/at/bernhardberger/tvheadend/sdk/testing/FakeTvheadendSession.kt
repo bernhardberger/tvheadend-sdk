@@ -91,6 +91,8 @@ public enum class FakeSessionCall {
     DVR_DELETE_TIMEREC_RULE,
     LOAD_ARTWORK,
     CLEAR_CACHE,
+    /** Clears one profile cache without recording profile fields. */
+    CLEAR_PROFILE_CACHE,
     @ExperimentalTvheadendApi
     DVR_UPDATE_WATCH_STATE,
     @ExperimentalTvheadendApi
@@ -777,7 +779,11 @@ public class FakeArtworkLoader internal constructor(
 public class FakeSessionCache internal constructor(
     private val session: FakeTvheadendSession,
 ) : SessionCache {
-    override suspend fun clear(profile: ServerProfile): Unit = clear()
+    override suspend fun clear(profile: ServerProfile) {
+        currentCoroutineContext().ensureActive()
+        session.record(FakeSessionCall.CLEAR_PROFILE_CACHE)
+        mutableStatistics.value = CacheStatistics.EMPTY
+    }
     private val mutableStatistics = MutableStateFlow(CacheStatistics.EMPTY)
     override val statistics: StateFlow<CacheStatistics> = mutableStatistics.asStateFlow()
 

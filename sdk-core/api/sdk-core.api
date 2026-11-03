@@ -2219,6 +2219,7 @@ public abstract interface class at/bernhardberger/tvheadend/sdk/core/ServerProfi
 	public abstract fun addPassword (Ljava/lang/String;ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;ZLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun addPassword$default (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileStore;Ljava/lang/String;ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;ZLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public abstract fun clearAll (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun load (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileId;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun loadActive (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun profiles (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun remove (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileId;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -2234,8 +2235,9 @@ public final class at/bernhardberger/tvheadend/sdk/core/ServerProfileStore$Defau
 
 public final class at/bernhardberger/tvheadend/sdk/core/ServerProfileSummary {
 	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/ServerProfileSummary$Companion;
-	public static final fun create (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileId;Ljava/lang/String;Ljava/lang/String;ILat/bernhardberger/tvheadend/sdk/core/ServerProfileAuthenticationMode;)Lat/bernhardberger/tvheadend/sdk/core/ServerProfileSummary;
+	public static final fun create (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileId;Ljava/lang/String;Ljava/lang/String;ILat/bernhardberger/tvheadend/sdk/core/ServerProfileAuthenticationMode;Z)Lat/bernhardberger/tvheadend/sdk/core/ServerProfileSummary;
 	public final fun getAuthenticationMode ()Lat/bernhardberger/tvheadend/sdk/core/ServerProfileAuthenticationMode;
+	public final fun getCredentialsAvailable ()Z
 	public final fun getHost ()Ljava/lang/String;
 	public final fun getId ()Lat/bernhardberger/tvheadend/sdk/core/ServerProfileId;
 	public final fun getLabel ()Ljava/lang/String;
@@ -2244,7 +2246,8 @@ public final class at/bernhardberger/tvheadend/sdk/core/ServerProfileSummary {
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/ServerProfileSummary$Companion {
-	public final fun create (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileId;Ljava/lang/String;Ljava/lang/String;ILat/bernhardberger/tvheadend/sdk/core/ServerProfileAuthenticationMode;)Lat/bernhardberger/tvheadend/sdk/core/ServerProfileSummary;
+	public final fun create (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileId;Ljava/lang/String;Ljava/lang/String;ILat/bernhardberger/tvheadend/sdk/core/ServerProfileAuthenticationMode;Z)Lat/bernhardberger/tvheadend/sdk/core/ServerProfileSummary;
+	public static synthetic fun create$default (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileSummary$Companion;Lat/bernhardberger/tvheadend/sdk/core/ServerProfileId;Ljava/lang/String;Ljava/lang/String;ILat/bernhardberger/tvheadend/sdk/core/ServerProfileAuthenticationMode;ZILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/ServerProfileSummary;
 }
 
 public abstract interface class at/bernhardberger/tvheadend/sdk/core/ServerProfileWriteResult {

@@ -13,7 +13,7 @@ Unreleased; development target.
 
   | Old API | New API |
   | --- | --- |
-  | `loadProfile()` | `loadActive()`; `profiles()` lists summaries |
+  | `loadProfile()` | `loadActive()` or `load(id)`; `profiles()` lists summaries with `credentialsAvailable` |
   | `storeAnonymous(...)` | `addAnonymous(...)` or `updateAnonymous(id, ...)` |
   | `storePassword(...)` | `addPassword(...)` or `updatePassword(id, ...)` |
   | `clearProfile()` | `remove(id)` or `clearAll()` |
@@ -23,9 +23,26 @@ Unreleased; development target.
   assigning a new active id and re-encrypting credentials with id-bound associated
   data. Undecryptable credentials remain listed but unavailable until edited or
   removed. Unknown or malformed formats stay unavailable until `clearAll()`.
+- BREAKING: a corrupted credentials file used to read as `Missing` and now reads
+  as `Unavailable`. Every mutation returns `Unavailable` until `clearAll()` discards
+  all profiles. Apps that treated `Missing` as onboarding must offer this recovery.
+  An available collection with `credentialsAvailable == false` instead allows
+  repairing that profile with `updatePassword` or deleting it with `remove`.
+- BREAKING: `FakeServerProfileStore` adds the `idSource` constructor parameter.
+  `FakeServerProfileStoreCall` now records `PROFILES`, `LOAD_ACTIVE`, `LOAD`,
+  `ADD_ANONYMOUS`, `ADD_PASSWORD`, `UPDATE_ANONYMOUS`, `UPDATE_PASSWORD`,
+  `SET_ACTIVE`, `REMOVE`, and `CLEAR_ALL`. `scriptProfile` replaces the collection
+  with one active profile, empty (`Missing`), or unreadable (`Unavailable`).
+  `scriptCredentialsUnavailable(id)` marks one profile while keeping its collection
+  readable. `FakeSessionCall.CLEAR_PROFILE_CACHE` distinguishes scoped cache clears
+  from `CLEAR_CACHE` without recording profile fields.
 - Add `SessionCache.clear(profile)` to evict only that profile's metadata and
   artwork. Profiles with the same host, port and username share a namespace;
   clearing the current namespace immediately rewrites its current metadata.
+  Before removing a connected profile, disconnect or switch, then `load(id)`,
+  `cache.clear(profile)`, and `remove(id)`. Removing it alone leaves the session
+  connected. If password credentials are unavailable, its namespace cannot be
+  computed and its cache ages out under normal retention and budget limits.
 
 - BREAKING: add `DvrEntryState.DELETED` for retained entries whose recording files
   the server removed. Deleted recordings no longer report `FILE_MISSING`, which

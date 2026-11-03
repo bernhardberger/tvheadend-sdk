@@ -543,7 +543,7 @@ internal class FakeTvheadendSessionTest {
         assertSame(watchFailure, fake.dvrRepository.updateWatchState(current, DvrEntryId(1), true))
         fake.dvrRepository.scriptResetResume(watchFailure)
         assertSame(watchFailure, fake.dvrRepository.resetResume(current, DvrEntryId(1)))
-        assertEquals(FakeSessionCall.entries.drop(4), fake.calls)
+        assertEquals(FakeSessionCall.entries.drop(4).filterNot { it == FakeSessionCall.CLEAR_PROFILE_CACHE }, fake.calls)
     }
 
     @Test

@@ -36,6 +36,12 @@ import at.bernhardberger.tvheadend.sdk.core.RetainedMetadataAuthority;
 import at.bernhardberger.tvheadend.sdk.core.ServerProfile;
 import at.bernhardberger.tvheadend.sdk.core.ServerProfileReadResult;
 import at.bernhardberger.tvheadend.sdk.core.ServerProfileStore;
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileId;
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileSummary;
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileListResult;
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileWriteResult;
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileAuthenticationMode;
+import at.bernhardberger.tvheadend.sdk.core.SessionCache;
 import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult;
 import at.bernhardberger.tvheadend.sdk.core.SessionFailure;
 import at.bernhardberger.tvheadend.sdk.core.SessionGenerationIdentity;
@@ -229,6 +235,44 @@ public final class StagedSdkJavaConsumer {
         return result instanceof ServerProfileReadResult.Available available
                 ? available.getProfile()
                 : null;
+    }
+
+    public static Object loadById(ServerProfileStore store, ServerProfileId id,
+            Continuation<? super ServerProfileReadResult> continuation) {
+        return store.load(ServerProfileId.from(id.getValue()), continuation);
+    }
+
+    public static Object updateAnonymous(ServerProfileStore store, ServerProfileId id,
+            Continuation<? super ServerProfileWriteResult> continuation) {
+        return store.updateAnonymous(id, "test.invalid", 9982, null, continuation);
+    }
+
+    public static Object updatePassword(ServerProfileStore store, ServerProfileId id,
+            Continuation<? super ServerProfileWriteResult> continuation) {
+        return store.updatePassword(id, "test.invalid", 9982, "user", "password", null, continuation);
+    }
+
+    public static Object removeProfile(ServerProfileStore store, ServerProfileId id,
+            Continuation<? super ServerProfileWriteResult> continuation) {
+        return store.remove(id, continuation);
+    }
+
+    public static Object clearProfiles(ServerProfileStore store, Continuation<? super kotlin.Unit> continuation) {
+        return store.clearAll(continuation);
+    }
+
+    public static Object clearProfileCache(SessionCache cache, ServerProfile profile,
+            Continuation<? super kotlin.Unit> continuation) {
+        return cache.clear(profile, continuation);
+    }
+
+    public static boolean summaryFields(ServerProfileId id) {
+        ServerProfileSummary summary = ServerProfileSummary.Companion.create(id, null, "test.invalid", 9982,
+                ServerProfileAuthenticationMode.PASSWORD, true);
+        ServerProfileListResult.Available list = new ServerProfileListResult.Available(java.util.List.of(summary), id);
+        return summary.getId().equals(id) && summary.getLabel() == null && !summary.getHost().isEmpty()
+                && summary.getPort() > 0 && summary.getAuthenticationMode() == ServerProfileAuthenticationMode.PASSWORD
+                && summary.getCredentialsAvailable() && list.getProfiles().size() == 1 && list.getActiveId().equals(id);
     }
 
     public static Object searchEpg(

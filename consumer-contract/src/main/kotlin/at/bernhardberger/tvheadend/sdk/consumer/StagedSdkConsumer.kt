@@ -75,6 +75,11 @@ import at.bernhardberger.tvheadend.sdk.core.SessionRecoveryDisposition
 import at.bernhardberger.tvheadend.sdk.core.RetainedMetadataAuthority
 import at.bernhardberger.tvheadend.sdk.core.ServerProfileReadResult
 import at.bernhardberger.tvheadend.sdk.core.ServerProfileStore
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileId
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileSummary
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileListResult
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileWriteResult
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileAuthenticationMode
 import at.bernhardberger.tvheadend.sdk.core.StreamProfileId
 import at.bernhardberger.tvheadend.sdk.core.StreamProfilesResult
 import at.bernhardberger.tvheadend.sdk.core.ArtworkId
@@ -288,6 +293,31 @@ public class StagedSdkConsumer(
             }
             ServerProfileReadResult.Missing, ServerProfileReadResult.Unavailable -> SessionCommandResult.NO_ACTIVE_PROFILE
         }
+    }
+
+    public suspend fun exerciseProfileCollection(store: ServerProfileStore, id: ServerProfileId): Boolean {
+        val restoredId = ServerProfileId.from(id.value)
+        val loaded = store.load(restoredId)
+        val anonymous = store.updateAnonymous(id, "test.invalid", 9982, null)
+        val password = store.updatePassword(id, "test.invalid", 9982, "user", "password", "Label")
+        val summary = ServerProfileSummary.create(id, null, "test.invalid", 9982,
+            ServerProfileAuthenticationMode.PASSWORD, credentialsAvailable = true)
+        val available = ServerProfileListResult.Available(listOf(summary), id)
+        val fields = summary.id == id && summary.label == null && summary.host.isNotEmpty() &&
+            summary.port > 0 && summary.authenticationMode == ServerProfileAuthenticationMode.PASSWORD &&
+            summary.credentialsAvailable && available.activeId == id
+        val readable = when (val listed = store.profiles()) {
+            is ServerProfileListResult.Available -> listed.profiles.all { it.credentialsAvailable }
+            ServerProfileListResult.Unavailable -> false
+        }
+        val removed = when (store.remove(id)) {
+            is ServerProfileWriteResult.Applied -> true
+            ServerProfileWriteResult.NotFound -> false
+            ServerProfileWriteResult.Unavailable -> false
+        }
+        store.clearAll()
+        return fields && readable && removed && loaded is ServerProfileReadResult.Available &&
+            anonymous is ServerProfileWriteResult.Applied && password is ServerProfileWriteResult.Applied
     }
 
     public suspend fun run(): Unit = coordinator.run()

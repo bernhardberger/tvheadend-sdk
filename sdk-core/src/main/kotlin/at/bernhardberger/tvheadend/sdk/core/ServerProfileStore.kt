@@ -32,13 +32,19 @@ public class ServerProfileId private constructor(
 
 /** Persists ordered server profiles with at most one active selection. */
 public interface ServerProfileStore {
-    /** Lists profiles in insertion order; only legacy migration needs credential decryption. */
+    /** Lists profiles in insertion order; implementations may decrypt when migrating older data. */
     public suspend fun profiles(): ServerProfileListResult
 
     /** Loads the active profile, or [ServerProfileReadResult.Missing] when none is selected. */
     public suspend fun loadActive(): ServerProfileReadResult
 
-    /** Adds a profile; success proves only local persistence, not server readiness. */
+    /** Loads [id], or [ServerProfileReadResult.Missing] when it does not exist. */
+    public suspend fun load(id: ServerProfileId): ServerProfileReadResult
+
+    /**
+     * Adds a profile; success proves only local persistence, not server readiness.
+     * @throws IllegalArgumentException if [host], [port], or [label] is invalid.
+     */
     public suspend fun addAnonymous(
         host: String,
         port: Int = DEFAULT_HTSP_PORT,
@@ -46,7 +52,10 @@ public interface ServerProfileStore {
         activate: Boolean = false,
     ): ServerProfileWriteResult
 
-    /** Adds a password profile; success proves only local persistence, not authentication. */
+    /**
+     * Adds a password profile; success proves only local persistence, not authentication.
+     * @throws IllegalArgumentException if the endpoint, credentials, or [label] is invalid.
+     */
     public suspend fun addPassword(
         host: String,
         port: Int = DEFAULT_HTSP_PORT,
@@ -56,7 +65,10 @@ public interface ServerProfileStore {
         activate: Boolean = false,
     ): ServerProfileWriteResult
 
-    /** Replaces fields while keeping [id]; null [label] clears the label. */
+    /**
+     * Replaces fields while keeping [id]; null [label] clears the label.
+     * @throws IllegalArgumentException if [host], [port], or [label] is invalid.
+     */
     public suspend fun updateAnonymous(
         id: ServerProfileId,
         host: String,
@@ -64,7 +76,10 @@ public interface ServerProfileStore {
         label: String?,
     ): ServerProfileWriteResult
 
-    /** Replaces fields and authentication while keeping [id]; null [label] clears it. */
+    /**
+     * Replaces fields and authentication while keeping [id]; null [label] clears it.
+     * @throws IllegalArgumentException if the endpoint, credentials, or [label] is invalid.
+     */
     public suspend fun updatePassword(
         id: ServerProfileId,
         host: String,
@@ -104,6 +119,8 @@ public class ServerProfileSummary private constructor(
     public val port: Int,
     /** Authentication mode, without credentials. */
     public val authenticationMode: ServerProfileAuthenticationMode,
+    /** False when stored credentials need replacement; this does not prove authentication. */
+    public val credentialsAvailable: Boolean,
 ) {
     override fun toString(): String = "ServerProfileSummary(<redacted>)"
 
@@ -116,12 +133,13 @@ public class ServerProfileSummary private constructor(
             host: String,
             port: Int,
             authenticationMode: ServerProfileAuthenticationMode,
+            credentialsAvailable: Boolean = true,
         ): ServerProfileSummary {
             val profile = ServerProfile(host, port)
             val normalizedLabel = label?.trim()?.takeIf { it.isNotEmpty() }
             require(label == null || label.none { it.isISOControl() }) { "Invalid profile label" }
             require(normalizedLabel == null || normalizedLabel.length <= 64) { "Invalid profile label" }
-            return ServerProfileSummary(id, normalizedLabel, profile.host, profile.port, authenticationMode)
+            return ServerProfileSummary(id, normalizedLabel, profile.host, profile.port, authenticationMode, credentialsAvailable)
         }
     }
 }
@@ -191,7 +209,12 @@ public sealed interface ServerProfileReadResult {
         }
     }
 
-    /** Reports data that could not be read, validated, or decrypted. */
+    /**
+     * Reports unreadable storage or unavailable credentials. Check [ServerProfileStore.profiles]:
+     * an unavailable collection requires [ServerProfileStore.clearAll]; an available collection
+     * with [ServerProfileSummary.credentialsAvailable] false can be repaired by updating credentials
+     * or removing that profile.
+     */
     public data object Unavailable : ServerProfileReadResult
 
     public companion object {

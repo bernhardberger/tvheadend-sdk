@@ -14,6 +14,8 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.jvm.JvmSynthetic
+import java.security.GeneralSecurityException
+import java.nio.charset.CharacterCodingException
 
 /**
  * Atomically persists Tvheadend profiles and one optional active selection.
@@ -45,12 +47,18 @@ public class TvheadendServerProfileStore private constructor(
         ServerProfileListResult.Available(collection.profiles.map { record ->
             ServerProfileSummary.create(
                 checkNotNull(record.id), record.label, record.host, record.port, record.publicMode(),
+                credentialsAvailable = !record.credentialsUnavailable,
             )
         }, collection.activeId)
     }
 
     override suspend fun loadActive(): ServerProfileReadResult = access(ServerProfileReadResult.Unavailable) { collection ->
         collection.profiles.singleOrNull { it.id == collection.activeId }?.let { loadProfile(it) }
+            ?: ServerProfileReadResult.Missing
+    }
+
+    override suspend fun load(id: ServerProfileId): ServerProfileReadResult = access(ServerProfileReadResult.Unavailable) { collection ->
+        collection.profiles.singleOrNull { it.id == id }?.let { loadProfile(it) }
             ?: ServerProfileReadResult.Missing
     }
 
@@ -70,7 +78,7 @@ public class TvheadendServerProfileStore private constructor(
     /**
      * Atomically stores an anonymous profile after normalizing and validating its endpoint.
      *
-     * @throws IllegalArgumentException if [host] or [port] is invalid.
+     * @throws IllegalArgumentException if [host], [port], or [label] is invalid.
      */
     override suspend fun addAnonymous(
         host: String,
@@ -85,7 +93,7 @@ public class TvheadendServerProfileStore private constructor(
     /**
      * Atomically stores an endpoint-bound password profile after validating all input.
      *
-     * @throws IllegalArgumentException if the endpoint, [username], or [password] is invalid.
+     * @throws IllegalArgumentException if the endpoint, credentials, or [label] is invalid.
      */
     override suspend fun addPassword(
         host: String,
@@ -99,10 +107,18 @@ public class TvheadendServerProfileStore private constructor(
         adding = true, activate = activate, username = username.trim(), password = password,
     )
 
+    /**
+     * Replaces anonymous fields for [id], retaining its identity.
+     * @throws IllegalArgumentException if [host], [port], or [label] is invalid.
+     */
     override suspend fun updateAnonymous(
         id: ServerProfileId, host: String, port: Int, label: String?,
     ): ServerProfileWriteResult = save(ServerProfileReadResult.anonymous(id, host, port, label), adding = false)
 
+    /**
+     * Replaces password fields for [id], retaining its identity.
+     * @throws IllegalArgumentException if the endpoint, credentials, or [label] is invalid.
+     */
     override suspend fun updatePassword(
         id: ServerProfileId, host: String, port: Int, username: String, password: String, label: String?,
     ): ServerProfileWriteResult = save(
@@ -180,11 +196,15 @@ public class TvheadendServerProfileStore private constructor(
         val id = ServerProfileId.generate()
         val context = CredentialCipherContext.Profile(legacy.host, legacy.port, legacy.authenticationMode, id)
         val credentials = if (legacy.authenticationMode == StoredAuthenticationMode.PASSWORD) {
-            val plaintext = profileResult<Pair<String, String>?>(null) {
+            val plaintext = try {
                 // Decrypt outside encrypt's callback: the production cipher serializes both calls.
                 cipher.decrypt(checkNotNull(legacy.credentials), legacy.cipherContext()) { user, pass ->
                     user to pass
                 }
+            } catch (_: GeneralSecurityException) {
+                null
+            } catch (_: CharacterCodingException) {
+                null
             }
             // Encryption/storage failures leave the legacy record intact for a later retry.
             plaintext?.let { cipher.encrypt(it.first, it.second, context) }
@@ -250,9 +270,9 @@ private fun StoredCredentialRecord.Profile.publicMode(): ServerProfileAuthentica
     StoredAuthenticationMode.PASSWORD -> ServerProfileAuthenticationMode.PASSWORD
 }
 
-/** Result of loading the selected server profile for editing. */
+/** Result of looking up a server profile by identifier for editing. */
 public sealed interface ServerProfileEditReadResult {
-    /** No server profile is stored. */
+    /** No profile exists for the requested identifier. */
     public data object Missing : ServerProfileEditReadResult
 
     /** Editable fields for an anonymous profile. */

@@ -18,6 +18,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -41,6 +42,73 @@ import kotlin.time.Instant
 class MetadataCacheRuntimeTest {
     @TempDir lateinit var root: File
     private val namespace = cacheNamespace("server", 9_982, "user")
+
+    @Test
+    fun `scoped clear preserves another suspended restore and fences its own stale restore`() = runTest {
+        val a = at.bernhardberger.tvheadend.sdk.core.ServerProfile("selected.invalid")
+        val b = at.bernhardberger.tvheadend.sdk.core.ServerProfile("other.invalid")
+        for (profile in listOf(b, a)) {
+            val ns = profile.cacheNamespace()
+            val files = FileMetadataCacheStore(root, FixedClock)
+            files.storeCatalog(ns, CachedCatalog(catalog(1)), START)
+            files.storeEpg(ns, CachedEpg(EpgSnapshot.create()), START)
+            val entered = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            val store = object : MetadataCacheStore by files {
+                override suspend fun loadEpg(namespace: CacheNamespace, notBefore: Instant): CachedEpg? {
+                    entered.complete(Unit)
+                    release.await()
+                    return files.loadEpg(namespace, notBefore)
+                }
+            }
+            val runtime = MetadataCacheRuntime(store, MetadataCachePolicy.create(root),
+                StandardTestDispatcher(testScheduler), FixedClock)
+            val restored = async { runtime.restore(ns) }
+            entered.await()
+            val clearing = launch { runtime.clear(a) }
+            runCurrent()
+            release.complete(Unit)
+            val snapshots = restored.await()
+            clearing.join()
+            assertEquals(profile == b, snapshots.isCurrent())
+            if (snapshots.isCurrent()) {
+                runtime.start(ns, MutableStateFlow(PublishedSnapshots(catalog(9), EpgSnapshot.create())))
+                runCurrent()
+                assertEquals(catalog(9), files.loadCatalog(ns, START - 1.days)?.catalog)
+            }
+            runtime.shutdown()
+        }
+    }
+
+    @Test
+    fun `scoped clear preserves another suspended artwork fetch and fences its own stale fetch`() = runTest {
+        val a = at.bernhardberger.tvheadend.sdk.core.ServerProfile("selected.invalid")
+        val b = at.bernhardberger.tvheadend.sdk.core.ServerProfile("other.invalid")
+        for (profile in listOf(b, a)) {
+            val ns = profile.cacheNamespace()
+            val runtime = MetadataCacheRuntime(FileMetadataCacheStore(root, FixedClock),
+                MetadataCachePolicy.create(root), StandardTestDispatcher(testScheduler), FixedClock)
+            val entered = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            val id = at.bernhardberger.tvheadend.sdk.core.ArtworkId(1)
+            val fetch = async {
+                runtime.loadArtwork(ns, id, { true }) {
+                    entered.complete(Unit)
+                    release.await()
+                    at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult.Available(
+                        at.bernhardberger.tvheadend.sdk.core.ArtworkContent.create(byteArrayOf(1)),
+                    )
+                }
+            }
+            entered.await()
+            runtime.clear(a)
+            release.complete(Unit)
+            assertTrue(fetch.await() is at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult.Available)
+            val cached = runtime.loadCachedArtwork(ns, id) { true }
+            assertEquals(profile == b, cached is at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult.Available)
+            runtime.shutdown()
+        }
+    }
 
     @Test
     fun `profile clear removes only its metadata and artwork namespace`() = runTest {

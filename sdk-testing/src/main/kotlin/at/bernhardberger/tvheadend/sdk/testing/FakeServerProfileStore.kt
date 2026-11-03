@@ -15,6 +15,8 @@ public enum class FakeServerProfileStoreCall {
     PROFILES,
     /** Loads the active profile. */
     LOAD_ACTIVE,
+    /** Loads a profile by identifier. */
+    LOAD,
     /** Adds anonymous authentication. */
     ADD_ANONYMOUS,
     /** Adds password authentication. */
@@ -39,6 +41,7 @@ public class FakeServerProfileStore(
     private val lock = Any()
     private val mutableCalls = ArrayList<FakeServerProfileStoreCall>()
     private val records = LinkedHashMap<ServerProfileId, ServerProfileReadResult.Available>()
+    private val unavailableCredentials = HashSet<ServerProfileId>()
     private var activeId: ServerProfileId? = null
     private var readUnavailable = false
     private var mutationAvailable = true
@@ -53,6 +56,7 @@ public class FakeServerProfileStore(
     public fun scriptProfile(result: ServerProfileReadResult) {
         synchronized(lock) {
             records.clear()
+            unavailableCredentials.clear()
             activeId = null
             readUnavailable = result == ServerProfileReadResult.Unavailable
             if (result is ServerProfileReadResult.Available) {
@@ -68,17 +72,33 @@ public class FakeServerProfileStore(
     /** Restores successful mutations. */
     public fun scriptMutationSuccess() { synchronized(lock) { mutationAvailable = true } }
 
+    /** Makes [id] unreadable while retaining its summary; updating the profile repairs it. */
+    public fun scriptCredentialsUnavailable(id: ServerProfileId) {
+        synchronized(lock) {
+            require(id in records) { "Profile not found" }
+            unavailableCredentials += id
+        }
+    }
+
     override suspend fun profiles(): ServerProfileListResult = call(FakeServerProfileStoreCall.PROFILES) {
         if (readUnavailable) ServerProfileListResult.Unavailable
         else ServerProfileListResult.Available(records.values.map {
-            ServerProfileSummary.create(it.id, it.label, it.host, it.port, it.authenticationMode)
+            ServerProfileSummary.create(it.id, it.label, it.host, it.port, it.authenticationMode,
+                credentialsAvailable = it.id !in unavailableCredentials)
         }, activeId)
     }
 
     override suspend fun loadActive(): ServerProfileReadResult = call(FakeServerProfileStoreCall.LOAD_ACTIVE) {
-        if (readUnavailable) ServerProfileReadResult.Unavailable
-        else records[activeId] ?: ServerProfileReadResult.Missing
+        read(activeId)
     }
+
+    override suspend fun load(id: ServerProfileId): ServerProfileReadResult = call(FakeServerProfileStoreCall.LOAD) {
+        read(id)
+    }
+
+    private fun read(id: ServerProfileId?): ServerProfileReadResult =
+        if (readUnavailable || id in unavailableCredentials) ServerProfileReadResult.Unavailable
+        else records[id] ?: ServerProfileReadResult.Missing
 
     override suspend fun addAnonymous(
         host: String, port: Int, label: String?, activate: Boolean,
@@ -111,6 +131,7 @@ public class FakeServerProfileStore(
     override suspend fun remove(id: ServerProfileId): ServerProfileWriteResult = call(FakeServerProfileStoreCall.REMOVE) {
         mutate(id) {
             records.remove(id)
+            unavailableCredentials.remove(id)
             if (activeId == id) activeId = null
         }
     }
@@ -118,6 +139,7 @@ public class FakeServerProfileStore(
     override suspend fun clearAll(): Unit = call(FakeServerProfileStoreCall.CLEAR_ALL) {
         check(mutationAvailable) { "Profile storage unavailable" }
         records.clear()
+        unavailableCredentials.clear()
         activeId = null
         readUnavailable = false
     }
@@ -129,6 +151,7 @@ public class FakeServerProfileStore(
         if (!adding && result.id !in records) return ServerProfileWriteResult.NotFound
         check(!adding || result.id !in records) { "Profile id already exists" }
         records[result.id] = result
+        unavailableCredentials.remove(result.id)
         if (activate) activeId = result.id
         return ServerProfileWriteResult.Applied(result.id)
     }

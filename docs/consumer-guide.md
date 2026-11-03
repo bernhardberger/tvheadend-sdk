@@ -1502,10 +1502,23 @@ contain control characters. IDs are stable canonical UUIDs; use `ServerProfileId
 to restore an application-owned key. Edits through `updateAnonymous` or `updatePassword`
 keep the id and can change authentication mode; a null label clears it.
 
+`load(id)` reads a profile without selecting it. If `load(id)` or `loadActive()`
+returns `Unavailable`, inspect `profiles()`: an unavailable collection requires
+`clearAll()` recovery; an available collection with `credentialsAvailable == false`
+identifies a profile needing `updatePassword` or `remove`. Listing an existing
+collection does not decrypt credentials. Other decryption or transient storage
+faults can also make a read unavailable.
+
 To switch servers, call `setActive(id)`, then `loadActive()` and
 `session.connect(stored.profile)`. Selection alone does not change the connection.
 `remove(id)` removes one profile; removing the active profile chooses no successor.
 `clearAll()` deletes every profile and the active pointer, including unreadable data.
+To remove a connected profile, disconnect or switch first. Otherwise the session
+stays connected to a profile no longer stored, and clearing its current cache
+namespace immediately rewrites the current metadata. After disconnecting or
+switching, use `load(id)` to obtain the profile, `session.cache.clear(profile)`,
+then `remove(id)`. A password profile with unavailable credentials cannot supply
+its cache namespace; its old cache ages out under normal retention and budget limits.
 Mutations return `NotFound` for a missing id and `Unavailable` for unreadable storage.
 Success says
 nothing about server reachability, authentication, or session readiness.
@@ -1513,11 +1526,28 @@ Anonymous profiles do not use the Android Keystore. Password profiles are
 encrypted at rest with profile-id- and endpoint-bound associated data. Duplicate
 endpoints are allowed. Existing format-2 single profiles migrate once to format 3,
 with a new id and active selection. Password credentials are decrypted with their
-old context and re-encrypted with the new id. If decryption fails, the endpoint
-remains listed but reads as unavailable until updated or removed. Unknown formats,
+old context and re-encrypted with the new id. Missing keys, invalid ciphertext, or
+invalid credential text leave the endpoint listed with unavailable credentials
+until updated or removed. Other migration failures preserve the legacy record for
+a later retry. Unknown formats,
 including format 1, stay unavailable until `clearAll()`. JVM consumer tests can
 use `FakeServerProfileStore` for positive and unavailable behavior without an
 Android `Context`.
+
+A corrupted credentials file previously read as `Missing`; it now reads as
+`Unavailable`. Every mutation returns `Unavailable` until `clearAll()` discards
+all profiles. Applications that used `Missing` to start onboarding must also
+offer this recovery path for an unavailable collection.
+
+`FakeServerProfileStore` accepts an `idSource` constructor parameter for deterministic
+ids. Its call enum now records `PROFILES`, `LOAD_ACTIVE`, `LOAD`, `ADD_ANONYMOUS`,
+`ADD_PASSWORD`, `UPDATE_ANONYMOUS`, `UPDATE_PASSWORD`, `SET_ACTIVE`, `REMOVE`, and
+`CLEAR_ALL` instead of the single-profile calls. `scriptProfile` replaces the whole
+collection with one active profile, an empty collection (`Missing`), or an unreadable
+collection (`Unavailable`). `scriptCredentialsUnavailable(id)` keeps the collection
+readable and marks one profile as needing credentials; updating it repairs it.
+`FakeSessionCall.CLEAR_PROFILE_CACHE` records scoped cache clears without profile
+fields, separately from `CLEAR_CACHE`.
 
 `loadForEditing(id)` additionally distinguishes `Anonymous` and
 `Password`, both including the label. The password result contains immutable plaintext username and

@@ -74,8 +74,9 @@ internal open class FakeCredentialCipher : CredentialCipher {
         val passwordPrefix = "$prefix|password|"
         val username = credentials.copyUsername().decodeToString()
         val password = credentials.copyPassword().decodeToString()
-        check(username.startsWith(usernamePrefix)) { "Associated data mismatch" }
-        check(password.startsWith(passwordPrefix)) { "Associated data mismatch" }
+        if (!username.startsWith(usernamePrefix) || !password.startsWith(passwordPrefix)) {
+            throw java.security.GeneralSecurityException("Associated data mismatch")
+        }
         return transform(
             username.removePrefix(usernamePrefix),
             password.removePrefix(passwordPrefix),

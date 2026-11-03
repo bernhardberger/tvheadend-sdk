@@ -15,6 +15,7 @@ import at.bernhardberger.tvheadend.sdk.core.SessionCache
 import at.bernhardberger.tvheadend.sdk.core.session.PublishedSnapshots
 import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -81,10 +82,19 @@ internal class MetadataCacheRuntime(
     private val metadataAccess = Mutex()
     private val artworkAccess = Mutex()
     private val restoreRevision = AtomicLong()
+    private val namespaceRestoreRevisions = AtomicReference<Map<CacheNamespace, Long>>(emptyMap())
     // Namespaces whose restore may still accept a guide; a writer's first EPG write waits for them.
     private val restoring = MutableStateFlow<List<CacheNamespace>>(emptyList())
     private var artworkFlush: Job? = null
     private var clearEpoch = 0L
+    private val namespaceClearEpochs = HashMap<CacheNamespace, Long>()
+
+    private fun restoreRevision(namespace: CacheNamespace): Pair<Long, Long> =
+        restoreRevision.get() to (namespaceRestoreRevisions.get()[namespace] ?: 0L)
+
+    // Called only under artworkAccess, independently of the lock-free restore fence.
+    private fun artworkEpoch(namespace: CacheNamespace): Pair<Long, Long> =
+        clearEpoch to (namespaceClearEpochs[namespace] ?: 0L)
     private val mutableStatistics = MutableStateFlow(CacheStatistics.EMPTY)
     private var writer: Writer? = null
 
@@ -95,7 +105,7 @@ internal class MetadataCacheRuntime(
         namespace: CacheNamespace,
         accept: (RestoredSnapshots) -> Unit = {},
     ): RestoredSnapshots {
-        val revision = restoreRevision.get()
+        val revision = restoreRevision(namespace)
         restoring.update { namespaces -> namespaces + namespace }
         // Released only after acceptance, so a late guide is published before the first EPG write.
         return try { restoreAccepting(namespace, revision, accept) } finally {
@@ -105,7 +115,7 @@ internal class MetadataCacheRuntime(
 
     private suspend fun restoreAccepting(
         namespace: CacheNamespace,
-        revision: Long,
+        revision: Pair<Long, Long>,
         accept: (RestoredSnapshots) -> Unit,
     ): RestoredSnapshots {
         return withContext(ioDispatcher) {
@@ -114,13 +124,13 @@ internal class MetadataCacheRuntime(
             }
             // Publish the small catalog before EPG decoding, with neither cache lock held.
             currentCoroutineContext().ensureActive()
-            accept(RestoredSnapshots(catalog, null) { restoreRevision.get() == revision })
+            accept(RestoredSnapshots(catalog, null) { restoreRevision(namespace) == revision })
             val restored = lifecycle.withLock {
                 accessMetadata {
                     val notBefore = clock.now() - policy.metadataRetention
                     val epgSnapshot = store.loadEpg(namespace, notBefore)
                     refreshMetadataStatistics()
-                    RestoredSnapshots(catalog, epgSnapshot) { restoreRevision.get() == revision }
+                    RestoredSnapshots(catalog, epgSnapshot) { restoreRevision(namespace) == revision }
                 }
             }
             // Index construction and acceptance hold no cache locks. Acceptance rechecks the
@@ -157,7 +167,7 @@ internal class MetadataCacheRuntime(
         if (cached != null) return ArtworkLoadResult.Available(ArtworkContent.create(cached))
         val result = fetch()
         accessArtwork {
-            if (epoch == clearEpoch && isCurrent()) {
+            if (epoch == artworkEpoch(namespace) && isCurrent()) {
                 val now = clock.now()
                 when (result) {
                     is ArtworkLoadResult.Available -> artworkStore.store(
@@ -204,7 +214,7 @@ internal class MetadataCacheRuntime(
         namespace: CacheNamespace,
         id: ArtworkId,
         isCurrent: () -> Boolean = { true },
-    ): Pair<Long, ByteArray?> {
+    ): Pair<Pair<Long, Long>, ByteArray?> {
         val (epoch, pending) = accessArtwork {
             val before = artworkStore.revision
             val pending = if (isCurrent()) {
@@ -212,12 +222,12 @@ internal class MetadataCacheRuntime(
             } else null
             if (before != artworkStore.revision) refreshArtworkStatistics()
             scheduleArtworkFlush()
-            clearEpoch to pending
+            artworkEpoch(namespace) to pending
         }
         if (pending == null) return epoch to null
         val bytes = withContext(ioDispatcher) { artworkStore.read(pending) }
         accessArtwork {
-            if (clearEpoch == epoch) {
+            if (artworkEpoch(namespace) == epoch) {
                 val before = artworkStore.revision
                 artworkStore.complete(pending, bytes, clock.now())
                 if (before != artworkStore.revision) refreshArtworkStatistics()
@@ -283,7 +293,10 @@ internal class MetadataCacheRuntime(
         // Never acquire a monitor here: an inline collector can call clear under publication
         // locks while a restore is waiting to take those locks. The atomic read at acceptance
         // linearizes the seed before clear, or rejects a load invalidated by clear.
-        restoreRevision.incrementAndGet()
+        if (namespace == null) restoreRevision.incrementAndGet()
+        else namespaceRestoreRevisions.updateAndGet { revisions ->
+            revisions + (namespace to ((revisions[namespace] ?: 0L) + 1L))
+        }
         lifecycle.withLock {
             val active = writer?.takeIf { namespace == null || it.namespace == namespace }
             try {
@@ -294,7 +307,8 @@ internal class MetadataCacheRuntime(
                 // Store clear deletes artwork directories too, so it holds both locks in order.
                 accessMetadata {
                     artworkAccess.withLock {
-                        clearEpoch++
+                        if (namespace == null) clearEpoch++
+                        else namespaceClearEpochs[namespace] = (namespaceClearEpochs[namespace] ?: 0L) + 1L
                         artworkFlush?.cancel()
                         artworkFlush = null
                         if (namespace == null) {

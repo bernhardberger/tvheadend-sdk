@@ -18,11 +18,145 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.async
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.sync.Mutex
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 
 internal class TvheadendServerProfileStoreTest {
+    @Test
+    fun `AAD bytes pin legacy v2 and id bound v3 layouts`() {
+        val legacy = CredentialCipherContext.Profile("test.invalid", 9982, StoredAuthenticationMode.PASSWORD)
+        val hex = java.util.HexFormat.of()
+        assertArrayEquals(hex.parseHex("0000002b61742e6265726e686172646265726765722e747668656164656e642e73646b2e63726564656e7469616c7300000002000000000c746573742e696e76616c6964000026fe01"), credentialAssociatedData(legacy, CredentialField.USERNAME))
+        assertArrayEquals(hex.parseHex("0000002b61742e6265726e686172646265726765722e747668656164656e642e73646b2e63726564656e7469616c7300000002010000000c746573742e696e76616c6964000026fe01"), credentialAssociatedData(legacy, CredentialField.PASSWORD))
+        val current = CredentialCipherContext.Profile("test.invalid", 9982, StoredAuthenticationMode.PASSWORD,
+            ServerProfileId.from("12345678-1234-1234-1234-123456789abc"))
+        assertArrayEquals(hex.parseHex("0000002b61742e6265726e686172646265726765722e747668656164656e642e73646b2e63726564656e7469616c7300000003000000000c746573742e696e76616c6964000026fe010000002431323334353637382d313233342d313233342d313233342d313233343536373839616263"), credentialAssociatedData(current, CredentialField.USERNAME))
+    }
+
+    @Test
+    fun `unexpected decrypt failure preserves legacy for retry`() = runTest {
+        val original = StoredCredentialRead.Available(passwordProfileRecord())
+        val storage = FakeCredentialStorage(original)
+        val cipher = FakeCredentialCipher().apply { decryptFailure = RuntimeException("Unavailable") }
+        val store = TvheadendServerProfileStore.create(storage, cipher)
+        assertSame(ServerProfileListResult.Unavailable, store.profiles())
+        assertSame(original, storage.state)
+        assertEquals(0, storage.writeCalls)
+        cipher.decryptFailure = null
+        assertTrue(store.loadActive() is ServerProfileReadResult.Available)
+        assertEquals(1, storage.writeCalls)
+    }
+
+    @Test
+    fun `migration cancellation during decrypt encrypt and write preserves legacy`() = runTest {
+        for (phase in 0..2) {
+            val original = StoredCredentialRead.Available(passwordProfileRecord())
+            val storage = FakeCredentialStorage(original)
+            val cipher = FakeCredentialCipher()
+            val cancellation = CancellationException("Cancelled")
+            when (phase) {
+                0 -> cipher.decryptFailure = cancellation
+                1 -> cipher.encryptFailure = cancellation
+                2 -> storage.writeFailure = cancellation
+            }
+            try {
+                TvheadendServerProfileStore.create(storage, cipher).loadActive()
+                fail<Unit>("Cancellation was swallowed")
+            } catch (actual: CancellationException) {
+                assertSame(cancellation, actual)
+            }
+            assertSame(original, storage.state)
+            assertEquals(0, storage.writeCalls)
+        }
+    }
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    @Test
+    fun `concurrent first access through shared mutex migrates exactly once`() = runTest {
+        val storage = FakeCredentialStorage(StoredCredentialRead.Available(passwordProfileRecord()))
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val cipher = object : FakeCredentialCipher() {
+            override suspend fun <T> decrypt(credentials: EncryptedCredentials, context: CredentialCipherContext,
+                transform: (String, String) -> T): T {
+                if ((context as CredentialCipherContext.Profile).id == null) {
+                    entered.complete(Unit)
+                    release.await()
+                }
+                return super.decrypt(credentials, context, transform)
+            }
+        }
+        val mutex = Mutex()
+        val first = TvheadendServerProfileStore.create(storage, cipher, mutex)
+        val second = TvheadendServerProfileStore.create(storage, cipher, mutex)
+        val a = async { first.loadActive() as ServerProfileReadResult.Available }
+        entered.await()
+        val b = async { second.loadActive() as ServerProfileReadResult.Available }
+        runCurrent()
+        assertEquals(0, storage.writeCalls)
+        release.complete(Unit)
+        assertEquals(a.await().id, b.await().id)
+        assertEquals(1, storage.writeCalls)
+    }
+
+    @Test
+    fun `cancelling suspended migration phases never replaces legacy state`() = runTest {
+        for (phase in 0..2) {
+            val original = StoredCredentialRead.Available(passwordProfileRecord())
+            val backing = FakeCredentialStorage(original)
+            val entered = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            suspend fun pause() {
+                entered.complete(Unit)
+                release.await()
+            }
+            val storage = object : CredentialStorage by backing {
+                override suspend fun write(record: StoredCredentialRecord) {
+                    if (phase == 2) pause()
+                    backing.write(record)
+                }
+            }
+            val cipher = object : FakeCredentialCipher() {
+                override suspend fun encrypt(username: String, password: String,
+                    context: CredentialCipherContext): EncryptedCredentials {
+                    if (phase == 1) pause()
+                    return super.encrypt(username, password, context)
+                }
+                override suspend fun <T> decrypt(credentials: EncryptedCredentials,
+                    context: CredentialCipherContext, transform: (String, String) -> T): T {
+                    if (phase == 0) pause()
+                    return super.decrypt(credentials, context, transform)
+                }
+            }
+            val reading = async { TvheadendServerProfileStore.create(storage, cipher).loadActive() }
+            entered.await()
+            reading.cancel()
+            try {
+                reading.await()
+                fail<Unit>("Cancellation was swallowed")
+            } catch (_: CancellationException) {
+                assertTrue(reading.isCancelled)
+            }
+            assertSame(original, backing.state)
+            assertEquals(0, backing.writeCalls)
+        }
+    }
+
+    @Test
+    fun `keyed load reads inactive profiles and missing identifiers`() = runTest {
+        val store = TvheadendServerProfileStore.create(FakeCredentialStorage(), FakeCredentialCipher())
+        val id = (store.addAnonymous("test.invalid") as ServerProfileWriteResult.Applied).id
+        assertEquals(id, (store.load(id) as ServerProfileReadResult.Available).id)
+        assertSame(ServerProfileReadResult.Missing, store.loadActive())
+        assertSame(ServerProfileReadResult.Missing, store.load(ServerProfileId.generate()))
+        val unavailable = TvheadendServerProfileStore.create(FakeCredentialStorage(StoredCredentialRead.Unavailable), FakeCredentialCipher())
+        assertSame(ServerProfileReadResult.Unavailable, unavailable.load(id))
+    }
     @Test
     fun `v3 rejects unknown keys invalid selection and malformed records`() {
         val id = ServerProfileId.generate()
@@ -161,16 +295,19 @@ internal class TvheadendServerProfileStoreTest {
     @Test
     fun `undecryptable legacy remains listed unavailable and repairable`() = runTest {
         val storage = FakeCredentialStorage(StoredCredentialRead.Available(passwordProfileRecord()))
-        val cipher = FakeCredentialCipher().apply { decryptFailure = IllegalStateException("Unavailable") }
+        val cipher = FakeCredentialCipher().apply { decryptFailure = java.security.GeneralSecurityException("Unavailable") }
         val store = TvheadendServerProfileStore.create(storage, cipher)
         val listed = store.profiles() as ServerProfileListResult.Available
         val id = listed.profiles.single().id
         assertEquals(id, listed.activeId)
+        assertFalse(listed.profiles.single().credentialsAvailable)
+        assertSame(ServerProfileReadResult.Unavailable, store.load(id))
         assertSame(ServerProfileReadResult.Unavailable, store.loadActive())
         cipher.decryptFailure = null
         assertSame(ServerProfileEditReadResult.Unavailable, store.loadForEditing(id))
         assertTrue(store.updatePassword(id, "test.invalid", 9982, "user", "password", "Repair") is ServerProfileWriteResult.Applied)
         assertEquals("Repair", (store.loadActive() as ServerProfileReadResult.Available).label)
+        assertTrue((store.profiles() as ServerProfileListResult.Available).profiles.single().credentialsAvailable)
         assertTrue(store.remove(id) is ServerProfileWriteResult.Applied)
         assertSame(ServerProfileReadResult.Missing, store.loadActive())
     }
