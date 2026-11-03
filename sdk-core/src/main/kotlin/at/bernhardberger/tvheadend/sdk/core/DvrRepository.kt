@@ -77,7 +77,12 @@ public class DvrEntryState private constructor(private val label: String) {
         /** Recording completed with an error. */
         @JvmField
         public val COMPLETED_ERROR: DvrEntryState = DvrEntryState("COMPLETED_ERROR")
-        /** The server still lists the recording file but cannot find it. */
+        /**
+         * The server reports the recording file missing without declaring it removed.
+         *
+         * The server either still lists the file or sent no file information. See [DELETED] for
+         * files the server removed.
+         */
         @JvmField
         public val FILE_MISSING: DvrEntryState = DvrEntryState("FILE_MISSING")
         /**

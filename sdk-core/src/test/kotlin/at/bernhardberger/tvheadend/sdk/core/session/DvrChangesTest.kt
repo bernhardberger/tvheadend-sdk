@@ -119,11 +119,28 @@ internal class DvrChangesTest {
     }
 
     @Test
+    fun `entry first seen already deleted emits no lifecycle change`() = runTest {
+        val fixture = Fixture()
+        fixture.ready()
+        val changes = collect(fixture)
+        fixture.accept(MetadataEvent.DvrEntryAdded(fixture.generation, entry(
+            state = DvrEntryState.COMPLETED, failure = GatewayDvrFailure.FILE_MISSING, files = emptyList(),
+        )))
+        runCurrent()
+        assertTrue(changes.isEmpty())
+    }
+
+    @Test
     fun `retained deletion emits removed attributes delete and never consumes stop`() = runTest {
-        for (before in listOf(DvrEntryState.RECORDING, DvrEntryState.COMPLETED)) {
+        val priors = listOf(
+            entry(state = DvrEntryState.RECORDING),
+            entry(state = DvrEntryState.COMPLETED),
+            entry(state = DvrEntryState.COMPLETED, failure = GatewayDvrFailure.FILE_MISSING),
+        )
+        for (before in priors) {
             val ledger = DvrIntentLedger()
             val fixture = Fixture(ledger = ledger)
-            fixture.accept(MetadataEvent.DvrEntryAdded(fixture.generation, entry(state = before)))
+            fixture.accept(MetadataEvent.DvrEntryAdded(fixture.generation, before))
             fixture.ready()
             val changes = collect(fixture)
             ledger.record(fixture.generation, DvrMutationKind.DELETE, entryId = DvrEntryId(7))

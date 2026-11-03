@@ -179,10 +179,16 @@ internal class DvrEventRankingTest {
                 val observed = observation(entries, link = deleted.id, username = "test-account")
                 assertSame(available, observed.dvrEntryForEvent(EventId(10)))
                 assertSame(available, observed.dvrEntryForEvent(requireNotNull(observed.event(EventId(10)))))
+                val ranked = requireNotNull(observed.dvrEntriesForEvent(EventId(10)))
+                assertSame(available, ranked.selected)
+                assertEquals(emptyList<DvrEntry>(), ranked.otherActive)
             }
         }
-        assertSame(deleted, observation(listOf(deleted), link = deleted.id, username = "test-account")
-            .dvrEntryForEvent(EventId(10)))
+        val sole = observation(listOf(deleted), link = deleted.id, username = "test-account")
+        assertSame(deleted, sole.dvrEntryForEvent(EventId(10)))
+        val soleRanked = requireNotNull(sole.dvrEntriesForEvent(EventId(10)))
+        assertSame(deleted, soleRanked.selected)
+        assertEquals(emptyList<DvrEntry>(), soleRanked.otherActive)
     }
 
     @Test

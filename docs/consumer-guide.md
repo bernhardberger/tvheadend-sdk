@@ -611,7 +611,8 @@ create lifecycle intents. A programme schedule remains correlated through its
 ID after the add. A delete may attribute both the terminal recording update and
 `REMOVED`; its intent is consumed only by removal (or expires). When the server
 keeps the entry after removing its files, `REMOVED` carries that `DELETED` entry as
-`current`; otherwise `current` is null.
+`current`; otherwise `current` is null. Any transition into `DELETED` from a valid
+state, including `COMPLETED` and `FILE_MISSING`, emits `REMOVED`.
 
 A server user-abort marker emits `RECORDING_ABORTED`, never `RECORDING_FAILED`.
 Its snapshot state remains `COMPLETED_ERROR` for compatibility. A local `STOP`

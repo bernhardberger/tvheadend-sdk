@@ -801,7 +801,7 @@ private suspend fun cleanupRecording(session: TvheadendSession, state: Acceptanc
     return true
 }
 
-/** Server log retention may keep a deleted recording's entry as file-missing instead of removing it. */
+/** Server log retention may keep a deleted recording's entry as DELETED instead of removing it. */
 private fun DvrEntry?.isDeletedRecording(): Boolean = this == null || state == DvrEntryState.DELETED
 
 private fun requireOwnedEntry(session: TvheadendSession, state: AcceptanceState): DvrEntry {
