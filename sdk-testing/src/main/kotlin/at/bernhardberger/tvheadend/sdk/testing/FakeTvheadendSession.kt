@@ -779,10 +779,10 @@ public class FakeArtworkLoader internal constructor(
 public class FakeSessionCache internal constructor(
     private val session: FakeTvheadendSession,
 ) : SessionCache {
+    /** Records scoped eviction without changing the application-scripted aggregate statistics. */
     override suspend fun clear(profile: ServerProfile) {
         currentCoroutineContext().ensureActive()
         session.record(FakeSessionCall.CLEAR_PROFILE_CACHE)
-        mutableStatistics.value = CacheStatistics.EMPTY
     }
     private val mutableStatistics = MutableStateFlow(CacheStatistics.EMPTY)
     override val statistics: StateFlow<CacheStatistics> = mutableStatistics.asStateFlow()

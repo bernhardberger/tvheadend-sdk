@@ -1,6 +1,7 @@
 package at.bernhardberger.tvheadend.sdk.android
 
 import android.content.Context
+import android.security.keystore.KeyPermanentlyInvalidatedException
 import at.bernhardberger.tvheadend.sdk.core.ServerProfileId
 import at.bernhardberger.tvheadend.sdk.core.ServerProfileSummary
 import at.bernhardberger.tvheadend.sdk.core.ServerProfileAuthenticationMode
@@ -15,7 +16,8 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.google.crypto.tink.Aead
 import com.google.crypto.tink.integration.android.AndroidKeystore
 import java.nio.ByteBuffer
-import java.security.GeneralSecurityException
+import java.nio.charset.CharacterCodingException
+import javax.crypto.BadPaddingException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
@@ -165,6 +167,20 @@ internal class DataStoreCredentialStorage(
     }
 }
 
+internal class CredentialUnreadableException : Exception("Stored credentials are unreadable")
+
+// Tink 1.24.0 AndroidKeystore.AeadImpl preserves Cipher's BadPaddingException on decrypt.
+// Other security/provider failures may be transient and must retain the persisted ciphertext.
+internal inline fun <T> readCredential(block: () -> T): T = try {
+    block()
+} catch (_: BadPaddingException) {
+    throw CredentialUnreadableException()
+} catch (_: KeyPermanentlyInvalidatedException) {
+    throw CredentialUnreadableException()
+} catch (_: CharacterCodingException) {
+    throw CredentialUnreadableException()
+}
+
 internal object AndroidTinkCredentialCipher : CredentialCipher {
     private val mutex = Mutex()
 
@@ -201,21 +217,21 @@ internal object AndroidTinkCredentialCipher : CredentialCipher {
         transform: (username: String, password: String) -> T,
     ): T = withContext(Dispatchers.IO) {
         mutex.withLock {
-            val aead = credentialAead(createIfMissing = false)
+            val aead = readCredential { credentialAead(createIfMissing = false) }
             var usernameBytes: ByteArray? = null
             var passwordBytes: ByteArray? = null
             try {
-                usernameBytes = aead.decrypt(
-                    credentials.copyUsername(),
-                    credentialAssociatedData(context, CredentialField.USERNAME),
-                )
-                passwordBytes = aead.decrypt(
-                    credentials.copyPassword(),
-                    credentialAssociatedData(context, CredentialField.PASSWORD),
-                )
+                val username = readCredential {
+                    aead.decrypt(credentials.copyUsername(), credentialAssociatedData(context, CredentialField.USERNAME))
+                }
+                usernameBytes = username
+                val password = readCredential {
+                    aead.decrypt(credentials.copyPassword(), credentialAssociatedData(context, CredentialField.PASSWORD))
+                }
+                passwordBytes = password
                 transform(
-                    usernameBytes.decodeToString(throwOnInvalidSequence = true),
-                    passwordBytes.decodeToString(throwOnInvalidSequence = true),
+                    readCredential { username.decodeToString(throwOnInvalidSequence = true) },
+                    readCredential { password.decodeToString(throwOnInvalidSequence = true) },
                 )
             } finally {
                 usernameBytes?.fill(0)
@@ -227,7 +243,7 @@ internal object AndroidTinkCredentialCipher : CredentialCipher {
     private fun credentialAead(createIfMissing: Boolean): Aead {
         if (!AndroidKeystore.hasKey(KEY_ALIAS)) {
             if (!createIfMissing) {
-                throw GeneralSecurityException("Credential key is unavailable")
+                throw CredentialUnreadableException()
             }
             AndroidKeystore.generateNewAes256GcmKey(KEY_ALIAS)
         }

@@ -1503,10 +1503,13 @@ to restore an application-owned key. Edits through `updateAnonymous` or `updateP
 keep the id and can change authentication mode; a null label clears it.
 
 `load(id)` reads a profile without selecting it. If `load(id)` or `loadActive()`
-returns `Unavailable`, inspect `profiles()`: an unavailable collection requires
-`clearAll()` recovery; an available collection with `credentialsAvailable == false`
+returns `Unavailable`, inspect `profiles()`: an unavailable collection can reflect
+transient storage I/O or a retryable migration fault; retry later. `clearAll()` is
+explicit, destructive recovery for persistent unreadability, such as a corrupted
+file that stays unavailable until cleared. An available collection with `credentialsAvailable == false`
 identifies a profile needing `updatePassword` or `remove`. Listing an existing
-collection does not decrypt credentials. Other decryption or transient storage
+collection does not decrypt credentials. A true marker does not guarantee decryption
+succeeds, for example after restoring without the key. Other decryption or transient storage
 faults can also make a read unavailable.
 
 To switch servers, call `setActive(id)`, then `loadActive()` and

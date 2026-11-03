@@ -38,7 +38,11 @@ public interface ServerProfileStore {
     /** Loads the active profile, or [ServerProfileReadResult.Missing] when none is selected. */
     public suspend fun loadActive(): ServerProfileReadResult
 
-    /** Loads [id], or [ServerProfileReadResult.Missing] when it does not exist. */
+    /**
+     * Loads [id], or [ServerProfileReadResult.Missing] when it does not exist.
+     * Returns [ServerProfileReadResult.Unavailable] for unreadable storage, credentials marked
+     * unavailable, or decryption failure (including transient faults).
+     */
     public suspend fun load(id: ServerProfileId): ServerProfileReadResult
 
     /**
@@ -119,7 +123,11 @@ public class ServerProfileSummary private constructor(
     public val port: Int,
     /** Authentication mode, without credentials. */
     public val authenticationMode: ServerProfileAuthenticationMode,
-    /** False when stored credentials need replacement; this does not prove authentication. */
+    /**
+     * Reports the stored credential-availability marker.
+     * True does not guarantee decryption succeeds, for example after restoring without the key,
+     * and does not prove server authentication.
+     */
     public val credentialsAvailable: Boolean,
 ) {
     override fun toString(): String = "ServerProfileSummary(<redacted>)"
@@ -135,6 +143,9 @@ public class ServerProfileSummary private constructor(
             authenticationMode: ServerProfileAuthenticationMode,
             credentialsAvailable: Boolean = true,
         ): ServerProfileSummary {
+            require(credentialsAvailable || authenticationMode == ServerProfileAuthenticationMode.PASSWORD) {
+                "Invalid credential availability"
+            }
             val profile = ServerProfile(host, port)
             val normalizedLabel = label?.trim()?.takeIf { it.isNotEmpty() }
             require(label == null || label.none { it.isISOControl() }) { "Invalid profile label" }
@@ -211,7 +222,9 @@ public sealed interface ServerProfileReadResult {
 
     /**
      * Reports unreadable storage or unavailable credentials. Check [ServerProfileStore.profiles]:
-     * an unavailable collection requires [ServerProfileStore.clearAll]; an available collection
+     * an unavailable collection may reflect a transient storage or migration fault; retry later.
+     * [ServerProfileStore.clearAll] explicitly discards all profiles and is destructive recovery
+     * for persistent unreadability, such as a corrupted file. An available collection
      * with [ServerProfileSummary.credentialsAvailable] false can be repaired by updating credentials
      * or removing that profile.
      */

@@ -11,9 +11,19 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 
 internal class FakeServerProfileStoreTest {
+    @Test
+    fun `anonymous profiles cannot script unavailable credentials`() = runTest {
+        val store = FakeServerProfileStore()
+        val id = (store.addAnonymous("test.invalid") as ServerProfileWriteResult.Applied).id
+        assertThrows(IllegalArgumentException::class.java) { store.scriptCredentialsUnavailable(id) }
+        assertTrue((store.profiles() as ServerProfileListResult.Available).profiles.single().credentialsAvailable)
+        assertTrue(store.load(id) is ServerProfileReadResult.Available)
+    }
+
     @Test
     fun `keyed reads and unavailable credentials keep a readable repairable collection`() = runTest {
         val store = FakeServerProfileStore()
@@ -44,8 +54,12 @@ internal class FakeServerProfileStoreTest {
     @Test
     fun `profile cache clear records a distinct value free call`() = runTest {
         val session = FakeTvheadendSession()
+        val footprint = at.bernhardberger.tvheadend.sdk.core.CacheStatistics(10, 20, 2)
+        session.cache.scriptStatistics(footprint)
         session.cache.clear(at.bernhardberger.tvheadend.sdk.core.ServerProfile("test.invalid"))
+        assertEquals(footprint, session.cache.statistics.value)
         session.cache.clear()
+        assertEquals(at.bernhardberger.tvheadend.sdk.core.CacheStatistics.EMPTY, session.cache.statistics.value)
         assertEquals(listOf(FakeSessionCall.CLEAR_PROFILE_CACHE, FakeSessionCall.CLEAR_CACHE), session.calls)
     }
     @Test

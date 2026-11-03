@@ -75,7 +75,7 @@ internal open class FakeCredentialCipher : CredentialCipher {
         val username = credentials.copyUsername().decodeToString()
         val password = credentials.copyPassword().decodeToString()
         if (!username.startsWith(usernamePrefix) || !password.startsWith(passwordPrefix)) {
-            throw java.security.GeneralSecurityException("Associated data mismatch")
+            throw CredentialUnreadableException()
         }
         return transform(
             username.removePrefix(usernamePrefix),

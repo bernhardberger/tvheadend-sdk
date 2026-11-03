@@ -1,6 +1,7 @@
 package at.bernhardberger.tvheadend.sdk.testing
 
 import at.bernhardberger.tvheadend.sdk.core.ServerProfileId
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileAuthenticationMode
 import at.bernhardberger.tvheadend.sdk.core.ServerProfileListResult
 import at.bernhardberger.tvheadend.sdk.core.ServerProfileReadResult
 import at.bernhardberger.tvheadend.sdk.core.ServerProfileStore
@@ -72,10 +73,16 @@ public class FakeServerProfileStore(
     /** Restores successful mutations. */
     public fun scriptMutationSuccess() { synchronized(lock) { mutationAvailable = true } }
 
-    /** Makes [id] unreadable while retaining its summary; updating the profile repairs it. */
+    /**
+     * Makes [id] unreadable while retaining its summary; updating the profile repairs it.
+     * @throws IllegalArgumentException if [id] is missing or uses anonymous authentication
+     */
     public fun scriptCredentialsUnavailable(id: ServerProfileId) {
         synchronized(lock) {
             require(id in records) { "Profile not found" }
+            require(records.getValue(id).authenticationMode == ServerProfileAuthenticationMode.PASSWORD) {
+                "Profile has no credentials"
+            }
             unavailableCredentials += id
         }
     }

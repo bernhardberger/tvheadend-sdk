@@ -12,6 +12,16 @@ import org.junit.jupiter.api.Test
 
 internal class ServerProfileStoreTest {
     @Test
+    fun `only password summaries may mark credentials unavailable`() {
+        val id = ServerProfileId.generate()
+        assertThrows(IllegalArgumentException::class.java) {
+            ServerProfileSummary.create(id, null, "test.invalid", 9982, ServerProfileAuthenticationMode.ANONYMOUS, false)
+        }
+        assertFalse(ServerProfileSummary.create(id, null, "test.invalid", 9982,
+            ServerProfileAuthenticationMode.PASSWORD, false).credentialsAvailable)
+    }
+
+    @Test
     fun `supported factories normalize and validate connectable profiles`() {
         val anonymous = ServerProfileReadResult.anonymous(ServerProfileId.generate(), "  test.invalid  ", 4_242)
         val password = ServerProfileReadResult.password(

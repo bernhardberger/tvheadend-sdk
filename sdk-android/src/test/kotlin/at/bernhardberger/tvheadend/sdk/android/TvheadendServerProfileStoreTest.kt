@@ -28,6 +28,42 @@ import org.junit.jupiter.api.io.TempDir
 
 internal class TvheadendServerProfileStoreTest {
     @Test
+    fun `cipher boundary distinguishes permanent unreadability from retryable security faults`() {
+        for (failure in listOf(javax.crypto.BadPaddingException(), javax.crypto.AEADBadTagException(),
+            java.nio.charset.CharacterCodingException())) {
+            assertThrows(CredentialUnreadableException::class.java) { readCredential<Unit> { throw failure } }
+        }
+        for (failure in listOf(java.security.KeyStoreException(), java.security.UnrecoverableKeyException(),
+            java.security.GeneralSecurityException())) {
+            val caught = assertThrows(java.security.GeneralSecurityException::class.java) {
+                readCredential<Unit> { throw failure }
+            }
+            assertSame(failure, caught)
+        }
+    }
+
+    @Test
+    fun `transient keystore failure preserves legacy and recovers on next access`() = runTest {
+        val legacy = StoredCredentialRead.Available(passwordProfileRecord())
+        val storage = FakeCredentialStorage(legacy)
+        val cipher = FakeCredentialCipher().apply { decryptFailure = java.security.KeyStoreException() }
+        val store = TvheadendServerProfileStore.create(storage, cipher)
+        assertSame(ServerProfileReadResult.Unavailable, store.loadActive())
+        assertSame(legacy, storage.state)
+        assertEquals(0, storage.writeCalls)
+        cipher.decryptFailure = null
+        val loaded = store.loadActive() as ServerProfileReadResult.Available
+        assertEquals(1, storage.writeCalls)
+        cipher.decryptFailure = java.security.KeyStoreException()
+        assertSame(ServerProfileReadResult.Unavailable, store.load(loaded.id))
+        assertSame(ServerProfileReadResult.Unavailable, store.loadActive())
+        assertEquals(1, storage.writeCalls)
+        cipher.decryptFailure = CredentialUnreadableException()
+        assertSame(ServerProfileReadResult.Unavailable, store.load(loaded.id))
+        assertEquals(1, storage.writeCalls)
+    }
+
+    @Test
     fun `AAD bytes pin legacy v2 and id bound v3 layouts`() {
         val legacy = CredentialCipherContext.Profile("test.invalid", 9982, StoredAuthenticationMode.PASSWORD)
         val hex = java.util.HexFormat.of()
@@ -295,7 +331,7 @@ internal class TvheadendServerProfileStoreTest {
     @Test
     fun `undecryptable legacy remains listed unavailable and repairable`() = runTest {
         val storage = FakeCredentialStorage(StoredCredentialRead.Available(passwordProfileRecord()))
-        val cipher = FakeCredentialCipher().apply { decryptFailure = java.security.GeneralSecurityException("Unavailable") }
+        val cipher = FakeCredentialCipher().apply { decryptFailure = CredentialUnreadableException() }
         val store = TvheadendServerProfileStore.create(storage, cipher)
         val listed = store.profiles() as ServerProfileListResult.Available
         val id = listed.profiles.single().id

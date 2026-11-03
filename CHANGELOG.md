@@ -28,6 +28,8 @@ Unreleased; development target.
   all profiles. Apps that treated `Missing` as onboarding must offer this recovery.
   An available collection with `credentialsAvailable == false` instead allows
   repairing that profile with `updatePassword` or deleting it with `remove`.
+  Other `Unavailable` results can be transient storage or migration faults: retry
+  later. Use destructive `clearAll()` recovery only for persistent unreadability.
 - BREAKING: `FakeServerProfileStore` adds the `idSource` constructor parameter.
   `FakeServerProfileStoreCall` now records `PROFILES`, `LOAD_ACTIVE`, `LOAD`,
   `ADD_ANONYMOUS`, `ADD_PASSWORD`, `UPDATE_ANONYMOUS`, `UPDATE_PASSWORD`,

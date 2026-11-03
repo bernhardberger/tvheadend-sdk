@@ -14,8 +14,6 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.jvm.JvmSynthetic
-import java.security.GeneralSecurityException
-import java.nio.charset.CharacterCodingException
 
 /**
  * Atomically persists Tvheadend profiles and one optional active selection.
@@ -201,9 +199,7 @@ public class TvheadendServerProfileStore private constructor(
                 cipher.decrypt(checkNotNull(legacy.credentials), legacy.cipherContext()) { user, pass ->
                     user to pass
                 }
-            } catch (_: GeneralSecurityException) {
-                null
-            } catch (_: CharacterCodingException) {
+            } catch (_: CredentialUnreadableException) {
                 null
             }
             // Encryption/storage failures leave the legacy record intact for a later retry.
