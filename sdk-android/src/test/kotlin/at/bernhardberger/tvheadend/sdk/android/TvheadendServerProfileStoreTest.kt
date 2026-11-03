@@ -28,6 +28,25 @@ import org.junit.jupiter.api.io.TempDir
 
 internal class TvheadendServerProfileStoreTest {
     @Test
+    fun `truncated legacy ciphertext migrates with unavailable credentials`() = runTest {
+        for (size in listOf(0, 1, 27)) {
+            assertThrows(CredentialUnreadableException::class.java) { validateCredentialCiphertext(ByteArray(size)) }
+        }
+        validateCredentialCiphertext(ByteArray(28))
+        val original = passwordProfileRecord()
+        val truncated = StoredCredentialRecord.Profile(original.host, original.port, original.authenticationMode,
+            EncryptedCredentials(original.credentials!!.copyUsername(), byteArrayOf(1)))
+        val storage = FakeCredentialStorage(StoredCredentialRead.Available(truncated))
+        // A generic provider fault must not hide the definite length failure before key acquisition.
+        val cipher = FakeCredentialCipher().apply { decryptFailure = java.security.GeneralSecurityException() }
+        val store = TvheadendServerProfileStore.create(storage, cipher)
+        val listed = store.profiles() as ServerProfileListResult.Available
+        assertFalse(listed.profiles.single().credentialsAvailable)
+        assertEquals(1, storage.writeCalls)
+        assertSame(ServerProfileReadResult.Unavailable, store.loadActive())
+    }
+
+    @Test
     fun `cipher boundary distinguishes permanent unreadability from retryable security faults`() {
         for (failure in listOf(javax.crypto.BadPaddingException(), javax.crypto.AEADBadTagException(),
             java.nio.charset.CharacterCodingException())) {

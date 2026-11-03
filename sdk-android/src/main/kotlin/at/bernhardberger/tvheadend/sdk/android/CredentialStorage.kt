@@ -169,6 +169,14 @@ internal class DataStoreCredentialStorage(
 
 internal class CredentialUnreadableException : Exception("Stored credentials are unreadable")
 
+// Tink 1.24.0 AndroidKeystore.AeadImpl.decrypt rejects lengths below 12-byte IV + 16-byte tag
+// with BadPaddingException("ciphertext too short"); reject before acquiring the key as well.
+private const val MINIMUM_CREDENTIAL_CIPHERTEXT_BYTES = 28
+
+internal fun validateCredentialCiphertext(ciphertext: ByteArray) {
+    if (ciphertext.size < MINIMUM_CREDENTIAL_CIPHERTEXT_BYTES) throw CredentialUnreadableException()
+}
+
 // Tink 1.24.0 AndroidKeystore.AeadImpl preserves Cipher's BadPaddingException on decrypt.
 // Other security/provider failures may be transient and must retain the persisted ciphertext.
 internal inline fun <T> readCredential(block: () -> T): T = try {
@@ -176,6 +184,7 @@ internal inline fun <T> readCredential(block: () -> T): T = try {
 } catch (_: BadPaddingException) {
     throw CredentialUnreadableException()
 } catch (_: KeyPermanentlyInvalidatedException) {
+    // Covered by type only: the Android stub constructor prevents JVM unit testing.
     throw CredentialUnreadableException()
 } catch (_: CharacterCodingException) {
     throw CredentialUnreadableException()
@@ -217,16 +226,20 @@ internal object AndroidTinkCredentialCipher : CredentialCipher {
         transform: (username: String, password: String) -> T,
     ): T = withContext(Dispatchers.IO) {
         mutex.withLock {
+            val encryptedUsername = credentials.copyUsername()
+            val encryptedPassword = credentials.copyPassword()
+            validateCredentialCiphertext(encryptedUsername)
+            validateCredentialCiphertext(encryptedPassword)
             val aead = readCredential { credentialAead(createIfMissing = false) }
             var usernameBytes: ByteArray? = null
             var passwordBytes: ByteArray? = null
             try {
                 val username = readCredential {
-                    aead.decrypt(credentials.copyUsername(), credentialAssociatedData(context, CredentialField.USERNAME))
+                    aead.decrypt(encryptedUsername, credentialAssociatedData(context, CredentialField.USERNAME))
                 }
                 usernameBytes = username
                 val password = readCredential {
-                    aead.decrypt(credentials.copyPassword(), credentialAssociatedData(context, CredentialField.PASSWORD))
+                    aead.decrypt(encryptedPassword, credentialAssociatedData(context, CredentialField.PASSWORD))
                 }
                 passwordBytes = password
                 transform(

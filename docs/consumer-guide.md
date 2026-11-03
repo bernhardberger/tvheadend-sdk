@@ -1529,8 +1529,9 @@ Anonymous profiles do not use the Android Keystore. Password profiles are
 encrypted at rest with profile-id- and endpoint-bound associated data. Duplicate
 endpoints are allowed. Existing format-2 single profiles migrate once to format 3,
 with a new id and active selection. Password credentials are decrypted with their
-old context and re-encrypted with the new id. Missing keys, invalid ciphertext, or
-invalid credential text leave the endpoint listed with unavailable credentials
+old context and re-encrypted with the new id. Ciphertext that fails authentication
+or is too short to be valid, a missing or permanently invalidated key, or invalid
+credential text leaves the endpoint listed with unavailable credentials
 until updated or removed. Other migration failures preserve the legacy record for
 a later retry. Unknown formats,
 including format 1, stay unavailable until `clearAll()`. JVM consumer tests can

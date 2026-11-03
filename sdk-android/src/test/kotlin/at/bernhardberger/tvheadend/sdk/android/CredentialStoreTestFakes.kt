@@ -66,6 +66,8 @@ internal open class FakeCredentialCipher : CredentialCipher {
         context: CredentialCipherContext,
         transform: (username: String, password: String) -> T,
     ): T {
+        validateCredentialCiphertext(credentials.copyUsername())
+        validateCredentialCiphertext(credentials.copyPassword())
         decryptFailure?.let { failure -> throw failure }
         decryptCalls += 1
         lastContext = context
