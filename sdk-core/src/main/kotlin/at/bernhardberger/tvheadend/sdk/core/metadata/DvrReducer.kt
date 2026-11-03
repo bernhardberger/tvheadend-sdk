@@ -523,10 +523,23 @@ internal class DvrReducer {
     }
 }
 
+/**
+ * Whether a full DVR entry carries Tvheadend's retained-deleted shape.
+ *
+ * Tvheadend drops every filename when it deletes a recording's files. Until it restarts, HTSP
+ * sends `files` as an empty list; it saves no file entries, so after a restart it omits `files`.
+ * A file lost outside Tvheadend keeps its filename and stays listed.
+ *
+ * Two other entries have the same wire shape and cannot be told apart, because the hidden
+ * `fileremoved` property is not sent: one whose file Tvheadend could not create ("File not
+ * created", `src/dvr/dvr_db.c` `dvr_stop_recording`), and, after a restart, one that ended
+ * without writing a file ("Time missed" before the restart), which `dvr_entry_set_timer`
+ * reloads as completed because `dvr_stop_recording` set `de_dont_reschedule`.
+ */
 internal fun hasRemovedRecordingFiles(
     failure: GatewayDvrFailure?,
     files: List<GatewayDvrRecordingFile>?,
-): Boolean = failure == GatewayDvrFailure.FILE_MISSING && files != null && files.isEmpty()
+): Boolean = failure == GatewayDvrFailure.FILE_MISSING && files.isNullOrEmpty()
 
 private fun GatewayDvrRecordingFile.toPublicOrNull(): DvrRecordingFile? {
     if (start != null && stop != null && stop < start) return null

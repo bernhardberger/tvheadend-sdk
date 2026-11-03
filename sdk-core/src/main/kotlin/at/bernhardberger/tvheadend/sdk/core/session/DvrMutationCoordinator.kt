@@ -682,7 +682,7 @@ private fun MetadataEvent.confirmationKeys(): List<ConfirmationKey> = when (this
     is MetadataEvent.DvrEntryUpdated -> buildList {
         add(ConfirmationKey(ConfirmationKind.ENTRY_UPDATED, entry.id))
         if (entry.state in endedEntryStates) add(ConfirmationKey(ConfirmationKind.ENTRY_ENDED, entry.id))
-        // An omitted files field cannot confirm deletion; require declared file removal.
+        // Stats-only updates never get here; a listed file means it vanished externally.
         if (hasRemovedRecordingFiles(entry.failure, entry.files)) {
             add(ConfirmationKey(ConfirmationKind.ENTRY_FILE_REMOVED, entry.id))
         }

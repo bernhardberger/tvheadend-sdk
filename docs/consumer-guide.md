@@ -357,6 +357,14 @@ kept the entry after its recording files were removed, not a recording failure.
 Replace deletion heuristics based on FILE_MISSING plus empty files with
 `state == DvrEntryState.DELETED`.
 
+The SDK reports DELETED for a completed entry with a missing file and no listed
+files. Tvheadend sends an empty files list until it restarts and omits the field
+afterwards; both mean DELETED. `FILE_MISSING` means the server still lists the
+file, usually because it was removed outside Tvheadend. Tvheadend sends the same
+data, and does not say whether files were removed, for a recording whose file it
+could not create and, after a restart, for a recording that ended without writing
+a file. The SDK reports both as DELETED.
+
 With `@OptIn(ExperimentalTvheadendApi::class)`, `dvrEntriesForEvent(eventId)` returns
 `DvrEventEntries` with the same `selected` entry and an immutable `otherActive`
 list of remaining SCHEDULED/RECORDING/RECORDING_ERROR matches in rank order.

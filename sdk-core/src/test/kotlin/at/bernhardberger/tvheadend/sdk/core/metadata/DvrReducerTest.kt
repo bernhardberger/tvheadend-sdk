@@ -34,11 +34,14 @@ internal class DvrReducerTest {
     private val generation = GatewayGeneration()
 
     @Test
-    fun `only declared removed files resolve as deleted and stats retain that shape`() {
+    fun `empty or absent files resolve as deleted, a listed file stays missing, and stats retain the shape`() {
         for ((files, expected) in listOf(
+            // Before a Tvheadend restart.
             emptyList<GatewayDvrRecordingFile>() to DvrEntryState.DELETED,
+            // After a restart Tvheadend omits files; "File not created" looks the same.
+            null to DvrEntryState.DELETED,
+            // Lost outside Tvheadend.
             listOf(GatewayDvrRecordingFile(1, null, null, null, null)) to DvrEntryState.FILE_MISSING,
-            null to DvrEntryState.FILE_MISSING,
         )) {
             val reducer = DvrReducer()
             reducer.accept(MetadataEvent.DvrEntryAdded(generation, GatewayDvrEntry(

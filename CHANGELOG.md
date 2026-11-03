@@ -47,21 +47,26 @@ Unreleased; development target.
   computed and its cache ages out under normal retention and budget limits.
 
 - BREAKING: add `DvrEntryState.DELETED` for retained entries whose recording files
-  the server removed. Deleted recordings no longer report `FILE_MISSING`, which
-  remains for a missing file the server does not declare removed: it still lists
-  the file, or the update carries no file information. Add `DELETED` to
-  exhaustive client state handling and replace FILE_MISSING-plus-empty-files
-  deletion heuristics with `state == DvrEntryState.DELETED`.
+  the server removed. A completed entry with a missing file and no listed files
+  is `DELETED`, whether Tvheadend sends an empty files list (before it restarts)
+  or omits the field (after a restart). `FILE_MISSING` remains only for a missing
+  file the server still lists, usually one removed outside Tvheadend. Tvheadend
+  sends the same data for a recording whose file it could not create and, after a
+  restart, for a recording that ended without writing a file; both are also
+  reported as `DELETED`. Add `DELETED` to exhaustive client state handling and
+  replace FILE_MISSING-plus-empty-files deletion heuristics with
+  `state == DvrEntryState.DELETED`.
 - BREAKING: any transition into DELETED from a valid state, including COMPLETED
   and FILE_MISSING, now emits `DvrChangeKind.REMOVED`. Previously it emitted no
-  change, or `RECORDING_FAILED` from a recording state. Such a `REMOVED` change
+  change, or `RECORDING_FAILED` from a recording state. This includes a recording
+  whose file Tvheadend could not create. Such a `REMOVED` change
   carries the retained entry as `current`, so do not assume `current` is null.
 - BREAKING: event selectors rank every non-DELETED entry above deleted entries,
   before ownership or event-link preference. A DELETED entry is still selected
   when it is the only match.
-- BREAKING: delete confirmation now requires entry removal or a full update with
-  a file-missing failure and an explicitly empty files list. Absent or non-empty
-  files no longer confirm a delete.
+- BREAKING: delete confirmation now requires entry removal or a full update in the
+  `DELETED` shape: a file-missing failure with an empty or absent files list. A
+  full update that still lists a file no longer confirms a delete.
 
 ## [0.38.0]
 
