@@ -33,7 +33,7 @@ plugins {
 }
 
 group = "at.bernhardberger.tvheadend"
-version = "0.38.0"
+version = "0.39.0"
 val sdkCandidateVersion = providers.gradleProperty("sdkCandidateVersion").orNull
 val sdkSnapshotVersion = providers.gradleProperty("sdkSnapshotVersion").orNull
 require(sdkCandidateVersion == null || sdkSnapshotVersion == null) {

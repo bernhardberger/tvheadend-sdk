@@ -349,7 +349,9 @@ The audit identifies scaling risks, not measured contributions to startup time.
   The owner runs the G10 commands; connect-to-Ready remains part of the Player's
   server-backed cold-start measurement.
 
-### 0.38: discovery, cache follow-up and API cleanup (candidate only)
+### 0.38: discovery, cache follow-up and API cleanup (released)
+
+0.38.0 was released on 2026-11-01.
 
 - Keep IPv4-first Android discovery, bounded mDNS recovery and attempts on each
   eligible LAN. An explicitly identified network stays pinned; missing local

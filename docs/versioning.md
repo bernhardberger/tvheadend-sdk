@@ -1,20 +1,20 @@
 # Versioning and compatibility
 
-The source targets the unreleased provisional `0.37.0` release under these
+The source targets the unreleased provisional `0.39.0` release under these
 coordinates:
 
-- `at.bernhardberger.tvheadend:sdk-android:0.37.0`
-- `at.bernhardberger.tvheadend:sdk-core:0.37.0`
-- `at.bernhardberger.tvheadend:sdk-media3:0.37.0`
-- `at.bernhardberger.tvheadend:sdk-playback:0.37.0`
-- `at.bernhardberger.tvheadend:sdk-testing:0.37.0`
+- `at.bernhardberger.tvheadend:sdk-android:0.39.0`
+- `at.bernhardberger.tvheadend:sdk-core:0.39.0`
+- `at.bernhardberger.tvheadend:sdk-media3:0.39.0`
+- `at.bernhardberger.tvheadend:sdk-playback:0.39.0`
+- `at.bernhardberger.tvheadend:sdk-testing:0.39.0`
 
 Source, local staging, and CI
-do not establish that the configured `0.37.0` coordinates are publicly available;
+do not establish that the configured `0.39.0` coordinates are publicly available;
 check Maven Central before selecting them.
 
-The development baseline is `v0.36.0`. Local prerelease builds may use
-`-PsdkCandidateVersion=0.37.0-dependency-updates-SNAPSHOT`; the existing release checks
+The development baseline is `v0.38.0`. Local prerelease builds may use
+`-PsdkCandidateVersion=0.39.0-feature-name-SNAPSHOT`; the existing release checks
 require a plain major-zero version in source. This development target is not a
 release or publication claim. See [releasing](releasing.md).
 
