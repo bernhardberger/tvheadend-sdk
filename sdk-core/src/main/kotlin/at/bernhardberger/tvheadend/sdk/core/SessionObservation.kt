@@ -121,7 +121,7 @@ public class SessionObservation private constructor(
         dvrSnapshotForDisplay?.entries?.singleOrNull { entry -> entry.id == id }
 
     /**
-     * Selects the highest-ranked linked DVR entry: non-deleted, own account, recording (including recording
+     * Selects the highest-ranked linked DVR entry: not [DvrEntryState.REMOVED], own account, recording (including recording
      * error), scheduled, event's DVR link, latest stop, then lowest entry ID, in that order.
      * Ownership uses exact comparison with the normalized session username; anonymous sessions
      * and absent owners receive no ownership preference. Unknown stops rank last.

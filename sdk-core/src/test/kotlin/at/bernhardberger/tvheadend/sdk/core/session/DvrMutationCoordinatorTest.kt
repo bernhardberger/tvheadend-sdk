@@ -833,6 +833,58 @@ internal class DvrMutationCoordinatorTest {
     }
 
     @Test
+    fun `delete of a removed entry that still lists a file waits for the full update`() = runTest {
+        val generation = GatewayGeneration()
+        val gateway = MutationGateway().apply { deleteBehavior = { _, _ -> GatewayResult.Ok(Unit) } }
+        val coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, id ->
+            DvrEntry.create(id, state = DvrEntryState.REMOVED,
+                files = listOf(at.bernhardberger.tvheadend.sdk.core.DvrRecordingFile.create(fileId = 1)))
+        })
+        coordinator.bindGeneration(generation)
+        coordinator.startAdmission(generation)
+        val deleted = async { coordinator.deleteEntry(generation, DvrEntryId(1)) }
+        runCurrent()
+        assertFalse(deleted.isCompleted)
+        coordinator.acceptMetadata(dvrUpdated(generation, 1, DvrEntryState.COMPLETED,
+            failure = GatewayDvrFailure.FILE_MISSING, files = emptyList()))
+        runCurrent()
+        assertTrue(deleted.await() is DvrMutationResult.Confirmed)
+    }
+
+    @Test
+    fun `delete of an already removed entry never confirms after retirement during acceptance`() = runTest {
+        val retirements = listOf<(DvrMutationCoordinator) -> Unit>(
+            { it.stopAdmission(connectionRetired = true) },
+            {
+                it.stopAdmission()
+                val replacement = GatewayGeneration()
+                it.bindGeneration(replacement)
+                it.startAdmission(replacement)
+            },
+        )
+        for (retire in retirements) {
+            val generation = GatewayGeneration()
+            var accepted = false
+            val gateway = MutationGateway().apply { deleteBehavior = { _, _ -> accepted = true; GatewayResult.Ok(Unit) } }
+            lateinit var coordinator: DvrMutationCoordinator
+            // The connection retires between the accepted reply and the already-removed check.
+            coordinator = DvrMutationCoordinator(gateway, currentEntry = { _, id ->
+                if (accepted) {
+                    accepted = false
+                    retire(coordinator)
+                }
+                DvrEntry.create(id, state = DvrEntryState.REMOVED)
+            })
+            coordinator.bindGeneration(generation)
+            coordinator.startAdmission(generation)
+            assertEquals(
+                DvrMutationResult.Failed(TvheadendFailure.CONNECTION_CHANGED, mayHaveApplied = true),
+                coordinator.deleteEntry(generation, DvrEntryId(1)),
+            )
+        }
+    }
+
+    @Test
     fun `delete ignores stats-only and unrelated full updates`() = runTest {
         val generation = GatewayGeneration()
         val gateway = MutationGateway().apply { deleteBehavior = { _, _ -> GatewayResult.Ok(Unit) } }

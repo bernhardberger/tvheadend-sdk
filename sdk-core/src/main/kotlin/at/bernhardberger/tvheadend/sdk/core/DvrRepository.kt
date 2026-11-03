@@ -1091,9 +1091,10 @@ public interface DvrRepository {
      * [DvrMutationResult.Confirmed] result can leave the entry observable as
      * [DvrEntryState.REMOVED], or leave no entry.
      *
-     * For an entry that is already [DvrEntryState.REMOVED], Tvheadend usually does nothing and
-     * sends no update. The result is then [DvrMutationResult.Confirmed] as soon as the server
-     * accepts the command, and the entry stays until retention removes it.
+     * For an entry that is already [DvrEntryState.REMOVED] and lists no files, Tvheadend usually
+     * does nothing and sends no update. The result is then [DvrMutationResult.Confirmed] as soon as
+     * the server accepts the command, and the entry stays until retention removes it. A removed
+     * entry that still lists a file confirms on the server's next full update.
      */
     public suspend fun deleteEntry(
         currentSession: CurrentSessionObservation,

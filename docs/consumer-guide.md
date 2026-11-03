@@ -363,8 +363,8 @@ a file removed outside Tvheadend, a recording marked as previously recorded, a
 recording whose file Tvheadend could not create, and, after a restart, a recording
 that ended without writing a file. Missed entries stay MISSED.
 
-Deleting an entry that is already REMOVED usually changes nothing on the server and
-produces no update. `deleteEntry` then confirms once the server accepts the command,
+Deleting an entry that is already REMOVED and lists no files usually changes nothing
+on the server and produces no update. `deleteEntry` then confirms once the server accepts the command,
 and the entry stays until Tvheadend's retention removes it.
 
 With `@OptIn(ExperimentalTvheadendApi::class)`, `dvrEntriesForEvent(eventId)` returns
@@ -627,7 +627,9 @@ ID after the add. A delete may attribute both the terminal recording update and
 keeps the entry after removing its files, `REMOVED` carries that entry, in state
 `REMOVED`, as `current`; otherwise `current` is null. Any transition into the
 `REMOVED` state from a valid state, including `COMPLETED` and the recording states,
-emits `REMOVED`, never `RECORDING_FAILED`.
+emits `REMOVED`, never `RECORDING_FAILED`. When the server later drops a retained
+entry, a second `REMOVED` follows with a null `current`, so one recording can produce
+two `REMOVED` changes.
 
 A server user-abort marker emits `RECORDING_ABORTED`, never `RECORDING_FAILED`.
 Its snapshot state remains `COMPLETED_ERROR` for compatibility. A local `STOP`

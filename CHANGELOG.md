@@ -60,14 +60,15 @@ Unreleased; development target.
   state. Previously a recording that ended without its file emitted
   `RECORDING_FAILED`, and a completed recording that lost its file emitted no
   change. A `REMOVED` change carries the retained entry as `current`, so do not
-  assume `current` is null.
+  assume `current` is null. When the server later drops that entry, a second
+  `REMOVED` change follows with a null `current`.
 - BREAKING: event selectors rank every other entry above `REMOVED` entries,
   before ownership or event-link preference. A `REMOVED` entry is still selected
   when it is the only match.
 - BREAKING: `deleteEntry` confirms on entry removal or a full update reporting
-  the file missing. For an entry that is already `REMOVED`, Tvheadend usually does
-  nothing and sends no update, so the delete confirms as soon as the server
-  accepts it, and the entry stays until retention removes it.
+  the file missing. For an entry that is already `REMOVED` and lists no files,
+  Tvheadend usually does nothing and sends no update, so the delete confirms as
+  soon as the server accepts it, and the entry stays until retention removes it.
 
 ## [0.38.0]
 

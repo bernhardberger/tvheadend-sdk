@@ -166,6 +166,23 @@ internal class DvrChangesTest {
     }
 
     @Test
+    fun `retained removal and the later entry delete each emit removed`() = runTest {
+        val fixture = Fixture()
+        fixture.accept(MetadataEvent.DvrEntryAdded(fixture.generation, entry(state = DvrEntryState.COMPLETED)))
+        fixture.ready()
+        val changes = collect(fixture)
+        fixture.accept(MetadataEvent.DvrEntryUpdated(fixture.generation, entry(
+            state = DvrEntryState.COMPLETED, failure = GatewayDvrFailure.FILE_MISSING, files = emptyList(),
+        )))
+        fixture.accept(MetadataEvent.DvrEntryDeleted(fixture.generation, DvrEntryId(7)))
+        runCurrent()
+        assertEquals(listOf(DvrChangeKind.REMOVED, DvrChangeKind.REMOVED), changes.map { it.kind })
+        assertEquals(DvrEntryState.REMOVED, changes[0].current!!.state)
+        assertEquals(DvrEntryState.REMOVED, changes[1].previous!!.state)
+        assertNull(changes[1].current)
+    }
+
+    @Test
     fun `full completion clears an omitted prior failure before classifying the transition`() = runTest {
         val fixture = Fixture(serverTime = Instant.fromEpochSeconds(1000))
         fixture.accept(MetadataEvent.DvrEntryAdded(fixture.generation,

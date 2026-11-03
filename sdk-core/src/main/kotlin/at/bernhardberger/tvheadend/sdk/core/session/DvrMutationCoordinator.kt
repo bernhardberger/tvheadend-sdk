@@ -243,7 +243,10 @@ internal class DvrMutationCoordinator(
             withIntent(generation, DvrMutationKind.DELETE, entryId = id) { gateway.deleteDvrEntry(generation, id) }
         },
         // Tvheadend's delete changes nothing, and sends nothing, when no file is left to remove.
-        confirmedOnAcceptance = { generation -> currentEntry(generation, id)?.state == DvrEntryState.REMOVED },
+        // A removed entry that still lists a file loses that filename and gets a full update.
+        confirmedOnAcceptance = { generation ->
+            currentEntry(generation, id)?.let { entry -> entry.state == DvrEntryState.REMOVED && entry.files.isNullOrEmpty() } == true
+        },
     )
 
     override suspend fun createAutorecRule(

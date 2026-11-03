@@ -55,7 +55,8 @@ public class DvrChangeKind private constructor(private val label: String) {
          * [DvrChange.current] is null for a removed entry and a [DvrEntryState.REMOVED] entry for a
          * retained one. Any move into [DvrEntryState.REMOVED] emits this kind, including one from
          * a recording state, never [RECORDING_FAILED]; see [DvrEntryState.REMOVED] for the
-         * causes the server does not distinguish.
+         * causes the server does not distinguish. When the server later drops a retained entry,
+         * a second change of this kind follows, with a null [DvrChange.current].
          */
         @JvmField
         public val REMOVED: DvrChangeKind = DvrChangeKind("REMOVED")
