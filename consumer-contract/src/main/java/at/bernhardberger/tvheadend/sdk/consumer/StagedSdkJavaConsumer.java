@@ -252,6 +252,15 @@ public final class StagedSdkJavaConsumer {
         return store.updatePassword(id, "test.invalid", 9982, "user", "password", null, continuation);
     }
 
+    public static Object updateLabel(ServerProfileStore store, ServerProfileId id,
+            Continuation<? super ServerProfileWriteResult> continuation) {
+        return store.updateLabel(id, "Renamed", continuation);
+    }
+
+    public static ServerProfileReadResult.Available copyLabel(ServerProfileReadResult.Available result) {
+        return result.withLabel("Copied");
+    }
+
     public static Object removeProfile(ServerProfileStore store, ServerProfileId id,
             Continuation<? super ServerProfileWriteResult> continuation) {
         return store.remove(id, continuation);
@@ -261,18 +270,19 @@ public final class StagedSdkJavaConsumer {
         return store.clearAll(continuation);
     }
 
-    public static Object clearProfileCache(SessionCache cache, ServerProfile profile,
+    public static Object clearProfileCache(SessionCache cache, ServerProfileSummary profile,
             Continuation<? super kotlin.Unit> continuation) {
         return cache.clear(profile, continuation);
     }
 
     public static boolean summaryFields(ServerProfileId id) {
         ServerProfileSummary summary = ServerProfileSummary.Companion.create(id, null, "test.invalid", 9982,
-                ServerProfileAuthenticationMode.PASSWORD, true);
+                ServerProfileAuthenticationMode.PASSWORD, "user", true);
         ServerProfileListResult.Available list = new ServerProfileListResult.Available(java.util.List.of(summary), id);
         return summary.getId().equals(id) && summary.getLabel() == null && !summary.getHost().isEmpty()
                 && summary.getPort() > 0 && summary.getAuthenticationMode() == ServerProfileAuthenticationMode.PASSWORD
-                && summary.getCredentialsAvailable() && list.getProfiles().size() == 1 && list.getActiveId().equals(id);
+                && "user".equals(summary.getUsername()) && summary.getCredentialsAvailable()
+                && list.getProfiles().size() == 1 && list.getActiveId().equals(id);
     }
 
     public static Object searchEpg(

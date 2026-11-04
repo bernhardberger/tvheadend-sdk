@@ -42,6 +42,7 @@ public interface ServerProfileStore {
      * Loads [id], or [ServerProfileReadResult.Missing] when it does not exist.
      * Returns [ServerProfileReadResult.Unavailable] for unreadable storage, credentials marked
      * unavailable, or decryption failure (including transient faults).
+     * Use [ServerProfileSummary.username] from [profiles] to prefill credential repair when known.
      */
     public suspend fun load(id: ServerProfileId): ServerProfileReadResult
 
@@ -93,6 +94,16 @@ public interface ServerProfileStore {
         label: String?,
     ): ServerProfileWriteResult
 
+    /**
+     * Replaces the display [label] for [id] without reading or changing credentials.
+     *
+     * Trims [label]; null or blank clears it. Works when stored credentials are unreadable.
+     * Returns [ServerProfileWriteResult.NotFound] for a missing profile and
+     * [ServerProfileWriteResult.Unavailable] for unreadable or unwritable storage.
+     * @throws IllegalArgumentException if [label] contains control characters or exceeds 64 characters after trimming.
+     */
+    public suspend fun updateLabel(id: ServerProfileId, label: String?): ServerProfileWriteResult
+
     /** Selects [id] locally without changing an existing session connection. */
     public suspend fun setActive(id: ServerProfileId): ServerProfileWriteResult
 
@@ -124,6 +135,12 @@ public class ServerProfileSummary private constructor(
     /** Authentication mode, without credentials. */
     public val authenticationMode: ServerProfileAuthenticationMode,
     /**
+     * Non-secret normalized username, available even when credentials cannot be decrypted.
+     * Null for anonymous profiles or unknown usernames after unreadable legacy migration.
+     * [toString] always redacts this field.
+     */
+    public val username: String?,
+    /**
      * Reports the stored credential-availability marker.
      * True does not guarantee decryption succeeds, for example after restoring without the key,
      * and does not prove server authentication.
@@ -141,16 +158,21 @@ public class ServerProfileSummary private constructor(
             host: String,
             port: Int,
             authenticationMode: ServerProfileAuthenticationMode,
+            username: String? = null,
             credentialsAvailable: Boolean = true,
         ): ServerProfileSummary {
             require(credentialsAvailable || authenticationMode == ServerProfileAuthenticationMode.PASSWORD) {
                 "Invalid credential availability"
             }
             val profile = ServerProfile(host, port)
+            val normalizedUsername = username?.trim()
+            require(normalizedUsername == null || normalizedUsername.isNotEmpty()) { "Username must not be blank" }
+            require(if (authenticationMode == ServerProfileAuthenticationMode.ANONYMOUS) username == null
+                else !credentialsAvailable || normalizedUsername != null) { "Invalid profile username" }
             val normalizedLabel = label?.trim()?.takeIf { it.isNotEmpty() }
             require(label == null || label.none { it.isISOControl() }) { "Invalid profile label" }
             require(normalizedLabel == null || normalizedLabel.length <= 64) { "Invalid profile label" }
-            return ServerProfileSummary(id, normalizedLabel, profile.host, profile.port, authenticationMode, credentialsAvailable)
+            return ServerProfileSummary(id, normalizedLabel, profile.host, profile.port, authenticationMode, normalizedUsername, credentialsAvailable)
         }
     }
 }
@@ -204,7 +226,12 @@ public sealed interface ServerProfileReadResult {
         public val port: Int,
         /** Authentication mode, without credentials. */
         public val authenticationMode: ServerProfileAuthenticationMode,
+        /** Non-secret normalized username, or null for anonymous authentication; redacted by [toString]. */
+        public val username: String?,
     ) : ServerProfileReadResult {
+        /** Returns a copy with a replaced display [label], carrying credentials over opaquely. */
+        public fun withLabel(label: String?): Available = create(id, label, profile, authenticationMode)
+
         override fun toString(): String = "ServerProfileReadResult.Available(<redacted>)"
 
         internal companion object {
@@ -214,8 +241,9 @@ public sealed interface ServerProfileReadResult {
                 profile: ServerProfile,
                 mode: ServerProfileAuthenticationMode,
             ): Available {
-                val summary = ServerProfileSummary.create(id, label, profile.host, profile.port, mode)
-                return Available(id, summary.label, profile, profile.host, profile.port, mode)
+                val username = (profile.authentication as? ServerAuthentication.Password)?.username
+                val summary = ServerProfileSummary.create(id, label, profile.host, profile.port, mode, username)
+                return Available(id, summary.label, profile, profile.host, profile.port, mode, summary.username)
             }
         }
     }
@@ -226,7 +254,7 @@ public sealed interface ServerProfileReadResult {
      * [ServerProfileStore.clearAll] explicitly discards all profiles and is destructive recovery
      * for persistent unreadability, such as a corrupted file. An available collection
      * with [ServerProfileSummary.credentialsAvailable] false can be repaired by updating credentials
-     * or removing that profile.
+     * or removing that profile. Use [ServerProfileSummary.username] to prefill the username when known.
      */
     public data object Unavailable : ServerProfileReadResult
 

@@ -2,12 +2,20 @@
 
 package at.bernhardberger.tvheadend.sdk.core.cache
 
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileAuthenticationMode
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileSummary
 import java.security.MessageDigest
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.protobuf.ProtoBuf
 
 private const val NAMESPACE_HEX_LENGTH = 32
+
+/** Derives a namespace without credentials, or returns null when the legacy username is unknown. */
+internal fun ServerProfileSummary.cacheNamespace(): CacheNamespace? {
+    if (authenticationMode == ServerProfileAuthenticationMode.PASSWORD && username == null) return null
+    return cacheNamespace(host, port, username.orEmpty())
+}
 
 /**
  * Derives the restart-stable [CacheNamespace] for one server profile.

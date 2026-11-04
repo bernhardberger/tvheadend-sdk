@@ -101,12 +101,15 @@ public class MetadataCachePolicy private constructor(
 /** Consumer view of the persistent metadata cache owned by a [TvheadendSession]. */
 public interface SessionCache {
     /**
-     * Clears metadata and artwork for [profile], then refreshes [statistics]. Profiles sharing
-     * host, port and username share this namespace. For the current writer this retires pending
+     * Clears metadata and artwork for [profile], then refreshes [statistics].
+     * Profiles sharing host, port and username share this namespace, even with unreadable passwords.
+     * A password summary with unknown [ServerProfileSummary.username] clears nothing and leaves
+     * [statistics] unchanged; its files age out under retention and budget limits.
+     * For the current writer this retires pending
      * writes and immediately rewrites its current metadata publication, just like [clear].
      * Cancellation propagates; deletion is best effort and racing reads cannot repopulate artwork.
      */
-    public suspend fun clear(profile: ServerProfile)
+    public suspend fun clear(profile: ServerProfileSummary)
 
     /**
      * Aggregate cache usage. Values are approximate and never expose paths or server identity.

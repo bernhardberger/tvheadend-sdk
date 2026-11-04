@@ -282,11 +282,14 @@ migrating ambiguous identities. `ArtworkLoader.cacheKey` values change once on
 upgrade, causing one-time misses in application-owned artwork caches; those
 caches retain their own eviction policy and are not cleared by the SDK.
 Removed profiles' files remain subject to retention and the byte budget until
-pruned by cache activity, or can be deleted immediately with `session.cache.clear(profile)`.
+pruned by cache activity, or can be deleted immediately with `session.cache.clear(summary)`
+using a `ServerProfileSummary` from `profiles()`, without loading credentials.
 This removes only that profile's metadata and artwork. Profiles sharing host, port
 and username share a namespace, even if their stored ids differ. Clearing the
 current namespace rewrites its current metadata publication immediately; other
 namespaces survive. Removing a stored profile does not evict its cache automatically.
+A legacy password summary with a null username clears nothing; its files age out
+under normal retention and budget limits.
 
 `session.cache` exposes `SessionCache.statistics` for a storage screen and
 `clear()` to delete every cached namespace. Statistics are measured once the
@@ -1510,7 +1513,19 @@ when (val stored = profileStore.loadActive()) {
 `addAnonymous` and `addPassword` return `ServerProfileWriteResult.Applied(id)`
 after local persistence. They leave the active selection unchanged unless
 `activate = true`. `profiles()` lists summaries in insertion order without exposing
-credentials. Labels are optional, trimmed, limited to 64 characters and cannot
+passwords. The non-secret `summary.username` is trimmed and remains available when
+password decryption fails. It is null for anonymous profiles and for unreadable
+legacy password profiles whose username could not be recovered. For display, use
+`summary.username?.let { "$it on ${summary.host}" } ?: summary.host`; never log this
+text. Prefill a re-enter-password surface from `summary.username` when known.
+
+Rename a stored profile with `store.updateLabel(id, "New label")` without asking
+for credentials again. It changes only the display label and works even when
+credentials are unreadable or a migrated profile has an unknown username. Labels
+are trimmed; null or blank clears the label. Handle `Applied`, `NotFound`, and
+`Unavailable` as with other writes. Renaming does not select or reconnect a profile.
+Duplicate detection by normalized host, port and username is the application's job;
+the store allows duplicates. Labels are optional, trimmed, limited to 64 characters and cannot
 contain control characters. IDs are stable canonical UUIDs; use `ServerProfileId.from`
 to restore an application-owned key. Edits through `updateAnonymous` or `updatePassword`
 keep the id and can change authentication mode; a null label clears it.
@@ -1529,25 +1544,30 @@ To switch servers, call `setActive(id)`, then `loadActive()` and
 `session.connect(stored.profile)`. Selection alone does not change the connection.
 `remove(id)` removes one profile; removing the active profile chooses no successor.
 `clearAll()` deletes every profile and the active pointer, including unreadable data.
-To remove a connected profile, disconnect or switch first. Otherwise the session
+To remove an active, connected profile, disconnect or switch away first. Otherwise the session
 stays connected to a profile no longer stored, and clearing its current cache
 namespace immediately rewrites the current metadata. After disconnecting or
-switching, use `load(id)` to obtain the profile, `session.cache.clear(profile)`,
-then `remove(id)`. A password profile with unavailable credentials cannot supply
-its cache namespace; its old cache ages out under normal retention and budget limits.
+switching, take its `ServerProfileSummary` from `profiles()`, call
+`session.cache.clear(summary)`, then `remove(id)`. Use this order for both readable
+and unreadable credentials; no `load(id)` is needed. A legacy password summary
+with an unknown username clears nothing; its old cache ages out under normal
+retention and budget limits.
 Mutations return `NotFound` for a missing id and `Unavailable` for unreadable storage.
 Success says
 nothing about server reachability, authentication, or session readiness.
 Anonymous profiles do not use the Android Keystore. Password profiles are
-encrypted at rest with profile-id- and endpoint-bound associated data. Duplicate
-endpoints are allowed. Existing format-2 single profiles migrate once to format 3,
-with a new id and active selection. Password credentials are decrypted with their
-old context and re-encrypted with the new id. Ciphertext that fails authentication
+stored with the normalized username in plaintext metadata and only the password
+encrypted at rest. Associated data binds the password to the profile id, endpoint
+and username, so editing the username makes the password unreadable rather than
+pairing it with another account. Existing format-2 single profiles migrate once to
+format 4, with a new id and active selection. Legacy credentials are decrypted with
+their old context, then the username is stored as metadata and the password is
+re-encrypted with its new context. Ciphertext that fails authentication
 or is too short to be valid, a missing or permanently invalidated key, or invalid
-credential text leaves the endpoint listed with unavailable credentials
+credential text leaves the endpoint listed with null username and unavailable credentials
 until updated or removed. Other migration failures preserve the legacy record for
 a later retry. Unknown formats,
-including format 1, stay unavailable until `clearAll()`. JVM consumer tests can
+including formats 1 and unreleased 3, stay unavailable until `clearAll()`. JVM consumer tests can
 use `FakeServerProfileStore` for positive and unavailable behavior without an
 Android `Context`.
 
@@ -1563,6 +1583,8 @@ ids. Its call enum now records `PROFILES`, `LOAD_ACTIVE`, `LOAD`, `ADD_ANONYMOUS
 collection with one active profile, an empty collection (`Missing`), or an unreadable
 collection (`Unavailable`). `scriptCredentialsUnavailable(id)` keeps the collection
 readable and marks one profile as needing credentials; updating it repairs it.
+The username stays visible unless `forgetUsername = true` simulates an unreadable
+legacy migration.
 `FakeSessionCall.CLEAR_PROFILE_CACHE` records scoped cache clears without profile
 fields, separately from `CLEAR_CACHE`.
 

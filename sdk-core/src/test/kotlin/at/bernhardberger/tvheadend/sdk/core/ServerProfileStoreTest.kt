@@ -12,13 +12,50 @@ import org.junit.jupiter.api.Test
 
 internal class ServerProfileStoreTest {
     @Test
+    fun `withLabel replaces only normalized label and retains opaque credentials`() {
+        val original = ServerProfileReadResult.password(ServerProfileId.generate(), "test.invalid",
+            username = "user", password = "password", label = "Original")
+        val renamed = original.withLabel(" Renamed ")
+        assertEquals("Renamed", renamed.label)
+        assertEquals("Original", original.label)
+        assertSame(original.id, renamed.id)
+        assertSame(original.profile, renamed.profile)
+        assertEquals(original.host, renamed.host)
+        assertEquals(original.port, renamed.port)
+        assertSame(original.authenticationMode, renamed.authenticationMode)
+        assertEquals(original.username, renamed.username)
+        assertEquals(null, renamed.withLabel(null).label)
+        assertEquals(null, renamed.withLabel("  ").label)
+        assertEquals("ServerProfileReadResult.Available(<redacted>)", renamed.toString())
+        for (label in listOf("x".repeat(65), "bad\nlabel")) {
+            assertThrows(IllegalArgumentException::class.java) { original.withLabel(label) }
+        }
+        assertEquals("x".repeat(64), original.withLabel(" " + "x".repeat(64) + " ").label)
+    }
+
+    @Test
     fun `only password summaries may mark credentials unavailable`() {
         val id = ServerProfileId.generate()
         assertThrows(IllegalArgumentException::class.java) {
-            ServerProfileSummary.create(id, null, "test.invalid", 9982, ServerProfileAuthenticationMode.ANONYMOUS, false)
+            ServerProfileSummary.create(id, null, "test.invalid", 9982, ServerProfileAuthenticationMode.ANONYMOUS, credentialsAvailable = false)
         }
         assertFalse(ServerProfileSummary.create(id, null, "test.invalid", 9982,
-            ServerProfileAuthenticationMode.PASSWORD, false).credentialsAvailable)
+            ServerProfileAuthenticationMode.PASSWORD, credentialsAvailable = false).credentialsAvailable)
+    }
+
+    @Test
+    fun `summary username normalizes validates and stays redacted`() {
+        val id = ServerProfileId.generate()
+        fun summary(mode: ServerProfileAuthenticationMode, username: String?, available: Boolean = true) =
+            ServerProfileSummary.create(id, null, "test.invalid", 9982, mode, username, available)
+        assertThrows(IllegalArgumentException::class.java) { summary(ServerProfileAuthenticationMode.ANONYMOUS, "user") }
+        assertThrows(IllegalArgumentException::class.java) { summary(ServerProfileAuthenticationMode.PASSWORD, null) }
+        assertThrows(IllegalArgumentException::class.java) { summary(ServerProfileAuthenticationMode.PASSWORD, " ", false) }
+        assertEquals(null, summary(ServerProfileAuthenticationMode.PASSWORD, null, false).username)
+        assertEquals(null, summary(ServerProfileAuthenticationMode.ANONYMOUS, null).username)
+        val normalized = summary(ServerProfileAuthenticationMode.PASSWORD, " user ")
+        assertEquals("user", normalized.username)
+        assertEquals("ServerProfileSummary(<redacted>)", normalized.toString())
     }
 
     @Test
@@ -73,7 +110,7 @@ internal class ServerProfileStoreTest {
             .filterNot { method -> method.isSynthetic }
             .mapTo(mutableSetOf()) { method -> method.name }
 
-        assertEquals(setOf("getId", "getLabel", "getProfile", "getHost", "getPort", "getAuthenticationMode", "toString"), methods)
+        assertEquals(setOf("getId", "getLabel", "getProfile", "getHost", "getPort", "getAuthenticationMode", "getUsername", "withLabel", "toString"), methods)
         assertEquals(
             0,
             ServerProfileReadResult.Available::class.java.constructors

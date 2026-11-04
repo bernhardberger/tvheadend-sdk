@@ -1,5 +1,8 @@
 package at.bernhardberger.tvheadend.sdk.android
 
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileId
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileWriteResult
+
 internal class FakeCredentialStorage(
     initialState: StoredCredentialRead = StoredCredentialRead.Missing,
 ) : CredentialStorage {
@@ -25,6 +28,18 @@ internal class FakeCredentialStorage(
         writeFailure?.let { failure -> throw failure }
         writeCalls += 1
         state = StoredCredentialRead.Available(record)
+    }
+
+    override suspend fun updateLabel(id: ServerProfileId, label: String?): ServerProfileWriteResult {
+        val stored = read()
+        if (stored == StoredCredentialRead.Unavailable) return ServerProfileWriteResult.Unavailable
+        val collection = (stored as? StoredCredentialRead.Available)?.record as? StoredCredentialRecord.Collection
+            ?: return ServerProfileWriteResult.NotFound
+        val old = collection.profiles.singleOrNull { it.id == id } ?: return ServerProfileWriteResult.NotFound
+        val replacement = StoredCredentialRecord.Profile(old.host, old.port, old.authenticationMode,
+            old.credentials, old.id, old.normalizedLabel(label), old.credentialsUnavailable, old.username)
+        write(StoredCredentialRecord.Collection(collection.profiles.map { if (it.id == id) replacement else it }, collection.activeId))
+        return ServerProfileWriteResult.Applied(id)
     }
 
     override suspend fun clear() {
@@ -66,7 +81,8 @@ internal open class FakeCredentialCipher : CredentialCipher {
         context: CredentialCipherContext,
         transform: (username: String, password: String) -> T,
     ): T {
-        validateCredentialCiphertext(credentials.copyUsername())
+        val profile = context as CredentialCipherContext.Profile
+        if (profile.id == null) validateCredentialCiphertext(credentials.copyUsername())
         validateCredentialCiphertext(credentials.copyPassword())
         decryptFailure?.let { failure -> throw failure }
         decryptCalls += 1
@@ -76,11 +92,11 @@ internal open class FakeCredentialCipher : CredentialCipher {
         val passwordPrefix = "$prefix|password|"
         val username = credentials.copyUsername().decodeToString()
         val password = credentials.copyPassword().decodeToString()
-        if (!username.startsWith(usernamePrefix) || !password.startsWith(passwordPrefix)) {
+        if ((profile.id == null && !username.startsWith(usernamePrefix)) || !password.startsWith(passwordPrefix)) {
             throw CredentialUnreadableException()
         }
         return transform(
-            username.removePrefix(usernamePrefix),
+            if (profile.id == null) username.removePrefix(usernamePrefix) else checkNotNull(profile.username),
             password.removePrefix(passwordPrefix),
         )
     }
@@ -93,7 +109,7 @@ internal fun encryptedCredentials(
 ): EncryptedCredentials {
     val prefix = contextPrefix(context)
     return EncryptedCredentials(
-        "$prefix|username|$username".encodeToByteArray(),
+        if ((context as CredentialCipherContext.Profile).id == null) "$prefix|username|$username".encodeToByteArray() else byteArrayOf(),
         "$prefix|password|$password".encodeToByteArray(),
     )
 }
@@ -124,4 +140,4 @@ internal fun anonymousProfileRecord(
 )
 
 private fun contextPrefix(context: CredentialCipherContext): String =
-    java.util.Base64.getEncoder().encodeToString(credentialAssociatedData(context, CredentialField.USERNAME))
+    java.util.Base64.getEncoder().encodeToString(credentialAssociatedData(context, CredentialField.PASSWORD))

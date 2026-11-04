@@ -13,16 +13,27 @@ Unreleased; development target.
 
   | Old API | New API |
   | --- | --- |
-  | `loadProfile()` | `loadActive()` or `load(id)`; `profiles()` lists summaries with `credentialsAvailable` |
+  | `loadProfile()` | `loadActive()` or `load(id)`; `profiles()` lists summaries with `username` and `credentialsAvailable` |
   | `storeAnonymous(...)` | `addAnonymous(...)` or `updateAnonymous(id, ...)` |
   | `storePassword(...)` | `addPassword(...)` or `updatePassword(id, ...)` |
   | `clearProfile()` | `remove(id)` or `clearAll()` |
   | `loadProfileForEditing()` | `loadForEditing(id)` |
 
-- Migrate Android format-2 single profiles to format-3 collections on first use,
-  assigning a new active id and re-encrypting credentials with id-bound associated
-  data. Undecryptable credentials remain listed but unavailable until edited or
-  removed. Unknown or malformed formats stay unavailable until `clearAll()`.
+- Store the normalized, non-secret username as plaintext profile metadata, available
+  through `ServerProfileSummary.username` even when password decryption fails.
+  Anonymous profiles have a null username. `ServerProfileReadResult.Available`
+  also exposes the normalized username. Both types keep redacted `toString()` output.
+  BREAKING: `ServerProfileSummary.create` adds `username` before `credentialsAvailable`.
+- Add `ServerProfileStore.updateLabel(id, label)` to rename a profile without
+  decrypting or replacing credentials, including unreadable credentials. Null or
+  blank clears the label. `ServerProfileReadResult.Available.withLabel(label)`
+  copies a read result with a normalized label, carrying credentials over opaquely.
+- Migrate Android format-2 single profiles to format-4 collections on first use,
+  assigning a new active id. Only the password is encrypted; associated data binds
+  it to the profile id, endpoint and plaintext username. Undecryptable legacy
+  credentials remain listed with null username and unavailable credentials until
+  edited or removed. Unknown or malformed formats, including unreleased format 3,
+  stay unavailable until `clearAll()`.
 - BREAKING: a corrupted credentials file used to read as `Missing` and now reads
   as `Unavailable`. Every mutation returns `Unavailable` until `clearAll()` discards
   all profiles. Apps that treated `Missing` as onboarding must offer this recovery.
@@ -33,18 +44,20 @@ Unreleased; development target.
 - BREAKING: `FakeServerProfileStore` adds the `idSource` constructor parameter.
   `FakeServerProfileStoreCall` now records `PROFILES`, `LOAD_ACTIVE`, `LOAD`,
   `ADD_ANONYMOUS`, `ADD_PASSWORD`, `UPDATE_ANONYMOUS`, `UPDATE_PASSWORD`,
-  `SET_ACTIVE`, `REMOVE`, and `CLEAR_ALL`. `scriptProfile` replaces the collection
-  with one active profile, empty (`Missing`), or unreadable (`Unavailable`).
+  `UPDATE_LABEL`, `SET_ACTIVE`, `REMOVE`, and `CLEAR_ALL`. `scriptProfile` replaces
+  the collection with one active profile, empty (`Missing`), or unreadable (`Unavailable`).
   `scriptCredentialsUnavailable(id)` marks one profile while keeping its collection
   readable. `FakeSessionCall.CLEAR_PROFILE_CACHE` distinguishes scoped cache clears
   from `CLEAR_CACHE` without recording profile fields.
-- Add `SessionCache.clear(profile)` to evict only that profile's metadata and
+- BREAKING: replace `SessionCache.clear(ServerProfile)` with `clear(ServerProfileSummary)`.
+  Take the summary from `profiles()` to evict that profile's metadata and
   artwork. Profiles with the same host, port and username share a namespace;
   clearing the current namespace immediately rewrites its current metadata.
-  Before removing a connected profile, disconnect or switch, then `load(id)`,
-  `cache.clear(profile)`, and `remove(id)`. Removing it alone leaves the session
-  connected. If password credentials are unavailable, its namespace cannot be
-  computed and its cache ages out under normal retention and budget limits.
+  Before removing an active, connected profile, disconnect or switch away, then
+  take its summary from `profiles()`, call `cache.clear(summary)`, and `remove(id)`.
+  No `load(id)` is needed, even with unreadable credentials. Removing it alone
+  leaves the session connected. A legacy password summary with an unknown username
+  clears nothing; its cache ages out under normal retention and budget limits.
 
 - BREAKING: replace `DvrEntryState.FILE_MISSING` with `DvrEntryState.REMOVED`.
   Every completed entry whose file is gone is now `REMOVED`, whatever its files

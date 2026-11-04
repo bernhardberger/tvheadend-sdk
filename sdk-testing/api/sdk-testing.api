@@ -103,12 +103,14 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeServerProfileStor
 	public fun loadActive (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun profiles (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun remove (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileId;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public final fun scriptCredentialsUnavailable (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileId;)V
+	public final fun scriptCredentialsUnavailable (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileId;Z)V
+	public static synthetic fun scriptCredentialsUnavailable$default (Lat/bernhardberger/tvheadend/sdk/testing/FakeServerProfileStore;Lat/bernhardberger/tvheadend/sdk/core/ServerProfileId;ZILjava/lang/Object;)V
 	public final fun scriptMutationSuccess ()V
 	public final fun scriptMutationUnavailable ()V
 	public final fun scriptProfile (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileReadResult;)V
 	public fun setActive (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileId;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun updateAnonymous (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileId;Ljava/lang/String;ILjava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun updateLabel (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileId;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun updatePassword (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileId;Ljava/lang/String;ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
@@ -122,6 +124,7 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeServerProfileStor
 	public static final field REMOVE Lat/bernhardberger/tvheadend/sdk/testing/FakeServerProfileStoreCall;
 	public static final field SET_ACTIVE Lat/bernhardberger/tvheadend/sdk/testing/FakeServerProfileStoreCall;
 	public static final field UPDATE_ANONYMOUS Lat/bernhardberger/tvheadend/sdk/testing/FakeServerProfileStoreCall;
+	public static final field UPDATE_LABEL Lat/bernhardberger/tvheadend/sdk/testing/FakeServerProfileStoreCall;
 	public static final field UPDATE_PASSWORD Lat/bernhardberger/tvheadend/sdk/testing/FakeServerProfileStoreCall;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
 	public static fun valueOf (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/testing/FakeServerProfileStoreCall;
@@ -129,7 +132,7 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeServerProfileStor
 }
 
 public final class at/bernhardberger/tvheadend/sdk/testing/FakeSessionCache : at/bernhardberger/tvheadend/sdk/core/SessionCache {
-	public fun clear (Lat/bernhardberger/tvheadend/sdk/core/ServerProfile;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun clear (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileSummary;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun clear (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun getStatistics ()Lkotlinx/coroutines/flow/StateFlow;
 	public final fun scriptStatistics (Lat/bernhardberger/tvheadend/sdk/core/CacheStatistics;)V

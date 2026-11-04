@@ -26,6 +26,8 @@ public enum class FakeServerProfileStoreCall {
     UPDATE_ANONYMOUS,
     /** Replaces fields with password authentication. */
     UPDATE_PASSWORD,
+    /** Replaces only the display label. */
+    UPDATE_LABEL,
     /** Changes the active selection. */
     SET_ACTIVE,
     /** Removes one profile. */
@@ -43,6 +45,7 @@ public class FakeServerProfileStore(
     private val mutableCalls = ArrayList<FakeServerProfileStoreCall>()
     private val records = LinkedHashMap<ServerProfileId, ServerProfileReadResult.Available>()
     private val unavailableCredentials = HashSet<ServerProfileId>()
+    private val unknownUsernames = HashSet<ServerProfileId>()
     private var activeId: ServerProfileId? = null
     private var readUnavailable = false
     private var mutationAvailable = true
@@ -58,6 +61,7 @@ public class FakeServerProfileStore(
         synchronized(lock) {
             records.clear()
             unavailableCredentials.clear()
+            unknownUsernames.clear()
             activeId = null
             readUnavailable = result == ServerProfileReadResult.Unavailable
             if (result is ServerProfileReadResult.Available) {
@@ -75,15 +79,17 @@ public class FakeServerProfileStore(
 
     /**
      * Makes [id] unreadable while retaining its summary; updating the profile repairs it.
+     * [forgetUsername] simulates an unreadable legacy migration with an unknown username.
      * @throws IllegalArgumentException if [id] is missing or uses anonymous authentication
      */
-    public fun scriptCredentialsUnavailable(id: ServerProfileId) {
+    public fun scriptCredentialsUnavailable(id: ServerProfileId, forgetUsername: Boolean = false) {
         synchronized(lock) {
             require(id in records) { "Profile not found" }
             require(records.getValue(id).authenticationMode == ServerProfileAuthenticationMode.PASSWORD) {
                 "Profile has no credentials"
             }
             unavailableCredentials += id
+            if (forgetUsername) unknownUsernames += id else unknownUsernames -= id
         }
     }
 
@@ -91,6 +97,7 @@ public class FakeServerProfileStore(
         if (readUnavailable) ServerProfileListResult.Unavailable
         else ServerProfileListResult.Available(records.values.map {
             ServerProfileSummary.create(it.id, it.label, it.host, it.port, it.authenticationMode,
+                username = it.username.takeUnless { _ -> it.id in unknownUsernames },
                 credentialsAvailable = it.id !in unavailableCredentials)
         }, activeId)
     }
@@ -131,6 +138,12 @@ public class FakeServerProfileStore(
         save(ServerProfileReadResult.password(id, host, port, username, password, label), false, false)
     }
 
+    override suspend fun updateLabel(id: ServerProfileId, label: String?): ServerProfileWriteResult =
+        call(FakeServerProfileStoreCall.UPDATE_LABEL) {
+            val replacement = records[id]?.withLabel(label)
+            mutate(id) { records[id] = checkNotNull(replacement) }
+        }
+
     override suspend fun setActive(id: ServerProfileId): ServerProfileWriteResult = call(FakeServerProfileStoreCall.SET_ACTIVE) {
         mutate(id) { activeId = id }
     }
@@ -139,6 +152,7 @@ public class FakeServerProfileStore(
         mutate(id) {
             records.remove(id)
             unavailableCredentials.remove(id)
+            unknownUsernames.remove(id)
             if (activeId == id) activeId = null
         }
     }
@@ -147,6 +161,7 @@ public class FakeServerProfileStore(
         check(mutationAvailable) { "Profile storage unavailable" }
         records.clear()
         unavailableCredentials.clear()
+        unknownUsernames.clear()
         activeId = null
         readUnavailable = false
     }
@@ -159,6 +174,7 @@ public class FakeServerProfileStore(
         check(!adding || result.id !in records) { "Profile id already exists" }
         records[result.id] = result
         unavailableCredentials.remove(result.id)
+        unknownUsernames.remove(result.id)
         if (activate) activeId = result.id
         return ServerProfileWriteResult.Applied(result.id)
     }

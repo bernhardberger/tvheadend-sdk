@@ -16,11 +16,53 @@ import org.junit.jupiter.api.Test
 
 internal class FakeServerProfileStoreTest {
     @Test
+    fun `renaming preserves credentials availability identity order and selection`() = runTest {
+        val store = FakeServerProfileStore()
+        val id = (store.addPassword("test.invalid", username = "user", password = "password", activate = true)
+            as ServerProfileWriteResult.Applied).id
+        val anonymous = (store.addAnonymous("test.invalid") as ServerProfileWriteResult.Applied).id
+        val original = store.load(id) as ServerProfileReadResult.Available
+        assertEquals(ServerProfileWriteResult.Applied(id), store.updateLabel(id, " Renamed "))
+        val renamed = store.load(id) as ServerProfileReadResult.Available
+        assertEquals("Renamed", renamed.label)
+        assertSame(original.profile, renamed.profile)
+        for (unknown in listOf(false, true)) {
+            store.scriptCredentialsUnavailable(id, forgetUsername = unknown)
+            assertEquals(ServerProfileWriteResult.Applied(id), store.updateLabel(id, " Repair "))
+            val list = store.profiles() as ServerProfileListResult.Available
+            assertEquals(listOf(id, anonymous), list.profiles.map { it.id })
+            assertEquals(id, list.activeId)
+            assertEquals("Repair", list.profiles.first().label)
+            assertEquals(if (unknown) null else "user", list.profiles.first().username)
+            assertEquals(false, list.profiles.first().credentialsAvailable)
+            assertSame(ServerProfileReadResult.Unavailable, store.load(id))
+        }
+        assertEquals(ServerProfileWriteResult.Applied(anonymous), store.updateLabel(anonymous, " Anonymous "))
+        for (label in listOf(null, "  ")) {
+            store.updateLabel(anonymous, label)
+            assertEquals(null, (store.load(anonymous) as ServerProfileReadResult.Available).label)
+        }
+        for (label in listOf("x".repeat(65), "bad\nlabel")) {
+            try {
+                store.updateLabel(id, label)
+                org.junit.jupiter.api.Assertions.fail<Unit>("Invalid label accepted")
+            } catch (_: IllegalArgumentException) { }
+        }
+        assertSame(ServerProfileWriteResult.NotFound, store.updateLabel(ServerProfileId.generate(), "Missing"))
+        store.scriptMutationUnavailable()
+        assertSame(ServerProfileWriteResult.Unavailable, store.updateLabel(id, "Unavailable"))
+        store.scriptProfile(ServerProfileReadResult.Unavailable)
+        assertSame(ServerProfileWriteResult.Unavailable, store.updateLabel(id, "Unavailable"))
+        assertTrue(FakeServerProfileStoreCall.UPDATE_LABEL in store.calls)
+    }
+
+    @Test
     fun `anonymous profiles cannot script unavailable credentials`() = runTest {
         val store = FakeServerProfileStore()
         val id = (store.addAnonymous("test.invalid") as ServerProfileWriteResult.Applied).id
         assertThrows(IllegalArgumentException::class.java) { store.scriptCredentialsUnavailable(id) }
         assertTrue((store.profiles() as ServerProfileListResult.Available).profiles.single().credentialsAvailable)
+        assertEquals(null, (store.profiles() as ServerProfileListResult.Available).profiles.single().username)
         assertTrue(store.load(id) is ServerProfileReadResult.Available)
     }
 
@@ -34,9 +76,13 @@ internal class FakeServerProfileStoreTest {
         assertSame(ServerProfileReadResult.Unavailable, store.load(id))
         assertSame(ServerProfileReadResult.Unavailable, store.loadActive())
         assertEquals(false, (store.profiles() as ServerProfileListResult.Available).profiles.single().credentialsAvailable)
+        assertTrue((store.profiles() as ServerProfileListResult.Available).profiles.single().username == "user")
+        store.scriptCredentialsUnavailable(id, forgetUsername = true)
+        assertEquals(null, (store.profiles() as ServerProfileListResult.Available).profiles.single().username)
         store.updatePassword(id, "test.invalid", 9982, "user", "replacement", null)
         assertTrue(store.load(id) is ServerProfileReadResult.Available)
         assertTrue((store.profiles() as ServerProfileListResult.Available).profiles.single().credentialsAvailable)
+        assertTrue((store.profiles() as ServerProfileListResult.Available).profiles.single().username == "user")
     }
 
     @Test
@@ -56,7 +102,10 @@ internal class FakeServerProfileStoreTest {
         val session = FakeTvheadendSession()
         val footprint = at.bernhardberger.tvheadend.sdk.core.CacheStatistics(10, 20, 2)
         session.cache.scriptStatistics(footprint)
-        session.cache.clear(at.bernhardberger.tvheadend.sdk.core.ServerProfile("test.invalid"))
+        val store = FakeServerProfileStore()
+        store.addPassword("test.invalid", username = "user", password = "password")
+        val summary = (store.profiles() as ServerProfileListResult.Available).profiles.single()
+        session.cache.clear(summary)
         assertEquals(footprint, session.cache.statistics.value)
         session.cache.clear()
         assertEquals(at.bernhardberger.tvheadend.sdk.core.CacheStatistics.EMPTY, session.cache.statistics.value)
@@ -119,6 +168,7 @@ internal class FakeServerProfileStoreTest {
             { store.addPassword("test.invalid", username = "user", password = "password") },
             { store.updateAnonymous(id, "test.invalid", 9982, null) },
             { store.updatePassword(id, "test.invalid", 9982, "user", "password", null) },
+            { store.updateLabel(id, "Renamed") },
             { store.setActive(id) }, { store.remove(id) }, { store.clearAll() },
         )
         calls.forEach { call ->

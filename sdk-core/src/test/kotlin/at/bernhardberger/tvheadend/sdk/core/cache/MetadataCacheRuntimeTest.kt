@@ -9,6 +9,11 @@ import at.bernhardberger.tvheadend.sdk.core.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.MetadataCachePolicy
 import at.bernhardberger.tvheadend.sdk.core.MetadataRefreshTimes
+import at.bernhardberger.tvheadend.sdk.core.ServerAuthentication
+import at.bernhardberger.tvheadend.sdk.core.ServerProfile
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileAuthenticationMode
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileId
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileSummary
 import at.bernhardberger.tvheadend.sdk.core.session.PublishedSnapshots
 import at.bernhardberger.tvheadend.sdk.core.session.PhaseOneSessionMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
@@ -19,6 +24,8 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -65,7 +72,7 @@ class MetadataCacheRuntimeTest {
                 StandardTestDispatcher(testScheduler), FixedClock)
             val restored = async { runtime.restore(ns) }
             entered.await()
-            val clearing = launch { runtime.clear(a) }
+            val clearing = launch { runtime.clear(summary(a)) }
             runCurrent()
             release.complete(Unit)
             val snapshots = restored.await()
@@ -101,7 +108,7 @@ class MetadataCacheRuntimeTest {
                 }
             }
             entered.await()
-            runtime.clear(a)
+            runtime.clear(summary(a))
             release.complete(Unit)
             assertTrue(fetch.await() is at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult.Available)
             val cached = runtime.loadCachedArtwork(ns, id) { true }
@@ -122,7 +129,7 @@ class MetadataCacheRuntimeTest {
             artwork.writeBytes(byteArrayOf(1))
         }
         val runtime = runtime(store)
-        runtime.clear(selected)
+        runtime.clear(summary(selected))
         assertEquals(null, store.loadCatalog(selected.cacheNamespace(), START - 1.days))
         assertTrue(store.loadCatalog(other.cacheNamespace(), START - 1.days) != null)
         assertTrue(!File(root, "tvheadend-sdk/${selected.cacheNamespace().value}/artwork/1").exists())
@@ -143,12 +150,69 @@ class MetadataCacheRuntimeTest {
         val artwork = File(root, "tvheadend-sdk/${ns.value}/artwork/1")
         artwork.parentFile.mkdirs()
         artwork.writeBytes(byteArrayOf(1))
-        runtime.clear(profile)
+        runtime.clear(summary(profile))
         runCurrent()
         assertEquals(current.catalog, store.loadCatalog(ns, START - 1.days)?.catalog)
         assertTrue(store.loadEpg(ns, START - 1.days) != null)
         assertTrue(!artwork.exists())
         runtime.shutdown()
+    }
+
+    @Test
+    fun `summary clear evicts anonymous readable and unreadable password namespaces only`() = runTest {
+        val anonymous = ServerProfile("selected.invalid")
+        val password = ServerProfile("selected.invalid", authentication = ServerAuthentication.Password("user", "password"))
+        val other = ServerProfile("selected.invalid", authentication = ServerAuthentication.Password("other", "password"))
+        val store = FileMetadataCacheStore(root, FixedClock)
+        val runtime = runtime(store)
+        for ((profile, available) in listOf(anonymous to true, password to true, password to false)) {
+            for (entry in listOf(profile, other)) {
+                store.storeCatalog(entry.cacheNamespace(), CachedCatalog(catalog(1)), START)
+                val artwork = File(root, "tvheadend-sdk/${entry.cacheNamespace().value}/artwork/1")
+                artwork.parentFile.mkdirs()
+                artwork.writeBytes(byteArrayOf(1))
+            }
+            runtime.clear(summary(profile, available))
+            assertEquals(null, store.loadCatalog(profile.cacheNamespace(), START - 1.days))
+            assertTrue(store.loadCatalog(other.cacheNamespace(), START - 1.days) != null)
+            assertTrue(!File(root, "tvheadend-sdk/${profile.cacheNamespace().value}/artwork/1").exists())
+            assertTrue(File(root, "tvheadend-sdk/${other.cacheNamespace().value}/artwork/1").exists())
+            assertEquals(1, runtime.statistics.value.artworkEntryCount)
+        }
+        runtime.shutdown()
+    }
+
+    @Test
+    fun `unknown username clear leaves files statistics and writer untouched but checks cancellation`() = runTest {
+        val store = FileMetadataCacheStore(root, FixedClock)
+        val runtime = runtime(store)
+        val publications = MutableStateFlow<PublishedSnapshots?>(PublishedSnapshots(catalog(1), EpgSnapshot.create()))
+        runtime.start(namespace, publications)
+        runCurrent()
+        val before = runtime.statistics.value
+        val unknown = ServerProfileSummary.create(ServerProfileId.generate(), null, "server", 9982,
+            ServerProfileAuthenticationMode.PASSWORD, credentialsAvailable = false)
+        runtime.clear(unknown)
+        assertSame(before, runtime.statistics.value)
+        assertEquals(catalog(1), store.loadCatalog(namespace, START - 1.days)?.catalog)
+        val cancelled = launch {
+            currentCoroutineContext().cancel()
+            runtime.clear(unknown)
+            throw AssertionError("Clear must propagate cancellation")
+        }
+        cancelled.join()
+        assertSame(before, runtime.statistics.value)
+        publications.value = PublishedSnapshots(catalog(2), EpgSnapshot.create())
+        runCurrent()
+        assertEquals(catalog(2), store.loadCatalog(namespace, START - 1.days)?.catalog)
+        runtime.shutdown()
+    }
+
+    private fun summary(profile: ServerProfile, available: Boolean = true): ServerProfileSummary {
+        val username = (profile.authentication as? ServerAuthentication.Password)?.username
+        return ServerProfileSummary.create(ServerProfileId.generate(), null, profile.host, profile.port,
+            if (username == null) ServerProfileAuthenticationMode.ANONYMOUS else ServerProfileAuthenticationMode.PASSWORD,
+            username, available)
     }
 
     @Test

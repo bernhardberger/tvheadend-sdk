@@ -4,6 +4,7 @@ import android.content.Context
 import android.security.keystore.KeyPermanentlyInvalidatedException
 import at.bernhardberger.tvheadend.sdk.core.ServerProfileId
 import at.bernhardberger.tvheadend.sdk.core.ServerProfileSummary
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileWriteResult
 import at.bernhardberger.tvheadend.sdk.core.ServerProfileAuthenticationMode
 import androidx.datastore.core.DataStore
 import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
@@ -29,6 +30,8 @@ internal interface CredentialStorage {
 
     suspend fun write(record: StoredCredentialRecord)
 
+    suspend fun updateLabel(id: ServerProfileId, label: String?): ServerProfileWriteResult
+
     suspend fun clear()
 }
 
@@ -52,6 +55,7 @@ internal sealed interface CredentialCipherContext {
         val port: Int,
         val authenticationMode: StoredAuthenticationMode,
         val id: ServerProfileId? = null,
+        val username: String? = null,
     ) : CredentialCipherContext
 }
 
@@ -79,6 +83,7 @@ internal sealed interface StoredCredentialRecord {
         val id: ServerProfileId? = null,
         val label: String? = null,
         val credentialsUnavailable: Boolean = false,
+        val username: String? = null,
     ) : StoredCredentialRecord {
         init {
             require(
@@ -95,6 +100,7 @@ internal sealed interface StoredCredentialRecord {
             port = port,
             authenticationMode = authenticationMode,
             id = id,
+            username = username,
         )
 
         override fun toString(): String = "StoredCredentialRecord.Profile(<redacted>)"
@@ -107,9 +113,10 @@ internal enum class StoredAuthenticationMode(val serializedName: String, val ass
 }
 
 internal class EncryptedCredentials(
-    encryptedUsername: ByteArray,
+    encryptedUsername: ByteArray = byteArrayOf(),
     encryptedPassword: ByteArray,
 ) {
+    // Only legacy format 2 has an encrypted username; format 4 leaves this empty.
     private val username: ByteArray = encryptedUsername.copyOf()
     private val password: ByteArray = encryptedPassword.copyOf()
 
@@ -139,11 +146,11 @@ internal class DataStoreCredentialStorage(
                         preferences[intPreferencesKey(prefix + "port")] = profile.port
                         preferences[stringPreferencesKey(prefix + "mode")] = profile.authenticationMode.serializedName
                         profile.label?.let { preferences[stringPreferencesKey(prefix + "label")] = it }
+                        profile.username?.let { preferences[stringPreferencesKey(prefix + "username")] = it }
                         if (profile.credentialsUnavailable) {
                             preferences[stringPreferencesKey(prefix + "credentials_unavailable")] = "true"
                         }
                         profile.credentials?.let {
-                            preferences[byteArrayPreferencesKey(prefix + "username")] = it.copyUsername()
                             preferences[byteArrayPreferencesKey(prefix + "password")] = it.copyPassword()
                         }
                     }
@@ -165,7 +172,34 @@ internal class DataStoreCredentialStorage(
     override suspend fun clear() {
         dataStore.edit { preferences -> preferences.clear() }
     }
+
+    override suspend fun updateLabel(id: ServerProfileId, label: String?): ServerProfileWriteResult {
+        var result: ServerProfileWriteResult = ServerProfileWriteResult.NotFound
+        dataStore.edit { preferences ->
+            when (val stored = decodeCredentialRecord(preferences)) {
+                StoredCredentialRead.Unavailable -> result = ServerProfileWriteResult.Unavailable
+                StoredCredentialRead.Missing -> Unit
+                is StoredCredentialRead.Available -> {
+                    // Legacy records have no stable id; do not migrate or access credentials to rename.
+                    val collection = stored.record as? StoredCredentialRecord.Collection ?: return@edit
+                    val profile = collection.profiles.singleOrNull { it.id == id } ?: return@edit
+                    val normalized = profile.normalizedLabel(label)
+                    val key = stringPreferencesKey("profile.${id.value}.label")
+                    if (normalized == null) preferences.remove(key) else preferences[key] = normalized
+                    result = ServerProfileWriteResult.Applied(id)
+                }
+            }
+        }
+        return result
+    }
 }
+
+internal fun StoredCredentialRecord.Profile.normalizedLabel(label: String?): String? = ServerProfileSummary.create(
+    checkNotNull(id), label, host, port,
+    if (authenticationMode == StoredAuthenticationMode.PASSWORD) ServerProfileAuthenticationMode.PASSWORD
+    else ServerProfileAuthenticationMode.ANONYMOUS,
+    username, !credentialsUnavailable,
+).label
 
 internal class CredentialUnreadableException : Exception("Stored credentials are unreadable")
 
@@ -200,21 +234,15 @@ internal object AndroidTinkCredentialCipher : CredentialCipher {
     ): EncryptedCredentials = withContext(Dispatchers.IO) {
         mutex.withLock {
             val aead = credentialAead(createIfMissing = true)
-            val usernameBytes = username.encodeToByteArray()
             val passwordBytes = password.encodeToByteArray()
             try {
                 EncryptedCredentials(
-                    encryptedUsername = aead.encrypt(
-                        usernameBytes,
-                        credentialAssociatedData(context, CredentialField.USERNAME),
-                    ),
                     encryptedPassword = aead.encrypt(
                         passwordBytes,
                         credentialAssociatedData(context, CredentialField.PASSWORD),
                     ),
                 )
             } finally {
-                usernameBytes.fill(0)
                 passwordBytes.fill(0)
             }
         }
@@ -228,22 +256,24 @@ internal object AndroidTinkCredentialCipher : CredentialCipher {
         mutex.withLock {
             val encryptedUsername = credentials.copyUsername()
             val encryptedPassword = credentials.copyPassword()
-            validateCredentialCiphertext(encryptedUsername)
+            val profileContext = context as CredentialCipherContext.Profile
+            if (profileContext.id == null) validateCredentialCiphertext(encryptedUsername)
             validateCredentialCiphertext(encryptedPassword)
             val aead = readCredential { credentialAead(createIfMissing = false) }
             var usernameBytes: ByteArray? = null
             var passwordBytes: ByteArray? = null
             try {
-                val username = readCredential {
+                val username = if (profileContext.id == null) readCredential {
                     aead.decrypt(encryptedUsername, credentialAssociatedData(context, CredentialField.USERNAME))
-                }
+                } else null
                 usernameBytes = username
                 val password = readCredential {
                     aead.decrypt(encryptedPassword, credentialAssociatedData(context, CredentialField.PASSWORD))
                 }
                 passwordBytes = password
                 transform(
-                    readCredential { username.decodeToString(throwOnInvalidSequence = true) },
+                    if (username == null) checkNotNull(profileContext.username)
+                    else readCredential { username.decodeToString(throwOnInvalidSequence = true) },
                     readCredential { password.decodeToString(throwOnInvalidSequence = true) },
                 )
             } finally {
@@ -276,12 +306,16 @@ internal fun credentialAssociatedData(
     is CredentialCipherContext.Profile -> {
         val hostBytes = context.host.encodeToByteArray()
         val idBytes = context.id?.value?.encodeToByteArray()
+        // Bind plaintext username to the password: edits must fail decryption, not switch accounts.
+        val usernameBytes = if (idBytes != null && context.authenticationMode == StoredAuthenticationMode.PASSWORD)
+            checkNotNull(context.username).encodeToByteArray() else null
         ByteBuffer.allocate(
             Int.SIZE_BYTES + CREDENTIAL_NAMESPACE.size +
                 Int.SIZE_BYTES + Byte.SIZE_BYTES +
                 Int.SIZE_BYTES + hostBytes.size +
                 Int.SIZE_BYTES + Byte.SIZE_BYTES +
-                (if (idBytes == null) 0 else Int.SIZE_BYTES + idBytes.size),
+                (if (idBytes == null) 0 else Int.SIZE_BYTES + idBytes.size) +
+                (if (usernameBytes == null) 0 else Int.SIZE_BYTES + usernameBytes.size),
         )
             .putInt(CREDENTIAL_NAMESPACE.size)
             .put(CREDENTIAL_NAMESPACE)
@@ -292,6 +326,7 @@ internal fun credentialAssociatedData(
             .putInt(context.port)
             .put(context.authenticationMode.associatedDataCode)
             .apply { if (idBytes != null) putInt(idBytes.size).put(idBytes) }
+            .apply { if (usernameBytes != null) putInt(usernameBytes.size).put(usernameBytes) }
             .array()
     }
 }
@@ -341,7 +376,7 @@ private fun decodeCollection(preferences: Preferences): StoredCredentialRead {
         val modeKey = stringPreferencesKey(prefix + "mode")
         val labelKey = stringPreferencesKey(prefix + "label")
         val unavailableKey = stringPreferencesKey(prefix + "credentials_unavailable")
-        val usernameKey = byteArrayPreferencesKey(prefix + "username")
+        val usernameKey = stringPreferencesKey(prefix + "username")
         val passwordKey = byteArrayPreferencesKey(prefix + "password")
         knownKeys += listOf(hostKey, portKey, modeKey, labelKey, unavailableKey, usernameKey, passwordKey)
         val host = preferences[hostKey] ?: return StoredCredentialRead.Unavailable
@@ -349,22 +384,19 @@ private fun decodeCollection(preferences: Preferences): StoredCredentialRead {
         val mode = StoredAuthenticationMode.entries.singleOrNull { it.serializedName == preferences[modeKey] }
             ?: return StoredCredentialRead.Unavailable
         val label = preferences[labelKey]
+        val marker = preferences[unavailableKey]
+        if (marker != null && marker != "true") return StoredCredentialRead.Unavailable
+        val username = preferences[usernameKey]
         val summary = ServerProfileSummary.create(
             id, label, host, port,
             if (mode == StoredAuthenticationMode.ANONYMOUS) ServerProfileAuthenticationMode.ANONYMOUS
             else ServerProfileAuthenticationMode.PASSWORD,
+            username = username, credentialsAvailable = marker == null,
         )
-        if (summary.host != host || summary.label != label) return StoredCredentialRead.Unavailable
-        val marker = preferences[unavailableKey]
-        if (marker != null && marker != "true") return StoredCredentialRead.Unavailable
-        val username = preferences[usernameKey]
+        if (summary.host != host || summary.label != label || summary.username != username) return StoredCredentialRead.Unavailable
         val password = preferences[passwordKey]
-        val credentials = when {
-            username == null && password == null -> null
-            username != null && password != null -> EncryptedCredentials(username, password)
-            else -> return StoredCredentialRead.Unavailable
-        }
-        StoredCredentialRecord.Profile(host, port, mode, credentials, id, label, marker != null)
+        val credentials = password?.let { EncryptedCredentials(encryptedPassword = it) }
+        StoredCredentialRecord.Profile(host, port, mode, credentials, id, label, marker != null, username)
     }
     if (!knownKeys.containsAll(preferences.asMap().keys)) return StoredCredentialRead.Unavailable
     return StoredCredentialRead.Available(StoredCredentialRecord.Collection(records, active))
@@ -403,8 +435,8 @@ internal fun productionCredentialStorage(context: Context): CredentialStorage =
 
 internal val credentialOperationMutex = Mutex()
 private const val PROFILE_CREDENTIAL_FORMAT_VERSION = 2
-internal const val PROFILE_COLLECTION_FORMAT_VERSION = 3
-// Formats 2 and 3 share this key; the alias is not the record format version.
+internal const val PROFILE_COLLECTION_FORMAT_VERSION = 4
+// Formats 2 and 4 share this key; the alias is not the record format version.
 private const val KEY_ALIAS = "at.bernhardberger.tvheadend.sdk.credentials.v1"
 internal val CREDENTIAL_VERSION_KEY = intPreferencesKey("format_version")
 internal val ENCRYPTED_USERNAME_KEY = byteArrayPreferencesKey("encrypted_username")

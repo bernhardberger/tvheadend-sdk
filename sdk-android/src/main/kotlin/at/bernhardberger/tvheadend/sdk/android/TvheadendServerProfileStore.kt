@@ -45,6 +45,7 @@ public class TvheadendServerProfileStore private constructor(
         ServerProfileListResult.Available(collection.profiles.map { record ->
             ServerProfileSummary.create(
                 checkNotNull(record.id), record.label, record.host, record.port, record.publicMode(),
+                username = record.username,
                 credentialsAvailable = !record.credentialsUnavailable,
             )
         }, collection.activeId)
@@ -124,6 +125,19 @@ public class TvheadendServerProfileStore private constructor(
         adding = false, username = username.trim(), password = password,
     )
 
+    override suspend fun updateLabel(id: ServerProfileId, label: String?): ServerProfileWriteResult {
+        currentCoroutineContext().ensureActive()
+        return try {
+            operationMutex.withLock { storage.updateLabel(id, label) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (invalid: IllegalArgumentException) {
+            throw invalid
+        } catch (_: Exception) {
+            ServerProfileWriteResult.Unavailable
+        }
+    }
+
     override suspend fun setActive(id: ServerProfileId): ServerProfileWriteResult =
         mutate(id) { collection -> StoredCredentialRecord.Collection(collection.profiles, id) }
 
@@ -150,10 +164,11 @@ public class TvheadendServerProfileStore private constructor(
             return@access ServerProfileWriteResult.NotFound
         }
         val mode = if (username == null) StoredAuthenticationMode.ANONYMOUS else StoredAuthenticationMode.PASSWORD
-        val context = CredentialCipherContext.Profile(result.host, result.port, mode, result.id)
+        val context = CredentialCipherContext.Profile(result.host, result.port, mode, result.id, username)
         val credentials = username?.let { cipher.encrypt(it, checkNotNull(password), context) }
         val record = StoredCredentialRecord.Profile(
             result.host, result.port, mode, credentials, result.id, result.label,
+            username = username,
         )
         val records = if (adding) collection.profiles + record
         else collection.profiles.map { if (it.id == result.id) record else it }
@@ -192,7 +207,7 @@ public class TvheadendServerProfileStore private constructor(
 
     private suspend fun migrate(legacy: StoredCredentialRecord.Profile): StoredCredentialRecord.Collection {
         val id = ServerProfileId.generate()
-        val context = CredentialCipherContext.Profile(legacy.host, legacy.port, legacy.authenticationMode, id)
+        var username: String? = null
         val credentials = if (legacy.authenticationMode == StoredAuthenticationMode.PASSWORD) {
             val plaintext = try {
                 // Decrypt outside encrypt's callback: the production cipher serializes both calls.
@@ -203,11 +218,17 @@ public class TvheadendServerProfileStore private constructor(
                 null
             }
             // Encryption/storage failures leave the legacy record intact for a later retry.
-            plaintext?.let { cipher.encrypt(it.first, it.second, context) }
+            plaintext?.let {
+                username = it.first.trim()
+                require(!username.isNullOrEmpty()) { "Username must not be blank" }
+                val context = CredentialCipherContext.Profile(legacy.host, legacy.port, legacy.authenticationMode, id, username)
+                cipher.encrypt(checkNotNull(username), it.second, context)
+            }
         } else null
         val migrated = StoredCredentialRecord.Profile(
             legacy.host, legacy.port, legacy.authenticationMode, credentials, id,
             credentialsUnavailable = legacy.authenticationMode == StoredAuthenticationMode.PASSWORD && credentials == null,
+            username = username,
         )
         return StoredCredentialRecord.Collection(listOf(migrated), id).also { storage.write(it) }
     }
@@ -224,11 +245,11 @@ public class TvheadendServerProfileStore private constructor(
             StoredAuthenticationMode.PASSWORD -> cipher.decrypt(
                 credentials = checkNotNull(record.credentials),
                 context = record.cipherContext(),
-            ) { username, password ->
+            ) { _, password ->
                 ServerProfileReadResult.password(
                     host = record.host,
                     port = record.port,
-                    username = username,
+                    username = checkNotNull(record.username),
                     password = password,
                     id = checkNotNull(record.id),
                     label = record.label,
@@ -249,11 +270,11 @@ public class TvheadendServerProfileStore private constructor(
         StoredAuthenticationMode.PASSWORD -> cipher.decrypt(
             credentials = checkNotNull(record.credentials),
             context = record.cipherContext(),
-        ) { username, password ->
+        ) { _, password ->
             ServerProfileEditReadResult.Password.create(
                 host = record.host,
                 port = record.port,
-                username = username,
+                username = checkNotNull(record.username),
                 password = password,
                 label = record.label,
             )

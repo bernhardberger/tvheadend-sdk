@@ -3,6 +3,7 @@ package at.bernhardberger.tvheadend.sdk.android
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import at.bernhardberger.tvheadend.sdk.core.ServerProfileAuthenticationMode
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileListResult
 import at.bernhardberger.tvheadend.sdk.core.ServerProfileReadResult
 import at.bernhardberger.tvheadend.sdk.core.ServerProfileWriteResult
 import kotlinx.coroutines.test.runTest
@@ -36,6 +37,7 @@ internal class TvheadendServerProfileStoreInstrumentationTest {
             assertEquals("instrumented.invalid", loaded.host)
             assertEquals(4_242, loaded.port)
             assertEquals(ServerProfileAuthenticationMode.PASSWORD, loaded.authenticationMode)
+            assertTrue((profileStore.profiles() as ServerProfileListResult.Available).profiles.single().username == "instrumented-user")
             assertEquals("ServerProfileReadResult.Available(<redacted>)", loaded.toString())
             assertTrue(
                 profileStore.updateAnonymous(loaded.id, loaded.host, loaded.port, null) is ServerProfileWriteResult.Applied,
@@ -47,6 +49,7 @@ internal class TvheadendServerProfileStoreInstrumentationTest {
             assertEquals("instrumented.invalid", anonymous.host)
             assertEquals(4_242, anonymous.port)
             assertEquals(ServerProfileAuthenticationMode.ANONYMOUS, anonymous.authenticationMode)
+            assertTrue((profileStore.profiles() as ServerProfileListResult.Available).profiles.single().username == null)
         } finally {
             profileStore.clearAll()
         }

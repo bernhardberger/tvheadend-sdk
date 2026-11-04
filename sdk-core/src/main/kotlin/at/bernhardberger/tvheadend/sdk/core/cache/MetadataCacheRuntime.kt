@@ -285,8 +285,11 @@ internal class MetadataCacheRuntime(
 
     override suspend fun clear() = clearNamespace(null)
 
-    override suspend fun clear(profile: at.bernhardberger.tvheadend.sdk.core.ServerProfile) =
-        clearNamespace(profile.cacheNamespace())
+    override suspend fun clear(profile: at.bernhardberger.tvheadend.sdk.core.ServerProfileSummary) {
+        currentCoroutineContext().ensureActive()
+        val namespace = profile.cacheNamespace() ?: return
+        clearNamespace(namespace)
+    }
 
     private suspend fun clearNamespace(namespace: CacheNamespace?) {
         currentCoroutineContext().ensureActive()
@@ -460,7 +463,7 @@ internal class MetadataCacheRuntime(
 
 /** Session cache exposed when no [MetadataCachePolicy] was supplied. */
 internal object DisabledSessionCache : SessionCache {
-    override suspend fun clear(profile: at.bernhardberger.tvheadend.sdk.core.ServerProfile) {
+    override suspend fun clear(profile: at.bernhardberger.tvheadend.sdk.core.ServerProfileSummary) {
         currentCoroutineContext().ensureActive()
     }
     override val statistics: StateFlow<CacheStatistics> = MutableStateFlow(CacheStatistics.EMPTY)

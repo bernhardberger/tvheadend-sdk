@@ -285,10 +285,11 @@ public class StagedSdkConsumer(
             return SessionCommandResult.NO_ACTIVE_PROFILE
         }
         store.setActive(added.id)
-        store.profiles()
+        val summaries = store.profiles() as? ServerProfileListResult.Available
+            ?: return SessionCommandResult.NO_ACTIVE_PROFILE
+        session.cache.clear(summaries.profiles.first { it.id == added.id })
         return when (val loaded = store.loadActive()) {
             is ServerProfileReadResult.Available -> {
-                session.cache.clear(loaded.profile)
                 session.connect(loaded.profile)
             }
             ServerProfileReadResult.Missing, ServerProfileReadResult.Unavailable -> SessionCommandResult.NO_ACTIVE_PROFILE
@@ -300,12 +301,14 @@ public class StagedSdkConsumer(
         val loaded = store.load(restoredId)
         val anonymous = store.updateAnonymous(id, "test.invalid", 9982, null)
         val password = store.updatePassword(id, "test.invalid", 9982, "user", "password", "Label")
+        val renamed = store.updateLabel(id, "Renamed")
+        val copied = (loaded as? ServerProfileReadResult.Available)?.withLabel("Copied")
         val summary = ServerProfileSummary.create(id, null, "test.invalid", 9982,
-            ServerProfileAuthenticationMode.PASSWORD, credentialsAvailable = true)
+            ServerProfileAuthenticationMode.PASSWORD, username = "user", credentialsAvailable = true)
         val available = ServerProfileListResult.Available(listOf(summary), id)
         val fields = summary.id == id && summary.label == null && summary.host.isNotEmpty() &&
             summary.port > 0 && summary.authenticationMode == ServerProfileAuthenticationMode.PASSWORD &&
-            summary.credentialsAvailable && available.activeId == id
+            summary.username == "user" && summary.credentialsAvailable && available.activeId == id
         val readable = when (val listed = store.profiles()) {
             is ServerProfileListResult.Available -> listed.profiles.all { it.credentialsAvailable }
             ServerProfileListResult.Unavailable -> false
@@ -317,7 +320,8 @@ public class StagedSdkConsumer(
         }
         store.clearAll()
         return fields && readable && removed && loaded is ServerProfileReadResult.Available &&
-            anonymous is ServerProfileWriteResult.Applied && password is ServerProfileWriteResult.Applied
+            anonymous is ServerProfileWriteResult.Applied && password is ServerProfileWriteResult.Applied &&
+            renamed is ServerProfileWriteResult.Applied && copied?.label == "Copied"
     }
 
     public suspend fun run(): Unit = coordinator.run()

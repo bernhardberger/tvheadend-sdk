@@ -49,7 +49,7 @@ public interface TvheadendSession {
 public interface SessionCache {
     public val statistics: StateFlow<CacheStatistics>   // bytes, entry counts, lastWrite; no paths
     public suspend fun clear()                          // all namespaces under the root
-    public suspend fun clear(profile: ServerProfile)    // shared host/port/username namespace
+    public suspend fun clear(profile: ServerProfileSummary) // shared host/port/username namespace
 }
 ```
 
@@ -311,12 +311,19 @@ same digest as `ArtworkLoader.cacheKey`.
 
 ## Clear
 
-`SessionCache.clear(profile)` deletes only the namespace shared by that profile's
+`SessionCache.clear(summary)` takes a `ServerProfileSummary` from `profiles()` and
+deletes only the namespace shared by that profile's
 host, port and username, including its artwork. Other namespaces remain. If it is
 the current writer's namespace, the writer retires and immediately rewrites the
 current metadata publication. It has the same cancellation and racing-read
 semantics as the root-wide clear below. Removing a stored profile does not evict
 its namespace automatically.
+
+Before removing an active, connected profile, disconnect or switch away, take its
+summary from `profiles()`, call `session.cache.clear(summary)`, then `store.remove(id)`.
+This order works with readable or unreadable credentials; no `load(id)` is needed.
+A legacy password summary with an unknown username clears nothing and leaves
+statistics unchanged. Its files age out under retention and budget limits.
 
 `SessionCache.clear()` deletes every namespace under the root and resets
 statistics. While connected the in-memory state is untouched; the next write

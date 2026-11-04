@@ -331,6 +331,7 @@ internal class ModuleBoundaryTest {
             "public suspend fun addPassword( host: String, port: Int = DEFAULT_HTSP_PORT, username: String, password: String, label: String? = null, activate: Boolean = false, ): ServerProfileWriteResult",
             "public suspend fun updateAnonymous( id: ServerProfileId, host: String, port: Int, label: String?, ): ServerProfileWriteResult",
             "public suspend fun updatePassword( id: ServerProfileId, host: String, port: Int, username: String, password: String, label: String?, ): ServerProfileWriteResult",
+            "public suspend fun updateLabel(id: ServerProfileId, label: String?): ServerProfileWriteResult",
             "public suspend fun setActive(id: ServerProfileId): ServerProfileWriteResult",
             "public suspend fun remove(id: ServerProfileId): ServerProfileWriteResult",
             "public suspend fun clearAll()",

@@ -2,6 +2,7 @@ package at.bernhardberger.tvheadend.sdk.android
 
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.byteArrayPreferencesKey
 import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.mutablePreferencesOf
@@ -27,6 +28,213 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 
 internal class TvheadendServerProfileStoreTest {
+    @Test
+    fun `label edits change only label keys without accessing credentials`(@TempDir directory: File) = runTest {
+        val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        try {
+            val dataStore = PreferenceDataStoreFactory.create(scope = scope, produceFile = { File(directory, "credentials.preferences_pb") })
+            val storage = DataStoreCredentialStorage(dataStore)
+            val readable = TvheadendServerProfileStore.create(storage, FakeCredentialCipher())
+            val password = (readable.addPassword("test.invalid", username = "user", password = "password", activate = true) as ServerProfileWriteResult.Applied).id
+            val anonymous = (readable.addAnonymous("test.invalid") as ServerProfileWriteResult.Applied).id
+            val unreadable = (readable.addPassword("test.invalid", username = "other", password = "password") as ServerProfileWriteResult.Applied).id
+            val marked = (readable.addPassword("test.invalid", username = "marked", password = "password") as ServerProfileWriteResult.Applied).id
+            val unknown = (readable.addPassword("test.invalid", username = "unknown", password = "password") as ServerProfileWriteResult.Applied).id
+            dataStore.edit { preferences ->
+                for (id in listOf(marked, unknown)) {
+                    preferences.remove(byteArrayPreferencesKey("profile.${id.value}.password"))
+                    preferences[stringPreferencesKey("profile.${id.value}.credentials_unavailable")] = "true"
+                }
+                preferences.remove(stringPreferencesKey("profile.${unknown.value}.username"))
+            }
+            val cipher = object : CredentialCipher {
+                var encryptCalls = 0
+                var decryptCalls = 0
+                override suspend fun encrypt(username: String, password: String, context: CredentialCipherContext): EncryptedCredentials {
+                    encryptCalls += 1
+                    error("Unexpected credential access")
+                }
+                override suspend fun <T> decrypt(credentials: EncryptedCredentials, context: CredentialCipherContext,
+                    transform: (username: String, password: String) -> T): T {
+                    decryptCalls += 1
+                    error("Unexpected credential access")
+                }
+            }
+            val store = TvheadendServerProfileStore.create(storage, cipher)
+            val unreadableStore = TvheadendServerProfileStore.create(storage,
+                FakeCredentialCipher().apply { decryptFailure = CredentialUnreadableException() })
+            assertSame(ServerProfileReadResult.Unavailable, unreadableStore.load(unreadable))
+            val before = dataStore.data.first().asMap()
+            val beforeList = readable.profiles() as ServerProfileListResult.Available
+            for (id in listOf(password, anonymous, unreadable, marked, unknown)) {
+                assertEquals(ServerProfileWriteResult.Applied(id), store.updateLabel(id, " Renamed "))
+            }
+            for (label in listOf(null, "  ")) {
+                assertEquals(ServerProfileWriteResult.Applied(anonymous), store.updateLabel(anonymous, label))
+                assertNull(dataStore.data.first()[stringPreferencesKey("profile.${anonymous.value}.label")])
+            }
+            val after = dataStore.data.first().asMap().filterKeys { !it.name.endsWith(".label") }
+            assertTrue(before.keys == after.keys)
+            for ((key, value) in before) {
+                val retained = after[key]
+                assertTrue(if (value is ByteArray) retained is ByteArray && value.contentEquals(retained) else value == retained)
+            }
+            assertEquals(0, cipher.encryptCalls)
+            assertEquals(0, cipher.decryptCalls)
+            val afterList = store.profiles() as ServerProfileListResult.Available
+            assertEquals(beforeList.profiles.map { it.id }, afterList.profiles.map { it.id })
+            assertEquals(beforeList.activeId, afterList.activeId)
+            for ((old, renamed) in beforeList.profiles.zip(afterList.profiles)) {
+                assertTrue(old.username == renamed.username)
+                assertEquals(old.credentialsAvailable, renamed.credentialsAvailable)
+                assertEquals(if (renamed.id == anonymous) null else "Renamed", renamed.label)
+            }
+            assertTrue(readable.load(password) is ServerProfileReadResult.Available)
+            assertEquals("Renamed", (readable.loadForEditing(password) as ServerProfileEditReadResult.Password).label)
+            assertTrue(readable.load(anonymous) is ServerProfileReadResult.Available)
+            for (id in listOf(unreadable, marked, unknown)) assertSame(ServerProfileReadResult.Unavailable, unreadableStore.load(id))
+            assertEquals(0, cipher.encryptCalls)
+            assertEquals(0, cipher.decryptCalls)
+        } finally { scope.cancel() }
+    }
+
+    @Test
+    fun `label edits reject invalid labels missing ids and corrupt collections`(@TempDir directory: File) = runTest {
+        val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        try {
+            val dataStore = PreferenceDataStoreFactory.create(scope = scope, produceFile = { File(directory, "credentials.preferences_pb") })
+            val store = TvheadendServerProfileStore.create(DataStoreCredentialStorage(dataStore), FakeCredentialCipher())
+            val missing = ServerProfileId.generate()
+            assertSame(ServerProfileWriteResult.NotFound, store.updateLabel(missing, "Missing"))
+            val id = (store.addAnonymous("test.invalid", label = "Original") as ServerProfileWriteResult.Applied).id
+            assertSame(ServerProfileWriteResult.NotFound, store.updateLabel(missing, "Missing"))
+            for (label in listOf("x".repeat(65), "bad\nlabel")) {
+                try {
+                    store.updateLabel(id, label)
+                    fail<Unit>("Invalid label accepted")
+                } catch (_: IllegalArgumentException) { }
+                assertEquals("Original", (store.load(id) as ServerProfileReadResult.Available).label)
+            }
+            for (version in listOf(3, 99, 4)) {
+                dataStore.edit {
+                    it[CREDENTIAL_VERSION_KEY] = version
+                    it[stringPreferencesKey("unexpected")] = "invalid"
+                }
+                val before = dataStore.data.first()
+                assertSame(ServerProfileWriteResult.Unavailable, store.updateLabel(id, "Unavailable"))
+                assertEquals(before, dataStore.data.first())
+            }
+        } finally { scope.cancel() }
+    }
+
+    @Test
+    fun `label edits preserve legacy records and map IO failures while propagating cancellation`() = runTest {
+        val storage = FakeCredentialStorage(StoredCredentialRead.Available(passwordProfileRecord()))
+        val cipher = FakeCredentialCipher()
+        val store = TvheadendServerProfileStore.create(storage, cipher)
+        assertSame(ServerProfileWriteResult.NotFound, store.updateLabel(ServerProfileId.generate(), "Legacy"))
+        assertEquals(0, storage.writeCalls)
+        assertEquals(0, cipher.encryptCalls)
+        assertEquals(0, cipher.decryptCalls)
+        storage.readFailure = java.io.IOException("Storage failure")
+        assertSame(ServerProfileWriteResult.Unavailable, store.updateLabel(ServerProfileId.generate(), "Read"))
+        storage.readFailure = null
+        val id = (store.addAnonymous("test.invalid") as ServerProfileWriteResult.Applied).id
+        storage.writeFailure = java.io.IOException("Storage failure")
+        assertSame(ServerProfileWriteResult.Unavailable, store.updateLabel(id, "Write"))
+        storage.readFailure = CancellationException("Cancelled")
+        try {
+            store.updateLabel(id, "Cancelled")
+            fail<Unit>("Cancellation swallowed")
+        } catch (_: CancellationException) { }
+    }
+
+    @Test
+    fun `store summary identity matches loaded profile identity for namespace derivation`() = runTest {
+        val store = TvheadendServerProfileStore.create(FakeCredentialStorage(), FakeCredentialCipher())
+        for (host in listOf(" EXAMPLE.invalid ", " [2001:DB8::1] ", " 2001:DB8::1 ")) {
+            val anonymous = store.addAnonymous(host, 4242) as ServerProfileWriteResult.Applied
+            val password = store.addPassword(host, 4242, " UsEr ", "password") as ServerProfileWriteResult.Applied
+            for (id in listOf(anonymous.id, password.id)) {
+                val loaded = store.load(id) as ServerProfileReadResult.Available
+                val summary = (store.profiles() as ServerProfileListResult.Available).profiles.single { it.id == id }
+                assertEquals(loaded.host, summary.host)
+                assertEquals(loaded.port, summary.port)
+                assertEquals(loaded.username, summary.username)
+                assertEquals(host.trim(), summary.host)
+                assertEquals(if (id == password.id) "UsEr" else null, summary.username)
+            }
+        }
+    }
+
+    @Test
+    fun `plaintext username survives unreadable credentials and tampering fails password AAD`(@TempDir directory: File) = runTest {
+        val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        try {
+            val dataStore = PreferenceDataStoreFactory.create(scope = scope, produceFile = { File(directory, "credentials.preferences_pb") })
+            val cipher = FakeCredentialCipher()
+            val store = TvheadendServerProfileStore.create(DataStoreCredentialStorage(dataStore), cipher)
+            val id = (store.addPassword("test.invalid", username = " user ", password = "password") as ServerProfileWriteResult.Applied).id
+            val usernameKey = stringPreferencesKey("profile.${id.value}.username")
+            assertTrue(dataStore.data.first()[usernameKey] == "user")
+            assertTrue((store.profiles() as ServerProfileListResult.Available).profiles.single().username == "user")
+            cipher.decryptFailure = CredentialUnreadableException()
+            assertSame(ServerProfileReadResult.Unavailable, store.load(id))
+            assertTrue((store.profiles() as ServerProfileListResult.Available).profiles.single().username == "user")
+            cipher.decryptFailure = null
+            dataStore.edit { it[usernameKey] = "changed-user" }
+            assertSame(ServerProfileReadResult.Unavailable, store.load(id))
+            assertSame(ServerProfileEditReadResult.Unavailable, store.loadForEditing(id))
+            assertTrue(store.updatePassword(id, "test.invalid", 9982, " replacement ", "password", null) is ServerProfileWriteResult.Applied)
+            assertTrue(dataStore.data.first()[usernameKey] == "replacement")
+            assertTrue((store.loadForEditing(id) as ServerProfileEditReadResult.Password).username == "replacement")
+            dataStore.edit {
+                it.remove(byteArrayPreferencesKey("profile.${id.value}.password"))
+                it[stringPreferencesKey("profile.${id.value}.credentials_unavailable")] = "true"
+            }
+            val summary = (store.profiles() as ServerProfileListResult.Available).profiles.single()
+            assertTrue(summary.username == "replacement")
+            assertFalse(summary.credentialsAvailable)
+            assertSame(ServerProfileReadResult.Unavailable, store.load(id))
+        } finally { scope.cancel() }
+    }
+
+    @Test
+    fun `v4 password metadata is strict and v3 collections are unsupported`() {
+        val id = ServerProfileId.generate()
+        val prefix = "profile.${id.value}."
+        fun preferences() = mutablePreferencesOf(
+            CREDENTIAL_VERSION_KEY to 4, PROFILE_ORDER_KEY to id.value,
+            stringPreferencesKey(prefix + "host") to "test.invalid",
+            intPreferencesKey(prefix + "port") to 9982,
+            stringPreferencesKey(prefix + "mode") to "password",
+            stringPreferencesKey(prefix + "username") to "user",
+            byteArrayPreferencesKey(prefix + "password") to ByteArray(28),
+        )
+        assertTrue(decodeCredentialRecord(preferences()) is StoredCredentialRead.Available)
+        val corruptions: List<MutablePreferences.() -> Unit> = listOf(
+            { remove(stringPreferencesKey(prefix + "username")) },
+            { this[stringPreferencesKey(prefix + "username")] = " user " },
+            { this[stringPreferencesKey(prefix + "username")] = " " },
+            { this[stringPreferencesKey(prefix + "username")] = "" },
+            { this[CREDENTIAL_VERSION_KEY] = 3 },
+            { this[stringPreferencesKey(prefix + "mode")] = "anonymous" },
+        )
+        corruptions.forEach { corrupt ->
+            assertSame(StoredCredentialRead.Unavailable, decodeCredentialRecord(preferences().apply(corrupt)))
+        }
+        for (knownUsername in listOf(false, true)) {
+            val unavailable = preferences().apply {
+                remove(byteArrayPreferencesKey(prefix + "password"))
+                if (!knownUsername) remove(stringPreferencesKey(prefix + "username"))
+                this[stringPreferencesKey(prefix + "credentials_unavailable")] = "true"
+            }
+            val record = (decodeCredentialRecord(unavailable) as StoredCredentialRead.Available).record as StoredCredentialRecord.Collection
+            assertTrue(record.profiles.single().credentialsUnavailable)
+            assertTrue((record.profiles.single().username != null) == knownUsername)
+        }
+    }
+
     @Test
     fun `truncated legacy ciphertext migrates with unavailable credentials`() = runTest {
         for (size in listOf(0, 1, 27)) {
@@ -83,14 +291,15 @@ internal class TvheadendServerProfileStoreTest {
     }
 
     @Test
-    fun `AAD bytes pin legacy v2 and id bound v3 layouts`() {
+    fun `AAD bytes pin legacy v2 and username bound v4 layouts`() {
         val legacy = CredentialCipherContext.Profile("test.invalid", 9982, StoredAuthenticationMode.PASSWORD)
         val hex = java.util.HexFormat.of()
         assertArrayEquals(hex.parseHex("0000002b61742e6265726e686172646265726765722e747668656164656e642e73646b2e63726564656e7469616c7300000002000000000c746573742e696e76616c6964000026fe01"), credentialAssociatedData(legacy, CredentialField.USERNAME))
         assertArrayEquals(hex.parseHex("0000002b61742e6265726e686172646265726765722e747668656164656e642e73646b2e63726564656e7469616c7300000002010000000c746573742e696e76616c6964000026fe01"), credentialAssociatedData(legacy, CredentialField.PASSWORD))
         val current = CredentialCipherContext.Profile("test.invalid", 9982, StoredAuthenticationMode.PASSWORD,
-            ServerProfileId.from("12345678-1234-1234-1234-123456789abc"))
-        assertArrayEquals(hex.parseHex("0000002b61742e6265726e686172646265726765722e747668656164656e642e73646b2e63726564656e7469616c7300000003000000000c746573742e696e76616c6964000026fe010000002431323334353637382d313233342d313233342d313233342d313233343536373839616263"), credentialAssociatedData(current, CredentialField.USERNAME))
+            ServerProfileId.from("12345678-1234-1234-1234-123456789abc"), "user")
+        // Independently encoded with Python struct.pack('>i', length) and UTF-8 fields.
+        assertArrayEquals(hex.parseHex("0000002b61742e6265726e686172646265726765722e747668656164656e642e73646b2e63726564656e7469616c7300000004010000000c746573742e696e76616c6964000026fe010000002431323334353637382d313233342d313233342d313233342d3132333435363738396162630000000475736572"), credentialAssociatedData(current, CredentialField.PASSWORD))
     }
 
     @Test
@@ -213,7 +422,7 @@ internal class TvheadendServerProfileStoreTest {
         assertSame(ServerProfileReadResult.Unavailable, unavailable.load(id))
     }
     @Test
-    fun `v3 rejects unknown keys invalid selection and malformed records`() {
+    fun `v4 rejects unknown keys invalid selection and malformed records`() {
         val id = ServerProfileId.generate()
         val prefix = "profile.${id.value}."
         val corruptions: List<MutablePreferences.() -> Unit> = listOf(
@@ -226,11 +435,11 @@ internal class TvheadendServerProfileStoreTest {
             { this[stringPreferencesKey(prefix + "mode")] = "password" },
             { this[stringPreferencesKey(prefix + "label")] = "bad\nlabel" },
             { this[stringPreferencesKey(prefix + "credentials_unavailable")] = "true" },
-            { this[byteArrayPreferencesKey(prefix + "username")] = byteArrayOf(1) },
+            { this[stringPreferencesKey(prefix + "username")] = "user" },
         )
         corruptions.forEach { corrupt ->
             val preferences = mutablePreferencesOf(
-                CREDENTIAL_VERSION_KEY to 3, PROFILE_ORDER_KEY to id.value,
+                CREDENTIAL_VERSION_KEY to 4, PROFILE_ORDER_KEY to id.value,
                 stringPreferencesKey(prefix + "host") to "test.invalid",
                 intPreferencesKey(prefix + "port") to 9982,
                 stringPreferencesKey(prefix + "mode") to "anonymous",
@@ -253,7 +462,7 @@ internal class TvheadendServerProfileStoreTest {
         assertEquals(1, storage.writeCalls)
     }
     @Test
-    fun `data store migration replaces legacy keys with one v3 collection`(@TempDir directory: File) = runTest {
+    fun `data store migration replaces legacy keys with one v4 collection`(@TempDir directory: File) = runTest {
         val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         try {
             val dataStore = PreferenceDataStoreFactory.create(scope = scope, produceFile = { File(directory, "credentials.preferences_pb") })
@@ -262,7 +471,8 @@ internal class TvheadendServerProfileStoreTest {
             val store = TvheadendServerProfileStore.create(storage, FakeCredentialCipher())
             val profile = store.loadActive() as ServerProfileReadResult.Available
             val preferences = dataStore.data.first()
-            assertEquals(3, preferences[CREDENTIAL_VERSION_KEY])
+            assertEquals(4, preferences[CREDENTIAL_VERSION_KEY])
+            assertTrue(preferences[stringPreferencesKey("profile.${profile.id.value}.username")] == "test-user")
             assertEquals(profile.id.value, preferences[PROFILE_ORDER_KEY])
             assertEquals(profile.id.value, preferences[ACTIVE_PROFILE_KEY])
             assertFalse(preferences.asMap().keys.any { it in setOf(SERVER_HOST_KEY, SERVER_PORT_KEY, AUTHENTICATION_MODE_KEY, ENCRYPTED_USERNAME_KEY, ENCRYPTED_PASSWORD_KEY) })
@@ -312,7 +522,7 @@ internal class TvheadendServerProfileStoreTest {
         }
         assertEquals(1, TvheadendServerProfileStore::class.java.constructors.count { !it.isSynthetic })
         assertTrue(ServerProfileReadResult.Available::class.java.constructors.all { it.isSynthetic })
-        assertFalse(ServerProfileReadResult.Available::class.java.methods.any { it.name in setOf("getUsername", "getPassword") })
+        assertFalse(ServerProfileReadResult.Available::class.java.methods.any { it.name == "getPassword" })
     }
 
     @Test
@@ -330,7 +540,7 @@ internal class TvheadendServerProfileStoreTest {
     }
 
     @Test
-    fun `password v2 migrates using id bound v3 associated data`() = runTest {
+    fun `password v2 migrates using username bound v4 associated data`() = runTest {
         val legacy = passwordProfileRecord(password = " exact password ")
         val storage = FakeCredentialStorage(StoredCredentialRead.Available(legacy))
         val cipher = FakeCredentialCipher()
@@ -338,6 +548,7 @@ internal class TvheadendServerProfileStoreTest {
         val loaded = store.loadActive() as ServerProfileReadResult.Available
         val migrated = (storage.state as StoredCredentialRead.Available).record as StoredCredentialRecord.Collection
         assertEquals(loaded.id, migrated.activeId)
+        assertTrue((store.profiles() as ServerProfileListResult.Available).profiles.single().username == "test-user")
         assertEquals(loaded.id, (cipher.lastContext as CredentialCipherContext.Profile).id)
         assertEquals(1, cipher.encryptCalls)
         assertFalse(legacy.credentials!!.copyPassword().contentEquals(migrated.profiles.single().credentials!!.copyPassword()))
@@ -356,6 +567,7 @@ internal class TvheadendServerProfileStoreTest {
         val id = listed.profiles.single().id
         assertEquals(id, listed.activeId)
         assertFalse(listed.profiles.single().credentialsAvailable)
+        assertNull(listed.profiles.single().username)
         assertSame(ServerProfileReadResult.Unavailable, store.load(id))
         assertSame(ServerProfileReadResult.Unavailable, store.loadActive())
         cipher.decryptFailure = null
@@ -395,7 +607,7 @@ internal class TvheadendServerProfileStoreTest {
     }
 
     @Test
-    fun `v3 data store round trip retains order label selection and credentials`(@TempDir directory: File) = runTest {
+    fun `v4 data store round trip retains order label selection and credentials`(@TempDir directory: File) = runTest {
         val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         try {
             val dataStore = PreferenceDataStoreFactory.create(scope = scope, produceFile = { File(directory, "credentials.preferences_pb") })
@@ -419,11 +631,12 @@ internal class TvheadendServerProfileStoreTest {
         val record = ((storage.state as StoredCredentialRead.Available).record as StoredCredentialRecord.Collection).profiles.single()
         val other = ServerProfileId.generate()
         val variants = listOf(
-            StoredCredentialRecord.Profile(record.host, record.port, record.authenticationMode, record.credentials, other),
-            StoredCredentialRecord.Profile("other.invalid", record.port, record.authenticationMode, record.credentials, id),
-            StoredCredentialRecord.Profile(record.host, 4242, record.authenticationMode, record.credentials, id),
+            StoredCredentialRecord.Profile(record.host, record.port, record.authenticationMode, record.credentials, other, username = "user"),
+            StoredCredentialRecord.Profile("other.invalid", record.port, record.authenticationMode, record.credentials, id, username = "user"),
+            StoredCredentialRecord.Profile(record.host, 4242, record.authenticationMode, record.credentials, id, username = "user"),
             StoredCredentialRecord.Profile(record.host, record.port, record.authenticationMode,
-                EncryptedCredentials(record.credentials!!.copyPassword(), record.credentials.copyUsername()), id),
+                EncryptedCredentials(encryptedPassword = byteArrayOf(1)), id, username = "user"),
+            StoredCredentialRecord.Profile(record.host, record.port, record.authenticationMode, record.credentials, id, username = "other-user"),
         )
         variants.forEach { changed ->
             val changedStore = TvheadendServerProfileStore.create(
