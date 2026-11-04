@@ -189,10 +189,13 @@ class MetadataCacheRuntimeTest {
         val publications = MutableStateFlow<PublishedSnapshots?>(PublishedSnapshots(catalog(1), EpgSnapshot.create()))
         runtime.start(namespace, publications)
         runCurrent()
+        val restored = runtime.restore(namespace)
+        assertTrue(restored.isCurrent())
         val before = runtime.statistics.value
         val unknown = ServerProfileSummary.create(ServerProfileId.generate(), null, "server", 9982,
             ServerProfileAuthenticationMode.PASSWORD, credentialsAvailable = false)
         runtime.clear(unknown)
+        assertTrue(restored.isCurrent())
         assertSame(before, runtime.statistics.value)
         assertEquals(catalog(1), store.loadCatalog(namespace, START - 1.days)?.catalog)
         val cancelled = launch {
@@ -201,6 +204,7 @@ class MetadataCacheRuntimeTest {
             throw AssertionError("Clear must propagate cancellation")
         }
         cancelled.join()
+        assertTrue(restored.isCurrent())
         assertSame(before, runtime.statistics.value)
         publications.value = PublishedSnapshots(catalog(2), EpgSnapshot.create())
         runCurrent()

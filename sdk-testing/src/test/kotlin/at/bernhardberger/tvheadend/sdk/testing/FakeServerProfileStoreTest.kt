@@ -16,6 +16,22 @@ import org.junit.jupiter.api.Test
 
 internal class FakeServerProfileStoreTest {
     @Test
+    fun `invalid rename labels fail before missing or unavailable storage is consulted`() = runTest {
+        val store = FakeServerProfileStore()
+        val id = ServerProfileId.generate()
+        for (unavailable in listOf(false, true)) {
+            if (unavailable) store.scriptProfile(ServerProfileReadResult.Unavailable)
+            for (label in listOf("x".repeat(65), "bad\nlabel")) {
+                try {
+                    store.updateLabel(id, label)
+                    org.junit.jupiter.api.Assertions.fail<Unit>("Invalid label accepted")
+                } catch (_: IllegalArgumentException) { }
+            }
+        }
+        assertTrue(store.calls.isEmpty())
+    }
+
+    @Test
     fun `renaming preserves credentials availability identity order and selection`() = runTest {
         val store = FakeServerProfileStore()
         val id = (store.addPassword("test.invalid", username = "user", password = "password", activate = true)

@@ -28,6 +28,8 @@ Unreleased; development target.
   decrypting or replacing credentials, including unreadable credentials. Null or
   blank clears the label. `ServerProfileReadResult.Available.withLabel(label)`
   copies a read result with a normalized label, carrying credentials over opaquely.
+  `ServerProfileSummary.normalizeLabel(label)` shares label validation with store
+  implementations; renames validate before accessing storage, including missing ids.
 - Migrate Android format-2 single profiles to format-4 collections on first use,
   assigning a new active id. Only the password is encrypted; associated data binds
   it to the profile id, endpoint and plaintext username. Undecryptable legacy

@@ -138,11 +138,13 @@ public class FakeServerProfileStore(
         save(ServerProfileReadResult.password(id, host, port, username, password, label), false, false)
     }
 
-    override suspend fun updateLabel(id: ServerProfileId, label: String?): ServerProfileWriteResult =
-        call(FakeServerProfileStoreCall.UPDATE_LABEL) {
-            val replacement = records[id]?.withLabel(label)
+    override suspend fun updateLabel(id: ServerProfileId, label: String?): ServerProfileWriteResult {
+        val normalizedLabel = ServerProfileSummary.normalizeLabel(label)
+        return call(FakeServerProfileStoreCall.UPDATE_LABEL) {
+            val replacement = records[id]?.withLabel(normalizedLabel)
             mutate(id) { records[id] = checkNotNull(replacement) }
         }
+    }
 
     override suspend fun setActive(id: ServerProfileId): ServerProfileWriteResult = call(FakeServerProfileStoreCall.SET_ACTIVE) {
         mutate(id) { activeId = id }

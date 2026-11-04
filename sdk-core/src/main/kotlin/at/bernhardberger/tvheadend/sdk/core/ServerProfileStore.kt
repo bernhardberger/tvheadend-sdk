@@ -150,6 +150,18 @@ public class ServerProfileSummary private constructor(
     override fun toString(): String = "ServerProfileSummary(<redacted>)"
 
     public companion object {
+        /**
+         * Normalizes a display [label] for store implementations before accessing storage.
+         * @throws IllegalArgumentException if [label] contains control characters or exceeds 64 characters after trimming.
+         */
+        @JvmStatic
+        public fun normalizeLabel(label: String?): String? {
+            val normalizedLabel = label?.trim()?.takeIf { it.isNotEmpty() }
+            require(label == null || label.none { it.isISOControl() }) { "Invalid profile label" }
+            require(normalizedLabel == null || normalizedLabel.length <= 64) { "Invalid profile label" }
+            return normalizedLabel
+        }
+
         /** Constructs validated fields for store implementations and consumer fakes. */
         @JvmStatic
         public fun create(
@@ -169,9 +181,7 @@ public class ServerProfileSummary private constructor(
             require(normalizedUsername == null || normalizedUsername.isNotEmpty()) { "Username must not be blank" }
             require(if (authenticationMode == ServerProfileAuthenticationMode.ANONYMOUS) username == null
                 else !credentialsAvailable || normalizedUsername != null) { "Invalid profile username" }
-            val normalizedLabel = label?.trim()?.takeIf { it.isNotEmpty() }
-            require(label == null || label.none { it.isISOControl() }) { "Invalid profile label" }
-            require(normalizedLabel == null || normalizedLabel.length <= 64) { "Invalid profile label" }
+            val normalizedLabel = normalizeLabel(label)
             return ServerProfileSummary(id, normalizedLabel, profile.host, profile.port, authenticationMode, normalizedUsername, credentialsAvailable)
         }
     }

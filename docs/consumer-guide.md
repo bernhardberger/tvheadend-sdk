@@ -1578,7 +1578,7 @@ offer this recovery path for an unavailable collection.
 
 `FakeServerProfileStore` accepts an `idSource` constructor parameter for deterministic
 ids. Its call enum now records `PROFILES`, `LOAD_ACTIVE`, `LOAD`, `ADD_ANONYMOUS`,
-`ADD_PASSWORD`, `UPDATE_ANONYMOUS`, `UPDATE_PASSWORD`, `SET_ACTIVE`, `REMOVE`, and
+`ADD_PASSWORD`, `UPDATE_ANONYMOUS`, `UPDATE_PASSWORD`, `UPDATE_LABEL`, `SET_ACTIVE`, `REMOVE`, and
 `CLEAR_ALL` instead of the single-profile calls. `scriptProfile` replaces the whole
 collection with one active profile, an empty collection (`Missing`), or an unreadable
 collection (`Unavailable`). `scriptCredentialsUnavailable(id)` keeps the collection

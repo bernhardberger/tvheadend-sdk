@@ -12,6 +12,17 @@ import org.junit.jupiter.api.Test
 
 internal class ServerProfileStoreTest {
     @Test
+    fun `label normalization is reusable without profile or storage fields`() {
+        assertEquals("Label", ServerProfileSummary.normalizeLabel(" Label "))
+        assertEquals(null, ServerProfileSummary.normalizeLabel(null))
+        assertEquals(null, ServerProfileSummary.normalizeLabel("  "))
+        assertEquals("x".repeat(64), ServerProfileSummary.normalizeLabel("x".repeat(64)))
+        for (label in listOf("x".repeat(65), "bad\nlabel")) {
+            assertThrows(IllegalArgumentException::class.java) { ServerProfileSummary.normalizeLabel(label) }
+        }
+    }
+
+    @Test
     fun `withLabel replaces only normalized label and retains opaque credentials`() {
         val original = ServerProfileReadResult.password(ServerProfileId.generate(), "test.invalid",
             username = "user", password = "password", label = "Original")

@@ -29,6 +29,67 @@ import org.junit.jupiter.api.io.TempDir
 
 internal class TvheadendServerProfileStoreTest {
     @Test
+    fun `blank decrypted legacy username migrates as unavailable credentials`() = runTest {
+        val legacy = passwordProfileRecord()
+        val storage = FakeCredentialStorage(StoredCredentialRead.Available(legacy))
+        val cipher = object : FakeCredentialCipher() {
+            override suspend fun <T> decrypt(credentials: EncryptedCredentials, context: CredentialCipherContext,
+                transform: (String, String) -> T): T = transform("  ", "password")
+        }
+        val store = TvheadendServerProfileStore.create(storage, cipher)
+        val list = store.profiles() as ServerProfileListResult.Available
+        val profile = list.profiles.single()
+        assertTrue(profile.host == legacy.host)
+        assertEquals(legacy.port, profile.port)
+        assertNull(profile.username)
+        assertFalse(profile.credentialsAvailable)
+        assertEquals(profile.id, list.activeId)
+        assertSame(ServerProfileReadResult.Unavailable, store.loadActive())
+        assertEquals(1, storage.writeCalls)
+        assertEquals(0, cipher.encryptCalls)
+        assertEquals(ServerProfileWriteResult.Applied(profile.id), store.updateLabel(profile.id, "Repair"))
+        assertEquals("Repair", (store.profiles() as ServerProfileListResult.Available).profiles.single().label)
+    }
+
+    @Test
+    fun `invalid labels fail before storage access even for missing or unavailable profiles`() = runTest {
+        val storage = FakeCredentialStorage().apply { readFailure = java.io.IOException("Storage failure") }
+        val cipher = FakeCredentialCipher()
+        val store = TvheadendServerProfileStore.create(storage, cipher, Mutex(locked = true))
+        for (label in listOf("x".repeat(65), "bad\nlabel")) {
+            try {
+                store.updateLabel(ServerProfileId.generate(), label)
+                fail<Unit>("Invalid label accepted")
+            } catch (_: IllegalArgumentException) { }
+        }
+        assertEquals(0, storage.readCalls)
+        assertEquals(0, storage.writeCalls)
+        assertEquals(0, cipher.encryptCalls)
+        assertEquals(0, cipher.decryptCalls)
+    }
+
+    @Test
+    fun `label edit result follows the last DataStore transform invocation`() = runTest {
+        val id = ServerProfileId.generate()
+        val prefix = "profile.${id.value}."
+        val populated = mutablePreferencesOf(CREDENTIAL_VERSION_KEY to 4, PROFILE_ORDER_KEY to id.value,
+            stringPreferencesKey(prefix + "host") to "test.invalid", intPreferencesKey(prefix + "port") to 9982,
+            stringPreferencesKey(prefix + "mode") to "anonymous")
+        val corrupt = mutablePreferencesOf(CREDENTIAL_VERSION_KEY to 99)
+        for (first in listOf(populated, corrupt)) {
+            val replaying = object : androidx.datastore.core.DataStore<androidx.datastore.preferences.core.Preferences> {
+                override val data = kotlinx.coroutines.flow.flowOf(first)
+                override suspend fun updateData(transform: suspend (androidx.datastore.preferences.core.Preferences) ->
+                    androidx.datastore.preferences.core.Preferences): androidx.datastore.preferences.core.Preferences {
+                    transform(first)
+                    return transform(mutablePreferencesOf())
+                }
+            }
+            assertSame(ServerProfileWriteResult.NotFound, DataStoreCredentialStorage(replaying).updateLabel(id, "Renamed"))
+        }
+    }
+
+    @Test
     fun `label edits change only label keys without accessing credentials`(@TempDir directory: File) = runTest {
         val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         try {
@@ -50,7 +111,7 @@ internal class TvheadendServerProfileStoreTest {
             val cipher = object : CredentialCipher {
                 var encryptCalls = 0
                 var decryptCalls = 0
-                override suspend fun encrypt(username: String, password: String, context: CredentialCipherContext): EncryptedCredentials {
+                override suspend fun encrypt(password: String, context: CredentialCipherContext): EncryptedCredentials {
                     encryptCalls += 1
                     error("Unexpected credential access")
                 }
@@ -106,6 +167,10 @@ internal class TvheadendServerProfileStoreTest {
             val store = TvheadendServerProfileStore.create(DataStoreCredentialStorage(dataStore), FakeCredentialCipher())
             val missing = ServerProfileId.generate()
             assertSame(ServerProfileWriteResult.NotFound, store.updateLabel(missing, "Missing"))
+            try {
+                store.updateLabel(missing, "x".repeat(65))
+                fail<Unit>("Invalid label accepted")
+            } catch (_: IllegalArgumentException) { }
             val id = (store.addAnonymous("test.invalid", label = "Original") as ServerProfileWriteResult.Applied).id
             assertSame(ServerProfileWriteResult.NotFound, store.updateLabel(missing, "Missing"))
             for (label in listOf("x".repeat(65), "bad\nlabel")) {
@@ -122,6 +187,14 @@ internal class TvheadendServerProfileStoreTest {
                 }
                 val before = dataStore.data.first()
                 assertSame(ServerProfileWriteResult.Unavailable, store.updateLabel(id, "Unavailable"))
+                try {
+                    store.updateLabel(id, "x".repeat(65))
+                    fail<Unit>("Invalid label accepted")
+                } catch (_: IllegalArgumentException) { }
+                try {
+                    DataStoreCredentialStorage(dataStore).updateLabel(id, "bad\nlabel")
+                    fail<Unit>("Invalid label accepted")
+                } catch (_: IllegalArgumentException) { }
                 assertEquals(before, dataStore.data.first())
             }
         } finally { scope.cancel() }
@@ -386,10 +459,10 @@ internal class TvheadendServerProfileStoreTest {
                 }
             }
             val cipher = object : FakeCredentialCipher() {
-                override suspend fun encrypt(username: String, password: String,
+                override suspend fun encrypt(password: String,
                     context: CredentialCipherContext): EncryptedCredentials {
                     if (phase == 1) pause()
-                    return super.encrypt(username, password, context)
+                    return super.encrypt(password, context)
                 }
                 override suspend fun <T> decrypt(credentials: EncryptedCredentials,
                     context: CredentialCipherContext, transform: (String, String) -> T): T {

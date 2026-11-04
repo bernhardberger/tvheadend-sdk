@@ -31,13 +31,14 @@ internal class FakeCredentialStorage(
     }
 
     override suspend fun updateLabel(id: ServerProfileId, label: String?): ServerProfileWriteResult {
+        val normalizedLabel = at.bernhardberger.tvheadend.sdk.core.ServerProfileSummary.normalizeLabel(label)
         val stored = read()
         if (stored == StoredCredentialRead.Unavailable) return ServerProfileWriteResult.Unavailable
         val collection = (stored as? StoredCredentialRead.Available)?.record as? StoredCredentialRecord.Collection
             ?: return ServerProfileWriteResult.NotFound
         val old = collection.profiles.singleOrNull { it.id == id } ?: return ServerProfileWriteResult.NotFound
         val replacement = StoredCredentialRecord.Profile(old.host, old.port, old.authenticationMode,
-            old.credentials, old.id, old.normalizedLabel(label), old.credentialsUnavailable, old.username)
+            old.credentials, old.id, normalizedLabel, old.credentialsUnavailable, old.username)
         write(StoredCredentialRecord.Collection(collection.profiles.map { if (it.id == id) replacement else it }, collection.activeId))
         return ServerProfileWriteResult.Applied(id)
     }
@@ -64,12 +65,12 @@ internal open class FakeCredentialCipher : CredentialCipher {
         private set
 
     override suspend fun encrypt(
-        username: String,
         password: String,
         context: CredentialCipherContext,
     ): EncryptedCredentials {
         encryptFailure?.let { failure -> throw failure }
         encryptCalls += 1
+        val username = checkNotNull((context as CredentialCipherContext.Profile).username)
         lastUsername = username
         lastPassword = password
         lastContext = context

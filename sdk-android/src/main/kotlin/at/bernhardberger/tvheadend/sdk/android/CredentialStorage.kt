@@ -37,7 +37,6 @@ internal interface CredentialStorage {
 
 internal interface CredentialCipher {
     suspend fun encrypt(
-        username: String,
         password: String,
         context: CredentialCipherContext,
     ): EncryptedCredentials
@@ -174,18 +173,19 @@ internal class DataStoreCredentialStorage(
     }
 
     override suspend fun updateLabel(id: ServerProfileId, label: String?): ServerProfileWriteResult {
+        val normalizedLabel = ServerProfileSummary.normalizeLabel(label)
         var result: ServerProfileWriteResult = ServerProfileWriteResult.NotFound
         dataStore.edit { preferences ->
+            result = ServerProfileWriteResult.NotFound
             when (val stored = decodeCredentialRecord(preferences)) {
                 StoredCredentialRead.Unavailable -> result = ServerProfileWriteResult.Unavailable
                 StoredCredentialRead.Missing -> Unit
                 is StoredCredentialRead.Available -> {
                     // Legacy records have no stable id; do not migrate or access credentials to rename.
                     val collection = stored.record as? StoredCredentialRecord.Collection ?: return@edit
-                    val profile = collection.profiles.singleOrNull { it.id == id } ?: return@edit
-                    val normalized = profile.normalizedLabel(label)
+                    if (collection.profiles.none { it.id == id }) return@edit
                     val key = stringPreferencesKey("profile.${id.value}.label")
-                    if (normalized == null) preferences.remove(key) else preferences[key] = normalized
+                    if (normalizedLabel == null) preferences.remove(key) else preferences[key] = normalizedLabel
                     result = ServerProfileWriteResult.Applied(id)
                 }
             }
@@ -193,13 +193,6 @@ internal class DataStoreCredentialStorage(
         return result
     }
 }
-
-internal fun StoredCredentialRecord.Profile.normalizedLabel(label: String?): String? = ServerProfileSummary.create(
-    checkNotNull(id), label, host, port,
-    if (authenticationMode == StoredAuthenticationMode.PASSWORD) ServerProfileAuthenticationMode.PASSWORD
-    else ServerProfileAuthenticationMode.ANONYMOUS,
-    username, !credentialsUnavailable,
-).label
 
 internal class CredentialUnreadableException : Exception("Stored credentials are unreadable")
 
@@ -228,7 +221,6 @@ internal object AndroidTinkCredentialCipher : CredentialCipher {
     private val mutex = Mutex()
 
     override suspend fun encrypt(
-        username: String,
         password: String,
         context: CredentialCipherContext,
     ): EncryptedCredentials = withContext(Dispatchers.IO) {

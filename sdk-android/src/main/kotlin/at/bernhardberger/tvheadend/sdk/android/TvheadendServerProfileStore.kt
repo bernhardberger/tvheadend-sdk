@@ -126,9 +126,10 @@ public class TvheadendServerProfileStore private constructor(
     )
 
     override suspend fun updateLabel(id: ServerProfileId, label: String?): ServerProfileWriteResult {
+        val normalizedLabel = ServerProfileSummary.normalizeLabel(label)
         currentCoroutineContext().ensureActive()
         return try {
-            operationMutex.withLock { storage.updateLabel(id, label) }
+            operationMutex.withLock { storage.updateLabel(id, normalizedLabel) }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (invalid: IllegalArgumentException) {
@@ -165,7 +166,7 @@ public class TvheadendServerProfileStore private constructor(
         }
         val mode = if (username == null) StoredAuthenticationMode.ANONYMOUS else StoredAuthenticationMode.PASSWORD
         val context = CredentialCipherContext.Profile(result.host, result.port, mode, result.id, username)
-        val credentials = username?.let { cipher.encrypt(it, checkNotNull(password), context) }
+        val credentials = username?.let { cipher.encrypt(checkNotNull(password), context) }
         val record = StoredCredentialRecord.Profile(
             result.host, result.port, mode, credentials, result.id, result.label,
             username = username,
@@ -212,17 +213,18 @@ public class TvheadendServerProfileStore private constructor(
             val plaintext = try {
                 // Decrypt outside encrypt's callback: the production cipher serializes both calls.
                 cipher.decrypt(checkNotNull(legacy.credentials), legacy.cipherContext()) { user, pass ->
-                    user to pass
+                    val normalizedUsername = user.trim()
+                    if (normalizedUsername.isEmpty()) throw CredentialUnreadableException()
+                    normalizedUsername to pass
                 }
             } catch (_: CredentialUnreadableException) {
                 null
             }
             // Encryption/storage failures leave the legacy record intact for a later retry.
             plaintext?.let {
-                username = it.first.trim()
-                require(!username.isNullOrEmpty()) { "Username must not be blank" }
+                username = it.first
                 val context = CredentialCipherContext.Profile(legacy.host, legacy.port, legacy.authenticationMode, id, username)
-                cipher.encrypt(checkNotNull(username), it.second, context)
+                cipher.encrypt(it.second, context)
             }
         } else null
         val migrated = StoredCredentialRecord.Profile(

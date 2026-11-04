@@ -2245,12 +2245,14 @@ public final class at/bernhardberger/tvheadend/sdk/core/ServerProfileSummary {
 	public final fun getLabel ()Ljava/lang/String;
 	public final fun getPort ()I
 	public final fun getUsername ()Ljava/lang/String;
+	public static final fun normalizeLabel (Ljava/lang/String;)Ljava/lang/String;
 	public fun toString ()Ljava/lang/String;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/ServerProfileSummary$Companion {
 	public final fun create (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileId;Ljava/lang/String;Ljava/lang/String;ILat/bernhardberger/tvheadend/sdk/core/ServerProfileAuthenticationMode;Ljava/lang/String;Z)Lat/bernhardberger/tvheadend/sdk/core/ServerProfileSummary;
 	public static synthetic fun create$default (Lat/bernhardberger/tvheadend/sdk/core/ServerProfileSummary$Companion;Lat/bernhardberger/tvheadend/sdk/core/ServerProfileId;Ljava/lang/String;Ljava/lang/String;ILat/bernhardberger/tvheadend/sdk/core/ServerProfileAuthenticationMode;Ljava/lang/String;ZILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/ServerProfileSummary;
+	public final fun normalizeLabel (Ljava/lang/String;)Ljava/lang/String;
 }
 
 public abstract interface class at/bernhardberger/tvheadend/sdk/core/ServerProfileWriteResult {
