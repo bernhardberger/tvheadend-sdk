@@ -40,7 +40,8 @@ internal fun createGrowingTsExtractorsFactory(
 
 /** Thin indexing decorator; Media3's maintained [TsExtractor] still owns all TS parsing. */
 internal class GrowingTsExtractor(
-    private val delegate: Extractor = TsExtractor(SubtitleParser.Factory.UNSUPPORTED),
+    private val delegate: Extractor =
+        VideoScanExtractor(TsExtractor(SubtitleParser.Factory.UNSUPPORTED)),
     private val index: GrowingTsIndex = GrowingTsIndex(),
     private val onSeekMap: (SeekMap) -> Unit = {},
     private val lease: GrowingRecordingFileLease? = null,

@@ -1214,6 +1214,53 @@ The staged Java consumer validates ordinary JVM linkage for the operation,
 aggregate getter, nested result, and explicit `Continuation` signature. It does
 not claim that Kotlin coroutine or `Flow` APIs are idiomatic Java ergonomics.
 
+### Video scan type
+
+Experimental `Format.videoScanType()` reports `PROGRESSIVE`, `INTERLACED`, or
+`UNKNOWN` for SDK live, recording and growing recording sources. Read the format
+being decoded, not the formats in `Tracks`, which describe only the stream's
+start:
+
+```kotlin
+import androidx.media3.exoplayer.ExoPlayer
+import at.bernhardberger.tvheadend.sdk.media3.VideoScanType
+import at.bernhardberger.tvheadend.sdk.media3.videoScanType
+import at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
+
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+@OptIn(ExperimentalTvheadendApi::class)
+fun currentScanType(player: ExoPlayer): VideoScanType =
+    player.videoFormat?.videoScanType() ?: VideoScanType.UNKNOWN
+```
+
+For updates, read `format.videoScanType()` in
+`AnalyticsListener.onVideoInputFormatChanged`. Refresh the badge when the input
+format changes, including a channel or recording file switch. The SDK inspects
+in-band parameter sets in live streams and all recording containers, including
+TS, MPEG-PS, MKV and MP4. Codec setup supplies the initial value until then. For H.264 and
+H.265, the value follows the parameter set the picture activates; announcing an
+inactive set does not change it. A new format precedes the first sample whose
+scan type changes, such as an advertisement switching 1080i to 720p. After a
+recording seek, the value reflects post-seek parameter sets or the current codec
+setup, not pre-seek evidence. Live timeshift seeks and discontinuities retain
+parameter sets from committed samples already received by the decoder until new
+ones arrive. Declarations in discarded, unfinished samples do not carry over.
+
+The value describes the bitstream declaration, not the decoder's output:
+
+- H.264 uses the SPS `frame_mbs_only_flag`; allowing field or MBAFF coding means
+  `INTERLACED`.
+- H.265 uses the base-layer SPS `general_progressive_source_flag` and
+  `general_interlaced_source_flag`. Exactly one must be set; otherwise the value
+  is `UNKNOWN`.
+- MPEG-2 uses the sequence extension's `progressive_sequence`. MPEG-1 is `UNKNOWN`.
+
+`UNKNOWN` means the stream declares no unambiguous scan type, or the SDK did not
+inspect it. If neither codec setup nor in-band parameters carry a usable
+declaration, the value is `UNKNOWN`. Other codecs and non-SDK formats return
+`UNKNOWN` too. Show a resolution class such as `1080` instead of an `i`/`p` badge
+in that case; never infer scan type from height or frame rate.
+
 ### Recordings
 
 A recording binding admits playback by entry state. `COMPLETED` entries are

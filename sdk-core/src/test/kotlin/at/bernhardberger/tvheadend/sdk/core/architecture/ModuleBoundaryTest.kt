@@ -497,11 +497,13 @@ internal class ModuleBoundaryTest {
             "TvheadendAudioOutputProvider",
             "TvheadendPlaybackCoordinator",
             "TvheadendRecordingException",
+            "VideoScanType",
             "createTvheadendPlaybackRecovery",
             "createTvheadendPlaybackCoordinator",
             "createTvheadendRenderersFactory",
             "createTvheadendLoadControl",
             "isTvheadendLive",
+            "videoScanType",
         )
         val expectedAndroid = setOf(
             "ServerProfileEditReadResult",
@@ -640,6 +642,7 @@ internal class ModuleBoundaryTest {
                         "createTvheadendPlaybackCoordinator",
                         "createTvheadendRenderersFactory",
                         "createTvheadendLoadControl",
+                        "videoScanType",
                     )
             }
             .forEach { function -> function.referencedPublicTypes().forEach(::enqueue) }

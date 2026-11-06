@@ -23,9 +23,10 @@ internal class SubscriptionElementaryStreamAdapter(
     private var ended = false
     private var payloadBuffer = EMPTY_PAYLOAD
     private val input = ParsableByteArray()
+    private val output = VideoScanExtractorOutput(output)
 
     init {
-        reader.createTracks(output, TsPayloadReader.TrackIdGenerator(firstTrackId, 1))
+        reader.createTracks(this.output, TsPayloadReader.TrackIdGenerator(firstTrackId, 1))
     }
 
     fun accept(event: SubscriptionEvent) {
@@ -67,6 +68,7 @@ internal class SubscriptionElementaryStreamAdapter(
     private fun resetForDiscontinuity() {
         payloadBuffer = EMPTY_PAYLOAD
         reader.seek()
+        output.resetForDiscontinuity()
         onDiscontinuity?.invoke()
     }
 

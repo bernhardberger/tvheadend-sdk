@@ -1,5 +1,8 @@
 @file:androidx.media3.common.util.UnstableApi
-@file:OptIn(at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class)
+@file:OptIn(
+    at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class,
+    at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class,
+)
 
 package at.bernhardberger.tvheadend.sdk.media3
 
@@ -284,6 +287,7 @@ class ActualElementaryStreamReaderFixtureTest {
                     "00000168ff7c80",
                 ),
                 sampleCount = 16,
+                scanType = VideoScanType.INTERLACED,
                 firstSamples = listOf(
                     CapturedSampleMetadata(1_117_733L, C.BUFFER_FLAG_KEY_FRAME, 29_535, 6_701, null),
                     CapturedSampleMetadata(1_237_733L, 0, 6_701, 628, null),
@@ -465,6 +469,7 @@ class ActualElementaryStreamReaderFixtureTest {
                     "000001b32d02403303d7a38210202020262c342c2c262c2c3434363a363634362c34363a3a363a4050404436443a363034443a4a444c506050464c3a443a4a445c60745c46464c708a8a70a71012111113141714141316141819191c1a191718151617181a1b1d1d221e1d1a1b191715161a1b1c1d222124211f1f1c1a1b1f20242326231e2021262928272b000001b5148200010000",
                 ),
                 sampleCount = 64,
+                scanType = VideoScanType.INTERLACED,
                 firstSamples = listOf(
                     CapturedSampleMetadata(759_211L, C.BUFFER_FLAG_KEY_FRAME, 74_328, 2_395, null),
                     CapturedSampleMetadata(679_211L, 0, 2_395, 2_462, null),
@@ -520,6 +525,7 @@ class ActualElementaryStreamReaderFixtureTest {
             height = format.height,
             initializationData = format.initializationData.map { it.toHex() },
             sampleCount = output.trackOutput.metadata.size,
+            scanType = format.videoScanType(),
             firstSamples = output.trackOutput.metadata.take(3),
         )
     }
@@ -712,6 +718,7 @@ private data class VideoOracle(
     val height: Int,
     val initializationData: List<String>,
     val sampleCount: Int,
+    val scanType: VideoScanType,
     val firstSamples: List<CapturedSampleMetadata>,
 )
 

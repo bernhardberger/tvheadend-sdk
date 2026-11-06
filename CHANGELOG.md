@@ -4,6 +4,17 @@
 
 Unreleased; development target.
 
+### Added
+
+- Add experimental `VideoScanType` and `Format.videoScanType()` in `sdk-media3`
+  for the video stream being decoded. Live streams and all recording containers
+  inspect in-band parameter sets, with codec setup as the initial value. H.264
+  and H.265 follow the parameter set the picture activates. After a recording
+  seek, the value reflects post-seek parameters or codec setup. Live timeshift
+  retains committed parameter sets, not unfinished samples. Missing, unsupported or
+  ambiguous declarations return `UNKNOWN`, never inferred from height or frame
+  rate.
+
 ### Changed
 
 - BREAKING: replace the single-profile store with an ordered collection and one

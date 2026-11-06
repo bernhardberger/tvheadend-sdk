@@ -95,7 +95,7 @@ internal fun createTvheadendRecordingMediaSource(
     readAheadBytes: Int = DEFAULT_RECORDING_READ_AHEAD_BYTES,
 ): MediaSource = ProgressiveMediaSource.Factory(
     createTvheadendRecordingDataSourceFactory(recordings, identity, readAheadBytes),
-    DefaultExtractorsFactory(),
+    VideoScanExtractorsFactory(DefaultExtractorsFactory()),
 ).createMediaSource(tvheadendRecordingMediaItem(identity))
 
 /**

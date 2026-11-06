@@ -22,6 +22,7 @@ question still spans an unknown flow after these paths are checked.
 | Persistent metadata and artwork cache | `sdk-core`, `sdk-android` | `docs/persistent-cache-design.md` |
 | Consumer fakes and scripted protocol events | `sdk-testing` | `FakeSessionObservation.kt` and `ScriptedSubscriptionConnection.kt` |
 | Internal timeshift host fixtures | `sdk-media3` tests | `testing/TimeshiftTestFixture.kt` |
+| Video scan-type fixtures and regressions | `sdk-media3` tests | `VideoScanInspectionTest.kt`, `ActualElementaryStreamReaderFixtureTest.kt`, and `sdk-media3/src/androidTest/assets/video-scan/README.md` |
 | Published-coordinate contract | `consumer-contract` | `consumer-contract/src/main/kotlin/at/bernhardberger/tvheadend/sdk/consumer/StagedSdkConsumer.kt` |
 
 ## Commands and release tooling
