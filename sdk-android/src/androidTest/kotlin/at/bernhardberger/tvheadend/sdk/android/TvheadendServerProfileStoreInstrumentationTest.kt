@@ -18,7 +18,9 @@ internal class TvheadendServerProfileStoreInstrumentationTest {
     fun server_profile_round_trips_through_recreated_stores_and_anonymous_replacement() = runTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val profileStore = TvheadendServerProfileStore(context)
-        profileStore.clearAll()
+        val cleared = profileStore.clearAll() as ServerProfileListResult.Available
+        assertTrue(cleared.profiles.isEmpty())
+        assertEquals(null, cleared.activeId)
 
         try {
             assertTrue(
@@ -51,7 +53,7 @@ internal class TvheadendServerProfileStoreInstrumentationTest {
             assertEquals(ServerProfileAuthenticationMode.ANONYMOUS, anonymous.authenticationMode)
             assertTrue((profileStore.profiles() as ServerProfileListResult.Available).profiles.single().username == null)
         } finally {
-            profileStore.clearAll()
+            assertTrue(profileStore.clearAll() is ServerProfileListResult.Available)
         }
 
         assertTrue(

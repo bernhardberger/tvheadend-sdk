@@ -103,7 +103,7 @@ public class TvheadendServerProfileStore private constructor(
         activate: Boolean,
     ): ServerProfileWriteResult = save(
         ServerProfileReadResult.password(ServerProfileId.generate(), host, port, username, password, label),
-        adding = true, activate = activate, username = username.trim(), password = password,
+        adding = true, activate = activate, password = password,
     )
 
     /**
@@ -122,7 +122,7 @@ public class TvheadendServerProfileStore private constructor(
         id: ServerProfileId, host: String, port: Int, username: String, password: String, label: String?,
     ): ServerProfileWriteResult = save(
         ServerProfileReadResult.password(id, host, port, username, password, label),
-        adding = false, username = username.trim(), password = password,
+        adding = false, password = password,
     )
 
     override suspend fun updateLabel(id: ServerProfileId, label: String?): ServerProfileWriteResult {
@@ -132,8 +132,6 @@ public class TvheadendServerProfileStore private constructor(
             operationMutex.withLock { storage.updateLabel(id, normalizedLabel) }
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (invalid: IllegalArgumentException) {
-            throw invalid
         } catch (_: Exception) {
             ServerProfileWriteResult.Unavailable
         }
@@ -148,22 +146,31 @@ public class TvheadendServerProfileStore private constructor(
         )
     }
 
-    /** Removes every profile and the selection in one atomic DataStore update. */
-    override suspend fun clearAll() {
-        currentCoroutineContext().ensureActive()
-        operationMutex.withLock { storage.clear() }
-    }
+    /**
+     * Deletes every profile and the selection, including unreadable persisted data.
+     *
+     * Returns [ServerProfileListResult.Available] with empty profiles and a null active id
+     * after the atomic DataStore update. Returns [ServerProfileListResult.Unavailable] when
+     * storage cannot be written; nothing is guaranteed deleted in that case.
+     * [CancellationException] propagates.
+     */
+    override suspend fun clearAll(): ServerProfileListResult =
+        profileResult(ServerProfileListResult.Unavailable) {
+            currentCoroutineContext().ensureActive()
+            operationMutex.withLock { storage.clear() }
+            ServerProfileListResult.Available(emptyList(), null)
+        }
 
     private suspend fun save(
         result: ServerProfileReadResult.Available,
         adding: Boolean,
         activate: Boolean = false,
-        username: String? = null,
         password: String? = null,
     ): ServerProfileWriteResult = access(ServerProfileWriteResult.Unavailable) { collection ->
         if (!adding && collection.profiles.none { it.id == result.id }) {
             return@access ServerProfileWriteResult.NotFound
         }
+        val username = result.username
         val mode = if (username == null) StoredAuthenticationMode.ANONYMOUS else StoredAuthenticationMode.PASSWORD
         val context = CredentialCipherContext.Profile(result.host, result.port, mode, result.id, username)
         val credentials = username?.let { cipher.encrypt(checkNotNull(password), context) }

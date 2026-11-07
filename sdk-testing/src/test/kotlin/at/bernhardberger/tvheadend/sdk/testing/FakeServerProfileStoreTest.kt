@@ -146,7 +146,9 @@ internal class FakeServerProfileStoreTest {
         assertSame(ServerProfileReadResult.Missing, store.loadActive())
         assertSame(ServerProfileWriteResult.NotFound, store.remove(ids[0]))
         assertSame(ServerProfileWriteResult.NotFound, store.setActive(ids[0]))
-        store.clearAll()
+        val cleared = store.clearAll() as ServerProfileListResult.Available
+        assertTrue(cleared.profiles.isEmpty())
+        assertEquals(null, cleared.activeId)
         assertTrue((store.profiles() as ServerProfileListResult.Available).profiles.isEmpty())
     }
 
@@ -156,18 +158,17 @@ internal class FakeServerProfileStoreTest {
         val store = FakeServerProfileStore(initial)
         store.scriptMutationUnavailable()
         assertSame(ServerProfileWriteResult.Unavailable, store.addAnonymous("test.invalid"))
-        try {
-            store.clearAll()
-            org.junit.jupiter.api.Assertions.fail<Unit>("Unavailable clear was accepted")
-        } catch (_: IllegalStateException) {
-            assertSame(initial, store.loadActive())
-        }
+        assertSame(ServerProfileListResult.Unavailable, store.clearAll())
+        assertEquals(FakeServerProfileStoreCall.CLEAR_ALL, store.calls.last())
         assertSame(initial, store.loadActive())
         store.scriptMutationSuccess()
         store.scriptProfile(ServerProfileReadResult.Unavailable)
         assertSame(ServerProfileReadResult.Unavailable, store.load(initial.id))
         assertSame(ServerProfileListResult.Unavailable, store.profiles())
-        store.clearAll()
+        val cleared = store.clearAll() as ServerProfileListResult.Available
+        assertTrue(cleared.profiles.isEmpty())
+        assertEquals(null, cleared.activeId)
+        assertEquals(FakeServerProfileStoreCall.CLEAR_ALL, store.calls.last())
         assertSame(ServerProfileReadResult.Missing, store.loadActive())
         store.scriptProfile(initial)
         assertSame(initial, store.loadActive())

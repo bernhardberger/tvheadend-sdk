@@ -636,7 +636,9 @@ two `REMOVED` changes.
 
 A server user-abort marker emits `RECORDING_ABORTED`, never `RECORDING_FAILED`.
 Its snapshot state remains `COMPLETED_ERROR` for compatibility. A local `STOP`
-intent wins over terminal error/abort kinds and yields `RECORDING_STOPPED`. For an
+intent wins over terminal error/abort kinds and yields `RECORDING_STOPPED`. A move
+into `REMOVED` never consumes a `STOP` intent; only a matching delete or cancel
+attributes it to this client, otherwise it is `External`. For an
 external successful completion, the latest recording-file stop time (when present),
 otherwise the generation's estimated server time at acceptance, must be more than
 60 seconds before the entry's scheduled `stop` to classify `RECORDING_STOPPED`.
@@ -1591,6 +1593,9 @@ To switch servers, call `setActive(id)`, then `loadActive()` and
 `session.connect(stored.profile)`. Selection alone does not change the connection.
 `remove(id)` removes one profile; removing the active profile chooses no successor.
 `clearAll()` deletes every profile and the active pointer, including unreadable data.
+It returns `ServerProfileListResult.Available` with empty profiles and a null `activeId`
+after deletion, or `Unavailable` on storage failure. No deletion is guaranteed on
+`Unavailable`; cancellation propagates.
 To remove an active, connected profile, disconnect or switch away first. Otherwise the session
 stays connected to a profile no longer stored, and clearing its current cache
 namespace immediately rewrites the current metadata. After disconnecting or
@@ -1599,7 +1604,7 @@ switching, take its `ServerProfileSummary` from `profiles()`, call
 and unreadable credentials; no `load(id)` is needed. A legacy password summary
 with an unknown username clears nothing; its old cache ages out under normal
 retention and budget limits.
-Mutations return `NotFound` for a missing id and `Unavailable` for unreadable storage.
+Keyed mutations return `NotFound` for a missing id and `Unavailable` for unreadable storage.
 Success says
 nothing about server reachability, authentication, or session readiness.
 Anonymous profiles do not use the Android Keystore. Password profiles are
@@ -1619,7 +1624,7 @@ use `FakeServerProfileStore` for positive and unavailable behavior without an
 Android `Context`.
 
 A corrupted credentials file previously read as `Missing`; it now reads as
-`Unavailable`. Every mutation returns `Unavailable` until `clearAll()` discards
+`Unavailable`. Other mutations return `Unavailable` until `clearAll()` discards
 all profiles. Applications that used `Missing` to start onboarding must also
 offer this recovery path for an unavailable collection.
 

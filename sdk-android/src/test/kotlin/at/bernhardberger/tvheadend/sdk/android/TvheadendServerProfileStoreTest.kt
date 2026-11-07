@@ -563,7 +563,9 @@ internal class TvheadendServerProfileStoreTest {
             val store = TvheadendServerProfileStore.create(DataStoreCredentialStorage(dataStore), FakeCredentialCipher())
             assertSame(ServerProfileReadResult.Unavailable, store.loadActive())
             assertSame(ServerProfileWriteResult.Unavailable, store.addAnonymous("test.invalid"))
-            store.clearAll()
+            val cleared = store.clearAll() as ServerProfileListResult.Available
+            assertTrue(cleared.profiles.isEmpty())
+            assertNull(cleared.activeId)
             assertSame(ServerProfileReadResult.Missing, store.loadActive())
             assertTrue(store.addAnonymous("test.invalid") is ServerProfileWriteResult.Applied)
         } finally { scope.cancel() }
@@ -674,7 +676,9 @@ internal class TvheadendServerProfileStoreTest {
         assertSame(ServerProfileWriteResult.NotFound, store.remove(first))
         assertSame(ServerProfileWriteResult.NotFound, store.updateAnonymous(first, "test.invalid", 9982, null))
         assertEquals(6, storage.writeCalls)
-        store.clearAll()
+        val cleared = store.clearAll() as ServerProfileListResult.Available
+        assertTrue(cleared.profiles.isEmpty())
+        assertNull(cleared.activeId)
         assertTrue((store.profiles() as ServerProfileListResult.Available).profiles.isEmpty())
         assertEquals(1, storage.clearCalls)
     }
@@ -740,7 +744,9 @@ internal class TvheadendServerProfileStoreTest {
             assertSame(ServerProfileListResult.Unavailable, store.profiles())
             assertSame(ServerProfileReadResult.Unavailable, store.loadActive())
             assertSame(ServerProfileWriteResult.Unavailable, store.addAnonymous("test.invalid"))
-            store.clearAll()
+            val cleared = store.clearAll() as ServerProfileListResult.Available
+            assertTrue(cleared.profiles.isEmpty())
+            assertNull(cleared.activeId)
             assertSame(ServerProfileReadResult.Missing, store.loadActive())
             assertTrue(store.addAnonymous("test.invalid") is ServerProfileWriteResult.Applied)
         }
@@ -773,6 +779,19 @@ internal class TvheadendServerProfileStoreTest {
         assertEquals("ServerProfileReadResult.Available(<redacted>)", store.loadActive().toString())
         assertEquals("ServerProfileEditReadResult.Password(<redacted>)", store.loadForEditing(id).toString())
         assertEquals("ServerProfileSummary(<redacted>)", (store.profiles() as ServerProfileListResult.Available).profiles.single().toString())
+    }
+
+    @Test
+    fun `clear storage failure returns unavailable without exposing its cause`() = runTest {
+        val storage = FakeCredentialStorage()
+        val store = TvheadendServerProfileStore.create(storage, FakeCredentialCipher())
+        store.addAnonymous("test.invalid", activate = true)
+        val previous = storage.state
+        storage.clearFailure = java.io.IOException("/data/user/0/x/files/datastore/p.preferences_pb")
+
+        assertSame(ServerProfileListResult.Unavailable, store.clearAll())
+        assertSame(previous, storage.state)
+        assertEquals(0, storage.clearCalls)
     }
 
     @Test

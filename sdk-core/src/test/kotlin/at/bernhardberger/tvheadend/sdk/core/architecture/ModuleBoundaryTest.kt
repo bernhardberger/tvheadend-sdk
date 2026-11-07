@@ -334,7 +334,7 @@ internal class ModuleBoundaryTest {
             "public suspend fun updateLabel(id: ServerProfileId, label: String?): ServerProfileWriteResult",
             "public suspend fun setActive(id: ServerProfileId): ServerProfileWriteResult",
             "public suspend fun remove(id: ServerProfileId): ServerProfileWriteResult",
-            "public suspend fun clearAll()",
+            "public suspend fun clearAll(): ServerProfileListResult",
             "public suspend fun scheduleEntry( currentSession: CurrentSessionObservation, request: DvrScheduleRequest, ): DvrMutationResult<DvrEntryId>",
             "public suspend fun updateEntry( currentSession: CurrentSessionObservation, id: DvrEntryId, update: DvrEntryUpdate, ): DvrMutationResult<Unit>",
             "public suspend fun updateWatchState( currentSession: CurrentSessionObservation, id: DvrEntryId, watched: Boolean, ): DvrProgressResult",

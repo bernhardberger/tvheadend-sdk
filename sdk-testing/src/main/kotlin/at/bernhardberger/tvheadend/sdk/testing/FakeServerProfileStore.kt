@@ -71,7 +71,7 @@ public class FakeServerProfileStore(
         }
     }
 
-    /** Makes mutations unavailable without changing stored state; clear throws a value-free error. */
+    /** Makes mutations return unavailable without changing stored state. */
     public fun scriptMutationUnavailable() { synchronized(lock) { mutationAvailable = false } }
 
     /** Restores successful mutations. */
@@ -159,13 +159,14 @@ public class FakeServerProfileStore(
         }
     }
 
-    override suspend fun clearAll(): Unit = call(FakeServerProfileStoreCall.CLEAR_ALL) {
-        check(mutationAvailable) { "Profile storage unavailable" }
+    override suspend fun clearAll(): ServerProfileListResult = call(FakeServerProfileStoreCall.CLEAR_ALL) {
+        if (!mutationAvailable) return@call ServerProfileListResult.Unavailable
         records.clear()
         unavailableCredentials.clear()
         unknownUsernames.clear()
         activeId = null
         readUnavailable = false
+        ServerProfileListResult.Available(emptyList(), null)
     }
 
     private fun save(

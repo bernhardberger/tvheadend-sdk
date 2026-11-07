@@ -6,6 +6,7 @@ import android.os.Process
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import at.bernhardberger.tvheadend.sdk.core.ServerProfileReadResult
+import at.bernhardberger.tvheadend.sdk.core.ServerProfileListResult
 import at.bernhardberger.tvheadend.sdk.core.ServerProfileWriteResult
 import at.bernhardberger.tvheadend.sdk.core.ServerProfile
 import at.bernhardberger.tvheadend.sdk.core.SessionCommandResult
@@ -62,7 +63,7 @@ internal class AndroidLifecycleVerificationInstrumentationTest {
             check(markerFile.delete()) { "Stale lifecycle marker could not be removed" }
         }
         val store = TvheadendServerProfileStore(context)
-        store.clearAll()
+        assertTrue(store.clearAll() is ServerProfileListResult.Available)
         assertTrue(
             store.addPassword(profile.host, profile.port, profile.username, profile.password, activate = true)
                 is ServerProfileWriteResult.Applied,
@@ -79,8 +80,9 @@ internal class AndroidLifecycleVerificationInstrumentationTest {
             }
         } catch (_: Exception) {
             val markerRemoved = !markerFile.exists() || markerFile.delete()
-            store.clearAll()
-            val credentialsCleared = store.loadActive() == ServerProfileReadResult.Missing
+            val cleared = store.clearAll()
+            val credentialsCleared = cleared is ServerProfileListResult.Available &&
+                store.loadActive() == ServerProfileReadResult.Missing
             if (!markerRemoved || !credentialsCleared) {
                 throw AssertionError("Process-restart marker failure cleanup failed")
             }
@@ -136,8 +138,9 @@ internal class AndroidLifecycleVerificationInstrumentationTest {
             throw failure
         } finally {
             var cleanupFailure = try {
-                store.clearAll()
-                if (store.loadActive() == ServerProfileReadResult.Missing) {
+                val cleared = store.clearAll()
+                if (cleared is ServerProfileListResult.Available &&
+                    store.loadActive() == ServerProfileReadResult.Missing) {
                     null
                 } else {
                     AssertionError("Credential cleanup failed")

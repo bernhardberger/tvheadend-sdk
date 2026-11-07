@@ -318,8 +318,11 @@ public class StagedSdkConsumer(
             ServerProfileWriteResult.NotFound -> false
             ServerProfileWriteResult.Unavailable -> false
         }
-        store.clearAll()
-        return fields && readable && removed && loaded is ServerProfileReadResult.Available &&
+        val cleared = when (val result = store.clearAll()) {
+            is ServerProfileListResult.Available -> result.profiles.isEmpty() && result.activeId == null
+            ServerProfileListResult.Unavailable -> false
+        }
+        return fields && readable && removed && cleared && loaded is ServerProfileReadResult.Available &&
             anonymous is ServerProfileWriteResult.Applied && password is ServerProfileWriteResult.Applied &&
             renamed is ServerProfileWriteResult.Applied && copied?.label == "Copied"
     }

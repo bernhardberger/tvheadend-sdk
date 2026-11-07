@@ -96,12 +96,15 @@ plaintext strings and cannot be zeroed. Keep the result only in private memory
 while the active secure edit surface needs it, then drop every reference; never
 serialize it, place it in saved state, log it, or use it as a diagnostic.
 
-Anonymous profiles do not use the Android Keystore. Password fields remain
-encrypted at rest with profile-id- and endpoint-bound associated data. Existing format-2
-profiles migrate to one active format-3 record. Undecryptable credentials stay listed
-but unavailable until edited or removed. Other formats require `clearAll()` to recover.
+Anonymous profiles do not use the Android Keystore. The normalized username is stored
+as plaintext metadata; only the password is encrypted at rest, with associated data
+bound to the profile id, endpoint and username. Existing format-2 profiles migrate to
+one active format-4 profile. Undecryptable credentials stay listed but unavailable
+until edited or removed. Other formats require `clearAll()` to recover.
 
-Successful mutations return `Applied(id)`; `clearAll()` removes the entire collection. This
+Successful keyed mutations return `Applied(id)`. `clearAll()` returns
+`ServerProfileListResult`: `Available` with no profiles or selection after deletion,
+or `Unavailable` on storage failure, with no deletion guaranteed. Success
 proves only local persistence, not server reachability, authentication, or
 session readiness. JVM tests can use `FakeServerProfileStore` to script stored,
 missing, and unavailable behavior without Android `Context` or Android runtime

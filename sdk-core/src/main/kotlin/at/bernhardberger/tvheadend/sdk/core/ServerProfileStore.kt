@@ -110,8 +110,15 @@ public interface ServerProfileStore {
     /** Removes [id]; removing the active profile leaves no active selection. */
     public suspend fun remove(id: ServerProfileId): ServerProfileWriteResult
 
-    /** Deletes all profiles and selection, including unreadable persisted data. */
-    public suspend fun clearAll()
+    /**
+     * Deletes every profile and the selection, including unreadable persisted data.
+     *
+     * Returns [ServerProfileListResult.Available] with empty profiles and a null active id
+     * after the atomic delete. Returns [ServerProfileListResult.Unavailable] when storage
+     * cannot be written; nothing is guaranteed deleted in that case.
+     * [kotlinx.coroutines.CancellationException] propagates.
+     */
+    public suspend fun clearAll(): ServerProfileListResult
 }
 
 /** Describes authentication without exposing credentials. */
@@ -200,7 +207,7 @@ public sealed interface ServerProfileListResult {
         override fun toString(): String = "ServerProfileListResult.Available(<redacted>)"
     }
 
-    /** Reports unreadable data or an unsupported format. */
+    /** Reports unreadable or unwritable storage, or an unsupported format. */
     public data object Unavailable : ServerProfileListResult
 }
 
@@ -280,7 +287,7 @@ public sealed interface ServerProfileReadResult {
             id, label, ServerProfile(host, port), ServerProfileAuthenticationMode.ANONYMOUS,
         )
 
-        /** Constructs a password result retaining credentials only in its opaque [ServerProfile]. */
+        /** Constructs a password result retaining the password only in its opaque [ServerProfile]. */
         @JvmStatic
         public fun password(
             id: ServerProfileId,

@@ -24,10 +24,12 @@ import kotlin.coroutines.cancellation.CancellationException
 
 /*
  * Media3 parses these parameter sets but publishes no scan type on Format, so the SDK reads the
- * declaring syntax elements with Media3's emulation-prevention-aware bit reader. Its full H.264
- * parser loops over an unbounded pic_order_cnt_cycle; its H.265 parser also allocates arrays from
- * unrelated syntax. Neither offers a bounded scan-only parser. The small prefixes below stop at
- * the scan declaration and parameter-set ids, with bounded counts and Exp-Golomb values.
+ * declaring syntax elements with Media3's emulation-prevention-aware bit reader. Media3 1.11.1's
+ * H.265 SPS parser allocates short-term reference picture arrays sized by stream values. Its
+ * H.264 SPS parser checks no syntax ranges and reads on through the VUI, so a damaged tail after
+ * frame_mbs_only_flag discards the declaration. Media3 has no slice-header parser for the
+ * activation path. The small prefixes below stop at the scan declaration and parameter-set ids,
+ * with specification-bounded counts and Exp-Golomb values.
  */
 
 /** Carries the detected scan type on [Format.metadata]. */

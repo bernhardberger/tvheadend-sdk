@@ -266,7 +266,7 @@ public final class StagedSdkJavaConsumer {
         return store.remove(id, continuation);
     }
 
-    public static Object clearProfiles(ServerProfileStore store, Continuation<? super kotlin.Unit> continuation) {
+    public static Object clearProfiles(ServerProfileStore store, Continuation<? super ServerProfileListResult> continuation) {
         return store.clearAll(continuation);
     }
 

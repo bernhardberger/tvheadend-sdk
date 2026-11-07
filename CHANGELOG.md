@@ -18,7 +18,7 @@ Unreleased; development target.
 ### Changed
 
 - BREAKING: replace the single-profile store with an ordered collection and one
-  optional active profile. Mutations return `ServerProfileWriteResult`, not a
+  optional active profile. Keyed mutations return `ServerProfileWriteResult`, not a
   connectable read result. IDs survive edits; removing the active profile leaves
   no selection. Select with `setActive(id)`, then connect using `loadActive()`.
 
@@ -27,14 +27,20 @@ Unreleased; development target.
   | `loadProfile()` | `loadActive()` or `load(id)`; `profiles()` lists summaries with `username` and `credentialsAvailable` |
   | `storeAnonymous(...)` | `addAnonymous(...)` or `updateAnonymous(id, ...)` |
   | `storePassword(...)` | `addPassword(...)` or `updatePassword(id, ...)` |
-  | `clearProfile()` | `remove(id)` or `clearAll()` |
+  | `clearProfile()` | `remove(id)` or `clearAll()`; `clearAll()` returns `ServerProfileListResult` |
   | `loadProfileForEditing()` | `loadForEditing(id)` |
+  | `ServerProfileReadResult.anonymous(host, port)` | `anonymous(id, host, port, label)` |
+  | `ServerProfileReadResult.password(host, port, username, password)` | `password(id, host, port, username, password, label)` |
 
+- `clearAll()` returns `ServerProfileListResult.Available` with no profiles or
+  selection after deletion, or `Unavailable` on storage failure. No deletion is
+  guaranteed on failure; cancellation still propagates.
 - Store the normalized, non-secret username as plaintext profile metadata, available
   through `ServerProfileSummary.username` even when password decryption fails.
   Anonymous profiles have a null username. `ServerProfileReadResult.Available`
   also exposes the normalized username. Both types keep redacted `toString()` output.
-  BREAKING: `ServerProfileSummary.create` adds `username` before `credentialsAvailable`.
+  `ServerProfileSummary.create(id, label, host, port, authenticationMode, username,
+  credentialsAvailable)` builds validated summaries for store implementations and fakes.
 - Add `ServerProfileStore.updateLabel(id, label)` to rename a profile without
   decrypting or replacing credentials, including unreadable credentials. Null or
   blank clears the label. `ServerProfileReadResult.Available.withLabel(label)`
@@ -48,7 +54,7 @@ Unreleased; development target.
   edited or removed. Unknown or malformed formats, including unreleased format 3,
   stay unavailable until `clearAll()`.
 - BREAKING: a corrupted credentials file used to read as `Missing` and now reads
-  as `Unavailable`. Every mutation returns `Unavailable` until `clearAll()` discards
+  as `Unavailable`. Other mutations return `Unavailable` until `clearAll()` discards
   all profiles. Apps that treated `Missing` as onboarding must offer this recovery.
   An available collection with `credentialsAvailable == false` instead allows
   repairing that profile with `updatePassword` or deleting it with `remove`.
@@ -62,9 +68,9 @@ Unreleased; development target.
   `scriptCredentialsUnavailable(id)` marks one profile while keeping its collection
   readable. `FakeSessionCall.CLEAR_PROFILE_CACHE` distinguishes scoped cache clears
   from `CLEAR_CACHE` without recording profile fields.
-- BREAKING: replace `SessionCache.clear(ServerProfile)` with `clear(ServerProfileSummary)`.
-  Take the summary from `profiles()` to evict that profile's metadata and
-  artwork. Profiles with the same host, port and username share a namespace;
+- BREAKING: add `SessionCache.clear(ServerProfileSummary)`; custom `SessionCache`
+  implementations must implement it. Take the summary from `profiles()` to evict
+  that profile's metadata and artwork. Profiles with the same host, port and username share a namespace;
   clearing the current namespace immediately rewrites its current metadata.
   Before removing an active, connected profile, disconnect or switch away, then
   take its summary from `profiles()`, call `cache.clear(summary)`, and `remove(id)`.
@@ -87,7 +93,9 @@ Unreleased; development target.
   `RECORDING_FAILED`, and a completed recording that lost its file emitted no
   change. A `REMOVED` change carries the retained entry as `current`, so do not
   assume `current` is null. When the server later drops that entry, a second
-  `REMOVED` change follows with a null `current`.
+  `REMOVED` change follows with a null `current`. A move into `REMOVED` never
+  consumes a `STOP` intent: it is `ThisClient` only for a matching delete or
+  cancel, otherwise `External`, even right after this client stopped the recording.
 - BREAKING: event selectors rank every other entry above `REMOVED` entries,
   before ownership or event-link preference. A `REMOVED` entry is still selected
   when it is the only match.
