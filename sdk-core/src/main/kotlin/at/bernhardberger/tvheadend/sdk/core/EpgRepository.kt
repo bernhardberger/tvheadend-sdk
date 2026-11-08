@@ -641,11 +641,18 @@ public data class EpgCoverageBatchResult private constructor(
  * [contentType] is an unsigned eight-bit genre code. Tvheadend servers using HTSP before version
  * 6 reinterpret values `0..15` as legacy major categories, so only those inputs are distinct on
  * such servers. Durations use finite whole seconds within the server's signed 32-bit storage.
+ *
+ * [query] matches titles by default. [fullText] also matches subtitle, summary, description,
+ * credits and keywords. [mergeText] matches one string merged from the event's text fields, the
+ * way an [AutorecRule] with [AutorecRule.mergeText] matches, and takes priority over [fullText].
+ * Tvheadend added merge-text matching without a protocol version change; older servers ignore
+ * [mergeText] and search as if it were false.
  */
 @ConsistentCopyVisibility
 public data class EpgSearchRequest private constructor(
     public val query: String,
     public val fullText: Boolean,
+    public val mergeText: Boolean,
     public val channelId: ChannelId?,
     public val tagId: ChannelTagId?,
     public val contentType: Long?,
@@ -673,6 +680,7 @@ public data class EpgSearchRequest private constructor(
         public fun create(
             query: String,
             fullText: Boolean = false,
+            mergeText: Boolean = false,
             channelId: ChannelId? = null,
             tagId: ChannelTagId? = null,
             contentType: Long? = null,
@@ -682,6 +690,7 @@ public data class EpgSearchRequest private constructor(
         ): EpgSearchRequest = EpgSearchRequest(
             query = query,
             fullText = fullText,
+            mergeText = mergeText,
             channelId = channelId,
             tagId = tagId,
             contentType = contentType,
@@ -695,6 +704,7 @@ public data class EpgSearchRequest private constructor(
         public fun createFromSeconds(
             query: String,
             fullText: Boolean,
+            mergeText: Boolean,
             channelId: Long?,
             tagId: Long?,
             contentType: Long?,
@@ -704,6 +714,7 @@ public data class EpgSearchRequest private constructor(
         ): EpgSearchRequest = create(
             query = query,
             fullText = fullText,
+            mergeText = mergeText,
             channelId = channelId?.let(::ChannelId),
             tagId = tagId?.let(::ChannelTagId),
             contentType = contentType,

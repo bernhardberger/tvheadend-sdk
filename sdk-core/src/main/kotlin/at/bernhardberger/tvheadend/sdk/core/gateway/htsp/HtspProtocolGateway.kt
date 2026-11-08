@@ -129,6 +129,7 @@ import at.bernhardberger.tvheadend.sdk.core.StreamProfileId
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.core.toDvrMutationSeconds
+import at.bernhardberger.tvheadend.sdk.core.toWire
 import at.bernhardberger.tvheadend.sdk.core.gateway.AutorecRuleId
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.gateway.DvrConfigId
@@ -604,6 +605,7 @@ internal class HtspProtocolGateway internal constructor(
         contentType = request.contentType,
         language = request.language,
         fullText = request.fullText,
+        mergeText = request.mergeText,
         full = true,
         minDurationSeconds = request.minimumDuration?.inWholeSeconds,
         maxDurationSeconds = request.maximumDuration?.inWholeSeconds,
@@ -690,6 +692,13 @@ internal class HtspProtocolGateway internal constructor(
         summary = request.summary,
         description = request.description,
         ageRating = request.ageRating,
+        enabled = request.enabled,
+        startExtraMinutes = request.startExtraMinutes?.inWholeMinutes,
+        stopExtraMinutes = request.stopExtraMinutes?.inWholeMinutes,
+        priority = request.priority?.wireValue,
+        retentionDays = request.retention?.toWire(),
+        removalDays = request.removal?.toWire(),
+        comment = request.comment,
         expectedGeneration = htspGenerationFor(generation),
     ).toGatewayResult { response ->
         DvrEntryId(response.entryId)
@@ -715,8 +724,8 @@ internal class HtspProtocolGateway internal constructor(
         stopEpochSeconds = update.stop?.epochSeconds,
         startExtraMinutes = update.startExtraMinutes?.inWholeMinutes,
         stopExtraMinutes = update.stopExtraMinutes?.inWholeMinutes,
-        retentionDays = update.retentionDays,
-        removalDays = update.removalDays,
+        retentionDays = update.retention?.toWire(),
+        removalDays = update.removal?.toWire(),
         priority = update.priority?.wireValue,
         ageRating = update.ageRating,
         expectedGeneration = htspGenerationFor(generation),
@@ -769,8 +778,8 @@ internal class HtspProtocolGateway internal constructor(
             startMinutesSinceMidnight = request.startMinutesSinceMidnight?.toDvrMinute(),
             startWindowEndMinutesSinceMidnight = request.startWindowEndMinutesSinceMidnight?.toDvrMinute(),
             enabled = request.enabled,
-            retentionDays = request.retentionDays,
-            removalDays = request.removalDays,
+            retentionDays = request.retention?.toWire(),
+            removalDays = request.removal?.toWire(),
             priority = request.priority?.wireValue,
             name = request.name,
             comment = request.comment,
@@ -812,8 +821,8 @@ internal class HtspProtocolGateway internal constructor(
             startMinutesSinceMidnight = update.startMinutesSinceMidnight?.toDvrMinute(),
             startWindowEndMinutesSinceMidnight = update.startWindowEndMinutesSinceMidnight?.toDvrMinute(),
             enabled = update.enabled,
-            retentionDays = update.retentionDays,
-            removalDays = update.removalDays,
+            retentionDays = update.retention?.toWire(),
+            removalDays = update.removal?.toWire(),
             priority = update.priority?.wireValue,
             name = update.name,
             comment = update.comment,
@@ -855,8 +864,8 @@ internal class HtspProtocolGateway internal constructor(
             startMinutesSinceMidnight = request.startMinutesSinceMidnight?.toDvrMinute(),
             stopMinutesSinceMidnight = request.stopMinutesSinceMidnight?.toDvrMinute(),
             enabled = request.enabled,
-            retentionDays = request.retentionDays,
-            removalDays = request.removalDays,
+            retentionDays = request.retention?.toWire(),
+            removalDays = request.removal?.toWire(),
             priority = request.priority?.wireValue,
             name = request.name,
             comment = request.comment,
@@ -888,8 +897,8 @@ internal class HtspProtocolGateway internal constructor(
             startMinutesSinceMidnight = update.startMinutesSinceMidnight?.toDvrMinute(),
             stopMinutesSinceMidnight = update.stopMinutesSinceMidnight?.toDvrMinute(),
             enabled = update.enabled,
-            retentionDays = update.retentionDays,
-            removalDays = update.removalDays,
+            retentionDays = update.retention?.toWire(),
+            removalDays = update.removal?.toWire(),
             priority = update.priority?.wireValue,
             name = update.name,
             comment = update.comment,

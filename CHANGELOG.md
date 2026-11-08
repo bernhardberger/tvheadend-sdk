@@ -14,9 +14,33 @@ Unreleased; development target.
   retains committed parameter sets, not unfinished samples. Missing, unsupported or
   ambiguous declarations return `UNKNOWN`, never inferred from height or frame
   rate.
+- `DvrScheduleRequest` carries `enabled`, `startExtraMinutes`, `stopExtraMinutes`,
+  `priority`, `retention`, `removal` and `comment`, so a new entry can get its
+  padding, priority and keep time when it is scheduled. Null options keep the
+  server defaults: enabled, with the recording profile's padding, priority and
+  keep times. The constructor and `copy` signatures change, so compiled callers
+  must be rebuilt.
+- `EpgSearchRequest.mergeText` searches the way an automatic rule with
+  `mergeText` matches, to preview the programmes such a rule would record. Older
+  servers ignore it; the HTSP version does not reveal support.
 
 ### Changed
 
+- BREAKING: keep times are typed. `retentionDays: Long?` and `removalDays: Long?`
+  become `retention: DvrRetention?` and `removal: DvrRemoval?` on `DvrEntry`,
+  `AutorecRule`, `TimerecRule`, their `create` factories, `DvrEntryUpdate` and the
+  rule create and update requests. Each is `ServerDefault`, `Days(days)`, `Forever`,
+  or `DvrRetention.UntilFilesRemoved` / `DvrRemoval.UntilSpaceNeeded`. Replace a
+  local `2147483646` constant with `DvrRemoval.UntilSpaceNeeded`, and `0` with
+  `ServerDefault`. `TimerecRule.removal` and its factory are no longer experimental.
+- BREAKING: `DvrEntryUpdate` rejects `DvrRetention.ServerDefault`,
+  `DvrRemoval.ServerDefault` and `DvrPriority.NOT_SET` with
+  `IllegalArgumentException`, because Tvheadend treats them as "leave unchanged"
+  on an existing entry. Zero padding is still accepted and still has no effect.
+- BREAKING: `EpgSearchRequest.create` and `createFromSeconds` take `mergeText`
+  after `fullText`, and the data class components shift. Positional calls that
+  pass a channel or later argument must add the new Boolean or switch to named
+  arguments; compiled callers must be rebuilt.
 - BREAKING: replace the single-profile store with an ordered collection and one
   optional active profile. Keyed mutations return `ServerProfileWriteResult`, not a
   connectable read result. IDs survive edits; removing the active profile leaves

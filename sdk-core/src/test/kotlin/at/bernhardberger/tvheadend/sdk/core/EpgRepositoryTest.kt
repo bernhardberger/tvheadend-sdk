@@ -189,6 +189,7 @@ internal class EpgRepositoryTest {
         val javaRequest = EpgSearchRequest.createFromSeconds(
             query = "private-java-query",
             fullText = true,
+            mergeText = true,
             channelId = 7,
             tagId = 8,
             contentType = 0xff,
@@ -205,6 +206,8 @@ internal class EpgRepositoryTest {
         assertEquals("de", request.language)
         assertEquals(4.seconds, request.minimumDuration)
         assertEquals(5.seconds, request.maximumDuration)
+        assertTrue(javaRequest.mergeText)
+        assertFalse(request.mergeText)
         assertEquals(ChannelId(7), javaRequest.channelId)
         assertEquals(ChannelTagId(8), javaRequest.tagId)
         assertEquals(0xffL, javaRequest.contentType)

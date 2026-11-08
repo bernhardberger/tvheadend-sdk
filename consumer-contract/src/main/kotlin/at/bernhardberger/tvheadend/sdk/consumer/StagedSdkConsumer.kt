@@ -50,6 +50,11 @@ import at.bernhardberger.tvheadend.sdk.core.AutorecTime
 import at.bernhardberger.tvheadend.sdk.core.BroadcastType
 import at.bernhardberger.tvheadend.sdk.core.DuplicateDetection
 import at.bernhardberger.tvheadend.sdk.core.DvrPriority
+import at.bernhardberger.tvheadend.sdk.core.DvrSchedule
+import at.bernhardberger.tvheadend.sdk.core.DvrScheduleRequest
+import at.bernhardberger.tvheadend.sdk.core.DvrEntryUpdate
+import at.bernhardberger.tvheadend.sdk.core.DvrRemoval
+import at.bernhardberger.tvheadend.sdk.core.DvrRetention
 import java.time.DayOfWeek
 import java.time.LocalTime
 import kotlin.time.Duration.Companion.minutes
@@ -192,9 +197,23 @@ public fun heldProgrammeRecording(observation: SessionObservation, event: EpgEve
 public fun programmeRecordingTargets(observation: SessionObservation, eventId: Long): List<DvrEntry> =
     programmeRecordings(observation, eventId)?.let { listOf(it.selected) + it.otherActive }.orEmpty()
 
-public fun timerecWithRemovalForFake(): TimerecRule = TimerecRule.create(TimerecRuleId("timerec"), removalDays = 30)
+public fun timerecWithRemovalForFake(): TimerecRule =
+    TimerecRule.create(TimerecRuleId("timerec"), removal = DvrRemoval.Days(30))
 
-public fun timerecRemovalDays(rule: TimerecRule): Long? = rule.removalDays
+public fun timerecRemovalDays(rule: TimerecRule): Int? = (rule.removal as? DvrRemoval.Days)?.days
+
+public fun keepUntilSpaceNeeded(event: EventId): DvrScheduleRequest = DvrScheduleRequest(
+    schedule = DvrSchedule.Programme(event),
+    startExtraMinutes = 2.minutes,
+    stopExtraMinutes = 10.minutes,
+    priority = DvrPriority.HIGH,
+    retention = DvrRetention.UntilFilesRemoved,
+    removal = DvrRemoval.UntilSpaceNeeded,
+)
+
+public fun keepForever(): DvrEntryUpdate = DvrEntryUpdate(removal = DvrRemoval.Forever)
+
+public fun mergeTextSearch(query: String): EpgSearchRequest = EpgSearchRequest.create(query, mergeText = true)
 
 public fun dvrAccountLabels(entry: DvrEntry, autorec: AutorecRule, timerec: TimerecRule): List<String?> =
     listOf(entry.owner, entry.creator, autorec.owner, autorec.creator, timerec.owner, timerec.creator)

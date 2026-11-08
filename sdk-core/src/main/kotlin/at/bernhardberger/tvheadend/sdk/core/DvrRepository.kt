@@ -211,8 +211,8 @@ public data class DvrEntry private constructor(
     public val stop: Instant?,
     public val startExtraMinutes: Duration?,
     public val stopExtraMinutes: Duration?,
-    public val retentionDays: Long?,
-    public val removalDays: Long?,
+    public val retention: DvrRetention?,
+    public val removal: DvrRemoval?,
     public val priority: DvrPriority?,
     public val contentGenre: ContentGenre?,
     public val rating: EpgRating?,
@@ -289,8 +289,8 @@ public data class DvrEntry private constructor(
             stop: Instant? = null,
             startExtraMinutes: Duration? = null,
             stopExtraMinutes: Duration? = null,
-            retentionDays: Long? = null,
-            removalDays: Long? = null,
+            retention: DvrRetention? = null,
+            removal: DvrRemoval? = null,
             priority: DvrPriority? = null,
             contentGenre: ContentGenre? = null,
             rating: EpgRating? = null,
@@ -327,8 +327,8 @@ public data class DvrEntry private constructor(
             stop = stop,
             startExtraMinutes = startExtraMinutes,
             stopExtraMinutes = stopExtraMinutes,
-            retentionDays = retentionDays,
-            removalDays = removalDays,
+            retention = retention,
+            removal = removal,
             priority = priority,
             contentGenre = contentGenre,
             rating = rating,
@@ -382,8 +382,8 @@ public data class DvrEntry private constructor(
             stop: Instant? = null,
             startExtraMinutes: Duration? = null,
             stopExtraMinutes: Duration? = null,
-            retentionDays: Long? = null,
-            removalDays: Long? = null,
+            retention: DvrRetention? = null,
+            removal: DvrRemoval? = null,
             priority: DvrPriority? = null,
             contentGenre: ContentGenre? = null,
             rating: EpgRating? = null,
@@ -422,8 +422,8 @@ public data class DvrEntry private constructor(
             stop = stop,
             startExtraMinutes = startExtraMinutes,
             stopExtraMinutes = stopExtraMinutes,
-            retentionDays = retentionDays,
-            removalDays = removalDays,
+            retention = retention,
+            removal = removal,
             priority = priority,
             contentGenre = contentGenre,
             rating = rating,
@@ -462,8 +462,8 @@ public data class DvrEntry private constructor(
             stop: Instant?,
             startExtraMinutes: Duration?,
             stopExtraMinutes: Duration?,
-            retentionDays: Long?,
-            removalDays: Long?,
+            retention: DvrRetention?,
+            removal: DvrRemoval?,
             priority: DvrPriority?,
             contentGenre: ContentGenre?,
             rating: EpgRating?,
@@ -493,8 +493,6 @@ public data class DvrEntry private constructor(
             if (start != null && stop != null) {
                 require(stop >= start) { "DvrEntry stop must not precede start" }
             }
-            retentionDays?.let { requireDvrU32("DvrEntry retentionDays", it) }
-            removalDays?.let { requireDvrU32("DvrEntry removalDays", it) }
             startExtraMinutes?.requireDvrExtraMinutes()
             stopExtraMinutes?.requireDvrExtraMinutes()
             playCount?.let { requireDvrU32("DvrEntry playCount", it) }
@@ -517,8 +515,8 @@ public data class DvrEntry private constructor(
                 stop = stop,
                 startExtraMinutes = startExtraMinutes,
                 stopExtraMinutes = stopExtraMinutes,
-                retentionDays = retentionDays,
-                removalDays = removalDays,
+                retention = retention,
+                removal = removal,
                 priority = priority,
                 contentGenre = contentGenre,
                 rating = rating,
@@ -557,8 +555,8 @@ public data class AutorecRule private constructor(
     public val enabled: Boolean?,
     public val maxDuration: Duration?,
     public val minDuration: Duration?,
-    public val retentionDays: Long?,
-    public val removalDays: Long?,
+    public val retention: DvrRetention?,
+    public val removal: DvrRemoval?,
     public val daysOfWeekMask: Set<DayOfWeek>?,
     public val approximateStartMinutesSinceMidnight: AutorecTime?,
     public val startMinutesSinceMidnight: AutorecTime?,
@@ -594,8 +592,8 @@ public data class AutorecRule private constructor(
             enabled: Boolean? = null,
             maxDuration: Duration? = null,
             minDuration: Duration? = null,
-            retentionDays: Long? = null,
-            removalDays: Long? = null,
+            retention: DvrRetention? = null,
+            removal: DvrRemoval? = null,
             daysOfWeekMask: Set<DayOfWeek>? = null,
             approximateStartMinutesSinceMidnight: AutorecTime? = null,
             startMinutesSinceMidnight: AutorecTime? = null,
@@ -620,8 +618,8 @@ public data class AutorecRule private constructor(
             enabled = enabled,
             maxDuration = maxDuration,
             minDuration = minDuration,
-            retentionDays = retentionDays,
-            removalDays = removalDays,
+            retention = retention,
+            removal = removal,
             daysOfWeekMask = daysOfWeekMask,
             approximateStartMinutesSinceMidnight = approximateStartMinutesSinceMidnight,
             startMinutesSinceMidnight = startMinutesSinceMidnight,
@@ -650,8 +648,8 @@ public data class AutorecRule private constructor(
             enabled: Boolean? = null,
             maxDuration: Duration? = null,
             minDuration: Duration? = null,
-            retentionDays: Long? = null,
-            removalDays: Long? = null,
+            retention: DvrRetention? = null,
+            removal: DvrRemoval? = null,
             daysOfWeekMask: Set<DayOfWeek>? = null,
             approximateStartMinutesSinceMidnight: AutorecTime? = null,
             startMinutesSinceMidnight: AutorecTime? = null,
@@ -676,8 +674,6 @@ public data class AutorecRule private constructor(
         ): AutorecRule {
             maxDuration?.let { require(!it.isNegative()) { "AutorecRule maxDuration must not be negative" } }
             minDuration?.let { require(!it.isNegative()) { "AutorecRule minDuration must not be negative" } }
-            retentionDays?.let { requireDvrU32("AutorecRule retentionDays", it) }
-            removalDays?.let { requireDvrU32("AutorecRule removalDays", it) }
             startExtraMinutes?.requireDvrExtraMinutes()
             stopExtraMinutes?.requireDvrExtraMinutes()
             maximumRecordingCount?.let { requireDvrU32("AutorecRule maximumRecordingCount", it) }
@@ -686,8 +682,8 @@ public data class AutorecRule private constructor(
                 enabled = enabled,
                 maxDuration = maxDuration,
                 minDuration = minDuration,
-                retentionDays = retentionDays,
-                removalDays = removalDays,
+                retention = retention,
+                removal = removal,
                 daysOfWeekMask = daysOfWeekMask?.toDvrImmutableDays(),
                 approximateStartMinutesSinceMidnight = approximateStartMinutesSinceMidnight,
                 startMinutesSinceMidnight = startMinutesSinceMidnight,
@@ -726,7 +722,8 @@ public data class TimerecRule private constructor(
     public val stopMinutesSinceMidnight: LocalTime?,
     public val daysOfWeekMask: Set<DayOfWeek>?,
     public val priority: DvrPriority?,
-    public val retentionDays: Long?,
+    public val retention: DvrRetention?,
+    public val removal: DvrRemoval?,
     public val directory: String?,
     /** Server-reported owner; private account metadata, never for diagnostics. */
     @at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
@@ -736,9 +733,6 @@ public data class TimerecRule private constructor(
     public val creator: String?,
     public val configId: DvrConfigId?,
     public val comment: String?,
-    /** Server removal policy in days, using the same wire domain as [AutorecRule.removalDays]. */
-    @at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
-    public val removalDays: Long?,
 ) {
     override fun toString(): String = "TimerecRule(<redacted>)"
 
@@ -754,7 +748,8 @@ public data class TimerecRule private constructor(
             stopMinutesSinceMidnight: LocalTime? = null,
             daysOfWeekMask: Set<DayOfWeek>? = null,
             priority: DvrPriority? = null,
-            retentionDays: Long? = null,
+            retention: DvrRetention? = null,
+            removal: DvrRemoval? = null,
             directory: String? = null,
             configId: DvrConfigId? = null,
             comment: String? = null,
@@ -768,48 +763,13 @@ public data class TimerecRule private constructor(
             stopMinutesSinceMidnight = stopMinutesSinceMidnight,
             daysOfWeekMask = daysOfWeekMask,
             priority = priority,
-            retentionDays = retentionDays,
+            retention = retention,
+            removal = removal,
             directory = directory,
             configId = configId,
             comment = comment,
             owner = null,
             creator = null,
-        )
-
-        /** Creates a time-based rule with its experimental removal policy, including for fakes. */
-        @at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
-        public fun create(
-            id: TimerecRuleId,
-            enabled: Boolean? = null,
-            name: String? = null,
-            title: String? = null,
-            channelId: ChannelId? = null,
-            startMinutesSinceMidnight: LocalTime? = null,
-            stopMinutesSinceMidnight: LocalTime? = null,
-            daysOfWeekMask: Set<DayOfWeek>? = null,
-            priority: DvrPriority? = null,
-            retentionDays: Long? = null,
-            directory: String? = null,
-            configId: DvrConfigId? = null,
-            comment: String? = null,
-            removalDays: Long?,
-        ): TimerecRule = create(
-            id = id,
-            enabled = enabled,
-            name = name,
-            title = title,
-            channelId = channelId,
-            startMinutesSinceMidnight = startMinutesSinceMidnight,
-            stopMinutesSinceMidnight = stopMinutesSinceMidnight,
-            daysOfWeekMask = daysOfWeekMask,
-            priority = priority,
-            retentionDays = retentionDays,
-            directory = directory,
-            configId = configId,
-            comment = comment,
-            owner = null,
-            creator = null,
-            removalDays = removalDays,
         )
 
         internal fun create(
@@ -822,18 +782,16 @@ public data class TimerecRule private constructor(
             stopMinutesSinceMidnight: LocalTime? = null,
             daysOfWeekMask: Set<DayOfWeek>? = null,
             priority: DvrPriority? = null,
-            retentionDays: Long? = null,
+            retention: DvrRetention? = null,
+            removal: DvrRemoval? = null,
             directory: String? = null,
             owner: String?,
             creator: String? = null,
             configId: DvrConfigId? = null,
             comment: String? = null,
-            removalDays: Long? = null,
         ): TimerecRule {
             startMinutesSinceMidnight?.requireDvrWholeMinute()
             stopMinutesSinceMidnight?.requireDvrWholeMinute()
-            retentionDays?.let { requireDvrU32("TimerecRule retentionDays", it) }
-            removalDays?.let { requireDvrU32("TimerecRule removalDays", it) }
             return TimerecRule(
                 id = id,
                 enabled = enabled,
@@ -844,13 +802,13 @@ public data class TimerecRule private constructor(
                 stopMinutesSinceMidnight = stopMinutesSinceMidnight,
                 daysOfWeekMask = daysOfWeekMask?.toDvrImmutableDays(),
                 priority = priority,
-                retentionDays = retentionDays,
+                retention = retention,
+                removal = removal,
                 directory = directory,
                 owner = owner,
                 creator = creator,
                 configId = configId,
                 comment = comment,
-                removalDays = removalDays,
             )
         }
     }

@@ -6,6 +6,8 @@ import at.bernhardberger.tvheadend.sdk.core.ContentCategory
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryId
 import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
 import at.bernhardberger.tvheadend.sdk.core.DvrRecordingStream
+import at.bernhardberger.tvheadend.sdk.core.DvrRemoval
+import at.bernhardberger.tvheadend.sdk.core.DvrRetention
 import at.bernhardberger.tvheadend.sdk.core.DvrSubscriptionError
 import at.bernhardberger.tvheadend.sdk.core.gateway.AutorecRuleId
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
@@ -111,7 +113,7 @@ internal class DvrReducerTest {
         assertEquals("test-creator", retained.autorecRules.single().creator)
         assertEquals("test-owner", retained.timerecRules.single().owner)
         assertEquals("test-creator", retained.timerecRules.single().creator)
-        assertEquals(0xffff_ffffL, retained.timerecRules.single().removalDays)
+        assertEquals(DvrRemoval.Forever, retained.timerecRules.single().removal)
         assertEquals("AutorecRule(<redacted>)", retained.autorecRules.single().toString())
         assertEquals("TimerecRule(<redacted>)", retained.timerecRules.single().toString())
         reducer.accept(MetadataEvent.AutorecRuleUpdated(
@@ -124,15 +126,15 @@ internal class DvrReducerTest {
         assertEquals("updated-creator", reducer.snapshot().autorecRules.single().creator)
         assertEquals("updated-owner", reducer.snapshot().timerecRules.single().owner)
         assertEquals("updated-creator", reducer.snapshot().timerecRules.single().creator)
-        assertEquals(0L, reducer.snapshot().timerecRules.single().removalDays)
+        assertEquals(DvrRemoval.ServerDefault, reducer.snapshot().timerecRules.single().removal)
         reducer.accept(MetadataEvent.AutorecRuleUpdated(generation, GatewayAutorecRule(autoId)))
         reducer.accept(MetadataEvent.TimerecRuleUpdated(generation, GatewayTimerecRule(timeId)))
         assertEquals(null, reducer.snapshot().autorecRules.single().owner)
         assertEquals(null, reducer.snapshot().autorecRules.single().creator)
         assertEquals(null, reducer.snapshot().timerecRules.single().owner)
         assertEquals(null, reducer.snapshot().timerecRules.single().creator)
-        assertEquals(null, reducer.snapshot().timerecRules.single().removalDays)
-        assertEquals(0xffff_ffffL, retained.timerecRules.single().removalDays)
+        assertEquals(null, reducer.snapshot().timerecRules.single().removal)
+        assertEquals(DvrRemoval.Forever, retained.timerecRules.single().removal)
     }
 
     @Test
@@ -417,6 +419,35 @@ internal class DvrReducerTest {
         assertEquals(null, timerec.creator)
         assertEquals(null, timerec.configId)
         assertEquals(null, timerec.comment)
+    }
+
+    @Test
+    fun `keep time wire values decode to typed retention and removal`() {
+        val reducer = DvrReducer()
+        val cases = listOf(
+            0L to (DvrRetention.ServerDefault to DvrRemoval.ServerDefault),
+            30L to (DvrRetention.Days(30) to DvrRemoval.Days(30)),
+            2_147_483_645L to (DvrRetention.Days(Int.MAX_VALUE - 2) to DvrRemoval.Days(Int.MAX_VALUE - 2)),
+            2_147_483_646L to (DvrRetention.UntilFilesRemoved to DvrRemoval.UntilSpaceNeeded),
+            2_147_483_647L to (DvrRetention.Forever to DvrRemoval.Forever),
+            0xffff_ffffL to (DvrRetention.Forever to DvrRemoval.Forever),
+        )
+        cases.forEachIndexed { index, (wire, _) ->
+            reducer.accept(MetadataEvent.DvrEntryAdded(
+                generation, GatewayDvrEntry(DvrEntryId(index + 1L), retentionDays = wire, removalDays = wire),
+            ))
+            reducer.accept(MetadataEvent.AutorecRuleAdded(
+                generation, GatewayAutorecRule(AutorecRuleId("a$index"), retentionDays = wire, removalDays = wire),
+            ))
+            reducer.accept(MetadataEvent.TimerecRuleAdded(
+                generation, GatewayTimerecRule(TimerecRuleId("t$index"), retentionDays = wire, removalDays = wire),
+            ))
+        }
+        val snapshot = reducer.snapshot()
+        val expected = cases.map { (_, typed) -> typed }
+        assertEquals(expected, snapshot.entries.map { it.retention to it.removal })
+        assertEquals(expected, snapshot.autorecRules.map { it.retention to it.removal })
+        assertEquals(expected, snapshot.timerecRules.map { it.retention to it.removal })
     }
 
     @Test

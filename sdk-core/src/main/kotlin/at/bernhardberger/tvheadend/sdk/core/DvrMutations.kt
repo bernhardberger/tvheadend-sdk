@@ -36,6 +36,9 @@ public sealed interface DvrSchedule {
 /**
  * Complete request for scheduling one DVR entry.
  * An [DvrSchedule.ExplicitTime] schedule requires a non-empty [title]; whitespace is permitted.
+ * Null fields are omitted: the entry is enabled, and its padding, priority and keep times follow
+ * the recording profile. Tvheadend reads zero padding as "use the recording profile or channel
+ * padding", not as no padding.
  */
 public data class DvrScheduleRequest(
     public val schedule: DvrSchedule,
@@ -46,12 +49,25 @@ public data class DvrScheduleRequest(
     public val summary: String? = null,
     public val description: String? = null,
     public val ageRating: Long? = null,
+    public val enabled: Boolean? = null,
+    /** Padding before the start, in whole minutes. */
+    public val startExtraMinutes: Duration? = null,
+    /** Padding after the stop, in whole minutes. */
+    public val stopExtraMinutes: Duration? = null,
+    /** Priority to set; [DvrPriority.UNKNOWN] is rejected with [IllegalArgumentException]. */
+    public val priority: DvrPriority? = null,
+    public val retention: DvrRetention? = null,
+    public val removal: DvrRemoval? = null,
+    public val comment: String? = null,
 ) {
     init {
         require(schedule !is DvrSchedule.ExplicitTime || !title.isNullOrEmpty()) {
             "Explicit-time DVR scheduling requires a non-empty title"
         }
         ageRating?.requireDvrMutationU32("DvrScheduleRequest ageRating")
+        startExtraMinutes?.requireDvrExtraMinutes()
+        stopExtraMinutes?.requireDvrExtraMinutes()
+        require(priority != DvrPriority.UNKNOWN) { "DVR priority must be known" }
     }
 
     override fun toString(): String = "DvrScheduleRequest(<redacted>)"
@@ -81,11 +97,25 @@ public data class DvrEntryUpdate(
     public val enabled: Boolean? = null,
     public val start: Instant? = null,
     public val stop: Instant? = null,
+    /** Padding before the start in whole minutes; Tvheadend ignores zero on an entry update. */
     public val startExtraMinutes: Duration? = null,
+    /** Padding after the stop in whole minutes; Tvheadend ignores zero on an entry update. */
     public val stopExtraMinutes: Duration? = null,
-    public val retentionDays: Long? = null,
-    public val removalDays: Long? = null,
-    /** Priority to set; [DvrPriority.UNKNOWN] is rejected with [IllegalArgumentException]. */
+    /**
+     * Retention to set. Tvheadend cannot return an existing entry to the recording profile's
+     * value, so [DvrRetention.ServerDefault] is rejected with [IllegalArgumentException].
+     */
+    public val retention: DvrRetention? = null,
+    /**
+     * Removal to set. Tvheadend cannot return an existing entry to the recording profile's
+     * value, so [DvrRemoval.ServerDefault] is rejected with [IllegalArgumentException].
+     */
+    public val removal: DvrRemoval? = null,
+    /**
+     * Priority to set; [DvrPriority.DEFAULT] returns the entry to the recording profile's priority.
+     * [DvrPriority.UNKNOWN] and [DvrPriority.NOT_SET], which Tvheadend reads as "leave unchanged"
+     * on an entry update, are rejected with [IllegalArgumentException].
+     */
     public val priority: DvrPriority? = null,
     public val ageRating: Long? = null,
 ) {
@@ -93,12 +123,17 @@ public data class DvrEntryUpdate(
         if (start != null && stop != null) {
             require(stop >= start) { "DvrEntryUpdate stop must not precede start" }
         }
-        retentionDays?.requireDvrMutationU32("DvrEntryUpdate retentionDays")
-        removalDays?.requireDvrMutationU32("DvrEntryUpdate removalDays")
+        require(retention != DvrRetention.ServerDefault) {
+            "DvrEntryUpdate cannot restore the server default retention"
+        }
+        require(removal != DvrRemoval.ServerDefault) {
+            "DvrEntryUpdate cannot restore the server default removal"
+        }
         startExtraMinutes?.requireDvrExtraMinutes()
         stopExtraMinutes?.requireDvrExtraMinutes()
         ageRating?.requireDvrMutationU32("DvrEntryUpdate ageRating")
         require(priority != DvrPriority.UNKNOWN) { "DVR priority must be known" }
+        require(priority != DvrPriority.NOT_SET) { "DvrEntryUpdate cannot set an unset priority" }
     }
 
     override fun toString(): String = "DvrEntryUpdate(<redacted>)"
@@ -117,7 +152,12 @@ public sealed interface RecordingRuleChannel {
     public data object AllChannels : RecordingRuleChannel
 }
 
-/** Complete request for creating an automatic-recording rule. */
+/**
+ * Complete request for creating an automatic-recording rule.
+ *
+ * Zero padding and [DvrRetention.ServerDefault] or [DvrRemoval.ServerDefault] follow the recording
+ * profile. Tvheadend reads negative padding on a rule as zero.
+ */
 public data class AutorecRuleCreate(
     public val title: String,
     public val channel: RecordingRuleChannel? = null,
@@ -137,8 +177,8 @@ public data class AutorecRuleCreate(
     public val startMinutesSinceMidnight: AutorecTime? = null,
     public val startWindowEndMinutesSinceMidnight: AutorecTime? = null,
     public val enabled: Boolean? = null,
-    public val retentionDays: Long? = null,
-    public val removalDays: Long? = null,
+    public val retention: DvrRetention? = null,
+    public val removal: DvrRemoval? = null,
     /** Priority to set; [DvrPriority.UNKNOWN] is rejected with [IllegalArgumentException]. */
     public val priority: DvrPriority? = null,
     public val name: String? = null,
@@ -152,8 +192,6 @@ public data class AutorecRuleCreate(
             minDuration = minDuration,
             maxDuration = maxDuration,
             maximumRecordingCount = maximumRecordingCount,
-            retentionDays = retentionDays,
-            removalDays = removalDays,
         )
         startExtraMinutes?.requireDvrExtraMinutes()
         stopExtraMinutes?.requireDvrExtraMinutes()
@@ -165,7 +203,12 @@ public data class AutorecRuleCreate(
     override fun toString(): String = "AutorecRuleCreate(<redacted>)"
 }
 
-/** Partial automatic-recording-rule change; null fields are omitted from the command. */
+/**
+ * Partial automatic-recording-rule change; null fields are omitted from the command.
+ *
+ * Zero padding and [DvrRetention.ServerDefault] or [DvrRemoval.ServerDefault] follow the recording
+ * profile. Tvheadend reads negative padding on a rule as zero.
+ */
 public data class AutorecRuleUpdate(
     public val channel: RecordingRuleChannel? = null,
     public val minDuration: Duration? = null,
@@ -179,12 +222,16 @@ public data class AutorecRuleUpdate(
     public val broadcastType: BroadcastType? = null,
     public val startExtraMinutes: Duration? = null,
     public val stopExtraMinutes: Duration? = null,
+    /**
+     * Series link to send. Tvheadend treats a rule's series link as read-only after creation and
+     * ignores it here; create a new rule to follow a different series.
+     */
     public val seriesLinkUri: String? = null,
     public val startMinutesSinceMidnight: AutorecTime? = null,
     public val startWindowEndMinutesSinceMidnight: AutorecTime? = null,
     public val enabled: Boolean? = null,
-    public val retentionDays: Long? = null,
-    public val removalDays: Long? = null,
+    public val retention: DvrRetention? = null,
+    public val removal: DvrRemoval? = null,
     /** Priority to set; [DvrPriority.UNKNOWN] is rejected with [IllegalArgumentException]. */
     public val priority: DvrPriority? = null,
     public val name: String? = null,
@@ -199,8 +246,6 @@ public data class AutorecRuleUpdate(
             minDuration = minDuration,
             maxDuration = maxDuration,
             maximumRecordingCount = maximumRecordingCount,
-            retentionDays = retentionDays,
-            removalDays = removalDays,
         )
         startExtraMinutes?.requireDvrExtraMinutes()
         stopExtraMinutes?.requireDvrExtraMinutes()
@@ -219,8 +264,8 @@ public data class TimerecRuleCreate(
     public val startMinutesSinceMidnight: LocalTime? = null,
     public val stopMinutesSinceMidnight: LocalTime? = null,
     public val enabled: Boolean? = null,
-    public val retentionDays: Long? = null,
-    public val removalDays: Long? = null,
+    public val retention: DvrRetention? = null,
+    public val removal: DvrRemoval? = null,
     /** Priority to set; [DvrPriority.UNKNOWN] is rejected with [IllegalArgumentException]. */
     public val priority: DvrPriority? = null,
     public val name: String? = null,
@@ -233,8 +278,6 @@ public data class TimerecRuleCreate(
         validateTimerecMutation(
             startMinutesSinceMidnight,
             stopMinutesSinceMidnight,
-            retentionDays,
-            removalDays,
         )
         require(priority != DvrPriority.UNKNOWN) { "DVR priority must be known" }
     }
@@ -248,8 +291,8 @@ public data class TimerecRuleUpdate(
     public val startMinutesSinceMidnight: LocalTime? = null,
     public val stopMinutesSinceMidnight: LocalTime? = null,
     public val enabled: Boolean? = null,
-    public val retentionDays: Long? = null,
-    public val removalDays: Long? = null,
+    public val retention: DvrRetention? = null,
+    public val removal: DvrRemoval? = null,
     /** Priority to set; [DvrPriority.UNKNOWN] is rejected with [IllegalArgumentException]. */
     public val priority: DvrPriority? = null,
     public val name: String? = null,
@@ -263,8 +306,6 @@ public data class TimerecRuleUpdate(
         validateTimerecMutation(
             startMinutesSinceMidnight,
             stopMinutesSinceMidnight,
-            retentionDays,
-            removalDays,
         )
         require(priority != DvrPriority.UNKNOWN) { "DVR priority must be known" }
     }
@@ -496,26 +537,18 @@ private fun validateAutorecMutation(
     minDuration: Duration?,
     maxDuration: Duration?,
     maximumRecordingCount: Long?,
-    retentionDays: Long?,
-    removalDays: Long?,
 ) {
     minDuration?.requireDvrMutationDuration("Autorec minDuration")
     maxDuration?.requireDvrMutationDuration("Autorec maxDuration")
     maximumRecordingCount?.requireDvrMutationU32("Autorec maximumRecordingCount")
-    retentionDays?.requireDvrMutationU32("Autorec retentionDays")
-    removalDays?.requireDvrMutationU32("Autorec removalDays")
 }
 
 private fun validateTimerecMutation(
     startMinutesSinceMidnight: LocalTime?,
     stopMinutesSinceMidnight: LocalTime?,
-    retentionDays: Long?,
-    removalDays: Long?,
 ) {
     startMinutesSinceMidnight?.requireDvrWholeMinute()
     stopMinutesSinceMidnight?.requireDvrWholeMinute()
-    retentionDays?.requireDvrMutationU32("Timerec retentionDays")
-    removalDays?.requireDvrMutationU32("Timerec removalDays")
 }
 
 private fun Duration.requireDvrMutationDuration(name: String) {

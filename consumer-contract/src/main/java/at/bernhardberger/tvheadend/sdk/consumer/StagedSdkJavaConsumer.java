@@ -178,9 +178,16 @@ public final class StagedSdkJavaConsumer {
         return observation.dvrEntryForEvent(event);
     }
 
-    @kotlin.OptIn(markerClass = ExperimentalTvheadendApi.class)
-    public static Long timerecRemovalDays(at.bernhardberger.tvheadend.sdk.core.TimerecRule rule) {
-        return rule.getRemovalDays();
+    public static Integer timerecRemovalDays(at.bernhardberger.tvheadend.sdk.core.TimerecRule rule) {
+        at.bernhardberger.tvheadend.sdk.core.DvrRemoval removal = rule.getRemoval();
+        if (removal instanceof at.bernhardberger.tvheadend.sdk.core.DvrRemoval.Days days) {
+            return days.getDays();
+        }
+        return null;
+    }
+
+    public static at.bernhardberger.tvheadend.sdk.core.DvrRetention retentionForever() {
+        return at.bernhardberger.tvheadend.sdk.core.DvrRetention.Forever.INSTANCE;
     }
 
     @kotlin.OptIn(markerClass = ExperimentalTvheadendApi.class)
@@ -315,6 +322,7 @@ public final class StagedSdkJavaConsumer {
         return EpgSearchRequest.createFromSeconds(
                 query,
                 true,
+                false,
                 1L,
                 2L,
                 0x20L,

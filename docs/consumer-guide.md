@@ -450,6 +450,14 @@ unusable payload is `Failed(MALFORMED_RESPONSE)`. Search durations, when supplie
 must be finite, non-negative whole seconds; content type is an unsigned eight-bit
 genre code.
 
+`fullText = true` also matches the query in programme descriptions, credits and
+keywords. `mergeText = true` matches it against the programme's text fields
+merged into one string, the way an automatic rule with `AutorecRule.mergeText`
+matches, so a search can preview what such a rule would catch. When both are
+set, merge-text matching wins. Tvheadend added merge-text search in December
+2025 without changing the HTSP version, so the SDK cannot detect support; older
+servers ignore the flag and search as if it were `false`.
+
 Acquire a bounded future horizon separately:
 
 ```kotlin
@@ -703,15 +711,19 @@ acknowledgement still fails with `MALFORMED_RESPONSE` and requires explicit retr
 Metadata delivery overflow still retires the generation and reconnects with backoff
 for a full resync.
 
-With
-`@OptIn(ExperimentalTvheadendApi::class)`, time-based rules expose `removalDays`
-as a nullable `Long`, matching `AutorecRule.removalDays` (unsigned 32-bit server
-policy domain, `null` means unknown). Fakes can use
-`TimerecRule.create(id, removalDays = 30)`. Rule updates replace their snapshots,
-so omitted rule fields become unknown rather than retaining an old policy.
+Entries and both rule types expose keep times as `retention: DvrRetention?`
+(how long the server keeps the entry, which duplicate detection relies on) and
+`removal: DvrRemoval?` (how long it keeps the files). `null` means the server
+did not report the value. Both are sealed: `ServerDefault`, `Days(days)`,
+`Forever`, and `DvrRetention.UntilFilesRemoved` or `DvrRemoval.UntilSpaceNeeded`.
+The server reports the effective value with the recording profile already
+applied, so a read value is `ServerDefault` only when the profile itself stores
+zero; a read cannot tell whether an entry or rule follows its profile. Rule
+updates replace their snapshots, so omitted rule fields become unknown rather
+than retaining an old policy.
 
-The same opt-in exposes nullable, read-only `owner` and `creator` on entries and
-both rule types. These are server-reported account metadata for application
+With `@OptIn(ExperimentalTvheadendApi::class)`, entries and both rule types
+expose nullable, read-only `owner` and `creator`. These are server-reported account metadata for application
 display; keep them out of logs and diagnostics. Model `toString()` remains
 redacted. Public create factories leave ownership unset.
 
@@ -758,6 +770,9 @@ delete automatic and time-based rules. For example:
 ```kotlin
 val request = DvrScheduleRequest(
     schedule = DvrSchedule.Programme(event.id),
+    stopExtraMinutes = 10.minutes,
+    priority = DvrPriority.HIGH,
+    removal = DvrRemoval.UntilSpaceNeeded,
 )
 
 when (val result = session.dvrRepository.scheduleEntry(currentSession, request)) {
@@ -774,6 +789,24 @@ when (val result = session.dvrRepository.scheduleEntry(currentSession, request))
     }
 }
 ```
+
+Null scheduling options are omitted: the entry is enabled, and its padding,
+priority and keep times follow the recording profile. Tvheadend reads zero
+padding as "use the profile or channel padding", not as no padding.
+
+Updates of an existing entry treat zero padding, zero keep times and
+`DvrPriority.NOT_SET` as "leave unchanged", so keep times and padding cannot
+return to the profile once set. `DvrEntryUpdate` therefore rejects
+`DvrRetention.ServerDefault`, `DvrRemoval.ServerDefault` and `DvrPriority.NOT_SET`
+with `IllegalArgumentException`; zero padding is accepted but has no effect.
+`DvrPriority.DEFAULT` does return an entry to the profile's priority. Once an
+entry is recording or completed, the server applies only `enabled`, the stop
+time, stop padding, keep times, title, subtitle and summary, and ignores every
+other field.
+
+Rule creates and updates accept `ServerDefault` and zero padding, which return
+the rule to its profile. Tvheadend reads negative padding on an automatic rule as
+zero.
 
 `Confirmed` means matching authoritative metadata was published.
 `AcceptedButUnconfirmed` means the server accepted the command but confirmation

@@ -19,14 +19,26 @@ import kotlin.time.Instant
 
 internal class DvrRepositoryTest {
     @Test
-    fun `timerec removal factory preserves unknown zero and unsigned policy values`() {
+    fun `timerec factory keeps typed keep times and distinguishes absence`() {
         val id = TimerecRuleId("rule")
-        assertNull(TimerecRule.create(id).removalDays)
-        for (days in listOf(null, 0L, 30L, 0xffff_ffffL)) {
-            assertEquals(days, TimerecRule.create(id, removalDays = days).removalDays)
+        assertNull(TimerecRule.create(id).removal)
+        assertNull(TimerecRule.create(id).retention)
+        for (removal in listOf(null, DvrRemoval.ServerDefault, DvrRemoval.Days(30), DvrRemoval.Forever)) {
+            assertEquals(removal, TimerecRule.create(id, removal = removal).removal)
         }
-        for (days in listOf(-1L, 0x1_0000_0000L)) {
-            assertThrows(IllegalArgumentException::class.java) { TimerecRule.create(id, removalDays = days) }
+        assertEquals(
+            DvrRetention.UntilFilesRemoved,
+            TimerecRule.create(id, retention = DvrRetention.UntilFilesRemoved).retention,
+        )
+    }
+
+    @Test
+    fun `keep time days reject values that collide with server sentinels`() {
+        assertEquals(1, DvrRemoval.Days(1).days)
+        assertEquals(Int.MAX_VALUE - 2, DvrRetention.Days(Int.MAX_VALUE - 2).days)
+        for (days in listOf(0, -1, Int.MAX_VALUE - 1, Int.MAX_VALUE)) {
+            assertThrows(IllegalArgumentException::class.java) { DvrRemoval.Days(days) }
+            assertThrows(IllegalArgumentException::class.java) { DvrRetention.Days(days) }
         }
     }
 
@@ -111,9 +123,6 @@ internal class DvrRepositoryTest {
         assertThrows(IllegalArgumentException::class.java) {
             TimerecRule.create(TimerecRuleId("rule"), startMinutesSinceMidnight = LocalTime.of(0, 0, 1))
         }
-        assertThrows(IllegalArgumentException::class.java) {
-            AutorecRule.create(AutorecRuleId("rule"), retentionDays = -1)
-        }
         assertFalse(
             listOf(entry, entry.files?.single(), entry.rating, entry.episode).joinToString()
                 .contains("private"),
@@ -158,7 +167,22 @@ internal class DvrRepositoryTest {
             DvrEntryUpdate(start = instant(2), stop = instant(1))
         }
         assertThrows(IllegalArgumentException::class.java) {
-            DvrEntryUpdate(retentionDays = 0x1_0000_0000L)
+            DvrEntryUpdate(retention = DvrRetention.ServerDefault)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            DvrEntryUpdate(removal = DvrRemoval.ServerDefault)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            DvrEntryUpdate(priority = DvrPriority.NOT_SET)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            DvrScheduleRequest(DvrSchedule.Programme(EventId(1)), priority = DvrPriority.UNKNOWN)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            DvrScheduleRequest(DvrSchedule.Programme(EventId(1)), startExtraMinutes = 30.seconds)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            DvrScheduleRequest(DvrSchedule.Programme(EventId(1)), stopExtraMinutes = 90.seconds)
         }
         assertThrows(IllegalArgumentException::class.java) {
             AutorecRuleCreate(title = "title", minDuration = 500.milliseconds)

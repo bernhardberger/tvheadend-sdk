@@ -157,6 +157,8 @@ import at.bernhardberger.tvheadend.sdk.core.AutorecTime
 import at.bernhardberger.tvheadend.sdk.core.BroadcastType
 import at.bernhardberger.tvheadend.sdk.core.DuplicateDetection
 import at.bernhardberger.tvheadend.sdk.core.DvrPriority
+import at.bernhardberger.tvheadend.sdk.core.DvrRemoval
+import at.bernhardberger.tvheadend.sdk.core.DvrRetention
 import java.time.DayOfWeek
 import java.time.LocalTime
 import kotlin.time.Duration.Companion.minutes
@@ -2175,6 +2177,7 @@ internal class HtspProtocolGatewayTest {
         val search = EpgSearchRequest.create(
             query = "private-query",
             fullText = true,
+            mergeText = true,
             channelId = at.bernhardberger.tvheadend.sdk.core.ChannelId(11),
             tagId = ChannelTagId(12),
             contentType = 13,
@@ -2193,7 +2196,7 @@ internal class HtspProtocolGatewayTest {
         assertEquals(13L, request.contentType)
         assertEquals("de", request.language)
         assertEquals(true, request.fullText)
-        assertEquals(null, request.mergeText)
+        assertEquals(true, request.mergeText)
         assertEquals(true, request.full)
         assertEquals(14L, request.minDurationSeconds)
         assertEquals(15L, request.maxDurationSeconds)
@@ -2659,6 +2662,13 @@ internal class HtspProtocolGatewayTest {
             summary = "private-summary",
             description = "private-description",
             ageRating = 12,
+            enabled = false,
+            startExtraMinutes = (-2).minutes,
+            stopExtraMinutes = 15.minutes,
+            priority = DvrPriority.HIGH,
+            retention = DvrRetention.UntilFilesRemoved,
+            removal = DvrRemoval.UntilSpaceNeeded,
+            comment = "private-comment",
         )
 
         val scheduled = gateway.scheduleDvrEntry(generation, schedule) as GatewayResult.Ok
@@ -2676,6 +2686,13 @@ internal class HtspProtocolGatewayTest {
         assertEquals("private-summary", addRequest.summary)
         assertEquals("private-description", addRequest.description)
         assertEquals(12L, addRequest.ageRating)
+        assertEquals(false, addRequest.enabled)
+        assertEquals(-2L, addRequest.startExtraMinutes)
+        assertEquals(15L, addRequest.stopExtraMinutes)
+        assertEquals(1L, addRequest.priority)
+        assertEquals(2_147_483_646L, addRequest.retentionDays)
+        assertEquals(2_147_483_646L, addRequest.removalDays)
+        assertEquals("private-comment", addRequest.comment)
         assertFalse(scheduled.toString().contains("private"))
 
         fake.executeResult = HtspResult.Ok(UpdateDvrEntryResponse)
@@ -2693,8 +2710,8 @@ internal class HtspProtocolGatewayTest {
             stop = Instant.fromEpochSeconds(6),
             startExtraMinutes = (-7).minutes,
             stopExtraMinutes = 8.minutes,
-            retentionDays = 9,
-            removalDays = 10,
+            retention = DvrRetention.Days(9),
+            removal = DvrRemoval.Forever,
             priority = DvrPriority.HIGH,
             ageRating = 13,
         )
@@ -2715,7 +2732,7 @@ internal class HtspProtocolGatewayTest {
         assertEquals(-7L, updateRequest.startExtraMinutes)
         assertEquals(8L, updateRequest.stopExtraMinutes)
         assertEquals(9L, updateRequest.retentionDays)
-        assertEquals(10L, updateRequest.removalDays)
+        assertEquals(2_147_483_647L, updateRequest.removalDays)
         assertEquals(1L, updateRequest.priority)
         assertEquals(13L, updateRequest.ageRating)
         assertEquals(null, updateRequest.playCount)
@@ -3074,6 +3091,60 @@ internal class HtspProtocolGatewayTest {
 
     @Test
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun `rule updates send every typed keep time and omit absent ones`() = runTest {
+        val source = HtspConnectionGeneration()
+        val messages = MutableSharedFlow<HtspTransportEvent>()
+        val fake = FakeHtspConnection().apply {
+            connectOutcome = HtspConnectOutcome.Connected(liveConnection(source))
+            eventsFlow = messages
+        }
+        val gateway = HtspProtocolGateway(fake)
+        val generation = (gateway.connect(ServerConfiguration("host", 9_982))
+            as GatewayConnectResult.Connected).connection.generation
+        backgroundScope.launch(start = CoroutineStart.UNDISPATCHED) { gateway.metadata.collect {} }
+        messages.emit(HtspTransportEvent.ServerMessage(HtspAutorecEntryAddMessage(autorecFixture()), source, 1))
+        messages.emit(HtspTransportEvent.ServerMessage(HtspTimerecEntryUpdateMessage(timerecFixture()), source, 2))
+        runCurrent()
+        val autoId = AutorecRuleId("auto")
+        val timeId = TimerecRuleId("time")
+        val cases = listOf(
+            Triple(DvrRetention.ServerDefault, DvrRemoval.ServerDefault, 0L to 0L),
+            Triple(DvrRetention.Days(14), DvrRemoval.Days(31), 14L to 31L),
+            Triple(DvrRetention.UntilFilesRemoved, DvrRemoval.UntilSpaceNeeded, 2_147_483_646L to 2_147_483_646L),
+            Triple(DvrRetention.Forever, DvrRemoval.Forever, 2_147_483_647L to 2_147_483_647L),
+        )
+
+        for ((retention, removal, wire) in cases) {
+            fake.executeResult = HtspResult.Ok(UpdateAutorecEntryResponse)
+            assertTrue(
+                gateway.updateAutorecRule(
+                    generation, autoId, AutorecRuleUpdate(retention = retention, removal = removal),
+                ) is GatewayResult.Ok,
+            )
+            val autorec = fake.lastRequest as UpdateAutorecEntryRequest
+            assertEquals(wire, autorec.retentionDays to autorec.removalDays)
+            fake.executeResult = HtspResult.Ok(UpdateTimerecEntryResponse)
+            assertTrue(
+                gateway.updateTimerecRule(
+                    generation, timeId, TimerecRuleUpdate(retention = retention, removal = removal),
+                ) is GatewayResult.Ok,
+            )
+            val timerec = fake.lastRequest as UpdateTimerecEntryRequest
+            assertEquals(wire, timerec.retentionDays to timerec.removalDays)
+        }
+
+        fake.executeResult = HtspResult.Ok(UpdateAutorecEntryResponse)
+        gateway.updateAutorecRule(generation, autoId, AutorecRuleUpdate(title = "next"))
+        val omittedAutorec = fake.lastRequest as UpdateAutorecEntryRequest
+        assertEquals(null to null, omittedAutorec.retentionDays to omittedAutorec.removalDays)
+        fake.executeResult = HtspResult.Ok(UpdateTimerecEntryResponse)
+        gateway.updateTimerecRule(generation, timeId, TimerecRuleUpdate(title = "next"))
+        val omittedTimerec = fake.lastRequest as UpdateTimerecEntryRequest
+        assertEquals(null to null, omittedTimerec.retentionDays to omittedTimerec.removalDays)
+    }
+
+    @Test
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     fun `rule updates preserve observed restrictions and never invent an unknown channel`() = runTest {
         val source = HtspConnectionGeneration()
         val messages = MutableSharedFlow<HtspTransportEvent>()
@@ -3296,8 +3367,8 @@ internal class HtspProtocolGatewayTest {
             startMinutesSinceMidnight = AutorecTime.At(LocalTime.of(0, 9)),
             startWindowEndMinutesSinceMidnight = AutorecTime.At(LocalTime.of(0, 10)),
             enabled = true,
-            retentionDays = 11,
-            removalDays = 12,
+            retention = DvrRetention.Days(11),
+            removal = DvrRemoval.UntilSpaceNeeded,
             priority = DvrPriority.LOW,
             name = "private-name",
             comment = "private-comment",
@@ -3326,7 +3397,7 @@ internal class HtspProtocolGatewayTest {
         assertEquals(10, addAutorec.startWindowEndMinutesSinceMidnight)
         assertEquals(true, addAutorec.enabled)
         assertEquals(11L, addAutorec.retentionDays)
-        assertEquals(12L, addAutorec.removalDays)
+        assertEquals(2_147_483_646L, addAutorec.removalDays)
         assertEquals(3L, addAutorec.priority)
         assertEquals("private-name", addAutorec.name)
         assertEquals("private-comment", addAutorec.comment)
@@ -3379,8 +3450,8 @@ internal class HtspProtocolGatewayTest {
                 startMinutesSinceMidnight = LocalTime.of(1, 0),
                 stopMinutesSinceMidnight = LocalTime.of(2, 0),
                 enabled = true,
-                retentionDays = 1,
-                removalDays = 2,
+                retention = DvrRetention.Forever,
+                removal = DvrRemoval.ServerDefault,
                 priority = DvrPriority.LOW,
                 name = "private-time-name",
                 comment = "private-time-comment",
@@ -3398,6 +3469,8 @@ internal class HtspProtocolGatewayTest {
         assertEquals(60, addTimerec.startMinutesSinceMidnight)
         assertEquals(120, addTimerec.stopMinutesSinceMidnight)
         assertEquals("private-time-config", addTimerec.configName)
+        assertEquals(2_147_483_647L, addTimerec.retentionDays)
+        assertEquals(0L, addTimerec.removalDays)
 
         fake.executeResult = HtspResult.Ok(UpdateTimerecEntryResponse)
         assertTrue(

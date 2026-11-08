@@ -169,6 +169,91 @@ public class BroadcastType private constructor(private val label: String, intern
     }
 }
 
+// Tvheadend dvr_retention_removal_t (dvr.h): 0 selects the recording profile, INT32_MAX - 1 is
+// "on file removal" for retention and "until space is needed" for removal, INT32_MAX is forever.
+private const val DVR_KEEP_SERVER_DEFAULT_WIRE: Long = 0L
+private const val DVR_KEEP_FOREVER_WIRE: Long = Int.MAX_VALUE.toLong()
+private const val DVR_KEEP_CONDITIONAL_WIRE: Long = DVR_KEEP_FOREVER_WIRE - 1
+
+/** Largest day count that [DvrRemoval.Days] and [DvrRetention.Days] accept. */
+private const val DVR_KEEP_DAYS_MAX: Int = Int.MAX_VALUE - 2
+
+/**
+ * How long Tvheadend keeps a recording's files before it removes them.
+ *
+ * Servers report the effective value for entries and rules, with the recording profile's setting
+ * already applied, so a read value is [ServerDefault] only when that profile itself stores zero.
+ */
+public sealed interface DvrRemoval {
+    /** Follow the recording profile; on an existing entry's update this cannot be selected. */
+    public data object ServerDefault : DvrRemoval
+
+    /** Keep files for [days] days after the recording ends, from 1 to 2147483645. */
+    public data class Days(public val days: Int) : DvrRemoval {
+        init {
+            require(days in 1..DVR_KEEP_DAYS_MAX) { "DvrRemoval days must be between 1 and $DVR_KEEP_DAYS_MAX" }
+        }
+    }
+
+    /** Keep files until Tvheadend needs the storage space for new recordings. */
+    public data object UntilSpaceNeeded : DvrRemoval
+
+    /** Never remove the files automatically. */
+    public data object Forever : DvrRemoval
+}
+
+/**
+ * How long Tvheadend keeps an entry's information, which duplicate detection relies on, after the
+ * recording ends. Read values are effective values, as for [DvrRemoval].
+ */
+public sealed interface DvrRetention {
+    /** Follow the recording profile; on an existing entry's update this cannot be selected. */
+    public data object ServerDefault : DvrRetention
+
+    /** Keep the information for [days] days after the recording ends, from 1 to 2147483645. */
+    public data class Days(public val days: Int) : DvrRetention {
+        init {
+            require(days in 1..DVR_KEEP_DAYS_MAX) { "DvrRetention days must be between 1 and $DVR_KEEP_DAYS_MAX" }
+        }
+    }
+
+    /** Keep the information until the recording's files are removed. */
+    public data object UntilFilesRemoved : DvrRetention
+
+    /** Keep the information forever. */
+    public data object Forever : DvrRetention
+}
+
+internal fun DvrRemoval.toWire(): Long = when (this) {
+    DvrRemoval.ServerDefault -> DVR_KEEP_SERVER_DEFAULT_WIRE
+    is DvrRemoval.Days -> days.toLong()
+    DvrRemoval.UntilSpaceNeeded -> DVR_KEEP_CONDITIONAL_WIRE
+    DvrRemoval.Forever -> DVR_KEEP_FOREVER_WIRE
+}
+
+internal fun DvrRetention.toWire(): Long = when (this) {
+    DvrRetention.ServerDefault -> DVR_KEEP_SERVER_DEFAULT_WIRE
+    is DvrRetention.Days -> days.toLong()
+    DvrRetention.UntilFilesRemoved -> DVR_KEEP_CONDITIONAL_WIRE
+    DvrRetention.Forever -> DVR_KEEP_FOREVER_WIRE
+}
+
+/** Decodes a non-negative wire value; Tvheadend clamps values above INT32_MAX to forever. */
+internal fun Long.toDvrRemoval(): DvrRemoval = when {
+    this <= DVR_KEEP_SERVER_DEFAULT_WIRE -> DvrRemoval.ServerDefault
+    this < DVR_KEEP_CONDITIONAL_WIRE -> DvrRemoval.Days(toInt())
+    this == DVR_KEEP_CONDITIONAL_WIRE -> DvrRemoval.UntilSpaceNeeded
+    else -> DvrRemoval.Forever
+}
+
+/** Decodes a non-negative wire value; Tvheadend clamps values above INT32_MAX to forever. */
+internal fun Long.toDvrRetention(): DvrRetention = when {
+    this <= DVR_KEEP_SERVER_DEFAULT_WIRE -> DvrRetention.ServerDefault
+    this < DVR_KEEP_CONDITIONAL_WIRE -> DvrRetention.Days(toInt())
+    this == DVR_KEEP_CONDITIONAL_WIRE -> DvrRetention.UntilFilesRemoved
+    else -> DvrRetention.Forever
+}
+
 internal fun LocalTime.requireDvrWholeMinute() {
     require(second == 0 && nano == 0) { "DVR time must use whole minutes" }
 }

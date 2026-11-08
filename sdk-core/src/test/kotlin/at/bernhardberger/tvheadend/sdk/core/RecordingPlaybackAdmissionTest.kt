@@ -170,7 +170,7 @@ internal class RecordingPlaybackAdmissionTest {
         DvrEntry.create(
             id = DvrEntryId(7), uuid = null, enabled = null, channelId = null, channelName = null,
             eventId = null, autorecRuleId = null, timerecRuleId = null, start = null, stop = null,
-            startExtraMinutes = null, stopExtraMinutes = null, retentionDays = null, removalDays = null,
+            startExtraMinutes = null, stopExtraMinutes = null, retention = null, removal = null,
             priority = null, contentGenre = null, rating = null, playCount = null, playPosition = null,
             episode = null, title = null, description = null, summary = null, subtitle = null,
             owner = null, creator = null, comment = null, image = null, fanartImage = null,

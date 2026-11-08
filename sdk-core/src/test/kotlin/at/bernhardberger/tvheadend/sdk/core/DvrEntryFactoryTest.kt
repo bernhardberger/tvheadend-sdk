@@ -51,11 +51,6 @@ internal class DvrEntryFactoryTest {
             DvrEntry.create(id, start = Instant.fromEpochSeconds(20), stop = Instant.fromEpochSeconds(10),
                 owner = "fixture-owner", creator = "fixture-creator")
         }
-        for (days in listOf(-1L, 0x1_0000_0000L)) {
-            assertThrows(IllegalArgumentException::class.java) {
-                DvrEntry.create(id, retentionDays = days, owner = null, creator = null)
-            }
-        }
         assertThrows(IllegalArgumentException::class.java) {
             DvrEntry.create(id, startExtraMinutes = 1.seconds, owner = null, creator = null)
         }

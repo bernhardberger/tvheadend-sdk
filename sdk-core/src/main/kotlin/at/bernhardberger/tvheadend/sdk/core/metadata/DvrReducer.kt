@@ -12,6 +12,8 @@ import at.bernhardberger.tvheadend.sdk.core.toAutorecTime
 import at.bernhardberger.tvheadend.sdk.core.toDvrDays
 import at.bernhardberger.tvheadend.sdk.core.toDvrExtraDuration
 import at.bernhardberger.tvheadend.sdk.core.toDvrLocalTime
+import at.bernhardberger.tvheadend.sdk.core.toDvrRemoval
+import at.bernhardberger.tvheadend.sdk.core.toDvrRetention
 import at.bernhardberger.tvheadend.sdk.core.DvrEntry
 import at.bernhardberger.tvheadend.sdk.core.DvrRecordingFile
 import at.bernhardberger.tvheadend.sdk.core.DvrSnapshot
@@ -118,8 +120,8 @@ internal data class ReducedDvrEntry private constructor(
             stop = stop,
             startExtraMinutes = startExtraMinutes?.toDvrExtraDuration(),
             stopExtraMinutes = stopExtraMinutes?.toDvrExtraDuration(),
-            retentionDays = retentionDays,
-            removalDays = removalDays,
+            retention = retentionDays?.toDvrRetention(),
+            removal = removalDays?.toDvrRemoval(),
             priority = priority?.let(DvrPriority::fromWire),
             contentGenre = ContentGenre.fromDvrContentType(contentType),
             rating = ratingOrNull(),
@@ -302,8 +304,8 @@ internal data class ReducedAutorecRule private constructor(
         enabled = enabled,
         maxDuration = maxDuration,
         minDuration = minDuration,
-        retentionDays = retentionDays,
-        removalDays = removalDays,
+        retention = retentionDays?.toDvrRetention(),
+        removal = removalDays?.toDvrRemoval(),
         daysOfWeekMask = daysOfWeekMask?.toDvrDays(),
         approximateStartMinutesSinceMidnight = approximateStartMinutesSinceMidnight?.toAutorecTime(),
         startMinutesSinceMidnight = startMinutesSinceMidnight?.toAutorecTime(),
@@ -394,8 +396,8 @@ internal data class ReducedTimerecRule private constructor(
             stopMinutesSinceMidnight = stopMinutesSinceMidnight?.toDvrLocalTime(),
             daysOfWeekMask = daysOfWeekMask?.toDvrDays(),
             priority = priority?.let(DvrPriority::fromWire),
-            retentionDays = retentionDays,
-            removalDays = removalDays,
+            retention = retentionDays?.toDvrRetention(),
+            removal = removalDays?.toDvrRemoval(),
             directory = directory,
             owner = owner,
             creator = creator,
