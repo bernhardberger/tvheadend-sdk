@@ -1,0 +1,9 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>ForbiddenMethodCall:GrowingTsSeekFeasibilityInstrumentationTest.kt:sleep(P7_POLL_INTERVAL_MS)</ID>
+    <ID>ForbiddenMethodCall:GrowingTsSourceInstrumentationTest.kt:sleep(FIXTURE_POLL_INTERVAL_MS)</ID>
+    <ID>ForbiddenMethodCall:SdkAcceptanceInstrumentationTest.kt:SdkAcceptanceInstrumentationTest$sleep(STATUS_FLUSH_DELAY_MS)</ID>
+  </CurrentIssues>
+</SmellBaseline>

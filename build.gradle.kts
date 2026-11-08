@@ -1,5 +1,7 @@
 import com.android.Version
 import com.android.build.api.dsl.LibraryExtension
+import dev.detekt.gradle.Detekt
+import dev.detekt.gradle.DetektCreateBaselineTask
 import org.gradle.api.Project
 import org.gradle.api.artifacts.FileCollectionDependency
 import org.gradle.api.artifacts.ProjectDependency
@@ -526,6 +528,38 @@ subprojects {
     }
     tasks.matching { task -> task.name == "check" }.configureEach {
         dependsOn(verifyClassMajor61)
+    }
+
+    pluginManager.withPlugin("dev.detekt") {
+        // Type-resolved test tasks run only detekt-tests.yml; every other detekt task analyses production sources.
+        val testSourceSets = setOf("Test", "TestFixtures", "DebugUnitTest", "DebugAndroidTest")
+        fun testBaseline(sourceSet: String) =
+            layout.projectDirectory.file("detekt-baseline-${sourceSet.replaceFirstChar(Char::lowercaseChar)}.xml")
+        val testDetektTasks = tasks.withType<Detekt>().matching { task ->
+            task.name.removePrefix("detekt") in testSourceSets
+        }
+        tasks.withType<Detekt>().configureEach {
+            val sourceSet = name.removePrefix("detekt")
+            if (sourceSet in testSourceSets) {
+                config.setFrom(rootProject.file("detekt-tests.yml"))
+                buildUponDefaultConfig.set(false)
+                val baselineFile = testBaseline(sourceSet)
+                if (baselineFile.asFile.isFile) baseline.set(baselineFile)
+            } else {
+                setSource(files("src/main/kotlin"))
+            }
+        }
+        tasks.withType<DetektCreateBaselineTask>().configureEach {
+            val sourceSet = name.removePrefix("detektBaseline")
+            if (sourceSet in testSourceSets) {
+                config.setFrom(rootProject.file("detekt-tests.yml"))
+                buildUponDefaultConfig.set(false)
+                baseline.set(testBaseline(sourceSet))
+            }
+        }
+        tasks.matching { task -> task.name == "check" }.configureEach {
+            dependsOn(testDetektTasks)
+        }
     }
 
     pluginManager.withPlugin("org.jetbrains.kotlin.jvm") {

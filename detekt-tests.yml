@@ -1,0 +1,22 @@
+# Rules for test and test-fixture sources only. The build runs these without the
+# default rule set, so production rules such as KDoc stay on main sources.
+config:
+  validation: true
+
+naming:
+  active: true
+  ClassNaming:
+    active: true
+    # Name test classes after the unit or behavior, not the process that produced them.
+    # Only names ending in Test or Tests are checked. Slice, Fence and Acceptance are left out
+    # because production classes use them as domain names (ScanUnit.Slice, EpgQueryFence,
+    # EpgQueryAcceptance).
+    classPattern: '(?!.*(?:Review|Evidence|Phase|PreRelease).*Tests?$)[A-Z][a-zA-Z0-9]*'
+
+style:
+  active: true
+  ForbiddenMethodCall:
+    active: true
+    methods:
+      - value: 'java.lang.Thread.sleep'
+        reason: 'Tests must not wait on the real clock; use virtual time from kotlinx-coroutines-test or a fake clock.'

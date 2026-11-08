@@ -63,6 +63,16 @@ signatures), secrets or server details in errors, logs or `toString()`,
 attribution or release-boundary violations, and missing focused regression
 tests.
 
+Also report test economy, normally as non-blocking findings: tests that
+duplicate an existing case, change detectors that pin incidental values, call
+order or internal structure that is not the contract, assertions that would
+still pass with the logic removed, copied fixture helpers, and real-clock waits
+(sleeps, `delay` settling, polling with timeouts). Name the existing test,
+`sdk-testing` fake or fixture to fold them into, and for a real-clock wait the
+virtual-time API (`runTest`, `StandardTestDispatcher`, `advanceTimeBy`,
+`runCurrent`, `TestTimeSource`) or deterministic signal to use instead. Note
+when the test diff is far larger than the production change it covers.
+
 For exact file, symbol, usage or test lookups you may delegate only to
 `sdk-locator`, which runs on its own low-cost model; do not set a model for it.
 

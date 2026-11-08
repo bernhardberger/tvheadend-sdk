@@ -14,7 +14,24 @@ notices, and do not describe this project as official Tvheadend software.
 
 - Keep changes minimal and scoped. Check `git status` before editing and never
   overwrite someone else's uncommitted changes.
-- Behavior changes ship with a focused regression test.
+- Behavior changes are covered by a focused regression test, which counts only
+  after it has failed against the pre-fix code. Tests cost build time and
+  maintenance; their count is not evidence of care. Before adding one, find the
+  existing test of that unit and extend it with a case or parameter; start a new
+  test or file only when none fits, and say why. Assert the rule or outcome, not
+  incidental values, call order or internal structure unless that is the
+  contract. Reuse the `sdk-testing` fakes and fixtures and the existing test
+  builders instead of local copies. A scenario written to prove something for
+  one review is deleted after the decision or moved to the opt-in live-server or
+  device lane. Merging or deleting redundant tests in touched code is in scope.
+  Tests run on virtual time: `runTest` with `StandardTestDispatcher`,
+  `advanceTimeBy` and `runCurrent`, and `testScheduler.currentTime` or
+  `TestTimeSource` as the clock. Where real sockets or threads are involved, use
+  the in-memory fakes or wait for a deterministic signal such as a
+  `CompletableDeferred` or listener callback; never `Thread.sleep`, real `delay`
+  settling or polling loops with timeouts. `detekt-tests.yml` checks test
+  sources for real-clock `Thread.sleep` and process words in test class names;
+  the per-module baselines record existing findings only.
 - Use constructor-injected fakes. Do not add dependency injection, mocking,
   screenshot, coverage, or UI frameworks without a concrete need.
 - Before writing a parser, codec, crypto implementation, discovery stack,

@@ -1,5 +1,4 @@
 import com.android.build.api.dsl.LibraryExtension
-import dev.detekt.gradle.Detekt
 import org.gradle.api.publish.maven.MavenPublication
 import org.gradle.api.tasks.bundling.Jar
 import org.gradle.kotlin.dsl.configure
@@ -81,10 +80,6 @@ dependencies {
 detekt {
     config.setFrom(rootProject.file("detekt.yml"))
     source.setFrom("src/main/kotlin")
-}
-
-tasks.withType<Detekt>().configureEach {
-    setSource(files("src/main/kotlin"))
 }
 
 val javadocJar = tasks.register<Jar>("javadocJar") {
