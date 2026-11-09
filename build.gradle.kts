@@ -532,15 +532,16 @@ subprojects {
 
     pluginManager.withPlugin("dev.detekt") {
         // Type-resolved test tasks run only detekt-tests.yml; every other detekt task analyses production sources.
-        val testSourceSets = setOf("Test", "TestFixtures", "DebugUnitTest", "DebugAndroidTest")
+        // Test, TestFixtures and every Android *UnitTest or *AndroidTest variant count as test source sets.
+        fun isTestSourceSet(sourceSet: String) = "Test" in sourceSet && !sourceSet.endsWith("SourceSet")
         fun testBaseline(sourceSet: String) =
             layout.projectDirectory.file("detekt-baseline-${sourceSet.replaceFirstChar(Char::lowercaseChar)}.xml")
         val testDetektTasks = tasks.withType<Detekt>().matching { task ->
-            task.name.removePrefix("detekt") in testSourceSets
+            isTestSourceSet(task.name.removePrefix("detekt"))
         }
         tasks.withType<Detekt>().configureEach {
             val sourceSet = name.removePrefix("detekt")
-            if (sourceSet in testSourceSets) {
+            if (isTestSourceSet(sourceSet)) {
                 config.setFrom(rootProject.file("detekt-tests.yml"))
                 buildUponDefaultConfig.set(false)
                 val baselineFile = testBaseline(sourceSet)
@@ -551,7 +552,7 @@ subprojects {
         }
         tasks.withType<DetektCreateBaselineTask>().configureEach {
             val sourceSet = name.removePrefix("detektBaseline")
-            if (sourceSet in testSourceSets) {
+            if (isTestSourceSet(sourceSet)) {
                 config.setFrom(rootProject.file("detekt-tests.yml"))
                 buildUponDefaultConfig.set(false)
                 baseline.set(testBaseline(sourceSet))
