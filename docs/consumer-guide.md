@@ -2025,9 +2025,9 @@ delayed message, so the window can start later than the `FakeClock` says.
 `FakeGrowingRecording` stands in for the file of a recording the server is
 still writing. Script it with `scriptGrowingRecordingPlayback(recording)`. The
 binding then admits a DVR entry that is still recording and has a single `.ts`
-file, and gives playback this file as its growing recording. Unlike the other
-fake bindings, it serves real bytes. It still never opens a completed file and
-never reports progress.
+file, and gives playback this file as its growing recording. Unlike the
+completed-recording binding, it serves real bytes. It still never opens a
+completed file and never reports progress.
 
 ```kotlin
 val recording = FakeGrowingRecording(initialBytes = firstSegment)
@@ -2045,13 +2045,16 @@ resumes at once with the new bytes, the end of input or the failure.
 tell when playback has caught up before it appends, interrupts or finishes.
 `interrupt` fails only the readers open at that moment, with `TIMEOUT` by
 default, as when the server stops sending. A reader opened afterwards reads
-normally. `retire` ends the file's continuity for good.
+normally. `retire` ends the file's continuity for good. The binding never
+retires the file itself: when a test replaces the file or the session
+generation, it calls `retire` as well, or playback keeps reading the old file.
 
 The DVR entry is separate from the file. Publish its observations yourself: a
 larger size while it grows, and `COMPLETED` after `finish`. The binding follows
-the entry while each observation keeps the same file and a size that does not
-shrink. One observation that breaks this, or that lacks the entry, makes the
-target unavailable for good. Playback still reads the file on Media3's loader
+the entry while each published observation keeps the same file and, while it
+grows, a size that does not shrink. One published observation that breaks this,
+or that lacks the entry, makes the target unavailable for good, even if nothing
+read the binding while it was published. Playback still reads the file on Media3's loader
 threads, so wait for `waitingReads` or Media3's own signals, not a fixed time.
 
 ## Malformed responses

@@ -13,6 +13,8 @@ import at.bernhardberger.tvheadend.sdk.playback.MAX_RECORDING_READ_BYTES
 import at.bernhardberger.tvheadend.sdk.playback.RECORDING_END_OF_INPUT
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -64,9 +66,13 @@ public class FakeGrowingRecording(initialBytes: ByteArray = ByteArray(0)) {
     public val isCurrent: Boolean
         get() = synchronized(lock) { retiredFailure == null }
 
-    /** Appends [bytes] to the file and resumes the reads waiting at its end. */
+    /**
+     * Appends [bytes] to the file and resumes the reads waiting at its end.
+     *
+     * @throws IllegalStateException after [finish] or [retire].
+     */
     public fun append(bytes: ByteArray) {
-        synchronized(lock) {
+        wake {
             check(!finished) { "A finished recording cannot grow" }
             check(retiredFailure == null) { "A retired recording cannot grow" }
             if (size + bytes.size > content.size) {
@@ -74,28 +80,22 @@ public class FakeGrowingRecording(initialBytes: ByteArray = ByteArray(0)) {
             }
             bytes.copyInto(content, size)
             size += bytes.size
-            wakeLocked()
         }
     }
 
     /** Ends the file: reads past its last byte now report [RECORDING_END_OF_INPUT]. */
     public fun finish() {
-        synchronized(lock) {
-            finished = true
-            wakeLocked()
-        }
+        wake { finished = true }
     }
 
     /**
      * Stops delivery to the readers open now: each of their pending and later calls fails with
-     * [failure]. Readers opened afterwards read normally, as after a server recovers.
+     * [failure]. Readers opened afterwards read normally, as after a server recovers. A reader that
+     * has already failed keeps its first failure.
      */
     public fun interrupt(failure: TvheadendFailure = TvheadendFailure.TIMEOUT) {
         require(failure in DELIVERY_FAILURES) { "A growing reader fails only with $DELIVERY_FAILURES" }
-        synchronized(lock) {
-            readers.forEach { it.failure = failure }
-            wakeLocked()
-        }
+        wake { readers.forEach { it.failure = it.failure ?: failure } }
     }
 
     /**
@@ -104,10 +104,9 @@ public class FakeGrowingRecording(initialBytes: ByteArray = ByteArray(0)) {
      */
     public fun retire(failure: TvheadendFailure = TvheadendFailure.CONNECTION_CHANGED) {
         require(failure in RETIREMENT_FAILURES) { "A lease retires only with $RETIREMENT_FAILURES" }
-        synchronized(lock) {
+        wake {
             if (retiredFailure == null) retiredFailure = failure
             readers.forEach { it.failure = it.failure ?: failure }
-            wakeLocked()
         }
     }
 
@@ -115,23 +114,32 @@ public class FakeGrowingRecording(initialBytes: ByteArray = ByteArray(0)) {
         override val isCurrent: Boolean
             get() = this@FakeGrowingRecording.isCurrent
 
-        override suspend fun open(position: Long): RecordingFileResult<GrowingRecordingFileReader> =
-            synchronized(lock) {
+        override suspend fun open(position: Long): RecordingFileResult<GrowingRecordingFileReader> {
+            currentCoroutineContext().ensureActive()
+            return synchronized(lock) {
                 retiredFailure?.let { return@synchronized RecordingFileResult.Failed(it) }
                 if (position !in 0..size) {
                     return@synchronized RecordingFileResult.Failed(TvheadendFailure.FILE_UNAVAILABLE)
                 }
                 RecordingFileResult.Ok(Reader(position.toInt(), size.toLong()).also(readers::add))
             }
+        }
 
         override fun toString(): String = "FakeGrowingRecording.lease"
     }
 
-    private fun wakeLocked() {
-        // Every waiting read is released here, so the count drops before the call returns.
-        wakeUp.complete(Unit)
-        wakeUp = CompletableDeferred()
-        waiting.value = 0
+    // Every waiting read is released here, so the count drops before the call returns. The next
+    // wake-up is in place before the released reads resume, and they resume outside the lock: a
+    // read that resumes on this thread and reaches the end again waits for the next call.
+    private inline fun wake(change: () -> Unit) {
+        val released = synchronized(lock) {
+            change()
+            wakeUp.also {
+                wakeUp = CompletableDeferred()
+                waiting.value = 0
+            }
+        }
+        released.complete(Unit)
     }
 
     private inner class Reader(private var position: Int, override val sizeBytes: Long?) :
@@ -143,31 +151,43 @@ public class FakeGrowingRecording(initialBytes: ByteArray = ByteArray(0)) {
         override val isFinal: Boolean
             get() = synchronized(lock) { final }
 
-        override suspend fun refreshSize(): RecordingFileResult<Long?> = synchronized(lock) {
-            unusableLocked()?.let { return@synchronized RecordingFileResult.Failed(it) }
-            if (finished) final = true
-            RecordingFileResult.Ok(size.toLong())
+        override suspend fun refreshSize(): RecordingFileResult<Long?> {
+            currentCoroutineContext().ensureActive()
+            return synchronized(lock) {
+                unusableLocked()?.let { return@synchronized RecordingFileResult.Failed(it) }
+                if (finished) final = true
+                RecordingFileResult.Ok(size.toLong())
+            }
         }
 
-        override suspend fun seek(position: Long): RecordingFileResult<Unit> = synchronized(lock) {
-            unusableLocked()?.let { return@synchronized RecordingFileResult.Failed(it) }
-            if (position !in 0..size) {
-                return@synchronized RecordingFileResult.Failed(TvheadendFailure.FILE_UNAVAILABLE)
+        override suspend fun seek(position: Long): RecordingFileResult<Unit> {
+            currentCoroutineContext().ensureActive()
+            return synchronized(lock) {
+                unusableLocked()?.let { return@synchronized RecordingFileResult.Failed(it) }
+                if (position !in 0..size) {
+                    return@synchronized RecordingFileResult.Failed(TvheadendFailure.FILE_UNAVAILABLE)
+                }
+                this.position = position.toInt()
+                RecordingFileResult.Ok(Unit)
             }
-            this.position = position.toInt()
-            RecordingFileResult.Ok(Unit)
         }
 
         override suspend fun read(destination: ByteArray, destinationOffset: Int, length: Int): RecordingFileResult<Int> {
-            if (Thread.currentThread().isInterrupted) throw InterruptedException()
-            if (length !in 1..MAX_RECORDING_READ_BYTES || destinationOffset < 0 ||
-                destinationOffset > destination.size - length
-            ) {
-                return RecordingFileResult.Failed(TvheadendFailure.FILE_UNAVAILABLE)
+            require(destinationOffset in 0..destination.size) {
+                "Destination offset must lie inside the destination array"
+            }
+            require(length in 0..(destination.size - destinationOffset)) {
+                "Read window must lie inside the destination array"
+            }
+            require(length <= MAX_RECORDING_READ_BYTES) {
+                "Growing recording read must not exceed $MAX_RECORDING_READ_BYTES bytes"
             }
             while (true) {
+                currentCoroutineContext().ensureActive()
+                if (Thread.currentThread().isInterrupted) throw InterruptedException()
                 val wait = synchronized(lock) {
                     unusableLocked()?.let { return RecordingFileResult.Failed(it) }
+                    if (length == 0) return RecordingFileResult.Ok(0)
                     val available = size - position
                     if (available > 0) {
                         val count = minOf(length, available)
@@ -179,8 +199,9 @@ public class FakeGrowingRecording(initialBytes: ByteArray = ByteArray(0)) {
                         final = true
                         return RecordingFileResult.Ok(RECORDING_END_OF_INPUT)
                     }
-                    waiting.value += 1
-                    wakeUp
+                    // Capture the wake-up before the count publishes, so a call the count prompts
+                    // releases this read.
+                    wakeUp.also { waiting.value += 1 }
                 }
                 try {
                     wait.await()

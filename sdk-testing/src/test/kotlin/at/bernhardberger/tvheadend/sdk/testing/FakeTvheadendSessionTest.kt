@@ -685,12 +685,15 @@ internal class FakeTvheadendSessionTest {
         fake.publish(growingObservation(DvrEntryState.COMPLETED, sizeBytes = 300))
         assertTrue(binding.admission is RecordingPlaybackAdmission.Completed)
         assertSame(recording.lease, (binding.bindGrowingRecording() as RecordingFileResult.Ok).value)
+        // An ended recording is matched as a completed one, whose identity ignores the size.
+        fake.publish(growingObservation(DvrEntryState.COMPLETED, sizeBytes = 250))
+        assertTrue(binding.admission is RecordingPlaybackAdmission.Completed)
 
         for (broken in listOf(
             growingObservation(DvrEntryState.COMPLETED, sizeBytes = 50),
             growingObservation(DvrEntryState.COMPLETED, sizeBytes = 300, fileId = 2),
             currentObservation(includeTargets = false),
-        )) {
+        )) for (readBetween in listOf(true, false)) {
             val restarted = FakeTvheadendSession(growingObservation(DvrEntryState.RECORDING, sizeBytes = 100)).apply {
                 scriptGrowingRecordingPlayback(recording)
             }
@@ -699,8 +702,9 @@ internal class FakeTvheadendSessionTest {
                     as PlaybackBindingResult.Bound
             ).binding
             restarted.publish(broken)
-            assertSame(RecordingPlaybackAdmission.TargetUnavailable, target.admission)
-            // One break ends the target even when the original file is observed again.
+            if (readBetween) assertSame(RecordingPlaybackAdmission.TargetUnavailable, target.admission)
+            // One break ends the target even when the original file is observed again, and
+            // whether or not the binding was read while it was broken.
             restarted.publish(growingObservation(DvrEntryState.RECORDING, sizeBytes = 400))
             assertSame(RecordingPlaybackAdmission.TargetUnavailable, target.admission)
             assertEquals(RecordingFileResult.Failed(TvheadendFailure.FILE_UNAVAILABLE), target.bindGrowingRecording())

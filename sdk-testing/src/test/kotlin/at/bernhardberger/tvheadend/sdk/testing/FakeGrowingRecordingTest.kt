@@ -8,17 +8,26 @@
 package at.bernhardberger.tvheadend.sdk.testing
 
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
+import at.bernhardberger.tvheadend.sdk.playback.MAX_RECORDING_READ_BYTES
 import at.bernhardberger.tvheadend.sdk.playback.RECORDING_END_OF_INPUT
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.coroutines.startCoroutine
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -70,6 +79,67 @@ internal class FakeGrowingRecordingTest {
         assertTrue(reopened.close() is RecordingFileResult.Ok)
         assertTrue(stopped.close() is RecordingFileResult.Ok)
         assertEquals(0, recording.openReaders)
+    }
+
+    @Test
+    fun `a read resumed inside the appending call waits again at the end`() {
+        val recording = FakeGrowingRecording(byteArrayOf(1))
+        val reader = startNow { recording.open(position = 1) }.getOrThrow()
+        val reads = mutableListOf<Int>()
+        // Unconfined, the read resumes on this thread before append returns.
+        val loop = CoroutineScope(Dispatchers.Unconfined).launch {
+            val buffer = ByteArray(4)
+            while (true) reads += reader.readOk(buffer)
+        }
+        try {
+            assertEquals(1, recording.waitingReads.value)
+            recording.append(byteArrayOf(2))
+            assertEquals(listOf(1), reads)
+            assertEquals(1, recording.waitingReads.value)
+        } finally {
+            loop.cancel()
+        }
+        // A cancelled read stops counting as waiting.
+        assertEquals(0, recording.waitingReads.value)
+    }
+
+    @Test
+    fun `a call prompted by a read starting to wait releases that read`() {
+        val recording = FakeGrowingRecording()
+        val reader = startNow { recording.open() }.getOrThrow()
+        val finisher = CoroutineScope(Dispatchers.Unconfined).launch {
+            recording.waitingReads.first { it == 1 }
+            recording.finish()
+        }
+        try {
+            // The count reaches the finisher before the read waits; the read must still end.
+            val end = startNow { reader.read(ByteArray(4), 0, 4) }.getOrThrow()
+            assertEquals(RECORDING_END_OF_INPUT, (end as RecordingFileResult.Ok).value)
+        } finally {
+            finisher.cancel()
+        }
+    }
+
+    @Test
+    fun `a cancelled caller opens, seeks, refreshes and reads nothing`() = runTest {
+        val recording = FakeGrowingRecording(byteArrayOf(1, 2))
+        val reader = recording.open()
+        recording.finish()
+        suspend fun cancelledCall(call: suspend () -> Any?) {
+            val attempt = async { currentCoroutineContext().cancel(); call() }
+            assertTrue(runCatching { attempt.await() }.exceptionOrNull() is CancellationException)
+        }
+        cancelledCall { recording.lease.open(0) }
+        cancelledCall { reader.seek(1) }
+        cancelledCall { reader.refreshSize() }
+        cancelledCall { reader.read(ByteArray(2), 0, 2) }
+        assertEquals(1, recording.openReaders)
+        assertFalse(reader.isFinal)
+        assertEquals(2, reader.readOk(ByteArray(2)))
+        assertThrows(IllegalArgumentException::class.java) {
+            startNow { reader.read(ByteArray(MAX_RECORDING_READ_BYTES + 1), 0, MAX_RECORDING_READ_BYTES + 1) }
+                .getOrThrow()
+        }
     }
 
     @Test

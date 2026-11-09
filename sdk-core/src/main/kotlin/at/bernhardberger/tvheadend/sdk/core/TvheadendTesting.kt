@@ -6,7 +6,7 @@
 package at.bernhardberger.tvheadend.sdk.core
 
 import at.bernhardberger.tvheadend.sdk.core.cache.CacheNamespace
-import at.bernhardberger.tvheadend.sdk.core.session.preservesGrowingContinuity
+import at.bernhardberger.tvheadend.sdk.core.session.DvrEntryIncarnation
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
@@ -43,6 +43,8 @@ public class SessionGenerationTestAuthority(
     private val store = SessionObservationStore()
     private var generation: Any? = null
     private var profileIdentity: CacheNamespace? = null
+    private var dvrEntries: Map<DvrEntryId, DvrEntry> = emptyMap()
+    private var dvrIncarnations: Map<DvrEntryId, DvrEntryIncarnation> = emptyMap()
     /** Atomic observations carrying proofs authored by this authority. */
     public val observation: StateFlow<SessionObservation> = store.observation
     init {
@@ -77,7 +79,27 @@ public class SessionGenerationTestAuthority(
             null
         }
         profileIdentity = identity
+        trackDvrIncarnationsLocked(observation)
         store.publishObservation(observation, publishedGeneration, identity)
+    }
+    /** The current observation with the incarnation of entry [id] it shows, read atomically. */
+    internal fun dvrEntryIncarnation(id: DvrEntryId): Pair<SessionObservation, DvrEntryIncarnation?> =
+        synchronized(lock) { store.observation.value to dvrIncarnations[id] }
+    // A session records an entry's incarnation as each DVR update arrives, whether or not a
+    // binding looks; publication is this authority's update. An absent entry loses its
+    // incarnation, so its return is a new one.
+    private fun trackDvrIncarnationsLocked(observation: SessionObservation) {
+        val entries = observation.dvrSnapshotForDisplay?.entries?.associateBy(DvrEntry::id) ?: return
+        dvrIncarnations = entries.mapValues { (id, entry) ->
+            val previous = dvrEntries[id]
+            val incarnation = dvrIncarnations[id]
+            if (previous != null && incarnation != null && incarnation.preservesUpdate(previous, entry)) {
+                incarnation
+            } else {
+                DvrEntryIncarnation(entry)
+            }
+        }
+        dvrEntries = entries
     }
     private fun replaceGenerationLocked(observation: SessionObservation, identity: CacheNamespace?) {
         require(observation.sessionState is SessionState.Ready) {
@@ -86,6 +108,7 @@ public class SessionGenerationTestAuthority(
         val replacement = Any()
         generation = replacement
         profileIdentity = identity
+        trackDvrIncarnationsLocked(observation)
         store.publishObservation(observation, replacement, identity)
     }
 }
@@ -175,30 +198,40 @@ public object TvheadendTestResultFactory {
      * Creates a growing-recording binding tied to [currentSession] whose file continuity is [lease].
      *
      * Like the session binding, it admits a recording or failed-recording entry with a single
-     * `.ts` file and keeps the target while later observations of that entry preserve the file's
-     * continuity: the entry may grow and end as a completed recording. A replaced file, a shrinking
-     * size or the entry's removal makes the target unavailable for good.
+     * `.ts` file and keeps the target while each observation of that entry [authority] publishes
+     * preserves the file's continuity: the entry may grow and end as a completed recording. A
+     * replaced file, a shrinking size or the entry's removal ends the target for good, even when no
+     * binding call saw that observation. [session] must publish through [authority].
      * [PlaybackBinding.Recording.bindGrowingRecording] returns [lease] while the entry is admitted
-     * as growing or, once it has ended, as completed. The binding never opens a completed file and
-     * never reports progress: those calls fail like the completed-recording binding's.
-     * [cutpoints] answers as in [boundCompletedRecordingPlayback].
+     * as growing or, once it has ended, as completed. The binding never retires [lease]: a test
+     * that replaces the file or the generation retires its lease itself. The binding never opens a
+     * completed file and never reports progress: those calls fail like the completed-recording
+     * binding's. [cutpoints] answers as in [boundCompletedRecordingPlayback].
      */
     @SubscriptionInfrastructureApi
     @ExperimentalTvheadendApi
     @JvmStatic
     public fun boundGrowingRecordingPlayback(
         session: TvheadendSession,
+        authority: SessionGenerationTestAuthority,
         currentSession: CurrentSessionObservation,
         recordingId: DvrEntryId,
         lease: GrowingRecordingFileLease,
         cutpoints: suspend () -> DvrCutpointsResult = { DvrCutpointsResult.Failed(TvheadendFailure.NOT_READY) },
-    ): PlaybackBindingResult<PlaybackBinding.Recording> = boundRecordingPlayback(
-        session,
-        currentSession,
-        recordingId,
-        cutpoints,
-        growingLease = lease,
-    )
+    ): PlaybackBindingResult<PlaybackBinding.Recording> {
+        require(session.observation === authority.observation) {
+            "The session must publish through the authority"
+        }
+        return boundRecordingPlayback(
+            session,
+            currentSession,
+            recordingId,
+            cutpoints,
+            growing = GrowingTarget(authority, lease),
+        )
+    }
+
+    private class GrowingTarget(val authority: SessionGenerationTestAuthority, val lease: GrowingRecordingFileLease)
 
     /** Creates a completed-recording admission with scripted resume and progress capability. */
     @JvmStatic
@@ -255,27 +288,33 @@ public object TvheadendTestResultFactory {
         currentSession: CurrentSessionObservation,
         recordingId: DvrEntryId,
         cutpoints: suspend () -> DvrCutpointsResult,
-        growingLease: GrowingRecordingFileLease? = null,
+        growing: GrowingTarget? = null,
     ): PlaybackBindingResult<PlaybackBinding.Recording> {
-        val initial = currentObservation(session, currentSession)
-            ?: return PlaybackBindingResult.ObservationExpired
-        val target = initial.dvrEntry(recordingId)
+        val growingLease = growing?.lease
+        // A completed target is the exact entry it bound; a growing one is the entry's incarnation.
+        fun observe(): Pair<SessionObservation, Any?>? {
+            val (observation, incarnation) = growing?.authority?.dvrEntryIncarnation(recordingId)
+                ?: session.observation.value.let { it to it.dvrEntry(recordingId) }
+            val current = observation.currentSession === currentSession && session.isCurrent(currentSession)
+            return if (current) observation to incarnation else null
+        }
+        val (initial, bound) = observe() ?: return PlaybackBindingResult.ObservationExpired
+        initial.dvrEntry(recordingId)
             ?.takeIf { entry ->
-                if (growingLease == null) {
+                if (growing == null) {
                     entry.isPlayableEndedRecording()
                 } else {
                     initial.recordingPlaybackAdmission(entry) is RecordingPlaybackAdmission.Growing
                 }
             }
             ?: return PlaybackBindingResult.TargetUnavailable
-        val continuity = TestRecordingContinuity(target, growing = growingLease != null)
-        fun currentEntry(observation: SessionObservation): DvrEntry? =
-            observation.dvrEntry(recordingId).takeIf(continuity::accepts)
+        checkNotNull(bound)
+        fun currentEntry(observed: Pair<SessionObservation, Any?>): DvrEntry? =
+            observed.first.dvrEntry(recordingId)?.takeIf { observed.second === bound }
         fun admission(): RecordingPlaybackAdmission {
-            val observation = currentObservation(session, currentSession)
-                ?: return RecordingPlaybackAdmission.ObservationExpired
-            val entry = currentEntry(observation) ?: return RecordingPlaybackAdmission.TargetUnavailable
-            return observation.recordingPlaybackAdmission(entry)
+            val observed = observe() ?: return RecordingPlaybackAdmission.ObservationExpired
+            val entry = currentEntry(observed) ?: return RecordingPlaybackAdmission.TargetUnavailable
+            return observed.first.recordingPlaybackAdmission(entry)
         }
         fun isAdmitted(admission: RecordingPlaybackAdmission): Boolean =
             admission is RecordingPlaybackAdmission.Completed ||
@@ -298,7 +337,7 @@ public object TvheadendTestResultFactory {
                     }
                 },
                 observeDeclaredVideoFrameDuration = {
-                    currentObservation(session, currentSession)
+                    observe()
                         ?.let(::currentEntry)
                         ?.declaredVideoFrameDuration()
                 },
@@ -365,24 +404,3 @@ public object TvheadendTestResultFactory {
     }
 }
 
-/**
- * The fake bindings' notion of one recording target. A completed target is the exact entry it
- * bound. A growing target follows its entry while each observed update preserves the file
- * continuity a session requires; one break, including the entry's absence, ends the target.
- */
-private class TestRecordingContinuity(first: DvrEntry, private val growing: Boolean) {
-    private val bound = first
-    private var latest: DvrEntry? = first
-
-    @Synchronized
-    fun accepts(entry: DvrEntry?): Boolean {
-        if (entry == null || !growing) {
-            if (growing) latest = null
-            return entry != null && entry === bound
-        }
-        val previous = latest ?: return false
-        if (entry === previous) return true
-        latest = entry.takeIf { previous.preservesGrowingContinuity(it) }
-        return latest != null
-    }
-}
