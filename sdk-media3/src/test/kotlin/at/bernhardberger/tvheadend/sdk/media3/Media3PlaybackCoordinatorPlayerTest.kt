@@ -2607,6 +2607,102 @@ internal class Media3PlaybackCoordinatorPlayerTest {
     }
 
     @Test
+    fun `a replaced source's failure before the recording prepares reprepares it once and reports no error`() =
+        runTest {
+            val (access, events) = installedRecording()
+            access.unprepared = true
+            access.operations.clear()
+
+            access.looperQueue.runOnLooper { access.deliver { it.onPlayerError(safeError()) } }
+            assertEquals(listOf("prepare"), access.operations)
+            assertNull(events.take())
+
+            // A failure recurring before the source prepares is the player's own: no endless retry.
+            access.snapshot = access.snapshot.copy(failed = true)
+            access.looperQueue.runOnLooper { access.deliver { it.onPlayerError(safeError()) } }
+            assertEquals(listOf("prepare"), access.operations)
+            assertSame(at.bernhardberger.tvheadend.sdk.core.DvrPlaybackExit.ERROR, events.take()?.terminalExit)
+        }
+
+    @Test
+    fun `a replaced source's failure the application answers by replacing the recording reports no error`() =
+        runTest {
+            val (access, events) = installedRecording()
+            access.unprepared = true
+            access.addApplicationListener(
+                object : Player.Listener {
+                    override fun onPlayerError(error: PlaybackException) = access.replaceWithApplicationItem()
+                },
+            )
+            access.operations.clear()
+
+            access.looperQueue.runOnLooper { access.deliver { it.onPlayerError(safeError()) } }
+
+            assertEquals(listOf("application"), access.playlistKinds)
+            assertFalse("prepare" in access.operations)
+            val published = generateSequence { events.take() }.toList()
+            assertTrue(published.none { it.terminalExit === at.bernhardberger.tvheadend.sdk.core.DvrPlaybackExit.ERROR })
+        }
+
+    @Test
+    fun `a recording restored after a failed replacement recovers once more from a replaced source's failure`() =
+        runTest {
+            val (access, events, player) = installedRecording()
+            access.unprepared = true
+            access.looperQueue.runOnLooper { access.deliver { it.onPlayerError(safeError()) } }
+            assertNull(events.take())
+
+            access.failNextSetMediaSource = true
+            val replacement = async {
+                player.installRecording(
+                    PlayerOperationTicket(),
+                    PlaybackTargetToken(),
+                    TestCoordinatorRecordingTarget(),
+                    RecordingPlaybackStart.START_OVER,
+                )
+            }
+            runCurrent()
+            access.looperQueue.runAll()
+            runCurrent()
+            assertSame(PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE, replacement.await().status)
+            while (events.take() != null) Unit
+            access.operations.clear()
+
+            // The restore is a new placement: the failed replacement's failure may still reach it.
+            access.looperQueue.runOnLooper { access.deliver { it.onPlayerError(safeError()) } }
+            assertEquals(listOf("prepare"), access.operations)
+            assertNull(events.take())
+
+            access.snapshot = access.snapshot.copy(failed = true)
+            access.looperQueue.runOnLooper { access.deliver { it.onPlayerError(safeError()) } }
+            assertEquals(listOf("prepare"), access.operations)
+            assertSame(at.bernhardberger.tvheadend.sdk.core.DvrPlaybackExit.ERROR, events.take()?.terminalExit)
+        }
+
+    private suspend fun TestScope.installedRecording():
+        Triple<FakeCoordinatorPlaybackAccess, PlaybackPlayerEventAccumulator, Media3PlaybackCoordinatorPlayer> {
+        val access = FakeCoordinatorPlaybackAccess()
+        val events = PlaybackPlayerEventAccumulator()
+        val player = Media3PlaybackCoordinatorPlayer(access, events) { _, _ -> RecordingAdmission.Completed(null) }
+        val result = async {
+            player.installRecording(
+                PlayerOperationTicket(),
+                PlaybackTargetToken(),
+                TestCoordinatorRecordingTarget(),
+                RecordingPlaybackStart.START_OVER,
+            )
+        }
+        runCurrent()
+        access.looperQueue.runAll()
+        runCurrent()
+        assertSame(PlaybackPlayerInstallStatus.STARTED, result.await().status)
+        while (events.take() != null) Unit
+        return Triple(access, events, player)
+    }
+
+    private fun safeError() = PlaybackException("safe", null, PlaybackException.ERROR_CODE_UNSPECIFIED)
+
+    @Test
     fun `retirement fences stale player and recovery callbacks by token`() = runTest {
         val access = FakeCoordinatorPlaybackAccess()
         val events = PlaybackPlayerEventAccumulator()
@@ -3603,6 +3699,8 @@ private class FakeCoordinatorPlaybackAccess(
     var failRecoveryClose = false
     var failNextRemoveListener = false
     var prepareAction: (() -> Unit)? = null
+    /** Whether the player has not prepared the current coordinator source since it was set. */
+    var unprepared = false
     var removeListenerAction: (() -> Unit)? = null
     var setMediaSourceAction: ((String) -> Unit)? = null
     val resumeSeeks = mutableListOf<Duration>()
@@ -3914,6 +4012,8 @@ private class FakeCoordinatorPlaybackAccess(
         }
         notifyPlaylistChanged()
     }
+
+    override fun unpreparedByPlayer(source: CoordinatorMediaSource): Boolean = unprepared
 
     override fun prepare() {
         requireApplicationLooper()

@@ -1,6 +1,8 @@
 import com.android.build.api.dsl.LibraryExtension
 import org.gradle.api.publish.maven.MavenPublication
 import org.gradle.api.tasks.bundling.Jar
+import org.gradle.api.tasks.testing.Test
+import org.gradle.process.CommandLineArgumentProvider
 import org.gradle.kotlin.dsl.configure
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
@@ -77,11 +79,43 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(project(":sdk-testing"))
+    // Real ExoPlayer races need its looper and FakeClock; Robolectric runs only on JUnit 4.
+    testImplementation(libs.junit4)
+    testImplementation(libs.media3.test.utils.robolectric)
+    testImplementation(libs.robolectric)
+    testRuntimeOnly(libs.junit.vintage.engine)
     testRuntimeOnly(libs.junit.platform.launcher)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(project(":sdk-core"))
     androidTestImplementation(project(":sdk-testing"))
+}
+
+// Robolectric would otherwise download its Android runtime at test time, outside dependency
+// verification and offline builds. Resolve it through Gradle and run Robolectric offline on it.
+val robolectricRuntime = configurations.dependencyScope("robolectricRuntime")
+val robolectricRuntimeFiles = configurations.resolvable("robolectricRuntimeFiles") {
+    extendsFrom(robolectricRuntime.get())
+    isTransitive = false
+}
+dependencies {
+    robolectricRuntime(libs.robolectric.android.all.instrumented)
+}
+val syncRobolectricRuntime = tasks.register<Sync>("syncRobolectricRuntime") {
+    from(robolectricRuntimeFiles)
+    into(layout.buildDirectory.dir("robolectric-runtime"))
+}
+tasks.withType<Test>().configureEach {
+    val runtimeDirectory = layout.buildDirectory.dir("robolectric-runtime")
+    inputs.files(syncRobolectricRuntime)
+        .withPropertyName("robolectricRuntime")
+        .withPathSensitivity(PathSensitivity.NAME_ONLY)
+    systemProperty("robolectric.offline", "true")
+    jvmArgumentProviders.add(
+        CommandLineArgumentProvider {
+            listOf("-Drobolectric.dependency.dir=${runtimeDirectory.get().asFile.absolutePath}")
+        },
+    )
 }
 
 detekt {
