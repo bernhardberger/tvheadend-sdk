@@ -63,20 +63,25 @@ class GrowingTsIndexTest {
     fun `lease driven map is retracted on continuity loss even with no playback consumption`() {
         val bytes = File("src/androidTest/assets/p7-f3/h264-synthetic.ts").readBytes()
         val lease = ProbeLease(bytes, bytes.size)
-        val output = CapturingSeekMapOutput()
+        val seekable = CountDownLatch(1)
+        val retracted = CountDownLatch(1)
+        val output = CapturingSeekMapOutput { map ->
+            when {
+                map.isSeekable -> seekable.countDown()
+                seekable.count == 0L -> retracted.countDown()
+            }
+        }
         val extractor = GrowingTsExtractor(
             delegate = WindowedKeyframeExtractor(),
             lease = lease,
         )
         try {
             extractor.init(output)
-            val initialDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
-            while (System.nanoTime() < initialDeadline && output.maps.none { it.isSeekable }) Thread.sleep(10)
+            assertTrue(seekable.await(5, TimeUnit.SECONDS))
             assertTrue(output.maps.last().isSeekable)
             lease.current = false
             // No further media consumption is required: poll exit retracts the existing map.
-            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(7)
-            while (System.nanoTime() < deadline && output.maps.last().isSeekable) Thread.sleep(10)
+            assertTrue(retracted.await(7, TimeUnit.SECONDS))
             assertFalse(output.maps.last().isSeekable)
             assertTrue(output.maps.last().durationUs > 23_000_000L)
         } finally {
@@ -394,7 +399,7 @@ private class DormantSecondVideoExtractor : Extractor {
     override fun release(): Unit = Unit
 }
 
-private class CapturingSeekMapOutput : ExtractorOutput {
+private class CapturingSeekMapOutput(private val onSeekMap: (SeekMap) -> Unit = {}) : ExtractorOutput {
     val maps = CopyOnWriteArrayList<SeekMap>()
 
     override fun track(id: Int, type: Int): TrackOutput = EmptyTrackOutput
@@ -403,6 +408,7 @@ private class CapturingSeekMapOutput : ExtractorOutput {
 
     override fun seekMap(seekMap: SeekMap) {
         maps += seekMap
+        onSeekMap(seekMap)
     }
 }
 

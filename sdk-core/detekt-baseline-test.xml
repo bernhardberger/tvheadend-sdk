@@ -4,6 +4,15 @@
   <CurrentIssues>
     <ID>ClassNaming:PhaseOneSessionMetadataContentionTest.kt:PhaseOneSessionMetadataContentionTest</ID>
     <ID>ClassNaming:PhaseOneSessionMetadataTest.kt:PhaseOneSessionMetadataTest</ID>
+    <ID>ForbiddenMethodCall:ArtworkStoreProfileTest.kt:ArtworkStoreProfileTest$nanoTime()</ID>
+    <ID>ForbiddenMethodCall:ArtworkStoreProfileTest.kt:ArtworkStoreProfileTest.MeasuredFiles$nanoTime()</ID>
+    <ID>ForbiddenMethodCall:ConnectionOwnerTest.kt:ConnectionOwnerTest$nanoTime()</ID>
     <ID>ForbiddenMethodCall:ConnectionOwnerTest.kt:ConnectionOwnerTest$sleep(1)</ID>
+    <ID>ForbiddenMethodCall:EpgCarryoverProfileTest.kt:EpgCarryoverProfileTest$nanoTime()</ID>
+    <ID>ForbiddenMethodCall:EpgListConversionProfileTest.kt:EpgListConversionProfileTest$nanoTime()</ID>
+    <ID>ForbiddenMethodCall:EpgRestoreOptionsProfileTest.kt:EpgRestoreOptionsProfileTest$nanoTime()</ID>
+    <ID>ForbiddenMethodCall:EpgRestoreProfileTest.kt:EpgRestoreProfileTest$nanoTime()</ID>
+    <ID>ForbiddenMethodCall:EpgSnapshotProfileTest.kt:EpgSnapshotProfileTest$nanoTime()</ID>
+    <ID>ForbiddenMethodCall:PhaseOneSessionMetadataContentionTest.kt:PhaseOneSessionMetadataContentionTest$nanoTime()</ID>
   </CurrentIssues>
 </SmellBaseline>

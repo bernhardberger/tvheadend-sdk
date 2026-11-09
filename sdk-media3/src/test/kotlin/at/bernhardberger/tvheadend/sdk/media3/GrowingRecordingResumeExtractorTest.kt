@@ -19,6 +19,7 @@ import androidx.media3.extractor.PositionHolder
 import androidx.media3.extractor.SeekMap
 import java.io.File
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
@@ -60,11 +61,9 @@ class GrowingRecordingResumeExtractorTest {
             listOf(8_000L to 8_000L, 30_000L to null).forEach { (saved, expectedSeek) ->
                 val result = resumeOverGrowingFixture(asset, videoMime, saved)
 
+                // The real settle timer abandons a resume that is not seekable within the bound, so
+                // an applied outcome means the fixture became resumable inside it.
                 assertEquals(RecordingResumeOutcome.APPLIED, result.outcome, asset)
-                assertTrue(
-                    result.settledAfterMillis < GROWING_RESUME_SETTLE_TIMEOUT_MILLIS,
-                    "$asset settled after ${result.settledAfterMillis} ms",
-                )
                 // The half fixture holds about 12 s; a saved position past it resumes before the edge.
                 assertTrue(kotlin.math.abs(result.extentMillis - 12_000L) < 500L, "$asset extent ${result.extentMillis}")
                 assertEquals(
@@ -74,7 +73,7 @@ class GrowingRecordingResumeExtractorTest {
                 )
                 println(
                     "growing-resume-measure asset=$asset saved=$saved seek=${result.seeks.single()} " +
-                        "extent=${result.extentMillis} seekableAfterMs=${result.settledAfterMillis}",
+                        "extent=${result.extentMillis}",
                 )
             }
         }
@@ -124,25 +123,29 @@ class GrowingRecordingResumeExtractorTest {
     @Test
     @Timeout(60, unit = TimeUnit.SECONDS)
     fun `unprobeable growing input abandons the resume at the settle bound`() {
-        val lease = ProbeLease(ByteArray(GROWING_TS_PACKET_BYTES * 600), GROWING_TS_PACKET_BYTES * 600)
+        val failedSamples = CountDownLatch(2)
+        val lease = ProbeLease(ByteArray(GROWING_TS_PACKET_BYTES * 600), GROWING_TS_PACKET_BYTES * 600).apply {
+            // A failed sample closes its reader, so each close marks one unsuccessful probe attempt.
+            afterClose = { failedSamples.countDown() }
+        }
         val maps = CopyOnWriteArrayList<SeekMap>()
         val seeks = CopyOnWriteArrayList<Long>()
-        val resume = RecordingResumeStateMachine(seekTo = { seeks += it }, scheduleTimeout = ::schedule)
+        val timeouts = FakeResumeTimeouts()
+        val resume = RecordingResumeStateMachine(seekTo = { seeks += it }, scheduleTimeout = timeouts::schedule)
         val extractor = GrowingTsExtractor(delegate = DeclaredVideoTrack(MimeTypes.VIDEO_H264), lease = lease, onSeekMap = { map ->
             maps += map
             looper.execute { resume.onMediaState(true, map.durationMillis(), map.isSeekable) }
         })
         try {
-            val started = System.nanoTime()
             onLooper { resume.beginPlaybackTarget(8_000L, RecordingResumeMode.GROWING) }
             extractor.init(CapturingOutput)
 
-            Thread.sleep(GROWING_RESUME_SETTLE_TIMEOUT_MILLIS - 2_000L)
+            assertTrue(failedSamples.await(30, TimeUnit.SECONDS), "The probe must retry before the resume is abandoned")
+            assertEquals(listOf(GROWING_RESUME_SETTLE_TIMEOUT_MILLIS), onLooper { timeouts.scheduledDelays.toList() })
             assertNull(onLooper { resume.outcome }, "Resume must stay pending until the bound")
             assertEquals(8_000L, onLooper { resume.pendingPositionMillis })
 
-            val deadline = started + TimeUnit.MILLISECONDS.toNanos(GROWING_RESUME_SETTLE_TIMEOUT_MILLIS + 5_000L)
-            while (System.nanoTime() < deadline && onLooper { resume.outcome } == null) Thread.sleep(50)
+            onLooper { timeouts.fireAll() }
 
             assertEquals(RecordingResumeOutcome.ABANDONED, onLooper { resume.outcome })
             assertNull(onLooper { resume.pendingPositionMillis })
@@ -167,7 +170,12 @@ class GrowingRecordingResumeExtractorTest {
         var extentMillis = -1L
         var seekableMap: SeekMap? = null
         val delegate = DeclaredVideoTrack(videoMime)
-        val resume = RecordingResumeStateMachine(seekTo = { seeks += it }, scheduleTimeout = ::schedule)
+        val settled = CountDownLatch(1)
+        val resume = RecordingResumeStateMachine(
+            seekTo = { seeks += it },
+            scheduleTimeout = ::schedule,
+            onPendingPositionChanged = { if (it == null) settled.countDown() },
+        )
         val extractor = GrowingTsExtractor(delegate = delegate, lease = lease, onSeekMap = { map ->
             looper.execute {
                 map.durationMillis()?.let { extentMillis = it }
@@ -176,13 +184,13 @@ class GrowingRecordingResumeExtractorTest {
             }
         })
         try {
-            val started = System.nanoTime()
             onLooper { resume.beginPlaybackTarget(savedMillis, RecordingResumeMode.GROWING) }
             extractor.init(CapturingOutput)
-            val deadline = started + TimeUnit.MILLISECONDS.toNanos(GROWING_RESUME_SETTLE_TIMEOUT_MILLIS + 5_000L)
-            while (System.nanoTime() < deadline && onLooper { resume.outcome } == null) Thread.sleep(10)
-            val settledAfter = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)
-            val result = onLooper { FixtureResume(resume.outcome, seeks.toList(), extentMillis, settledAfter) }
+            // The real settle timer settles the resume at the bound at the latest; the extra wait only guards a hang.
+            check(settled.await(GROWING_RESUME_SETTLE_TIMEOUT_MILLIS + 5_000L, TimeUnit.MILLISECONDS)) {
+                "$asset resume never settled"
+            }
+            val result = onLooper { FixtureResume(resume.outcome, seeks.toList(), extentMillis) }
             val shift = landingShiftMillis ?: return result
             val map = checkNotNull(onLooper { seekableMap }) { "$asset never published a seekable map" }
             val landing = seekThroughExtractor(extractor, delegate, bytes, initialBytes, map, result.seeks.single() + shift)
@@ -256,7 +264,6 @@ class GrowingRecordingResumeExtractorTest {
         val outcome: RecordingResumeOutcome?,
         val seeks: List<Long>,
         val extentMillis: Long,
-        val settledAfterMillis: Long,
         val landing: SeekLanding? = null,
     )
 
