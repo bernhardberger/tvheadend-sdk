@@ -939,6 +939,34 @@ an exhaustive enum. Use `isStarted`, `disposition`, or the non-exclusive
 `categories` and retain a fallback when matching an exact value. `isTransient`
 means the condition may change; it does not promise that replay is safe.
 
+A new target can replace one whose source has just failed. ExoPlayer stops for
+a failure on its playback thread first and only then reports it to the
+application looper, so the Player can still read `STATE_BUFFERING` or
+`STATE_READY` while the failure is on its way. When the coordinator sees that
+stop at installation, it calls `Player.stop()` before setting the new source.
+The application then observes `STATE_IDLE` followed by the new target's
+`STATE_BUFFERING`, and does not receive the earlier failure. Replacing a source
+that has not failed never stops the Player. If an application listener replaces
+or clears the item, or moves to another item, in response to that `STATE_IDLE`,
+the installation returns `DEPARTED` and the coordinator does not prepare the
+application's item. If the application has moved off the failed target's
+items, they leave the playlist; the application's items stay. A failed item
+that is still current stays in place.
+
+The failure can also arrive after the coordinator has set the new source. In
+that case application listeners still receive `onPlayerError` for the replaced
+source. If the new target still owns the current item, the coordinator's own
+listener prepares it once, right away, which clears `Player.playerError`. The
+same applies when a failed replacement restores the previous target. If the
+target fails again before the playback thread prepares it, that failure is
+reported as the target's own.
+For a recording target, the coordinator does not report `DvrPlaybackExit.ERROR`
+for the replaced source's failure, also when an earlier application listener
+has already replaced the recording in response to it. An application that treats
+`onPlayerError` as a failure of the current target should check
+`Player.playerError` again in `onEvents`, or later on the application looper,
+and ignore the error if it has been cleared.
+
 Discover stream profiles for the same captured generation with
 `session.getStreamProfiles(currentSession)`. `StreamProfilesResult.Available`
 contains the immutable server order and its exact `originatingSession`. That

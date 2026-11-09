@@ -13,6 +13,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.Timeline
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.MediaSource
+import androidx.media3.exoplayer.source.WrappingMediaSource
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackExit
 import at.bernhardberger.tvheadend.sdk.core.DvrProgressPolicy
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
@@ -203,6 +204,25 @@ internal interface CoordinatorPlaybackAccess {
     fun prepare()
 
     fun stop()
+
+    /**
+     * Stops the player ahead of a replacement. Returns false when an application listener changed
+     * the playlist in response, so the coordinator does not install over the application's item.
+     */
+    fun stopForReplacement(): Boolean {
+        stop()
+        return true
+    }
+
+    /**
+     * Whether the playback thread has prepared and then released [source] since it was last set:
+     * the player has stopped, possibly for a failure the application looper has not yet received.
+     * Accesses without a playback thread never observe this.
+     */
+    fun releasedByPlayer(source: CoordinatorMediaSource): Boolean = false
+
+    /** Whether the playback thread has not prepared [source] since it was last set. */
+    fun unpreparedByPlayer(source: CoordinatorMediaSource): Boolean = false
 
     /** Removes only the playlist items [source] installed, leaving every application item in place. */
     fun removeMediaItems(source: CoordinatorMediaSource)
@@ -449,8 +469,7 @@ internal class Media3PlaybackCoordinatorPlayer(
                 isTargetCurrent = { installed.token.isActive() && describesTarget(installed) },
             ) { reason -> publishRecovery(token, reason) }
             installed.recovery?.beginPlaybackTarget()
-            installed.sourceInstalled = true
-            access.setMediaSource(source)
+            setSourceOverOnLooper(installed, previous)
             if (describesTarget(installed)) access.prepare() else loseOwnership(installed)
             val retirement = retireReplacedOnLooper(previous, previousSnapshot)
             if (!retirement.playerAvailable) {
@@ -531,8 +550,7 @@ internal class Media3PlaybackCoordinatorPlayer(
         return try {
             installed.listenerAttached = true
             access.addListener(listener)
-            installed.sourceInstalled = true
-            access.setMediaSource(source)
+            setSourceOverOnLooper(installed, previous)
             if (describesTarget(installed) && !installed.viewerSeekDuringInstall) {
                 // Growing start-over keeps its install sequence without a resume helper.
                 if (accepted is RecordingAdmission.Completed || resumePosition != null) {
@@ -669,6 +687,20 @@ internal class Media3PlaybackCoordinatorPlayer(
 
         override fun onPlayerError(error: PlaybackException) {
             access.requireApplicationLooper()
+            val installed = active?.takeIf { it.token === token }
+            if (installed != null && installed.sourceInstalled && !installed.staleFailureHandled &&
+                access.unpreparedByPlayer(installed.source)
+            ) {
+                // The player has not prepared this target's source since it was set, so a replaced
+                // source failed after the replacement began. Its prepare() was ignored while the
+                // failure was masked; an effective prepare now clears the failure and opens it.
+                // An earlier application listener may already have replaced the item, so the
+                // failure is never this target's, but only an owned item is prepared. Once per
+                // placement of the source: a failure that recurs before it prepares is the player's.
+                installed.staleFailureHandled = true
+                if (describesTarget(installed)) access.prepare()
+                return
+            }
             if (recording) {
                 val (_, snapshot) = eventTarget(token) { last -> last.copy(failed = true) } ?: return
                 events.publish(
@@ -772,6 +804,34 @@ internal class Media3PlaybackCoordinatorPlayer(
                 loseOwnership(installed)
             }
         }
+    }
+
+    /**
+     * Sets [installed]'s source over the [retired] target's.
+     *
+     * ExoPlayer ignores prepare() unless its visible state is IDLE, and only an effective prepare
+     * clears a playback error. Once the playback thread has stopped for the retired source's
+     * failure, the application looper can still read BUFFERING or READY while that failure is on
+     * its way. Stopping first then makes the following prepare effective, and the failure arrives
+     * superseded. The player has already left playback and released audio focus for that failure;
+     * a healthy replacement is never stopped.
+     *
+     * Leaves the source unset when an application listener changes the playlist or moves to another
+     * item during that stop. Once the application has moved off the retired target's items, they
+     * leave the playlist, since no replacement source overwrites them; the application's items
+     * stay. A retired item that is still current stays, so the application's position is kept.
+     */
+    private fun setSourceOverOnLooper(installed: InstalledPlayerTarget, retired: InstalledPlayerTarget?) {
+        val failed = retired?.takeIf {
+            it.sourceInstalled && access.isCurrent(it.source) && access.releasedByPlayer(it.source)
+        }
+        if (failed != null && !(access.stopForReplacement() && access.isCurrent(failed.source))) {
+            // Removing a still-current item would move the application to its next one.
+            if (!access.isCurrent(failed.source)) access.removeMediaItems(failed.source)
+            return
+        }
+        installed.sourceInstalled = true
+        access.setMediaSource(installed.source)
     }
 
     private fun loseOwnership(installed: InstalledPlayerTarget) {
@@ -898,6 +958,8 @@ internal class Media3PlaybackCoordinatorPlayer(
         }
         return try {
             val restored = restorablePrevious.token.runIfActive {
+                // A new placement of the source, so a replaced source's failure may reach it again.
+                restorablePrevious.staleFailureHandled = false
                 access.setMediaSource(
                     restorablePrevious.source,
                     previousSnapshot.position.takeIf { restorablePrevious is InstalledPlayerTarget.Recording },
@@ -1118,6 +1180,8 @@ internal class Media3PlaybackCoordinatorPlayer(
         var sourceInstalled: Boolean = false
         var ownership: ItemOwnership = ItemOwnership.PENDING
         var lastOwnedSnapshot: PlaybackPlayerSnapshot? = null
+        /** Whether a failure delivered before this target's source prepared was already absorbed. */
+        var staleFailureHandled: Boolean = false
         abstract val declaredVideoFrameDuration: Duration?
 
         class Live(
@@ -1316,6 +1380,7 @@ internal class ExoPlayerCoordinatorPlaybackAccess(
     override fun setMediaSource(source: CoordinatorMediaSource, startPosition: Duration?) {
         requireApplicationLooper()
         val mediaSource = (source as Media3CoordinatorMediaSource).source
+        mediaSource.markSet()
         if (startPosition == null) {
             player.setMediaSource(mediaSource)
         } else {
@@ -1333,6 +1398,33 @@ internal class ExoPlayerCoordinatorPlaybackAccess(
         player.stop()
     }
 
+    override fun stopForReplacement(): Boolean {
+        requireApplicationLooper()
+        if (player.playbackState == Player.STATE_IDLE) return true
+        // stop() never changes the timeline itself, so a playlist change during it is the
+        // application's. A stop issued from inside a listener defers the application's reactions
+        // until after the installation, where ordinary ownership loss handles them.
+        var playlistChanged = false
+        val listener = object : Player.Listener {
+            override fun onTimelineChanged(timeline: Timeline, reason: Int) {
+                if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) playlistChanged = true
+            }
+        }
+        player.addListener(listener)
+        try {
+            player.stop()
+        } finally {
+            player.removeListener(listener)
+        }
+        return !playlistChanged
+    }
+
+    override fun releasedByPlayer(source: CoordinatorMediaSource): Boolean =
+        (source as Media3CoordinatorMediaSource).source.releasedSinceSet
+
+    override fun unpreparedByPlayer(source: CoordinatorMediaSource): Boolean =
+        !(source as Media3CoordinatorMediaSource).source.preparedSinceSet
+
     /**
      * One coordinator-installed source and the rule that recognizes its playlist item.
      *
@@ -1344,13 +1436,55 @@ internal class ExoPlayerCoordinatorPlaybackAccess(
      * all share one reserved media id, so they are recognized by instance.
      */
     private class Media3CoordinatorMediaSource(
-        val source: MediaSource,
+        mediaSource: MediaSource,
         private val recordingIdentity: RecordingMediaIdentity? = null,
     ) : CoordinatorMediaSource {
+        val source = PlaybackThreadTrackingMediaSource(mediaSource)
         private val installedItem: MediaItem = source.mediaItem
 
         fun owns(item: MediaItem?): Boolean =
             ownsCoordinatorMediaItem(installedItem, item, recordingIdentity)
+    }
+
+    /**
+     * Records the playback thread's preparation and release of the wrapped source.
+     *
+     * ExoPlayer stops for a failure on its playback thread, releasing every source, before the
+     * application looper receives the failure. That release is the earliest sign of the stop that
+     * the application looper can read.
+     */
+    private class PlaybackThreadTrackingMediaSource(mediaSource: MediaSource) : WrappingMediaSource(mediaSource) {
+        @Volatile
+        var preparedSinceSet = false
+            private set
+
+        @Volatile
+        private var prepared = false
+
+        val releasedSinceSet: Boolean
+            get() = preparedSinceSet && !prepared
+
+        /**
+         * Called on the application looper as the source is set, before the player can prepare it.
+         *
+         * A rollback that sets the source again before the playback thread prepared its earlier
+         * placement can see that preparation land afterwards. The flags then describe the earlier
+         * placement, which at most skips one stale-failure preparation or adds one stop.
+         */
+        fun markSet() {
+            preparedSinceSet = false
+        }
+
+        override fun prepareSourceInternal() {
+            prepared = true
+            preparedSinceSet = true
+            super.prepareSourceInternal()
+        }
+
+        override fun releaseSourceInternal() {
+            prepared = false
+            super.releaseSourceInternal()
+        }
     }
 }
 
