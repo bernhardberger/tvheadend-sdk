@@ -88,8 +88,10 @@ public class SessionGenerationTestAuthority(
     // A session records an entry's incarnation as each DVR update arrives, whether or not a
     // binding looks; publication is this authority's update. An absent entry loses its
     // incarnation, so its return is a new one. A DVR state without a snapshot is never current,
-    // so it already retires every binding's proof. Re-checking unchanged entries is harmless:
-    // public factories give every admitted `.ts` file its own path, hence a growing identity.
+    // so it already retires every binding's proof. Re-checking unchanged entries keeps their
+    // incarnation whenever they have a growing identity: public factories give every admitted
+    // `.ts` file its own path. An entry with a blank uuid has none, so each publication renews
+    // its incarnation; the session would refuse its continuity at its own next update.
     private fun trackDvrIncarnationsLocked(observation: SessionObservation) {
         val entries = observation.dvrSnapshotForDisplay?.entries?.associateBy(DvrEntry::id) ?: return
         dvrIncarnations = entries.mapValues { (id, entry) ->

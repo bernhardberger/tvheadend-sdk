@@ -2056,6 +2056,10 @@ grows, a size that does not shrink. One published observation that breaks this,
 or that lacks the entry, makes the target unavailable for good, even if nothing
 read the binding while it was published. Playback still reads the file on Media3's loader
 threads, so wait for `waitingReads` or Media3's own signals, not a fixed time.
+Wait on the main looper, for example with `RobolectricUtil.runMainLooperUntil`.
+Media3's `TestPlayerRunHelper.untilBackgroundThreadCondition` re-checks its
+condition through a delayed post on the player's `Clock`, so with
+`FakeClock(false)` it never returns.
 
 ## Malformed responses
 
