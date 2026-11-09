@@ -23,6 +23,13 @@ Unreleased; development target.
 - `EpgSearchRequest.mergeText` searches the way an automatic rule with
   `mergeText` matches, to preview the programmes such a rule would record. Older
   servers ignore it; the HTSP version does not reveal support.
+- `sdk-testing` adds `FakeGrowingRecording` and
+  `FakeTvheadendSession.scriptGrowingRecordingPlayback`, and `sdk-core` adds
+  `TvheadendTestResultFactory.boundGrowingRecordingPlayback`, all experimental.
+  A consumer test can play a recording that is still being written: it grows the
+  file, ends it, stops delivery to open readers, or retires the file, and each
+  step takes effect before the call returns. The binding follows the DVR entry
+  while its observations keep the same file and a size that does not shrink.
 
 ### Changed
 

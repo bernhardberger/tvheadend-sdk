@@ -461,6 +461,7 @@ internal class ModuleBoundaryTest {
             "FakeSessionCache",
             "FakeDvrRepository",
             "FakeEpgRepository",
+            "FakeGrowingRecording",
             "FakePlaybackApi",
             "FakeServerProfileStore",
             "FakeServerProfileStoreCall",
@@ -543,6 +544,7 @@ internal class ModuleBoundaryTest {
             setOf(
                 "scriptLivePlaybackSuccess",
                 "scriptRecordingPlaybackSuccess",
+                "scriptGrowingRecordingPlayback",
                 "scriptLivePlaybackFailure",
                 "scriptRecordingPlaybackFailure",
             ),

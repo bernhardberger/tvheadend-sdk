@@ -6,7 +6,10 @@
 package at.bernhardberger.tvheadend.sdk.core
 
 import at.bernhardberger.tvheadend.sdk.core.cache.CacheNamespace
+import at.bernhardberger.tvheadend.sdk.core.session.preservesGrowingContinuity
+import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener
@@ -168,6 +171,35 @@ public object TvheadendTestResultFactory {
         cutpoints,
     )
 
+    /**
+     * Creates a growing-recording binding tied to [currentSession] whose file continuity is [lease].
+     *
+     * Like the session binding, it admits a recording or failed-recording entry with a single
+     * `.ts` file and keeps the target while later observations of that entry preserve the file's
+     * continuity: the entry may grow and end as a completed recording. A replaced file, a shrinking
+     * size or the entry's removal makes the target unavailable for good.
+     * [PlaybackBinding.Recording.bindGrowingRecording] returns [lease] while the entry is admitted
+     * as growing or, once it has ended, as completed. The binding never opens a completed file and
+     * never reports progress: those calls fail like the completed-recording binding's.
+     * [cutpoints] answers as in [boundCompletedRecordingPlayback].
+     */
+    @SubscriptionInfrastructureApi
+    @ExperimentalTvheadendApi
+    @JvmStatic
+    public fun boundGrowingRecordingPlayback(
+        session: TvheadendSession,
+        currentSession: CurrentSessionObservation,
+        recordingId: DvrEntryId,
+        lease: GrowingRecordingFileLease,
+        cutpoints: suspend () -> DvrCutpointsResult = { DvrCutpointsResult.Failed(TvheadendFailure.NOT_READY) },
+    ): PlaybackBindingResult<PlaybackBinding.Recording> = boundRecordingPlayback(
+        session,
+        currentSession,
+        recordingId,
+        cutpoints,
+        growingLease = lease,
+    )
+
     /** Creates a completed-recording admission with scripted resume and progress capability. */
     @JvmStatic
     public fun completedRecordingAdmission(
@@ -223,48 +255,60 @@ public object TvheadendTestResultFactory {
         currentSession: CurrentSessionObservation,
         recordingId: DvrEntryId,
         cutpoints: suspend () -> DvrCutpointsResult,
+        growingLease: GrowingRecordingFileLease? = null,
     ): PlaybackBindingResult<PlaybackBinding.Recording> {
         val initial = currentObservation(session, currentSession)
             ?: return PlaybackBindingResult.ObservationExpired
         val target = initial.dvrEntry(recordingId)
-            ?.takeIf(DvrEntry::isPlayableEndedRecording)
+            ?.takeIf { entry ->
+                if (growingLease == null) {
+                    entry.isPlayableEndedRecording()
+                } else {
+                    initial.recordingPlaybackAdmission(entry) is RecordingPlaybackAdmission.Growing
+                }
+            }
             ?: return PlaybackBindingResult.TargetUnavailable
+        val continuity = TestRecordingContinuity(target, growing = growingLease != null)
+        fun currentEntry(observation: SessionObservation): DvrEntry? =
+            observation.dvrEntry(recordingId).takeIf(continuity::accepts)
         fun admission(): RecordingPlaybackAdmission {
             val observation = currentObservation(session, currentSession)
                 ?: return RecordingPlaybackAdmission.ObservationExpired
-            if (observation.dvrEntry(recordingId) !== target) {
-                return RecordingPlaybackAdmission.TargetUnavailable
-            }
-            return observation.recordingPlaybackAdmission(target)
+            val entry = currentEntry(observation) ?: return RecordingPlaybackAdmission.TargetUnavailable
+            return observation.recordingPlaybackAdmission(entry)
         }
-        fun unavailableFile() = RecordingFileResult.Failed(
-            if (admission() == RecordingPlaybackAdmission.ObservationExpired) {
-                TvheadendFailure.CONNECTION_CHANGED
-            } else {
-                TvheadendFailure.FILE_UNAVAILABLE
-            },
-        )
+        fun isAdmitted(admission: RecordingPlaybackAdmission): Boolean =
+            admission is RecordingPlaybackAdmission.Completed ||
+                growingLease != null && admission is RecordingPlaybackAdmission.Growing
+        fun unavailableFailure() = if (admission() == RecordingPlaybackAdmission.ObservationExpired) {
+            TvheadendFailure.CONNECTION_CHANGED
+        } else {
+            TvheadendFailure.FILE_UNAVAILABLE
+        }
         return PlaybackBindingResult.Bound(
             PlaybackBinding.Recording(
-                startedGrowing = false,
+                startedGrowing = growingLease != null,
                 observeAdmission = ::admission,
-                openTarget = { cancellationAware(::unavailableFile) },
-                bindGrowingTarget = { unavailableFile() },
+                openTarget = { cancellationAware { RecordingFileResult.Failed(unavailableFailure()) } },
+                bindGrowingTarget = {
+                    if (growingLease != null && isAdmitted(admission())) {
+                        RecordingFileResult.Ok(growingLease)
+                    } else {
+                        RecordingFileResult.Failed(unavailableFailure())
+                    }
+                },
                 observeDeclaredVideoFrameDuration = {
                     currentObservation(session, currentSession)
-                        ?.dvrEntry(recordingId)
-                        ?.takeIf { it === target }
+                        ?.let(::currentEntry)
                         ?.declaredVideoFrameDuration()
                 },
                 reportTargetProgress = { _, _ ->
                     cancellationAware {
                         when (val state = admission()) {
                             is RecordingPlaybackAdmission.Completed ->
-                                if (state.progressCapability == RecordingProgressCapability.UNSUPPORTED) {
-                                    DvrProgressResult.Failed(TvheadendFailure.NOT_SUPPORTED, mayHaveApplied = false)
-                                } else {
-                                    DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
-                                }
+                                unreportedProgress(state.progressCapability)
+                            is RecordingPlaybackAdmission.Growing ->
+                                unreportedProgress(state.progressCapability)
                             RecordingPlaybackAdmission.ObservationExpired ->
                                 DvrProgressResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED, mayHaveApplied = false)
                             else -> DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
@@ -273,29 +317,38 @@ public object TvheadendTestResultFactory {
                 },
                 loadTargetCutpoints = cutpoints@{
                     currentCoroutineContext().ensureActive()
-                    when (admission()) {
+                    when (val state = admission()) {
                         RecordingPlaybackAdmission.ObservationExpired ->
                             return@cutpoints DvrCutpointsResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED)
-                        is RecordingPlaybackAdmission.Completed -> Unit
-                        else -> return@cutpoints DvrCutpointsResult.Failed(TvheadendFailure.NOT_READY)
+                        else -> if (!isAdmitted(state)) {
+                            return@cutpoints DvrCutpointsResult.Failed(TvheadendFailure.NOT_READY)
+                        }
                     }
                     val result = cutpoints()
                     currentCoroutineContext().ensureActive()
-                    when (admission()) {
+                    when (val state = admission()) {
                         RecordingPlaybackAdmission.ObservationExpired ->
                             DvrCutpointsResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED)
-                        is RecordingPlaybackAdmission.Completed -> {
+                        else -> if (isAdmitted(state)) {
                             require(result != DvrCutpointsResult.Failed(TvheadendFailure.OBSERVATION_EXPIRED)) {
                                 "Scripted cutpoint responses cannot counterfeit observation expiry"
                             }
                             result
+                        } else {
+                            DvrCutpointsResult.Failed(TvheadendFailure.NOT_READY)
                         }
-                        else -> DvrCutpointsResult.Failed(TvheadendFailure.NOT_READY)
                     }
                 },
             ),
         )
     }
+
+    private fun unreportedProgress(capability: RecordingProgressCapability): DvrProgressResult =
+        if (capability == RecordingProgressCapability.UNSUPPORTED) {
+            DvrProgressResult.Failed(TvheadendFailure.NOT_SUPPORTED, mayHaveApplied = false)
+        } else {
+            DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false)
+        }
 
     private fun currentObservation(
         session: TvheadendSession,
@@ -309,5 +362,27 @@ public object TvheadendTestResultFactory {
         val value = result()
         currentCoroutineContext().ensureActive()
         return value
+    }
+}
+
+/**
+ * The fake bindings' notion of one recording target. A completed target is the exact entry it
+ * bound. A growing target follows its entry while each observed update preserves the file
+ * continuity a session requires; one break, including the entry's absence, ends the target.
+ */
+private class TestRecordingContinuity(first: DvrEntry, private val growing: Boolean) {
+    private val bound = first
+    private var latest: DvrEntry? = first
+
+    @Synchronized
+    fun accepts(entry: DvrEntry?): Boolean {
+        if (entry == null || !growing) {
+            if (growing) latest = null
+            return entry != null && entry === bound
+        }
+        val previous = latest ?: return false
+        if (entry === previous) return true
+        latest = entry.takeIf { previous.preservesGrowingContinuity(it) }
+        return latest != null
     }
 }

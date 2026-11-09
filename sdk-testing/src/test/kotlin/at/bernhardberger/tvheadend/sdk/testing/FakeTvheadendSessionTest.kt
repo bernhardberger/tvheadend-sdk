@@ -55,6 +55,7 @@ import at.bernhardberger.tvheadend.sdk.core.TimerecRuleCreate
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleId
 import at.bernhardberger.tvheadend.sdk.core.TimerecRuleUpdate
 import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
+import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.cancel
@@ -663,6 +664,59 @@ internal class FakeTvheadendSessionTest {
     }
 
     @Test
+    fun `growing recording binding follows its file into completion until continuity breaks`() = runTest {
+        val recording = FakeGrowingRecording()
+        val fake = FakeTvheadendSession(growingObservation(DvrEntryState.RECORDING, sizeBytes = 100)).apply {
+            scriptGrowingRecordingPlayback(recording)
+        }
+        val current = fake.captureCurrentSession()
+        val binding = (fake.bindRecordingPlayback(current, DvrEntryId(1)) as PlaybackBindingResult.Bound).binding
+
+        assertTrue(binding.startedGrowing)
+        assertTrue(binding.admission is RecordingPlaybackAdmission.Growing)
+        assertSame(recording.lease, (binding.bindGrowingRecording() as RecordingFileResult.Ok).value)
+        assertEquals(RecordingFileResult.Failed(TvheadendFailure.FILE_UNAVAILABLE), binding.openRecording())
+        assertEquals(
+            DvrProgressResult.Failed(TvheadendFailure.NOT_READY, mayHaveApplied = false),
+            binding.reportProgress(recording.lease, DvrPlaybackProgress.checkpoint(1.seconds)),
+        )
+        fake.publish(growingObservation(DvrEntryState.RECORDING, sizeBytes = 200))
+        assertTrue(binding.admission is RecordingPlaybackAdmission.Growing)
+        fake.publish(growingObservation(DvrEntryState.COMPLETED, sizeBytes = 300))
+        assertTrue(binding.admission is RecordingPlaybackAdmission.Completed)
+        assertSame(recording.lease, (binding.bindGrowingRecording() as RecordingFileResult.Ok).value)
+
+        for (broken in listOf(
+            growingObservation(DvrEntryState.COMPLETED, sizeBytes = 50),
+            growingObservation(DvrEntryState.COMPLETED, sizeBytes = 300, fileId = 2),
+            currentObservation(includeTargets = false),
+        )) {
+            val restarted = FakeTvheadendSession(growingObservation(DvrEntryState.RECORDING, sizeBytes = 100)).apply {
+                scriptGrowingRecordingPlayback(recording)
+            }
+            val target = (
+                restarted.bindRecordingPlayback(restarted.captureCurrentSession(), DvrEntryId(1))
+                    as PlaybackBindingResult.Bound
+            ).binding
+            restarted.publish(broken)
+            assertSame(RecordingPlaybackAdmission.TargetUnavailable, target.admission)
+            // One break ends the target even when the original file is observed again.
+            restarted.publish(growingObservation(DvrEntryState.RECORDING, sizeBytes = 400))
+            assertSame(RecordingPlaybackAdmission.TargetUnavailable, target.admission)
+            assertEquals(RecordingFileResult.Failed(TvheadendFailure.FILE_UNAVAILABLE), target.bindGrowingRecording())
+        }
+        fake.replaceGeneration(growingObservation(DvrEntryState.COMPLETED, sizeBytes = 300))
+        assertEquals(RecordingFileResult.Failed(TvheadendFailure.CONNECTION_CHANGED), binding.bindGrowingRecording())
+        val ended = FakeTvheadendSession(growingObservation(DvrEntryState.COMPLETED, sizeBytes = 300)).apply {
+            scriptGrowingRecordingPlayback(recording)
+        }
+        assertSame(
+            PlaybackBindingResult.TargetUnavailable,
+            ended.bindRecordingPlayback(ended.captureCurrentSession(), DvrEntryId(1)),
+        )
+    }
+
+    @Test
     @OptIn(at.bernhardberger.tvheadend.sdk.core.TvheadendTestingApi::class)
     fun `scripted cutpoints retain authority across suspended responses`() = runTest {
         for (retirement in listOf("none", "generation", "removal", "cancel")) {
@@ -969,6 +1023,29 @@ private fun currentObservation(includeTargets: Boolean = true, recordingTitle: S
         ),
     ),
 )
+
+@OptIn(at.bernhardberger.tvheadend.sdk.core.TvheadendTestingApi::class)
+private fun growingObservation(state: DvrEntryState, sizeBytes: Long, fileId: Long = 1): SessionObservation =
+    currentObservation().let { base ->
+        SessionObservation.create(
+            sessionState = base.sessionState,
+            channelState = base.channelState,
+            epgState = base.epgState,
+            dvrState = DvrRepositoryState.Current(DvrSnapshot.create(listOf(DvrEntry.create(
+                DvrEntryId(1),
+                state = state,
+                files = listOf(
+                    at.bernhardberger.tvheadend.sdk.core.TvheadendTestResultFactory.recordingFile(
+                        fileId = fileId,
+                        serverPath = "recording.ts",
+                        sizeBytes = sizeBytes,
+                    ),
+                ),
+                dataSizeBytes = sizeBytes,
+            )))),
+            recordingProgressCapability = at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability.SUPPORTED,
+        )
+    }
 
 private suspend fun assertRejected(block: suspend () -> Unit) {
     var rejected = false

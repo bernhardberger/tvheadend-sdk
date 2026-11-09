@@ -88,6 +88,23 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeEpgRepository : a
 	public fun search (Lat/bernhardberger/tvheadend/sdk/core/CurrentSessionObservation;Lat/bernhardberger/tvheadend/sdk/core/EpgSearchRequest;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
+public final class at/bernhardberger/tvheadend/sdk/testing/FakeGrowingRecording {
+	public fun <init> ()V
+	public fun <init> ([B)V
+	public synthetic fun <init> ([BILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun append ([B)V
+	public final fun finish ()V
+	public final fun getOpenReaders ()I
+	public final fun getSizeBytes ()J
+	public final fun getWaitingReads ()Lkotlinx/coroutines/flow/StateFlow;
+	public final fun interrupt (Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;)V
+	public static synthetic fun interrupt$default (Lat/bernhardberger/tvheadend/sdk/testing/FakeGrowingRecording;Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;ILjava/lang/Object;)V
+	public final fun isCurrent ()Z
+	public final fun retire (Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;)V
+	public static synthetic fun retire$default (Lat/bernhardberger/tvheadend/sdk/testing/FakeGrowingRecording;Lat/bernhardberger/tvheadend/sdk/playback/TvheadendFailure;ILjava/lang/Object;)V
+	public fun toString ()Ljava/lang/String;
+}
+
 public abstract interface annotation class at/bernhardberger/tvheadend/sdk/testing/FakePlaybackApi : java/lang/annotation/Annotation {
 }
 
@@ -213,6 +230,7 @@ public final class at/bernhardberger/tvheadend/sdk/testing/FakeTvheadendSession 
 	public static synthetic fun retire$default (Lat/bernhardberger/tvheadend/sdk/testing/FakeTvheadendSession;Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;ILjava/lang/Object;)V
 	public fun retry (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun scriptConnect (Lat/bernhardberger/tvheadend/sdk/core/SessionCommandResult;)V
+	public final fun scriptGrowingRecordingPlayback (Lat/bernhardberger/tvheadend/sdk/testing/FakeGrowingRecording;)V
 	public final fun scriptLivePlaybackFailure (Lat/bernhardberger/tvheadend/sdk/core/PlaybackBindingResult;)V
 	public final fun scriptLivePlaybackSuccess ()V
 	public final fun scriptLivePlaybackSuccess (Lat/bernhardberger/tvheadend/sdk/playback/SubscriptionOpener;)V

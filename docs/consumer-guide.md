@@ -2020,6 +2020,40 @@ Android's `SystemClock`. Under Robolectric, `FakeClock` sets that clock on every
 advance, but running the main looper task by task moves it further, to the next
 delayed message, so the window can start later than the `FakeClock` says.
 
+### Test a recording that is still being written
+
+`FakeGrowingRecording` stands in for the file of a recording the server is
+still writing. Script it with `scriptGrowingRecordingPlayback(recording)`. The
+binding then admits a DVR entry that is still recording and has a single `.ts`
+file, and gives playback this file as its growing recording. Unlike the other
+fake bindings, it serves real bytes. It still never opens a completed file and
+never reports progress.
+
+```kotlin
+val recording = FakeGrowingRecording(initialBytes = firstSegment)
+session.scriptGrowingRecordingPlayback(recording)
+
+recording.append(nextSegment)   // the recording grows
+recording.interrupt()           // the server stops sending to the open readers
+recording.finish()              // the file ends; publish the completed entry too
+recording.retire()              // the file is replaced or the connection is lost
+```
+
+Each call takes effect before it returns: a read waiting at the end of the file
+resumes at once with the new bytes, the end of input or the failure.
+`waitingReads` counts the reads waiting at the end of the file, so a test can
+tell when playback has caught up before it appends, interrupts or finishes.
+`interrupt` fails only the readers open at that moment, with `TIMEOUT` by
+default, as when the server stops sending. A reader opened afterwards reads
+normally. `retire` ends the file's continuity for good.
+
+The DVR entry is separate from the file. Publish its observations yourself: a
+larger size while it grows, and `COMPLETED` after `finish`. The binding follows
+the entry while each observation keeps the same file and a size that does not
+shrink. One observation that breaks this, or that lacks the entry, makes the
+target unavailable for good. Playback still reads the file on Media3's loader
+threads, so wait for `waitingReads` or Media3's own signals, not a fixed time.
+
 ## Malformed responses
 
 A malformed response means the SDK could not interpret or validate the reply;

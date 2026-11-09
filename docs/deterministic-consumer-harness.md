@@ -3,8 +3,11 @@
 Status: slice 1 (live path) accepted by the owner on 2026-11-09 and merged.
 The consumer recipe is in the consumer guide, "Test live playback
 deterministically". Slice 2 (remaining timers) is implemented on branch
-`feat/deterministic-recording-harness`; see "Slice 2 as implemented". Requested
-by the Player test-quality work.
+`feat/deterministic-recording-harness`; see "Slice 2 as implemented". On the
+same branch, `sdk-testing` adds `FakeGrowingRecording` so that a consumer test
+controls a recording that is still being written; the consumer guide describes
+it in "Test a recording that is still being written". Requested by the Player
+test-quality work.
 
 ## Problem
 

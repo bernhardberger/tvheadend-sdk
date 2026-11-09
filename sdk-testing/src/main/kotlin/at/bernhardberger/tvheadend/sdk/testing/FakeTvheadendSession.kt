@@ -205,6 +205,18 @@ public class FakeTvheadendSession(
             recordingBindingScript = PlaybackBindingScript.CompletedRecording
         }
     }
+    /**
+     * Scripts a generation-bound growing-recording binding whose file is [recording].
+     *
+     * The binding admits an entry that is still recording, with a single `.ts` file, and follows
+     * it while observations keep that file: through growth and into a completed recording. It
+     * serves [recording] as the growing file, never opens a completed file, and never reports
+     * progress. See [TvheadendTestResultFactory.boundGrowingRecordingPlayback].
+     */
+    @FakePlaybackApi
+    public fun scriptGrowingRecordingPlayback(recording: FakeGrowingRecording) {
+        synchronized(lock) { recordingBindingScript = PlaybackBindingScript.GrowingRecording(recording) }
+    }
     /** Scripts a failed live binding result. */
     @FakePlaybackApi
     public fun scriptLivePlaybackFailure(result: PlaybackBindingResult<Nothing>) {
@@ -248,6 +260,7 @@ public class FakeTvheadendSession(
             }
             is PlaybackBindingScript.Failure -> script.result
             is PlaybackBindingScript.CompletedRecording,
+            is PlaybackBindingScript.GrowingRecording,
             -> error("Invalid live playback script")
         }
     }
@@ -263,6 +276,13 @@ public class FakeTvheadendSession(
                     this,
                     currentSession,
                     recordingId,
+                )
+            is PlaybackBindingScript.GrowingRecording ->
+                TvheadendTestResultFactory.boundGrowingRecordingPlayback(
+                    this,
+                    currentSession,
+                    recordingId,
+                    script.recording.lease,
                 )
             is PlaybackBindingScript.Failure -> script.result
             is PlaybackBindingScript.Live -> error("Invalid recording playback script")
@@ -812,6 +832,7 @@ private sealed interface EpgSearchScript {
 private sealed interface PlaybackBindingScript {
     class Live(val opener: at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpener?) : PlaybackBindingScript
     data object CompletedRecording : PlaybackBindingScript
+    class GrowingRecording(val recording: FakeGrowingRecording) : PlaybackBindingScript
     class Failure(val result: PlaybackBindingResult<Nothing>) : PlaybackBindingScript
 }
 
