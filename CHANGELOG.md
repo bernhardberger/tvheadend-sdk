@@ -23,6 +23,16 @@ Unreleased; development target.
 - `EpgSearchRequest.mergeText` searches the way an automatic rule with
   `mergeText` matches, to preview the programmes such a rule would record. Older
   servers ignore it; the HTSP version does not reveal support.
+- Both `createTvheadendPlaybackCoordinator` factories take a trailing
+  `workDispatcher`, default `Dispatchers.IO`, for live subscription work. The
+  coordinator's own callbacks, live source callbacks and recovery timers now use
+  handlers created by the player's `Clock`. With `Clock.DEFAULT` nothing changes
+  in production. With a test `StandardTestDispatcher` and a non-advancing Media3
+  `FakeClock`, the test decides when each live SDK step runs, and a broken
+  condition fails at once instead of waiting out a real-time budget. Recording
+  playback still loads on Media3's loader threads. Source calls compile
+  unchanged; compiled callers must be rebuilt. See "Test live playback
+  deterministically" in the consumer guide.
 
 ### Changed
 

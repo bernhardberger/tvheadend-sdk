@@ -1,8 +1,9 @@
 # Deterministic consumer playback tests: phase 1 proposal
 
-Status: proposal with a working prototype on branch
-`feat/deterministic-consumer-harness` (from `origin/main` 28978f3). Not merged,
-not released. Requested by the Player test-quality work (2026-11-09).
+Status: slice 1 (live path) accepted by the owner on 2026-11-09 and implemented
+on branch `feat/deterministic-consumer-harness`. The consumer recipe is in the
+consumer guide, "Test live playback deterministically". Slice 2 follows the
+Player pilot. Requested by the Player test-quality work.
 
 ## Problem
 
@@ -237,13 +238,13 @@ timeshift grant before a focus loss") and the scenario the proof models.
   `BackgroundPlaybackRuntimeTest`. `RecordingRecoveryPositionTest` waits for
   slice 2 and keeps the Loader limit above.
 
-## Open questions for the owner
+## Owner decisions (2026-11-09)
 
-1. Plain `workDispatcher` parameter (recommended) or a separate
-   `@TvheadendTestingApi` overload?
-2. Accept SDK timers and posts on the player's `Clock` as production behaviour?
-   No observable change with `Clock.DEFAULT`.
-3. Recipe in the consumer guide only (recommended), or a published lockstep
-   helper module later?
-4. Should slice 2 (load-control and wall clocks) go into the same candidate as
-   slice 1, or follow it?
+1. `workDispatcher` is a plain trailing parameter on both coordinator
+   factories. There is no `@TvheadendTestingApi` overload.
+2. SDK posts and timers on the player looper use the player's `Clock` in
+   production.
+3. The recipe goes in the consumer guide only. A helper module (slice 3) is
+   considered only if the Player pilot shows repetition.
+4. Slice 2 follows the Player pilot and targets the same 0.39 line before its
+   release. It is not part of slice 1.

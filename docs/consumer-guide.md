@@ -1912,6 +1912,75 @@ These are focused SDK-boundary building blocks, not a UI or application
 architecture framework. Applications remain responsible for faking their own
 SDK-facing abstraction where that is the appropriate test boundary.
 
+### Test live playback deterministically
+
+A host test can run a real `ExoPlayer` with the real coordinator, a real
+subscription manager and `FakeTvheadendSession`. The SDK's live work then runs only
+when the test lets it. Pass the same `StandardTestDispatcher` to the manager and
+as the coordinator's `workDispatcher`, and build the player with a non-advancing
+Media3 `FakeClock`. The SDK creates its player-looper handlers from the player's
+clock, so the `FakeClock` orders them with the player's own messages and holds
+SDK timers until the test advances it.
+
+No SDK step is then left on a real thread, so the test can assert outcomes
+directly after settling, with no wait for an SDK condition. A broken condition
+fails as soon as it is asserted, instead of waiting out a real-time budget.
+This keeps mutation testing from timing out.
+
+The recipe uses `media3-test-utils`, `media3-test-utils-robolectric` and
+Robolectric, which the application adds as test dependencies. It opts into
+`SubscriptionInfrastructureApi` for `createSubscriptionManager` and into
+`FakePlaybackApi` for `scriptLivePlaybackSuccess(manager)`:
+
+```kotlin
+@Test
+fun liveTimeshiftIsReadyAfterTheOpenRuns() = runTest {
+    val work = StandardTestDispatcher(testScheduler)
+    val clock = FakeClock(/* isAutoAdvancing = */ false)
+    val player = TestExoPlayerBuilder(context).setClock(clock).build()
+    val connection = ScriptedSubscriptionConnection()
+    val manager = createSubscriptionManager(connection, work)
+    manager.startAdmission()
+    val session = FakeTvheadendSession(observation).apply { scriptLivePlaybackSuccess(manager) }
+    val coordinator = createTvheadendPlaybackCoordinator(player, workDispatcher = work)
+    coordinator.launchIn(backgroundScope)
+
+    fun handleCommands() {
+        // Media3's acknowledgement that the playback thread is done, not an SDK condition.
+        TestPlayerRunHelper.advance(player).untilPendingCommandsAreFullyHandled()
+        shadowOf(Looper.getMainLooper()).idle()
+    }
+    fun settle() = repeat(8) { runCurrent(); handleCommands() }
+    fun advanceBy(duration: Duration) {
+        clock.advanceTime(duration.inWholeMilliseconds)
+        advanceTimeBy(duration)
+        settle()
+    }
+
+    // Install the target, then:
+    settle()
+    // Assert timeshiftState, subscriptionIssue or player state here.
+}
+```
+
+Two rules keep such a test deterministic:
+
+- Settle the player before the test suspends. If every coroutine is suspended
+  while the playback thread still owes the SDK a reply, `runTest` skips virtual
+  time to the next SDK timeout and fires it. Call `settle()` before awaiting a
+  result, rather than relying on `runTest`'s automatic advance.
+- Advance both clocks together. SDK timers run on both the test scheduler and
+  the `FakeClock`, so advancing only one of them skews their order. Use one
+  helper, like `advanceBy` above, for every advance.
+
+`settle()` runs a fixed number of rounds. Eight cover installing a live target
+through to its timeline. If a scenario needs more, settle again where it
+needs to, so the extra step stays visible.
+
+Live playback is covered. Recording playback still loads on Media3's loader
+threads, so recording tests wait on Media3's own signals. Live-start buffer
+timing and DVR progress timestamps still read the system clock.
+
 ## Malformed responses
 
 A malformed response means the SDK could not interpret or validate the reply;
