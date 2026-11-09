@@ -23,18 +23,24 @@ Unreleased; development target.
 - `EpgSearchRequest.mergeText` searches the way an automatic rule with
   `mergeText` matches, to preview the programmes such a rule would record. Older
   servers ignore it; the HTSP version does not reveal support.
-- Both `createTvheadendPlaybackCoordinator` factories take a trailing
-  `workDispatcher`, default `Dispatchers.IO`, for live subscription work. The
-  coordinator's own callbacks, live source callbacks and recovery timers now use
-  handlers created by the player's `Clock`. With `Clock.DEFAULT` nothing changes
-  in production. With a test `StandardTestDispatcher` and a non-advancing Media3
-  `FakeClock`, the test decides when each live SDK step runs, and a broken
-  condition fails at once instead of waiting out a real-time budget. Recording
-  playback still loads on Media3's loader threads. Source calls compile
-  unchanged; compiled callers must be rebuilt. See "Test live playback
-  deterministically" in the consumer guide.
 
 ### Changed
+
+- BREAKING: both `createTvheadendPlaybackCoordinator` factories take a trailing
+  `workDispatcher`, default `Dispatchers.IO`, for live subscription work. A
+  trailing lambda now binds to `workDispatcher` and no longer compiles: pass the
+  unsupported-stream callback as `onUnsupportedStream = { ... }`. Compiled callers
+  must be rebuilt. The dispatcher must dispatch; unconfined and immediate
+  dispatchers are not supported. The coordinator's own callbacks, live source
+  callbacks and recovery timers now use handlers created by the player's `Clock`.
+  With `Clock.DEFAULT` nothing changes in production. In tests, recovery timers
+  now follow a Media3 `FakeClock`: an auto-advancing one, the `TestExoPlayerBuilder`
+  default, can run a watchdog out while live work still runs on a real thread.
+  With a `StandardTestDispatcher` and a non-advancing `FakeClock`, the test
+  decides when each live SDK step runs, and a broken condition fails at once
+  instead of waiting out a real-time budget. Recording playback still loads on
+  Media3's loader threads. See "Test live playback deterministically" in the
+  consumer guide.
 
 - BREAKING: keep times are typed. `retentionDays: Long?` and `removalDays: Long?`
   become `retention: DvrRetention?` and `removal: DvrRemoval?` on `DvrEntry`,

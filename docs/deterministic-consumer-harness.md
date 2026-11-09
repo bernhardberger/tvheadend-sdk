@@ -130,17 +130,24 @@ fun ExoPlayer.handleCommands() {           // Media3's acknowledgement, not an S
     shadowOf(Looper.getMainLooper()).idle()
 }
 fun TestScope.settle() = repeat(8) { runCurrent(); player.handleCommands() }
-fun TestScope.advanceBy(d: Duration) {     // both clocks in lockstep
-    clock.advanceTime(d.inWholeMilliseconds); advanceTimeBy(d); settle()
+fun TestScope.advanceBy(d: Duration) {     // both clocks in lockstep, in short steps
+    var left = d
+    while (left > Duration.ZERO) {
+        val step = minOf(left, 100.milliseconds)
+        clock.advanceTime(step.inWholeMilliseconds); advanceTimeBy(step); settle()
+        left -= step
+    }
 }
 ```
 
 After `settle()` the test asserts outcomes directly. It never waits for an SDK
 condition.
 
-**Compatibility.** Adding a defaulted trailing parameter keeps call sites
-source-compatible and changes the JVM signature, which is acceptable in 0.x and
-belongs in the changelog. Android ABI dumps are not generated with the pinned
+**Compatibility.** Adding a defaulted trailing parameter changes the JVM
+signature and breaks source calls that pass `onUnsupportedStream` as a trailing
+lambda, which would now bind to `workDispatcher`. Such calls name the argument
+instead. Both breaks are acceptable in 0.x and are marked BREAKING in the
+changelog. Android ABI dumps are not generated with the pinned
 toolchain (KT-83410), so no dump changes. A parameter cannot carry an opt-in
 marker. If the owner wants the dispatcher gated, the alternative is a separate
 `@TvheadendTestingApi` overload. The recommendation is the plain parameter,

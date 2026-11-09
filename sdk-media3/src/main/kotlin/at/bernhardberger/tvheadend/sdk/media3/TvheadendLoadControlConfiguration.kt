@@ -90,7 +90,8 @@ public fun createTvheadendLoadControl(liveStartBuffer: TvheadendLiveStartBuffer)
  * in flight or when that restart begins within 3 s of completion. An existing rebuffer is eligible.
  * Refusal, cancellation, departure, target replacement and teardown clear the mark. Unconfirmed
  * dispatched commands retain the bounded grace according to their typed disposition.
- * [workDispatcher] works as in the overload without a load control.
+ * [workDispatcher] works, and must dispatch, as in the [createTvheadendPlaybackCoordinator]
+ * overload without a load control.
  * The application retains Player ownership, learning, settings and autoplay policy.
  */
 @OptIn(UnstableApi::class)

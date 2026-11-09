@@ -3,6 +3,7 @@
     at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class,
     at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class,
     at.bernhardberger.tvheadend.sdk.testing.FakePlaybackApi::class,
+    kotlinx.coroutines.ExperimentalCoroutinesApi::class,
 )
 
 package at.bernhardberger.tvheadend.sdk.media3
@@ -36,6 +37,8 @@ import at.bernhardberger.tvheadend.sdk.testing.FakeTvheadendSession
 import at.bernhardberger.tvheadend.sdk.testing.ScriptedSubscriptionConnection
 import java.io.IOException
 import java.util.concurrent.CountDownLatch
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
@@ -43,6 +46,7 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.robolectric.Shadows.shadowOf
@@ -198,47 +202,55 @@ class ExoPlayerSourceReplacementTest {
         }
 
     @Test
-    fun `a live target is timeshift-ready only after its open has been consumed`() = runTest {
-        // A consumer's whole SDK side runs on this scheduler and the player's non-advancing clock.
-        val work = StandardTestDispatcher(testScheduler)
-        val exoPlayer = TestExoPlayerBuilder(ApplicationProvider.getApplicationContext())
-            .setClock(FakeClock(/* isAutoAdvancing = */ false))
-            .build()
-        val connection = ScriptedSubscriptionConnection()
-        val manager = createSubscriptionManager(connection, work)
-        manager.startAdmission()
-        val session = FakeTvheadendSession(currentLiveObservation()).apply { scriptLivePlaybackSuccess(manager) }
-        val recoveries = mutableListOf<PlaybackRecoveryReason>()
-        val coordinator = createTvheadendPlaybackCoordinator(
-            exoPlayer,
-            onRecoveryRequired = { recoveries += it },
-            workDispatcher = work,
-        )
-        coordinator.launchIn(backgroundScope)
-        connection.scriptSubscribe(SubscriptionOperationResult.Ok(SubscriptionConfirmation(null, null, null, 120)))
-
-        val installed = async {
-            coordinator.setLiveTarget(session, session.captureCurrentSession(), ChannelId(1), LivePlaybackOptions(timeshiftPeriod = 120.seconds))
-        }
+    fun `a live target is timeshift-ready only after its open has been consumed`() = withDeterministicLive { live ->
+        val installed = async { live.setTarget() }
         runCurrent()
         assertTrue((installed.await() as LivePlaybackTargetResult.Bound).result.isStarted)
         // The playback thread prepares the source, which queues its open here and nowhere else:
         // however long real threads run, the server has not been asked yet.
-        exoPlayer.handleCommands()
-        assertEquals(0, connection.subscribeCount)
-        assertSame(LiveTimeshiftState.Unavailable, coordinator.timeshiftState.value)
+        live.exoPlayer.handleCommands()
+        assertEquals(0, live.connection.subscribeCount)
+        assertSame(LiveTimeshiftState.Unavailable, live.coordinator.timeshiftState.value)
 
         runCurrent()
-        connection.emit(SubscriptionEvent.Started(listOf(audioStream()), null))
-        connection.emit(SubscriptionEvent.Timeshift(0, 0, 0, 120_000_000, 100))
-        settle(exoPlayer)
+        live.startStream()
+        live.settle()
 
-        val ready = coordinator.timeshiftState.value as? LiveTimeshiftState.Available
+        val ready = live.coordinator.timeshiftState.value as? LiveTimeshiftState.Available
         assertEquals(120.seconds, ready?.grantedPeriod)
-        assertTrue(recoveries.isEmpty())
-        coordinator.shutdown(1.seconds)
-        manager.closeAndJoin()
-        exoPlayer.release()
+    }
+
+    @Test
+    fun `a stalled live target's recovery watchdog runs on the player's clock`() =
+        withDeterministicLive(PlaybackRecoveryPolicy(1_000L, 1_000L, 1_000L)) { live ->
+            live.setTarget()
+            live.settle()
+            live.startStream()
+            live.exoPlayer.play()
+            live.settle()
+            assertEquals(Player.STATE_BUFFERING, live.exoPlayer.playbackState)
+
+            live.advanceBy(900.milliseconds)
+            assertTrue(live.recoveries.isEmpty())
+            // No packet ever arrives, so whichever budget applies runs out on the player's clock.
+            live.advanceBy(3.seconds)
+            assertEquals(listOf(PlaybackRecoveryReason.AUDIO_RECOVERY_EXHAUSTED), live.recoveries)
+        }
+
+    /**
+     * Runs [block] against the real coordinator, subscription manager and live source, with all SDK
+     * work on the test scheduler and the player on a non-advancing clock, and releases them after.
+     */
+    private fun withDeterministicLive(
+        recoveryPolicy: PlaybackRecoveryPolicy = PlaybackRecoveryPolicy(),
+        block: suspend TestScope.(DeterministicLive) -> Unit,
+    ) = runTest {
+        val live = DeterministicLive(this, recoveryPolicy)
+        try {
+            block(live)
+        } finally {
+            live.close()
+        }
     }
 
     private fun withPlayer(holdFailure: Boolean = true, block: (Harness) -> Unit) {
@@ -321,15 +333,68 @@ private fun ExoPlayer.handleCommands() {
     shadowOf(Looper.getMainLooper()).idle()
 }
 
-/** Runs the due SDK work and player commands in turn until both are quiet at the current time. */
-private fun TestScope.settle(player: ExoPlayer) {
-    repeat(SETTLE_ROUNDS) {
-        runCurrent()
-        player.handleCommands()
+/** A consumer's SDK side on one test scheduler and the player's clock, as the consumer guide shows. */
+private class DeterministicLive(private val test: TestScope, recoveryPolicy: PlaybackRecoveryPolicy) {
+    private val work = StandardTestDispatcher(test.testScheduler)
+    private val clock = FakeClock(/* isAutoAdvancing = */ false)
+    val exoPlayer: ExoPlayer = TestExoPlayerBuilder(ApplicationProvider.getApplicationContext())
+        .setClock(clock)
+        .build()
+    val connection = ScriptedSubscriptionConnection().apply {
+        scriptSubscribe(SubscriptionOperationResult.Ok(SubscriptionConfirmation(null, null, null, 120)))
+    }
+    private val manager = createSubscriptionManager(connection, work).apply { startAdmission() }
+    private val session = FakeTvheadendSession(currentLiveObservation()).apply { scriptLivePlaybackSuccess(manager) }
+    val recoveries = mutableListOf<PlaybackRecoveryReason>()
+    val coordinator = createTvheadendPlaybackCoordinator(
+        exoPlayer,
+        recoveryPolicy = recoveryPolicy,
+        onRecoveryRequired = { recoveries += it },
+        workDispatcher = work,
+    ).also { it.launchIn(test.backgroundScope) }
+
+    suspend fun setTarget(): LivePlaybackTargetResult = coordinator.setLiveTarget(
+        session,
+        session.captureCurrentSession(),
+        ChannelId(1),
+        LivePlaybackOptions(timeshiftPeriod = 120.seconds),
+    )
+
+    suspend fun startStream() {
+        connection.emit(SubscriptionEvent.Started(listOf(audioStream()), null))
+        connection.emit(SubscriptionEvent.Timeshift(0, 0, 0, 120_000_000, 100))
+    }
+
+    /** Runs the due SDK work and player commands in turn until both are quiet at the current time. */
+    fun settle() = repeat(SETTLE_ROUNDS) {
+        test.runCurrent()
+        exoPlayer.handleCommands()
+    }
+
+    /** Advances both clocks together in steps shorter than any SDK deadline, settling after each. */
+    fun advanceBy(duration: Duration) {
+        var remaining = duration
+        while (remaining > Duration.ZERO) {
+            val step = minOf(remaining, ADVANCE_STEP)
+            clock.advanceTime(step.inWholeMilliseconds)
+            test.advanceTimeBy(step)
+            settle()
+            remaining -= step
+        }
+    }
+
+    suspend fun close() {
+        try {
+            coordinator.shutdown(1.seconds)
+            manager.closeAndJoin()
+        } finally {
+            exoPlayer.release()
+        }
     }
 }
 
 private const val SETTLE_ROUNDS = 8
+private val ADVANCE_STEP = 100.milliseconds
 
 private fun audioStream() = SubscriptionStream(
     StreamIndex(0), SubscriptionStreamType.MPEG2_AUDIO, null, null, null, null, null,

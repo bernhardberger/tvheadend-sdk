@@ -1922,15 +1922,24 @@ Media3 `FakeClock`. The SDK creates its player-looper handlers from the player's
 clock, so the `FakeClock` orders them with the player's own messages and holds
 SDK timers until the test advances it.
 
-No SDK step is then left on a real thread, so the test can assert outcomes
-directly after settling, with no wait for an SDK condition. A broken condition
-fails as soon as it is asserted, instead of waiting out a real-time budget.
-This keeps mutation testing from timing out.
+No SDK step then waits on a real thread other than Media3's playback thread,
+which the test lets catch up through Media3's own acknowledgement. The test can
+assert outcomes directly after settling, with no wait for an SDK condition. A
+broken condition fails as soon as it is asserted, instead of waiting out a
+real-time budget. This keeps mutation testing from timing out.
+
+The `workDispatcher` must dispatch. `UnconfinedTestDispatcher` and other
+unconfined or immediate dispatchers are not supported. Keep the `FakeClock`
+non-advancing too: `TestExoPlayerBuilder` defaults to an auto-advancing clock,
+which now also drives the SDK's recovery timers and can run a watchdog out
+before the live work it guards has run.
 
 The recipe uses `media3-test-utils`, `media3-test-utils-robolectric` and
 Robolectric, which the application adds as test dependencies. It opts into
-`SubscriptionInfrastructureApi` for `createSubscriptionManager` and into
-`FakePlaybackApi` for `scriptLivePlaybackSuccess(manager)`:
+Media3's `UnstableApi` for the coordinator factory, `FakeClock` and
+`TestExoPlayerBuilder`, into `SubscriptionInfrastructureApi` for
+`createSubscriptionManager`, and into `FakePlaybackApi` for
+`scriptLivePlaybackSuccess(manager)`:
 
 ```kotlin
 @Test
@@ -1939,6 +1948,9 @@ fun liveTimeshiftIsReadyAfterTheOpenRuns() = runTest {
     val clock = FakeClock(/* isAutoAdvancing = */ false)
     val player = TestExoPlayerBuilder(context).setClock(clock).build()
     val connection = ScriptedSubscriptionConnection()
+    connection.scriptSubscribe(
+        SubscriptionOperationResult.Ok(SubscriptionConfirmation(null, null, null, 120)),
+    )
     val manager = createSubscriptionManager(connection, work)
     manager.startAdmission()
     val session = FakeTvheadendSession(observation).apply { scriptLivePlaybackSuccess(manager) }
@@ -1952,18 +1964,29 @@ fun liveTimeshiftIsReadyAfterTheOpenRuns() = runTest {
     }
     fun settle() = repeat(8) { runCurrent(); handleCommands() }
     fun advanceBy(duration: Duration) {
-        clock.advanceTime(duration.inWholeMilliseconds)
-        advanceTimeBy(duration)
-        settle()
+        var remaining = duration
+        while (remaining > Duration.ZERO) {
+            val step = minOf(remaining, 100.milliseconds)
+            clock.advanceTime(step.inWholeMilliseconds)
+            advanceTimeBy(step)
+            settle()
+            remaining -= step
+        }
     }
 
-    // Install the target, then:
-    settle()
-    // Assert timeshiftState, subscriptionIssue or player state here.
+    try {
+        // Install the target, emit the stream's events on `connection`, then:
+        settle()
+        // Assert timeshiftState, subscriptionIssue or player state here.
+    } finally {
+        coordinator.shutdown(1.seconds)
+        manager.closeAndJoin()
+        player.release()
+    }
 }
 ```
 
-Two rules keep such a test deterministic:
+Three rules keep such a test deterministic:
 
 - Settle the player before the test suspends. If every coroutine is suspended
   while the playback thread still owes the SDK a reply, `runTest` skips virtual
@@ -1972,14 +1995,22 @@ Two rules keep such a test deterministic:
 - Advance both clocks together. SDK timers run on both the test scheduler and
   the `FakeClock`, so advancing only one of them skews their order. Use one
   helper, like `advanceBy` above, for every advance.
+- Advance in short steps. Each clock runs everything due up to its new time
+  before the other catches up, so a single long jump can run a later deadline on
+  one clock before an earlier one on the other. Keep the step shorter than the
+  gap between the SDK deadlines the test cares about. The SDK's live timeouts
+  are a second or more apart, so 100 ms steps keep their order.
 
 `settle()` runs a fixed number of rounds. Eight cover installing a live target
 through to its timeline. If a scenario needs more, settle again where it
 needs to, so the extra step stays visible.
 
-Live playback is covered. Recording playback still loads on Media3's loader
-threads, so recording tests wait on Media3's own signals. Live-start buffer
-timing and DVR progress timestamps still read the system clock.
+Live playback through `createTvheadendPlaybackCoordinator` is covered. Recording
+playback still loads on Media3's loader threads, and the recording resume
+timeout uses a plain `Handler`, so recording tests wait on Media3's own signals.
+A recovery created on its own with `createTvheadendPlaybackRecovery` keeps the
+system clock. Live-start buffer timing and DVR progress timestamps still read the
+system clock.
 
 ## Malformed responses
 

@@ -1059,6 +1059,12 @@ private fun validatePlaybackShutdownDrainTimeout(drainTimeout: Duration) {
  * orders them with the player's own messages. A test that passes a `StandardTestDispatcher`
  * and a non-advancing `FakeClock` decides when each live SDK step runs; no live SDK step then
  * waits on a real thread. Media3's own playback thread and loaders stay real threads.
+ *
+ * [workDispatcher] must dispatch: live sources start work on it while holding their own locks,
+ * so `Dispatchers.Unconfined`, `UnconfinedTestDispatcher` and immediate dispatchers are not
+ * supported. With an auto-advancing `FakeClock`, recovery timers can fire while live work on
+ * the default [workDispatcher] still runs on a real thread; pair a test dispatcher with a
+ * non-advancing clock.
  */
 @androidx.media3.common.util.UnstableApi
 public fun createTvheadendPlaybackCoordinator(
