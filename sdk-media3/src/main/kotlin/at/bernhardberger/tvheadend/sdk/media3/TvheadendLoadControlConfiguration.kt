@@ -90,6 +90,7 @@ public fun createTvheadendLoadControl(liveStartBuffer: TvheadendLiveStartBuffer)
  * in flight or when that restart begins within 3 s of completion. An existing rebuffer is eligible.
  * Refusal, cancellation, departure, target replacement and teardown clear the mark. Unconfirmed
  * dispatched commands retain the bounded grace according to their typed disposition.
+ * [workDispatcher] works as in the overload without a load control.
  * The application retains Player ownership, learning, settings and autoplay policy.
  */
 @OptIn(UnstableApi::class)
@@ -101,11 +102,12 @@ public fun createTvheadendPlaybackCoordinator(
     recoveryPolicy: PlaybackRecoveryPolicy = PlaybackRecoveryPolicy(),
     onRecoveryRequired: (PlaybackRecoveryReason) -> Unit = {},
     onUnsupportedStream: (SubscriptionStreamType) -> Unit = {},
+    workDispatcher: kotlinx.coroutines.CoroutineDispatcher = kotlinx.coroutines.Dispatchers.IO,
 ): TvheadendPlaybackCoordinator {
     val events = PlaybackPlayerEventAccumulator()
     return TvheadendPlaybackCoordinator(
         player = Media3PlaybackCoordinatorPlayer(
-            ExoPlayerCoordinatorPlaybackAccess(player, recoveryPolicy, onUnsupportedStream),
+            ExoPlayerCoordinatorPlaybackAccess(player, recoveryPolicy, workDispatcher, onUnsupportedStream),
             events, loadControl.delegate, ::admitRecordingTarget,
         ),
         playerEvents = events,

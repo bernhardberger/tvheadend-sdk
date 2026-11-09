@@ -5,7 +5,6 @@
 
 package at.bernhardberger.tvheadend.sdk.media3
 
-import android.os.Handler
 import android.os.Looper
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackExit
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
@@ -185,8 +184,18 @@ internal interface CoordinatorLooper {
     fun isCurrent(): Boolean
 }
 
-internal class HandlerCoordinatorLooper(looper: Looper) : CoordinatorLooper {
-    private val handler = Handler(looper)
+/**
+ * Posts through a handler of the player's Media3 clock, so that a test clock orders SDK work with
+ * the player's own messages. [androidx.media3.common.util.Clock.DEFAULT] creates a plain handler.
+ */
+@androidx.media3.common.util.UnstableApi
+internal class HandlerCoordinatorLooper(
+    private val handler: androidx.media3.common.util.HandlerWrapper,
+) : CoordinatorLooper {
+    constructor(
+        looper: Looper,
+        clock: androidx.media3.common.util.Clock = androidx.media3.common.util.Clock.DEFAULT,
+    ) : this(clock.createHandler(looper, null))
 
     override fun post(runnable: Runnable): Boolean = handler.post(runnable)
 

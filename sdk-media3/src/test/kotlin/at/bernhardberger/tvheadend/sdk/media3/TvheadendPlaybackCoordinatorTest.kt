@@ -4758,7 +4758,7 @@ private fun liveSession(): FakeTvheadendSession = FakeTvheadendSession(currentLi
     scriptLivePlaybackSuccess()
 }
 
-private fun currentLiveObservation(): SessionObservation = SessionObservation.create(
+internal fun currentLiveObservation(): SessionObservation = SessionObservation.create(
     sessionState = readyState(),
     channelState = ChannelRepositoryState.Current(
         ChannelCatalog.create(listOf(TvheadendChannel.create(ChannelId(1)))),

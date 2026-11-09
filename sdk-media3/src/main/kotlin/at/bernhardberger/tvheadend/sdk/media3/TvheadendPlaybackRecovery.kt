@@ -2,7 +2,6 @@
 
 package at.bernhardberger.tvheadend.sdk.media3
 
-import android.os.Handler
 import android.os.Looper
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -139,10 +138,11 @@ public class TvheadendPlaybackRecovery internal constructor(
     isTargetCurrent: () -> Boolean = { true },
     scheduler: RecoveryScheduler? = null,
 ) : AutoCloseable {
-    private val handler = Handler(player.applicationLooper)
     private val stateMachine = PlaybackRecoveryStateMachine(
         policy = policy,
-        scheduler = scheduler ?: HandlerRecoveryScheduler(handler),
+        scheduler = scheduler ?: HandlerRecoveryScheduler(
+            androidx.media3.common.util.Clock.DEFAULT.createHandler(player.applicationLooper, null),
+        ),
         hasSelectedAudio = { player.currentTracks.isTypeSelected(C.TRACK_TYPE_AUDIO) },
         isAudioDisabled = { C.TRACK_TYPE_AUDIO in player.trackSelectionParameters.disabledTrackTypes },
         setAudioDisabled = { disabled ->
@@ -229,7 +229,9 @@ internal fun interface RecoveryScheduler {
     fun schedule(delayMillis: Long, action: () -> Unit): ScheduledRecoveryTask
 }
 
-private class HandlerRecoveryScheduler(private val handler: Handler) : RecoveryScheduler {
+internal class HandlerRecoveryScheduler(
+    private val handler: androidx.media3.common.util.HandlerWrapper,
+) : RecoveryScheduler {
     override fun schedule(delayMillis: Long, action: () -> Unit): ScheduledRecoveryTask {
         val runnable = Runnable(action)
         check(handler.postDelayed(runnable, delayMillis)) { "Player looper is not accepting work" }

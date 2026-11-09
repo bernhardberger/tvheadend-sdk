@@ -1051,7 +1051,15 @@ private fun validatePlaybackShutdownDrainTimeout(drainTimeout: Duration) {
     }
 }
 
-/** Creates a narrow playback coordinator over an application-owned [player]. */
+/**
+ * Creates a narrow playback coordinator over an application-owned [player].
+ *
+ * Live sources run their subscription work on [workDispatcher]. Their callbacks, and the
+ * coordinator's recovery timers, use handlers of [player]'s clock, so a Media3 `FakeClock`
+ * orders them with the player's own messages. A test that passes a `StandardTestDispatcher`
+ * and a non-advancing `FakeClock` decides when each live SDK step runs; no live SDK step then
+ * waits on a real thread. Media3's own playback thread and loaders stay real threads.
+ */
 @androidx.media3.common.util.UnstableApi
 public fun createTvheadendPlaybackCoordinator(
     player: ExoPlayer,
@@ -1059,6 +1067,7 @@ public fun createTvheadendPlaybackCoordinator(
     recoveryPolicy: PlaybackRecoveryPolicy = PlaybackRecoveryPolicy(),
     onRecoveryRequired: (PlaybackRecoveryReason) -> Unit = {},
     onUnsupportedStream: (SubscriptionStreamType) -> Unit = {},
+    workDispatcher: kotlinx.coroutines.CoroutineDispatcher = kotlinx.coroutines.Dispatchers.IO,
 ): TvheadendPlaybackCoordinator {
     val events = PlaybackPlayerEventAccumulator()
     return TvheadendPlaybackCoordinator(
@@ -1066,6 +1075,7 @@ public fun createTvheadendPlaybackCoordinator(
             access = ExoPlayerCoordinatorPlaybackAccess(
                 player = player,
                 recoveryPolicy = recoveryPolicy,
+                workDispatcher = workDispatcher,
                 onUnsupportedStream = onUnsupportedStream,
             ),
             events = events,

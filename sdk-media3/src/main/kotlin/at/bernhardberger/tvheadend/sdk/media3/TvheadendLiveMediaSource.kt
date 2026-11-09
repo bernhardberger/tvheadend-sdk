@@ -41,12 +41,15 @@ internal fun createTvheadendLiveMediaSource(
     options: SubscriptionOptions = SubscriptionOptions(),
     timeshiftControls: LiveTimeshiftControlBridge? = null,
     onUnsupportedStream: (SubscriptionStreamType) -> Unit = {},
+    workerDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    clock: androidx.media3.common.util.Clock = androidx.media3.common.util.Clock.DEFAULT,
 ): MediaSource = TvheadendLiveMediaSource(
     target,
     options,
     timeshiftControls,
     onUnsupportedStream,
-)
+    workerDispatcher,
+) { HandlerCoordinatorLooper(checkNotNull(Looper.myLooper()), clock) }
 
 /** All close outcomes retire local delivery; none authorizes retry or proves Player item removal. */
 internal suspend fun ActiveSubscription.closeForMedia3() {

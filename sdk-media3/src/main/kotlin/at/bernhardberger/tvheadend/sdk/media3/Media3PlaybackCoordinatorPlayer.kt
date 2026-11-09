@@ -1234,9 +1234,10 @@ internal class Media3PlaybackCoordinatorPlayer(
 internal class ExoPlayerCoordinatorPlaybackAccess(
     private val player: ExoPlayer,
     private val recoveryPolicy: PlaybackRecoveryPolicy,
+    private val workDispatcher: kotlinx.coroutines.CoroutineDispatcher = kotlinx.coroutines.Dispatchers.IO,
     private val onUnsupportedStream: (SubscriptionStreamType) -> Unit,
 ) : CoordinatorPlaybackAccess {
-    override val looper: CoordinatorLooper = HandlerCoordinatorLooper(player.applicationLooper)
+    override val looper: CoordinatorLooper = HandlerCoordinatorLooper(player.applicationLooper, player.clock)
 
     override fun requireApplicationLooper() {
         check(looper.isCurrent()) { "Playback coordination must run on the player's application looper" }
@@ -1291,6 +1292,8 @@ internal class ExoPlayerCoordinatorPlaybackAccess(
                 options,
                 timeshiftControls,
                 onUnsupportedStream,
+                workDispatcher,
+                player.clock,
             ),
         )
 
@@ -1320,7 +1323,13 @@ internal class ExoPlayerCoordinatorPlaybackAccess(
         isTargetCurrent: () -> Boolean,
         onRecoveryRequired: (PlaybackRecoveryReason) -> Unit,
     ): CoordinatorPlaybackRecovery {
-        val recovery = TvheadendPlaybackRecovery(player, recoveryPolicy, onRecoveryRequired, isTargetCurrent)
+        val recovery = TvheadendPlaybackRecovery(
+            player,
+            recoveryPolicy,
+            onRecoveryRequired,
+            isTargetCurrent,
+            HandlerRecoveryScheduler(player.clock.createHandler(player.applicationLooper, null)),
+        )
         return object : CoordinatorPlaybackRecovery {
             override fun beginPlaybackTarget() {
                 recovery.beginPlaybackTarget()

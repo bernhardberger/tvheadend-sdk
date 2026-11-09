@@ -2,6 +2,7 @@
 @file:OptIn(
     at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class,
     at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class,
+    at.bernhardberger.tvheadend.sdk.testing.FakePlaybackApi::class,
 )
 
 package at.bernhardberger.tvheadend.sdk.media3
@@ -17,15 +18,34 @@ import androidx.media3.exoplayer.source.BaseMediaSource
 import androidx.media3.exoplayer.source.MediaPeriod
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.upstream.Allocator
+import android.os.Looper
+import androidx.media3.test.utils.FakeClock
 import androidx.media3.test.utils.TestExoPlayerBuilder
 import androidx.media3.test.utils.robolectric.RobolectricUtil.runMainLooperUntil
 import androidx.media3.test.utils.robolectric.TestPlayerRunHelper
 import androidx.test.core.app.ApplicationProvider
+import at.bernhardberger.tvheadend.sdk.core.ChannelId
+import at.bernhardberger.tvheadend.sdk.playback.StreamIndex
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionConfirmation
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStream
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
+import at.bernhardberger.tvheadend.sdk.playback.createSubscriptionManager
+import at.bernhardberger.tvheadend.sdk.testing.FakeTvheadendSession
+import at.bernhardberger.tvheadend.sdk.testing.ScriptedSubscriptionConnection
 import java.io.IOException
 import java.util.concurrent.CountDownLatch
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import org.robolectric.Shadows.shadowOf
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -177,6 +197,50 @@ class ExoPlayerSourceReplacementTest {
             assertEquals(Player.STATE_BUFFERING, harness.exoPlayer.playbackState)
         }
 
+    @Test
+    fun `a live target is timeshift-ready only after its open has been consumed`() = runTest {
+        // A consumer's whole SDK side runs on this scheduler and the player's non-advancing clock.
+        val work = StandardTestDispatcher(testScheduler)
+        val exoPlayer = TestExoPlayerBuilder(ApplicationProvider.getApplicationContext())
+            .setClock(FakeClock(/* isAutoAdvancing = */ false))
+            .build()
+        val connection = ScriptedSubscriptionConnection()
+        val manager = createSubscriptionManager(connection, work)
+        manager.startAdmission()
+        val session = FakeTvheadendSession(currentLiveObservation()).apply { scriptLivePlaybackSuccess(manager) }
+        val recoveries = mutableListOf<PlaybackRecoveryReason>()
+        val coordinator = createTvheadendPlaybackCoordinator(
+            exoPlayer,
+            onRecoveryRequired = { recoveries += it },
+            workDispatcher = work,
+        )
+        coordinator.launchIn(backgroundScope)
+        connection.scriptSubscribe(SubscriptionOperationResult.Ok(SubscriptionConfirmation(null, null, null, 120)))
+
+        val installed = async {
+            coordinator.setLiveTarget(session, session.captureCurrentSession(), ChannelId(1), LivePlaybackOptions(timeshiftPeriod = 120.seconds))
+        }
+        runCurrent()
+        assertTrue((installed.await() as LivePlaybackTargetResult.Bound).result.isStarted)
+        // The playback thread prepares the source, which queues its open here and nowhere else:
+        // however long real threads run, the server has not been asked yet.
+        exoPlayer.handleCommands()
+        assertEquals(0, connection.subscribeCount)
+        assertSame(LiveTimeshiftState.Unavailable, coordinator.timeshiftState.value)
+
+        runCurrent()
+        connection.emit(SubscriptionEvent.Started(listOf(audioStream()), null))
+        connection.emit(SubscriptionEvent.Timeshift(0, 0, 0, 120_000_000, 100))
+        settle(exoPlayer)
+
+        val ready = coordinator.timeshiftState.value as? LiveTimeshiftState.Available
+        assertEquals(120.seconds, ready?.grantedPeriod)
+        assertTrue(recoveries.isEmpty())
+        coordinator.shutdown(1.seconds)
+        manager.closeAndJoin()
+        exoPlayer.release()
+    }
+
     private fun withPlayer(holdFailure: Boolean = true, block: (Harness) -> Unit) {
         val harness = Harness(holdFailure)
         try {
@@ -247,6 +311,30 @@ class ExoPlayerSourceReplacementTest {
         }
     }
 }
+
+/**
+ * Lets the playback thread handle every queued command and the application looper run what is due,
+ * without advancing either clock. The wait is Media3's own acknowledgement, not an SDK condition.
+ */
+private fun ExoPlayer.handleCommands() {
+    TestPlayerRunHelper.advance(this).untilPendingCommandsAreFullyHandled()
+    shadowOf(Looper.getMainLooper()).idle()
+}
+
+/** Runs the due SDK work and player commands in turn until both are quiet at the current time. */
+private fun TestScope.settle(player: ExoPlayer) {
+    repeat(SETTLE_ROUNDS) {
+        runCurrent()
+        player.handleCommands()
+    }
+}
+
+private const val SETTLE_ROUNDS = 8
+
+private fun audioStream() = SubscriptionStream(
+    StreamIndex(0), SubscriptionStreamType.MPEG2_AUDIO, null, null, null, null, null,
+    null, null, null, null, null, null, null, null,
+)
 
 /** Signals on the playback thread when the player first stops, then holds it until [resume] opens. */
 private class StopHoldingLoadControl(
