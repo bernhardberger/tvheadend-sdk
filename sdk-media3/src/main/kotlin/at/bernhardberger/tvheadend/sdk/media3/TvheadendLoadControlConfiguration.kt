@@ -106,14 +106,12 @@ public fun createTvheadendPlaybackCoordinator(
     workDispatcher: kotlinx.coroutines.CoroutineDispatcher = kotlinx.coroutines.Dispatchers.IO,
 ): TvheadendPlaybackCoordinator {
     val events = PlaybackPlayerEventAccumulator()
+    val access = ExoPlayerCoordinatorPlaybackAccess(player, recoveryPolicy, workDispatcher, onUnsupportedStream)
     return TvheadendPlaybackCoordinator(
-        player = Media3PlaybackCoordinatorPlayer(
-            ExoPlayerCoordinatorPlaybackAccess(player, recoveryPolicy, workDispatcher, onUnsupportedStream),
-            events, loadControl.delegate, ::admitRecordingTarget,
-        ),
+        player = Media3PlaybackCoordinatorPlayer(access, events, loadControl.delegate, ::admitRecordingTarget),
         playerEvents = events,
         progressPolicy = progressPolicy,
         onRecoveryRequired = onRecoveryRequired,
-        timeSource = SystemPlaybackCoordinatorTimeSource,
+        timeSource = access.progressTimeSource,
     )
 }

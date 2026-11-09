@@ -25,6 +25,8 @@ import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.io.InterruptedIOException
 import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 
 internal fun createTvheadendGrowingRecordingDataSourceFactory(
@@ -56,9 +58,10 @@ internal fun createTvheadendGrowingRecordingMediaSource(
     readAheadBytes: Int = DEFAULT_RECORDING_READ_AHEAD_BYTES,
     onSeekMap: (SeekMap) -> Unit = {},
     onFinalEnd: () -> Unit = {},
+    probeDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ): MediaSource = ProgressiveMediaSource.Factory(
     createTvheadendGrowingRecordingDataSourceFactory(lease, identity, readAheadBytes, onFinalEnd),
-    createGrowingTsExtractorsFactory(onSeekMap, lease),
+    createGrowingTsExtractorsFactory(onSeekMap, lease, probeDispatcher),
 ).createMediaSource(tvheadendRecordingMediaItem(identity))
 
 /**

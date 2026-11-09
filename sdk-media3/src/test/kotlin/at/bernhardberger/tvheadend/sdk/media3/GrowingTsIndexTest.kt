@@ -2,6 +2,7 @@
 @file:OptIn(
     at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi::class,
     at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi::class,
+    kotlinx.coroutines.ExperimentalCoroutinesApi::class,
 )
 
 package at.bernhardberger.tvheadend.sdk.media3
@@ -22,7 +23,12 @@ import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
@@ -60,28 +66,23 @@ class GrowingTsIndexTest {
     }
 
     @Test
-    fun `lease driven map is retracted on continuity loss even with no playback consumption`() {
+    fun `lease driven map is retracted on continuity loss even with no playback consumption`() = runTest {
         val bytes = File("src/androidTest/assets/p7-f3/h264-synthetic.ts").readBytes()
         val lease = ProbeLease(bytes, bytes.size)
-        val seekable = CountDownLatch(1)
-        val retracted = CountDownLatch(1)
-        val output = CapturingSeekMapOutput { map ->
-            when {
-                map.isSeekable -> seekable.countDown()
-                seekable.count == 0L -> retracted.countDown()
-            }
-        }
+        val output = CapturingSeekMapOutput()
         val extractor = GrowingTsExtractor(
             delegate = WindowedKeyframeExtractor(),
             lease = lease,
+            probeDispatcher = StandardTestDispatcher(testScheduler),
         )
         try {
             extractor.init(output)
-            assertTrue(seekable.await(5, TimeUnit.SECONDS))
+            runCurrent()
             assertTrue(output.maps.last().isSeekable)
             lease.current = false
-            // No further media consumption is required: poll exit retracts the existing map.
-            assertTrue(retracted.await(7, TimeUnit.SECONDS))
+            // No further media consumption is required: the probe's next sample retracts the map.
+            advanceTimeBy(5.seconds)
+            runCurrent()
             assertFalse(output.maps.last().isSeekable)
             assertTrue(output.maps.last().durationUs > 23_000_000L)
         } finally {

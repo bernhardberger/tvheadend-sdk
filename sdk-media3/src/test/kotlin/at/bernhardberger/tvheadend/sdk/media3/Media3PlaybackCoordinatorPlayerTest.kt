@@ -4132,3 +4132,12 @@ private fun declaredStream(
     at.bernhardberger.tvheadend.sdk.playback.StreamIndex(index), type, null, null, null, null, null,
     frameDurationUs, null, null, null, null, null, null, null,
 )
+
+/** Wall-clock DVR progress cadence for coordinator tests on a fake player access. */
+internal data object SystemPlaybackCoordinatorTimeSource : PlaybackCoordinatorTimeSource {
+    override fun now(): kotlin.time.Instant = kotlin.time.Clock.System.now()
+
+    override suspend fun wait(duration: Duration) {
+        kotlinx.coroutines.delay(duration)
+    }
+}

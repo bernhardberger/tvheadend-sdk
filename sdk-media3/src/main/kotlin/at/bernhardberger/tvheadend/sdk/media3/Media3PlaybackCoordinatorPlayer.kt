@@ -1239,6 +1239,10 @@ internal class ExoPlayerCoordinatorPlaybackAccess(
 ) : CoordinatorPlaybackAccess {
     override val looper: CoordinatorLooper = HandlerCoordinatorLooper(player.applicationLooper, player.clock)
 
+    /** The coordinator's DVR progress cadence, on the same clock as the player's messages. */
+    val progressTimeSource: PlaybackCoordinatorTimeSource =
+        PlayerClockCoordinatorTimeSource(player.clock, player.applicationLooper)
+
     override fun requireApplicationLooper() {
         check(looper.isCurrent()) { "Playback coordination must run on the player's application looper" }
     }
@@ -1315,6 +1319,7 @@ internal class ExoPlayerCoordinatorPlaybackAccess(
             lease = lease,
             identity = identity,
             onFinalEnd = onFinalEnd,
+            probeDispatcher = workDispatcher,
         ),
         identity,
     )
@@ -1323,13 +1328,7 @@ internal class ExoPlayerCoordinatorPlaybackAccess(
         isTargetCurrent: () -> Boolean,
         onRecoveryRequired: (PlaybackRecoveryReason) -> Unit,
     ): CoordinatorPlaybackRecovery {
-        val recovery = TvheadendPlaybackRecovery(
-            player,
-            recoveryPolicy,
-            onRecoveryRequired,
-            isTargetCurrent,
-            HandlerRecoveryScheduler(player.clock.createHandler(player.applicationLooper, null)),
-        )
+        val recovery = TvheadendPlaybackRecovery(player, recoveryPolicy, onRecoveryRequired, isTargetCurrent)
         return object : CoordinatorPlaybackRecovery {
             override fun beginPlaybackTarget() {
                 recovery.beginPlaybackTarget()

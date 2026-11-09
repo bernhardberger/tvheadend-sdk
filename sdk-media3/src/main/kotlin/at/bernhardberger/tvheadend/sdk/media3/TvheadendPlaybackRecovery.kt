@@ -140,9 +140,7 @@ public class TvheadendPlaybackRecovery internal constructor(
 ) : AutoCloseable {
     private val stateMachine = PlaybackRecoveryStateMachine(
         policy = policy,
-        scheduler = scheduler ?: HandlerRecoveryScheduler(
-            androidx.media3.common.util.Clock.DEFAULT.createHandler(player.applicationLooper, null),
-        ),
+        scheduler = scheduler ?: HandlerRecoveryScheduler(player.mediaClock.createHandler(player.applicationLooper, null)),
         hasSelectedAudio = { player.currentTracks.isTypeSelected(C.TRACK_TYPE_AUDIO) },
         isAudioDisabled = { C.TRACK_TYPE_AUDIO in player.trackSelectionParameters.disabledTrackTypes },
         setAudioDisabled = { disabled ->
@@ -213,7 +211,12 @@ public class TvheadendPlaybackRecovery internal constructor(
     }
 }
 
-/** Creates one recovery coordinator for an application-owned [Player]. */
+/**
+ * Creates one recovery coordinator for an application-owned [Player].
+ *
+ * Its timers run on handlers of the player's clock when [player] is an `ExoPlayer`, so a Media3
+ * `FakeClock` orders them with the player's own messages, and on the system clock otherwise.
+ */
 @androidx.media3.common.util.UnstableApi
 public fun createTvheadendPlaybackRecovery(
     player: Player,

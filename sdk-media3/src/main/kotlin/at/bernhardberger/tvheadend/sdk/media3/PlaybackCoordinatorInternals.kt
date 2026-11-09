@@ -21,11 +21,9 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.resume
-import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Instant
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 
 internal interface CoordinatorLiveTarget {
@@ -469,10 +467,30 @@ internal interface PlaybackCoordinatorTimeSource {
     suspend fun wait(duration: Duration)
 }
 
-internal data object SystemPlaybackCoordinatorTimeSource : PlaybackCoordinatorTimeSource {
-    override fun now(): Instant = Clock.System.now()
+/**
+ * Measures DVR progress cadence on the player's Media3 [clock], so that a test clock moves it with
+ * the player's own messages. [now] counts elapsed realtime, not wall time: the coordinator only
+ * compares two of its values and never shows, stores or schedules against one.
+ */
+@androidx.media3.common.util.UnstableApi
+internal class PlayerClockCoordinatorTimeSource(
+    private val clock: androidx.media3.common.util.Clock,
+    looper: Looper,
+) : PlaybackCoordinatorTimeSource {
+    private val handler = clock.createHandler(looper, null)
 
-    override suspend fun wait(duration: Duration) {
-        delay(duration)
+    override fun now(): Instant = Instant.fromEpochMilliseconds(clock.elapsedRealtime())
+
+    override suspend fun wait(duration: Duration): Unit = suspendCancellableCoroutine { continuation ->
+        val elapsed = Runnable { continuation.resume(Unit) }
+        // A released player's looper refuses the post. The wait then ends only by cancellation,
+        // which the coordinator's teardown performs.
+        if (handler.postDelayed(elapsed, duration.inWholeMilliseconds.coerceAtLeast(0L))) {
+            continuation.invokeOnCancellation { handler.removeCallbacks(elapsed) }
+        }
     }
 }
+
+/** The Media3 clock that orders this player's own messages, or the system clock for another [androidx.media3.common.Player]. */
+internal val androidx.media3.common.Player.mediaClock: androidx.media3.common.util.Clock
+    @androidx.media3.common.util.UnstableApi get() = (this as? androidx.media3.exoplayer.ExoPlayer)?.clock ?: androidx.media3.common.util.Clock.DEFAULT

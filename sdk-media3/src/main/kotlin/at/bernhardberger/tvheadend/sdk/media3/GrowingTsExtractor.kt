@@ -24,6 +24,7 @@ import androidx.media3.extractor.text.SubtitleParser
 import androidx.media3.extractor.ts.TsExtractor
 import androidx.media3.extractor.ts.GrowingTsBinarySearch
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -34,8 +35,9 @@ import kotlinx.coroutines.launch
 internal fun createGrowingTsExtractorsFactory(
     onSeekMap: (SeekMap) -> Unit = {},
     lease: GrowingRecordingFileLease? = null,
+    probeDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ): ExtractorsFactory = ExtractorsFactory {
-    arrayOf(GrowingTsExtractor(onSeekMap = onSeekMap, lease = lease))
+    arrayOf(GrowingTsExtractor(onSeekMap = onSeekMap, lease = lease, probeDispatcher = probeDispatcher))
 }
 
 /** Thin indexing decorator; Media3's maintained [TsExtractor] still owns all TS parsing. */
@@ -45,6 +47,7 @@ internal class GrowingTsExtractor(
     private val index: GrowingTsIndex = GrowingTsIndex(),
     private val onSeekMap: (SeekMap) -> Unit = {},
     private val lease: GrowingRecordingFileLease? = null,
+    private val probeDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : Extractor {
     private val publicationLock = Any()
     private var probeJob: Job? = null
@@ -95,7 +98,7 @@ internal class GrowingTsExtractor(
         if (lease != null) {
             // Extractor init/release is the synchronous Media3 lifecycle boundary. The probe has
             // its own readers and continues while playback loading is stopped (including pause).
-            probeJob = CoroutineScope(Dispatchers.IO).launch {
+            probeJob = CoroutineScope(probeDispatcher).launch {
                 val probe = GrowingTsExtentProbe(lease)
                 try {
                 while (isActive && lease.isCurrent) {

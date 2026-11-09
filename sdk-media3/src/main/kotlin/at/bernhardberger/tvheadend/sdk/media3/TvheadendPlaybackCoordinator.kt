@@ -1054,11 +1054,13 @@ private fun validatePlaybackShutdownDrainTimeout(drainTimeout: Duration) {
 /**
  * Creates a narrow playback coordinator over an application-owned [player].
  *
- * Live sources run their subscription work on [workDispatcher]. Their callbacks, and the
- * coordinator's recovery timers, use handlers of [player]'s clock, so a Media3 `FakeClock`
- * orders them with the player's own messages. A test that passes a `StandardTestDispatcher`
- * and a non-advancing `FakeClock` decides when each live SDK step runs; no live SDK step then
- * waits on a real thread. Media3's own playback thread and loaders stay real threads.
+ * Live sources run their subscription work, and growing recordings their extent probe, on
+ * [workDispatcher]. Live source callbacks, the coordinator's recovery and recording-resume
+ * timers and its DVR progress cadence use [player]'s clock, so a Media3 `FakeClock` orders them
+ * with the player's own messages. A test that passes a `StandardTestDispatcher` and a
+ * non-advancing `FakeClock` decides when each live SDK step runs; no live SDK step then waits on
+ * a real thread. Media3's own playback thread and loaders stay real threads, including the
+ * loaders that read recordings.
  *
  * [workDispatcher] must dispatch: live sources start work on it while holding their own locks,
  * so `Dispatchers.Unconfined`, `UnconfinedTestDispatcher` and immediate dispatchers are not
@@ -1076,21 +1078,22 @@ public fun createTvheadendPlaybackCoordinator(
     workDispatcher: kotlinx.coroutines.CoroutineDispatcher = kotlinx.coroutines.Dispatchers.IO,
 ): TvheadendPlaybackCoordinator {
     val events = PlaybackPlayerEventAccumulator()
+    val access = ExoPlayerCoordinatorPlaybackAccess(
+        player = player,
+        recoveryPolicy = recoveryPolicy,
+        workDispatcher = workDispatcher,
+        onUnsupportedStream = onUnsupportedStream,
+    )
     return TvheadendPlaybackCoordinator(
         player = Media3PlaybackCoordinatorPlayer(
-            access = ExoPlayerCoordinatorPlaybackAccess(
-                player = player,
-                recoveryPolicy = recoveryPolicy,
-                workDispatcher = workDispatcher,
-                onUnsupportedStream = onUnsupportedStream,
-            ),
+            access = access,
             events = events,
             admitRecording = ::admitRecordingTarget,
         ),
         playerEvents = events,
         progressPolicy = progressPolicy,
         onRecoveryRequired = onRecoveryRequired,
-        timeSource = SystemPlaybackCoordinatorTimeSource,
+        timeSource = access.progressTimeSource,
     )
 }
 

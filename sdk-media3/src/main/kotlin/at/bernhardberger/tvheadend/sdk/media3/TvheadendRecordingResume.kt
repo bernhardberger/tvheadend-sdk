@@ -3,7 +3,6 @@
 
 package at.bernhardberger.tvheadend.sdk.media3
 
-import android.os.Handler
 import android.os.Looper
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -348,7 +347,7 @@ internal interface RecordingResumePlayer {
 private class Media3RecordingResumePlayer(
     private val player: Player,
 ) : RecordingResumePlayer {
-    private val handler = Handler(player.applicationLooper)
+    private val handler = player.mediaClock.createHandler(player.applicationLooper, null)
 
     override val currentMediaItem: MediaItem?
         get() = player.currentMediaItem
