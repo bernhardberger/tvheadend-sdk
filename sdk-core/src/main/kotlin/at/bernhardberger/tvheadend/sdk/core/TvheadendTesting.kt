@@ -87,7 +87,9 @@ public class SessionGenerationTestAuthority(
         synchronized(lock) { store.observation.value to dvrIncarnations[id] }
     // A session records an entry's incarnation as each DVR update arrives, whether or not a
     // binding looks; publication is this authority's update. An absent entry loses its
-    // incarnation, so its return is a new one.
+    // incarnation, so its return is a new one. A DVR state without a snapshot is never current,
+    // so it already retires every binding's proof. Re-checking unchanged entries is harmless:
+    // public factories give every admitted `.ts` file its own path, hence a growing identity.
     private fun trackDvrIncarnationsLocked(observation: SessionObservation) {
         val entries = observation.dvrSnapshotForDisplay?.entries?.associateBy(DvrEntry::id) ?: return
         dvrIncarnations = entries.mapValues { (id, entry) ->
@@ -207,6 +209,8 @@ public object TvheadendTestResultFactory {
      * that replaces the file or the generation retires its lease itself. The binding never opens a
      * completed file and never reports progress: those calls fail like the completed-recording
      * binding's. [cutpoints] answers as in [boundCompletedRecordingPlayback].
+     *
+     * @throws IllegalArgumentException if [session] does not observe [authority]'s observations.
      */
     @SubscriptionInfrastructureApi
     @ExperimentalTvheadendApi

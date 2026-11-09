@@ -689,11 +689,12 @@ internal class FakeTvheadendSessionTest {
         fake.publish(growingObservation(DvrEntryState.COMPLETED, sizeBytes = 250))
         assertTrue(binding.admission is RecordingPlaybackAdmission.Completed)
 
-        for (broken in listOf(
+        val breaks = listOf(
             growingObservation(DvrEntryState.COMPLETED, sizeBytes = 50),
             growingObservation(DvrEntryState.COMPLETED, sizeBytes = 300, fileId = 2),
             currentObservation(includeTargets = false),
-        )) for (readBetween in listOf(true, false)) {
+        ).flatMap { broken -> listOf(broken to true, broken to false) }
+        for ((broken, readBetween) in breaks) {
             val restarted = FakeTvheadendSession(growingObservation(DvrEntryState.RECORDING, sizeBytes = 100)).apply {
                 scriptGrowingRecordingPlayback(recording)
             }
