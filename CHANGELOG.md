@@ -41,6 +41,13 @@ Unreleased; development target.
   instead of waiting out a real-time budget. Recording playback still loads on
   Media3's loader threads. See "Test live playback deterministically" in the
   consumer guide.
+- The coordinator's recording resume timeout and DVR progress cadence, and the
+  timers of a standalone `createTvheadendPlaybackRecovery` for an `ExoPlayer`,
+  also use handlers created by the player's `Clock`. A growing recording's extent
+  probe runs on `workDispatcher`. DVR progress now measures its checkpoint
+  interval as elapsed time, so a change of the device's wall clock no longer
+  shortens or stretches one. In tests, a DVR progress checkpoint is reached by
+  advancing the player's `FakeClock`, not the coroutine test scheduler.
 
 - BREAKING: keep times are typed. `retentionDays: Long?` and `removalDays: Long?`
   become `retention: DvrRetention?` and `removal: DvrRemoval?` on `DvrEntry`,

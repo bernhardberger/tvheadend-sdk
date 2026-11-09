@@ -2006,12 +2006,14 @@ Three rules keep such a test deterministic:
 through to its timeline. If a scenario needs more, settle again where it
 needs to, so the extra step stays visible.
 
-Live playback through `createTvheadendPlaybackCoordinator` is covered. Recording
-playback still loads on Media3's loader threads, and the recording resume
-timeout uses a plain `Handler`, so recording tests wait on Media3's own signals.
-A recovery created on its own with `createTvheadendPlaybackRecovery` keeps the
-system clock. Live-start buffer timing and DVR progress timestamps still read the
-system clock.
+The coordinator's recording resume timeout and DVR progress cadence run on the
+player's clock too, and so do the timers of a recovery created on its own with
+`createTvheadendPlaybackRecovery` for an `ExoPlayer`. A DVR progress checkpoint
+is therefore reached by advancing the `FakeClock`. A growing recording's extent
+probe runs on `workDispatcher`. Recording playback itself still loads on
+Media3's loader threads, so a recording test waits on Media3's own signals for
+loading. Under Robolectric, `FakeClock` also moves Android's `SystemClock`, so the
+live-start buffer's skip window follows it as well.
 
 ## Malformed responses
 

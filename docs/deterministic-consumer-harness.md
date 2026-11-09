@@ -1,9 +1,10 @@
 # Deterministic consumer playback tests: phase 1 proposal
 
-Status: slice 1 (live path) accepted by the owner on 2026-11-09 and implemented
-on branch `feat/deterministic-consumer-harness`. The consumer recipe is in the
-consumer guide, "Test live playback deterministically". Slice 2 follows the
-Player pilot. Requested by the Player test-quality work.
+Status: slice 1 (live path) accepted by the owner on 2026-11-09 and merged.
+The consumer recipe is in the consumer guide, "Test live playback
+deterministically". Slice 2 (remaining timers) is implemented on branch
+`feat/deterministic-recording-harness`; see "Slice 2 as implemented". Requested
+by the Player test-quality work.
 
 ## Problem
 
@@ -36,11 +37,11 @@ unless stated otherwise. Line numbers refer to `origin/main` 28978f3.
 | `LiveTimeshiftControls.kt:471,940-982` grant and state publication | runs on the caller's thread (the source worker) | follows the source | follows the source |
 | `PlaybackCoordinatorInternals.kt:188` `HandlerCoordinatorLooper` (coordinator → application looper) | plain `Handler` | no | `Clock` handler |
 | `TvheadendPlaybackRecovery.kt:142,232` watchdogs (6 s, 6 s, 20 s) | `Handler.postDelayed` on the application looper | internal `RecoveryScheduler` only | `Clock` handler when created by the coordinator |
-| `TvheadendRecordingResume.kt:351,372` resume timeout | `Handler.postDelayed` | no | unchanged (slice 2) |
-| `GrowingTsExtractor.kt:98` extent probe; `GrowingTsExtent.kt:42` 5 s timeout | `CoroutineScope(Dispatchers.IO)` hard-coded | no | unchanged (slice 2) |
+| `TvheadendRecordingResume.kt:351,372` resume timeout | `Handler.postDelayed` | no | slice 2: `Clock` handler |
+| `GrowingTsExtractor.kt:98` extent probe; `GrowingTsExtent.kt:42` 5 s timeout | `CoroutineScope(Dispatchers.IO)` hard-coded | no | slice 2: `workDispatcher` |
 | `TvheadendRecordingDataSource.kt:110`, `TvheadendGrowingRecordingDataSource.kt:72` | `runBlocking` on Media3 Loader threads | no; `ProgressiveMediaSource.Factory.setDownloadExecutor` exists but is not exposed | unchanged, see limits |
-| `LiveStartLoadControl.kt:22` live-start timing | `android.os.SystemClock.elapsedRealtime` on the playback thread | no | unchanged (slice 2) |
-| `TvheadendPlaybackCoordinator.kt:1077` DVR progress timestamps | `Clock.System` (wall clock); waits use `delay` in the consumer scope | no | unchanged (slice 2) |
+| `LiveStartLoadControl.kt:22` live-start timing | `android.os.SystemClock.elapsedRealtime` on the playback thread | no | unchanged: under Robolectric `FakeClock` moves `SystemClock` |
+| `TvheadendPlaybackCoordinator.kt:1077` DVR progress timestamps | `Clock.System` (wall clock); waits use `delay` in the consumer scope | no | slice 2: player's `Clock` (elapsed time) |
 | `TvheadendPlaybackCoordinator.kt:1494,1545` drain, paused-seek polling | consumer coroutine context | yes (consumer scope) | unchanged |
 | `TvheadendAudioOutputProvider.kt:64` 2 s wait for a playback-thread message | caller's coroutine context | yes | unchanged, see hazards |
 | `sdk-playback/.../SubscriptionStateMachine.kt:484` manager, seek/restart timeouts (5 s) | `createSubscriptionManager(connection, dispatcher)` | **yes, public** | unchanged |
@@ -107,14 +108,8 @@ public fun createTvheadendPlaybackCoordinator(
 ): TvheadendPlaybackCoordinator
 ```
 
-The same parameter goes on the `loadControl` overload. Slice 2 adds:
-
-- `createTvheadendLoadControl(liveStartBuffer, clock: Clock = Clock.DEFAULT)`, so
-  live-start timing reads the same clock the application gives the player builder;
-- a `kotlin.time.Clock` parameter on the coordinator factories for DVR progress
-  timestamps, so recording progress tests are not tied to the wall clock;
-- recording-resume timers on the player's clock and the growing-recording probe
-  on `workDispatcher`.
+The same parameter goes on the `loadControl` overload. Slice 2 needed no
+further public parameter; see "Slice 2 as implemented".
 
 Consumer recipe (test-side, about 15 lines in the consumer):
 
@@ -205,6 +200,36 @@ sources), and `:sdk-media3:compileDebugAndroidTestKotlin` compiles.
 - `settle` uses a fixed round count, not a quiescence test. Eight rounds cover
   the live open-to-timeline path. A scenario that needs more rounds should
   advance or settle again explicitly rather than raise the count silently.
+
+## Slice 2 as implemented
+
+Player-looper timers use the player's `Clock`, coroutine work uses
+`workDispatcher`, and no public parameter is added.
+
+- Recording resume timeout: handler from the player's `Clock`.
+- Standalone `createTvheadendPlaybackRecovery`: handlers from the `ExoPlayer`'s
+  `Clock`; another `Player` keeps `Clock.DEFAULT`.
+- Growing-recording extent probe: `workDispatcher` when the coordinator creates
+  the source; `Dispatchers.IO` otherwise.
+- DVR progress cadence: both the timestamps and the checkpoint wait use the
+  player's `Clock`. Every consumer of the coordinator's time source was checked
+  first: `TvheadendPlaybackCoordinator.kt` passes `now()` to
+  `DvrProgressTracker.onPause` and `onElapsed` and waits one checkpoint interval
+  between them; the tracker (`sdk-core/.../DvrProgress.kt:171-190`) only
+  compares two of its values. None reads `now()` as a wall time, so all of them
+  moved. `now()` is elapsed realtime and is never shown, stored or scheduled
+  against.
+- Live-start load control: unchanged. Its skip window compares
+  `SystemClock.elapsedRealtime` with Media3's rebuffer timestamps from the
+  player's `Clock`. In production that is the same clock; under Robolectric,
+  `FakeClock` sets `SystemClock` when it is created and on every advance, so the
+  two agree in tests too. Routing it through the player's clock changed nothing
+  a test could observe, so it was left out.
+
+Media3's loader threads still load recordings. Regression tests:
+`PlayerClockTimersTest` (standalone recovery, recording resume, DVR cadence on a
+real `ExoPlayer` with a non-advancing `FakeClock`) and the growing probe case in
+`GrowingTsIndexTest`, now on virtual time. Each fails with its change reverted.
 
 ## Cost in slices
 
