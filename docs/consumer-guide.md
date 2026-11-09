@@ -1998,8 +1998,9 @@ Three rules keep such a test deterministic:
 - Advance in short steps. Each clock runs everything due up to its new time
   before the other catches up, so a single long jump can run a later deadline on
   one clock before an earlier one on the other. Keep the step shorter than the
-  gap between the SDK deadlines the test cares about. The SDK's live timeouts
-  are a second or more apart, so 100 ms steps keep their order.
+  gap between the SDK deadlines the test cares about. 100 ms suits the default
+  budgets. Timers armed at different times, or short custom recovery budgets,
+  can fall closer together; advance to each such deadline explicitly.
 
 `settle()` runs a fixed number of rounds. Eight cover installing a live target
 through to its timeline. If a scenario needs more, settle again where it
