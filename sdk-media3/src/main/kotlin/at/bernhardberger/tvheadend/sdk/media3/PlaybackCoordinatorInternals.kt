@@ -471,7 +471,7 @@ internal interface PlaybackCoordinatorTimeSource {
 /**
  * Measures DVR progress cadence on the player's Media3 [clock], so that a test clock moves it with
  * the player's own messages. [now] counts elapsed realtime, not wall time: the coordinator only
- * compares two of its values and never shows, stores or schedules against one.
+ * compares two of its values and never persists, reports or compares one with wall time.
  */
 @androidx.media3.common.util.UnstableApi
 internal class PlayerClockCoordinatorTimeSource(

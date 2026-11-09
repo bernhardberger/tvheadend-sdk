@@ -48,7 +48,6 @@ Unreleased; development target.
   interval as elapsed time, so a change of the device's wall clock no longer
   shortens or stretches one. In tests, a DVR progress checkpoint is reached by
   advancing the player's `FakeClock`, not the coroutine test scheduler.
-
 - BREAKING: keep times are typed. `retentionDays: Long?` and `removalDays: Long?`
   become `retention: DvrRetention?` and `removal: DvrRemoval?` on `DvrEntry`,
   `AutorecRule`, `TimerecRule`, their `create` factories, `DvrEntryUpdate` and the

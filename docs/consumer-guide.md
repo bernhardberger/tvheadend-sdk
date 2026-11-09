@@ -1931,7 +1931,8 @@ real-time budget. This keeps mutation testing from timing out.
 The `workDispatcher` must dispatch. `UnconfinedTestDispatcher` and other
 unconfined or immediate dispatchers are not supported. Keep the `FakeClock`
 non-advancing too: `TestExoPlayerBuilder` defaults to an auto-advancing clock,
-which now also drives the SDK's recovery timers and can run a watchdog out
+which now also drives the SDK's timers (recovery watchdogs, the recording
+resume timeout and the DVR progress checkpoints) and can run a watchdog out
 before the live work it guards has run.
 
 The recipe uses `media3-test-utils`, `media3-test-utils-robolectric` and
@@ -2010,10 +2011,14 @@ The coordinator's recording resume timeout and DVR progress cadence run on the
 player's clock too, and so do the timers of a recovery created on its own with
 `createTvheadendPlaybackRecovery` for an `ExoPlayer`. A DVR progress checkpoint
 is therefore reached by advancing the `FakeClock`. A growing recording's extent
-probe runs on `workDispatcher`. Recording playback itself still loads on
-Media3's loader threads, so a recording test waits on Media3's own signals for
-loading. Under Robolectric, `FakeClock` also moves Android's `SystemClock`, so the
-live-start buffer's skip window follows it as well.
+probe runs on `workDispatcher` and re-arms every 5 seconds until the recording
+completes or the source is released, so the scheduler never becomes idle: use
+`advanceTimeBy` and `runCurrent`, not `advanceUntilIdle`. Recording playback
+itself still loads on Media3's loader threads, so a recording test waits on
+Media3's own signals for loading. The live-start buffer's skip window reads
+Android's `SystemClock`. Under Robolectric, `FakeClock` sets that clock on every
+advance, but running the main looper task by task moves it further, to the next
+delayed message, so the window can start later than the `FakeClock` says.
 
 ## Malformed responses
 

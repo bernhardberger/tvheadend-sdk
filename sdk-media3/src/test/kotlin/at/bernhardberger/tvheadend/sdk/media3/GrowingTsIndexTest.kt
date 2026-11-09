@@ -20,8 +20,6 @@ import androidx.media3.extractor.PositionHolder
 import androidx.media3.extractor.SeekMap
 import androidx.media3.extractor.TrackOutput
 import java.io.File
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.awaitCancellation
@@ -46,18 +44,18 @@ class GrowingTsIndexTest {
     }
 
     @Test
-    fun `confirmed completion publishes final extent and retires probe without extractor release`() {
+    fun `confirmed completion publishes final extent and retires probe without extractor release`() = runTest {
         val bytes = File("src/androidTest/assets/p7-f3/h264-synthetic.ts").readBytes()
-        val closed = CountDownLatch(1)
-        val lease = ProbeLease(bytes, bytes.size).apply {
-            completed = true
-            afterClose = { closed.countDown() }
-        }
+        val lease = ProbeLease(bytes, bytes.size).apply { completed = true }
         val output = CapturingSeekMapOutput()
-        val extractor = GrowingTsExtractor(delegate = WindowedKeyframeExtractor(), lease = lease)
+        val extractor = GrowingTsExtractor(
+            delegate = WindowedKeyframeExtractor(),
+            lease = lease,
+            probeDispatcher = StandardTestDispatcher(testScheduler),
+        )
         try {
             extractor.init(output)
-            assertTrue(closed.await(5, TimeUnit.SECONDS))
+            runCurrent()
             assertTrue(output.maps.last().isSeekable)
             assertFalse(output.maps.last().isEstimated)
             assertEquals(1, lease.opens)
@@ -91,22 +89,27 @@ class GrowingTsIndexTest {
     }
 
     @Test
-    fun `extractor release cancels a suspended probe and closes its reader without publishing`() {
-        val reading = CountDownLatch(1)
-        val closed = CountDownLatch(1)
+    fun `extractor release cancels a suspended probe and closes its reader without publishing`() = runTest {
+        var reading = false
         val lease = ProbeLease(ByteArray(188 * 600), 188 * 600).apply {
-            beforeRead = { reading.countDown(); awaitCancellation() }
-            afterClose = { closed.countDown() }
+            beforeRead = { reading = true; awaitCancellation() }
         }
         val output = CapturingSeekMapOutput()
-        val extractor = GrowingTsExtractor(delegate = WindowedKeyframeExtractor(), lease = lease)
+        val extractor = GrowingTsExtractor(
+            delegate = WindowedKeyframeExtractor(),
+            lease = lease,
+            probeDispatcher = StandardTestDispatcher(testScheduler),
+        )
         try {
             extractor.init(output)
-            assertTrue(reading.await(5, TimeUnit.SECONDS))
+            runCurrent()
+            assertTrue(reading)
+            assertEquals(0, lease.closes)
         } finally {
             extractor.release()
         }
-        assertTrue(closed.await(5, TimeUnit.SECONDS))
+        runCurrent()
+        assertEquals(1, lease.closes)
         assertTrue(output.maps.none { it.isSeekable })
     }
 

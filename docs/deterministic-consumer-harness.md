@@ -217,14 +217,19 @@ Player-looper timers use the player's `Clock`, coroutine work uses
   `DvrProgressTracker.onPause` and `onElapsed` and waits one checkpoint interval
   between them; the tracker (`sdk-core/.../DvrProgress.kt:171-190`) only
   compares two of its values. None reads `now()` as a wall time, so all of them
-  moved. `now()` is elapsed realtime and is never shown, stored or scheduled
-  against.
+  moved. `now()` is elapsed realtime and is never persisted, reported or
+  compared with wall time.
 - Live-start load control: unchanged. Its skip window compares
   `SystemClock.elapsedRealtime` with Media3's rebuffer timestamps from the
-  player's `Clock`. In production that is the same clock; under Robolectric,
+  player's `Clock`. In production that is the same clock. Under Robolectric,
   `FakeClock` sets `SystemClock` when it is created and on every advance, so the
-  two agree in tests too. Routing it through the player's clock changed nothing
-  a test could observe, so it was left out.
+  two agree as long as nothing else moves Robolectric's clock. Running the main
+  looper task by task does: it advances `SystemClock` to the next delayed
+  message, past `FakeClock`, and the skip window then starts late. The harness
+  tests could not observe a difference, so the load control was left on
+  `SystemClock`. If the Player pilot meets that drift, the `loadControl`
+  coordinator factory can bind the load control's existing `elapsedRealtimeMs`
+  parameter to `player.clock`.
 
 Media3's loader threads still load recordings. Regression tests:
 `PlayerClockTimersTest` (standalone recovery, recording resume, DVR cadence on a
