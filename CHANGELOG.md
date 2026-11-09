@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.38.1]
+
+Unreleased; hotfix for 0.38.0.
+
+### Fixed
+
+- In `sdk-media3`, installing a live channel or recording right after the previous
+  source failed now prepares the new target. Before, if the failure was still on
+  its way from the playback thread, `Player.prepare()` had no effect: the new
+  source was never prepared, and `onPlayerError` delivered the previous source's
+  error.
+  - When the Player has already stopped for that failure at installation, the
+    coordinator calls `Player.stop()` before setting the new source.
+    Applications see `STATE_IDLE` and no error. A switch away from a source that
+    has not failed never stops the Player, so it keeps audio focus as before.
+  - If an application listener replaces or clears the item, or moves to another
+    item, in response to that `STATE_IDLE`, the installation returns `DEPARTED`.
+    Once the application has moved off the failed target's items, they leave
+    the playlist. The application's item stays `STATE_IDLE` until the
+    application prepares it.
+  - When the failure arrives only after the new source is set, application
+    listeners still receive `onPlayerError` for it. If the new target still owns
+    the current item, the coordinator prepares it once, clearing
+    `Player.playerError`. A previous target restored after a failed replacement
+    is prepared the same way. A recording target
+    reports no `DvrPlaybackExit.ERROR` for that failure, also when an
+    application listener has already replaced the recording in response to it.
+
 ## [0.38.0]
 
 Released 2026-11-01.
