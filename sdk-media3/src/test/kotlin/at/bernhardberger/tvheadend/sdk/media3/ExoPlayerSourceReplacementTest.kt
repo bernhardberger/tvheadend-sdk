@@ -328,7 +328,7 @@ class ExoPlayerSourceReplacementTest {
  * Lets the playback thread handle every queued command and the application looper run what is due,
  * without advancing either clock. The wait is Media3's own acknowledgement, not an SDK condition.
  */
-private fun ExoPlayer.handleCommands() {
+internal fun ExoPlayer.handleCommands() {
     TestPlayerRunHelper.advance(this).untilPendingCommandsAreFullyHandled()
     shadowOf(Looper.getMainLooper()).idle()
 }

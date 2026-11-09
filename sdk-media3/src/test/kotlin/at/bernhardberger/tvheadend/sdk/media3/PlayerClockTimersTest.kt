@@ -5,7 +5,6 @@
 
 package at.bernhardberger.tvheadend.sdk.media3
 
-import android.os.Looper
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.datasource.TransferListener
@@ -16,8 +15,8 @@ import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.upstream.Allocator
 import androidx.media3.test.utils.FakeClock
 import androidx.media3.test.utils.TestExoPlayerBuilder
-import androidx.media3.test.utils.robolectric.TestPlayerRunHelper
 import androidx.test.core.app.ApplicationProvider
+import kotlin.time.Duration.Companion.microseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.advanceTimeBy
@@ -30,7 +29,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 /**
@@ -50,38 +48,38 @@ class PlayerClockTimersTest {
     @Test
     fun `a standalone recovery's watchdog runs on the player's clock`() = released {
         val recoveries = mutableListOf<PlaybackRecoveryReason>()
-        val recovery = createTvheadendPlaybackRecovery(player, PlaybackRecoveryPolicy(1_000L, 1_000L, 1_000L)) {
+        createTvheadendPlaybackRecovery(player, PlaybackRecoveryPolicy(1_000L, 1_000L, 1_000L)) {
             recoveries += it
-        }
-        recovery.beginPlaybackTarget()
-        player.setMediaSource(StalledMediaSource(MediaItem.fromUri("tvheadend-test:stalled")))
-        player.prepare()
-        player.play()
-        player.handleCommands()
-        assertEquals(Player.STATE_BUFFERING, player.playbackState)
+        }.use { recovery ->
+            recovery.beginPlaybackTarget()
+            player.setMediaSource(StalledMediaSource(MediaItem.fromUri("tvheadend-test:stalled")))
+            player.prepare()
+            player.play()
+            player.handleCommands()
+            assertEquals(Player.STATE_BUFFERING, player.playbackState)
 
-        advanceBy(900L)
-        assertTrue(recoveries.isEmpty())
-        advanceBy(3_000L)
-        assertEquals(listOf(PlaybackRecoveryReason.AUDIO_RECOVERY_EXHAUSTED), recoveries)
-        recovery.close()
+            advanceBy(900L)
+            assertTrue(recoveries.isEmpty())
+            advanceBy(3_000L)
+            assertEquals(listOf(PlaybackRecoveryReason.AUDIO_RECOVERY_EXHAUSTED), recoveries)
+        }
     }
 
     @Test
     fun `a completed recording's progress floor lapses on the player's clock`() = released {
         val identity = RecordingMediaIdentity()
         player.setMediaSource(StalledMediaSource(tvheadendRecordingMediaItem(identity)))
-        val resume = createTvheadendRecordingResume(player, identity)
-        resume.beginPlaybackTarget(90.seconds)
+        createTvheadendRecordingResume(player, identity).use { resume ->
+            resume.beginPlaybackTarget(90.seconds)
 
-        // The floor is the only deadline here, so one jump to just before it orders nothing away.
-        clock.advanceTime(COMPLETED_RESUME_PROGRESS_FLOOR_TIMEOUT_MILLIS - 1L)
-        player.handleCommands()
-        assertEquals(90.seconds, resume.progressFloor)
-        advanceBy(1L)
-        assertNull(resume.progressFloor)
-        assertEquals(90.seconds, resume.pendingPosition)
-        resume.close()
+            // The floor is the only deadline here, so one jump to just before it orders nothing away.
+            clock.advanceTime(COMPLETED_RESUME_PROGRESS_FLOOR_TIMEOUT_MILLIS - 1L)
+            player.handleCommands()
+            assertEquals(90.seconds, resume.progressFloor)
+            advanceBy(1L)
+            assertNull(resume.progressFloor)
+            assertEquals(90.seconds, resume.pendingPosition)
+        }
     }
 
     @Test
@@ -100,6 +98,16 @@ class PlayerClockTimersTest {
             runCurrent()
             assertTrue(tick.isCompleted)
             assertEquals(5.seconds, timeSource.now() - start)
+
+            // As with delay, a positive wait below a millisecond still waits one.
+            val brief = async { timeSource.wait(500.microseconds) }
+            runCurrent()
+            player.handleCommands()
+            runCurrent()
+            assertFalse(brief.isCompleted)
+            advanceBy(1L)
+            runCurrent()
+            assertTrue(brief.isCompleted)
         }
     }
 
@@ -124,11 +132,6 @@ class PlayerClockTimersTest {
 }
 
 private const val ADVANCE_STEP_MILLIS = 100L
-/** Lets the playback thread handle queued commands and the application looper run what is due. */
-private fun ExoPlayer.handleCommands() {
-    TestPlayerRunHelper.advance(this).untilPendingCommandsAreFullyHandled()
-    shadowOf(Looper.getMainLooper()).idle()
-}
 
 /** An item whose preparation never publishes a timeline, so the player stays buffering. */
 private class StalledMediaSource(private val item: MediaItem) : BaseMediaSource() {

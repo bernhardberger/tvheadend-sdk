@@ -22,6 +22,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.resume
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.nanoseconds
 import kotlin.time.Instant
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -483,13 +484,21 @@ internal class PlayerClockCoordinatorTimeSource(
 
     override suspend fun wait(duration: Duration): Unit = suspendCancellableCoroutine { continuation ->
         val elapsed = Runnable { continuation.resume(Unit) }
-        // A released player's looper refuses the post. The wait then ends only by cancellation,
-        // which the coordinator's teardown performs.
-        if (handler.postDelayed(elapsed, duration.inWholeMilliseconds.coerceAtLeast(0L))) {
+        // Like delay, a positive wait shorter than a millisecond still waits one.
+        val delayMillis = if (duration.isPositive()) {
+            (duration + SUB_MILLISECOND).inWholeMilliseconds
+        } else {
+            0L
+        }
+        // A quitting looper refuses the post. The wait then ends only by cancellation, which the
+        // coordinator's teardown performs.
+        if (handler.postDelayed(elapsed, delayMillis)) {
             continuation.invokeOnCancellation { handler.removeCallbacks(elapsed) }
         }
     }
 }
+
+private val SUB_MILLISECOND: Duration = 999_999.nanoseconds
 
 /** The Media3 clock that orders this player's own messages, or the system clock for another [androidx.media3.common.Player]. */
 internal val androidx.media3.common.Player.mediaClock: androidx.media3.common.util.Clock
