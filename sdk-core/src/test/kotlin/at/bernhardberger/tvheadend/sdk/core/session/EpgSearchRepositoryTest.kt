@@ -20,6 +20,7 @@ import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.job
 import kotlinx.coroutines.test.runTest
@@ -34,6 +35,27 @@ import org.junit.jupiter.params.provider.EnumSource
 import kotlin.time.Instant
 
 internal class EpgSearchRepositoryTest {
+    @Test
+    fun `pre cancelled search throws before returning an expired observation`() = runTest {
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        publishReady(metadata, generation)
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
+        metadata.bindGeneration(GatewayGeneration())
+        val outcome = CompletableDeferred<Throwable?>()
+
+        val caller = async {
+            currentCoroutineContext().cancel()
+            outcome.complete(runCatching {
+                metadata.epgRepository.search(currentSession, EpgSearchRequest.create("query"))
+            }.exceptionOrNull())
+        }
+        caller.join()
+        assertTrue(outcome.await() is CancellationException)
+    }
+
     @Test
     fun `search returns only remote immutable results without mutating EPG state`() = runTest {
         val calls = mutableListOf<Pair<GatewayGeneration, EpgSearchRequest>>()

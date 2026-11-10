@@ -51,6 +51,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.TagId
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
@@ -72,6 +73,108 @@ import kotlin.time.Instant
 
 @OptIn(ExperimentalCoroutinesApi::class)
 internal class PhaseOneSessionMetadataTest {
+    @Test
+    fun `direct rebind cancels the retired initial sync waiter`() = runTest {
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        val outcome = CompletableDeferred<Throwable?>()
+        val caller = backgroundScope.launch {
+            outcome.complete(runCatching { metadata.awaitMetadataCurrent(generation) }.exceptionOrNull())
+        }
+        runCurrent()
+
+        metadata.bindGeneration(GatewayGeneration())
+        runCurrent()
+        assertTrue(caller.isCompleted)
+        assertTrue(outcome.await() is CancellationException)
+    }
+
+    @Test
+    fun `direct rebind gives a new recording target its own physical identity`() {
+        val metadata = PhaseOneSessionMetadata()
+        val first = GatewayGeneration()
+        metadata.bindGeneration(first)
+        val original = GatewayDvrEntry(id = DvrEntryId(1), state = DvrEntryState.COMPLETED, uuid = "original")
+        metadata.acceptMetadata(MetadataEvent.DvrEntryAdded(first, original))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(first))
+        publishReady(metadata, first)
+        metadata.bindPlaybackRecording(first, requireNotNull(metadata.observation.value.currentSession), DvrEntryId(1))
+        val second = GatewayGeneration()
+        metadata.bindGeneration(second)
+        val replacement = GatewayDvrEntry(id = DvrEntryId(1), state = DvrEntryState.COMPLETED, uuid = "replacement")
+        metadata.acceptMetadata(MetadataEvent.DvrEntryAdded(second, replacement))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(second))
+        publishReady(metadata, second)
+        val target = (metadata.bindPlaybackRecording(
+            second, requireNotNull(metadata.observation.value.currentSession), DvrEntryId(1),
+        ) as PlaybackRecordingLookup.Current).target
+
+        metadata.acceptMetadata(MetadataEvent.DvrEntryUpdated(second, GatewayDvrEntry(
+            id = DvrEntryId(1), state = DvrEntryState.COMPLETED, uuid = "replacement", title = "updated",
+        )))
+        assertTrue(metadata.currentPlaybackRecording(target) is PlaybackRecordingLookup.Current)
+    }
+
+    @Test
+    fun `initial synchronization excludes orphan EPG events`() {
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(1)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(1, 1, 0, 10)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(2, 2, 0, 10)))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(2)))
+        assertEquals(listOf(1L), metadata.currentEpgSnapshot().events.map { it.id.value })
+    }
+
+    @Test
+    fun `rejected DVR update does not refresh its observation`() {
+        var now = Instant.fromEpochSeconds(100)
+        val metadata = PhaseOneSessionMetadata(clock = object : Clock { override fun now() = now })
+        val generation = GatewayGeneration()
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.DvrEntryAdded(generation, dvrEntry(1, start = 0, stop = 10)))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        val before = metadata.observation.value.dvrRefreshTimes
+        assertTrue(before.lastSynchronizedAt != null)
+
+        now += 1.seconds
+        metadata.acceptMetadata(MetadataEvent.DvrEntryUpdated(generation, dvrEntry(1, start = 20, stop = 10)))
+        assertEquals(before, metadata.observation.value.dvrRefreshTimes)
+    }
+
+    @Test
+    fun `released request yields its far tail after recent requests roll over`() {
+        val metadata = PhaseOneSessionMetadata(
+            epgCoveragePolicy = EpgCoveragePolicy.create(48.hours, maximumRetainedEvents = 2),
+            clock = object : Clock { override fun now() = Instant.fromEpochSeconds(0) },
+        )
+        val generation = GatewayGeneration()
+        val tailStart = 30.hours.inWholeSeconds
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(1)))
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(generation, channel(2)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(1, 1, 0, 10)))
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(2, 2, tailStart, tailStart + 3_600)))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        val request = requireNotNull(metadata.rememberEpgCoverageRequest(
+            generation, listOf(ChannelId(2)), Instant.fromEpochSeconds(tailStart + 3_600),
+        ))
+        metadata.releaseEpgCoverageRequest(generation, request)
+        repeat(8) {
+            val recent = requireNotNull(metadata.rememberEpgCoverageRequest(
+                generation, listOf(ChannelId(1)), Instant.fromEpochSeconds(20),
+            ))
+            metadata.releaseEpgCoverageRequest(generation, recent)
+        }
+
+        metadata.acceptMetadata(MetadataEvent.EventAdded(generation, epgEvent(3, 1, 10, 20)))
+        assertEquals(listOf(1L, 3L), metadata.currentEpgSnapshot().events.map { it.id.value })
+    }
+
     @Test
     fun `reentrant observation retirement fences the rest of a post-sync batch`() = runTest {
         val metadata = PhaseOneSessionMetadata()
@@ -336,6 +439,7 @@ internal class PhaseOneSessionMetadataTest {
         val metadata = PhaseOneSessionMetadata(clock = object : Clock { override fun now() = now })
         val first = GatewayGeneration()
         metadata.bindGeneration(first)
+        metadata.acceptMetadata(MetadataEvent.ChannelAdded(first, channel(1)))
         metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(first))
         val retained = metadata.observation.value
         now += 1.seconds
@@ -349,6 +453,7 @@ internal class PhaseOneSessionMetadataTest {
         metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(second))
         assertEquals(MetadataRefreshTimes(now, now), metadata.observation.value.epgRefreshTimes)
         assertTrue(metadata.currentEpgSnapshot().events.isEmpty())
+        assertTrue(metadata.currentSnapshot().channels.isEmpty())
     }
 
     @Test
