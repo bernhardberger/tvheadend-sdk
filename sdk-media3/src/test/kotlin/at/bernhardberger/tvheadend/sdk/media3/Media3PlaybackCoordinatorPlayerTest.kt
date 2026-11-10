@@ -8,6 +8,11 @@
 package at.bernhardberger.tvheadend.sdk.media3
 
 import androidx.media3.common.PlaybackException
+import androidx.media3.common.C
+import androidx.media3.common.Format
+import androidx.media3.common.TrackGroup
+import androidx.media3.common.Tracks
+import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
@@ -448,6 +453,67 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         fire()
         requireNotNull(listener).onPlaybackStateChanged(Player.STATE_ENDED)
         assertTrue(reasons.isEmpty())
+    }
+
+    @ParameterizedTest
+    @CsvSource("timeline,true", "transition,true", "pause,true", "budget,true", "budget,false")
+    fun `player recovery callbacks restore retired audio stop paused timers and select the audio budget`(
+        callback: String,
+        selectedAudio: Boolean,
+    ) {
+        var listener: Player.Listener? = null
+        var owned = true
+        var parameters = TrackSelectionParameters.DEFAULT_WITHOUT_CONTEXT
+        val audio = Tracks(listOf(Tracks.Group(
+            TrackGroup(Format.Builder().setSampleMimeType("audio/mp4a-latm").build()),
+            false, intArrayOf(C.FORMAT_HANDLED), booleanArrayOf(selectedAudio),
+        )))
+        val active = mutableListOf<() -> Unit>()
+        val budgets = mutableListOf<Long>()
+        val proxy = java.lang.reflect.Proxy.newProxyInstance(
+            Player::class.java.classLoader, arrayOf(Player::class.java),
+        ) { _, method, arguments ->
+            when (method.name) {
+                "getApplicationLooper" -> null
+                "getPlayWhenReady" -> true
+                "getCurrentTracks" -> audio
+                "getTrackSelectionParameters" -> parameters
+                "setTrackSelectionParameters" -> { parameters = arguments!![0] as TrackSelectionParameters; null }
+                "addListener" -> { listener = arguments!![0] as Player.Listener; null }
+                "removeListener" -> null
+                else -> error("Unexpected recovery player access")
+            }
+        } as Player
+        TvheadendPlaybackRecovery(
+            proxy, PlaybackRecoveryPolicy(), {}, isTargetCurrent = { owned },
+            scheduler = RecoveryScheduler { delay, action ->
+                budgets += delay
+                active += action
+                ScheduledRecoveryTask { active -= action }
+            },
+        ).use { recovery ->
+            recovery.beginPlaybackTarget()
+            val events = requireNotNull(listener)
+            events.onPlaybackStateChanged(Player.STATE_BUFFERING)
+            when (callback) {
+                "budget" -> assertEquals(if (selectedAudio) 6_000L else 20_000L, budgets.single())
+                "pause" -> {
+                    events.onPlayWhenReadyChanged(false, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
+                    assertTrue(active.isEmpty())
+                }
+                else -> {
+                    active.removeAt(0).invoke()
+                    assertTrue(C.TRACK_TYPE_AUDIO in parameters.disabledTrackTypes)
+                    owned = false
+                    if (callback == "timeline") {
+                        events.onTimelineChanged(Timeline.EMPTY, Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED)
+                    } else {
+                        events.onMediaItemTransition(null, Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED)
+                    }
+                    assertFalse(C.TRACK_TYPE_AUDIO in parameters.disabledTrackTypes)
+                }
+            }
+        }
     }
 
     @Test

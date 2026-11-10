@@ -31,6 +31,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -155,15 +156,17 @@ class GrowingTsIndexTest {
 
     @Test
     fun `validated codec drift retracts a previously seekable estimate`() {
-        val index = GrowingTsIndex(minimumMapAdvanceUs = 1L)
-        index.onVideoFormat(VIDEO_TRACK, MimeTypes.VIDEO_H264)
-        addKeyframes(index, count = 4)
-        assertTrue(index.nextSeekMap() is GrowingTsSeekMap)
+        listOf(MimeTypes.VIDEO_H265, MimeTypes.VIDEO_AV1).forEach { mimeType ->
+            val index = GrowingTsIndex(minimumMapAdvanceUs = 1L)
+            index.onVideoFormat(VIDEO_TRACK, MimeTypes.VIDEO_H264)
+            addKeyframes(index, count = 4)
+            assertTrue(index.nextSeekMap() is GrowingTsSeekMap)
 
-        index.onVideoFormat(VIDEO_TRACK, MimeTypes.VIDEO_H265)
+            index.onVideoFormat(VIDEO_TRACK, mimeType)
 
-        assertSame(EstimatedUnseekableGrowingTsSeekMap, index.nextSeekMap())
-        assertEquals(0, index.pointCount)
+            assertSame(EstimatedUnseekableGrowingTsSeekMap, index.nextSeekMap())
+            assertEquals(0, index.pointCount)
+        }
     }
 
     @Test
@@ -183,20 +186,23 @@ class GrowingTsIndexTest {
 
     @Test
     fun `unexplained regressing keyframe evidence retracts a published map`() {
-        val index = GrowingTsIndex(minimumMapAdvanceUs = 1L)
-        index.onVideoFormat(VIDEO_TRACK, MimeTypes.VIDEO_H264)
-        addKeyframes(index, count = 4)
-        assertTrue(index.nextSeekMap() is GrowingTsSeekMap)
+        // Time and bytes regressing together, then time regressing alone.
+        for ((sampleOrdinal, sourceOrdinal) in listOf(1 to 4, 5 to 6)) {
+            val index = GrowingTsIndex(minimumMapAdvanceUs = 1L)
+            index.onVideoFormat(VIDEO_TRACK, MimeTypes.VIDEO_H264)
+            addKeyframes(index, count = 4)
+            assertTrue(index.nextSeekMap() is GrowingTsSeekMap)
 
-        index.onVideoKeyframe(
-            trackId = VIDEO_TRACK,
-            timeUs = 2_000_000L,
-            samplePosition = packetPosition(1),
-            sourceReadPosition = packetPosition(4),
-        )
+            index.onVideoKeyframe(
+                trackId = VIDEO_TRACK,
+                timeUs = 2_000_000L,
+                samplePosition = packetPosition(sampleOrdinal),
+                sourceReadPosition = packetPosition(sourceOrdinal),
+            )
 
-        assertSame(EstimatedUnseekableGrowingTsSeekMap, index.nextSeekMap())
-        assertEquals(0, index.pointCount)
+            assertSame(EstimatedUnseekableGrowingTsSeekMap, index.nextSeekMap())
+            assertEquals(0, index.pointCount)
+        }
     }
 
     @Test
@@ -223,6 +229,14 @@ class GrowingTsIndexTest {
         repeat(10_000) { zeroBased ->
             addKeyframe(index, ordinal = zeroBased + 1, timeUs = (zeroBased + 1L) * 1_000_000L)
             assertTrue(index.pointCount <= 8)
+            if (zeroBased == 8) {
+                val compacted = index.nextSeekMap() as GrowingTsSeekMap
+                val floor = compacted.getSeekPoints(4_000_000L).first
+                assertTrue(
+                    floor.timeUs in compacted.points.first().timeUs + 1..4_000_000L,
+                    "The first compaction keeps an interior preroll point",
+                )
+            }
         }
 
         val map = index.nextSeekMap() as GrowingTsSeekMap
@@ -230,6 +244,38 @@ class GrowingTsIndexTest {
         assertEquals(10_000_000_000L, map.indexedHorizonUs)
         assertTrue(map.points.zipWithNext().all { (first, second) -> first.timeUs < second.timeUs })
         assertTrue(map.points.zipWithNext().all { (first, second) -> first.position <= second.position })
+    }
+
+    @Test
+    fun `zero time keyframe supplies preroll and equal timestamps preserve seekability`() {
+        val index = GrowingTsIndex(minimumMapAdvanceUs = 1L)
+        index.onVideoFormat(VIDEO_TRACK, MimeTypes.VIDEO_H264)
+        addKeyframe(index, ordinal = 1, timeUs = 0L)
+        addKeyframe(index, ordinal = 2, timeUs = 1_000_000L)
+        addKeyframe(index, ordinal = 3, timeUs = 2_000_000L)
+        addKeyframe(index, ordinal = 4, timeUs = 3_000_000L)
+        addKeyframe(index, ordinal = 5, timeUs = 4_000_000L)
+        val map = index.nextSeekMap() as GrowingTsSeekMap
+        assertEquals(packetPosition(1), map.getSeekPoints(1_000_000L).first.position)
+
+        addKeyframe(index, ordinal = 6, timeUs = 4_000_000L)
+        addKeyframe(index, ordinal = 7, timeUs = 5_000_000L)
+        assertTrue(index.nextSeekMap()!!.isSeekable)
+    }
+
+    @Test
+    fun `samples sharing one read window add no seek horizon`() {
+        val index = GrowingTsIndex(minimumMapAdvanceUs = 1L)
+        index.onVideoFormat(VIDEO_TRACK, MimeTypes.VIDEO_H264)
+        addKeyframes(index, count = 4)
+        index.nextSeekMap()
+        index.onVideoKeyframe(VIDEO_TRACK, 5_000_000L, packetPosition(5), packetPosition(5))
+        assertNull(index.nextSeekMap())
+    }
+
+    @Test
+    fun `zero minimum map advance is rejected`() {
+        assertThrows(IllegalArgumentException::class.java) { GrowingTsIndex(minimumMapAdvanceUs = 0L) }
     }
 
     @Test
@@ -245,6 +291,8 @@ class GrowingTsIndexTest {
         assertEquals(8_000_000L, seekPoints.second.timeUs)
         assertEquals(map.indexedHorizonUs, map.durationUs)
         assertFalse(EstimatedUnseekableGrowingTsSeekMap.isSeekable)
+        assertEquals(C.TIME_UNSET, EstimatedUnseekableGrowingTsSeekMap.durationUs)
+        assertEquals(map.points.first().position, map.getSeekPoints(0L).first.position)
 
         val beyondHorizon = map.getSeekPoints(map.indexedHorizonUs + 1_000_000L)
         assertEquals(map.points.last().timeUs, beyondHorizon.first.timeUs)
@@ -298,12 +346,99 @@ class GrowingTsIndexTest {
     }
 
     @Test
+    fun `split samples retain their first read window and non-keyframes add no horizon`() {
+        val output = CapturingSeekMapOutput()
+        val extractor = GrowingTsExtractor(
+            delegate = WindowedKeyframeExtractor(splitSamples = true, trailingNonKeyframe = true),
+            index = GrowingTsIndex(minimumMapAdvanceUs = 1L),
+        )
+        extractor.init(output)
+        val input = emptyInput()
+        repeat(14) { extractor.read(input, PositionHolder()) }
+        val map = output.maps.last()
+        assertEquals(9_400L, map.getSeekPoints(4_000_000L).first.position)
+        assertEquals(6_000_000L, map.durationUs)
+        extractor.release()
+    }
+
+    @Test
+    fun `wrapper seek resets sample origins forwards the exact pair and releases its delegate`() {
+        val output = CapturingSeekMapOutput()
+        val delegate = WindowedKeyframeExtractor(splitSamples = true)
+        val extractor = GrowingTsExtractor(delegate = delegate, index = GrowingTsIndex(minimumMapAdvanceUs = 1L))
+        extractor.init(output)
+        val input = emptyInput()
+        repeat(12) { extractor.read(input, PositionHolder()) }
+        extractor.seek(188_000L, 20_000_000L)
+        val afterSeek = emptyInput(188_000L)
+        repeat(6) { extractor.read(afterSeek, PositionHolder()) }
+        assertEquals(188_000L, output.maps.last().getSeekPoints(22_000_000L).second.position)
+        assertEquals(listOf(188_000L to 20_000_000L), delegate.seeks)
+        extractor.release()
+        assertEquals(1, delegate.releaseCalls)
+    }
+
+    @Test
+    fun `wrapper backward seek preserves the published index during replay`() {
+        val output = CapturingSeekMapOutput()
+        val extractor = GrowingTsExtractor(
+            delegate = WindowedKeyframeExtractor(splitSamples = true),
+            index = GrowingTsIndex(minimumMapAdvanceUs = 1L),
+        )
+        extractor.init(output)
+        val input = emptyInput()
+        repeat(12) { extractor.read(input, PositionHolder()) }
+        extractor.seek(9_400L, 2_000_000L)
+        val afterSeek = emptyInput(9_400L)
+        repeat(2) { extractor.read(afterSeek, PositionHolder()) }
+        assertTrue(output.maps.last().isSeekable)
+        extractor.release()
+    }
+
+    @Test
     fun `factory exposes only the maintained TS wrapper`() {
         val extractors = createGrowingTsExtractorsFactory().createExtractors()
 
         assertEquals(1, extractors.size)
         assertTrue(extractors.single() is GrowingTsExtractor)
     }
+
+    @Test
+    fun `wrapper preserves sniff rejection track completion and one initial estimated map`() {
+        val output = CapturingSeekMapOutput()
+        val extractor = GrowingTsExtractor(delegate = WindowedKeyframeExtractor(sniffResult = false, delegateMapCount = 2))
+        assertFalse(extractor.sniff(emptyInput()))
+        extractor.init(output)
+        assertEquals(1, output.trackCompletions)
+        assertEquals(listOf(EstimatedUnseekableGrowingTsSeekMap), output.maps.toList())
+    }
+
+    @Test
+    fun `final probed extent waits for a supported format and publishes on the first ready read`() = runTest {
+        listOf(null, MimeTypes.VIDEO_AV1, MimeTypes.VIDEO_H264).forEach { mimeType ->
+            val bytes = File("src/androidTest/assets/p7-f3/h264-synthetic.ts").readBytes()
+            val lease = ProbeLease(bytes, bytes.size).apply { completed = true }
+            val delegate = WindowedKeyframeExtractor(mimeType = mimeType, deferFormat = true)
+            val output = CapturingSeekMapOutput()
+            val extractor = GrowingTsExtractor(delegate = delegate, lease = lease, probeDispatcher = StandardTestDispatcher(testScheduler))
+            try {
+                extractor.init(output)
+                runCurrent()
+                assertFalse(output.maps.last().isSeekable)
+                extractor.read(emptyInput(), PositionHolder())
+                assertEquals(mimeType == MimeTypes.VIDEO_H264, output.maps.last().isSeekable)
+            } finally { extractor.release() }
+        }
+    }
+
+    private fun emptyInput(position: Long = 0L): ExtractorInput = DefaultExtractorInput(
+        DataReader { buffer, offset, length ->
+            buffer.fill(0, offset, offset + length)
+            length
+        },
+        position,
+        C.LENGTH_UNSET.toLong(),
+    )
 
     private fun addKeyframes(
         index: GrowingTsIndex,
@@ -328,35 +463,52 @@ class GrowingTsIndexTest {
     private fun packetPosition(ordinal: Int): Long = ordinal * 100L * GROWING_TS_PACKET_BYTES
 }
 
-private class WindowedKeyframeExtractor : Extractor {
+private class WindowedKeyframeExtractor(
+    private val sniffResult: Boolean = true,
+    private val delegateMapCount: Int = 1,
+    private val mimeType: String? = MimeTypes.VIDEO_H264,
+    private val deferFormat: Boolean = false,
+    private val splitSamples: Boolean = false,
+    private val trailingNonKeyframe: Boolean = false,
+) : Extractor {
     private lateinit var track: TrackOutput
     private var readCount = 0
     private var keyframeCount = 0
+    val seeks = mutableListOf<Pair<Long, Long>>()
+    var releaseCalls = 0
+        private set
 
-    override fun sniff(input: ExtractorInput): Boolean = true
+    override fun sniff(input: ExtractorInput): Boolean = sniffResult
 
     override fun init(output: ExtractorOutput) {
         track = output.track(VIDEO_TRACK, C.TRACK_TYPE_VIDEO)
-        track.format(Format.Builder().setSampleMimeType(MimeTypes.VIDEO_H264).build())
+        if (!deferFormat) track.format(Format.Builder().setSampleMimeType(mimeType).build())
         output.endTracks()
-        output.seekMap(SeekMap.Unseekable(C.TIME_UNSET))
+        repeat(delegateMapCount) { output.seekMap(SeekMap.Unseekable(C.TIME_UNSET)) }
     }
 
     override fun read(input: ExtractorInput, seekPosition: PositionHolder): Int {
         readCount += 1
+        if (deferFormat && readCount == 1) track.format(Format.Builder().setSampleMimeType(mimeType).build())
         if (readCount % 2 == 1) {
+            if (splitSamples) track.sampleData(ParsableByteArray(ByteArray(1)), 1, TrackOutput.SAMPLE_DATA_PART_MAIN)
             input.readFully(ByteArray(9_400), 0, 9_400)
         } else {
             keyframeCount += 1
-            sample(timeUs = keyframeCount * 1_000_000L - 1L, flags = 0)
-            sample(timeUs = keyframeCount * 1_000_000L, flags = C.BUFFER_FLAG_KEY_FRAME)
+            if (!splitSamples) sample(timeUs = keyframeCount * 1_000_000L - 1L, flags = 0)
+            val flags = if (trailingNonKeyframe && keyframeCount == 7) 0 else C.BUFFER_FLAG_KEY_FRAME
+            sample(timeUs = keyframeCount * 1_000_000L, flags = flags)
         }
         return Extractor.RESULT_CONTINUE
     }
 
-    override fun seek(position: Long, timeUs: Long): Unit = Unit
+    override fun seek(position: Long, timeUs: Long) {
+        seeks += position to timeUs
+        readCount = 0
+        keyframeCount = (timeUs / 1_000_000L).toInt()
+    }
 
-    override fun release(): Unit = Unit
+    override fun release() { releaseCalls += 1 }
 
     private fun sample(timeUs: Long, flags: Int) {
         track.sampleData(ParsableByteArray(ByteArray(1)), 1, TrackOutput.SAMPLE_DATA_PART_MAIN)
@@ -405,10 +557,12 @@ private class DormantSecondVideoExtractor : Extractor {
 
 private class CapturingSeekMapOutput(private val onSeekMap: (SeekMap) -> Unit = {}) : ExtractorOutput {
     val maps = CopyOnWriteArrayList<SeekMap>()
+    var trackCompletions = 0
+        private set
 
     override fun track(id: Int, type: Int): TrackOutput = EmptyTrackOutput
 
-    override fun endTracks(): Unit = Unit
+    override fun endTracks() { trackCompletions += 1 }
 
     override fun seekMap(seekMap: SeekMap) {
         maps += seekMap

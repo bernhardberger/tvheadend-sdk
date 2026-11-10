@@ -57,7 +57,7 @@ class PlaybackRecoveryStateMachineTest {
             PlaybackRecoveryPolicy(initialBufferingDurationMillis = 0L)
         }
         assertThrows(IllegalArgumentException::class.java) {
-            PlaybackRecoveryPolicy(postAudioDisableDurationMillis = -1L)
+            PlaybackRecoveryPolicy(postAudioDisableDurationMillis = 0L)
         }
         assertThrows(IllegalArgumentException::class.java) {
             PlaybackRecoveryPolicy(preparationDurationMillis = 0L)
@@ -197,6 +197,53 @@ class PlaybackRecoveryStateMachineTest {
         harness.playback(Player.STATE_BUFFERING)
 
         assertEquals(listOf(20_000L), harness.scheduler.activeDelays())
+    }
+
+    @Test
+    fun `a new target cancels the previous initial timer and recovers on its own deadline`() {
+        val harness = RecoveryHarness()
+        harness.begin()
+        harness.playback(Player.STATE_BUFFERING)
+        harness.begin()
+        harness.playback(Player.STATE_BUFFERING)
+        harness.scheduler.runNextActive()
+        assertTrue(harness.audioDisabled)
+    }
+
+    @Test
+    fun `a new target immediately restores recovery owned audio`() {
+        val harness = RecoveryHarness()
+        harness.begin()
+        harness.playback(Player.STATE_BUFFERING)
+        harness.scheduler.runNextActive()
+        assertTrue(harness.audioDisabled)
+        harness.begin()
+        assertFalse(harness.audioDisabled)
+    }
+
+    @Test
+    fun `audio selected through tracks while ready is remembered for the next stall`() {
+        val harness = RecoveryHarness()
+        harness.selectedAudio = false
+        harness.begin()
+        harness.playback(Player.STATE_READY)
+        harness.selectedAudio = true
+        harness.machine.onTracksChanged()
+        harness.selectedAudio = false
+        harness.playback(Player.STATE_BUFFERING)
+        assertEquals(listOf(6_000L), harness.scheduler.activeDelays())
+    }
+
+    @Test
+    fun `resume sees selected audio before its track notification`() {
+        val harness = RecoveryHarness()
+        harness.selectedAudio = false
+        harness.begin()
+        harness.machine.onPlayWhenReadyChanged(false)
+        harness.playback(Player.STATE_BUFFERING)
+        harness.selectedAudio = true
+        harness.machine.onPlayWhenReadyChanged(true)
+        assertEquals(listOf(6_000L), harness.scheduler.activeDelays())
     }
 
     @Test
@@ -402,8 +449,10 @@ class PlaybackRecoveryStateMachineTest {
     fun `live ended escalates immediately and only once`() {
         val harness = RecoveryHarness()
         harness.begin()
+        harness.playback(Player.STATE_BUFFERING)
 
         harness.playback(Player.STATE_ENDED)
+        assertTrue(harness.scheduler.activeDelays().isEmpty())
         harness.playback(Player.STATE_ENDED)
 
         assertEquals(listOf(PlaybackRecoveryReason.LIVE_ENDED), harness.reasons)

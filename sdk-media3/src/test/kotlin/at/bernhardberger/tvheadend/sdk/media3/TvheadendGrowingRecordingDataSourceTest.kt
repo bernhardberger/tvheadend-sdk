@@ -9,6 +9,8 @@ package at.bernhardberger.tvheadend.sdk.media3
 import androidx.media3.common.C
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
+import androidx.media3.datasource.TransferListener
+import at.bernhardberger.tvheadend.sdk.playback.MAX_RECORDING_READ_BYTES
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
@@ -34,8 +36,8 @@ class TvheadendGrowingRecordingDataSourceTest {
     @Test
     fun `open is unknown length and partial transport bytes wait for a complete TS packet`() {
         val opener = ScriptedGrowingLease(
-            ReadStep.Bytes(ByteArray(100) { 1 }),
-            ReadStep.Bytes(ByteArray(88) { 2 }),
+            ReadStep.Bytes(ByteArray(288) { it.toByte() }),
+            ReadStep.Bytes(ByteArray(88) { (it + 288).toByte() }),
             ReadStep.End,
         )
         var finalEnds = 0
@@ -45,9 +47,12 @@ class TvheadendGrowingRecordingDataSourceTest {
         assertEquals(listOf(0L), opener.openPositions)
         val destination = ByteArray(GROWING_TS_PACKET_BYTES)
         assertEquals(50, source.read(destination, 0, 50))
-        assertEquals(2, opener.readCalls, "No partial packet may be delivered after the first read")
-        assertEquals(GROWING_TS_PACKET_BYTES - 50, source.read(destination, 50, destination.size - 50))
-        assertArrayEquals(ByteArray(100) { 1 } + ByteArray(88) { 2 }, destination)
+        val remainder = ByteArray(376)
+        assertEquals(GROWING_TS_PACKET_BYTES - 50, source.read(remainder, 0, remainder.size))
+        assertArrayEquals(ByteArray(188) { it.toByte() }, destination.take(50).toByteArray() + remainder.take(138))
+        val nextPacket = ByteArray(GROWING_TS_PACKET_BYTES)
+        assertEquals(GROWING_TS_PACKET_BYTES, source.read(nextPacket, 0, nextPacket.size))
+        assertArrayEquals(ByteArray(188) { (it + 188).toByte() }, nextPacket)
         assertEquals(C.RESULT_END_OF_INPUT, source.read(ByteArray(1), 0, 1))
         assertEquals(C.RESULT_END_OF_INPUT, source.read(ByteArray(1), 0, 1))
         assertEquals(1, finalEnds)
@@ -297,6 +302,49 @@ class TvheadendGrowingRecordingDataSourceTest {
         }
     }
 
+    @Test
+    fun `read ahead accepts endpoints and never requests more than the transport cap`() {
+        listOf(GROWING_TS_PACKET_BYTES, MAX_RECORDING_READ_BYTES).forEach { capacity ->
+            val lease = ScriptedGrowingLease(
+                ReadStep.Bytes(byteArrayOf(1)),
+                ReadStep.Bytes(ByteArray(187) { 2 }),
+            )
+            val source = dataSource(lease, capacity)
+            source.open(recordingSpec())
+            val packet = ByteArray(188)
+            assertEquals(188, source.read(packet, 0, packet.size))
+            assertArrayEquals(byteArrayOf(1) + ByteArray(187) { 2 }, packet)
+            source.close()
+        }
+    }
+
+    @Test
+    fun `transfer listener observes initialization start delivered bytes and one end`() {
+        val source = dataSource(
+            ScriptedGrowingLease(ReadStep.Bytes(ByteArray(188))),
+            GROWING_TS_PACKET_BYTES,
+        )
+        val events = mutableListOf<String>()
+        source.addTransferListener(object : TransferListener {
+            override fun onTransferInitializing(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean) {
+                events += "initializing"
+            }
+            override fun onTransferStart(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean) {
+                events += "start"
+            }
+            override fun onBytesTransferred(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean, bytesTransferred: Int) {
+                events += "bytes:$bytesTransferred"
+            }
+            override fun onTransferEnd(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean) {
+                events += "end"
+            }
+        })
+        source.open(recordingSpec())
+        source.read(ByteArray(50), 0, 50)
+        source.close()
+        assertEquals(listOf("initializing", "start", "bytes:50", "end"), events)
+    }
+
     private fun dataSource(
         lease: GrowingRecordingFileLease,
         readAheadBytes: Int,
@@ -362,6 +410,8 @@ private class ScriptedGrowingLease(
             length: Int,
         ): RecordingFileResult<Int> {
             readCalls += 1
+            check(length <= MAX_RECORDING_READ_BYTES)
+            check(destinationOffset >= 0 && length <= destination.size - destinationOffset)
             return when (val step = if (steps.isEmpty()) ReadStep.End else steps.removeAt(0)) {
                 is ReadStep.Bytes -> {
                     check(step.value.size <= length)

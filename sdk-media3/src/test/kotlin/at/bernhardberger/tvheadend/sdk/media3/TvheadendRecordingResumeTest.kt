@@ -36,25 +36,32 @@ internal class TvheadendRecordingResumeTest {
 
     @Test
     fun `listener waits for a known seekable timeline and applies resume once`() {
-        val identity = RecordingMediaIdentity()
-        val player = FakeRecordingResumePlayer(
-            currentMediaItem = tvheadendRecordingMediaItem(identity),
-        )
-        val resume = TvheadendRecordingResume(player, identity)
+        for (stateOnly in listOf(false, true)) {
+            val identity = RecordingMediaIdentity()
+            val player = FakeRecordingResumePlayer(
+                currentMediaItem = tvheadendRecordingMediaItem(identity),
+            )
+            val resume = TvheadendRecordingResume(player, identity)
 
-        assertNotNull(player.listener)
-        resume.beginPlaybackTarget(180_000.milliseconds)
-        assertEquals(emptyList<Long>(), player.seeks)
+            assertNotNull(player.listener)
+            resume.beginPlaybackTarget(180_000.milliseconds)
+            assertEquals(emptyList<Long>(), player.seeks)
 
-        player.duration = 3_600_000
-        player.listener?.onTimelineChanged(Timeline.EMPTY, Player.TIMELINE_CHANGE_REASON_SOURCE_UPDATE)
-        assertEquals(emptyList<Long>(), player.seeks)
+            player.duration = 3_600_000
+            player.listener?.onTimelineChanged(Timeline.EMPTY, Player.TIMELINE_CHANGE_REASON_SOURCE_UPDATE)
+            assertEquals(emptyList<Long>(), player.seeks)
 
-        player.isCurrentMediaItemSeekable = true
-        player.listener?.onTimelineChanged(Timeline.EMPTY, Player.TIMELINE_CHANGE_REASON_SOURCE_UPDATE)
-        player.listener?.onPlaybackStateChanged(Player.STATE_READY)
+            player.isCurrentMediaItemSeekable = true
+            if (stateOnly) player.listener?.onPlaybackStateChanged(Player.STATE_READY)
+            else player.listener?.onTimelineChanged(Timeline.EMPTY, Player.TIMELINE_CHANGE_REASON_SOURCE_UPDATE)
 
-        assertEquals(listOf(180_000L), player.seeks)
+            assertEquals(listOf(180_000L), player.seeks)
+
+            player.listener?.onTimelineChanged(Timeline.EMPTY, Player.TIMELINE_CHANGE_REASON_SOURCE_UPDATE)
+            player.listener?.onPlaybackStateChanged(Player.STATE_READY)
+            assertEquals(listOf(180_000L), player.seeks)
+            resume.close()
+        }
     }
 
     @Test
@@ -134,27 +141,53 @@ internal class TvheadendRecordingResumeTest {
 
     @Test
     fun `callbacks enforce the application looper and close only detaches the listener`() {
-        val identity = RecordingMediaIdentity()
-        val player = FakeRecordingResumePlayer(
-            currentMediaItem = tvheadendRecordingMediaItem(identity),
+        val operations: List<(TvheadendRecordingResume, Player.Listener) -> Unit> = listOf(
+            { _, listener -> listener.onPlaybackStateChanged(Player.STATE_READY) },
+            { _, listener -> listener.onTimelineChanged(Timeline.EMPTY, Player.TIMELINE_CHANGE_REASON_SOURCE_UPDATE) },
+            { _, listener -> listener.onPositionDiscontinuity(POSITION, POSITION, Player.DISCONTINUITY_REASON_SEEK) },
+            { resume, _ -> resume.pendingPosition; Unit },
+            { resume, _ -> resume.progressFloor; Unit },
+            { resume, _ -> resume.outcome; Unit },
+            { resume, _ -> resume.beginPlaybackTarget(null) },
+            { resume, _ -> resume.close() },
         )
+        operations.forEach { operation ->
+            val identity = RecordingMediaIdentity()
+            val player = FakeRecordingResumePlayer(
+                currentMediaItem = tvheadendRecordingMediaItem(identity),
+            )
+            val resume = TvheadendRecordingResume(player, identity)
+            val listener = requireNotNull(player.listener)
+
+            player.onApplicationLooper = false
+            assertThrows(IllegalStateException::class.java) {
+                operation(resume, listener)
+            }
+
+            player.onApplicationLooper = true
+            resume.close()
+            resume.close()
+
+            assertNull(player.listener)
+            assertEquals(1, player.removeListenerCalls)
+            assertThrows(IllegalStateException::class.java) {
+                resume.beginPlaybackTarget(180_000.milliseconds)
+            }
+        }
+        val player = FakeRecordingResumePlayer().apply { onApplicationLooper = false }
+        assertThrows(IllegalStateException::class.java) {
+            TvheadendRecordingResume(player, RecordingMediaIdentity())
+        }
+    }
+
+    @Test
+    fun `known zero duration abandons a completed resume`() {
+        val identity = RecordingMediaIdentity()
+        val player = FakeRecordingResumePlayer(currentMediaItem = tvheadendRecordingMediaItem(identity), duration = 0L)
         val resume = TvheadendRecordingResume(player, identity)
-        val listener = requireNotNull(player.listener)
-
-        player.onApplicationLooper = false
-        assertThrows(IllegalStateException::class.java) {
-            listener.onPlaybackStateChanged(Player.STATE_READY)
-        }
-
-        player.onApplicationLooper = true
+        resume.beginPlaybackTarget(1_000.milliseconds)
+        assertEquals(RecordingResumeOutcome.ABANDONED, resume.outcome)
         resume.close()
-        resume.close()
-
-        assertNull(player.listener)
-        assertEquals(1, player.removeListenerCalls)
-        assertThrows(IllegalStateException::class.java) {
-            resume.beginPlaybackTarget(180_000.milliseconds)
-        }
     }
 
     @Test
