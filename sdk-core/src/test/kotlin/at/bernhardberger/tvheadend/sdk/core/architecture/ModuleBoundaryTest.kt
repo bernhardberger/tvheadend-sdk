@@ -138,6 +138,7 @@ internal class ModuleBoundaryTest {
             "ChannelIcon",
             "ImageCache",
             "RemoteUrl",
+            "RemoteArtworkUrl",
             "ArtworkContent",
             "ArtworkLoadResult",
             "ArtworkLoader",
@@ -652,6 +653,8 @@ internal class ModuleBoundaryTest {
             "at.bernhardberger.tvheadend.sdk.core.DvrProgressPolicy",
             // Konsist does not resolve this nullable sealed-interface parameter from DVR rule types.
             "at.bernhardberger.tvheadend.sdk.core.AutorecTime",
+            // Konsist does not resolve this nullable property type from the EPG and DVR models.
+            "at.bernhardberger.tvheadend.sdk.core.RemoteArtworkUrl",
             "at.bernhardberger.tvheadend.sdk.testing.ScriptedSubscriptionConnection",
             "at.bernhardberger.tvheadend.sdk.testing.SubscriptionBinaryFixture",
             "at.bernhardberger.tvheadend.sdk.testing.ChannelCatalogFixture",

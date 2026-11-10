@@ -10,6 +10,7 @@ internal class ChannelIconTest {
     fun `image cache selectors retain their typed artwork ID`() {
         for (selector in listOf("imagecache/12", "/imagecache/12")) {
             assertEquals(ChannelIcon.ImageCache(ArtworkId(12)), ChannelIcon.parse(selector))
+            assertNull(RemoteArtworkUrl.parse(selector))
         }
     }
 
@@ -32,6 +33,11 @@ internal class ChannelIconTest {
             assertEquals(icon.hashCode(), ChannelIcon.parse(url).hashCode())
             assertEquals("ChannelIcon.RemoteUrl(<redacted>)", icon.toString())
             assertNull(ArtworkId.parse(url))
+            // Programme and recording artwork accepts exactly the URLs channel icons accept.
+            val artwork = checkNotNull(RemoteArtworkUrl.parse(url))
+            assertEquals(url, artwork.url)
+            assertEquals(artwork, RemoteArtworkUrl.parse(url))
+            assertEquals("RemoteArtworkUrl(<redacted>)", artwork.toString())
         }
     }
 
@@ -48,7 +54,10 @@ internal class ChannelIconTest {
             "https://example.invalid:-2/logo.png", " https://example.invalid/logo.png",
             "https://example.invalid/logo.png\n",
         )
-        selectors.forEach { assertNull(ChannelIcon.parse(it)) }
+        selectors.forEach {
+            assertNull(ChannelIcon.parse(it))
+            assertNull(RemoteArtworkUrl.parse(it))
+        }
     }
 
     @Test

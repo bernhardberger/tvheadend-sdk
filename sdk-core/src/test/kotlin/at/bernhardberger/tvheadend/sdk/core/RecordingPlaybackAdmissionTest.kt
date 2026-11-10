@@ -176,7 +176,7 @@ internal class RecordingPlaybackAdmissionTest {
             owner = null, creator = null, comment = null, image = null, fanartImage = null,
             copyrightYear = null, files = files, path = path, configId = null, duplicate = null,
             state = state, subscriptionError = null, streamErrors = null, dataErrors = null,
-            dataSizeBytes = null,
+            dataSizeBytes = null, remoteImage = null, remoteFanartImage = null,
         )
 
     private fun entry(case: Case, playPosition: Duration? = SAVED_POSITION): DvrEntry = DvrEntry.create(

@@ -19,6 +19,7 @@ import at.bernhardberger.tvheadend.sdk.core.EpgRating
 import at.bernhardberger.tvheadend.sdk.core.EpgSeriesLinkId
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
 import at.bernhardberger.tvheadend.sdk.core.EventId
+import at.bernhardberger.tvheadend.sdk.core.RemoteArtworkUrl
 import kotlinx.serialization.protobuf.ProtoBuf
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -153,8 +154,11 @@ internal class CacheDtosTest {
             channelId = ChannelId(2L),
             queriedTo = stop,
         )
+        // A URL replaces the selector, so the single cached image field restores the event.
+        val remoteImageEvent = EpgEvent.create(id = EventId(3L), start = start, stop = stop, image = ArtworkId(9))
+            .withRemoteImage(RemoteArtworkUrl.parse("https://images.invalid/programme.jpg?size=2"))
         val snapshot = EpgSnapshot.create(
-            events = listOf(populatedEvent, minimalEvent),
+            events = listOf(populatedEvent, minimalEvent, remoteImageEvent),
             coverages = listOf(populatedCoverage, emptyCoverage),
         )
 

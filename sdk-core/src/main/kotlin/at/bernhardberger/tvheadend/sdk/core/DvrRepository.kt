@@ -228,6 +228,14 @@ public data class DvrEntry private constructor(
     public val dataErrors: Long?,
     public val dataSizeBytes: Long?,
     internal val suppliedFolder: List<String>?,
+    /**
+     * Recording image as an absolute HTTP(S) URL, or null. Tvheadend sends one instead of an
+     * image-cache selector for [image] when its image cache is off, for example for XMLTV
+     * images. Set it on application fakes with [withRemoteImages].
+     */
+    public val remoteImage: RemoteArtworkUrl? = null,
+    /** Fan-art image as an absolute HTTP(S) URL, or null; see [remoteImage] and [fanartImage]. */
+    public val remoteFanartImage: RemoteArtworkUrl? = null,
 ) {
     /**
      * Common folder components relative to the server's DVR storage root, for display and grouping only.
@@ -254,6 +262,21 @@ public data class DvrEntry private constructor(
         }
 
     override fun toString(): String = "DvrEntry(<redacted>)"
+
+    /**
+     * Returns this entry with [remoteImage] and [remoteFanartImage] replaced. Tvheadend sends
+     * either an image-cache selector or a URL for each image, so a non-null [remoteImage] also
+     * clears [image], and a non-null [remoteFanartImage] clears [fanartImage].
+     */
+    public fun withRemoteImages(
+        remoteImage: RemoteArtworkUrl?,
+        remoteFanartImage: RemoteArtworkUrl?,
+    ): DvrEntry = copy(
+        image = image.takeIf { remoteImage == null },
+        fanartImage = fanartImage.takeIf { remoteFanartImage == null },
+        remoteImage = remoteImage,
+        remoteFanartImage = remoteFanartImage,
+    )
 
     public companion object {
         /**
@@ -339,6 +362,8 @@ public data class DvrEntry private constructor(
             owner = null,
             creator = null,
             path = null,
+            remoteImage = null,
+            remoteFanartImage = null,
         ).copy(
             suppliedFolder = folder?.toDvrImmutableList()?.also { components ->
                 require(components.none { it.isEmpty() || it == "." || it == ".." }) {
@@ -474,6 +499,8 @@ public data class DvrEntry private constructor(
             streamErrors: Long?,
             dataErrors: Long?,
             dataSizeBytes: Long?,
+            remoteImage: RemoteArtworkUrl?,
+            remoteFanartImage: RemoteArtworkUrl?,
         ): DvrEntry {
             if (start != null && stop != null) {
                 require(stop >= start) { "DvrEntry stop must not precede start" }
@@ -530,6 +557,8 @@ public data class DvrEntry private constructor(
                 dataErrors = dataErrors,
                 dataSizeBytes = dataSizeBytes,
                 suppliedFolder = null,
+                remoteImage = remoteImage,
+                remoteFanartImage = remoteFanartImage,
             )
         }
     }

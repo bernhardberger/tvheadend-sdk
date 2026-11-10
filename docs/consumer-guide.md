@@ -650,7 +650,8 @@ Automatic-rule bounds use `AutorecTime.At(time)` or `AutorecTime.AnyTime` (wire 
 distinct from midnight). Sub-minute times, non-finite or fractional-minute padding
 throw `IllegalArgumentException`; signed whole-minute padding is supported.
 `DvrEntry.duplicate` is nullable Boolean. Entry images, fanart and EPG images use
-`ArtworkId`; unsupported image references are omitted. Genre uses `contentGenre` only.
+`ArtworkId`; absolute HTTP(S) image URLs go to `remoteImage` and `remoteFanartImage`
+instead, and other image references are omitted. Genre uses `contentGenre` only.
 
 `DvrEntry.episode` includes `seasonCount` and `onscreen` when supplied by the
 server. Full add/update notifications replace channel, tag, EPG, DVR-entry and
@@ -1655,7 +1656,14 @@ owns network policy, including whether to allow cleartext HTTP. Do not log the
 URL. Missing icons, malformed URLs and other schemes are dropped.
 
 `ChannelIcon.parse` accepts either supported icon kind. Programme and recording
-images remain image-cache only. For other image-cache selector strings, such as
+images follow the same split in two properties. When Tvheadend's image cache is
+off, it sends XMLTV images as absolute URLs: `EpgEvent.image`, `DvrEntry.image` and
+`DvrEntry.fanartImage` are then `null`, and `EpgEvent.remoteImage`,
+`DvrEntry.remoteImage` and `DvrEntry.remoteFanartImage` hold a `RemoteArtworkUrl`.
+Load and log it like a `ChannelIcon.RemoteUrl`. The SDK never fetches it, and the
+saved EPG keeps it. `RemoteArtworkUrl.parse` accepts the URLs that `RemoteUrl`
+accepts. Application fakes set these values with `EpgEvent.withRemoteImage` and
+`DvrEntry.withRemoteImages`. For other image-cache selector strings, such as
 `EpgEvent.image`, use `ArtworkId.parse`, which accepts
 only positive `imagecache/<id>` selectors (a leading `/` is tolerated) and
 returns `null` for absent, external, malformed, or unsupported values. The opaque model
