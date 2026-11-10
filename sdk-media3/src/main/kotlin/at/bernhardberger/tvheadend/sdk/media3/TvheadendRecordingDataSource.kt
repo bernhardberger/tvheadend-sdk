@@ -13,6 +13,9 @@ import androidx.media3.datasource.DataSpec
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.extractor.DefaultExtractorsFactory
+import androidx.media3.extractor.Extractor
+import androidx.media3.extractor.ExtractorsFactory
+import androidx.media3.extractor.ts.TsExtractor
 import at.bernhardberger.tvheadend.sdk.playback.DEFAULT_RECORDING_READ_AHEAD_BYTES
 import at.bernhardberger.tvheadend.sdk.playback.RECORDING_END_OF_INPUT
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileOpener
@@ -84,7 +87,8 @@ internal fun createTvheadendRecordingDataSourceFactory(
  * Creates a pull-based Media3 source for one completed recording.
  *
  * Playback uses the standard progressive pipeline, so the stored MKV, MP4, or TS container is
- * parsed by Media3's own extractors. Each extractor reopen performs a fresh transport open and
+ * parsed by Media3's own extractors. A TS stream the program map announces but that never gets a
+ * format is left out as in live playback; see [FormatlessTrackFilter]. Each extractor reopen performs a fresh transport open and
  * seek rather than reusing a stale server handle. Below HTSP v27, Tvheadend increments play count
  * on a plain file close. The coordinator still permits completed playback there, but starts over
  * and disables explicit resume and progress reporting.
@@ -95,8 +99,29 @@ internal fun createTvheadendRecordingMediaSource(
     readAheadBytes: Int = DEFAULT_RECORDING_READ_AHEAD_BYTES,
 ): MediaSource = ProgressiveMediaSource.Factory(
     createTvheadendRecordingDataSourceFactory(recordings, identity, readAheadBytes),
-    VideoScanExtractorsFactory(DefaultExtractorsFactory()),
+    createRecordingExtractorsFactory(),
 ).createMediaSource(tvheadendRecordingMediaItem(identity))
+
+/**
+ * Media3's default extractors with video scan inspection, with each transport stream extractor
+ * behind a [FormatlessTrackFilter] so an announced stream without packets cannot hold preparation.
+ */
+internal fun createRecordingExtractorsFactory(): ExtractorsFactory {
+    val defaults = VideoScanExtractorsFactory(DefaultExtractorsFactory())
+    return object : ExtractorsFactory {
+        override fun createExtractors(): Array<Extractor> = defaults.createExtractors().filteringTs()
+
+        override fun createExtractors(uri: Uri, responseHeaders: Map<String, List<String>>): Array<Extractor> =
+            defaults.createExtractors(uri, responseHeaders).filteringTs()
+    }
+}
+
+private fun Array<Extractor>.filteringTs(): Array<Extractor> =
+    Array(size) { index ->
+        this[index].let { extractor ->
+            if (extractor.underlyingImplementation is TsExtractor) FormatlessTrackFilter(extractor) else extractor
+        }
+    }
 
 /**
  * Media3 data source that pulls one recording over the SDK's suspend recording transport.

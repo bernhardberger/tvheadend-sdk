@@ -400,7 +400,7 @@ class GrowingTsIndexTest {
         val extractors = createGrowingTsExtractorsFactory().createExtractors()
 
         assertEquals(1, extractors.size)
-        assertTrue(extractors.single() is GrowingTsExtractor)
+        assertTrue(extractors.single().underlyingImplementation is GrowingTsExtractor)
     }
 
     @Test

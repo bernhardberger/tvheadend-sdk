@@ -238,7 +238,7 @@ private class RecordingTransferListener : TransferListener {
     }
 }
 
-private class FakeRecordingTransport(
+internal class FakeRecordingTransport(
     private val content: ByteArray,
     private val openFailure: TvheadendFailure? = null,
     private val readFailure: TvheadendFailure? = null,
