@@ -5,7 +5,10 @@ verification, clean consumer tests and dependency-graph check, and release setup
 checks. `build check` is one Gradle task graph, not duplicate task execution.
 First-attempt push staging on `main` or a `release/X.Y` maintenance branch
 remains bound to the exact commit and run, as
-specified in [releasing](releasing.md). No release credentials enter ordinary CI.
+specified in [releasing](releasing.md). A `release/**` branch whose name does
+not match its configured version line fails at the provenance step, after build
+and tests, so it can never stage a release. No release credentials enter
+ordinary CI.
 
 ## Cache and cancellation boundaries
 
@@ -38,9 +41,6 @@ Concurrency groups include the workflow and event. PRs share a group only with
 runs of the same PR and cancel obsolete runs. Main and maintenance-branch
 pushes use unique run IDs, so neither newer pushes nor PRs cancel or replace
 pending staging runs.
-A `release/**` branch whose name does not match its configured version line
-fails at the provenance step, after build and tests, so it can never stage a
-release.
 
 ## Timing baseline
 

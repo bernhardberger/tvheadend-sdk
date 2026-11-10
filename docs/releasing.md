@@ -168,10 +168,11 @@ carries the same CI and release tooling, so the flow is the same as on `main`:
 push the release-prep commit to `release/X.Y`, wait for its first-attempt push
 CI run, then push the annotated tag. The tag workflow requires exactly one
 successful push CI run at the tagged commit, so push that commit to no other
-qualifying branch before the release: a second run makes the version
-unreleasable, because the tag can be neither rerun nor moved. Fixes that also
-apply to `main` are
-ported there separately. Snapshot publishing and dependency-cache writes stay
+qualifying branch before the release. A second successful run makes that commit
+ineligible. Before the tag is pushed, a new release-prep commit with the same
+version gets its own run; once the tag is pushed, the version is burned,
+because the tag can be neither rerun nor moved. Fixes that also apply to `main`
+are ported there separately. Snapshot publishing and dependency-cache writes stay
 `main`-only.
 
 ## Operator Completion
