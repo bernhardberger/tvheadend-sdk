@@ -17,9 +17,9 @@ The SDK is split into five libraries:
 | `sdk-android` | Android | Discovery, connectivity, atomic server-profile storage, and authenticated artwork |
 | `sdk-testing` | Kotlin/JVM | Aggregate observation fakes, scripted events, and packet fixtures |
 
-The source targets the unreleased `0.37.0` development cycle, based on `v0.36.0`.
-For local prerelease builds, use `-PsdkCandidateVersion=0.37.0-dependency-updates-SNAPSHOT`
-as described in [releasing](docs/releasing.md). The normal build never publishes.
+The source is configured for the provisional `0.38.1` release, a maintenance
+release on `release/0.38` based on `v0.38.0`. The normal build never publishes.
+See [releasing](docs/releasing.md) for the publication process.
 `./gradlew clean build check stageLocalPublication` verifies the repository and
 stages all five modules under `build/local-maven`; the Maven Central badge, not
 local source or staging, reports the latest publicly available version.

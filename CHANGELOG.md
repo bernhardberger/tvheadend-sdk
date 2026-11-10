@@ -2,7 +2,7 @@
 
 ## [0.38.1]
 
-Unreleased; hotfix for 0.38.0.
+Released 2026-11-10.
 
 ### Added
 
