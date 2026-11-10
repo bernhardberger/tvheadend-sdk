@@ -622,7 +622,7 @@ class MetadataCacheRuntimeTest {
         clock: Clock = FixedClock,
     ): MetadataCacheRuntime = MetadataCacheRuntime(
         store = store,
-        policy = MetadataCachePolicy.create(File("unused"), metadataRetention = retentionDays.days),
+        policy = MetadataCachePolicy.create(root, metadataRetention = retentionDays.days),
         ioDispatcher = StandardTestDispatcher(testScheduler),
         clock = clock,
         epgWriteInterval = 60.seconds,

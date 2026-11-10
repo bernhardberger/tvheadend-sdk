@@ -135,9 +135,14 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 
 @OptIn(ExperimentalCoroutinesApi::class)
 internal class ConnectionOwnerTest {
+    /** Artwork root for cache policies, so a regression can never write into the source tree. */
+    @TempDir
+    lateinit var cacheRoot: File
+
     @Test
     fun `fake failure latch retains first result before subscribers and isolates generations`() = runTest {
         val gateway = FakeProtocolGateway()
@@ -755,7 +760,7 @@ internal class ConnectionOwnerTest {
         val store = InMemoryMetadataCacheStore(catalog = cachedCatalog, epg = EpgSnapshot.create())
         val cacheRuntime = MetadataCacheRuntime(
             store = store,
-            policy = MetadataCachePolicy.create(File("unused")),
+            policy = MetadataCachePolicy.create(cacheRoot),
             ioDispatcher = StandardTestDispatcher(testScheduler),
             clock = object : Clock {
                 override fun now(): Instant = Instant.fromEpochMilliseconds(testScheduler.currentTime)
@@ -801,7 +806,7 @@ internal class ConnectionOwnerTest {
         gateway.connectResults += connected(second)
         gateway.connectResults += connected(GatewayGeneration())
         val store = InMemoryMetadataCacheStore(null, null)
-        val runtime = MetadataCacheRuntime(store, MetadataCachePolicy.create(File("unused")),
+        val runtime = MetadataCacheRuntime(store, MetadataCachePolicy.create(cacheRoot),
             StandardTestDispatcher(testScheduler), Clock.System)
         val owner = owner(gateway, cacheRuntime = runtime)
         try {
@@ -1126,7 +1131,7 @@ internal class ConnectionOwnerTest {
         }
         val seed = EpgSnapshot.create()
         val store = InMemoryMetadataCacheStore(null, seed) { loading.complete(Unit); release.await() }
-        val runtime = MetadataCacheRuntime(store, MetadataCachePolicy.create(File("unused")),
+        val runtime = MetadataCacheRuntime(store, MetadataCachePolicy.create(cacheRoot),
             StandardTestDispatcher(testScheduler), Clock.System)
         val owner = owner(gateway, cacheRuntime = runtime)
         try {
@@ -1334,7 +1339,7 @@ internal class ConnectionOwnerTest {
         }
         val store = InMemoryMetadataCacheStore(null, null)
         val runtime = MetadataCacheRuntime(
-            store, MetadataCachePolicy.create(File("unused")),
+            store, MetadataCachePolicy.create(cacheRoot),
             kotlinx.coroutines.test.UnconfinedTestDispatcher(testScheduler),
             object : Clock {
                 override fun now(): Instant = Instant.fromEpochMilliseconds(testScheduler.currentTime)
@@ -1433,7 +1438,7 @@ internal class ConnectionOwnerTest {
             restoringThread.set(Thread.currentThread())
             check(allowRestore.await(5, java.util.concurrent.TimeUnit.SECONDS))
         }
-        val runtime = MetadataCacheRuntime(store, MetadataCachePolicy.create(File("unused")), io, Clock.System)
+        val runtime = MetadataCacheRuntime(store, MetadataCachePolicy.create(cacheRoot), io, Clock.System)
         val gateway = FakeProtocolGateway().apply { defaultConnectResult = connected(GatewayGeneration()) }
         val owner = owner(gateway, cacheRuntime = runtime, defaultDispatcher = Dispatchers.Default)
         val observerScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Unconfined)
@@ -1486,7 +1491,7 @@ internal class ConnectionOwnerTest {
         val store = InMemoryMetadataCacheStore(catalog = null, epg = null)
         val cacheRuntime = MetadataCacheRuntime(
             store = store,
-            policy = MetadataCachePolicy.create(File("unused")),
+            policy = MetadataCachePolicy.create(cacheRoot),
             ioDispatcher = StandardTestDispatcher(testScheduler),
             clock = Clock.System,
         )
@@ -1529,7 +1534,7 @@ internal class ConnectionOwnerTest {
         }
         val cacheRuntime = MetadataCacheRuntime(
             store = store,
-            policy = MetadataCachePolicy.create(File("unused")),
+            policy = MetadataCachePolicy.create(cacheRoot),
             ioDispatcher = StandardTestDispatcher(testScheduler),
             clock = schedulerClock,
         )
@@ -1593,7 +1598,7 @@ internal class ConnectionOwnerTest {
         }
         val cacheRuntime = MetadataCacheRuntime(
             store = blockingStore,
-            policy = MetadataCachePolicy.create(File("unused")),
+            policy = MetadataCachePolicy.create(cacheRoot),
             ioDispatcher = StandardTestDispatcher(testScheduler),
             clock = schedulerClock,
         )
@@ -3360,11 +3365,11 @@ internal class ConnectionOwnerTest {
     }
 
     private fun TestScope.cacheRuntime(store: MetadataCacheStore): MetadataCacheRuntime = MetadataCacheRuntime(
-        store, MetadataCachePolicy.create(File("unused")), StandardTestDispatcher(testScheduler), Clock.System,
+        store, MetadataCachePolicy.create(cacheRoot), StandardTestDispatcher(testScheduler), Clock.System,
     )
 
     private fun TestScope.virtualClockCacheRuntime(store: MetadataCacheStore): MetadataCacheRuntime = MetadataCacheRuntime(
-        store, MetadataCachePolicy.create(File("unused")), StandardTestDispatcher(testScheduler),
+        store, MetadataCachePolicy.create(cacheRoot), StandardTestDispatcher(testScheduler),
         object : Clock {
             override fun now(): Instant = Instant.fromEpochMilliseconds(testScheduler.currentTime)
         },
