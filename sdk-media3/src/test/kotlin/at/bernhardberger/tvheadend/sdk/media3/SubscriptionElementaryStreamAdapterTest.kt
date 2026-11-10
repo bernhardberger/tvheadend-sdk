@@ -94,39 +94,29 @@ class SubscriptionElementaryStreamAdapterTest {
     }
 
     @Test
-    fun `successive packets reuse capacity but expose only current bytes including empty input`() {
-        val reader = RecordingReader()
-        val allocations = mutableListOf<Int>()
-        val adapter = SubscriptionElementaryStreamAdapter(reader, EmptyExtractorOutput, 0, payloadAllocator = {
-            allocations += it
-            ByteArray(it)
-        })
-        for (size in listOf(8, 3, 0, 12, 4)) {
-            val expected = ByteArray(size) { size.toByte() }
-            val binary = CountingBinary(expected)
-            adapter.accept(packet(binary, MuxFrameType.P, 0))
-            assertEquals(expected.toList(), reader.bytes.toList())
-            assertEquals(1, binary.copyCount)
-        }
-        assertEquals(listOf(8, 12), allocations)
-    }
-
-    @Test
-    fun `oversized packets do not grow retained scratch capacity`() {
-        val allocations = mutableListOf<Int>()
-        val reader = RecordingReader()
-        val adapter = SubscriptionElementaryStreamAdapter(reader, EmptyExtractorOutput, 0, payloadAllocator = {
-            allocations += it
-            ByteArray(it)
-        })
+    fun `packets expose exact bytes while retaining only bounded scratch capacity`() {
         // The per-reader retention bound is 256 KiB; larger packets remain supported.
         val oversized = 256 * 1024 + 1
-        for (size in listOf(3, oversized, 2, oversized, 1)) {
-            val bytes = ByteArray(size) { size.toByte() }
-            adapter.accept(packet(CountingBinary(bytes), MuxFrameType.P, 0))
-            assertEquals(bytes.toList(), reader.bytes.toList())
+        val cases = listOf(
+            Triple("capacity reuse including empty input", listOf(8, 3, 0, 12, 4), listOf(8, 12)),
+            Triple("oversized transient allocations", listOf(3, oversized, 2, oversized, 1), listOf(3, oversized, oversized)),
+        )
+        cases.forEach { (label, sizes, expectedAllocations) ->
+            val reader = RecordingReader()
+            val allocations = mutableListOf<Int>()
+            val adapter = SubscriptionElementaryStreamAdapter(reader, EmptyExtractorOutput, 0, payloadAllocator = {
+                allocations += it
+                ByteArray(it)
+            })
+            for (size in sizes) {
+                val expected = ByteArray(size) { size.toByte() }
+                val binary = CountingBinary(expected)
+                adapter.accept(packet(binary, MuxFrameType.P, 0))
+                assertEquals(expected.toList(), reader.bytes.toList(), label)
+                assertEquals(1, binary.copyCount, label)
+            }
+            assertEquals(expectedAllocations, allocations, label)
         }
-        assertEquals(listOf(3, oversized, oversized), allocations)
     }
 
     @Test

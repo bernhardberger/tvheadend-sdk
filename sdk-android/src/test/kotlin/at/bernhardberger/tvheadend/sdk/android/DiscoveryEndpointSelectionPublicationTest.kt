@@ -11,27 +11,19 @@ internal class DiscoveryEndpointSelectionPublicationTest {
     private val ipv4 = InetAddress.getByName("192.0.2.1")
 
     @Test
-    fun `final publication rejection continues original LAN snapshot and publishes second LAN once`() {
-        val first = finalValidationNetwork { false }
-        val second = FakeDiscoveryNetwork()
-        val fixture = Fixture(listOf(first, second))
-        fixture.resolve()
-        assertEquals(listOf(ipv4), first.probes)
-        assertEquals(listOf(ipv4), second.probes)
-        assertEquals(1, fixture.events.resolvedServers.size)
-        assertEquals(1, fixture.snapshots)
-    }
-
-    @Test
-    fun `runtime failure exactly at final publication validation continues original LAN snapshot`() {
-        val first = finalValidationNetwork { error("Private platform detail") }
-        val second = FakeDiscoveryNetwork()
-        val fixture = Fixture(listOf(first, second))
-        fixture.resolve()
-        assertEquals(listOf(ipv4), first.probes)
-        assertEquals(listOf(ipv4), second.probes)
-        assertEquals(1, fixture.events.resolvedServers.size)
-        assertEquals(1, fixture.snapshots)
+    fun `final publication rejection or runtime failure continues the snapshot and publishes second LAN once`() {
+        listOf("false return", "runtime failure").forEach { mode ->
+            val first = finalValidationNetwork {
+                if (mode == "runtime failure") error("Private platform detail") else false
+            }
+            val second = FakeDiscoveryNetwork()
+            val fixture = Fixture(listOf(first, second))
+            fixture.resolve()
+            assertEquals(listOf(ipv4), first.probes, mode)
+            assertEquals(listOf(ipv4), second.probes, mode)
+            assertEquals(1, fixture.events.resolvedServers.size, mode)
+            assertEquals(1, fixture.snapshots, mode)
+        }
     }
 
     @Test

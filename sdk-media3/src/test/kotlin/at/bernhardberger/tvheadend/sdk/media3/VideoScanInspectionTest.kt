@@ -52,18 +52,10 @@ class VideoScanInspectionTest {
     }
 
     @Test
-    fun `TS recording switches H264 from interlaced to progressive at the first progressive picture`() {
-        assertSwitch(extract("h264-switch.ts") { it is TsExtractor }, interlacedSamples = 3, totalSamples = 6)
-    }
-
-    @Test
-    fun `TS recording switches H265 from interlaced to progressive at the first progressive picture`() {
-        assertSwitch(extract("h265-switch.ts") { it is TsExtractor }, interlacedSamples = 3, totalSamples = 6)
-    }
-
-    @Test
-    fun `TS recording switches MPEG-2 from interlaced to progressive at the first progressive picture`() {
-        assertSwitch(extract("mpeg2-switch.ts") { it is TsExtractor }, interlacedSamples = 3, totalSamples = 6)
+    fun `TS recordings switch each codec at the first progressive picture`() {
+        listOf("h264-switch.ts", "h265-switch.ts", "mpeg2-switch.ts").forEach { asset ->
+            assertSwitch(extract(asset) { it is TsExtractor }, interlacedSamples = 3, totalSamples = 6, label = asset)
+        }
     }
 
     @Test
@@ -83,7 +75,7 @@ class VideoScanInspectionTest {
     @Test
     fun `MKV recordings inspect in-band H264 H265 and MPEG-2 switches`() {
         listOf("h264-switch.mkv", "h265-switch.mkv", "mpeg2-switch.mkv").forEach { name ->
-            assertSwitch(extract(name) { it is MatroskaExtractor }, 3, 6, initialUnknown = name.startsWith("mpeg2"))
+            assertSwitch(extract(name) { it is MatroskaExtractor }, 3, 6, initialUnknown = name.startsWith("mpeg2"), label = name)
         }
     }
 
@@ -92,7 +84,7 @@ class VideoScanInspectionTest {
         assertEquals(List(3) { VideoScanType.INTERLACED }, extract("h264-interlaced.mp4") { it is Mp4Extractor }.sampleScans)
         assertEquals(List(3) { VideoScanType.PROGRESSIVE }, extract("h264-progressive.mp4") { it is Mp4Extractor }.sampleScans)
         listOf("h264-switch.mp4", "h265-switch.mp4").forEach { name ->
-            assertSwitch(extract(name) { it is Mp4Extractor }, 3, 6)
+            assertSwitch(extract(name) { it is Mp4Extractor }, 3, 6, label = name)
         }
     }
 
@@ -367,18 +359,14 @@ class VideoScanInspectionTest {
     }
 
     @Test
-    fun `live H264 switches from interlaced to progressive at the first progressive picture`() {
-        assertSwitch(live("h264-switch.h264", SubscriptionStreamType.H264), interlacedSamples = 3, totalSamples = 6)
-    }
-
-    @Test
-    fun `live H265 switches from interlaced to progressive at the first progressive picture`() {
-        assertSwitch(live("h265-switch.h265", SubscriptionStreamType.H265), interlacedSamples = 3, totalSamples = 6)
-    }
-
-    @Test
-    fun `live MPEG-2 switches from interlaced to progressive at the first progressive picture`() {
-        assertSwitch(live("mpeg2-switch.m2v", SubscriptionStreamType.MPEG2_VIDEO), interlacedSamples = 3, totalSamples = 6)
+    fun `live streams switch each codec at the first progressive picture`() {
+        listOf(
+            "h264-switch.h264" to SubscriptionStreamType.H264,
+            "h265-switch.h265" to SubscriptionStreamType.H265,
+            "mpeg2-switch.m2v" to SubscriptionStreamType.MPEG2_VIDEO,
+        ).forEach { (asset, codec) ->
+            assertSwitch(live(asset, codec), interlacedSamples = 3, totalSamples = 6, label = asset)
+        }
     }
 
     @Test
@@ -401,37 +389,24 @@ class VideoScanInspectionTest {
     }
 
     @Test
-    fun `ambiguous H265 source flags are unknown and leave other metadata intact`() {
-        val sps = h265Sps(progressiveConstraintByte = 0xD0)
-        val other = OtherMetadata("kept")
-        val track = ScanCapturingTrack()
-        val output = VideoScanTrackOutput(track)
+    fun `ambiguous or absent H265 source flags preserve existing metadata and report unknown scan`() {
+        listOf(
+            Triple("ambiguous flags", 0xD0, Metadata(5L, OtherMetadata("kept"))),
+            Triple("absent flags", 0x10, null),
+        ).forEach { (label, flags, metadata) ->
+            val track = ScanCapturingTrack()
+            VideoScanTrackOutput(track).format(
+                Format.Builder()
+                    .setSampleMimeType(MimeTypes.VIDEO_H265)
+                    .setInitializationData(listOf(h265Sps(progressiveConstraintByte = flags)))
+                    .setMetadata(metadata)
+                    .build(),
+            )
 
-        output.format(
-            Format.Builder()
-                .setSampleMimeType(MimeTypes.VIDEO_H265)
-                .setInitializationData(listOf(sps))
-                .setMetadata(Metadata(5L, other))
-                .build(),
-        )
-
-        val format = track.formats.single()
-        assertEquals(VideoScanType.UNKNOWN, format.videoScanType())
-        assertEquals(Metadata(5L, other), format.metadata)
-    }
-
-    @Test
-    fun `H265 without either source flag is unknown`() {
-        val track = ScanCapturingTrack()
-        VideoScanTrackOutput(track).format(
-            Format.Builder()
-                .setSampleMimeType(MimeTypes.VIDEO_H265)
-                .setInitializationData(listOf(h265Sps(progressiveConstraintByte = 0x10)))
-                .build(),
-        )
-
-        assertEquals(VideoScanType.UNKNOWN, track.formats.single().videoScanType())
-        assertNull(track.formats.single().metadata)
+            val format = track.formats.single()
+            assertEquals(VideoScanType.UNKNOWN, format.videoScanType(), label)
+            assertEquals(metadata, format.metadata, label)
+        }
     }
 
     @Test
@@ -475,16 +450,24 @@ class VideoScanInspectionTest {
         assertSame(audio, output.track(2, C.TRACK_TYPE_TEXT))
     }
 
-    private fun assertSwitch(track: ScanCapturingTrack, interlacedSamples: Int, totalSamples: Int, initialUnknown: Boolean = false) {
+    private fun assertSwitch(
+        track: ScanCapturingTrack,
+        interlacedSamples: Int,
+        totalSamples: Int,
+        initialUnknown: Boolean = false,
+        label: String? = null,
+    ) {
         assertEquals(
             List(interlacedSamples) { VideoScanType.INTERLACED } +
                 List(totalSamples - interlacedSamples) { VideoScanType.PROGRESSIVE },
             track.sampleScans,
+            label,
         )
         assertEquals(
             (if (initialUnknown) listOf(VideoScanType.UNKNOWN) else emptyList()) +
                 listOf(VideoScanType.INTERLACED, VideoScanType.PROGRESSIVE),
             track.formats.map(Format::videoScanType),
+            label,
         )
     }
 

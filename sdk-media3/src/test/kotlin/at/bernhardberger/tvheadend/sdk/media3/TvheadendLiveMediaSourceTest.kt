@@ -118,20 +118,26 @@ internal class TvheadendLiveMediaSourceTest {
     }
 
     @Test
-    fun `explicit source options reach the subscription opener owned by the source`() = runTest {
-        val target = CapturingLiveTarget()
-        val options = SubscriptionOptions(
+    fun `explicit and default source options reach the bound target`() = runTest {
+        val explicit = SubscriptionOptions(
             streamProfileUuid = "0123456789abcdef0123456789abcdef",
             timeshiftPeriod = 600.seconds,
         )
-        val source = TvheadendLiveMediaSource(target, options, null, {}, StandardTestDispatcher(testScheduler), { QueuedCoordinatorLooper() })
-        val caller = MediaSource.MediaSourceCaller { _, _ -> }
-        source.prepareSource(caller, PlayerId.UNSET, BandwidthMeter.NO_OP)
-        runCurrent()
-        assertTrue(target.consumer != null)
-        assertSame(options, target.options)
-        source.releaseSource(caller)
-        runCurrent()
+        listOf("explicit" to explicit, "default" to SubscriptionOptions()).forEach { (label, options) ->
+            val target = CapturingLiveTarget()
+            val source = TvheadendLiveMediaSource(target, options, null, {}, StandardTestDispatcher(testScheduler), { QueuedCoordinatorLooper() })
+            val caller = MediaSource.MediaSourceCaller { _, _ -> }
+            source.prepareSource(caller, PlayerId.UNSET, BandwidthMeter.NO_OP)
+            runCurrent()
+            assertTrue(target.consumer != null, label)
+            assertSame(options, target.options, label)
+            if (label == "default") {
+                assertNull(target.options?.streamProfileUuid, label)
+                assertEquals(Duration.ZERO, target.options?.timeshiftPeriod, label)
+            }
+            source.releaseSource(caller)
+            runCurrent()
+        }
     }
 
     @Test
@@ -147,20 +153,6 @@ internal class TvheadendLiveMediaSourceTest {
         assertFalse(tvheadendRecordingMediaItem(RecordingMediaIdentity()).isTvheadendLive())
         assertFalse(MediaItem.fromUri("https://example.invalid/live.ts").isTvheadendLive())
         assertFalse(MediaItem.Builder().build().isTvheadendLive())
-        source.releaseSource(caller)
-        runCurrent()
-    }
-
-    @Test
-    fun `default source options reach the bound target`() = runTest {
-        val target = CapturingLiveTarget()
-        val source = TvheadendLiveMediaSource(target, SubscriptionOptions(), null, {}, StandardTestDispatcher(testScheduler), { QueuedCoordinatorLooper() })
-        val caller = MediaSource.MediaSourceCaller { _, _ -> }
-        source.prepareSource(caller, PlayerId.UNSET, BandwidthMeter.NO_OP)
-        runCurrent()
-        assertTrue(target.consumer != null)
-        assertNull(target.options?.streamProfileUuid)
-        assertEquals(Duration.ZERO, target.options?.timeshiftPeriod)
         source.releaseSource(caller)
         runCurrent()
     }

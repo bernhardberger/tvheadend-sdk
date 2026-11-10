@@ -103,13 +103,22 @@ internal class TvheadendVideoRendererTest {
     }
 
     @Test
-    fun `paused tunnelled key frame before API 31 does not report a frame`() {
-        val stream = RecordingPreviewStream()
-        val renderer = enabledRenderer(stream, tunneling = true, sdkInt = Build.VERSION_CODES.R)
+    fun `input outside paused tunnelled API 31 key frames does not report a frame`() {
+        data class InputCase(val label: String, val api: Int, val keyFrame: Boolean, val started: Boolean, val tunneling: Boolean)
+        listOf(
+            InputCase("before API 31", Build.VERSION_CODES.R, true, false, true),
+            InputCase("non-key input", Build.VERSION_CODES.S, false, false, true),
+            InputCase("playing input", Build.VERSION_CODES.S, true, true, true),
+            InputCase("untunnelled input", Build.VERSION_CODES.S, true, false, false),
+        ).forEach { case ->
+            val stream = RecordingPreviewStream()
+            val renderer = enabledRenderer(stream, tunneling = case.tunneling, sdkInt = case.api)
+            if (case.started) renderer.start()
 
-        renderer.queueInput(STREAM_OFFSET_US + 250_000L, keyFrame = true)
+            renderer.queueInput(STREAM_OFFSET_US + 250_000L, keyFrame = case.keyFrame)
 
-        assertEquals(emptyList<Long>(), stream.rendered)
+            assertEquals(emptyList<Long>(), stream.rendered, case.label)
+        }
     }
 
     @Test
@@ -122,37 +131,6 @@ internal class TvheadendVideoRendererTest {
 
         assertEquals(listOf(250_000L), stream.rendered)
         assertEquals(STREAM_OFFSET_US, renderer.callProtected("getOutputStreamOffsetUs"))
-    }
-
-    @Test
-    fun `paused tunnelled non-key input does not report a frame`() {
-        val stream = RecordingPreviewStream()
-        val renderer = enabledRenderer(stream, tunneling = true)
-
-        renderer.queueInput(STREAM_OFFSET_US + 250_000L, keyFrame = false)
-
-        assertEquals(emptyList<Long>(), stream.rendered)
-    }
-
-    @Test
-    fun `playing tunnelled key frame input does not report a frame`() {
-        val stream = RecordingPreviewStream()
-        val renderer = enabledRenderer(stream, tunneling = true)
-        renderer.start()
-
-        renderer.queueInput(STREAM_OFFSET_US + 250_000L, keyFrame = true)
-
-        assertEquals(emptyList<Long>(), stream.rendered)
-    }
-
-    @Test
-    fun `paused untunnelled key frame input does not report a frame`() {
-        val stream = RecordingPreviewStream()
-        val renderer = enabledRenderer(stream, tunneling = false)
-
-        renderer.queueInput(STREAM_OFFSET_US + 250_000L, keyFrame = true)
-
-        assertEquals(emptyList<Long>(), stream.rendered)
     }
 
     @Test

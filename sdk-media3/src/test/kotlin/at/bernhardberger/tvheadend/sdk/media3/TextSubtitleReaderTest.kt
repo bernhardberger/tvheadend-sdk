@@ -95,26 +95,24 @@ class TextSubtitleReaderTest {
     }
 
     @Test
-    fun `plain text page drops the terminator and trailing row break`() {
-        assertEquals(TextSubtitlePage("Guten Abend", emptyList()), parse("Guten Abend\n\u0000"))
-    }
-
-    @Test
-    fun `bytes after the terminator are ignored`() {
-        assertEquals(TextSubtitlePage("Hallo", emptyList()), parse("Hallo\n\u0000Rest"))
-    }
-
-    @Test
-    fun `umlauts sharp s and euro survive UTF-8 decoding`() {
-        assertEquals(TextSubtitlePage("Grüße für 5 € – ÄÖÜ äöü ß", emptyList()), parse("Grüße für 5 € – ÄÖÜ äöü ß\n\u0000"))
-    }
-
-    @Test
-    fun `rows keep their line breaks`() {
-        assertEquals(
-            TextSubtitlePage("Erste Zeile\nZweite Zeile", emptyList()),
-            parse("Erste Zeile\nZweite Zeile\n\u0000"),
+    fun `plain pages decode bytes and retain literal text while trimming the terminator`() {
+        val tags = "<i>kursiv</i> <font color=\"#123456\">a</font> <FONT color=\"#ff0000\">b <font color=#ff0000>c"
+        val cases = listOf(
+            Triple("terminator and trailing break", "Guten Abend\n\u0000".toByteArray(), "Guten Abend"),
+            Triple("bytes after terminator", "Hallo\n\u0000Rest".toByteArray(), "Hallo"),
+            Triple("UTF-8 characters", "Grüße für 5 € – ÄÖÜ äöü ß\n\u0000".toByteArray(), "Grüße für 5 € – ÄÖÜ äöü ß"),
+            Triple("line breaks", "Erste Zeile\nZweite Zeile\n\u0000".toByteArray(), "Erste Zeile\nZweite Zeile"),
+            Triple("unknown and malformed tags", "$tags\n\u0000".toByteArray(), tags),
+            Triple("ampersands and angle brackets", "Tom & Jerry <3 a<b &amp; >\n\u0000".toByteArray(), "Tom & Jerry <3 a<b &amp; >"),
+            Triple(
+                "invalid UTF-8 replacement",
+                byteArrayOf(0x41, 0xc3.toByte(), 0x28, 0x42, 0xff.toByte(), 0x0a, 0x00),
+                "A\uFFFD(B\uFFFD",
+            ),
         )
+        cases.forEach { (label, payload, expected) ->
+            assertEquals(TextSubtitlePage(expected, emptyList()), parseTextSubtitlePage(payload), label)
+        }
     }
 
     @Test
@@ -194,30 +192,10 @@ class TextSubtitleReaderTest {
     }
 
     @Test
-    fun `unknown and malformed tags stay literal`() {
-        val source = "<i>kursiv</i> <font color=\"#123456\">a</font> <FONT color=\"#ff0000\">b <font color=#ff0000>c"
-        assertEquals(TextSubtitlePage(source, emptyList()), parse("$source\n\u0000"))
-    }
-
-    @Test
-    fun `ampersands and angle brackets stay literal`() {
-        assertEquals(
-            TextSubtitlePage("Tom & Jerry <3 a<b &amp; >", emptyList()),
-            parse("Tom & Jerry <3 a<b &amp; >\n\u0000"),
-        )
-    }
-
-    @Test
     fun `blank and zero-length pages clear the subtitle`() {
         assertNull(parseTextSubtitlePage(byteArrayOf(0)))
         assertNull(parseTextSubtitlePage(byteArrayOf()))
         assertNull(parse("<font color=\"#ff0000\">   </font>\n\u0000"))
-    }
-
-    @Test
-    fun `invalid UTF-8 is replaced instead of failing`() {
-        val payload = byteArrayOf(0x41, 0xc3.toByte(), 0x28, 0x42, 0xff.toByte(), 0x0a, 0x00)
-        assertEquals(TextSubtitlePage("A\uFFFD(B\uFFFD", emptyList()), parseTextSubtitlePage(payload))
     }
 
     private fun parse(payload: String): TextSubtitlePage? = parseTextSubtitlePage(payload.toByteArray())

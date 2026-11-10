@@ -169,12 +169,17 @@ internal class LiveStartLoadControlTest {
     }
 
     @Test
-    fun `defaults preserve two second startup and one and a half second ordinary rebuffer`() {
-        val control = prepared(TvheadendLiveStartBuffer())
-        assertFalse(control.shouldStartPlayback(parameters(1_999)))
-        assertTrue(control.shouldStartPlayback(parameters(2_000)))
-        assertFalse(control.shouldStartPlayback(parameters(1_499, rebuffering = true)))
-        assertTrue(control.shouldStartPlayback(parameters(1_500, rebuffering = true)))
+    fun `default live and custom dynamic recording preserve ordinary startup and rebuffer thresholds`() {
+        listOf(
+            Triple("default live", TvheadendLiveStartBuffer(), live),
+            Triple("custom dynamic recording", TvheadendLiveStartBuffer(500.milliseconds), recording),
+        ).forEach { (label, buffer, timeline) ->
+            val control = prepared(buffer)
+            assertFalse(control.shouldStartPlayback(parameters(1_999, timeline = timeline)), label)
+            assertTrue(control.shouldStartPlayback(parameters(2_000, timeline = timeline)), label)
+            assertFalse(control.shouldStartPlayback(parameters(1_499, timeline = timeline, rebuffering = true)), label)
+            assertTrue(control.shouldStartPlayback(parameters(1_500, timeline = timeline, rebuffering = true)), label)
+        }
     }
 
     @Test
@@ -226,15 +231,6 @@ internal class LiveStartLoadControlTest {
         assertTrue(control.shouldStartPlayback(parameters(4_000, speed = 2f)))
         assertFalse(control.shouldStartPlayback(parameters(499, liveOffset = 1_000_000)))
         assertTrue(control.shouldStartPlayback(parameters(500, liveOffset = 1_000_000)))
-    }
-
-    @Test
-    fun `dynamic recordings keep the original startup and rebuffer thresholds`() {
-        val control = prepared(TvheadendLiveStartBuffer(500.milliseconds))
-        assertFalse(control.shouldStartPlayback(parameters(1_999, timeline = recording)))
-        assertTrue(control.shouldStartPlayback(parameters(2_000, timeline = recording)))
-        assertFalse(control.shouldStartPlayback(parameters(1_499, timeline = recording, rebuffering = true)))
-        assertTrue(control.shouldStartPlayback(parameters(1_500, timeline = recording, rebuffering = true)))
     }
 
     @Test

@@ -870,35 +870,24 @@ internal class LiveStreamRestartTest {
     }
 
     @Test
-    fun `live queues filled with timeshift granted still fail the subscription with an accurate reason`() = runTest {
-        val handedOver = mutableListOf<LiveTimeshiftControlBridge.Attachment>()
-        val harness = RestartSourceHarness(this) { handedOver += it }
-        try {
-            harness.start()
-            val period = harness.createPeriod()
-            harness.started(SubscriptionStreamType.MPEG2_AUDIO)
-            harness.fillLiveQueues(period)
-            assertTrue(handedOver.isEmpty())
-            val reason = (harness.subscription.state.value as SubscriptionState.Terminal).reason
-            assertSame(at.bernhardberger.tvheadend.sdk.playback.SubscriptionTerminalReason.ConsumerFailed, reason)
-            val error = assertThrows(IOException::class.java) { period.maybeThrowPrepareError() }
-            assertEquals("Live sample buffer limit reached", error.message)
-        } finally { harness.close() }
-    }
-
-    @Test
-    fun `live queues filled without a coordinator handler still fail the subscription with an accurate reason`() = runTest {
-        val harness = RestartSourceHarness(this, timeshiftSeconds = null)
-        try {
-            harness.start()
-            val period = harness.createPeriod()
-            harness.started(SubscriptionStreamType.MPEG2_AUDIO)
-            harness.fillLiveQueues(period)
-            val reason = (harness.subscription.state.value as SubscriptionState.Terminal).reason
-            assertSame(at.bernhardberger.tvheadend.sdk.playback.SubscriptionTerminalReason.ConsumerFailed, reason)
-            val error = assertThrows(IOException::class.java) { period.maybeThrowPrepareError() }
-            assertEquals("Live sample buffer limit reached", error.message)
-        } finally { harness.close() }
+    fun `full live queues fail accurately with timeshift granted or without a handler`() = runTest {
+        listOf("timeshift granted" to 120L, "no handler" to null).forEach { (label, timeshiftSeconds) ->
+            val handedOver = mutableListOf<LiveTimeshiftControlBridge.Attachment>()
+            val handler: ((LiveTimeshiftControlBridge.Attachment) -> Unit)? =
+                if (timeshiftSeconds != null) ({ handedOver += it }) else null
+            val harness = RestartSourceHarness(this, timeshiftSeconds = timeshiftSeconds, onBufferExhausted = handler)
+            try {
+                harness.start()
+                val period = harness.createPeriod()
+                harness.started(SubscriptionStreamType.MPEG2_AUDIO)
+                harness.fillLiveQueues(period)
+                assertTrue(handedOver.isEmpty(), label)
+                val reason = (harness.subscription.state.value as SubscriptionState.Terminal).reason
+                assertSame(at.bernhardberger.tvheadend.sdk.playback.SubscriptionTerminalReason.ConsumerFailed, reason, label)
+                val error = assertThrows(IOException::class.java) { period.maybeThrowPrepareError() }
+                assertEquals("Live sample buffer limit reached", error.message, label)
+            } finally { harness.close() }
+        }
     }
 
     @Test

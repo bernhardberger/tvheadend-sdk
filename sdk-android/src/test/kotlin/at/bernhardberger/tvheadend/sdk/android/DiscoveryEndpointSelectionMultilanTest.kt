@@ -164,22 +164,18 @@ internal class DiscoveryEndpointSelectionMultilanTest {
     }
 
     @Test
-    fun `per LAN cancellation propagates without continuing to another LAN`() {
-        val first = FakeDiscoveryNetwork().apply { reachable = { throw CancellationException() } }
-        val second = FakeDiscoveryNetwork()
-        val fixture = Fixture(listOf(first, second))
-        assertThrows(CancellationException::class.java) { fixture.resolve(ipv4) }
-        assertTrue(second.probes.isEmpty())
-        assertTrue(fixture.events.resolvedServers.isEmpty())
-    }
-
-    @Test
-    fun `eligibility cancellation propagates instead of omitting LAN and continuing`() {
-        val first = FakeDiscoveryNetwork().apply { current = { throw CancellationException() } }
-        val second = FakeDiscoveryNetwork()
-        val fixture = Fixture(listOf(first, second))
-        assertThrows(CancellationException::class.java) { fixture.resolve(ipv4) }
-        assertTrue(second.probes.isEmpty())
+    fun `probe and eligibility cancellation propagate without publication or another LAN`() {
+        listOf("probe", "eligibility").forEach { phase ->
+            val first = FakeDiscoveryNetwork().apply {
+                if (phase == "probe") reachable = { throw CancellationException() }
+                else current = { throw CancellationException() }
+            }
+            val second = FakeDiscoveryNetwork()
+            val fixture = Fixture(listOf(first, second))
+            assertThrows(CancellationException::class.java, { fixture.resolve(ipv4) }, phase)
+            assertTrue(second.probes.isEmpty(), phase)
+            assertTrue(fixture.events.resolvedServers.isEmpty(), phase)
+        }
     }
 
     @Test

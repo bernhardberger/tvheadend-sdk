@@ -79,11 +79,17 @@ class GrowingTsExtentTest {
 
     @Test
     fun `unexpected probe read failure degrades duration and closes the reader`() = runTest {
+        var failureReached = false
         val lease = ProbeLease(ByteArray(188 * 600), 188 * 600).apply {
-            beforeRead = { throw IllegalStateException("synthetic transport failure") }
+            beforeRead = {
+                failureReached = true
+                throw IllegalStateException("synthetic transport failure")
+            }
         }
         assertNull(probeGrowingTsExtent(lease))
-        assertEquals(lease.opens, lease.closes)
+        assertTrue(failureReached)
+        assertEquals(1, lease.opens)
+        assertEquals(1, lease.closes)
     }
 
     @Test

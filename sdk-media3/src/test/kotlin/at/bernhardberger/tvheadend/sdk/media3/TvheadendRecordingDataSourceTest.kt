@@ -37,16 +37,24 @@ class TvheadendRecordingDataSourceTest {
     }
 
     @Test
-    fun `another bound media identity cannot open this target`() {
-        val transport = FakeRecordingTransport(ByteArray(4))
-        val source = dataSource(transport, readAheadBytes = 4)
+    fun `another identity or foreign uri fails before transport or transfer activity`() {
+        listOf(
+            "another identity" to recordingSpec(identity = RecordingMediaIdentity()),
+            "foreign uri" to DataSpec.Builder().setUri("http://host/dvrfile/7").build(),
+        ).forEach { (label, spec) ->
+            val transport = FakeRecordingTransport(ByteArray(4))
+            val source = dataSource(transport, readAheadBytes = 4)
+            val listener = RecordingTransferListener()
+            source.addTransferListener(listener)
 
-        val failure = assertThrows(TvheadendRecordingException::class.java) {
-            source.open(recordingSpec(identity = RecordingMediaIdentity()))
+            val failure = assertThrows(TvheadendRecordingException::class.java) { source.open(spec) }
+
+            assertSame(TvheadendFailure.FILE_UNAVAILABLE, failure.failure, label)
+            assertTrue(transport.calls.isEmpty(), label)
+            assertEquals(0, listener.starts, label)
+            source.close()
+            assertEquals(0, listener.ends, label)
         }
-
-        assertSame(TvheadendFailure.FILE_UNAVAILABLE, failure.failure)
-        assertTrue(transport.calls.isEmpty())
     }
 
     @Test
@@ -153,25 +161,6 @@ class TvheadendRecordingDataSourceTest {
         assertSame(TvheadendFailure.FILE_UNAVAILABLE, readingFailure.failure)
         readSource.close()
         assertEquals(1, truncated.closes, "A failed read must still release its handle on close")
-    }
-
-    @Test
-    fun `a foreign uri fails before any transport round trip and reports no transfer`() {
-        val transport = FakeRecordingTransport(ByteArray(4))
-        val source = dataSource(transport, readAheadBytes = 4)
-        val listener = RecordingTransferListener()
-        source.addTransferListener(listener)
-
-        val failure = assertThrows(TvheadendRecordingException::class.java) {
-            source.open(DataSpec.Builder().setUri("http://host/dvrfile/7").build())
-        }
-
-        assertSame(TvheadendFailure.FILE_UNAVAILABLE, failure.failure)
-        assertTrue(transport.calls.isEmpty(), "A foreign uri must not reach the transport")
-        assertEquals(0, listener.starts)
-
-        source.close()
-        assertEquals(0, listener.ends, "A source that never opened must not report a transfer end")
     }
 
     @Test

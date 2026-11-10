@@ -701,14 +701,11 @@ internal class TvheadendLiveMediaPeriodTest {
         }
         val dvbOnly = PeriodHarness(this)
         try {
-            dvbOnly.period.tracksReady(
-                SubscriptionTracks(
-                    listOf(
-                        subscriptionStream(0, SubscriptionStreamType.UNKNOWN),
-                        subscriptionStream(1, SubscriptionStreamType.DVB_SUBTITLE),
-                    ),
-                ),
-            )
+            dvbOnly.start(SubscriptionStreamType.UNKNOWN, SubscriptionStreamType.DVB_SUBTITLE)
+            dvbOnly.looper.runAll()
+            assertEquals(1, dvbOnly.preparations)
+            assertEquals(1, dvbOnly.period.trackGroups.length)
+            assertEquals(C.TRACK_TYPE_TEXT, dvbOnly.period.trackGroups[0].type)
         } finally {
             dvbOnly.close()
         }
