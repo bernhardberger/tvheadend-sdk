@@ -13,6 +13,7 @@ import at.bernhardberger.tvheadend.sdk.core.ArtworkLoadResult
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.CurrentSessionObservation
 import at.bernhardberger.tvheadend.sdk.core.EpgCoveragePolicy
+import at.bernhardberger.tvheadend.sdk.core.EpgCoverageAcquisitionResult
 import at.bernhardberger.tvheadend.sdk.core.EpgRepositoryState
 import at.bernhardberger.tvheadend.sdk.core.SessionRegistry
 import at.bernhardberger.tvheadend.sdk.core.DvrConfiguration
@@ -79,6 +80,8 @@ import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -98,6 +101,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
+import org.junit.jupiter.params.provider.CsvSource
 import kotlin.time.Duration
 import kotlin.time.Clock
 import kotlin.time.TestTimeSource
@@ -108,6 +112,213 @@ import kotlin.time.Instant
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SessionSubscriptionsTest {
+    @Test
+    fun `teardown settles acquisition queued before lazy enrichment starts`() = runTest {
+        val gateway = SubscriptionGateway()
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        metadata.bindKnownChannels(generation, 1L)
+        val clock = object : Clock {
+            override fun now(): Instant = Instant.fromEpochSeconds(testScheduler.currentTime / 1_000L)
+        }
+        val children = PlaybackSessionChildren(gateway, metadata, StandardTestDispatcher(testScheduler), clock)
+        children.bindGeneration(generation)
+        children.prepareBackgroundEnrichment(generation) {}
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
+        val pending = backgroundScope.async {
+            metadata.epgRepository.acquireCoverage(
+                currentSession,
+                at.bernhardberger.tvheadend.sdk.core.ChannelId(1L),
+                clock.now() + 1.hours,
+            )
+        }
+        runCurrent()
+
+        children.cancelAndJoinBackgroundEnrichment()
+        runCurrent()
+        assertTrue(pending.isCompleted)
+        assertSame(EpgCoverageAcquisitionResult.ObservationExpired, pending.await())
+        children.closeAndJoinSubscriptions()
+    }
+
+    @Test
+    fun `teardown detaches enrichment even for already covered acquisition`() = runTest {
+        val gateway = SubscriptionGateway()
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        metadata.bindKnownChannels(generation, 1L)
+        val through = Instant.fromEpochSeconds(3_600L)
+        metadata.applySuccessfulEpgQuery(
+            generation, requireNotNull(metadata.beginEpgQuery(generation, ChannelId(1L))), through, emptyList(),
+        )
+        val children = PlaybackSessionChildren(gateway, metadata, StandardTestDispatcher(testScheduler))
+        children.bindGeneration(generation)
+        children.prepareBackgroundEnrichment(generation) {}
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
+
+        children.cancelAndJoinBackgroundEnrichment()
+        assertSame(EpgCoverageAcquisitionResult.ObservationExpired, metadata.epgRepository.acquireCoverage(
+            currentSession, at.bernhardberger.tvheadend.sdk.core.ChannelId(1L), through,
+        ))
+        children.closeAndJoinSubscriptions()
+    }
+
+    @Test
+    fun `cancelled enrichment teardown throws inside its caller`() = runTest {
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        metadata.bindKnownChannels(generation, 1L)
+        val children = PlaybackSessionChildren(SubscriptionGateway(), metadata, StandardTestDispatcher(testScheduler))
+        children.bindGeneration(generation)
+        children.prepareBackgroundEnrichment(generation) {}
+        val outcome = CompletableDeferred<Throwable?>()
+        val caller = async {
+            currentCoroutineContext().cancel()
+            outcome.complete(runCatching { children.cancelAndJoinBackgroundEnrichment() }.exceptionOrNull())
+        }
+        caller.join()
+        assertTrue(outcome.await() is CancellationException)
+        children.closeAndJoinSubscriptions()
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["subscription", "profiles", "recording", "growing", "artwork"])
+    fun `pre cancelled caller throws instead of returning an API outcome`(operation: String) = runTest {
+        val gateway = SubscriptionGateway()
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        metadata.bindCurrentRecording(generation, id = 5L, sizeBytes = 64L)
+        metadata.publishSessionState(
+            state = SessionState.Ready(ServerCapabilities.create(CapabilityAccess.ALLOWED, CapabilityAccess.ALLOWED)),
+            progressCapability = RecordingProgressCapability.SUPPORTED,
+            generation = generation,
+        )
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
+        val children = PlaybackSessionChildren(gateway, metadata, StandardTestDispatcher(testScheduler))
+        children.bindGeneration(generation)
+        val lease = (children.bindGrowingRecording(generation, DvrEntryId(5L)) as RecordingFileResult.Ok).value
+        val outcome = CompletableDeferred<Throwable?>()
+        if (operation == "artwork") metadata.bindGeneration(GatewayGeneration())
+
+        val caller = async {
+            currentCoroutineContext().cancel()
+            outcome.complete(runCatching {
+                // Profiles and recording deliberately pass a retired generation: its fast rejection
+                // path must still yield to the caller's cancellation.
+                when (operation) {
+                    "subscription" -> children.open(
+                        generation, SubscriptionChannelId(1L), SubscriptionEventConsumer {}, SubscriptionOptions(),
+                    )
+                    "profiles" -> children.getStreamProfiles(GatewayGeneration(), currentSession)
+                    "recording" -> children.openRecording(GatewayGeneration(), DvrEntryId(5L))
+                    "growing" -> lease.open(0L)
+                    "artwork" -> children.loadArtwork(currentSession, ArtworkId(1))
+                }
+            }.exceptionOrNull())
+        }
+        caller.join()
+        assertTrue(outcome.await() is CancellationException)
+        children.closeAndJoinSubscriptions()
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [true, false])
+    fun `stop admission fences a captured admission during channel lookup`(known: Boolean) = runTest {
+        val gateway = SubscriptionGateway()
+        val generation = GatewayGeneration()
+        val metadata = PhaseOneSessionMetadata()
+        metadata.bindKnownChannels(generation, 1L)
+        lateinit var children: PlaybackSessionChildren
+        val stoppingMetadata = object : SessionMetadata by metadata {
+            override fun isKnownChannel(generation: GatewayGeneration, channelId: ChannelId): Boolean {
+                children.stopAdmission()
+                return known
+            }
+        }
+        children = PlaybackSessionChildren(gateway, stoppingMetadata, StandardTestDispatcher(testScheduler))
+        children.bindGeneration(generation)
+        children.startLiveAdmission(generation, CapabilityAccess.ALLOWED)
+
+        val pending = backgroundScope.async {
+            children.open(generation, SubscriptionChannelId(1L), SubscriptionEventConsumer {}, SubscriptionOptions())
+        }
+        runCurrent()
+        assertTrue(pending.isCompleted)
+        assertSame(SubscriptionOpenResult.NotReady, pending.await())
+        assertTrue(gateway.requestedTimeshiftPeriods.isEmpty())
+        children.closeAndJoinSubscriptions()
+    }
+
+    @ParameterizedTest
+    @ValueSource(longs = [0L, 64L])
+    fun `growing lease opens at the known endpoint including an empty file`(size: Long) = runTest {
+        val gateway = SubscriptionGateway()
+        gateway.recordingOpenResult = GatewayResult.Ok(
+            GatewayRecordingFile(handleId = 8L, sizeBytes = size, protocolVersion = 27),
+        )
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        metadata.bindCurrentRecording(generation, id = 5L, sizeBytes = size)
+        val children = PlaybackSessionChildren(gateway, metadata, StandardTestDispatcher(testScheduler))
+        children.bindGeneration(generation)
+        val lease = (children.bindGrowingRecording(generation, DvrEntryId(5L)) as RecordingFileResult.Ok).value
+
+        val reader = lease.open(size)
+        assertTrue(reader is RecordingFileResult.Ok)
+        (reader as RecordingFileResult.Ok).value.close()
+        children.closeAndJoinSubscriptions()
+    }
+
+    @ParameterizedTest
+    @CsvSource("uuid,true", "entryPath,true", "fileId,true", "filePath,true", "fileStart,true",
+        "uuid,false", "entryPath,false", "fileId,false", "filePath,false", "fileStart,false")
+    fun `completed target retains and learns identity across omitted and restored fields`(
+        field: String,
+        initiallyKnown: Boolean,
+    ) = runTest {
+        val metadata = PhaseOneSessionMetadata()
+        val generation = GatewayGeneration()
+        fun entry(value: Int): GatewayDvrEntry {
+            fun <T> select(name: String, original: T, replacement: T, omitted: T? = null): T? = when {
+                field != name || value == 1 -> original
+                value == 2 -> replacement
+                else -> omitted
+            }
+            val omittedText = if (value == 0) " " else null
+            return GatewayDvrEntry(
+                id = DvrEntryId(5L),
+                uuid = select("uuid", "original", "replacement", omittedText),
+                path = select("entryPath", "/original", "/replacement", omittedText),
+                files = listOf(GatewayDvrRecordingFile(
+                    fileId = select("fileId", 11L, 12L),
+                    path = select("filePath", "/original", "/replacement", omittedText),
+                    start = select("fileStart", Instant.fromEpochSeconds(1L), Instant.fromEpochSeconds(2L)),
+                    stop = null,
+                    sizeBytes = 64L,
+                )),
+                state = DvrEntryState.COMPLETED,
+            )
+        }
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.DvrEntryAdded(generation, entry(if (initiallyKnown) 1 else 0)))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        metadata.publishSessionState(
+            state = SessionState.Ready(ServerCapabilities.create(CapabilityAccess.ALLOWED, CapabilityAccess.ALLOWED)),
+            progressCapability = RecordingProgressCapability.SUPPORTED,
+            generation = generation,
+        )
+        val currentSession = requireNotNull(metadata.observation.value.currentSession)
+        val target = (metadata.bindPlaybackRecording(generation, currentSession, DvrEntryId(5L)) as
+            PlaybackRecordingLookup.Current).target
+
+        listOf(1, 0, -1, 1).forEach { value ->
+            metadata.acceptMetadata(MetadataEvent.DvrEntryUpdated(generation, entry(value)))
+            assertTrue(metadata.currentPlaybackRecording(target) is PlaybackRecordingLookup.Current)
+        }
+        metadata.acceptMetadata(MetadataEvent.DvrEntryUpdated(generation, entry(2)))
+        assertSame(PlaybackRecordingLookup.TargetUnavailable, metadata.currentPlaybackRecording(target))
+    }
+
     @Test
     fun `initial retention is past only and rebind replaces previous worker bounds`() {
         val now = Instant.fromEpochSeconds(1_000_000)
@@ -772,20 +983,19 @@ class SessionSubscriptionsTest {
             GatewayResult.Ok(emptyList())
         }
         val suppressedCancellation = CancellationException("private suppressed cancellation")
-        val suppressed = async { children.getStreamProfiles(generationB, currentSession) }
+        val suppressedOutcome = CompletableDeferred<Throwable?>()
+        val suppressed = async {
+            suppressedOutcome.complete(runCatching {
+                children.getStreamProfiles(generationB, currentSession)
+            }.exceptionOrNull())
+        }
         suppressedEntered.await()
         suppressed.cancel(suppressedCancellation)
         suppressedRelease.complete(Unit)
-        var suppressedCaught: CancellationException? = null
-        try {
-            suppressed.await()
-        } catch (failure: CancellationException) {
-            suppressedCaught = failure
-        }
-        val propagated = requireNotNull(suppressedCaught)
-        assertTrue(
-            propagated === suppressedCancellation || propagated.cause === suppressedCancellation,
-        )
+        suppressed.join()
+        val propagated = suppressedOutcome.await()
+        assertTrue(propagated is CancellationException)
+        assertTrue(propagated === suppressedCancellation || propagated?.cause === suppressedCancellation)
         children.closeAndJoinSubscriptions()
     }
 
@@ -1630,18 +1840,17 @@ class SessionSubscriptionsTest {
             GatewayResult.Ok(byteArrayOf(2))
         }
         val cancellation = CancellationException("private artwork cancellation")
-        val cancelled = async { children.loadArtwork(currentB, ArtworkId(2)) }
+        val outcome = CompletableDeferred<Throwable?>()
+        val cancelled = async {
+            outcome.complete(runCatching { children.loadArtwork(currentB, ArtworkId(2)) }.exceptionOrNull())
+        }
         cancellationEntered.await()
         cancelled.cancel(cancellation)
         cancellationRelease.complete(Unit)
-        var caught: CancellationException? = null
-        try {
-            cancelled.await()
-        } catch (failure: CancellationException) {
-            caught = failure
-        }
-        val propagated = requireNotNull(caught)
-        assertTrue(propagated === cancellation || propagated.cause === cancellation)
+        cancelled.join()
+        val propagated = outcome.await()
+        assertTrue(propagated is CancellationException)
+        assertTrue(propagated === cancellation || propagated?.cause === cancellation)
         children.closeAndJoinSubscriptions()
     }
 

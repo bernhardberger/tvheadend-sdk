@@ -16,18 +16,22 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayRecordingFileStat
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.playback.RECORDING_END_OF_INPUT
+import at.bernhardberger.tvheadend.sdk.playback.MAX_RECORDING_READ_BYTES
 import at.bernhardberger.tvheadend.sdk.playback.RecordingFileResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionInfrastructureApi
 import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.time.Instant
+import kotlin.time.Duration.Companion.nanoseconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -36,12 +40,65 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class GrowingRecordingFileReaderTest {
+    @ParameterizedTest
+    @ValueSource(strings = ["file", "data"])
+    fun `omitted counter does not erase the greatest observed DVR progress`(counter: String) = runTest {
+        val fixture = GrowingFixture(fileSizeBytes = 10L, dataSizeBytes = 10L, statSizeBytes = 10L)
+        assertOk(10L, fixture.reader.refreshSize())
+        fixture.update(
+            fileSizeBytes = if (counter == "file") null else 10L,
+            dataSizeBytes = if (counter == "data") null else 10L,
+        )
+        assertOk(10L, fixture.reader.refreshSize())
+        fixture.update(
+            fileSizeBytes = if (counter == "file") 9L else 10L,
+            dataSizeBytes = if (counter == "data") 9L else 10L,
+        )
+        assertFailed(TvheadendFailure.FILE_UNAVAILABLE, fixture.reader.refreshSize())
+    }
+
+    @Test
+    fun `read accepts exact buffer and transport boundaries and rejects invalid windows`() = runTest {
+        val fixture = GrowingFixture(readCounts = listOf(1))
+        assertOk(0, fixture.reader.read(ByteArray(1), 1, 0))
+        assertInstanceOf(
+            IllegalArgumentException::class.java,
+            runCatching { fixture.reader.read(ByteArray(1), 2, 0) }.exceptionOrNull(),
+        )
+        assertInstanceOf(
+            IllegalArgumentException::class.java,
+            runCatching { fixture.reader.read(ByteArray(2), 1, 2) }.exceptionOrNull(),
+        )
+        assertOk(1, fixture.reader.read(ByteArray(MAX_RECORDING_READ_BYTES), 0, MAX_RECORDING_READ_BYTES))
+    }
+
+    @Test
+    fun `seek accepts proven endpoint and a read ending at maximum position`() = runTest {
+        val fixture = GrowingFixture(openSizeBytes = Long.MAX_VALUE, readCounts = listOf(1))
+        assertOk(Unit, fixture.reader.seek(Long.MAX_VALUE))
+        assertOk(Unit, fixture.reader.seek(Long.MAX_VALUE - 1))
+        assertOk(1, fixture.reader.read(ByteArray(1), 0, 1))
+    }
+
+    @Test
+    fun `pre cancelled caller throws before zero length read returns`() = runTest {
+        val fixture = GrowingFixture()
+        val outcome = CompletableDeferred<Result<RecordingFileResult<Int>>>()
+        val reading = async {
+            currentCoroutineContext().cancel()
+            outcome.complete(runCatching { fixture.reader.read(ByteArray(0), 0, 0) })
+        }
+        reading.join()
+        assertTrue(outcome.await().exceptionOrNull() is CancellationException)
+    }
+
     @ParameterizedTest
     @ValueSource(strings = ["RECORDING", "RECORDING_ERROR"])
     fun `stats shrink then recovery before read permanently retires reader`(stateName: String) = runTest {
@@ -214,13 +271,40 @@ class GrowingRecordingFileReaderTest {
 
     @Test
     fun `a suspended stat is bounded by the remaining no progress deadline`() = runTest {
-        val fixture = GrowingFixture(readCounts = listOf(0), statSizeBytes = null)
-        fixture.transport.suspendStat = true
+        val fixture = GrowingFixture(
+            runtime = object : GrowingRecordingRuntime {
+                override fun nowNanos(): Long = testScheduler.currentTime * 1_000_000L
+
+                override suspend fun awaitStateUpdate(
+                    states: kotlinx.coroutines.flow.StateFlow<SessionObservation>,
+                    observed: DvrRepositoryState,
+                    waitNanos: Long,
+                ) {
+                    kotlinx.coroutines.delay(waitNanos.nanoseconds)
+                }
+            },
+            readCounts = listOf(0),
+            statSizeBytes = null,
+        )
+        fixture.transport.beforeStatResult = { fixture.transport.suspendStat = true }
 
         assertFailed(
             TvheadendFailure.TIMEOUT,
             fixture.reader.read(ByteArray(1), 0, 1),
         )
+        assertEquals(30_000L, testScheduler.currentTime)
+    }
+
+    @Test
+    fun `stat polling slot after deadline does not extend no progress budget`() = runTest {
+        val runtime = ManualGrowingRuntime()
+        val fixture = GrowingFixture(runtime = runtime, readCounts = listOf(0), statSizeBytes = null)
+        runtime.steps += WaitStep(0L) { runtime.now = 29_750_000_000L }
+        runtime.steps += WaitStep(Long.MAX_VALUE) {}
+        runtime.steps += WaitStep(0L) { runtime.now += 1L }
+
+        assertFailed(TvheadendFailure.TIMEOUT, fixture.reader.read(ByteArray(1), 0, 1))
+        assertEquals(NO_PROGRESS_TIMEOUT_NANOS_FOR_TEST, runtime.now)
     }
 
     @Test

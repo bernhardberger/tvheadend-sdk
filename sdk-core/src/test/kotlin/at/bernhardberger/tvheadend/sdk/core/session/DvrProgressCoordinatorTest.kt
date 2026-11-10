@@ -11,6 +11,10 @@ import at.bernhardberger.tvheadend.sdk.core.DvrCutpointAction
 import at.bernhardberger.tvheadend.sdk.core.DvrCutpointsResult
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
 import at.bernhardberger.tvheadend.sdk.core.DvrProgressResult
+import at.bernhardberger.tvheadend.sdk.core.DvrEntryState
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrEntry
+import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayDvrRecordingFile
+import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayGeneration
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayResult
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileReader
@@ -27,6 +31,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertSame
@@ -37,6 +42,38 @@ import kotlin.time.Duration.Companion.milliseconds
 
 @OptIn(ExperimentalCoroutinesApi::class)
 internal class DvrProgressCoordinatorTest {
+    @Test
+    fun `production growing lease reports progress against its selected recording`() = runTest {
+        val generation = GatewayGeneration()
+        val gateway = MutationGateway()
+        val metadata = PhaseOneSessionMetadata()
+        val recordingId = DvrEntryId(7L)
+        metadata.bindGeneration(generation)
+        metadata.acceptMetadata(MetadataEvent.DvrEntryAdded(generation, GatewayDvrEntry(
+            id = recordingId,
+            uuid = "recording",
+            state = DvrEntryState.RECORDING,
+            files = listOf(GatewayDvrRecordingFile(11L, "/recording.ts", null, null, 64L)),
+        )))
+        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
+        val children = PlaybackSessionChildren(gateway, metadata, StandardTestDispatcher(testScheduler))
+        children.bindGeneration(generation)
+        val lease = (children.bindGrowingRecording(generation, recordingId) as RecordingFileResult.Ok).value
+            as GenerationBoundGrowingRecordingFileLease
+        val sentIds = mutableListOf<DvrEntryId>()
+        gateway.progressBehavior = { _, id, _ ->
+            sentIds += id
+            GatewayResult.Ok(Unit)
+        }
+        val coordinator = DvrProgressCoordinator(gateway)
+        coordinator.bindGeneration(generation, 27)
+        coordinator.startAdmission(generation)
+
+        coordinator.reportProgress(lease, checkpoint())
+        assertEquals(listOf(recordingId), sentIds)
+        children.closeAndJoinSubscriptions()
+    }
+
     @Test
     fun `progress cancellation after reply propagates with and without a growing lease`() = runTest {
         for (useLease in listOf(false, true)) {
