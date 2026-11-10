@@ -8,6 +8,7 @@ import at.bernhardberger.tvheadend.sdk.core.BroadcastType
 import at.bernhardberger.tvheadend.sdk.core.ContentGenre
 import at.bernhardberger.tvheadend.sdk.core.DuplicateDetection
 import at.bernhardberger.tvheadend.sdk.core.DvrPriority
+import at.bernhardberger.tvheadend.sdk.core.RemoteArtworkUrl
 import at.bernhardberger.tvheadend.sdk.core.toAutorecTime
 import at.bernhardberger.tvheadend.sdk.core.toDvrDays
 import at.bernhardberger.tvheadend.sdk.core.toDvrExtraDuration
@@ -147,6 +148,8 @@ internal data class ReducedDvrEntry private constructor(
             streamErrors = streamErrors,
             dataErrors = dataErrors,
             dataSizeBytes = dataSizeBytes,
+            remoteImage = RemoteArtworkUrl.parse(image),
+            remoteFanartImage = RemoteArtworkUrl.parse(fanartImage),
         )
     }
 

@@ -22,6 +22,7 @@ import at.bernhardberger.tvheadend.sdk.core.EpgRating
 import at.bernhardberger.tvheadend.sdk.core.EpgSeriesLinkId
 import at.bernhardberger.tvheadend.sdk.core.EventId
 import at.bernhardberger.tvheadend.sdk.core.MetadataRefreshTimes
+import at.bernhardberger.tvheadend.sdk.core.RemoteArtworkUrl
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.protobuf.ProtoNumber
@@ -326,7 +327,7 @@ internal fun EpgEvent.toDto(): EpgEventDto = EpgEventDto(
     firstAired = firstAired?.toEpochMilliseconds(),
     isNew = isNew,
     episode = episode?.toDto(),
-    image = image?.let { "imagecache/${it.value}" },
+    image = image?.let { "imagecache/${it.value}" } ?: remoteImage?.url,
     dvrEntryId = dvrEntryId?.value,
     nextEventId = nextEventId?.value,
     credits = credits?.let { entries -> EpgCreditsDto(entries.map { EpgCreditDto(it.name, it.role.raw) }) },
@@ -356,7 +357,7 @@ internal fun EpgEventDto.toModel(): EpgEvent = EpgEvent.create(
     dvrEntryId = dvrEntryId?.let(::DvrEntryId),
     nextEventId = nextEventId?.let(::EventId),
     credits = credits?.entries?.map { EpgCredit(it.name, EpgCreditRole.of(it.role)) },
-)
+).let { event -> RemoteArtworkUrl.parse(image)?.let(event::withRemoteImage) ?: event }
 
 /**
  * Maps [EpgCoverage] to [EpgCoverageDto], preserving [EpgCoverage.empty]'s inverted interval.

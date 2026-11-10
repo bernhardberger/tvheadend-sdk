@@ -31,6 +31,16 @@ Unreleased; development target.
   step takes effect before the call returns. The binding follows the DVR entry
   while its observations keep the same file and a size that does not shrink.
 
+- In `sdk-core`, programme and recording images that Tvheadend sends as
+  absolute HTTP(S) URLs are kept. Tvheadend sends these URLs for XMLTV images
+  while its image cache is off; before, the SDK dropped them. The new
+  `EpgEvent.remoteImage`, `DvrEntry.remoteImage` and `DvrEntry.remoteFanartImage`
+  hold a `RemoteArtworkUrl`, which has the same rules as `ChannelIcon.RemoteUrl`:
+  the application loads it, and the SDK never fetches it. Image-cache selectors
+  still populate `image` and `fanartImage`. `RemoteArtworkUrl.parse`,
+  `EpgEvent.withRemoteImage` and `DvrEntry.withRemoteImages` let application
+  fakes build these values.
+
 ### Changed
 
 - BREAKING: both `createTvheadendPlaybackCoordinator` factories take a trailing

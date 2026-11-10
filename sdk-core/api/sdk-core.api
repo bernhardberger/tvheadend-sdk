@@ -972,6 +972,8 @@ public final class at/bernhardberger/tvheadend/sdk/core/DvrEntry {
 	public final fun component38 ()Ljava/lang/Long;
 	public final fun component39 ()Ljava/lang/Long;
 	public final fun component4-tg-tQzc ()Lat/bernhardberger/tvheadend/sdk/core/ChannelId;
+	public final fun component41 ()Lat/bernhardberger/tvheadend/sdk/core/RemoteArtworkUrl;
+	public final fun component42 ()Lat/bernhardberger/tvheadend/sdk/core/RemoteArtworkUrl;
 	public final fun component5 ()Ljava/lang/String;
 	public final fun component6-IwUpMHo ()Lat/bernhardberger/tvheadend/sdk/core/EventId;
 	public final fun component7-aDRcnu8 ()Ljava/lang/String;
@@ -1003,6 +1005,8 @@ public final class at/bernhardberger/tvheadend/sdk/core/DvrEntry {
 	public final fun getPlayPosition-FghU774 ()Lkotlin/time/Duration;
 	public final fun getPriority ()Lat/bernhardberger/tvheadend/sdk/core/DvrPriority;
 	public final fun getRating ()Lat/bernhardberger/tvheadend/sdk/core/EpgRating;
+	public final fun getRemoteFanartImage ()Lat/bernhardberger/tvheadend/sdk/core/RemoteArtworkUrl;
+	public final fun getRemoteImage ()Lat/bernhardberger/tvheadend/sdk/core/RemoteArtworkUrl;
 	public final fun getRemoval ()Lat/bernhardberger/tvheadend/sdk/core/DvrRemoval;
 	public final fun getRetention ()Lat/bernhardberger/tvheadend/sdk/core/DvrRetention;
 	public final fun getStart ()Lkotlin/time/Instant;
@@ -1019,6 +1023,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/DvrEntry {
 	public final fun getUuid ()Ljava/lang/String;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
+	public final fun withRemoteImages (Lat/bernhardberger/tvheadend/sdk/core/RemoteArtworkUrl;Lat/bernhardberger/tvheadend/sdk/core/RemoteArtworkUrl;)Lat/bernhardberger/tvheadend/sdk/core/DvrEntry;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/DvrEntry$Companion {
@@ -1779,6 +1784,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/EpgEvent {
 	public final fun component21-iqnyXvo ()Lat/bernhardberger/tvheadend/sdk/core/DvrEntryId;
 	public final fun component22-IwUpMHo ()Lat/bernhardberger/tvheadend/sdk/core/EventId;
 	public final fun component23 ()Ljava/util/List;
+	public final fun component24 ()Lat/bernhardberger/tvheadend/sdk/core/RemoteArtworkUrl;
 	public final fun component3 ()Lkotlin/time/Instant;
 	public final fun component4 ()Lkotlin/time/Instant;
 	public final fun component5 ()Ljava/lang/String;
@@ -1803,6 +1809,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/EpgEvent {
 	public final fun getKeywords ()Ljava/util/List;
 	public final fun getNextEventId-IwUpMHo ()Lat/bernhardberger/tvheadend/sdk/core/EventId;
 	public final fun getRating ()Lat/bernhardberger/tvheadend/sdk/core/EpgRating;
+	public final fun getRemoteImage ()Lat/bernhardberger/tvheadend/sdk/core/RemoteArtworkUrl;
 	public final fun getSeriesLinkUri ()Ljava/lang/String;
 	public final fun getStart ()Lkotlin/time/Instant;
 	public final fun getStop ()Lkotlin/time/Instant;
@@ -1812,6 +1819,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/EpgEvent {
 	public fun hashCode ()I
 	public final fun isNew ()Ljava/lang/Boolean;
 	public fun toString ()Ljava/lang/String;
+	public final fun withRemoteImage (Lat/bernhardberger/tvheadend/sdk/core/RemoteArtworkUrl;)Lat/bernhardberger/tvheadend/sdk/core/EpgEvent;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/EpgEvent$Companion {
@@ -2141,6 +2149,19 @@ public final class at/bernhardberger/tvheadend/sdk/core/RecordingRuleChannel$Spe
 	public final fun getChannelId-X9YaTts ()J
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/RemoteArtworkUrl {
+	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/RemoteArtworkUrl$Companion;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getUrl ()Ljava/lang/String;
+	public fun hashCode ()I
+	public static final fun parse (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/RemoteArtworkUrl;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class at/bernhardberger/tvheadend/sdk/core/RemoteArtworkUrl$Companion {
+	public final fun parse (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/RemoteArtworkUrl;
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/RetainedMetadataAuthority : java/lang/Enum {

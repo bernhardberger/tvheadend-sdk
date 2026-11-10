@@ -14,6 +14,7 @@ import at.bernhardberger.tvheadend.sdk.core.EpgEvent
 import at.bernhardberger.tvheadend.sdk.core.EpgRating
 import at.bernhardberger.tvheadend.sdk.core.EpgSeriesLinkId
 import at.bernhardberger.tvheadend.sdk.core.EpgSnapshot
+import at.bernhardberger.tvheadend.sdk.core.RemoteArtworkUrl
 import at.bernhardberger.tvheadend.sdk.core.gateway.ChannelId
 import at.bernhardberger.tvheadend.sdk.core.gateway.EventId
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
@@ -99,7 +100,8 @@ internal data class ReducedEpgEvent private constructor(
             image = ArtworkId.parse(image),
             dvrEntryId = dvrEntryId,
             nextEventId = nextEventId,
-        ).also { publicEvent = it }
+        ).let { event -> RemoteArtworkUrl.parse(image)?.let(event::withRemoteImage) ?: event }
+            .also { publicEvent = it }
     }
 
     internal fun shouldRetain(from: Instant, to: Instant): Boolean = stop >= from && start <= to

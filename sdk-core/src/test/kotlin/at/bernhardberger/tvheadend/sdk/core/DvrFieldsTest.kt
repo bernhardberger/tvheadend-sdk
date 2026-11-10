@@ -190,9 +190,21 @@ internal class DvrFieldsTest {
         assertEquals(LocalTime.of(23, 59), snapshot.timerecRules.single().stopMinutesSinceMidnight)
         reducer.accept(MetadataEvent.DvrEntryAdded(generation, GatewayDvrEntry(
             id = DvrEntryId(1), duplicate = 0, image = "https://private.invalid/image",
+            fanartImage = "http://private.invalid/fanart",
         )))
-        assertEquals(false, reducer.snapshot().entries.single().duplicate)
-        assertNull(reducer.snapshot().entries.single().image)
+        val remote = reducer.snapshot().entries.single()
+        assertEquals(false, remote.duplicate)
+        assertNull(remote.image)
+        assertNull(remote.fanartImage)
+        assertEquals(RemoteArtworkUrl.parse("https://private.invalid/image"), remote.remoteImage)
+        assertEquals(RemoteArtworkUrl.parse("http://private.invalid/fanart"), remote.remoteFanartImage)
+        assertNull(entry.remoteImage)
+        assertNull(entry.remoteFanartImage)
+        // Each image is either a selector or a URL, as Tvheadend sends it.
+        val replaced = entry.withRemoteImages(remote.remoteImage, remoteFanartImage = null)
+        assertNull(replaced.image)
+        assertEquals(ArtworkId(8), replaced.fanartImage)
+        assertEquals(remote.remoteImage, replaced.remoteImage)
     }
 
     @Test

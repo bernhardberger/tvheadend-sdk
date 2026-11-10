@@ -127,6 +127,12 @@ public data class EpgEvent private constructor(
      */
     @at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
     public val credits: List<EpgCredit>? = null,
+    /**
+     * Programme image as an absolute HTTP(S) URL, or null. Tvheadend sends one instead of an
+     * image-cache selector for [image] when its image cache is off, for example for XMLTV
+     * images. Set it on application fakes with [withRemoteImage].
+     */
+    public val remoteImage: RemoteArtworkUrl? = null,
 ) {
     // Events are immutable and shared by successive snapshots. Preserve the data-class hash,
     // but compute it only once rather than rehashing every field on each guide publication.
@@ -153,12 +159,20 @@ public data class EpgEvent private constructor(
         result = 31 * result + image.hashCode()
         result = 31 * result + dvrEntryId.hashCode()
         result = 31 * result + nextEventId.hashCode()
-        31 * result + credits.hashCode()
+        result = 31 * result + credits.hashCode()
+        31 * result + remoteImage.hashCode()
     }
 
     override fun hashCode(): Int = contentHash
 
     override fun toString(): String = "EpgEvent(<redacted>)"
+
+    /**
+     * Returns this event with [remoteImage] replaced. Tvheadend sends either an image-cache
+     * selector or a URL, so a non-null [remoteImage] also clears [image].
+     */
+    public fun withRemoteImage(remoteImage: RemoteArtworkUrl?): EpgEvent =
+        copy(image = image.takeIf { remoteImage == null }, remoteImage = remoteImage)
 
     public companion object {
         /** Creates an event while validating timing and defensively copying collections. */

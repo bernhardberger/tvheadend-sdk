@@ -11,6 +11,7 @@ import at.bernhardberger.tvheadend.sdk.core.EpgEpisodeId
 import at.bernhardberger.tvheadend.sdk.core.EpgEvent
 import at.bernhardberger.tvheadend.sdk.core.EpgSeriesLinkId
 import at.bernhardberger.tvheadend.sdk.core.EventId
+import at.bernhardberger.tvheadend.sdk.core.RemoteArtworkUrl
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayChannelMetadata
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayEpgQueryEvent
@@ -167,8 +168,13 @@ internal class EpgReducerTest {
         addChannel(reducer, 1)
         reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20, image = "imagecache/7")))
         assertEquals(ArtworkId(7), reducer.snapshot().events.single().image)
+        assertEquals(null, reducer.snapshot().events.single().remoteImage)
+        reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20, image = "https://private.invalid/image")))
+        assertEquals(null, reducer.snapshot().events.single().image)
+        assertEquals(RemoteArtworkUrl.parse("https://private.invalid/image"), reducer.snapshot().events.single().remoteImage)
         reducer.accept(MetadataEvent.EventAdded(generation, event(1, 1, 10, 20, image = "private-uri")))
         assertEquals(null, reducer.snapshot().events.single().image)
+        assertEquals(null, reducer.snapshot().events.single().remoteImage)
     }
 
     @Test
