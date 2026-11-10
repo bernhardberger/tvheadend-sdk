@@ -1447,6 +1447,9 @@ internal class ConnectionOwnerTest {
                 if (observation.sessionState == SessionState.Connecting) {
                     try {
                         allowRestore.countDown()
+                        // Waits for the restore thread's real BLOCKED state on the owner monitor:
+                        // a monitor wait raises no other signal. This is not a clock settle, so the
+                        // detekt test baseline keeps its nanoTime and sleep entries for this poll.
                         val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5)
                         while (restoringThread.get()?.state != Thread.State.BLOCKED && System.nanoTime() < deadline) {
                             Thread.sleep(1)
