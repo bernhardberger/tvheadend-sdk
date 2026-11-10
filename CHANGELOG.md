@@ -31,16 +31,6 @@ Unreleased; development target.
   step takes effect before the call returns. The binding follows the DVR entry
   while its observations keep the same file and a size that does not shrink.
 
-- In `sdk-core`, programme and recording images that Tvheadend sends as
-  absolute HTTP(S) URLs are kept. Tvheadend sends these URLs for XMLTV images
-  while its image cache is off; before, the SDK dropped them. The new
-  `EpgEvent.remoteImage`, `DvrEntry.remoteImage` and `DvrEntry.remoteFanartImage`
-  hold a `RemoteArtworkUrl`, which has the same rules as `ChannelIcon.RemoteUrl`:
-  the application loads it, and the SDK never fetches it. Image-cache selectors
-  still populate `image` and `fanartImage`. `RemoteArtworkUrl.parse`,
-  `EpgEvent.withRemoteImage` and `DvrEntry.withRemoteImages` let application
-  fakes build these values.
-
 ### Changed
 
 - BREAKING: both `createTvheadendPlaybackCoordinator` factories take a trailing
@@ -174,6 +164,25 @@ Unreleased; development target.
   player's shared buffer once the server accepts the seek. Before, the capacity
   was attributed to the previous seek until the next packet arrived. Without a
   further packet, the seek ended as `TIMEOUT`.
+
+## [0.38.1]
+
+Released 2026-11-10.
+
+### Added
+
+- In `sdk-core`, programme and recording images that Tvheadend sends as
+  absolute HTTP(S) URLs are kept. Tvheadend sends these URLs for XMLTV images
+  while its image cache is off; before, the SDK dropped them. The new
+  `EpgEvent.remoteImage`, `DvrEntry.remoteImage` and `DvrEntry.remoteFanartImage`
+  hold a `RemoteArtworkUrl`, which has the same rules as `ChannelIcon.RemoteUrl`:
+  the application loads it, and the SDK never fetches it. Image-cache selectors
+  still populate `image` and `fanartImage`. `RemoteArtworkUrl.parse`,
+  `EpgEvent.withRemoteImage` and `DvrEntry.withRemoteImages` let application
+  fakes build these values.
+
+### Fixed
+
 - In `sdk-media3`, a TS recording whose program map announces a stream that
   never carries data, such as an audio description track, now prepares.
   Before, Media3 waited for a format on every announced track, so completed
