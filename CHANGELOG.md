@@ -159,6 +159,11 @@ Unreleased; development target.
 
 ### Fixed
 
+- In `sdk-media3`, a paused live timeshift seek now returns
+  `TimeshiftCommandResult.UNAVAILABLE` when other allocations still exhaust the
+  player's shared buffer once the server accepts the seek. Before, the capacity
+  was attributed to the previous seek until the next packet arrived. Without a
+  further packet, the seek ended as `TIMEOUT`.
 - In `sdk-media3`, installing a live channel or recording right after the previous
   source failed now prepares the new target. Before, if the failure was still on
   its way from the playback thread, `Player.prepare()` had no effect: the new

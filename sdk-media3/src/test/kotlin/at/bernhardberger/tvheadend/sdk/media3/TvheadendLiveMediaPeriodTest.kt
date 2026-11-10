@@ -82,8 +82,12 @@ internal class TvheadendLiveMediaPeriodTest {
             harness.audio()
             assertFalse(attachment.bufferingCapacityAvailable)
             harness.period.maybeThrowPrepareError()
+            val seek = TimeshiftSeekToken(attachment)
+            attachment.pendingSeeks.add(LiveTimeshiftControlBridge.SeekAttempt(seek))
             harness.seek(0.seconds)
             assertTrue(attachment.bufferingCapacityAvailable)
+            // Capacity is attributed to the seek just applied, before any post-seek packet arrives.
+            assertSame(seek, attachment.bufferingCapacitySeek)
         } finally {
             harness.close()
         }

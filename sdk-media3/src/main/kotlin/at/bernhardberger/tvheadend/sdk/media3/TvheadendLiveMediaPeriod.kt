@@ -241,6 +241,8 @@ internal class TvheadendLiveMediaPeriod(
             }
             // Only an active period contributes mapping; packets must reach a supported reader.
             if (!terminalEvent) timeshiftControls?.accept(event)
+            // Publish the capacity regained by an accepted skip only once accept has applied its seek.
+            if (event is SubscriptionEvent.Skipped && event.outcome == SkipOutcome.ACCEPTED) updateBufferingCapacity()
         } catch (cancellation: CancellationException) {
             failPeriod()
             throw cancellation
@@ -315,7 +317,6 @@ internal class TvheadendLiveMediaPeriod(
                 }
                 if (event is SubscriptionEvent.Skipped && event.outcome == SkipOutcome.ACCEPTED) {
                     outputs.forEach { it.preview = null; it.queue.reset() }
-                    updateBufferingCapacity()
                     finitePausedInputPending =
                         timeshiftControls?.bufferingSeek != true &&
                             (timeshiftControls?.availableState() as? LiveTimeshiftState.Available)?.serverPaused == true
