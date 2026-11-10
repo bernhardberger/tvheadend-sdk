@@ -23,6 +23,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.time.Instant
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
@@ -515,12 +516,13 @@ class GrowingRecordingFileReaderTest {
             readCounts = listOf(0),
             statSizeBytes = 0L,
         )
-        val reading = async { fixture.reader.read(ByteArray(1), 0, 1) }
+        val outcome = CompletableDeferred<Result<RecordingFileResult<Int>>>()
+        val reading = async { outcome.complete(runCatching { fixture.reader.read(ByteArray(1), 0, 1) }) }
         runCurrent()
 
         reading.cancelAndJoin()
 
-        assertTrue(reading.isCancelled)
+        assertTrue(outcome.await().exceptionOrNull() is CancellationException)
         assertEquals(1, fixture.transport.statStartNanos.size)
     }
 
@@ -528,17 +530,19 @@ class GrowingRecordingFileReaderTest {
     fun `cancellation aborts read and stat RPCs`() = runTest {
         val readingFixture = GrowingFixture(readCounts = listOf(1), statSizeBytes = 1L)
         readingFixture.transport.suspendRead = true
-        val reading = async { readingFixture.reader.read(ByteArray(1), 0, 1) }
+        val readOutcome = CompletableDeferred<Result<RecordingFileResult<Int>>>()
+        val reading = async { readOutcome.complete(runCatching { readingFixture.reader.read(ByteArray(1), 0, 1) }) }
         runCurrent()
         reading.cancelAndJoin()
-        assertTrue(reading.isCancelled)
+        assertTrue(readOutcome.await().exceptionOrNull() is CancellationException)
 
         val statingFixture = GrowingFixture(readCounts = listOf(0), statSizeBytes = 0L)
         statingFixture.transport.suspendStat = true
-        val stating = async { statingFixture.reader.read(ByteArray(1), 0, 1) }
+        val statOutcome = CompletableDeferred<Result<RecordingFileResult<Int>>>()
+        val stating = async { statOutcome.complete(runCatching { statingFixture.reader.read(ByteArray(1), 0, 1) }) }
         runCurrent()
         stating.cancelAndJoin()
-        assertTrue(stating.isCancelled)
+        assertTrue(statOutcome.await().exceptionOrNull() is CancellationException)
     }
 
     @Test
@@ -588,7 +592,8 @@ class GrowingRecordingFileReaderTest {
         val fixture = GrowingFixture()
         val gate = CompletableDeferred<Unit>()
         fixture.transport.closeGate = gate
-        val closing = async { fixture.reader.close() }
+        val outcome = CompletableDeferred<Result<RecordingFileResult<Unit>>>()
+        val closing = async { outcome.complete(runCatching { fixture.reader.close() }) }
         runCurrent()
 
         closing.cancel()
@@ -597,7 +602,7 @@ class GrowingRecordingFileReaderTest {
         gate.complete(Unit)
         runCurrent()
 
-        assertTrue(closing.isCancelled)
+        assertTrue(outcome.await().exceptionOrNull() is CancellationException)
         assertEquals(1, fixture.transport.closeCount)
     }
 }

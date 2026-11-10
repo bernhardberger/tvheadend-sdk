@@ -65,18 +65,13 @@ internal class CacheNamespacesTest {
     }
 
     @Test
-    fun `namespace derivation distinguishes host, port, and username`() {
+    fun `namespace derivation distinguishes host port and named or anonymous users`() {
         val baseline = cacheNamespace("tvh.example.org", 9982, "alice")
         assertNotEquals(baseline, cacheNamespace("other.example.org", 9982, "alice"))
         assertNotEquals(baseline, cacheNamespace("tvh.example.org", 9983, "alice"))
         assertNotEquals(baseline, cacheNamespace("tvh.example.org", 9982, "bob"))
-    }
-
-    @Test
-    fun `anonymous profiles use an empty username`() {
         val anonymous = cacheNamespace("tvh.example.org", 9982, "")
-        val named = cacheNamespace("tvh.example.org", 9982, "alice")
-        assertNotEquals(anonymous, named)
+        assertNotEquals(anonymous, baseline)
         assertEquals(35, anonymous.value.length)
     }
 

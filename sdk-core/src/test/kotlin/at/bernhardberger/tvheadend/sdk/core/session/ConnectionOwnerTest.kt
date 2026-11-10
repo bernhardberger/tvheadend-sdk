@@ -77,6 +77,7 @@ import at.bernhardberger.tvheadend.sdk.core.gateway.GatewayState
 import at.bernhardberger.tvheadend.sdk.core.gateway.MetadataEvent
 import at.bernhardberger.tvheadend.sdk.core.gateway.ProtocolGateway
 import at.bernhardberger.tvheadend.sdk.core.gateway.ServerConfiguration
+import at.bernhardberger.tvheadend.sdk.playback.StreamIndex
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionConfirmation
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionChannelId
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
@@ -87,6 +88,8 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOpenResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOperationResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekTarget
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStream
+import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import at.bernhardberger.tvheadend.sdk.playback.TvheadendFailure
 import java.util.Collections
 import java.util.IdentityHashMap
@@ -2164,7 +2167,11 @@ internal class ConnectionOwnerTest {
         val gateway = FakeProtocolGateway()
         val generation = GatewayGeneration()
         gateway.connectResults += connected(generation)
-        gateway.queryBehavior = { _, _, _ -> GatewayResult.NotSupported }
+        var rejectedQueries = 0
+        gateway.queryBehavior = { _, _, _ ->
+            rejectedQueries += 1
+            GatewayResult.NotSupported
+        }
         val metadata = PhaseOneSessionMetadata()
         val children = PlaybackSessionChildren(
             gateway = gateway,
@@ -2185,6 +2192,7 @@ internal class ConnectionOwnerTest {
             advanceTimeBy(250)
             runCurrent()
 
+            assertTrue(rejectedQueries > 0)
             assertTrue(owner.observation.value.sessionState is SessionState.Ready)
         } finally {
             owner.shutdown()
@@ -2325,9 +2333,28 @@ internal class ConnectionOwnerTest {
     @Test
     fun `failure after early admission joins subscriptions before replacement bind`() = runTest {
         val gateway = FakeProtocolGateway()
+        val cleanupEntered = CompletableDeferred<Unit>()
+        val releaseCleanup = CompletableDeferred<Unit>()
+        val streamDrained = CompletableDeferred<Unit>()
+        gateway.subscribeResult = SubscriptionOperationResult.Ok(SubscriptionConfirmation(null, null, null, null))
+        gateway.subscriptionEvents = flow {
+            emit(SubscriptionEvent.Started(listOf(SubscriptionStream(
+                StreamIndex(0),
+                SubscriptionStreamType.H264,
+                null, null, null, null, null, null, null, null, null, null, null, null, null,
+            )), null))
+            streamDrained.await()
+        }
+        gateway.unsubscribeBehavior = {
+            cleanupEntered.complete(Unit)
+            releaseCleanup.await()
+            // Successful unsubscribe drains and completes the subscription's event stream.
+            streamDrained.complete(Unit)
+            SubscriptionOperationResult.Ok(Unit)
+        }
         val firstGeneration = GatewayGeneration()
         val secondGeneration = GatewayGeneration()
-        gateway.connectResults += connected(firstGeneration)
+        gateway.connectResults += connected(firstGeneration, streaming = true)
         gateway.connectResults += connected(secondGeneration)
         val metadata = PhaseOneSessionMetadata()
         val children = PlaybackSessionChildren(
@@ -2337,27 +2364,51 @@ internal class ConnectionOwnerTest {
         )
         val owner = owner(gateway, children, metadata)
 
-        owner.connect(ServerProfile("server"))
-        runCurrent()
-        assertEquals(SessionState.Synchronizing, owner.observation.value.sessionState)
+        try {
+            owner.connect(ServerProfile("server"))
+            runCurrent()
+            assertEquals(SessionState.Synchronizing, owner.observation.value.sessionState)
+            assertTrue(metadata.seedRetainedSnapshots(
+                CachedCatalog(ChannelCatalog.create(channels = listOf(Channel.create(SdkChannelId(1), "Cached")))),
+                null,
+                expectedGeneration = firstGeneration,
+            ))
+            val opening = async {
+                children.open(firstGeneration, SubscriptionChannelId(1), SubscriptionEventConsumer {}, SubscriptionOptions())
+            }
+            runCurrent()
+            val opened = opening.await()
+            assertTrue(opened is SubscriptionOpenResult.Opened)
 
-        gateway.emitFailure(
-            GatewayConnectionFailureEvent(
-                failure = GatewayConnectionFailure.TRANSPORT_UNAVAILABLE,
-                generation = firstGeneration,
-            ),
-        )
-        runCurrent()
-        assertEquals(
-            SessionState.Unavailable(SessionFailure.TRANSPORT_UNAVAILABLE),
-            owner.observation.value.sessionState,
-        )
-
-        advanceTimeBy(1.seconds)
-        runCurrent()
-        assertEquals(2, gateway.connectCalls)
-        assertEquals(SessionState.Synchronizing, owner.observation.value.sessionState)
-        owner.shutdown()
+            gateway.emitFailure(
+                GatewayConnectionFailureEvent(
+                    failure = GatewayConnectionFailure.TRANSPORT_UNAVAILABLE,
+                    generation = firstGeneration,
+                ),
+            )
+            runCurrent()
+            assertTrue(cleanupEntered.isCompleted)
+            assertEquals(
+                SessionState.Unavailable(SessionFailure.TRANSPORT_UNAVAILABLE),
+                owner.observation.value.sessionState,
+            )
+            advanceTimeBy(1.seconds)
+            runCurrent()
+            assertEquals(1, gateway.connectCalls)
+            releaseCleanup.complete(Unit)
+            runCurrent()
+            assertEquals(
+                SessionState.Unavailable(SessionFailure.TRANSPORT_UNAVAILABLE),
+                owner.observation.value.sessionState,
+            )
+            advanceTimeBy(1.seconds)
+            runCurrent()
+            assertEquals(2, gateway.connectCalls)
+            assertEquals(SessionState.Synchronizing, owner.observation.value.sessionState)
+        } finally {
+            releaseCleanup.complete(Unit)
+            owner.shutdown()
+        }
     }
 
     @Test
@@ -3307,6 +3358,12 @@ private class FakeProtocolGateway(
     internal var progressReportCount: Int = 0
     internal var connectCalls: Int = 0
     internal var artworkCalls: Int = 0
+    internal var subscriptionEvents: Flow<SubscriptionEvent> = emptyFlow()
+    internal var subscribeResult: SubscriptionOperationResult<SubscriptionConfirmation> =
+        SubscriptionOperationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE)
+    internal var unsubscribeBehavior: suspend () -> SubscriptionOperationResult<Unit> = {
+        SubscriptionOperationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE)
+    }
 
     override suspend fun loadArtwork(
         generation: GatewayGeneration,
@@ -3514,7 +3571,7 @@ private class FakeProtocolGateway(
     override fun subscription(
         generation: GatewayGeneration,
         id: SubscriptionId,
-    ): Flow<SubscriptionEvent> = emptyFlow()
+    ): Flow<SubscriptionEvent> = subscriptionEvents
 
     override suspend fun subscribe(
         generation: GatewayGeneration,
@@ -3522,7 +3579,7 @@ private class FakeProtocolGateway(
         channelId: ChannelId,
         timeshiftPeriod: Duration,
     ): SubscriptionOperationResult<SubscriptionConfirmation> =
-        SubscriptionOperationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE)
+        subscribeResult
 
     override suspend fun skipSubscription(
         generation: GatewayGeneration,
@@ -3533,7 +3590,7 @@ private class FakeProtocolGateway(
     override suspend fun unsubscribe(
         generation: GatewayGeneration,
         id: SubscriptionId,
-    ): SubscriptionOperationResult<Unit> = SubscriptionOperationResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE)
+    ): SubscriptionOperationResult<Unit> = unsubscribeBehavior()
 
     internal suspend fun emitMetadata(event: MetadataEvent) {
         metadataEvents.emit(event)

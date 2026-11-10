@@ -132,26 +132,20 @@ internal class TvheadendSessionFactoryTest {
     }
 
     @Test
-    fun `concurrent equal policy requests acquire exactly one owner`() = runTest {
-        val results = acquireConcurrently(List(8) { EpgCoveragePolicy.create(7.days, 123) })
-        try {
-            assertTrue(results.all { it.isSuccess })
-            val first = results.first().getOrThrow()
-            results.forEach { assertSame(first, it.getOrThrow()) }
-        } finally {
-            results.mapNotNull { it.getOrNull() }.distinct().forEach { it.shutdown() }
-        }
-    }
-
-    @Test
-    fun `concurrent conflicting policy requests have exactly one winner`() = runTest {
-        val results = acquireConcurrently(List(8) { EpgCoveragePolicy.create(7.days, it + 1) })
-        try {
-            assertEquals(1, results.count { it.isSuccess })
-            assertEquals(7, results.count { it.exceptionOrNull() is IllegalStateException })
-            assertSame(results.single { it.isSuccess }.getOrThrow(), createTvheadendSession())
-        } finally {
-            results.mapNotNull { it.getOrNull() }.distinct().forEach { it.shutdown() }
+    fun `concurrent policy requests share one owner and reject conflicts`() = runTest {
+        for (conflicting in listOf(false, true)) {
+            val policies = List(8) { EpgCoveragePolicy.create(7.days, if (conflicting) it + 1 else 123) }
+            val results = acquireConcurrently(policies)
+            try {
+                assertEquals(if (conflicting) 1 else 8, results.count { it.isSuccess }, "conflicting=$conflicting")
+                assertEquals(if (conflicting) 7 else 0,
+                    results.count { it.exceptionOrNull() is IllegalStateException }, "conflicting=$conflicting")
+                val first = results.first { it.isSuccess }.getOrThrow()
+                results.filter { it.isSuccess }.forEach { assertSame(first, it.getOrThrow()) }
+                assertSame(first, createTvheadendSession())
+            } finally {
+                results.mapNotNull { it.getOrNull() }.distinct().forEach { it.shutdown() }
+            }
         }
     }
 

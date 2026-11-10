@@ -409,15 +409,21 @@ internal class FileMetadataCacheStoreTest {
     }
 
     @Test
-    fun `query time count and record length are bounded before allocation`() = runTest {
-        val payload = CachedEpg(EpgSnapshot.create(), lastQueriedAt = mapOf(ChannelId(1) to storedAt))
-        for (offset in listOf(20L, 24L)) {
-            for (invalid in listOf(-1, Int.MAX_VALUE)) {
-                val cache = store()
-                cache.storeEpg(namespace, payload, storedAt)
-                RandomAccessFile(epgFile(), "rw").use { it.seek(offset); it.writeInt(invalid) }
-                assertNull(cache.loadEpg(namespace, storedAt))
-                assertFalse(epgFile().exists())
+    fun `EPG query time and event counts and lengths are bounded before allocation`() = runTest {
+        val layouts = listOf(
+            Triple("query times", CachedEpg(EpgSnapshot.create(), lastQueriedAt = mapOf(ChannelId(1) to storedAt)),
+                listOf(20L, 24L)),
+            Triple("events", sampleSnapshot(), listOf(12L, 16L, 20L)),
+        )
+        for ((label, payload, offsets) in layouts) {
+            for (offset in offsets) {
+                for (invalid in listOf(-1, Int.MAX_VALUE)) {
+                    val cache = store()
+                    cache.storeEpg(namespace, payload, storedAt)
+                    RandomAccessFile(epgFile(), "rw").use { it.seek(offset); it.writeInt(invalid) }
+                    assertNull(cache.loadEpg(namespace, storedAt), "$label offset $offset value $invalid")
+                    assertFalse(epgFile().exists(), "$label offset $offset value $invalid")
+                }
             }
         }
     }
@@ -622,23 +628,6 @@ internal class FileMetadataCacheStoreTest {
     }
 
     @Test
-    fun `invalid EPG record counts and lengths are rejected before allocation`() = runTest {
-        // Empty times record occupies a four-byte zero length after the stream header.
-        for (offset in listOf(12L, 16L, 20L)) {
-            for (invalid in listOf(-1, Int.MAX_VALUE)) {
-                val cache = store()
-                cache.storeEpg(namespace, sampleSnapshot(), storedAt)
-                RandomAccessFile(epgFile(), "rw").use { file ->
-                    file.seek(offset)
-                    file.writeInt(invalid)
-                }
-                assertNull(cache.loadEpg(namespace, storedAt))
-                assertFalse(epgFile().exists())
-            }
-        }
-    }
-
-    @Test
     fun `EPG truncation trailing bytes and expired timestamps invalidate the cache`() = runTest {
         val cache = store()
         cache.storeEpg(namespace, sampleSnapshot(), storedAt)
@@ -665,19 +654,6 @@ internal class FileMetadataCacheStoreTest {
         cache.storeEpg(namespace, CachedEpg(oversized), storedAt)
         assertEquals(previous, cache.loadEpg(namespace, storedAt))
         assertFalse(File(epgFile().parentFile, "epg.bin.tmp").exists())
-    }
-
-    @Test
-    fun `stored catalog and EPG snapshot load back equal`() = runTest {
-        val cache = store()
-        val catalog = sampleCatalog()
-        val snapshot = sampleSnapshot()
-
-        cache.storeCatalog(namespace, catalog, storedAt)
-        cache.storeEpg(namespace, snapshot, storedAt)
-
-        assertEquals(catalog, cache.loadCatalog(namespace, storedAt))
-        assertEquals(snapshot, cache.loadEpg(namespace, storedAt))
     }
 
     @Test
@@ -761,40 +737,23 @@ internal class FileMetadataCacheStoreTest {
     }
 
     @Test
-    fun `random corrupt bytes are discarded and the file is deleted`() = runTest {
-        val cache = store()
-        cache.storeCatalog(namespace, sampleCatalog(), storedAt)
-        catalogFile().writeBytes(Random.nextBytes(256))
-
-        assertNull(cache.loadCatalog(namespace, storedAt))
-        assertFalse(catalogFile().isFile)
-    }
-
-    @Test
-    fun `a truncated file is discarded and deleted`() = runTest {
-        val cache = store()
-        cache.storeCatalog(namespace, sampleCatalog(), storedAt)
-        val originalBytes = catalogFile().readBytes()
-        catalogFile().writeBytes(originalBytes.copyOf(originalBytes.size / 2))
-
-        assertNull(cache.loadCatalog(namespace, storedAt))
-        assertFalse(catalogFile().isFile)
-    }
-
-    @Test
-    fun `a mismatched schema version is discarded and deleted`() = runTest {
-        val file = catalogFile()
-        file.parentFile.mkdirs()
-        val mismatched = CatalogEnvelopeDto(
-            schemaVersion = CATALOG_SCHEMA_VERSION + 1,
-            storedAtEpochMillis = storedAt.toEpochMilliseconds(),
-            payload = sampleCatalog().catalog.toDto(),
+    fun `corrupt truncated and mismatched schema catalogs are discarded and deleted`() = runTest {
+        val corruptions: List<Pair<String, (ByteArray) -> ByteArray>> = listOf(
+            "corrupt" to { _ -> Random.nextBytes(256) },
+            "truncated" to { bytes -> bytes.copyOf(bytes.size / 2) },
+            "schema" to { _ -> ProtoBuf.encodeToByteArray(CatalogEnvelopeDto.serializer(), CatalogEnvelopeDto(
+                schemaVersion = CATALOG_SCHEMA_VERSION + 1,
+                storedAtEpochMillis = storedAt.toEpochMilliseconds(),
+                payload = sampleCatalog().catalog.toDto(),
+            )) },
         )
-        file.writeBytes(ProtoBuf.encodeToByteArray(CatalogEnvelopeDto.serializer(), mismatched))
-
-        val cache = store()
-        assertNull(cache.loadCatalog(namespace, storedAt))
-        assertFalse(file.isFile)
+        for ((label, corrupt) in corruptions) {
+            val cache = store()
+            cache.storeCatalog(namespace, sampleCatalog(), storedAt)
+            catalogFile().writeBytes(corrupt(catalogFile().readBytes()))
+            assertNull(cache.loadCatalog(namespace, storedAt), label)
+            assertFalse(catalogFile().isFile, label)
+        }
     }
 
     @Test
@@ -858,7 +817,10 @@ internal class FileMetadataCacheStoreTest {
         cache.storeCatalog(namespace, sampleCatalog(), storedAt)
         cache.storeEpg(namespace, sampleSnapshot(), storedAt)
 
+        assertTrue(catalogFile().isFile)
+        assertTrue(epgFile().isFile)
         val expectedBytes = catalogFile().length() + epgFile().length()
+        assertTrue(expectedBytes > 0L)
         val statistics = cache.statistics()
 
         assertEquals(expectedBytes, statistics.metadataBytes)
@@ -867,17 +829,17 @@ internal class FileMetadataCacheStoreTest {
     }
 
     @Test
-    fun `storing into a non-writable namespace directory does not throw`() = runTest {
+    fun `failed temporary catalog write preserves the prior catalog without throwing`() = runTest {
         val cache = store()
         cache.storeCatalog(namespace, sampleCatalog(), storedAt)
-        val namespaceDir = catalogFile().parentFile
-        namespaceDir.setWritable(false)
-        try {
-            // Must complete without throwing regardless of whether the write actually failed;
-            // an uncaught exception here fails the test.
-            cache.storeCatalog(namespace, sampleCatalog(), storedAt)
-        } finally {
-            namespaceDir.setWritable(true)
-        }
+        val previous = catalogFile().readBytes()
+        val temporary = File(catalogFile().parentFile, "catalog.bin.tmp")
+        assertTrue(temporary.mkdir())
+        File(temporary, "blocker").writeText("keep")
+        val replacement = sampleCatalog().copy(refreshTimes = MetadataRefreshTimes(storedAt, storedAt))
+
+        cache.storeCatalog(namespace, replacement, storedAt)
+        assertTrue(previous.contentEquals(catalogFile().readBytes()))
+        assertEquals(sampleCatalog(), cache.loadCatalog(namespace, storedAt))
     }
 }

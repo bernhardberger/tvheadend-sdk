@@ -1408,6 +1408,7 @@ internal class HtspProtocolGatewayTest {
             }.toTypedArray())
         }
         val events = HtspProtocolGateway(fake).metadata.toList()
+        assertEquals(selectors.size * 4, events.size)
         events.chunked(4).zip(selectors).forEach { (mapped, selector) ->
             // Gateway keeps the raw selector; ChannelTagReducer validates the public icon.
             assertTrue((mapped[0] as MetadataEvent.ChannelAdded).channel.icon == selector)

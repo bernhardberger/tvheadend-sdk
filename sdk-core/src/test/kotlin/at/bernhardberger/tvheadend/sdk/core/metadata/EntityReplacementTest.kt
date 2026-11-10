@@ -128,7 +128,11 @@ internal class EntityReplacementTest {
     @Test
     fun `now next patch clears event links but preserves channel metadata`() {
         val reducer = ChannelTagReducer()
-        reducer.accept(MetadataEvent.ChannelAdded(generation, channel(icon = "imagecache/1", current = EventId(2))))
+        reducer.accept(MetadataEvent.ChannelAdded(generation,
+            channel(icon = "imagecache/1", current = EventId(2), next = EventId(3))))
+        val seeded = reducer.snapshot().channels.single()
+        assertEquals(EventId(2), seeded.currentEventId)
+        assertEquals(EventId(3), seeded.nextEventId)
         reducer.accept(nowNext(1))
         val channel = reducer.snapshot().channels.single()
         assertNull(channel.currentEventId)
@@ -169,8 +173,8 @@ internal class EntityReplacementTest {
     private fun stats(id: Long): MetadataEvent = MetadataEvent.DvrEntryStatsUpdated(generation,
         GatewayDvrStats(DvrEntryId(id), uuid = null, state = DvrEntryState.RECORDING, dataSizeBytes = 42))
 
-    private fun channel(icon: String? = null, current: EventId? = null): GatewayChannelMetadata =
-        GatewayChannelMetadata(ChannelId(1), "Channel", null, 1, null, icon, current, null, emptyList(), emptyList())
+    private fun channel(icon: String? = null, current: EventId? = null, next: EventId? = null): GatewayChannelMetadata =
+        GatewayChannelMetadata(ChannelId(1), "Channel", null, 1, null, icon, current, next, emptyList(), emptyList())
 
     private fun tag(id: Long = 1, icon: String? = null, members: List<ChannelId>? = null): GatewayTagMetadata =
         GatewayTagMetadata(TagId(id), "Tag", null, 0, icon, false, members)

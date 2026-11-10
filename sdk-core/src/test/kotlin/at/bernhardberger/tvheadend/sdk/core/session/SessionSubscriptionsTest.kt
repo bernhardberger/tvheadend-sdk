@@ -1792,44 +1792,23 @@ class SessionSubscriptionsTest {
         }
     }
 
-    @Test
-    fun `a failed disk space refresh keeps the last value as stale until the next success`() = runTest {
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `a failed disk space refresh keeps the last value as stale until the next success`(throws: Boolean) = runTest {
         val gateway = SubscriptionGateway()
         val metadata = PhaseOneSessionMetadata()
         val generation = GatewayGeneration()
         val children = startDiskSpaceRefresh(gateway, metadata, generation)
         try {
             gateway.diskSpace = GatewayResult.Timeout
+            if (throws) gateway.diskSpaceAction = { _ -> throw IllegalStateException("private failure") }
             metadata.acceptMetadata(MetadataEvent.DvrEntryDeleted(generation, DvrEntryId(1)))
             advanceTimeBy(20.seconds)
             runCurrent()
             assertEquals(2, gateway.diskSpaceGenerations.size)
             assertEquals(DvrDiskSpaceState.Stale(INITIAL_DISK_SPACE), metadata.diskSpaceState())
             gateway.diskSpace = GatewayResult.Ok(FREED_DISK_SPACE)
-            advanceTimeBy(5.minutes)
-            runCurrent()
-            assertEquals(3, gateway.diskSpaceGenerations.size)
-            assertEquals(DvrDiskSpaceState.Current(FREED_DISK_SPACE), metadata.diskSpaceState())
-        } finally {
-            children.cancelAndJoinBackgroundEnrichment()
-            children.closeAndJoinSubscriptions()
-        }
-    }
-
-    @Test
-    fun `a thrown disk space query keeps the last value as stale until the next success`() = runTest {
-        val gateway = SubscriptionGateway()
-        val metadata = PhaseOneSessionMetadata()
-        val generation = GatewayGeneration()
-        val children = startDiskSpaceRefresh(gateway, metadata, generation)
-        try {
-            gateway.diskSpaceAction = { _ -> throw IllegalStateException("private failure") }
-            metadata.acceptMetadata(MetadataEvent.DvrEntryDeleted(generation, DvrEntryId(1)))
-            advanceTimeBy(20.seconds)
-            runCurrent()
-            assertEquals(2, gateway.diskSpaceGenerations.size)
-            assertEquals(DvrDiskSpaceState.Stale(INITIAL_DISK_SPACE), metadata.diskSpaceState())
-            gateway.diskSpaceAction = { _ -> GatewayResult.Ok(FREED_DISK_SPACE) }
+            gateway.diskSpaceAction = { _ -> gateway.diskSpace }
             advanceTimeBy(5.minutes)
             runCurrent()
             assertEquals(3, gateway.diskSpaceGenerations.size)
@@ -1941,39 +1920,20 @@ class SessionSubscriptionsTest {
         }
     }
 
-    @Test
-    fun `an added recording refreshes disk space once after the server cache settles`() = runTest {
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `recording changes refresh disk space once after the server cache settles`(batched: Boolean) = runTest {
         val gateway = SubscriptionGateway()
         val metadata = PhaseOneSessionMetadata()
         val generation = GatewayGeneration()
         val children = startDiskSpaceRefresh(gateway, metadata, generation)
         try {
-            metadata.acceptMetadata(MetadataEvent.DvrEntryAdded(generation, scheduledRecording(2)))
-            advanceTimeBy(20.seconds)
-            assertEquals(1, gateway.diskSpaceGenerations.size)
-            runCurrent()
-            assertEquals(2, gateway.diskSpaceGenerations.size)
-            advanceTimeBy(4.minutes)
-            assertEquals(2, gateway.diskSpaceGenerations.size)
-        } finally {
-            children.cancelAndJoinBackgroundEnrichment()
-            children.closeAndJoinSubscriptions()
-        }
-    }
-
-    @Test
-    fun `recording changes accepted in a batch refresh disk space once settled`() = runTest {
-        val gateway = SubscriptionGateway()
-        val metadata = PhaseOneSessionMetadata()
-        val generation = GatewayGeneration()
-        val children = startDiskSpaceRefresh(gateway, metadata, generation)
-        try {
-            metadata.acceptMetadataBatch(
-                listOf(
-                    MetadataEvent.DvrEntryAdded(generation, scheduledRecording(2)),
-                    MetadataEvent.DvrEntryDeleted(generation, DvrEntryId(2)),
-                ),
-            )
+            val added = MetadataEvent.DvrEntryAdded(generation, scheduledRecording(2))
+            if (batched) {
+                metadata.acceptMetadataBatch(listOf(added, MetadataEvent.DvrEntryDeleted(generation, DvrEntryId(2))))
+            } else {
+                metadata.acceptMetadata(added)
+            }
             advanceTimeBy(20.seconds)
             assertEquals(1, gateway.diskSpaceGenerations.size)
             runCurrent()

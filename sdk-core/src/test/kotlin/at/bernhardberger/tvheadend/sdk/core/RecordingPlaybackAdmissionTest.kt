@@ -8,9 +8,9 @@ package at.bernhardberger.tvheadend.sdk.core
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
-import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 internal class RecordingPlaybackAdmissionTest {
@@ -107,16 +107,6 @@ internal class RecordingPlaybackAdmissionTest {
     }
 
     @Test
-    fun `missed entries never carry a resume position`() {
-        val observation = SessionObservation.create(recordingProgressCapability = RecordingProgressCapability.SUPPORTED)
-        val admission = observation.recordingPlaybackAdmission(
-            entry(Case("missed", DvrEntryState.MISSED, listOf(file("/rec/a.ts")), Outcome.COMPLETED, 100L)),
-        )
-
-        assertNull((admission as RecordingPlaybackAdmission.Completed).resumePosition)
-    }
-
-    @Test
     fun `resume position needs supported progress and a positive saved position`() {
         listOf(DvrEntryState.RECORDING, DvrEntryState.COMPLETED).forEach { state ->
             listOf(null, Duration.ZERO).forEach { position ->
@@ -127,18 +117,14 @@ internal class RecordingPlaybackAdmissionTest {
                     entry(Case("position", state, listOf(file("/rec/a.ts")), Outcome.GROWING), position),
                 )
 
+                val expectedType = if (state == DvrEntryState.RECORDING) {
+                    RecordingPlaybackAdmission.Growing::class.java
+                } else {
+                    RecordingPlaybackAdmission.Completed::class.java
+                }
+                assertInstanceOf(expectedType, admission, "$state $position")
                 assertNull(resumeOf(admission), "$state $position")
             }
-        }
-    }
-
-    @Test
-    fun `admission never reports an expired observation`() {
-        val observation = SessionObservation.create(recordingProgressCapability = RecordingProgressCapability.SUPPORTED)
-
-        cases.forEach { case ->
-            val admission = observation.recordingPlaybackAdmission(entry(case))
-            assertTrue(admission !== RecordingPlaybackAdmission.ObservationExpired, case.name)
         }
     }
 

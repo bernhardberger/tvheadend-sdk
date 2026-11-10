@@ -29,6 +29,8 @@ import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.EnumSource
 import kotlin.time.Instant
 
 internal class EpgSearchRepositoryTest {
@@ -158,8 +160,15 @@ internal class EpgSearchRepositoryTest {
         assertEquals(mappings.size + 1, calls)
     }
 
-    @Test
-    fun `search classifies a midflight generation replacement`() = runTest {
+    enum class MidflightTransition(val replace: Boolean, val retire: Boolean, val expected: TvheadendFailure) {
+        REPLACEMENT(replace = true, retire = false, TvheadendFailure.CONNECTION_CHANGED),
+        REPLACEMENT_THEN_RETIREMENT(replace = true, retire = true, TvheadendFailure.CONNECTION_CHANGED),
+        RETIREMENT_ONLY(replace = false, retire = true, TvheadendFailure.TRANSPORT_UNAVAILABLE),
+    }
+
+    @ParameterizedTest
+    @EnumSource(MidflightTransition::class)
+    fun `search classifies midflight replacement and retirement`(transition: MidflightTransition) = runTest {
         val entered = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()
         val metadata = PhaseOneSessionMetadata(
@@ -178,64 +187,10 @@ internal class EpgSearchRepositoryTest {
 
         val search = async { metadata.epgRepository.search(currentSession, request) }
         entered.await()
-        metadata.bindGeneration(GatewayGeneration())
+        if (transition.replace) metadata.bindGeneration(GatewayGeneration())
+        if (transition.retire) metadata.clearAllState()
         release.complete(Unit)
-        assertEquals(EpgSearchResult.Failed(TvheadendFailure.CONNECTION_CHANGED), search.await())
-    }
-
-    @Test
-    fun `search remembers a midflight replacement that retires before completion`() = runTest {
-        val entered = CompletableDeferred<Unit>()
-        val release = CompletableDeferred<Unit>()
-        val metadata = PhaseOneSessionMetadata(
-            searchCommands = EpgSearchCommands { _, _ ->
-                entered.complete(Unit)
-                release.await()
-                GatewayResult.TransportUnavailable
-            },
-        )
-        val generation = GatewayGeneration()
-        metadata.bindGeneration(generation)
-        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
-        publishReady(metadata, generation)
-        val currentSession = requireNotNull(metadata.observation.value.currentSession)
-
-        val search = async {
-            metadata.epgRepository.search(currentSession, EpgSearchRequest.create("query"))
-        }
-        entered.await()
-        metadata.bindGeneration(GatewayGeneration())
-        metadata.clearAllState()
-        release.complete(Unit)
-
-        assertEquals(EpgSearchResult.Failed(TvheadendFailure.CONNECTION_CHANGED), search.await())
-    }
-
-    @Test
-    fun `search preserves transport failure when its generation retires without replacement`() = runTest {
-        val entered = CompletableDeferred<Unit>()
-        val release = CompletableDeferred<Unit>()
-        val metadata = PhaseOneSessionMetadata(
-            searchCommands = EpgSearchCommands { _, _ ->
-                entered.complete(Unit)
-                release.await()
-                GatewayResult.TransportUnavailable
-            },
-        )
-        val generation = GatewayGeneration()
-        metadata.bindGeneration(generation)
-        metadata.acceptMetadata(MetadataEvent.InitialSyncCompleted(generation))
-        publishReady(metadata, generation)
-        val currentSession = requireNotNull(metadata.observation.value.currentSession)
-
-        val search = async {
-            metadata.epgRepository.search(currentSession, EpgSearchRequest.create("query"))
-        }
-        entered.await()
-        metadata.clearAllState()
-        release.complete(Unit)
-
-        assertEquals(EpgSearchResult.Failed(TvheadendFailure.TRANSPORT_UNAVAILABLE), search.await())
+        assertEquals(EpgSearchResult.Failed(transition.expected), search.await(), "$transition")
     }
 
     @Test
@@ -260,21 +215,19 @@ internal class EpgSearchRepositoryTest {
         val currentSession = requireNotNull(metadata.observation.value.currentSession)
         val cancellation = CancellationException("private cancellation")
 
+        val outcome = CompletableDeferred<Result<EpgSearchResult>>()
         val search = async {
-            metadata.epgRepository.search(currentSession, EpgSearchRequest.create("query"))
+            outcome.complete(runCatching { metadata.epgRepository.search(currentSession, EpgSearchRequest.create("query")) })
         }
         entered.await()
         metadata.bindGeneration(GatewayGeneration())
         search.cancel(cancellation)
         release.complete(Unit)
 
-        var caught: CancellationException? = null
-        try {
-            search.await()
-        } catch (failure: CancellationException) {
-            caught = failure
-        }
-        val propagated = requireNotNull(caught)
+        search.join()
+        val propagated = outcome.await().exceptionOrNull()
+        assertTrue(propagated is CancellationException)
+        requireNotNull(propagated)
         assertEquals(cancellation.message, propagated.message)
         assertTrue(propagated === cancellation || propagated.cause === cancellation)
     }

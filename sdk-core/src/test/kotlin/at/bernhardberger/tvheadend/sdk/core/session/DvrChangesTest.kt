@@ -516,8 +516,9 @@ internal class DvrChangesTest {
                 listOf(DvrChangeKind.SCHEDULED, DvrChangeKind.RECORDING_STARTED)
                 else listOf(DvrChangeKind.RECORDING_STARTED), local.map { it.kind })
             assertTrue(local.all { it.origin == DvrChangeOrigin.ThisClient(DvrMutationKind.SCHEDULE) })
-            changes.singleOrNull { it.current?.id == DvrEntryId(99) }?.let {
-                assertEquals(DvrChangeOrigin.External, it.origin)
+            if (addedState == DvrEntryState.SCHEDULED) {
+                val unrelated = changes.single { it.current?.id == DvrEntryId(99) }
+                assertEquals(DvrChangeOrigin.External, unrelated.origin)
             }
         }
     }

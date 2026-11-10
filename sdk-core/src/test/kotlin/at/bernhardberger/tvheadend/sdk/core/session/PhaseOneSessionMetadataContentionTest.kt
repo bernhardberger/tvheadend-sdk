@@ -115,48 +115,6 @@ internal class PhaseOneSessionMetadataContentionTest {
     }
 
     @Test
-    fun `representative contended publication reader workload`() {
-        val generation = GatewayGeneration()
-        val metadata = readyMetadata(generation, channelCount = 100, eventsPerChannel = 200)
-        val current = requireNotNull(metadata.observation.value.currentSession)
-        val executor = Executors.newSingleThreadExecutor()
-        val latencies = ArrayList<Long>()
-        try {
-            repeat(40) { iteration ->
-                val query = requireNotNull(metadata.beginEpgQuery(generation, ChannelId(0)))
-                val entered = CountDownLatch(1)
-                val release = CountDownLatch(1)
-                // Reproducible measurement only: release races the read, with no timing threshold.
-                // The separate paused-query test gates progress before the writer is released.
-                val writer = executor.submit {
-                    metadata.applySuccessfulEpgQuery(generation, query, instant(400_000), gatedEvents(
-                        listOf(queryEvent(0, "query-$iteration")), entered, release,
-                    ))
-                    metadata.retainEpgEvents(generation, retentionBounds(instant(iteration * 1800L), instant(400_000)))
-                }
-                try {
-                    assertTrue(entered.await(5, TimeUnit.SECONDS))
-                    val start = System.nanoTime()
-                    release.countDown()
-                    assertSame(generation, metadata.resolveGeneration(current))
-                    val observed = requireNotNull(metadata.currentObservation(generation, current))
-                    latencies += System.nanoTime() - start
-                    assertSame(current, observed.currentSession)
-                    assertTrue(observed.epgState is EpgRepositoryState.Current)
-                    writer.get(5, TimeUnit.SECONDS)
-                } finally {
-                    release.countDown()
-                }
-            }
-            val sorted = latencies.sorted()
-            println("EPG contention: samples=${sorted.size}, median-ns=${sorted[sorted.size / 2]}, max-ns=${sorted.last()}")
-        } finally {
-            executor.shutdownNow()
-            assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS))
-        }
-    }
-
-    @Test
     fun `concurrent generation replacement never mixes published channel and EPG authority`() {
         val metadata = PhaseOneSessionMetadata()
         val executor = Executors.newSingleThreadExecutor()

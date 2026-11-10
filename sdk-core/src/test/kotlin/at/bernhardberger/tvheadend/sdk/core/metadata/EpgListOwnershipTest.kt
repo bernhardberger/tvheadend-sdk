@@ -24,20 +24,18 @@ internal class EpgListOwnershipTest {
     private val shapes = listOf(null, emptyList(), listOf("one"), listOf("one", "two", "three"))
 
     @Test
-    fun `live gateway category and keyword exposures reject mutation`() {
-        for (values in shapes) {
-            val event = live(values, values)
-            assertMutationRejected(event.categories)
-            assertMutationRejected(event.keywords)
-        }
-    }
-
-    @Test
-    fun `query gateway category and keyword exposures reject mutation`() {
-        for (values in shapes) {
-            val event = query(values, values)
-            assertMutationRejected(event.categories)
-            assertMutationRejected(event.keywords)
+    fun `live and query gateway category and keyword exposures reject mutation`() {
+        for (isQuery in listOf(false, true)) {
+            for (values in shapes) {
+                val (categories, keywords) = if (isQuery) {
+                    query(values, values).let { it.categories to it.keywords }
+                } else {
+                    live(values, values).let { it.categories to it.keywords }
+                }
+                val case = "${if (isQuery) "query" else "live"} $values"
+                assertMutationRejected(categories, "$case categories")
+                assertMutationRejected(keywords, "$case keywords")
+            }
         }
     }
 
@@ -128,14 +126,14 @@ internal class EpgListOwnershipTest {
         GatewayEpgQueryEvent(EventId(1), ChannelId(1), start, stop,
             categories = categories, keywords = keywords, credits = credits)
 
-    private fun assertMutationRejected(values: List<String>?) {
+    private fun assertMutationRejected(values: List<String>?, label: String? = null) {
         if (values == null) return
         val expected = values.toList()
         fun rejected(operation: () -> Unit) {
-            val failure = assertThrows(RuntimeException::class.java) { operation() }
+            val failure = assertThrows(RuntimeException::class.java, { operation() }, label)
             // Kotlin's empty immutable list can reject the mutable cast itself.
-            assertTrue(failure is UnsupportedOperationException || failure is ClassCastException)
-            assertEquals(expected, values)
+            assertTrue(failure is UnsupportedOperationException || failure is ClassCastException, label)
+            assertEquals(expected, values, label)
         }
         rejected { (values as MutableList<String>).add("mutation") }
         if (values.isNotEmpty()) rejected { (values as MutableList<String>)[0] = "mutation" }

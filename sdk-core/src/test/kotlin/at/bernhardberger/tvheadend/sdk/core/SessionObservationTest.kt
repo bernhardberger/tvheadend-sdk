@@ -173,6 +173,29 @@ internal class SessionObservationTest {
             dvrState = current.dvrState,
         )
         assertNull(synchronizing.currentSession)
+        val missingPrerequisites = listOf(
+            SessionObservation.create(
+                sessionState = SessionState.Synchronizing,
+                channelState = current.channelState,
+                epgState = current.epgState,
+                dvrState = current.dvrState,
+            ),
+            SessionObservation.create(
+                sessionState = current.sessionState,
+                channelState = current.channelState,
+                epgState = EpgRepositoryState.Synchronizing(current.epgSnapshotForDisplay),
+                dvrState = current.dvrState,
+            ),
+            SessionObservation.create(
+                sessionState = current.sessionState,
+                channelState = current.channelState,
+                epgState = current.epgState,
+                dvrState = DvrRepositoryState.Synchronizing(current.dvrSnapshotForDisplay),
+            ),
+        )
+        missingPrerequisites.forEachIndexed { index, observation ->
+            assertNull(observation.currentSession, "missing prerequisite $index")
+        }
     }
 
     @Test

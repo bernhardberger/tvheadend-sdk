@@ -78,10 +78,17 @@ internal class DvrEntryFolderTest {
     }
 
     @Test
-    fun `single file supplies directory components instead of the entry path`() {
-        val entry = entry(listOf("/archive/series/episode.ts"), path = "/other/recording.ts")
-
-        assertEquals(listOf("archive", "series"), entry.folder)
+    fun `selected file or fallback path determines folder components`() {
+        val cases = listOf(
+            Triple("file precedence", entry(listOf("/archive/series/episode.ts"), path = "/other/recording.ts"),
+                listOf("archive", "series")),
+            Triple("component prefix", entry(listOf("/series/one.ts", "/series-extra/two.ts")), emptyList()),
+            Triple("missing files", entry(path = "/archive/series/recording.ts"), listOf("archive", "series")),
+            Triple("empty files", entry(emptyList(), path = "/archive/recording.ts"), listOf("archive")),
+            Triple("root file", entry(listOf("/recording.ts")), emptyList()),
+            Triple("root fallback", entry(path = "recording.ts"), emptyList()),
+        )
+        for ((label, entry, expected) in cases) assertEquals(expected, entry.folder, label)
     }
 
     @Test
@@ -89,17 +96,6 @@ internal class DvrEntryFolderTest {
         val entry = entry(listOf("/archive/series/a/one.ts", "/archive/series/b/two.ts", "/archive/series/three.ts"))
 
         assertEquals(listOf("archive", "series"), entry.folder)
-    }
-
-    @Test
-    fun `files without a common component prefix resolve to the storage root`() {
-        assertEquals(emptyList<String>(), entry(listOf("/series/one.ts", "/series-extra/two.ts")).folder)
-    }
-
-    @Test
-    fun `missing or empty files fall back to the entry directory`() {
-        assertEquals(listOf("archive", "series"), entry(path = "/archive/series/recording.ts").folder)
-        assertEquals(listOf("archive"), entry(emptyList(), path = "/archive/recording.ts").folder)
     }
 
     @Test
@@ -122,12 +118,6 @@ internal class DvrEntryFolderTest {
     fun `leading and repeated slashes do not create empty components`() {
         assertEquals(listOf("archive", "series"), entry(listOf("///archive//series///one.ts")).folder)
         assertEquals(listOf("archive"), entry(path = "archive//one.ts").folder)
-    }
-
-    @Test
-    fun `root files have an empty folder`() {
-        assertEquals(emptyList<String>(), entry(listOf("/recording.ts")).folder)
-        assertEquals(emptyList<String>(), entry(path = "recording.ts").folder)
     }
 
     @Test

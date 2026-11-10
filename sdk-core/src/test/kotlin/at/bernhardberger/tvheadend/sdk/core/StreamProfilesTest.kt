@@ -36,17 +36,22 @@ internal class StreamProfilesTest {
     @Test
     fun `available profiles preserve wire order and own an immutable snapshot`() {
         val id = StreamProfileId("0123456789abcdef0123456789abcdef")
-        val source = mutableListOf(StreamProfile(id, "Pass", "Original streams"))
+        val expected = listOf(
+            StreamProfile(id, "Pass", "Original streams"),
+            StreamProfile(StreamProfileId("00000000000000000000000000000001"), "Audio", "Audio only"),
+            StreamProfile(StreamProfileId("ffffffffffffffffffffffffffffffff"), "Default", "Default streams"),
+        )
+        val source = expected.toMutableList()
         val currentSession = currentSession()
         val available = StreamProfilesResult.Available.create(source, currentSession)
         source.clear()
 
-        assertEquals(listOf(StreamProfile(id, "Pass", "Original streams")), available.profiles)
+        assertEquals(expected, available.profiles)
         assertSame(currentSession, available.originatingSession)
         assertThrows(UnsupportedOperationException::class.java) {
             (available.profiles as MutableList<*>).clear()
         }
-        assertEquals("StreamProfile(<redacted>)", available.profiles.single().toString())
+        available.profiles.forEach { assertEquals("StreamProfile(<redacted>)", it.toString()) }
         assertEquals("StreamProfilesResult.Available(<redacted>)", available.toString())
     }
 

@@ -8,6 +8,8 @@ import java.io.File
 import java.io.IOException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
@@ -132,7 +134,10 @@ internal class ArtworkCacheReadTest {
         }
         val runtime = MetadataCacheRuntime(FileMetadataCacheStore(root), MetadataCachePolicy.create(root),
             Dispatchers.IO, clock, artworkStore = FileArtworkCacheStore(root, files))
-        val reading = async { runtime.loadCachedArtwork(namespace, ArtworkId(1)) { true } }
+        val outcome = CompletableDeferred<Result<ArtworkLoadResult>>()
+        val reading = async {
+            outcome.complete(runCatching { runtime.loadCachedArtwork(namespace, ArtworkId(1)) { true } })
+        }
         try {
             assertTrue(withContext(Dispatchers.IO) { entered.await(5, TimeUnit.SECONDS) })
             reading.cancel()
@@ -141,7 +146,7 @@ internal class ArtworkCacheReadTest {
             reading.join()
         }
         try {
-            assertTrue(reading.isCancelled)
+            assertTrue(outcome.await().exceptionOrNull() is CancellationException)
             withTimeout(5.seconds) {
                 assertTrue(runtime.loadCachedArtwork(namespace, ArtworkId(1)) { true } is ArtworkLoadResult.Available)
             }

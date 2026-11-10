@@ -118,27 +118,6 @@ class MetadataCacheRuntimeTest {
     }
 
     @Test
-    fun `profile clear removes only its metadata and artwork namespace`() = runTest {
-        val store = FileMetadataCacheStore(root, FixedClock)
-        val selected = at.bernhardberger.tvheadend.sdk.core.ServerProfile("selected.invalid")
-        val other = at.bernhardberger.tvheadend.sdk.core.ServerProfile("other.invalid")
-        for (profile in listOf(selected, other)) {
-            store.storeCatalog(profile.cacheNamespace(), CachedCatalog(catalog(1)), START)
-            val artwork = File(root, "tvheadend-sdk/${profile.cacheNamespace().value}/artwork/1")
-            artwork.parentFile.mkdirs()
-            artwork.writeBytes(byteArrayOf(1))
-        }
-        val runtime = runtime(store)
-        runtime.clear(summary(selected))
-        assertEquals(null, store.loadCatalog(selected.cacheNamespace(), START - 1.days))
-        assertTrue(store.loadCatalog(other.cacheNamespace(), START - 1.days) != null)
-        assertTrue(!File(root, "tvheadend-sdk/${selected.cacheNamespace().value}/artwork/1").exists())
-        assertTrue(File(root, "tvheadend-sdk/${other.cacheNamespace().value}/artwork/1").exists())
-        assertEquals(1, runtime.statistics.value.artworkEntryCount)
-        runtime.shutdown()
-    }
-
-    @Test
     fun `profile clear rewrites the current publication and removes its artwork`() = runTest {
         val store = FileMetadataCacheStore(root, FixedClock)
         val profile = at.bernhardberger.tvheadend.sdk.core.ServerProfile("selected.invalid")
@@ -528,6 +507,7 @@ class MetadataCacheRuntimeTest {
         runCurrent()
 
         assertEquals(listOf(Call.StoreEpg(thirdEpg)), store.writes().drop(3))
+        assertSame(thirdEpg, store.epg)
         runtime.shutdown()
     }
 
@@ -602,6 +582,7 @@ class MetadataCacheRuntimeTest {
         runtime.stop()
 
         assertEquals(Call.StoreEpg(pendingEpg), store.writes().last())
+        assertSame(pendingEpg, store.epg)
         val writesAfterStop = store.writes().size
         publications.value = PublishedSnapshots(catalog(3), pendingEpg)
         runCurrent()

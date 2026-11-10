@@ -1611,8 +1611,9 @@ internal class EpgWorkerTest {
         job.cancelAndJoin()
     }
 
-    @Test
-    fun `failed request retries at cooldown without terminating the worker`() = runTest {
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `failed request retries at cooldown without terminating the worker`(persistentTimeout: Boolean) = runTest {
         val generation = GatewayGeneration()
         val metadata = synchronizedMetadata(generation, 1L..1L)
         var attempts = 0
@@ -1622,6 +1623,7 @@ internal class EpgWorkerTest {
             clock = SchedulerClock { testScheduler.currentTime },
             queryEpg = { _, _, _ ->
                 attempts += 1
+                if (persistentTimeout) return@EpgWorker GatewayResult.Timeout
                 if (attempts == 1) error("private failure")
                 GatewayResult.Ok(emptyList())
             },
@@ -1638,32 +1640,9 @@ internal class EpgWorkerTest {
         advanceTimeBy(1.milliseconds)
         runCurrent()
         assertEquals(2, attempts)
-        job.cancelAndJoin()
-    }
-
-    @Test
-    fun `persistent timeout still retries after cooldown`() = runTest {
-        val generation = GatewayGeneration()
-        val metadata = synchronizedMetadata(generation, 1L..1L)
-        var attempts = 0
-        val worker = EpgWorker(
-            generation = generation,
-            metadata = metadata,
-            clock = SchedulerClock { testScheduler.currentTime },
-            queryEpg = { _, _, _ ->
-                attempts += 1
-                GatewayResult.Timeout
-            },
-        )
-        val job = backgroundScope.launch { worker.run() }
-
-        runCurrent()
-        assertEquals(1, attempts)
         advanceTimeBy(250.milliseconds)
         runCurrent()
-        advanceTimeBy(10.minutes)
-        runCurrent()
-        assertEquals(2, attempts)
+        assertEquals(2, attempts, "persistent timeout $persistentTimeout")
         job.cancelAndJoin()
     }
 
