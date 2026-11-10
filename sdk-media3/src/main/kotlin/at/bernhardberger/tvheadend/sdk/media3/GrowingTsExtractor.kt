@@ -35,7 +35,7 @@ internal fun createGrowingTsExtractorsFactory(
     onSeekMap: (SeekMap) -> Unit = {},
     lease: GrowingRecordingFileLease? = null,
 ): ExtractorsFactory = ExtractorsFactory {
-    arrayOf(GrowingTsExtractor(onSeekMap = onSeekMap, lease = lease))
+    arrayOf(FormatlessTrackFilter(GrowingTsExtractor(onSeekMap = onSeekMap, lease = lease)))
 }
 
 /** Thin indexing decorator; Media3's maintained [TsExtractor] still owns all TS parsing. */

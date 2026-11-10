@@ -6,6 +6,16 @@ Unreleased; hotfix for 0.38.0.
 
 ### Fixed
 
+- In `sdk-media3`, a TS recording whose program map announces a stream that
+  never carries data, such as an audio description track, now prepares.
+  Before, Media3 waited for a format on every announced track, so completed
+  and running recordings stayed buffering until the Player failed with
+  `ERROR_CODE_FAILED_RUNTIME_CHECK` (1004, "stuck buffering and not loading").
+  As in live playback, once audio and video formats exist, another track gets
+  1 s of media time to produce a format before it is left out. Recordings
+  whose tracks all get a format prepare with the same tracks and samples as
+  before. A recording whose announced audio or video never gets a format still
+  fails as before.
 - In `sdk-media3`, installing a live channel or recording right after the previous
   source failed now prepares the new target. Before, if the failure was still on
   its way from the playback thread, `Player.prepare()` had no effect: the new
