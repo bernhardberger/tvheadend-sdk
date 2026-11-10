@@ -2,13 +2,13 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'release/**']
   pull_request:
 
 permissions:
   contents: read
 
-# PRs supersede only their own PR; every main run retains staging provenance.
+# PRs supersede only their own PR; every main and release-branch push run retains staging provenance.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

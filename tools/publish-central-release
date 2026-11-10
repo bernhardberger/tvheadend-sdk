@@ -56,7 +56,7 @@ CI_PROVENANCE = ROOT / "build/ci-staging-provenance.json"
 SECRET_NAMES = ("MAVEN_GPG_PRIVATE_KEY", "MAVEN_GPG_PASSPHRASE", "CENTRAL_PORTAL_TOKEN")
 CREDENTIAL_NAMES = SECRET_NAMES + ("GITHUB_TOKEN",)
 CENTRAL_GET_WORKERS = 8
-CI_WORKFLOW_SHA256 = "121f6de298f605385c43705e9e160b76a6dc88d102086781b5a8fa63cb0072fd"
+CI_WORKFLOW_SHA256 = "247a15516e09cf6c96c2184f391ab569f8c9878e744838961017dc3f18a25d89"
 RELEASE_WORKFLOW_SHA256 = "0dcebeddf1e8f57ddae0cbeb363c75e35861b7182ace23a8904dff7513f83210"
 ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 ZIP_MODE = (stat.S_IFREG | 0o644) << 16
@@ -284,6 +284,24 @@ def require_local_tag(kind: str, tagged_commit: str, commit: str) -> None:
     require(tagged_commit == commit, "annotated release tag does not resolve to HEAD")
 
 
+def release_branches(identity: Identity) -> tuple[str, ...]:
+    """Branches that may stage and release this version: main and its own release/X.Y line."""
+    major, minor, _patch = identity.version.split(".")
+    return ("main", f"release/{major}.{minor}")
+
+
+def reachable_from(commit: str, branch: str) -> bool:
+    return run_process(("git", "merge-base", "--is-ancestor", commit, f"refs/remotes/origin/{branch}")).returncode == 0
+
+
+Reachability = Callable[[str, str], bool]
+
+
+def require_release_reachability(commit: str, identity: Identity, reachable: Reachability = reachable_from) -> None:
+    require(any(reachable(commit, branch) for branch in release_branches(identity)),
+            "release commit is not reachable from origin/main or the version's release branch")
+
+
 def require_publish_context(identity: Identity) -> str:
     commit = git_text("rev-parse", "HEAD")
     reference = f"refs/tags/{identity.tag}"
@@ -291,8 +309,7 @@ def require_publish_context(identity: Identity) -> str:
     require_action_context(identity, tagged_commit, os.environ)
     require_local_tag(git_text("cat-file", "-t", reference), tagged_commit, commit)
     require_remote_tag(identity, commit)
-    ancestry = run_process(("git", "merge-base", "--is-ancestor", commit, "refs/remotes/origin/main"))
-    require(ancestry.returncode == 0, "release commit is not reachable from origin/main")
+    require_release_reachability(commit, identity)
     require(not git_text("status", "--porcelain=v1", "--untracked-files=all"), "release checkout is not clean")
     return commit
 
@@ -579,7 +596,7 @@ def github_json(url: str, token: str, client: HttpClient) -> dict[str, object]:
     return value
 
 
-def select_ci_run(commit: str, token: str, client: HttpClient) -> int:
+def select_ci_run(commit: str, branches: tuple[str, ...], token: str, client: HttpClient) -> int:
     query = urllib.parse.urlencode({
         "event": "push",
         "status": "success",
@@ -593,13 +610,14 @@ def select_ci_run(commit: str, token: str, client: HttpClient) -> int:
     require(isinstance(run, dict), "successful push CI run is malformed")
     run_id = positive_integer(run.get("id"), "successful push CI run id")
     repository = run.get("repository")
+    branch = run.get("head_branch")
     require(
         run.get("run_attempt") == 1
         and run.get("event") == "push"
         and run.get("status") == "completed"
         and run.get("conclusion") == "success"
         and run.get("head_sha") == commit
-        and run.get("head_branch") == "main"
+        and branch in branches
         and run.get("path") == CI_WORKFLOW
         and isinstance(repository, dict)
         and repository.get("full_name") == REPOSITORY,
@@ -619,38 +637,40 @@ def select_ci_run(commit: str, token: str, client: HttpClient) -> int:
         and isinstance(workflow_run, dict)
         and workflow_run.get("id") == run_id
         and workflow_run.get("head_sha") == commit
-        and workflow_run.get("head_branch") == "main",
+        and workflow_run.get("head_branch") == branch,
         "successful push CI artifact does not match the selected run",
     )
     return run_id
 
 
-def require_ci_action_context(commit: str, environment: dict[str, str]) -> int:
+def require_ci_action_context(commit: str, identity: Identity, environment: dict[str, str]) -> tuple[int, str]:
+    branch = environment.get("GITHUB_REF_NAME", "")
+    require(branch in release_branches(identity), "CI staging requires main or the configured version's release branch")
+    ref = f"refs/heads/{branch}"
     expected = {
         "GITHUB_ACTIONS": "true",
         "GITHUB_EVENT_NAME": "push",
         "GITHUB_REPOSITORY": REPOSITORY,
-        "GITHUB_REF": "refs/heads/main",
-        "GITHUB_REF_NAME": "main",
+        "GITHUB_REF": ref,
         "GITHUB_RUN_ATTEMPT": "1",
         "GITHUB_SHA": commit,
         "GITHUB_WORKFLOW": "CI",
-        "GITHUB_WORKFLOW_REF": f"{REPOSITORY}/{CI_WORKFLOW}@refs/heads/main",
+        "GITHUB_WORKFLOW_REF": f"{REPOSITORY}/{CI_WORKFLOW}@{ref}",
     }
     for name, value in expected.items():
         require(environment.get(name) == value, f"CI staging requires exact first-attempt push context: {name}")
     value = environment.get("GITHUB_RUN_ID", "")
     require(re.fullmatch(r"[1-9][0-9]*", value) is not None, "CI staging run id is invalid")
-    return int(value)
+    return int(value), ref
 
 
-def ci_provenance(commit: str, run_id: int, manifest: bytes) -> dict[str, object]:
+def ci_provenance(commit: str, run_id: int, manifest: bytes, ref: str) -> dict[str, object]:
     return {
         "schema": CI_PROVENANCE_SCHEMA,
         "repository": REPOSITORY,
         "workflow": CI_WORKFLOW,
         "event": "push",
-        "ref": "refs/heads/main",
+        "ref": ref,
         "commit": commit,
         "runId": run_id,
         "runAttempt": 1,
@@ -658,15 +678,27 @@ def ci_provenance(commit: str, run_id: int, manifest: bytes) -> dict[str, object
     }
 
 
+def ci_provenance_ref(provenance: bytes, identity: Identity, commit: str, reachable: Reachability = reachable_from) -> str:
+    try:
+        value = json.loads(provenance.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise ReleaseError("CI staging provenance is malformed") from error
+    ref = value.get("ref") if isinstance(value, dict) else None
+    require(ref in tuple(f"refs/heads/{branch}" for branch in release_branches(identity)),
+            "CI staging provenance does not name main or the version's release branch")
+    require(reachable(commit, ref.removeprefix("refs/heads/")), "tagged commit is not reachable from the branch that staged it")
+    return ref
+
+
 def write_ci_provenance() -> None:
     scoped_credentials((), os.environ)
     commit = git_text("rev-parse", "HEAD")
-    run_id = require_ci_action_context(commit, os.environ)
     identity = configured_identity()
+    run_id, ref = require_ci_action_context(commit, identity, os.environ)
     staged_originals(identity)
     manifest = read_regular(STAGED_MANIFEST, "staged publication manifest")
     ensure_absent(CI_PROVENANCE, "CI staging provenance")
-    CI_PROVENANCE.write_bytes(canonical_json(ci_provenance(commit, run_id, manifest)))
+    CI_PROVENANCE.write_bytes(canonical_json(ci_provenance(commit, run_id, manifest, ref)))
     print("Exact successful push CI staging provenance recorded")
 
 
@@ -679,7 +711,8 @@ def verify_ci_staging() -> None:
     manifest = read_regular(STAGED_MANIFEST, "staged publication manifest")
     staged_originals(identity)
     provenance = read_regular(CI_PROVENANCE, "CI staging provenance")
-    require(provenance == canonical_json(ci_provenance(commit, int(run_id_text), manifest)), "CI staging provenance does not match the tagged commit and selected run")
+    ref = ci_provenance_ref(provenance, identity, commit)
+    require(provenance == canonical_json(ci_provenance(commit, int(run_id_text), manifest, ref)), "CI staging provenance does not match the tagged commit and selected run")
     errors = check_setup()
     require(not errors, "release setup differs after successful push CI")
     print("Exact successful push CI staging validated for the tagged commit")
@@ -690,7 +723,7 @@ def select_ci_run_output() -> None:
     require(bool(token) and not any(character.isspace() for character in token), "GITHUB_TOKEN is empty or malformed")
     identity = configured_identity(tag=os.environ.get("GITHUB_REF_NAME", ""))
     commit = require_publish_context(identity)
-    print(f"ci_run_id={select_ci_run(commit, token, stdlib_http)}")
+    print(f"ci_run_id={select_ci_run(commit, release_branches(identity), token, stdlib_http)}")
 
 
 def upload_bundle(bundle: bytes, identity: Identity, token: str, client: HttpClient) -> str:
@@ -1026,11 +1059,51 @@ def self_test() -> list[str]:
         "GITHUB_WORKFLOW": "CI",
         "GITHUB_WORKFLOW_REF": f"{REPOSITORY}/{CI_WORKFLOW}@refs/heads/main",
     }
-    if require_ci_action_context(tagged_commit, ci_context) != 12345:
+    if require_ci_action_context(tagged_commit, identity, ci_context) != (12345, "refs/heads/main"):
         errors.append("self-test rejected exact first-attempt push CI context")
-    expect_error(errors, "rerun CI staging", lambda: require_ci_action_context(tagged_commit, {**ci_context, "GITHUB_RUN_ATTEMPT": "2"}))
-    if ci_provenance(tagged_commit, 12345, b"manifest")["manifestSha256"] != digest("sha256", b"manifest"):
+    expect_error(errors, "rerun CI staging", lambda: require_ci_action_context(tagged_commit, identity, {**ci_context, "GITHUB_RUN_ATTEMPT": "2"}))
+    if release_branches(identity) != ("main", "release/0.1"):
+        errors.append("self-test release branches differ from main and release/0.1")
+    release_ref = "refs/heads/release/0.1"
+    everywhere: Reachability = lambda _commit, _branch: True
+    on_main: Reachability = lambda commit, branch: commit == tagged_commit and branch == "main"
+    on_release_line: Reachability = lambda commit, branch: commit == tagged_commit and branch == "release/0.1"
+    branch_context = {**ci_context, "GITHUB_REF": release_ref, "GITHUB_REF_NAME": "release/0.1",
+                      "GITHUB_WORKFLOW_REF": f"{REPOSITORY}/{CI_WORKFLOW}@{release_ref}"}
+    try:
+        if require_ci_action_context(tagged_commit, identity, branch_context) != (12345, release_ref):
+            errors.append("self-test release-branch CI context returned the wrong ref")
+    except ReleaseError as error:
+        errors.append(f"self-test rejected the version's release-branch CI context: {error}")
+    other_ref = "refs/heads/release/0.2"
+    other_line = {**branch_context, "GITHUB_REF": other_ref, "GITHUB_REF_NAME": "release/0.2",
+                  "GITHUB_WORKFLOW_REF": f"{REPOSITORY}/{CI_WORKFLOW}@{other_ref}"}
+    expect_error(errors, "another version line's release-branch CI staging", lambda: require_ci_action_context(tagged_commit, identity, other_line))
+    for label, name, value in (("unrelated branch CI staging", "GITHUB_REF_NAME", "feature"),
+                               ("release-branch ref mismatch", "GITHUB_REF", "refs/heads/main"),
+                               ("release-branch workflow ref mismatch", "GITHUB_WORKFLOW_REF", f"{REPOSITORY}/{CI_WORKFLOW}@refs/heads/main")):
+        expect_error(errors, label, lambda name=name, value=value: require_ci_action_context(tagged_commit, identity, {**branch_context, name: value}))
+    if ci_provenance(tagged_commit, 12345, b"manifest", release_ref)["manifestSha256"] != digest("sha256", b"manifest"):
         errors.append("self-test CI staging provenance digest differs")
+    try:
+        if ci_provenance_ref(canonical_json(ci_provenance(tagged_commit, 12345, b"manifest", release_ref)), identity, tagged_commit, on_release_line) != release_ref:
+            errors.append("self-test read the wrong release-branch CI staging provenance ref")
+    except ReleaseError as error:
+        errors.append(f"self-test rejected release-branch CI staging provenance: {error}")
+    for bad_ref in (other_ref, "refs/heads/feature", None):
+        expect_error(errors, "foreign CI staging provenance ref", lambda bad_ref=bad_ref: ci_provenance_ref(
+            canonical_json({**ci_provenance(tagged_commit, 12345, b"manifest", release_ref), "ref": bad_ref}), identity, tagged_commit, everywhere))
+    expect_error(errors, "malformed CI staging provenance", lambda: ci_provenance_ref(b"[]", identity, tagged_commit, everywhere))
+    expect_error(errors, "CI staging from a branch that does not contain the tagged commit", lambda: ci_provenance_ref(
+        canonical_json(ci_provenance(tagged_commit, 12345, b"manifest", release_ref)), identity, tagged_commit, on_main))
+    for label, reachable in (("main", on_main), ("release/0.1", on_release_line)):
+        try:
+            require_release_reachability(tagged_commit, identity, reachable)
+        except ReleaseError as error:
+            errors.append(f"self-test rejected a release commit reachable from {label}: {error}")
+    for label, reachable in (("another line's release branch", lambda _commit, branch: branch == "release/0.2"),
+                             ("an unreachable release commit", lambda _commit, _branch: False)):
+        expect_error(errors, label, lambda reachable=reachable: require_release_reachability(tagged_commit, identity, reachable))
     run_id = 12345
     run = {
         "id": run_id,
@@ -1069,10 +1142,22 @@ def self_test() -> list[str]:
             return HttpResponse(404, b"")
         return request
 
-    if select_ci_run(tagged_commit, "token", ci_client(run, artifact)) != run_id:
+    branches = release_branches(identity)
+    if select_ci_run(tagged_commit, branches, "token", ci_client(run, artifact)) != run_id:
         errors.append("self-test rejected exact successful push CI staging")
-    expect_error(errors, "rerun push CI", lambda: select_ci_run(tagged_commit, "token", ci_client({**run, "run_attempt": 2}, artifact)))
-    expect_error(errors, "expired CI staging", lambda: select_ci_run(tagged_commit, "token", ci_client(run, {**artifact, "expired": True})))
+    expect_error(errors, "rerun push CI", lambda: select_ci_run(tagged_commit, branches, "token", ci_client({**run, "run_attempt": 2}, artifact)))
+    expect_error(errors, "expired CI staging", lambda: select_ci_run(tagged_commit, branches, "token", ci_client(run, {**artifact, "expired": True})))
+    branch_run = {**run, "head_branch": "release/0.1"}
+    branch_artifact = {**artifact, "workflow_run": {**artifact["workflow_run"], "head_branch": "release/0.1"}}
+    try:
+        if select_ci_run(tagged_commit, branches, "token", ci_client(branch_run, branch_artifact)) != run_id:
+            errors.append("self-test selected the wrong release-branch CI run")
+    except ReleaseError as error:
+        errors.append(f"self-test rejected the version's release-branch push CI staging: {error}")
+    other_run = {**run, "head_branch": "release/0.2"}
+    other_artifact = {**artifact, "workflow_run": {**artifact["workflow_run"], "head_branch": "release/0.2"}}
+    expect_error(errors, "another version line's push CI", lambda: select_ci_run(tagged_commit, branches, "token", ci_client(other_run, other_artifact)))
+    expect_error(errors, "CI artifact from another branch", lambda: select_ci_run(tagged_commit, branches, "token", ci_client(branch_run, artifact)))
     originals = tuple(Original(f"group/module/0.1.2/file-{index}", f"file-{index}", f"original-{index}".encode(), digest("sha256", f"original-{index}".encode())) for index in range(25))
     signatures = {item.relative_path + ".asc": b"signature" for item in originals}
     bundle = zip_bytes(release_assets(originals, signatures))

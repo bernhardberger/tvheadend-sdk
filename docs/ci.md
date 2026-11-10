@@ -3,14 +3,16 @@
 The required `verify` job retains the clean SDK build/check/staging, publication
 verification, clean consumer tests and dependency-graph check, and release setup
 checks. `build check` is one Gradle task graph, not duplicate task execution.
-First-attempt main push staging remains bound to the exact commit and run, as
+First-attempt push staging on `main` or a `release/X.Y` maintenance branch
+remains bound to the exact commit and run, as
 specified in [releasing](releasing.md). No release credentials enter ordinary CI.
 
 ## Cache and cancellation boundaries
 
 SHA-pinned `actions/cache/restore` and `actions/cache/save` use explicit paths.
 Wrapper validation still runs before cache restoration. Only a successful
-`push` to `refs/heads/main` may save caches; PRs only run restore. GitHub's cache
+`push` to `refs/heads/main` may save caches; PRs and maintenance-branch
+pushes only run restore. GitHub's cache
 branch isolation prevents main from restoring PR merge-ref caches. The
 `sdk-dependencies-v1` namespace cannot match prior Gradle Actions cache entries.
 
@@ -33,8 +35,12 @@ The maintained path-based GitHub cache actions avoid both behaviors without
 deleting old remote caches, adding secrets, or depending on proprietary caching.
 
 Concurrency groups include the workflow and event. PRs share a group only with
-runs of the same PR and cancel obsolete runs. Main pushes use unique run IDs,
-so neither newer main pushes nor PRs cancel or replace pending staging runs.
+runs of the same PR and cancel obsolete runs. Main and maintenance-branch
+pushes use unique run IDs, so neither newer pushes nor PRs cancel or replace
+pending staging runs.
+A `release/**` branch whose name does not match its configured version line
+fails at the provenance step, after build and tests, so it can never stage a
+release.
 
 ## Timing baseline
 

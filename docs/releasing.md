@@ -109,7 +109,8 @@ checks.
 
 ## Push CI Staging
 
-A successful first-attempt `main` push CI run retains the verified
+A successful first-attempt push CI run on `main` or a `release/X.Y` branch
+retains the verified
 `build/local-maven` repository, its exact 25-original manifest, and a provenance
 record bound to the commit and CI run. Pull requests and reruns do not create
 this seven-day `staged-publication-${{ github.run_id }}` artifact. The retained
@@ -132,10 +133,13 @@ An annotated tag exactly matching the configured version starts one first-
 attempt-only job. The job:
 
 1. Requires the configured major-zero version, exact tag, checked-out commit,
-   remote annotated-tag object, clean tree, and reachability from `origin/main`.
+   remote annotated-tag object, clean tree, and reachability from `origin/main`
+   or from the version's maintenance branch (see below).
 2. Uses read-only Actions access to locate exactly one successful attempt-one
    `ci.yml` push run at the peeled tag commit and exactly its unexpired staging
-   artifact.
+   artifact. The run and its staging provenance must come from `main` or that
+   maintenance branch, and the tag commit must be reachable from the branch
+   that staged it.
 3. Downloads that staging without setting up Java, Gradle, or Android, verifies
    the artifact's commit/run provenance, and locally rechecks its exact manifest,
    sources, Javadocs, POM and Gradle metadata, legal entries, and the absence of
@@ -153,6 +157,22 @@ attempt-only job. The job:
 The upload step records `CENTRAL_DEPLOYMENT_ID` and stops. It does not poll,
 retry, recover published members, or mutate GitHub Releases. A workflow rerun is
 rejected because `github.run_attempt` is no longer one.
+
+## Maintenance Releases
+
+A patch for an older minor line is released from `release/X.Y`, branched from
+that line's last tag, when `main` has moved on to the next minor. For a tag
+`vX.Y.Z`, only `main` and `release/X.Y` qualify: CI staging provenance from any
+other branch, including another line's `release/*`, is rejected. The branch
+carries the same CI and release tooling, so the flow is the same as on `main`:
+push the release-prep commit to `release/X.Y`, wait for its first-attempt push
+CI run, then push the annotated tag. The tag workflow requires exactly one
+successful push CI run at the tagged commit, so push that commit to no other
+qualifying branch before the release: a second run makes the version
+unreleasable, because the tag can be neither rerun nor moved. Fixes that also
+apply to `main` are
+ported there separately. Snapshot publishing and dependency-cache writes stay
+`main`-only.
 
 ## Operator Completion
 
