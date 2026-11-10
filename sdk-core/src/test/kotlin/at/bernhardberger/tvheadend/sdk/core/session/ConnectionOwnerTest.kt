@@ -543,7 +543,13 @@ internal class ConnectionOwnerTest {
             TvheadendFailure.OBSERVATION_EXPIRED,
             (uncached.artwork.loadCachedArtwork(reference) as ArtworkLoadResult.Unavailable).failure,
         )
+        var cancellation: Throwable? = null
+        launch(start = CoroutineStart.UNDISPATCHED) {
+            kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]!!.cancel()
+            cancellation = runCatching { uncached.artwork.loadCachedArtwork(reference) }.exceptionOrNull()
+        }.join()
         uncached.shutdown()
+        assertTrue(cancellation is CancellationException)
     }
 
     @Test
@@ -2901,6 +2907,8 @@ internal class ConnectionOwnerTest {
             owner.observation.value.recordingProgressCapability,
         )
 
+        owner.disconnect()
+
         assertEquals(
             SessionCommandResult.STARTED,
             owner.connect(
@@ -3054,18 +3062,254 @@ internal class ConnectionOwnerTest {
         owner.connect(ServerProfile("server"))
         runCurrent()
 
-        val disconnect = launch(start = CoroutineStart.UNDISPATCHED) { owner.disconnect() }
+        var outcome: Throwable? = null
+        val disconnect = launch(start = CoroutineStart.UNDISPATCHED) {
+            outcome = runCatching { owner.disconnect() }.exceptionOrNull()
+        }
         cleanupStarted.await()
         disconnect.cancel()
         releaseCleanup.complete(Unit)
         runCurrent()
         disconnect.join()
+        assertTrue(outcome is CancellationException, "Cancelled caller must not observe a normal return")
 
         assertEquals(SessionState.Disconnected, owner.observation.value.sessionState)
         assertTrue("disconnect" in order, "Admitted disconnect did not close the gateway")
         assertEquals(SessionCommandResult.STARTED, owner.connect(ServerProfile("server")))
         runCurrent()
         owner.shutdown()
+    }
+
+    @Test
+    fun `failed replacement or retry teardown does not retain an active profile`() = runTest {
+        for (retry in listOf(false, true)) {
+            val gateway = FakeProtocolGateway()
+            var failCleanup = true
+            val children = object : SessionChildren by SessionChildren.None {
+                override suspend fun cancelAndJoinBackgroundEnrichment() {
+                    if (failCleanup) {
+                        failCleanup = false
+                        error("Synthetic cleanup failure")
+                    }
+                }
+            }
+            val owner = owner(gateway, children)
+            val profile = ServerProfile("fixture")
+            try {
+                owner.connect(profile)
+                runCurrent()
+                val result = runCatching {
+                    if (retry) owner.retry() else owner.connect(ServerProfile("other"))
+                }
+                assertTrue(result.isFailure)
+                assertEquals(SessionCommandResult.STARTED, owner.connect(profile))
+            } finally {
+                owner.shutdown()
+            }
+        }
+    }
+
+    @Test
+    fun `retry is a no-op throughout the next automatic connection attempt`() = runTest {
+        val connecting = CompletableDeferred<Unit>()
+        val gateway = FakeProtocolGateway()
+        var attempts = 0
+        gateway.connectBehavior = {
+            if (++attempts == 1) failed(GatewayConnectionFailure.SERVER_UNREACHABLE)
+            else {
+                connecting.complete(Unit)
+                awaitCancellation()
+            }
+        }
+        val owner = owner(gateway)
+        try {
+            owner.connect(ServerProfile("fixture"))
+            runCurrent()
+            advanceTimeBy(1.seconds)
+            runCurrent()
+            connecting.await()
+            assertEquals(SessionCommandResult.NO_CHANGE, owner.retry())
+        } finally {
+            owner.shutdown()
+        }
+    }
+
+    @Test
+    fun `explicit retry preserves the selected profile for a later retry`() = runTest {
+        val owner = owner(FakeProtocolGateway())
+        try {
+            owner.connect(ServerProfile("fixture"))
+            runCurrent()
+            assertEquals(SessionCommandResult.STARTED, owner.retry())
+            runCurrent()
+            assertEquals(SessionCommandResult.STARTED, owner.retry())
+        } finally {
+            owner.shutdown()
+        }
+    }
+
+    @Test
+    fun `admitted replacement retry and shutdown propagate caller cancellation`() = runTest {
+        for (command in listOf("connect", "retry", "shutdown")) {
+            val started = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            val gateway = FakeProtocolGateway()
+            val owner = owner(gateway, BlockingSessionChildren(mutableListOf(), started, release))
+            try {
+                owner.connect(ServerProfile("fixture"))
+                runCurrent()
+                var outcome: Throwable? = null
+                val caller = launch(start = CoroutineStart.UNDISPATCHED) {
+                    outcome = runCatching {
+                        when (command) {
+                            "connect" -> owner.connect(ServerProfile("other"))
+                            "retry" -> owner.retry()
+                            else -> owner.shutdown()
+                        }
+                    }.exceptionOrNull()
+                }
+                started.await()
+                caller.cancel()
+                release.complete(Unit)
+                caller.join()
+                assertTrue(outcome is CancellationException, "Cancelled caller must not observe a normal return")
+            } finally {
+                release.complete(Unit)
+                owner.shutdown()
+            }
+        }
+    }
+
+    @Test
+    fun `admission stop failures reach disconnect and shutdown callers`() = runTest {
+        for (shutdown in listOf(false, true)) for (firstStage in listOf(false, true)) {
+            val failure = IllegalStateException("Synthetic admission failure")
+            var fail = false
+            val mutations = object : DvrMutationLifecycle by DvrMutationLifecycle.None {
+                override fun stopAdmission(connectionRetired: Boolean) {
+                    if (fail && firstStage) throw failure
+                }
+            }
+            val children = object : SessionChildren by SessionChildren.None {
+                override fun stopAdmission() {
+                    if (fail && !firstStage) throw failure
+                }
+            }
+            val owner = owner(FakeProtocolGateway(), children, dvrMutations = mutations)
+            try {
+                owner.connect(ServerProfile("fixture"))
+                runCurrent()
+                fail = true
+                val result = runCatching { if (shutdown) owner.shutdown() else owner.disconnect() }
+                // Coroutine stack-trace recovery may hand the caller a copy, so compare type and message.
+                val thrown = result.exceptionOrNull()
+                assertTrue(thrown is IllegalStateException)
+                assertEquals(failure.message, thrown?.message)
+            } finally {
+                fail = false
+                // A completed shutdown replays its captured failure to every later shutdown caller.
+                runCatching { owner.shutdown() }
+            }
+        }
+    }
+
+    @Test
+    fun `ordinary transport loss after ready resets accumulated backoff`() = runTest {
+        var generation = GatewayGeneration()
+        var attempts = 0
+        val gateway = FakeProtocolGateway().apply {
+            connectBehavior = {
+                if (++attempts < 3) failed(GatewayConnectionFailure.SERVER_UNREACHABLE)
+                else {
+                    generation = GatewayGeneration()
+                    connected(generation)
+                }
+            }
+        }
+        val owner = owner(gateway)
+        try {
+            owner.connect(ServerProfile("fixture"))
+            runCurrent()
+            advanceTimeBy(3.seconds)
+            runCurrent()
+            gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+            runCurrent()
+            gateway.emitFailure(GatewayConnectionFailureEvent(GatewayConnectionFailure.TRANSPORT_UNAVAILABLE, generation))
+            runCurrent()
+            advanceTimeBy(1.seconds)
+            runCurrent()
+            assertEquals(4, gateway.connectCalls)
+        } finally {
+            owner.shutdown()
+        }
+    }
+
+    @Test
+    fun `automatic loss exposes an admission stop failure instead of retrying normally`() = runTest {
+        val generation = GatewayGeneration()
+        val gateway = FakeProtocolGateway().apply { defaultConnectResult = connected(generation) }
+        var fail = false
+        val children = object : SessionChildren by SessionChildren.None {
+            override fun stopAdmission() {
+                if (fail) {
+                    fail = false
+                    error("Synthetic admission failure")
+                }
+            }
+        }
+        val owner = owner(gateway, children)
+        try {
+            owner.connect(ServerProfile("fixture"))
+            runCurrent()
+            gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+            runCurrent()
+            fail = true
+            gateway.emitFailure(GatewayConnectionFailureEvent(GatewayConnectionFailure.TRANSPORT_UNAVAILABLE, generation))
+            runCurrent()
+            assertEquals(SessionState.Unavailable(SessionFailure.UNEXPECTED_FAILURE), owner.observation.value.sessionState)
+        } finally {
+            owner.shutdown()
+        }
+    }
+
+    @Test
+    fun `artwork completing after generation retirement reports a connection change`(
+        @org.junit.jupiter.api.io.TempDir root: File,
+    ) = runTest {
+        val generation = GatewayGeneration()
+        val gateway = FakeProtocolGateway().apply { defaultConnectResult = connected(generation) }
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val children = object : SessionChildren by SessionChildren.None {
+            override suspend fun loadArtwork(currentSession: CurrentSessionObservation, artworkId: ArtworkId): ArtworkLoadResult {
+                started.complete(Unit)
+                release.await()
+                return ArtworkLoadResult.Available(at.bernhardberger.tvheadend.sdk.core.ArtworkContent.create(byteArrayOf(1)))
+            }
+        }
+        // A real artwork cache under a temporary root: a regression that serves stale artwork stores it there.
+        val owner = owner(
+            gateway, children,
+            cacheRuntime = MetadataCacheRuntime(
+                at.bernhardberger.tvheadend.sdk.core.cache.FileMetadataCacheStore(root),
+                MetadataCachePolicy.create(root), StandardTestDispatcher(testScheduler), Clock.System,
+            ),
+        )
+        try {
+            owner.connect(ServerProfile("fixture"))
+            runCurrent()
+            gateway.emitMetadata(MetadataEvent.InitialSyncCompleted(generation))
+            runCurrent()
+            val proof = requireNotNull(owner.observation.value.currentSession)
+            val artwork = async { owner.artwork.loadArtwork(proof, ArtworkId(1)) }
+            started.await()
+            owner.disconnect()
+            release.complete(Unit)
+            assertEquals(ArtworkLoadResult.Unavailable(TvheadendFailure.CONNECTION_CHANGED), artwork.await())
+        } finally {
+            release.complete(Unit)
+            owner.shutdown()
+        }
     }
 
     @Test

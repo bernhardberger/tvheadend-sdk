@@ -66,12 +66,18 @@ internal class MetadataDrainTest {
 
     @Test
     fun `a burst that is already buffered is reduced in order and published once`() = runTest {
-        val recorder = RecordingMetadata()
-        val burst = (1L..5L).map { id -> MetadataEvent.EventAdded(generation, epgEvent(id)) }
-
-        drainMetadata(flow { emit(burst) }, recorder)
-
-        assertEquals(listOf("batch:1,2,3,4,5", "flush"), recorder.calls)
+        // The smallest explicit limit, then the production default (512).
+        for (limit in listOf(1, null)) {
+            val recorder = RecordingMetadata()
+            val ids = 1L..(limit ?: 512).toLong()
+            val burst = ids.map { id -> MetadataEvent.EventAdded(generation, epgEvent(id)) }
+            if (limit == null) {
+                drainMetadata(flow { emit(burst) }, recorder)
+            } else {
+                drainMetadata(flow { emit(burst) }, recorder, burstLimit = limit)
+            }
+            assertEquals(listOf("batch:${ids.joinToString(",")}", "flush"), recorder.calls)
+        }
     }
 
     @Test

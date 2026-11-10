@@ -13,11 +13,13 @@ import androidx.media3.common.TrackGroup
 import androidx.media3.common.util.ParsableByteArray
 import androidx.media3.decoder.DecoderInputBuffer
 import androidx.media3.exoplayer.FormatHolder
+import androidx.media3.exoplayer.LoadingInfo
 import androidx.media3.exoplayer.source.MediaPeriod
 import androidx.media3.exoplayer.source.SampleStream
 import androidx.media3.exoplayer.trackselection.FixedTrackSelection
 import androidx.media3.exoplayer.trackselection.ExoTrackSelection
 import androidx.media3.exoplayer.upstream.DefaultAllocator
+import androidx.media3.exoplayer.upstream.Allocator
 import at.bernhardberger.tvheadend.sdk.playback.ActiveSubscription
 import at.bernhardberger.tvheadend.sdk.playback.MuxFrameType
 import at.bernhardberger.tvheadend.sdk.playback.SkipOutcome
@@ -75,9 +77,13 @@ internal class TvheadendLiveMediaPeriodTest {
         val harness = PeriodHarness(this, attachment)
         try {
             harness.start(SubscriptionStreamType.MPEG2_AUDIO)
-            repeat(2_050) { harness.audio() }
+            repeat(2_047) { harness.audio() }
+            assertTrue(attachment.bufferingCapacityAvailable)
+            harness.audio()
             assertFalse(attachment.bufferingCapacityAvailable)
             harness.period.maybeThrowPrepareError()
+            harness.seek(0.seconds)
+            assertTrue(attachment.bufferingCapacityAvailable)
         } finally {
             harness.close()
         }
@@ -809,6 +815,13 @@ internal class TvheadendLiveMediaPeriodTest {
             harness.period.maybeThrowPrepareError()
             stream.maybeThrowError()
             assertEquals(C.TIME_END_OF_SOURCE, harness.period.bufferedPositionUs)
+            val holder = FormatHolder()
+            val buffer = DecoderInputBuffer(DecoderInputBuffer.BUFFER_REPLACEMENT_MODE_NORMAL)
+            assertEquals(C.RESULT_FORMAT_READ, stream.readData(holder, buffer, 0))
+            assertEquals(C.RESULT_BUFFER_READ, stream.readData(holder, buffer, 0))
+            buffer.clear()
+            assertEquals(C.RESULT_BUFFER_READ, stream.readData(holder, buffer, 0))
+            assertTrue(buffer.isEndOfStream)
         } finally {
             harness.close()
         }
@@ -844,11 +857,183 @@ internal class TvheadendLiveMediaPeriodTest {
             harness.close()
         }
     }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["callback-last", "tracks-last", "binding-last"])
+    fun `preparation completes when the last prerequisite arrives`(order: String) = runTest {
+        val harness = PeriodHarness(this)
+        try {
+            harness.start(SubscriptionStreamType.DVB_SUBTITLE, preparationOrder = order)
+            harness.looper.runAll()
+            assertEquals(1, harness.preparations)
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `silent streams never prepare merely because the alternative deadline passed`() = runTest {
+        val harness = PeriodHarness(this)
+        try {
+            harness.start(SubscriptionStreamType.MPEG2_AUDIO)
+            advanceTimeBy(1.seconds)
+            runCurrent()
+            harness.looper.runAll()
+            assertEquals(0, harness.preparations)
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `push driven loading reports no synchronous progress`() = runTest {
+        val harness = PeriodHarness(this)
+        try {
+            harness.start(SubscriptionStreamType.MPEG2_AUDIO)
+            assertFalse(harness.period.continueLoading(LoadingInfo.Builder().setPlaybackPositionUs(0).build()))
+        } finally {
+            harness.close()
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["rounded-overflow", "exact-budget", "aligned-reservation"])
+    fun `sample byte reservations respect the shared allocator budget`(boundary: String) = runTest {
+        val block = if (boundary == "aligned-reservation") 4 else 1_024
+        // The MPEG audio reader writes mpeg-audio.bin as 572-byte sample chunks: 575 bytes cover the
+        // raw chunk but not its 1,024-byte block, and 572 bytes fit it exactly in 4-byte blocks.
+        val remaining = when (boundary) {
+            "rounded-overflow" -> 575
+            "aligned-reservation" -> 572
+            else -> 1_024
+        }
+        val allocator = object : Allocator by DefaultAllocator(false, block) {
+            override fun getTotalBytesAllocated(): Int = 64 * 1_024 * 1_024 - remaining
+        }
+        val harness = PeriodHarness(this, allocator = allocator)
+        try {
+            harness.start(SubscriptionStreamType.MPEG2_AUDIO)
+            val packet = packetEvent(0, PeriodCountingBinary(fixture("mpeg-audio.bin")))
+            if (boundary == "rounded-overflow") {
+                assertThrows(IllegalStateException::class.java) { harness.period.acceptOrdered(packet) }
+                assertThrows(IOException::class.java) { harness.period.maybeThrowPrepareError() }
+            } else {
+                harness.period.acceptOrdered(packet)
+                harness.looper.runAll()
+                val stream = harness.select(0)
+                val holder = FormatHolder()
+                val buffer = DecoderInputBuffer(DecoderInputBuffer.BUFFER_REPLACEMENT_MODE_NORMAL)
+                assertEquals(C.RESULT_FORMAT_READ, stream.readData(holder, buffer, 0))
+                assertEquals(C.RESULT_BUFFER_READ, stream.readData(holder, buffer, 0))
+            }
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `sample limit counts unread samples rather than lifetime queue indices`() = runTest {
+        val attachment = LiveTimeshiftControlBridge(PlaybackTargetToken()) {}.newAttachment()
+        val harness = PeriodHarness(this, attachment)
+        try {
+            harness.start(SubscriptionStreamType.MPEG2_AUDIO)
+            val data = PeriodCountingBinary(fixture("mpeg-audio.bin"))
+            repeat(4_096) { harness.period.acceptOrdered(packetEvent(0, data, 1_117_733L + it * 40_000)) }
+            harness.looper.runAll()
+            val stream = harness.select(0)
+            val holder = FormatHolder()
+            val buffer = DecoderInputBuffer(DecoderInputBuffer.BUFFER_REPLACEMENT_MODE_NORMAL)
+            assertEquals(C.RESULT_FORMAT_READ, stream.readData(holder, buffer, 0))
+            repeat(4_096) {
+                buffer.clear()
+                assertEquals(C.RESULT_BUFFER_READ, stream.readData(holder, buffer, 0))
+            }
+            harness.period.acceptOrdered(packetEvent(0, data, 165_000_000))
+            assertTrue(attachment.bufferingCapacityAvailable, "Consumed samples do not occupy the unread budget")
+            repeat(4_095) { harness.period.acceptOrdered(packetEvent(0, data, 165_040_000L + it * 40_000)) }
+            harness.period.maybeThrowPrepareError()
+            assertThrows(IllegalStateException::class.java) {
+                harness.period.acceptOrdered(packetEvent(0, data, 330_000_000))
+            }
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `buffer positions follow the slowest selected audio video and ignore text`() = runTest {
+        val harness = PeriodHarness(this)
+        try {
+            assertEquals(0, harness.period.bufferedPositionUs)
+            harness.start(SubscriptionStreamType.MPEG2_AUDIO, SubscriptionStreamType.MPEG2_AUDIO,
+                SubscriptionStreamType.TEXT_SUBTITLE)
+            harness.audio()
+            harness.packet(0, PeriodCountingBinary(fixture("mpeg-audio.bin")), 1_617_733)
+            harness.packet(1, PeriodCountingBinary(fixture("mpeg-audio.bin")), 1_367_733)
+            harness.looper.runAll()
+            assertEquals(250_000, harness.period.bufferedPositionUs)
+            assertEquals(250_000, harness.period.nextLoadPositionUs)
+            val selections = Array(3) { FixedTrackSelection(harness.period.trackGroups[it], 0) }
+            val streams = arrayOfNulls<SampleStream>(3)
+            assertEquals(123_456, harness.period.selectTracks(selections, BooleanArray(3), streams, BooleanArray(3), 123_456))
+            assertEquals(250_000, harness.period.bufferedPositionUs, "The silent text queue is not a required AV queue")
+            harness.select(0)
+            assertEquals(500_000, harness.period.bufferedPositionUs)
+            harness.period.selectTracks(arrayOf(FixedTrackSelection(harness.period.trackGroups[2], 0)),
+                booleanArrayOf(false), arrayOfNulls<SampleStream>(1), booleanArrayOf(false), 0)
+            harness.packet(2, PeriodCountingBinary("Caption".toByteArray()), 1_867_733)
+            assertEquals(750_000, harness.period.bufferedPositionUs, "Text-only selection uses its own range")
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `skipping queued samples returns the count and advances the stream`() = runTest {
+        val harness = PeriodHarness(this)
+        try {
+            harness.start(SubscriptionStreamType.MPEG2_AUDIO)
+            repeat(3) { harness.packet(0, PeriodCountingBinary(fixture("mpeg-audio.bin")), 1_117_733L + it * 40_000) }
+            harness.looper.runAll()
+            val stream = harness.select(0)
+            assertEquals(2, stream.skipData(80_000))
+            val holder = FormatHolder()
+            val buffer = DecoderInputBuffer(DecoderInputBuffer.BUFFER_REPLACEMENT_MODE_NORMAL)
+            assertEquals(C.RESULT_FORMAT_READ, stream.readData(holder, buffer, 0))
+            assertEquals(C.RESULT_BUFFER_READ, stream.readData(holder, buffer, 0))
+            assertEquals(80_000, buffer.timeUs)
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `paused buffering reserves byte headroom at exactly half the shared budget`() = runTest {
+        val attachment = LiveTimeshiftControlBridge(PlaybackTargetToken()) {}.newAttachment()
+        var allocated = 32 * 1_024 * 1_024 - 1
+        val allocator = object : Allocator by DefaultAllocator(false, 1_024) {
+            override fun getTotalBytesAllocated(): Int = allocated
+        }
+        val harness = PeriodHarness(this, attachment, allocator)
+        try {
+            harness.start(SubscriptionStreamType.MPEG2_AUDIO)
+            harness.audio()
+            assertTrue(attachment.bufferingCapacityAvailable)
+            allocated++
+            harness.audio()
+            assertFalse(attachment.bufferingCapacityAvailable)
+        } finally {
+            harness.close()
+        }
+    }
 }
 
-private class PeriodHarness(private val scope: TestScope, attachment: LiveTimeshiftControlBridge.Attachment? = null) {
+private class PeriodHarness(
+    private val scope: TestScope,
+    attachment: LiveTimeshiftControlBridge.Attachment? = null,
+    val allocator: Allocator = DefaultAllocator(false, 1_024),
+) {
     val looper = QueuedCoordinatorLooper()
-    val allocator = DefaultAllocator(false, 1_024)
     val connection = ScriptedSubscriptionConnection()
     private val dispatcher = StandardTestDispatcher(scope.testScheduler)
     private val manager = createSubscriptionManager(connection, dispatcher)
@@ -866,17 +1051,25 @@ private class PeriodHarness(private val scope: TestScope, attachment: LiveTimesh
         vararg types: SubscriptionStreamType,
         audioTypes: List<Long?> = emptyList(),
         languages: List<String?> = emptyList(),
+        preparationOrder: String = "binding-last",
     ) {
         connection.scriptSubscribe(SubscriptionOperationResult.Ok(SubscriptionConfirmation(null, null, null, 120)))
         manager.startAdmission()
-        period.prepare(object : MediaPeriod.Callback {
+        val callback = object : MediaPeriod.Callback {
             override fun onPrepared(mediaPeriod: MediaPeriod) {
                 assertTrue(looper.isCurrent())
                 preparations++
             }
             override fun onContinueLoadingRequested(source: MediaPeriod) = Unit
-        }, 0)
-        val opening = scope.async { manager.open(SubscriptionChannelId(1), period, 120.seconds) }
+        }
+        if (preparationOrder != "callback-last") period.prepare(callback, 0)
+        var deferredTracks: SubscriptionTracks? = null
+        val consumer = object : SubscriptionEventConsumer by period {
+            override fun tracksReady(tracks: SubscriptionTracks) {
+                if (preparationOrder == "tracks-last") deferredTracks = tracks else period.tracksReady(tracks)
+            }
+        }
+        val opening = scope.async { manager.open(SubscriptionChannelId(1), consumer, 120.seconds) }
         scope.runCurrent()
         connection.emit(SubscriptionEvent.Started(types.mapIndexed { index, type ->
             subscriptionStream(index.toLong(), type, languages.getOrNull(index), audioTypes.getOrNull(index))
@@ -884,6 +1077,8 @@ private class PeriodHarness(private val scope: TestScope, attachment: LiveTimesh
         scope.runCurrent()
         subscription = (opening.await() as SubscriptionOpenResult.Opened).subscription
         period.bind(subscription)
+        deferredTracks?.let(period::tracksReady)
+        if (preparationOrder == "callback-last") period.prepare(callback, 0)
         scope.backgroundScope.launch {
             subscription.state.first { it is SubscriptionState.Terminal }
             period.terminal(subscription)

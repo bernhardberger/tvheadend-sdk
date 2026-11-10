@@ -14,6 +14,7 @@ import androidx.media3.common.Metadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.ParsableByteArray
 import androidx.media3.extractor.DefaultExtractorInput
+import androidx.media3.extractor.ExtractorInput
 import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.extractor.DiscardingTrackOutput
 import androidx.media3.extractor.Extractor
@@ -133,6 +134,56 @@ class VideoScanInspectionTest {
     }
 
     @Test
+    fun `extractor decoration preserves rejection lifecycle and output signals`() {
+        var seek: Pair<Long, Long>? = null
+        var released = false
+        var inspectedVideo: VideoScanTrackOutput? = null
+        val delegate = object : Extractor {
+            override fun sniff(input: ExtractorInput): Boolean = false
+            override fun init(output: ExtractorOutput) {
+                inspectedVideo = (output.track(0, C.TRACK_TYPE_VIDEO) as VideoScanTrackOutput).apply {
+                    format(Format.Builder().setSampleMimeType(MimeTypes.VIDEO_H264)
+                        .setInitializationData(listOf(scanSps(false, 0, false), scanPps(false, 0, 0))).build())
+                }
+            }
+            override fun read(input: ExtractorInput, seekPosition: PositionHolder): Int = Extractor.RESULT_END_OF_INPUT
+            override fun seek(position: Long, timeUs: Long) { seek = position to timeUs }
+            override fun release() { released = true }
+        }
+        val extractor = VideoScanExtractor(delegate)
+        assertEquals(false, extractor.sniff(input(byteArrayOf(), 0)))
+        val captured = ScanCapturingOutput()
+        extractor.init(captured)
+        val video = checkNotNull(inspectedVideo)
+        writeSample(video, scanSps(false, 0, true) + scanSlice(false, 0))
+        extractor.seek(17, 29)
+        assertEquals(17L to 29L, seek)
+        writeSample(video, byteArrayOf(0x55))
+        assertEquals(listOf(VideoScanType.PROGRESSIVE, VideoScanType.INTERLACED), captured.video.sampleScans)
+        extractor.release()
+        assertTrue(released)
+
+        var ended = false
+        var publishedMap: SeekMap? = null
+        val map = SeekMap.Unseekable(31)
+        val output = VideoScanExtractorOutput(object : ExtractorOutput {
+            override fun track(id: Int, type: Int): TrackOutput = DiscardingTrackOutput()
+            override fun endTracks() { ended = true }
+            override fun seekMap(seekMap: SeekMap) { publishedMap = seekMap }
+        })
+        output.endTracks()
+        assertTrue(ended)
+        output.seekMap(map)
+        assertSame(map, publishedMap)
+        var duration: Long? = null
+        val track = VideoScanTrackOutput(object : TrackOutput by DiscardingTrackOutput() {
+            override fun durationUs(durationUs: Long) { duration = durationUs }
+        })
+        track.durationUs(43)
+        assertEquals(43L, duration)
+    }
+
+    @Test
     fun `backward TS seek restores interlaced samples after reading the progressive part`() {
         val bytes = resource("h264-switch.ts")
         val extractor = VideoScanExtractor(TsExtractor(SubtitleParser.Factory.UNSUPPORTED))
@@ -191,12 +242,17 @@ class VideoScanInspectionTest {
     @Test
     fun `inactive parameter sets do not change H264 or H265 pictures until their PPS is activated`() {
         listOf(false, true).forEach { hevc ->
-            val track = ScanCapturingTrack()
-            val output = configuredTrack(track, hevc)
-            writeSample(output, scanSps(hevc, 1, true) + scanSlice(hevc, 0))
-            writeSample(output, scanPps(hevc, 1, 1) + scanSlice(hevc, 0))
-            writeSample(output, scanSlice(hevc, 1))
-            assertEquals(listOf(VideoScanType.INTERLACED, VideoScanType.INTERLACED, VideoScanType.PROGRESSIVE), track.sampleScans)
+            listOf(1, 2).forEach { id ->
+                val track = ScanCapturingTrack()
+                val output = configuredTrack(track, hevc)
+                writeSample(output, scanSps(hevc, id, true) + scanSlice(hevc, 0))
+                writeSample(output, scanPps(hevc, id, id) + scanSlice(hevc, 0))
+                val activatedSlice = scanSlice(hevc, id).apply {
+                    if (!hevc && id == 2) this[START_CODE.size] = 0x61
+                }
+                writeSample(output, activatedSlice)
+                assertEquals(listOf(VideoScanType.INTERLACED, VideoScanType.INTERLACED, VideoScanType.PROGRESSIVE), track.sampleScans)
+            }
         }
     }
 
@@ -214,10 +270,66 @@ class VideoScanInspectionTest {
 
     @Test
     fun `H265 SPS sub-layer PTL flags locate the correct sequence id`() {
+        listOf(2, 6).forEach { subLayers ->
+            val track = ScanCapturingTrack()
+            val output = configuredTrack(track, hevc = true)
+            writeSample(output, annexB(scanH265Sps(1, true, subLayers)) + scanPps(true, 1, 1) + scanSlice(true, 1))
+            assertEquals(listOf(VideoScanType.PROGRESSIVE), track.sampleScans)
+        }
+    }
+
+    @Test
+    fun `H264 scaling-list termination and POC type one retain the declared scan`() {
+        val tail = ue(1) + "0" + ue(3) + ue(3) + "1100"
+        val scaling = "011001000000000000011110" + ue(0) + ue(1) + ue(0) + ue(0) + "01" +
+            "1" + ue(16) + "0000000" + ue(0) + ue(0) + ue(0) + tail
+        val poc = "010000100000000000011110" + ue(0) + ue(0) + ue(1) + "0" +
+            ue(1) + ue(2) + ue(2) + ue(1) + ue(2) + tail
+        val zeroCyclePoc = "010000100000000000011110" + ue(0) + ue(0) + ue(1) + "0" +
+            ue(0) + ue(0) + ue(0) + tail
+        listOf(scaling, poc, zeroCyclePoc).forEach { bits ->
+            val track = ScanCapturingTrack()
+            val output = configuredTrack(track, hevc = false)
+            writeSample(output, annexB(rbsp(byteArrayOf(0x67), bits)) + scanSlice(false, 0))
+            assertEquals(listOf(VideoScanType.PROGRESSIVE), track.sampleScans)
+        }
+    }
+
+    @Test
+    fun `malformed active sequence declarations cannot replace the valid scan`() {
+        val invalidH264 = annexB(rbsp(byteArrayOf(0x67), "010000100000000000011110" + ue(0) + ue(13) +
+            ue(0) + ue(0) + ue(1) + "0" + ue(3) + ue(3) + "1100"))
+        val hevc = scanH265Sps(0, true)
+        listOf(false to invalidH264,
+            true to annexB(hevc.copyOf().also { it[0] = 0xC2.toByte() }),
+            true to annexB(hevc.copyOf().also { it[1] = 0 }),
+            true to annexB(scanH265Sps(0, true, subLayers = 7))).forEach { (h265, invalid) ->
+            val track = ScanCapturingTrack()
+            val output = configuredTrack(track, h265)
+            writeSample(output, invalid + scanSlice(h265, 0))
+            assertEquals(listOf(VideoScanType.INTERLACED), track.sampleScans)
+        }
+    }
+
+    @Test
+    fun `minimal MPEG-2 sequence extension declares the sample scan`() {
         val track = ScanCapturingTrack()
-        val output = configuredTrack(track, hevc = true)
-        writeSample(output, annexB(scanH265Sps(1, true, subLayers = 2)) + scanPps(true, 1, 1) + scanSlice(true, 1))
+        val output = VideoScanTrackOutput(track)
+        output.format(Format.Builder().setSampleMimeType(MimeTypes.VIDEO_MPEG2).build())
+        writeSample(output, annexB(byteArrayOf(0xB5.toByte(), 0x10, 0x08)) + START_CODE)
         assertEquals(listOf(VideoScanType.PROGRESSIVE), track.sampleScans)
+    }
+
+    @Test
+    fun `H265 VCL type endpoints activate the referenced picture`() {
+        listOf(0, 15, 16, 23, 24, 31).forEach { type ->
+            val track = ScanCapturingTrack()
+            val output = configuredTrack(track, hevc = true)
+            val slice = annexB(rbsp(byteArrayOf((type shl 1).toByte(), 1),
+                (if (type in 16..23) "10" else "1") + ue(1)))
+            writeSample(output, scanSps(true, 1, true) + scanPps(true, 1, 1) + slice)
+            assertEquals(listOf(VideoScanType.PROGRESSIVE), track.sampleScans)
+        }
     }
 
     @Test
@@ -271,6 +383,19 @@ class VideoScanInspectionTest {
         output.resetForSeek()
         writeSample(output, scanSlice(false, 0))
         assertEquals(listOf(VideoScanType.PROGRESSIVE, VideoScanType.PROGRESSIVE, VideoScanType.INTERLACED), track.sampleScans)
+    }
+
+    @Test
+    fun `reset discards pending scan evidence before an inconclusive sample`() {
+        listOf(false, true).forEach { seek ->
+            val track = ScanCapturingTrack()
+            val output = configuredTrack(track, hevc = false)
+            val pending = scanSps(false, 0, true) + scanSlice(false, 0)
+            output.sampleData(ParsableByteArray(pending), pending.size, TrackOutput.SAMPLE_DATA_PART_MAIN)
+            if (seek) output.resetForSeek() else output.resetForDiscontinuity()
+            writeSample(output, byteArrayOf(0x55))
+            assertEquals(listOf(VideoScanType.INTERLACED), track.sampleScans)
+        }
     }
 
     @Test
@@ -336,26 +461,40 @@ class VideoScanInspectionTest {
     }
 
     @Test
-    fun `pre-format replay retains absolute positions across non-main bytes and stops at its cap`() {
+    fun `adjacent pre-format chunks replay as a single complete declaration`() {
         val track = ScanCapturingTrack()
         val output = VideoScanTrackOutput(track)
-        val first = scanSps(false, 1, true)
-        val second = scanPps(false, 1, 1) + scanSlice(false, 1)
-        output.sampleData(ParsableByteArray(first), first.size, TrackOutput.SAMPLE_DATA_PART_MAIN)
-        output.sampleData(ParsableByteArray(ByteArray(7)), 7, TrackOutput.SAMPLE_DATA_PART_ENCRYPTION)
-        output.sampleData(ParsableByteArray(second), second.size, TrackOutput.SAMPLE_DATA_PART_MAIN)
-        val padding = ByteArray(64 * 1024) { 0x55 }
-        output.sampleData(ParsableByteArray(padding), padding.size, TrackOutput.SAMPLE_DATA_PART_MAIN)
-        val ignored = scanSps(false, 1, false) + scanSlice(false, 1)
-        output.sampleData(ParsableByteArray(ignored), ignored.size, TrackOutput.SAMPLE_DATA_PART_MAIN)
-        output.format(
-            Format.Builder().setSampleMimeType(MimeTypes.VIDEO_H264)
-                .setInitializationData(listOf(scanSps(false, 0, false), scanPps(false, 0, 0))).build(),
-        )
-        val offset = second.size + padding.size + ignored.size
-        output.sampleMetadata(0L, C.BUFFER_FLAG_KEY_FRAME, first.size + 7, offset, null)
-        output.sampleMetadata(1L, C.BUFFER_FLAG_KEY_FRAME, second.size + padding.size + ignored.size, 0, null)
-        assertEquals(listOf(VideoScanType.INTERLACED, VideoScanType.PROGRESSIVE), track.sampleScans)
+        val chunk = scanSps(false, 1, true) + scanPps(false, 1, 1) + scanSlice(false, 1)
+        chunk.forEach { output.sampleData(ParsableByteArray(byteArrayOf(it)), 1, TrackOutput.SAMPLE_DATA_PART_MAIN) }
+        output.format(Format.Builder().setSampleMimeType(MimeTypes.VIDEO_H264)
+            .setInitializationData(listOf(scanSps(false, 0, false), scanPps(false, 0, 0))).build())
+        output.sampleMetadata(0, C.BUFFER_FLAG_KEY_FRAME, chunk.size, 0, null)
+        assertEquals(listOf(VideoScanType.PROGRESSIVE), track.sampleScans)
+    }
+
+    @Test
+    fun `pre-format replay retains absolute positions across non-main bytes and stops at its cap`() {
+        listOf(7, 64).forEach { gap ->
+            val track = ScanCapturingTrack()
+            val output = VideoScanTrackOutput(track)
+            val first = scanSps(false, 1, true)
+            val second = scanPps(false, 1, 1) + scanSlice(false, 1)
+            output.sampleData(ParsableByteArray(first), first.size, TrackOutput.SAMPLE_DATA_PART_MAIN)
+            output.sampleData(ParsableByteArray(ByteArray(gap)), gap, TrackOutput.SAMPLE_DATA_PART_ENCRYPTION)
+            output.sampleData(ParsableByteArray(second), second.size, TrackOutput.SAMPLE_DATA_PART_MAIN)
+            val padding = ByteArray(64 * 1024) { 0x55 }
+            output.sampleData(ParsableByteArray(padding), padding.size, TrackOutput.SAMPLE_DATA_PART_MAIN)
+            val ignored = scanSps(false, 1, false) + scanSlice(false, 1)
+            output.sampleData(ParsableByteArray(ignored), ignored.size, TrackOutput.SAMPLE_DATA_PART_MAIN)
+            output.format(
+                Format.Builder().setSampleMimeType(MimeTypes.VIDEO_H264)
+                    .setInitializationData(listOf(scanSps(false, 0, false), scanPps(false, 0, 0))).build(),
+            )
+            val offset = second.size + padding.size + ignored.size
+            output.sampleMetadata(0L, C.BUFFER_FLAG_KEY_FRAME, first.size + gap, offset, null)
+            output.sampleMetadata(1L, C.BUFFER_FLAG_KEY_FRAME, second.size + padding.size + ignored.size, 0, null)
+            assertEquals(listOf(VideoScanType.INTERLACED, VideoScanType.PROGRESSIVE), track.sampleScans)
+        }
     }
 
     @Test
