@@ -15,7 +15,7 @@ implementation.
 |---|---|
 | Forward-only play from the start to the live edge, then on to completion, built-in Matroska | **Yes.** Stock `MatroskaExtractor` and `ProgressiveMediaSource` play it unchanged when the data source has unknown length and waits at the edge. |
 | Seeking and resume in a growing Matroska file | **Yes, with a P7-style wrapper.** No parser fork and no custom `MediaPeriod` were needed. Not free: it needs a cluster index probe of its own. |
-| MP4 (Tvheadend's libav `avmp4` profile) | **Probably for forward-only, not tested.** The file is fragmented and append-only, and Media3's fragmented extractor has the same unseekable-then-continue shape. No test recording was made. |
+| MP4 (Tvheadend's libav `avmp4` profile) | **Forward parsing yes, but not worth admitting for 1.0.** A test recording parses forward to its end like Matroska. But the server's bundled FFmpeg cannot record AC-3 services as MP4 at all, and Media3 reads a 49.7-day duration from the files it does write, so even a finished MP4 recording neither ends nor seeks correctly. See [MP4 test recording](#mp4-test-recording). |
 
 ## What Tvheadend writes
 
@@ -64,8 +64,33 @@ recording closes.
   a sequence of `moof`/`mdat` pairs.
 - At close, `av_write_trailer` appends `mfra` (`:7730-7736`); `moov` is not
   rewritten. The file is append-only from the first fragment on.
-- `avmp4` carries MPEG-2/H.264/HEVC video and MP2, AC-3, E-AC-3, AAC and AC-4
+- `avmp4` lists MPEG-2/H.264/HEVC video and MP2, AC-3, E-AC-3, AAC and AC-4
   audio (`muxer_libav.c:290-300`). DVB subtitles and teletext are dropped.
+- In practice AC-3 and E-AC-3 fail. `lav_muxer_add_stream` takes each stream's
+  codec id from `avcodec_find_encoder`, and the bundled FFmpeg is built with
+  only the `mpeg2video mp2 aac vorbis flac` encoders (`Makefile.ffmpeg:40`). An
+  AC-3 stream gets codec `none`, the MP4 header write fails, and the recording
+  ends as "File not created". This was reproduced on 3sat HD. Most German and
+  Austrian HD services on the test server carry AC-3.
+
+### Other containers Tvheadend can record
+
+`muxer_create` (`muxer.c:321-345`) tries the pass-through, built-in Matroska,
+audio-ES and libav muxers in turn. The file suffixes come from `muxer.c:107-140`:
+
+| Container | Suffix | How a recording gets it |
+|---|---|---|
+| MPEG-TS pass-through | `.ts` | Default `pass` profile. Already growing-capable. |
+| Built-in Matroska | `.mkv`, audio-only `.mka` | `matroska` profile. In 1.0 scope. |
+| Built-in WebM | `.webm` | Same muxer with the WebM flag (`muxer_mkv.c:1610-1624`). Needs a transcode profile that produces WebM codecs. |
+| libav Matroska | **`.mkv`, the same suffix as built-in** | `avmatroska` profile, FFmpeg's muxer. |
+| libav MP4 | `.mp4` | `avmp4` profile, tested below. |
+| MPEG-PS, audio ES (`.mpeg`, `.mp2`, `.ac3`, `.aac`, `.oga`, `.ac4`) | various | Transcode and audio-only profiles (`profile.c:2731-2741`); not examined further. |
+
+Two consequences for admission. Built-in WebM and `.mka` come from the same
+Matroska muxer, so the same file layout follows, but neither was recorded here.
+And admission by suffix cannot tell built-in from libav Matroska: both write
+`.mkv`.
 
 ## Media3 1.11.1 evidence
 
@@ -125,6 +150,45 @@ Seeking was proven over a fixed copy with one index. Republishing the index as
 the file grows was not run for Matroska. It is the same Media3 path the P7 TS
 wrapper already uses.
 
+### MP4 test recording
+
+A second, non-default DVR configuration with an `avmp4` stream profile recorded
+12 minutes of arte HD (H.264 video and four MP2 tracks; DVB subtitles and
+teletext were dropped), because the 3sat attempt failed on AC-3 (see
+[libav MP4](#libav-mp4-avmp4)). The same harness, with Media3's
+`FragmentedMp4Extractor`, ran over a 282 MB and a 320 MB copy taken during
+recording and over the finished 654 MB file.
+
+The file has the layout the source predicts. `moov` and a first `mdat` sit at
+the start, followed by 35,995 `moof`/`mdat` pairs (18 KB each on average, one
+video frame per fragment) and a 3 MB `mfra` written at close. Each copy is a
+byte-exact prefix of the finished file.
+
+| Case | Outcome |
+|---|---|
+| Extractor, copy ending inside an `mdat`, known or unknown length | Definitive `SeekMap.Unseekable` at the first fragment; `EOFException` at the copy's end after emitting the samples it had. |
+| Player, copy, known length | READY, not seekable, `seekTo(30 s)` stays at 0; plays to 326 s, then a source error (`EOFException`). |
+| **Extractor, unknown length, data source waits at the edge**; the file grows in unaligned 7 MB steps to the finished file | Ends cleanly after 54 edge waits. Sample counts match a known-length read of the finished file exactly (35,996 video samples with 1,168 keyframes, about 29,970 per MP2 track). |
+| Player over the same growing source | READY, not reported live, then plays past the media's end: still READY at 100,719 s when the harness gave up. It never reaches ENDED. |
+| Finished file through the SDK's finished-recording extractor factory | Seekable through the `mfra` index, but with the same bogus duration. `seekTo(600 s)` fails with `ERROR_CODE_PARSING_CONTAINER_MALFORMED` ("Offset to end of mdat was negative"). |
+
+Two defects in the written file cause the player results; neither is specific
+to growth:
+
+- **Duration.** The video `tkhd` duration is `0xFFFFFFB0` (−80 ms written as an
+  unsigned 32-bit value; its `mdhd` is likewise negative). Media3 takes it as
+  4,294,967,216 ms, about 49.7 days, as the item duration. ExoPlayer only
+  finishes once the position reaches a known duration
+  (`ExoPlayerImplInternal.java:1515-1519`), so playback idles after the last
+  sample instead of ending.
+- **Seek index.** The video `tfra` lists all 35,995 fragments, not just the
+  1,168 that hold keyframes, and their times follow presentation order: 17,995
+  of them are earlier than the entry before.
+
+So stock Media3 parses a growing Tvheadend MP4 forward exactly like Matroska,
+but a usable MP4 path needs its own duration override and its own keyframe
+index, even for finished recordings.
+
 ## Carry-over cost and risk
 
 The SDK already has the generation-bound growth lease, the unknown-length
@@ -135,7 +199,7 @@ Estimates below are rough and assume that infrastructure.
 |---|---|---|
 | Forward-only Matroska | Admit `.mkv` growing paths (`sdk-core` `PlaybackBinding.kt:340`, the coordinator's deferred admission), select `MatroskaExtractor` instead of the TS wrapper, make the data source's 188-byte delivery alignment container-neutral, and state the live, duration-less, unseekable presentation in the consumer contract. Add a synthetic (non-broadcast) Matroska fixture, a review, and device acceptance. | 4-7 engineer-days |
 | Seek and resume, Matroska | Wrapper as above; an extent probe that walks cluster headers and republishes keyframe-start indexes as the file grows; edge clamping; handover at completion. | +6-10 engineer-days |
-| MP4 | Separate test recording first. Forward-only likely matches Matroska; seeking needs a `moof`/`tfdt` walker over very dense fragments. | Not estimated |
+| MP4 | Duration override and a keyframe-only index of its own (a `moof`/`tfdt` walker over one-frame fragments), which finished MP4 recordings need as well. Only services without AC-3 can be recorded at all with the bundled FFmpeg. | Not estimated; out of 1.0 |
 
 Risks and upgrade exposure:
 
@@ -153,10 +217,15 @@ Risks and upgrade exposure:
 - **Coarse seek points.** Cluster starts are up to 6 s apart, and clusters can
   reach 10 MB. Seeking stays exact through decode-forward, but a seek near the
   edge can wait for the next cluster.
-- **Stalls.** A recording that stalls longer than Media3's 10-minute
-  stuck-buffering limit ends forward-only playback with a timeout error.
+- **Stalls.** The harness data source waited forever, so a stalled source in
+  the harness ends only at Media3's 10-minute stuck-buffering limit. The SDK's
+  own growing reader is stricter for every container: a read fails with
+  `TIMEOUT` after 30 seconds without new bytes
+  (`sdk-core` `GrowingRecordingFileReader.kt:543,577,673`).
+- **Admission by suffix.** Built-in and libav Matroska both write `.mkv`, so a
+  suffix check alone also admits `avmatroska` recordings, which were not tested.
 - **Not covered by this spike:** H.265, other channels and bitrates, Tvheadend's
-  libav Matroska profile (`avmatroska`, a different muxer), reconnect, and
+  libav Matroska profile (`avmatroska`, a different muxer), WebM, reconnect, and
   device playback.
 
 ## Recommendation for #24
@@ -164,16 +233,24 @@ Risks and upgrade exposure:
 Forward-only play-to-edge of the built-in Matroska profile is the low-risk
 part. It reuses the existing growth source and stock Media3 parsing, and it can
 be scoped on its own. Seeking and resume are feasible on the P7 pattern and
-cost roughly as much again. MP4 should wait for its own test recording.
+cost roughly as much again.
 
 Owner decision, 2026-11-11: built-in Matroska with seeking and resume is in
 scope for 1.0, and [roadmap decision 12](roadmap.md) now says so. MP4 stays out
 until it has its own test recording. The implementation has no release slot
 yet and needs an independent review before it lands.
 
-Two points from the spike belong in that implementation's scope. First, the
-estimated seek map with a duration also stops Media3 from reporting the
-recording as live, so forward playback before the first index is published
-should already use an estimated map with a duration. Second, the SDK should
-detect stalled growth itself, while the DVR entry is still recording, and
-report it well before Media3's 10-minute stuck-buffering limit.
+The MP4 test recording, made the same evening, does not change that. Growing
+MP4 parses forward like Matroska, but on the bundled FFmpeg build it cannot
+record AC-3 services, and the files it does write carry a bogus duration and a
+seek index that is not keyframe-only. Those defects affect finished MP4
+recordings as well, so they belong to a separate finished-MP4 fix before any
+growing MP4 work.
+
+Two points from the spike belong in the Matroska implementation's scope.
+First, the estimated seek map with a duration also stops Media3 from reporting
+the recording as live, so forward playback before the first index is published
+should already use an estimated map with a duration. Second, stalled growth is
+already bounded by the SDK's growing reader (30 seconds without new bytes
+fails the read with `TIMEOUT`). The implementation should keep that bound for
+Matroska and test it, not add a second one.
