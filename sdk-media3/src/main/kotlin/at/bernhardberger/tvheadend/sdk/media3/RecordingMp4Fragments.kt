@@ -1,0 +1,195 @@
+@file:androidx.media3.common.util.UnstableApi
+
+package at.bernhardberger.tvheadend.sdk.media3
+
+import androidx.media3.common.C
+import androidx.media3.common.util.ParsableByteArray
+import androidx.media3.common.util.Util
+import androidx.media3.container.Mp4Box
+import androidx.media3.extractor.GaplessInfoHolder
+import androidx.media3.extractor.mp4.BoxParser
+import androidx.media3.extractor.mp4.Track
+
+internal const val MP4_PROBE_BYTES: Int = 16 * 1024 * 1024
+internal const val MP4_FRAGMENT_BYTES: Int = 64 * 1024
+
+/** Shares fragment metadata between finished-file probing and timestamp seeking. */
+internal data class RecordingMp4Track(
+    val track: Track,
+    val duration: Long,
+    val flags: Int,
+    val restartTrackIds: Set<Int>,
+) {
+    fun timeUs(value: Long): Long = Util.scaleLargeTimestamp(value, C.MICROS_PER_SECOND, track.timescale)
+}
+
+internal data class RecordingMp4Fragment(
+    val position: Long,
+    val endPosition: Long,
+    val timeUs: Long,
+    val endTimeUs: Long,
+    val sync: Boolean,
+    val restartSafe: Boolean,
+)
+
+/** Uses Media3's box model and track parser; fragment field parsers are private in Media3. */
+internal object RecordingMp4Fragments {
+    fun track(moovBytes: ByteArray): RecordingMp4Track? {
+        val moov = tree(moovBytes, 0, moovBytes.size) ?: return null
+        val mvex = moov.getContainerBoxOfType(Mp4Box.TYPE_mvex) ?: return null
+        val tables = BoxParser.parseTraks(moov, GaplessInfoHolder(), C.TIME_UNSET, null, false, false, { it }, false)
+        val video = tables.firstOrNull { it.track.type == C.TRACK_TYPE_VIDEO }?.track ?: return null
+        val trex = mvex.leafChildren.firstOrNull {
+            it.type == Mp4Box.TYPE_trex && it.data.limit() >= 32 && it.data.apply { position = 12 }.readInt() == video.id
+        }?.data ?: return null
+        trex.position = 20
+        val duration = trex.readUnsignedInt()
+        trex.skipBytes(4)
+        return RecordingMp4Track(video, duration, trex.readInt(), tables.filter { it.sampleCount > 0 }.map { it.track.id }.toSet())
+    }
+
+    fun find(bytes: ByteArray, base: Long, fileSize: Long, track: RecordingMp4Track, syncOnly: Boolean, from: Int = 0): RecordingMp4Fragment? {
+        var offset = from
+        val data = ParsableByteArray(bytes)
+        while (offset <= bytes.size - 16) {
+            data.position = offset + 4
+            if (data.readInt() != Mp4Box.TYPE_moof) {
+                offset++
+                continue
+            }
+            val box = header(bytes, offset, bytes.size)
+            if (box == null) {
+                offset++
+                continue
+            }
+            if (box.size > MP4_FRAGMENT_BYTES || box.end > bytes.size || box.end + 8 > bytes.size) {
+                offset++
+                continue
+            }
+            val mdat = header(bytes, box.end, bytes.size)
+            if (mdat == null || mdat.type != Mp4Box.TYPE_mdat || base + mdat.end > fileSize) {
+                offset++
+                continue
+            }
+            val fragment = fragment(bytes, offset, box.end, base, track)
+            if (fragment != null && (!syncOnly || fragment.sync && fragment.restartSafe)) {
+                return fragment.copy(endPosition = base + mdat.end)
+            }
+            offset = minOf(mdat.end, bytes.size)
+        }
+        return null
+    }
+
+    fun lastEndTime(bytes: ByteArray, base: Long, fileSize: Long, track: RecordingMp4Track): Long? {
+        var offset = 0
+        var end: Long? = null
+        while (offset < bytes.size) {
+            val fragment = find(bytes, base, fileSize, track, false, offset) ?: break
+            end = maxOf(end ?: 0, fragment.endTimeUs)
+            offset = (fragment.endPosition - base).toInt()
+        }
+        return end
+    }
+
+    private fun fragment(bytes: ByteArray, start: Int, end: Int, base: Long, track: RecordingMp4Track): RecordingMp4Fragment? {
+        return try {
+            val moof = tree(bytes, start, end) ?: return null
+            // seek() restores each nonempty moov sample table until this moof supplies that track's traf.
+            val presentTrackIds = moof.containerChildren.filter { it.type == Mp4Box.TYPE_traf }.mapNotNull {
+                it.getLeafBoxOfType(Mp4Box.TYPE_tfhd)?.data?.apply { position = 12 }?.readInt()
+            }.toSet()
+            val traf = moof.containerChildren.firstOrNull { container ->
+                container.type == Mp4Box.TYPE_traf && container.getLeafBoxOfType(Mp4Box.TYPE_tfhd)?.data?.let {
+                    it.position = 12
+                    it.readInt() == track.track.id
+                } == true
+            } ?: return null
+            val tfhd = requireNotNull(traf.getLeafBoxOfType(Mp4Box.TYPE_tfhd)).data
+            tfhd.position = 8
+            val flags = BoxParser.parseFullBoxFlags(tfhd.readInt())
+            tfhd.skipBytes(4)
+            if (flags and 1 != 0) tfhd.skipBytes(8)
+            if (flags and 2 != 0) tfhd.skipBytes(4)
+            val defaultDuration = if (flags and 8 != 0) tfhd.readUnsignedInt() else track.duration
+            if (flags and 16 != 0) tfhd.skipBytes(4)
+            val defaultFlags = if (flags and 32 != 0) tfhd.readInt() else track.flags
+            val tfdt = traf.getLeafBoxOfType(Mp4Box.TYPE_tfdt)?.data ?: return null
+            tfdt.position = 8
+            val version = BoxParser.parseFullBoxVersion(tfdt.readInt())
+            var decode = if (version == 1) tfdt.readUnsignedLongToLong() else tfdt.readUnsignedInt()
+            var firstTime: Long? = null
+            var firstFlags = defaultFlags
+            var lastEnd = 0L
+            val edit = track.track.editListMediaTimes?.takeIf { it.length() == 1 }?.get(0) ?: 0
+            for (run in traf.leafChildren.filter { it.type == Mp4Box.TYPE_trun }) {
+                val data = run.data
+                data.position = 8
+                val runFlags = BoxParser.parseFullBoxFlags(data.readInt())
+                val samples = data.readUnsignedInt()
+                if (samples > 100_000) return null
+                if (runFlags and 1 != 0) data.skipBytes(4)
+                val runFirstFlags = if (runFlags and 4 != 0) data.readInt() else defaultFlags
+                repeat(samples.toInt()) { index ->
+                    val duration = if (runFlags and 0x100 != 0) data.readUnsignedInt() else defaultDuration
+                    if (runFlags and 0x200 != 0) data.skipBytes(4)
+                    val sampleFlags = if (runFlags and 0x400 != 0) data.readInt() else if (index == 0) runFirstFlags else defaultFlags
+                    val composition = if (runFlags and 0x800 != 0) data.readInt().toLong() else 0
+                    if (duration <= 0 || decode > Long.MAX_VALUE - duration - Int.MAX_VALUE) return null
+                    val presentation = decode + composition - edit
+                    if (firstTime == null) {
+                        firstTime = track.timeUs(presentation)
+                        firstFlags = sampleFlags
+                    }
+                    lastEnd = maxOf(lastEnd, track.timeUs(presentation + duration))
+                    decode += duration
+                }
+            }
+            RecordingMp4Fragment(
+                base + start, base + end, firstTime ?: return null, lastEnd, firstFlags and 0x10000 == 0,
+                presentTrackIds.containsAll(track.restartTrackIds),
+            )
+        } catch (_: IndexOutOfBoundsException) {
+            null
+        } catch (_: IllegalArgumentException) {
+            null
+        }
+    }
+
+    private fun tree(bytes: ByteArray, start: Int, limit: Int, depth: Int = 0): Mp4Box.ContainerBox? {
+        if (depth > 8) return null
+        val box = header(bytes, start, limit) ?: return null
+        if (box.end > limit) return null
+        val container = Mp4Box.ContainerBox(box.type, box.end.toLong())
+        var offset = start + box.headerSize
+        while (offset < box.end) {
+            val child = header(bytes, offset, box.end) ?: return null
+            if (child.end > box.end) return null
+            if (child.type in containers) container.add(tree(bytes, offset, child.end, depth + 1) ?: return null)
+            else container.add(Mp4Box.LeafBox(child.type, ParsableByteArray(bytes.copyOfRange(offset, child.end))))
+            offset = child.end
+        }
+        return container
+    }
+
+    internal fun header(bytes: ByteArray, start: Int, limit: Int): Header? {
+        if (start < 0 || limit - start < 8) return null
+        val data = ParsableByteArray(bytes, limit)
+        data.position = start
+        var size = data.readUnsignedInt()
+        val type = data.readInt()
+        val headerSize = if (size == 1L) 16 else 8
+        if (size == 1L) {
+            if (limit - start < 16) return null
+            size = data.readLong()
+        }
+        if (size < headerSize || size > Int.MAX_VALUE - start) return null
+        return Header(type, size.toInt(), start + size.toInt(), headerSize)
+    }
+
+    internal data class Header(val type: Int, val size: Int, val end: Int, val headerSize: Int)
+
+    private val containers = setOf(
+        Mp4Box.TYPE_moov, Mp4Box.TYPE_trak, Mp4Box.TYPE_mdia, Mp4Box.TYPE_minf, Mp4Box.TYPE_stbl,
+        Mp4Box.TYPE_edts, Mp4Box.TYPE_mvex, Mp4Box.TYPE_moof, Mp4Box.TYPE_traf,
+    )
+}

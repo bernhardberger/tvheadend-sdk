@@ -1412,6 +1412,17 @@ The application retains identity matching, retry/route choice and play intent.
 `at.bernhardberger.tvheadend.sdk.playback`. The shared admission type, completed
 playback, and `DvrRepository.changes` remain stable.
 
+Finished fragmented MP4 recordings use the last video fragments for duration,
+not Tvheadend's initial header durations. Seeking starts at an earlier video
+keyframe whose fragment also initializes every track with initial samples;
+this can land more than one keyframe interval early. Tvheadend's `mfra` index
+is not used for seeking. A validated footer lets the duration probe skip that
+index. The probe starts with 1 MiB of media and doubles only when needed, up to
+16 MiB, reading only newly added bytes. Each seek scan has the same cap. If
+the probe cannot find usable final fragments, duration stays unknown and seeking is
+unavailable. A fragmented input without a known file length also stays
+forward-only with unknown duration. Growing MP4 recordings remain deferred.
+
 The 0.27 additions `Channel.mediaKind`, `ChannelService.mediaKind`, and
 `DvrRecordingFile.streams` also require `@OptIn(ExperimentalTvheadendApi::class)`.
 Keep a fallback for future `ChannelMediaKind` and `SubscriptionStreamType` values.

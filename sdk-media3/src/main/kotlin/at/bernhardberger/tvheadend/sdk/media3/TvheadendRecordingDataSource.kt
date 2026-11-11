@@ -15,6 +15,8 @@ import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.extractor.Extractor
 import androidx.media3.extractor.ExtractorsFactory
+import androidx.media3.extractor.mp4.FragmentedMp4Extractor
+import androidx.media3.extractor.text.DefaultSubtitleParserFactory
 import androidx.media3.extractor.ts.TsExtractor
 import at.bernhardberger.tvheadend.sdk.playback.DEFAULT_RECORDING_READ_AHEAD_BYTES
 import at.bernhardberger.tvheadend.sdk.playback.RECORDING_END_OF_INPUT
@@ -103,23 +105,37 @@ internal fun createTvheadendRecordingMediaSource(
 ).createMediaSource(tvheadendRecordingMediaItem(identity))
 
 /**
- * Media3's default extractors with video scan inspection, with each transport stream extractor
- * behind a [FormatlessTrackFilter] so an announced stream without packets cannot hold preparation.
+ * Inspects Media3's extractors and repairs finished fragmented MP4 timelines and seeks.
+ *
+ * Each transport stream extractor uses [FormatlessTrackFilter] so an empty stream cannot hold preparation.
  */
 internal fun createRecordingExtractorsFactory(): ExtractorsFactory {
     val defaults = VideoScanExtractorsFactory(DefaultExtractorsFactory())
     return object : ExtractorsFactory {
-        override fun createExtractors(): Array<Extractor> = defaults.createExtractors().filteringTs()
+        override fun createExtractors(): Array<Extractor> = defaults.createExtractors().recordingAdapters()
 
         override fun createExtractors(uri: Uri, responseHeaders: Map<String, List<String>>): Array<Extractor> =
-            defaults.createExtractors(uri, responseHeaders).filteringTs()
+            defaults.createExtractors(uri, responseHeaders).recordingAdapters()
     }
 }
 
-private fun Array<Extractor>.filteringTs(): Array<Extractor> =
+private fun Array<Extractor>.recordingAdapters(): Array<Extractor> =
     Array(size) { index ->
         this[index].let { extractor ->
-            if (extractor.underlyingImplementation is TsExtractor) FormatlessTrackFilter(extractor) else extractor
+            when (extractor.underlyingImplementation) {
+                is TsExtractor -> FormatlessTrackFilter(extractor)
+                // The default factory unconditionally enables MFRA; create the maintained parser without that flag.
+                is FragmentedMp4Extractor -> FinishedFragmentedMp4Extractor(
+                    VideoScanExtractor(
+                        FragmentedMp4Extractor(
+                            DefaultSubtitleParserFactory(),
+                            FragmentedMp4Extractor.FLAG_READ_WITHIN_GOP_SAMPLE_DEPENDENCIES or
+                                FragmentedMp4Extractor.FLAG_READ_WITHIN_GOP_SAMPLE_DEPENDENCIES_H265,
+                        ),
+                    ),
+                )
+                else -> extractor
+            }
         }
     }
 

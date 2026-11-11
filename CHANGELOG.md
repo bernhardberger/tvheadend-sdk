@@ -170,6 +170,10 @@ Unreleased; development target.
 
 ### Fixed
 
+- Finished fragmented MP4 recordings now use fragment-derived duration and
+  keyframe seeking instead of Tvheadend's short or invalid header durations
+  and unsafe fragment index. Playback can reach its end after seeking.
+
 - In `sdk-media3`, a paused live timeshift seek now returns
   `TimeshiftCommandResult.UNAVAILABLE` when other allocations still exhaust the
   player's shared buffer once the server accepts the seek. Before, the capacity

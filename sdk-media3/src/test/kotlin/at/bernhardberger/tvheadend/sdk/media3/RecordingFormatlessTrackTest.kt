@@ -45,6 +45,23 @@ private typealias Step = (ExtractorOutput) -> Unit
 @Config(sdk = [34])
 class RecordingFormatlessTrackTest {
     @Test
+    fun `a finished fragmented MP4 with invalid header durations seeks and reaches ended`() {
+        val player = TestExoPlayerBuilder(ApplicationProvider.getApplicationContext()).build()
+        try {
+            player.setMediaSource(createTvheadendRecordingMediaSource(FakeRecordingTransport(finishedMp4Fixture(true)), RecordingMediaIdentity()))
+            player.prepare()
+            TestPlayerRunHelper.run(player).untilState(Player.STATE_READY)
+            assertTrue(player.isCurrentMediaItemSeekable)
+            assertTrue(player.duration in 5_900L..6_200L)
+            player.seekTo(4_500L)
+            player.play()
+            TestPlayerRunHelper.run(player).untilState(Player.STATE_ENDED)
+        } finally {
+            player.release()
+        }
+    }
+
+    @Test
     fun `a completed recording with an announced stream that carries no data prepares its audio and video`() {
         val player = TestExoPlayerBuilder(ApplicationProvider.getApplicationContext()).build()
         try {

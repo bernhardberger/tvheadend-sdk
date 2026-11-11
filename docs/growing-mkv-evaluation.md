@@ -216,6 +216,16 @@ So stock Media3 parses a growing Tvheadend MP4 forward exactly like Matroska,
 but a usable MP4 path needs its own duration override and its own keyframe
 index, even for finished recordings.
 
+The SDK now handles these finished-MP4 duration and seeking defects with a
+fragment-derived timeline and restart-safe video keyframe seeks; growing MP4
+remains deferred.
+
+Media3 1.11.1 restores initial sample tables for tracks missing from a seek's
+first fragment; this is unchanged on main as of 2026-11-11. The SDK therefore
+requires every track with initial samples to have a `traf` in a seek-floor
+fragment, as well as a video sync sample. Sparse qualifying fragments can make
+seeks land earlier, with byte zero retained as the safe header-restart floor.
+
 ### Adapter over the real recordings
 
 The SDK's Matroska adapter probes the extent from head and tail windows and
