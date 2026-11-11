@@ -4,6 +4,7 @@ package at.bernhardberger.tvheadend.sdk.media3
 
 import androidx.media3.common.C
 import androidx.media3.common.DataReader
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.ParsableByteArray
 import androidx.media3.common.util.Log
 import androidx.media3.container.Mp4Box
@@ -170,9 +171,10 @@ class FinishedFragmentedMp4ExtractorTest {
         }
     }
 
-    @Test
-    fun `healthy unknown length fragments retain the delegate duration`() {
-        val bytes = finishedMp4Fixture()
+    @ParameterizedTest
+    @ValueSource(strings = ["short", "high-bit", "high-bit-within-tolerance", "version-one"])
+    fun `healthy unknown length fragments retain the delegate duration`(header: String) {
+        val bytes = durationFixture(header)
         val extractor = recordingMp4Extractor()
         val output = FragmentOutput()
         extractor.init(output)
@@ -184,9 +186,23 @@ class FinishedFragmentedMp4ExtractorTest {
         }
     }
 
-    @Test
-    fun `audio only fragmented recordings have duration and can seek`() {
+    @ParameterizedTest
+    @ValueSource(strings = [MimeTypes.AUDIO_MPEG_L2, MimeTypes.AUDIO_AAC, MimeTypes.AUDIO_AC4])
+    fun `audio only fragmented recordings have duration and can seek`(mimeType: String) {
         val bytes = File("src/test/resources/finished-mp4/audio-only.mp4").readBytes()
+        var offset = 0
+        while (ByteBuffer.wrap(bytes).getInt(offset + 4) != Mp4Box.TYPE_moov) offset += ByteBuffer.wrap(bytes).getInt(offset)
+        val primary = checkNotNull(RecordingMp4Fragments.track(bytes.copyOfRange(offset, offset + ByteBuffer.wrap(bytes).getInt(offset))))
+        val flagged = bytes.copyOf()
+        val buffer = ByteBuffer.wrap(flagged)
+        for (position in 4 until flagged.size - 32) {
+            if (buffer.getInt(position) == Mp4Box.TYPE_tfhd) buffer.putInt(position + 28, buffer.getInt(position + 28) or 0x10000)
+        }
+        val format = primary.track.format.buildUpon().setSampleMimeType(mimeType)
+            .setCodecs(if (mimeType == MimeTypes.AUDIO_AAC) "mp4a.40.2" else null).build()
+        val track = primary.copy(track = primary.track.buildUpon().setFormat(format).build())
+        val fragment = checkNotNull(RecordingMp4Fragments.find(flagged, 0, flagged.size.toLong(), track, false))
+        assertEquals(mimeType != MimeTypes.AUDIO_AC4, fragment.sync, "Only all-sync codecs may override a nonsync sample flag")
         val extractor = recordingMp4Extractor()
         val output = FragmentOutput()
         extractor.init(output)
@@ -244,9 +260,10 @@ class FinishedFragmentedMp4ExtractorTest {
         assertTrue(totalRead <= 32 * 1024 * 1024L, "A seek must have a total read budget")
     }
 
-    @Test
-    fun `unknown length fragments do not publish corrupt header duration`() {
-        val bytes = finishedMp4Fixture(true)
+    @ParameterizedTest
+    @ValueSource(strings = ["negative-tkhd", "mismatched-high-bit-mdhd"])
+    fun `unknown length fragments do not publish corrupt header duration`(header: String) {
+        val bytes = durationFixture(header)
         val extractor = recordingMp4Extractor()
         val output = FragmentOutput()
         extractor.init(output)
@@ -285,6 +302,58 @@ class FinishedFragmentedMp4ExtractorTest {
 
     private fun recordingMp4Extractor(): Extractor = createRecordingExtractorsFactory().createExtractors()
         .single { it.underlyingImplementation is FragmentedMp4Extractor }
+
+    private fun durationFixture(header: String): ByteArray {
+        if (header == "negative-tkhd") return finishedMp4Fixture(true)
+        var bytes = finishedMp4Fixture()
+        if (header == "short") return bytes
+        val buffer = ByteBuffer.wrap(bytes)
+        val tkhd = (4 until bytes.size - 32).first { buffer.getInt(it) == Mp4Box.TYPE_tkhd }
+        val mdhd = (tkhd + 28 until bytes.size - 24).first { buffer.getInt(it) == Mp4Box.TYPE_mdhd }
+        buffer.putInt(tkhd + 24, if (header == "version-one") 3_000_000_000L.toInt() else 28_800_000)
+        buffer.putInt(mdhd + 16, 90_000)
+        val difference = when (header) {
+            "high-bit-within-tolerance" -> 90_000L
+            "mismatched-high-bit-mdhd" -> 90_090L
+            else -> 0L
+        }
+        buffer.putInt(mdhd + 20, (2_592_000_000L + difference).toInt())
+        if (header != "version-one") return bytes
+        // FFmpeg cannot select these exact version-1 durations; widen just the two headers.
+        for (typePosition in listOf(mdhd, tkhd)) {
+            val start = typePosition - 4
+            val size = buffer.getInt(start)
+            val replacement = ByteBuffer.allocate(size + 12)
+                .putInt(size + 12).putInt(buffer.getInt(typePosition)).putInt(buffer.getInt(typePosition + 4) or (1 shl 24))
+                .putLong(0).putLong(0)
+            if (typePosition == tkhd) {
+                replacement.putInt(1).putInt(0).putLong(3_000_000_000L)
+                    .put(bytes, start + 32, size - 32)
+            } else {
+                replacement.putInt(90_000).putLong(270_000_000_000L).put(bytes, start + 28, size - 28)
+            }
+            val widened = ByteArray(bytes.size + 12)
+            bytes.copyInto(widened, 0, 0, start)
+            replacement.array().copyInto(widened, start)
+            bytes.copyInto(widened, start + size + 12, start + size)
+            bytes = widened
+        }
+        val widened = ByteBuffer.wrap(bytes)
+        for ((type, added) in listOf(Mp4Box.TYPE_moov to 24, Mp4Box.TYPE_trak to 24, Mp4Box.TYPE_mdia to 12)) {
+            val position = (4 until bytes.size - 8).first { widened.getInt(it) == type }
+            widened.putInt(position - 4, widened.getInt(position - 4) + added)
+        }
+        for (position in 4 until bytes.size - 24) {
+            when (widened.getInt(position)) {
+                Mp4Box.TYPE_stco -> repeat(widened.getInt(position + 8)) { index ->
+                    val entry = position + 12 + index * 4
+                    widened.putInt(entry, widened.getInt(entry) + 24)
+                }
+                Mp4Box.TYPE_tfhd -> widened.putLong(position + 12, widened.getLong(position + 12) + 24)
+            }
+        }
+        return bytes
+    }
 
     @Test
     fun `seeking skips video keyframes missing an initialized audio track`() {

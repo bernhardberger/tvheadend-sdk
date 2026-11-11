@@ -37,6 +37,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStream
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import java.io.File
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -46,11 +47,14 @@ import org.junit.jupiter.api.Assertions.assertTimeoutPreemptively
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 
 class VideoScanInspectionTest {
     @OptIn(ExperimentalCoroutinesApi::class)
-    @Test
-    fun `growing Matroska prefixes preserve all video samples and finalize the estimated map`() = runTest {
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `growing Matroska prefixes preserve all video samples and finalize the estimated map`(probeFirst: Boolean) = runTest {
         val bytes = growingMatroskaFixture()
         val expected = extract(bytes, GrowingMatroskaContainer.createExtractor()).sampleScans.size
         val lease = ProbeLease(bytes, bytes.size / 3)
@@ -77,6 +81,7 @@ class VideoScanInspectionTest {
         val input = DefaultExtractorInput(reader, 0L, C.LENGTH_UNSET.toLong())
         try {
             extractor.init(output)
+            if (probeFirst) testScheduler.runCurrent()
             extractor.seek(0L, 0L)
             val holder = PositionHolder()
             while (extractor.read(input, holder) == Extractor.RESULT_CONTINUE) {
@@ -100,12 +105,21 @@ class VideoScanInspectionTest {
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    @Test
-    fun `failed initial growing probe releases the estimated placeholder`() = runTest {
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `failed initial growing probe releases the estimated placeholder`(slowClose: Boolean) = runTest {
         val bytes = growingMatroskaFixture()
         val output = ScanCapturingOutput()
         val callbacks = mutableListOf<SeekMap>()
-        val lease = ProbeLease(bytes, 0)
+        val closeStarted = CompletableDeferred<Unit>()
+        val allowClose = CompletableDeferred<Unit>()
+        val lease = ProbeLease(bytes, if (slowClose) bytes.size / 2 else 0).apply {
+            suspendReads = slowClose
+            afterClose = {
+                closeStarted.complete(Unit)
+                if (slowClose) allowClose.await()
+            }
+        }
         val extractor = GrowingRecordingExtractor(
             GrowingMatroskaContainer, lease = lease,
             onSeekMap = callbacks::add, probeDispatcher = StandardTestDispatcher(testScheduler),
@@ -124,8 +138,19 @@ class VideoScanInspectionTest {
             while (extractor.read(input, PositionHolder()) == Extractor.RESULT_CONTINUE) Unit
             assertTrue(output.maps.isEmpty(), "Publication must wait for the first probe result")
             testScheduler.runCurrent()
+            if (slowClose) {
+                testScheduler.advanceTimeBy(4_999L)
+                testScheduler.runCurrent()
+                assertTrue(output.maps.isEmpty())
+                testScheduler.advanceTimeBy(1L)
+                testScheduler.runCurrent()
+                assertTrue(closeStarted.isCompleted)
+            }
             assertEquals(listOf(EstimatedUnseekableGrowingSeekMap), output.maps)
             assertEquals(output.maps, callbacks)
+            lease.suspendReads = false
+            allowClose.complete(Unit)
+            testScheduler.runCurrent()
             lease.available = bytes.size / 2
             testScheduler.advanceTimeBy(5_000L)
             testScheduler.runCurrent()
@@ -133,6 +158,7 @@ class VideoScanInspectionTest {
             assertTrue(output.maps.last().isEstimated)
             assertEquals(output.maps, callbacks)
         } finally {
+            allowClose.complete(Unit)
             extractor.release()
         }
     }

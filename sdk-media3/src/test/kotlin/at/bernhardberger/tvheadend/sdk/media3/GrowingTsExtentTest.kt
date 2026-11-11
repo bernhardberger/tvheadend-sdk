@@ -159,7 +159,7 @@ internal class ProbeLease(private val bytes: ByteArray, @Volatile var available:
     @Volatile var current = true
     var suspendReads = false
     var beforeRead: suspend () -> Unit = {}
-    var afterClose: () -> Unit = {}
+    var afterClose: suspend () -> Unit = {}
     @Volatile var completed = false
     var stats = 0
     val seeks = mutableListOf<Long>()

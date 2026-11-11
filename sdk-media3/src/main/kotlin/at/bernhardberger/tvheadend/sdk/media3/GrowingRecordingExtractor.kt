@@ -22,6 +22,7 @@ import androidx.media3.extractor.TrackOutput
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -51,6 +52,7 @@ internal class GrowingRecordingExtractor<E : GrowingRecordingExtent>(
 ) : Extractor {
     private val publicationLock = Any()
     private var probeJob: Job? = null
+    private var initialProbeDeadlineJob: Job? = null
     private var released = false
     @Volatile private var extent: E? = null
     private var publishedExtent: E? = null
@@ -95,14 +97,24 @@ internal class GrowingRecordingExtractor<E : GrowingRecordingExtent>(
             },
         )
         if (lease != null) {
+            val probeScope = CoroutineScope(probeDispatcher)
+            // Start the deadline at init, independently of a sample's non-cancellable cleanup.
+            initialProbeDeadlineJob = probeScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                delay(5_000L)
+                synchronized(publicationLock) {
+                    firstProbeResolved = true
+                    publishInitialMapIfReady()
+                }
+            }
             // Extractor init/release is the synchronous Media3 lifecycle boundary. The probe has
             // its own readers and continues while playback loading is stopped (including pause).
-            probeJob = CoroutineScope(probeDispatcher).launch {
+            probeJob = probeScope.launch {
                 val probe = container.createExtentProbe(lease)
                 try {
                 while (isActive && lease.isCurrent) {
                     val next = probe.sample()
                     synchronized(publicationLock) {
+                        initialProbeDeadlineJob?.cancel()
                         firstProbeResolved = true
                         val previous = extent
                         if (!released && next != null &&
@@ -117,6 +129,7 @@ internal class GrowingRecordingExtractor<E : GrowingRecordingExtent>(
                     delay(5_000L)
                 }
                 synchronized(publicationLock) {
+                    initialProbeDeadlineJob?.cancel()
                     firstProbeResolved = true
                     publishExtent()
                     publishInitialMapIfReady()
@@ -182,6 +195,7 @@ internal class GrowingRecordingExtractor<E : GrowingRecordingExtent>(
     override fun release() {
         synchronized(publicationLock) { released = true }
         probeJob?.cancel()
+        initialProbeDeadlineJob?.cancel()
         delegate.release()
     }
 

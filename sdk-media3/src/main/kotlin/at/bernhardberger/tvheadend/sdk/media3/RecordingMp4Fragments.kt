@@ -3,12 +3,14 @@
 package at.bernhardberger.tvheadend.sdk.media3
 
 import androidx.media3.common.C
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.ParsableByteArray
 import androidx.media3.common.util.Util
 import androidx.media3.container.Mp4Box
 import androidx.media3.extractor.GaplessInfoHolder
 import androidx.media3.extractor.mp4.BoxParser
 import androidx.media3.extractor.mp4.Track
+import java.math.BigInteger
 
 internal const val MP4_PROBE_BYTES: Int = 16 * 1024 * 1024
 internal const val MP4_FRAGMENT_BYTES: Int = 64 * 1024
@@ -57,17 +59,37 @@ internal object RecordingMp4Fragments {
         }
         return RecordingMp4Track(
             primary, duration, trex.readInt(), tables.filter { it.sampleCount > 0 }.map { it.track.id }.toSet(),
-            unsignedNegativeDuration(trak?.getLeafBoxOfType(Mp4Box.TYPE_tkhd)?.data, 28, 40) ||
-                unsignedNegativeDuration(trak?.getContainerBoxOfType(Mp4Box.TYPE_mdia)?.getLeafBoxOfType(Mp4Box.TYPE_mdhd)?.data, 24, 32),
+            corruptDuration(trak, primary),
         )
     }
 
-    private fun unsignedNegativeDuration(data: ParsableByteArray?, shortPosition: Int, longPosition: Int): Boolean {
-        if (data == null) return false
+    private fun corruptDuration(trak: Mp4Box.ContainerBox?, track: Track): Boolean {
+        // ISO/IEC 14496-12 TrackHeaderBox: v0 duration at 28; v1 at 36, after track_ID/reserved.
+        val movie = headerDuration(trak?.getLeafBoxOfType(Mp4Box.TYPE_tkhd)?.data, 28, 36) ?: return false
+        if (movie.negative) return true
+        // MediaHeaderBox: creation/modification then timescale, hence v0 at 24 and v1 at 32.
+        val media = headerDuration(
+            trak?.getContainerBoxOfType(Mp4Box.TYPE_mdia)?.getLeafBoxOfType(Mp4Box.TYPE_mdhd)?.data, 24, 32,
+        ) ?: return false
+        if (!media.negative) return false
+        // Media3's scaler cannot represent unsigned 64-bit inputs. JDK arithmetic also avoids
+        // overflow while comparing the two independently scaled header durations.
+        val micros = BigInteger.valueOf(C.MICROS_PER_SECOND)
+        val movieUs = movie.unsigned.multiply(micros).divide(BigInteger.valueOf(track.movieTimescale))
+        val mediaUs = media.unsigned.multiply(micros).divide(BigInteger.valueOf(track.timescale))
+        return movieUs.subtract(mediaUs).abs() > micros
+    }
+
+    private data class HeaderDuration(val unsigned: BigInteger, val negative: Boolean)
+
+    private fun headerDuration(data: ParsableByteArray?, shortPosition: Int, longPosition: Int): HeaderDuration? {
+        if (data == null) return null
         data.position = 8
         val version = BoxParser.parseFullBoxVersion(data.readInt())
         data.position = if (version == 1) longPosition else shortPosition
-        return if (version == 1) data.readLong() < 0 else data.readInt() < 0
+        val signed = if (version == 1) data.readLong() else data.readInt().toLong()
+        val unsigned = if (version == 1) signed else signed and 0xffffffffL
+        return HeaderDuration(BigInteger(java.lang.Long.toUnsignedString(unsigned)), signed < 0)
     }
 
     fun find(bytes: ByteArray, base: Long, fileSize: Long, track: RecordingMp4Track, syncOnly: Boolean, from: Int = 0): RecordingMp4Fragment? {
@@ -142,6 +164,7 @@ internal object RecordingMp4Fragments {
             var firstTime: Long? = null
             var firstFlags = defaultFlags
             var lastEnd = 0L
+            // Mirrors FragmentedMp4Extractor.isEdtsListDurationForEntireMediaTimeline (Media3 1.11.1).
             val mediaTimes = track.track.editListMediaTimes
             val durations = track.track.editListDurations
             val edit = if (mediaTimes != null && durations?.length() == 1 &&
@@ -173,7 +196,8 @@ internal object RecordingMp4Fragments {
             }
             RecordingMp4Fragment(
                 base + start, base + end, firstTime ?: return null, lastEnd,
-                track.track.type == C.TRACK_TYPE_AUDIO || firstFlags and 0x10000 == 0,
+                MimeTypes.allSamplesAreSyncSamples(track.track.format.sampleMimeType, track.track.format.codecs) ||
+                    firstFlags and 0x10000 == 0,
                 presentTrackIds.containsAll(track.restartTrackIds),
             )
         } catch (_: IndexOutOfBoundsException) {
