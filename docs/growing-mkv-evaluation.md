@@ -249,6 +249,14 @@ Estimates below are rough and assume that infrastructure.
 
 Risks and upgrade exposure:
 
+- **Payload lookalikes.** Bounded Cluster searches check declared track numbers,
+  timestamp bounds, element sizes, and following Segment boundaries. They do not
+  walk every element from the Segment start. Crafted block payloads can still
+  imitate valid headers and cause a parse error after seeking; this is not
+  memory unsafety. Tail sampling reads at most a 16 MiB window, plus small
+  boundary checks. A seek stops after 64 timestamp searches at its validated
+  floor Cluster if it has not converged.
+
 - **The same Media3 ordering rule as P7.** `ProgressiveMediaSource` ignores
   estimated maps after any definitive one, so the wrapper must keep
   suppressing the inner `Unseekable`. A Media3 change there breaks TS and

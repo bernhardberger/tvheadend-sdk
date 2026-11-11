@@ -24,17 +24,25 @@ internal data class GrowingMatroskaExtent(
     val lastClusterPosition: Long,
     val origin: Long,
     val timecodeScaleNs: Long,
+    val trackNumbers: Set<Long>,
+    val lastClusterTimecode: Long,
     override val durationUs: Long,
     override val isFinal: Boolean,
 ) : GrowingRecordingExtent {
-    fun timeUs(timecode: Long): Long = Util.scaleLargeTimestamp(timecode - origin, timecodeScaleNs, 1_000L)
+    fun timeUs(timecode: Long): Long = checkNotNull(matroskaTimeUs(timecode, timecodeScaleNs))
 }
 
-internal const val MATROSKA_MAX_SEARCH_BYTES: Int = 32 * 1024 * 1024
+internal const val MATROSKA_MAX_SEARCH_BYTES: Int = 16 * 1024 * 1024
 private const val HEAD_BYTES = 1024 * 1024
 private const val TAIL_BYTES = 256 * 1024
 private const val CLUSTER_ID = 0x1f43b675L
-private val SEGMENT_BOUNDARIES = setOf(CLUSTER_ID, 0x1c53bb6bL, 0x1043a770L, 0x1254c367L, 0xecL)
+private val SEGMENT_BOUNDARIES = setOf(CLUSTER_ID, 0x1c53bb6bL, 0x1043a770L, 0x1254c367L, 0xecL, 0x114d9b74L, 0x1941a469L)
+
+private fun matroskaTimeUs(timecode: Long, scaleNs: Long): Long? {
+    // Reject unrepresentable nanoseconds before Media3's multiply/divide can wrap.
+    if (timecode < 0L || scaleNs <= 0L || timecode > Long.MAX_VALUE / scaleNs) return null
+    return Util.scaleLargeTimestamp(timecode, scaleNs, 1_000L)
+}
 
 /** Samples finite head/tail windows; Media3 supplies EBML integer decoding. */
 internal class GrowingMatroskaExtentProbe(private val lease: GrowingRecordingFileLease) :
@@ -67,14 +75,13 @@ internal class GrowingMatroskaExtentProbe(private val lease: GrowingRecordingFil
         }
         val origin = head ?: readAt(active, 0L, minOf(size, HEAD_BYTES.toLong()).toInt())
             ?.let(::matroskaHead)?.also { head = it } ?: return null
-        val tail = lastCluster?.let { walkForward(active, it, size) } ?: sampleTail(active, size) ?: return null
+        val tail = lastCluster?.let { walkForward(active, it, size, origin) } ?: sampleTail(active, size, origin) ?: return null
         lastCluster = tail
-        val delta = tail.timecode - origin.cluster.timecode
-        if (delta <= 0L || delta > Long.MAX_VALUE / origin.scaleNs) return null
+        val durationUs = matroskaTimeUs(tail.timecode, origin.scaleNs)?.takeIf { it > 0L } ?: return null
         if (!lease.isCurrent) return null
         return GrowingMatroskaExtent(
             size, origin.cluster.position, origin.cluster.endPosition, tail.position, origin.cluster.timecode, origin.scaleNs,
-            Util.scaleLargeTimestamp(delta, origin.scaleNs, 1_000L), sampledFinal,
+            origin.trackNumbers, tail.timecode, durationUs, sampledFinal,
         )
     }
 
@@ -82,6 +89,7 @@ internal class GrowingMatroskaExtentProbe(private val lease: GrowingRecordingFil
         active: GrowingRecordingFileReader,
         previousCluster: MatroskaCluster,
         size: Long,
+        head: MatroskaHead,
     ): MatroskaCluster? {
         var cluster = previousCluster
         repeat(64) {
@@ -89,31 +97,43 @@ internal class GrowingMatroskaExtentProbe(private val lease: GrowingRecordingFil
             val position = cluster.endPosition
             val bytes = readAt(active, position, minOf(size - position, 128L).toInt()) ?: return null
             val boundary = element(bytes, 0, bytes.size) ?: return null
-            if (boundary.id in SEGMENT_BOUNDARIES && boundary.id != CLUSTER_ID) return cluster
-            val next = findMatroskaCluster(bytes, position, size, 0, bytes.size) ?: return null
+            if (boundary.id != CLUSTER_ID && validSegmentBoundary(bytes, 0, bytes.size, position, size)) return cluster
+            val next = findMatroskaCluster(bytes, position, size, 0, bytes.size, head.trackNumbers, head.cluster.timecode, scaleNs = head.scaleNs) ?: return null
             if (next.position != position || next.timecode < cluster.timecode) return null
             cluster = next
         }
         return null // Long gaps or changed structure use the bounded bootstrap search.
     }
 
-    private suspend fun sampleTail(active: GrowingRecordingFileReader, size: Long): MatroskaCluster? {
+    private suspend fun sampleTail(active: GrowingRecordingFileReader, size: Long, head: MatroskaHead): MatroskaCluster? {
         var window = minOf(size, TAIL_BYTES.toLong()).toInt()
-        var last: MatroskaCluster? = null
-        while (last == null) {
+        var previousStart = size
+        var seam = ByteArray(0)
+        while (true) {
             val start = size - window
-            val bytes = readAt(active, start, window) ?: return null
+            // Fetch only newly exposed bytes, keeping enough seam for a split header.
+            val bytes = readAt(active, start, (previousStart - start).toInt(), seam) ?: return null
+            var last: MatroskaCluster? = null
             var offset = 0
             while (offset < bytes.size) {
-                val cluster = findMatroskaCluster(bytes, start, size, offset, bytes.size) ?: break
-                last = cluster
+                val cluster = findMatroskaCluster(bytes, start, size, offset, bytes.size, head.trackNumbers, head.cluster.timecode, scaleNs = head.scaleNs) ?: break
+                if (cluster.endPosition < size && cluster.endPosition >= start + bytes.size) {
+                    val boundary = readAt(active, cluster.endPosition, minOf(16L, size - cluster.endPosition).toInt()) ?: return null
+                    if (!validSegmentBoundary(boundary, 0, boundary.size, cluster.endPosition, size)) {
+                        offset = (cluster.position - start + 1L).toInt()
+                        continue
+                    }
+                }
+                if (last == null || cluster.timecode >= last.timecode) last = cluster
                 // Skip the whole validated Cluster, not block payloads containing lookalike IDs.
                 offset = (cluster.endPosition - start).coerceAtMost(bytes.size.toLong()).toInt()
             }
-            if (last != null || window == minOf(size, MATROSKA_MAX_SEARCH_BYTES.toLong()).toInt()) break
+            if (last != null) return last
+            if (window == minOf(size, MATROSKA_MAX_SEARCH_BYTES.toLong()).toInt()) return null
+            seam = bytes.copyOfRange(0, minOf(256, bytes.size))
+            previousStart = start
             window = minOf(size, window * 2L, MATROSKA_MAX_SEARCH_BYTES.toLong()).toInt()
         }
-        return last
     }
 
     override suspend fun close() {
@@ -127,9 +147,9 @@ internal class GrowingMatroskaExtentProbe(private val lease: GrowingRecordingFil
     }
 }
 
-private suspend fun readAt(reader: GrowingRecordingFileReader, position: Long, count: Int): ByteArray? {
+private suspend fun readAt(reader: GrowingRecordingFileReader, position: Long, count: Int, suffix: ByteArray = ByteArray(0)): ByteArray? {
     if (reader.seek(position) !is RecordingFileResult.Ok) return null
-    val bytes = ByteArray(count)
+    val bytes = ByteArray(count + suffix.size)
     var offset = 0
     while (offset < count) {
         val requested = minOf(count - offset, MAX_RECORDING_READ_BYTES)
@@ -137,13 +157,14 @@ private suspend fun readAt(reader: GrowingRecordingFileReader, position: Long, c
         if (read !in 1..requested) return null
         offset += read
     }
+    suffix.copyInto(bytes, count)
     return bytes
 }
 
 internal data class MatroskaCluster(val position: Long, val endPosition: Long, val timecode: Long)
-private data class MatroskaHead(val cluster: MatroskaCluster, val scaleNs: Long)
+private data class MatroskaHead(val cluster: MatroskaCluster, val scaleNs: Long, val trackNumbers: Set<Long>)
 private data class EbmlElement(val id: Long, val data: Int, val size: Long) {
-    val end: Long get() = data + size
+    val end: Long get() = if (size == Long.MAX_VALUE) Long.MAX_VALUE else data + size
 }
 
 private fun element(bytes: ByteArray, offset: Int, limit: Int): EbmlElement? {
@@ -157,6 +178,7 @@ private fun element(bytes: ByteArray, offset: Int, limit: Int): EbmlElement? {
     val (id, idLength) = vint(offset, false, 4) ?: return null
     val (size, sizeLength) = vint(offset + idLength, true, 8) ?: return null
     val knownSize = if (size == (1L shl (sizeLength * 7)) - 1L) Long.MAX_VALUE else size
+    if (knownSize == Long.MAX_VALUE && id != 0x18538067L) return null
     return EbmlElement(id, offset + idLength + sizeLength, knownSize)
 }
 
@@ -176,11 +198,14 @@ private fun matroskaHead(bytes: ByteArray): MatroskaHead? {
     val segment = element(bytes, ebml.end.toInt(), bytes.size)?.takeIf { it.id == 0x18538067L } ?: return null
     var offset = segment.data
     var scale = 1_000_000L
+    var tracks = emptySet<Long>()
     while (offset < bytes.size) {
         val child = element(bytes, offset, bytes.size) ?: return null
         if (child.id == CLUSTER_ID) {
-            val timecode = clusterTimecode(bytes, child, bytes.size) ?: return null
-            return MatroskaHead(MatroskaCluster(offset.toLong(), child.end, timecode), scale)
+            if (tracks.isEmpty()) return null
+            val cluster = findMatroskaCluster(bytes, 0L, bytes.size.toLong(), offset, bytes.size, tracks, scaleNs = scale)
+                ?.takeIf { it.position == offset.toLong() } ?: return null
+            return MatroskaHead(cluster, scale, tracks)
         }
         if (child.end > bytes.size || child.end <= offset) return null
         if (child.id == 0x1549a966L) {
@@ -192,9 +217,30 @@ private fun matroskaHead(bytes: ByteArray): MatroskaHead? {
                 infoOffset = info.end.toInt()
             }
         }
+        if (child.id == 0x1654ae6bL) tracks = trackNumbers(bytes, child) ?: return null
         offset = child.end.toInt()
     }
     return null
+}
+
+private fun trackNumbers(bytes: ByteArray, tracks: EbmlElement): Set<Long>? {
+    val numbers = mutableSetOf<Long>()
+    var offset = tracks.data
+    while (offset < tracks.end) {
+        val entry = element(bytes, offset, tracks.end.toInt()) ?: return null
+        if (entry.end > tracks.end || entry.end <= offset) return null
+        if (entry.id == 0xaeL) {
+            var fieldOffset = entry.data
+            while (fieldOffset < entry.end) {
+                val field = element(bytes, fieldOffset, entry.end.toInt()) ?: return null
+                if (field.end > entry.end || field.end <= fieldOffset) return null
+                if (field.id == 0xd7L) numbers += unsigned(bytes, field, entry.end.toInt())?.takeIf { it > 0L } ?: return null
+                fieldOffset = field.end.toInt()
+            }
+        }
+        offset = entry.end.toInt()
+    }
+    return numbers
 }
 
 internal fun findMatroskaCluster(
@@ -203,6 +249,10 @@ internal fun findMatroskaCluster(
     sizeBytes: Long,
     from: Int,
     limit: Int,
+    trackNumbers: Set<Long>? = null,
+    minimumTimecode: Long = 0L,
+    maximumTimecode: Long = Long.MAX_VALUE,
+    scaleNs: Long = 1_000_000L,
 ): MatroskaCluster? {
     for (offset in from until (limit - 4).coerceAtLeast(from)) {
         if (bytes[offset] != 0x1f.toByte() || bytes[offset + 1] != 0x43.toByte() ||
@@ -212,26 +262,12 @@ internal fun findMatroskaCluster(
         if (cluster.size <= 0L || cluster.size > MATROSKA_MAX_SEARCH_BYTES) continue
         val timecode = clusterTimecodeElement(bytes, cluster, limit) ?: continue
         val time = unsigned(bytes, timecode, limit) ?: continue
-        val firstChild = element(bytes, timecode.end.toInt(), limit) ?: continue
-        if (firstChild.end > cluster.end || firstChild.size <= 0L) continue
-        // A plausible block header and track vint reject payload ID lookalikes without fetching
-        // the Cluster payload. Check the following Segment boundary only when already buffered.
-        when (firstChild.id) {
-            0xa3L -> if (!validBlockTrack(bytes, firstChild, limit)) continue
-            0xa0L -> {
-                val block = element(bytes, firstChild.data, limit)?.takeIf { it.id == 0xa1L } ?: continue
-                if (block.end > firstChild.end || !validBlockTrack(bytes, block, limit)) continue
-            }
-            0xa7L, 0xabL -> if (firstChild.size > 8L) continue
-            0xecL -> Unit
-            else -> continue
-        }
+        if (time !in minimumTimecode..maximumTimecode || matroskaTimeUs(time, scaleNs) == null) continue
+        if (!validFirstBlock(bytes, timecode.end.toInt(), cluster.end, limit, trackNumbers)) continue
         val end = basePosition + cluster.end
         if (end < sizeBytes) {
             if (cluster.end < limit) {
-                val next = element(bytes, cluster.end.toInt(), limit)
-                if (next != null && next.id !in SEGMENT_BOUNDARIES) continue
-                if (next == null && bytes[cluster.end.toInt()] == 0.toByte()) continue
+                if (!validSegmentBoundary(bytes, cluster.end.toInt(), limit, basePosition, sizeBytes)) continue
             }
         }
         return MatroskaCluster(basePosition + offset, end, time)
@@ -239,8 +275,32 @@ internal fun findMatroskaCluster(
     return null
 }
 
-private fun clusterTimecode(bytes: ByteArray, cluster: EbmlElement, limit: Int): Long? {
-    return clusterTimecodeElement(bytes, cluster, limit)?.let { unsigned(bytes, it, limit) }
+private fun validSegmentBoundary(bytes: ByteArray, offset: Int, limit: Int, basePosition: Long, size: Long): Boolean {
+    val next = element(bytes, offset, limit) ?: return false
+    if (next.id !in SEGMENT_BOUNDARIES) return false
+    return if (next.id == CLUSTER_ID) next.size in 1L..MATROSKA_MAX_SEARCH_BYTES.toLong()
+    else next.end <= size - basePosition
+}
+
+private fun validFirstBlock(bytes: ByteArray, start: Int, clusterEnd: Long, limit: Int, tracks: Set<Long>?): Boolean {
+    var offset = start
+    while (offset < minOf(clusterEnd, limit.toLong())) {
+        val child = element(bytes, offset, limit) ?: return false
+        if (child.end > clusterEnd || child.size <= 0L) return false
+        when (child.id) {
+            0xa3L -> return validBlockTrack(bytes, child, limit, tracks)
+            0xa0L -> {
+                val block = element(bytes, child.data, limit)?.takeIf { it.id == 0xa1L } ?: return false
+                return block.end <= child.end && validBlockTrack(bytes, block, limit, tracks)
+            }
+            0xa7L, 0xabL -> if (child.size > 8L) return false
+            0xecL -> Unit
+            else -> return false
+        }
+        if (child.end > limit) return false
+        offset = child.end.toInt()
+    }
+    return false
 }
 
 private fun clusterTimecodeElement(bytes: ByteArray, cluster: EbmlElement, limit: Int): EbmlElement? {
@@ -259,9 +319,10 @@ private fun clusterTimecodeElement(bytes: ByteArray, cluster: EbmlElement, limit
     return null
 }
 
-private fun validBlockTrack(bytes: ByteArray, block: EbmlElement, limit: Int): Boolean {
+private fun validBlockTrack(bytes: ByteArray, block: EbmlElement, limit: Int, trackNumbers: Set<Long>?): Boolean {
     if (block.data >= limit) return false
     val length = GrowingMatroskaVarint.length(bytes[block.data].toInt() and 0xff)
     if (length !in 1..8 || block.data + length > limit || block.size < length + 3L) return false
-    return GrowingMatroskaVarint.value(bytes.copyOfRange(block.data, block.data + length), true) > 0L
+    val number = GrowingMatroskaVarint.value(bytes.copyOfRange(block.data, block.data + length), true)
+    return number > 0L && (trackNumbers == null || number in trackNumbers)
 }

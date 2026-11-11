@@ -2,11 +2,11 @@ package at.bernhardberger.tvheadend.sdk.core
 
 import at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
 
-/** Selects the container adapter for [RecordingPlaybackAdmission.Growing]. */
+/** Identifies formats supported for active [RecordingPlaybackAdmission.Growing] recordings. */
 @ExperimentalTvheadendApi
 public enum class GrowingRecordingContainer {
-    /** Reads MPEG transport streams. */
+    /** Reads active `.ts` recordings. */
     MPEG_TS,
-    /** Reads Matroska streams. */
+    /** Reads active `.mkv` recordings. */
     MATROSKA,
 }

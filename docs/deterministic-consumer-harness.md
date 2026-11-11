@@ -41,7 +41,7 @@ unless stated otherwise. Line numbers refer to `origin/main` 28978f3.
 | `PlaybackCoordinatorInternals.kt:188` `HandlerCoordinatorLooper` (coordinator → application looper) | plain `Handler` | no | `Clock` handler |
 | `TvheadendPlaybackRecovery.kt:142,232` watchdogs (6 s, 6 s, 20 s) | `Handler.postDelayed` on the application looper | internal `RecoveryScheduler` only | `Clock` handler when created by the coordinator |
 | `TvheadendRecordingResume.kt:351,372` resume timeout | `Handler.postDelayed` | no | slice 2: `Clock` handler |
-| `GrowingTsExtractor.kt:98` extent probe; `GrowingTsExtent.kt:42` 5 s timeout | `CoroutineScope(Dispatchers.IO)` hard-coded | no | slice 2: `workDispatcher` |
+| `GrowingRecordingExtractor.kt` extent probe; `GrowingTsExtent.kt` and `GrowingMatroskaExtent.kt` 5 s timeout | injectable `probeDispatcher`, default `Dispatchers.IO` | yes | pass a test dispatcher |
 | `TvheadendRecordingDataSource.kt:110`, `TvheadendGrowingRecordingDataSource.kt:72` | `runBlocking` on Media3 Loader threads | no; `ProgressiveMediaSource.Factory.setDownloadExecutor` exists but is not exposed | unchanged, see limits |
 | `LiveStartLoadControl.kt:22` live-start timing | `android.os.SystemClock.elapsedRealtime` on the playback thread | no | unchanged: under Robolectric `FakeClock` moves `SystemClock` |
 | `TvheadendPlaybackCoordinator.kt:1077` DVR progress timestamps | `Clock.System` (wall clock); waits use `delay` in the consumer scope | no | slice 2: player's `Clock` (elapsed time) |

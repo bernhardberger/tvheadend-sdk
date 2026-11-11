@@ -291,7 +291,7 @@ active entry; `DvrReducerTest` keeps it across partial updates and completion).
 The admission gates are unchanged from 0.21 and identical for `START_OVER`:
 unknown progress `NOT_READY`, unsupported progress
 `RECORDING_PROGRESS_UNSUPPORTED`, not exactly one usable file
-`TARGET_UNAVAILABLE`, non-TS `GROWING_RECORDING_DEFERRED`. A missing or zero
+`TARGET_UNAVAILABLE`, formats other than `.ts` and `.mkv` `GROWING_RECORDING_DEFERRED`. A missing or zero
 saved position plays from the beginning.
 
 - Playback starts at 0:00 and seeks once when the growing timeline is seekable,

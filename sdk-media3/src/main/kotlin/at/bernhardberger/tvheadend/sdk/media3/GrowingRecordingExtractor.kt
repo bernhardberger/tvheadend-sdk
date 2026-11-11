@@ -56,6 +56,7 @@ internal class GrowingRecordingExtractor<E : GrowingRecordingExtent>(
     private var publishedExtent: E? = null
     private var publishedSeekable = false
     private var binarySeeker: BinarySearchSeeker? = null
+    private var pendingSeekFallback: Long? = null
     private val trackOutputs = ArrayList<GrowingRecordingTrackOutput>()
     private var downstream: ExtractorOutput? = null
     private var conservativeReadPosition = 0L
@@ -124,6 +125,13 @@ internal class GrowingRecordingExtractor<E : GrowingRecordingExtent>(
     }
 
     override fun read(input: ExtractorInput, seekPosition: PositionHolder): Int {
+        pendingSeekFallback?.let { position ->
+            if (input.position != position) {
+                seekPosition.position = position
+                return Extractor.RESULT_SEEK
+            }
+            pendingSeekFallback = null
+        }
         val seeker = binarySeeker
         if (seeker != null && seeker.isSeeking) {
             val limit = checkNotNull(extent).sizeBytes
@@ -156,10 +164,14 @@ internal class GrowingRecordingExtractor<E : GrowingRecordingExtent>(
             container.createBinarySearchSeeker(it)
                 .apply { setSeekTargetUs(timeUs) }
         }
-        conservativeReadPosition = position
+        pendingSeekFallback = if (binarySeeker == null && !container.supportsObservedIndex) {
+            extent?.let(container::seekFallbackPosition)
+        } else null
+        val parserPosition = pendingSeekFallback ?: position
+        conservativeReadPosition = parserPosition
         trackOutputs.forEach(GrowingRecordingTrackOutput::resetForSeek)
         index.onExtractorSeek()
-        delegate.seek(position, timeUs)
+        delegate.seek(parserPosition, timeUs)
     }
 
     override fun release() {

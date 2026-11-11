@@ -28,6 +28,8 @@ internal object GrowingMatroskaContainer : GrowingContainerAdapter<GrowingMatros
 
     override fun alignIndexPosition(position: Long): Long = position
 
+    override fun seekFallbackPosition(extent: GrowingMatroskaExtent): Long = extent.firstClusterPosition
+
     override fun createExtentProbe(lease: GrowingRecordingFileLease): GrowingRecordingExtentProbe<GrowingMatroskaExtent> =
         GrowingMatroskaExtentProbe(lease)
 
@@ -44,7 +46,7 @@ private class MatroskaBinarySearchSeeker(extent: GrowingMatroskaExtent) : Binary
     DefaultSeekTimestampConverter(),
     MatroskaTimestampSeeker(extent),
     extent.durationUs,
-    0L,
+    extent.timeUs(extent.origin),
     extent.durationUs + 1L,
     extent.firstClusterPosition,
     extent.sizeBytes,
@@ -55,13 +57,19 @@ private class MatroskaBinarySearchSeeker(extent: GrowingMatroskaExtent) : Binary
     private class MatroskaTimestampSeeker(private val extent: GrowingMatroskaExtent) : TimestampSeeker {
         private var floor = MatroskaCluster(extent.firstClusterPosition, extent.firstClusterEndPosition, extent.origin)
         private var ceilingTimeUs = extent.durationUs + 1L
+        private var steps = 0
+        // Allow one coarse cluster interval beyond the sampled extent, without integer overflow.
+        private val maximumTimecode = extent.lastClusterTimecode +
+            minOf(Long.MAX_VALUE - extent.lastClusterTimecode, (10_000_000_000L / extent.timecodeScaleNs).coerceAtLeast(1L))
 
         override fun onSeekFinished() {
             floor = MatroskaCluster(extent.firstClusterPosition, extent.firstClusterEndPosition, extent.origin)
             ceilingTimeUs = extent.durationUs + 1L
+            steps = 0
         }
 
         override fun searchForTimestamp(input: ExtractorInput, targetTimestamp: Long): TimestampSearchResult {
+            if (++steps > 64) return TimestampSearchResult.targetFoundResult(floor.position)
             val start = input.position
             // Do not rediscover the floor when Media3 interpolates within that same Cluster.
             val scanStart = maxOf(start, floor.endPosition)
@@ -87,7 +95,11 @@ private class MatroskaBinarySearchSeeker(extent: GrowingMatroskaExtent) : Binary
 
         private fun scanCluster(input: ExtractorInput, scanStart: Long): MatroskaCluster? {
             if (scanStart >= extent.sizeBytes) return null
-            input.advancePeekPosition((scanStart - input.position).toInt())
+            val gap = scanStart - input.position
+            if (gap > MATROSKA_MAX_SEARCH_BYTES) return null
+            // TimestampSeeker may consume input; Media3 seeks back to our validated floor.
+            // skipFully uses DefaultExtractorInput's bounded scratch buffer, unlike advancing peek.
+            input.skipFully(gap.toInt())
             val chunkSize = 16 * 1024
             val overlap = 256
             val bytes = ByteArray(chunkSize + overlap)
@@ -96,9 +108,12 @@ private class MatroskaBinarySearchSeeker(extent: GrowingMatroskaExtent) : Binary
             val end = minOf(extent.sizeBytes, scanStart + MATROSKA_MAX_SEARCH_BYTES + overlap)
             while (base + retained < end) {
                 val count = minOf(chunkSize.toLong(), end - base - retained).toInt()
-                input.peekFully(bytes, retained, count)
+                input.readFully(bytes, retained, count)
                 val limit = retained + count
-                findMatroskaCluster(bytes, base, extent.sizeBytes, 0, limit)?.let { return it }
+                findMatroskaCluster(
+                    bytes, base, extent.sizeBytes, 0, limit, extent.trackNumbers,
+                    extent.origin, maximumTimecode, extent.timecodeScaleNs,
+                )?.takeIf { it.position <= extent.lastClusterPosition }?.let { return it }
                 retained = minOf(overlap, limit)
                 bytes.copyInto(bytes, 0, limit - retained, limit)
                 base += limit - retained

@@ -23,6 +23,11 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
@@ -121,37 +126,63 @@ class GrowingRecordingResumeExtractorTest {
     }
 
     @Test
-    @Timeout(60, unit = TimeUnit.SECONDS)
-    fun `unprobeable growing input abandons the resume at the settle bound`() {
-        val failedSamples = CountDownLatch(2)
-        val lease = ProbeLease(ByteArray(GROWING_TS_PACKET_BYTES * 600), GROWING_TS_PACKET_BYTES * 600).apply {
-            // A failed sample closes its reader, so each close marks one unsuccessful probe attempt.
-            afterClose = { failedSamples.countDown() }
-        }
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `unprobeable growing input abandons the resume at the settle bound`() = runTest {
+        val lease = ProbeLease(ByteArray(GROWING_TS_PACKET_BYTES * 600), GROWING_TS_PACKET_BYTES * 600)
         val maps = CopyOnWriteArrayList<SeekMap>()
         val seeks = CopyOnWriteArrayList<Long>()
         val timeouts = FakeResumeTimeouts()
         val resume = RecordingResumeStateMachine(seekTo = { seeks += it }, scheduleTimeout = timeouts::schedule)
-        val extractor = GrowingRecordingExtractor(GrowingTsContainer, delegate = DeclaredVideoTrack(MimeTypes.VIDEO_H264), lease = lease, onSeekMap = { map ->
+        val extractor = GrowingRecordingExtractor(GrowingTsContainer, delegate = DeclaredVideoTrack(MimeTypes.VIDEO_H264), lease = lease, probeDispatcher = StandardTestDispatcher(testScheduler), onSeekMap = { map ->
             maps += map
-            looper.execute { resume.onMediaState(true, map.durationMillis(), map.isSeekable) }
+            resume.onMediaState(true, map.durationMillis(), map.isSeekable)
         })
         try {
-            onLooper { resume.beginPlaybackTarget(8_000L, RecordingResumeMode.GROWING) }
+            resume.beginPlaybackTarget(8_000L, RecordingResumeMode.GROWING)
             extractor.init(CapturingOutput)
-
-            assertTrue(failedSamples.await(30, TimeUnit.SECONDS), "The probe must retry before the resume is abandoned")
-            assertEquals(listOf(GROWING_RESUME_SETTLE_TIMEOUT_MILLIS), onLooper { timeouts.scheduledDelays.toList() })
-            assertNull(onLooper { resume.outcome }, "Resume must stay pending until the bound")
-            assertEquals(8_000L, onLooper { resume.pendingPositionMillis })
-
-            onLooper { timeouts.fireAll() }
-
-            assertEquals(RecordingResumeOutcome.ABANDONED, onLooper { resume.outcome })
-            assertNull(onLooper { resume.pendingPositionMillis })
+            runCurrent()
+            advanceTimeBy(5_000L)
+            runCurrent()
+            assertEquals(listOf(GROWING_RESUME_SETTLE_TIMEOUT_MILLIS), timeouts.scheduledDelays.toList())
+            assertNull(resume.outcome, "Resume must stay pending until the bound")
+            assertEquals(8_000L, resume.pendingPositionMillis)
+            timeouts.fireAll()
+            assertEquals(RecordingResumeOutcome.ABANDONED, resume.outcome)
+            assertNull(resume.pendingPositionMillis)
             assertTrue(maps.none(SeekMap::isSeekable))
             assertEquals(emptyList<Long>(), seeks)
             assertTrue(lease.opens >= 2, "The probe must have retried before the resume was abandoned")
+        } finally {
+            extractor.release()
+        }
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `Matroska seek falls back to first Cluster when codec validation is revoked`() = runTest {
+        val bytes = growingMatroskaFixture()
+        val lease = ProbeLease(bytes, bytes.size)
+        val delegate = DeclaredVideoTrack(MimeTypes.VIDEO_H264)
+        val index = GrowingRecordingIndex(GrowingMatroskaContainer)
+        val maps = mutableListOf<SeekMap>()
+        val extractor = GrowingRecordingExtractor(
+            GrowingMatroskaContainer, delegate, index, onSeekMap = { maps += it }, lease = lease,
+            probeDispatcher = StandardTestDispatcher(testScheduler),
+        )
+        try {
+            extractor.init(CapturingOutput)
+            runCurrent()
+            val firstCluster = requireNotNull(findMatroskaCluster(bytes, 0, bytes.size.toLong(), 0, bytes.size)).position
+            assertTrue(maps.last().isSeekable)
+            index.onVideoFormat(0, MimeTypes.VIDEO_VP9)
+            val rawPosition = firstCluster + 7L
+            extractor.seek(rawPosition, 2_000_000L)
+            val holder = PositionHolder()
+            fun input(position: Long) = DefaultExtractorInput(DataReader { _, _, _ -> C.RESULT_END_OF_INPUT }, position, bytes.size.toLong())
+            assertEquals(Extractor.RESULT_SEEK, extractor.read(input(rawPosition), holder))
+            assertEquals(firstCluster, holder.position)
+            extractor.read(input(holder.position), holder)
+            assertEquals(listOf(firstCluster), delegate.readPositions)
         } finally {
             extractor.release()
         }

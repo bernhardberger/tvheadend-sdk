@@ -51,7 +51,7 @@ class VideoScanInspectionTest {
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun `growing Matroska prefixes preserve all video samples and finalize the estimated map`() = runTest {
-        val bytes = File("src/test/resources/growing-matroska/synthetic.mkv").readBytes()
+        val bytes = growingMatroskaFixture()
         val expected = extract(bytes, GrowingMatroskaContainer.createExtractor()).sampleScans.size
         val lease = ProbeLease(bytes, bytes.size / 3)
         val output = ScanCapturingOutput()

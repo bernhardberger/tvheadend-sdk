@@ -149,7 +149,7 @@ public sealed interface RecordingPlaybackAdmission {
     public class Growing internal constructor(
         public val resumePosition: Duration?,
         public val progressCapability: RecordingProgressCapability,
-        /** Selects the growing-recording container adapter. */
+        /** Identifies the active recording's format, including `.mkv` Matroska recordings. */
         public val container: GrowingRecordingContainer,
     ) : RecordingPlaybackAdmission {
         override fun toString(): String =

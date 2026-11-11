@@ -18,6 +18,7 @@ internal interface GrowingContainerAdapter<E : GrowingRecordingExtent> {
     val supportsObservedIndex: Boolean get() = true
     fun createExtractor(): Extractor
     fun alignIndexPosition(position: Long): Long
+    fun seekFallbackPosition(extent: E): Long? = null
     fun createExtentProbe(lease: GrowingRecordingFileLease): GrowingRecordingExtentProbe<E>
     fun isContinuous(previous: E, next: E): Boolean
     fun createBinarySearchSeeker(extent: E): BinarySearchSeeker
