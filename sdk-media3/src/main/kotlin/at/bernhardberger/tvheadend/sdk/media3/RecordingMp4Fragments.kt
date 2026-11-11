@@ -19,6 +19,7 @@ internal data class RecordingMp4Track(
     val duration: Long,
     val flags: Int,
     val restartTrackIds: Set<Int>,
+    val hasUnsignedNegativeDuration: Boolean,
 ) {
     fun timeUs(value: Long): Long = Util.scaleLargeTimestamp(value, C.MICROS_PER_SECOND, track.timescale)
 }
@@ -38,14 +39,35 @@ internal object RecordingMp4Fragments {
         val moov = tree(moovBytes, 0, moovBytes.size) ?: return null
         val mvex = moov.getContainerBoxOfType(Mp4Box.TYPE_mvex) ?: return null
         val tables = BoxParser.parseTraks(moov, GaplessInfoHolder(), C.TIME_UNSET, null, false, false, { it }, false)
-        val video = tables.firstOrNull { it.track.type == C.TRACK_TYPE_VIDEO }?.track ?: return null
+        val primary = (tables.firstOrNull { it.track.type == C.TRACK_TYPE_VIDEO }
+            ?: tables.firstOrNull { it.track.type == C.TRACK_TYPE_AUDIO })?.track ?: return null
         val trex = mvex.leafChildren.firstOrNull {
-            it.type == Mp4Box.TYPE_trex && it.data.limit() >= 32 && it.data.apply { position = 12 }.readInt() == video.id
+            it.type == Mp4Box.TYPE_trex && it.data.limit() >= 32 && it.data.apply { position = 12 }.readInt() == primary.id
         }?.data ?: return null
         trex.position = 20
         val duration = trex.readUnsignedInt()
         trex.skipBytes(4)
-        return RecordingMp4Track(video, duration, trex.readInt(), tables.filter { it.sampleCount > 0 }.map { it.track.id }.toSet())
+        val trak = moov.containerChildren.firstOrNull {
+            it.type == Mp4Box.TYPE_trak && it.getLeafBoxOfType(Mp4Box.TYPE_tkhd)?.data?.let { data ->
+                data.position = 8
+                val version = BoxParser.parseFullBoxVersion(data.readInt())
+                data.position = if (version == 1) 28 else 20
+                data.readInt() == primary.id
+            } == true
+        }
+        return RecordingMp4Track(
+            primary, duration, trex.readInt(), tables.filter { it.sampleCount > 0 }.map { it.track.id }.toSet(),
+            unsignedNegativeDuration(trak?.getLeafBoxOfType(Mp4Box.TYPE_tkhd)?.data, 28, 40) ||
+                unsignedNegativeDuration(trak?.getContainerBoxOfType(Mp4Box.TYPE_mdia)?.getLeafBoxOfType(Mp4Box.TYPE_mdhd)?.data, 24, 32),
+        )
+    }
+
+    private fun unsignedNegativeDuration(data: ParsableByteArray?, shortPosition: Int, longPosition: Int): Boolean {
+        if (data == null) return false
+        data.position = 8
+        val version = BoxParser.parseFullBoxVersion(data.readInt())
+        data.position = if (version == 1) longPosition else shortPosition
+        return if (version == 1) data.readLong() < 0 else data.readInt() < 0
     }
 
     fun find(bytes: ByteArray, base: Long, fileSize: Long, track: RecordingMp4Track, syncOnly: Boolean, from: Int = 0): RecordingMp4Fragment? {
@@ -120,7 +142,12 @@ internal object RecordingMp4Fragments {
             var firstTime: Long? = null
             var firstFlags = defaultFlags
             var lastEnd = 0L
-            val edit = track.track.editListMediaTimes?.takeIf { it.length() == 1 }?.get(0) ?: 0
+            val mediaTimes = track.track.editListMediaTimes
+            val durations = track.track.editListDurations
+            val edit = if (mediaTimes != null && durations?.length() == 1 &&
+                (durations[0] == 0L || Util.scaleLargeTimestamp(durations[0], C.MICROS_PER_SECOND, track.track.movieTimescale) +
+                    track.timeUs(mediaTimes[0]) >= track.track.durationUs)
+            ) mediaTimes[0] else 0
             for (run in traf.leafChildren.filter { it.type == Mp4Box.TYPE_trun }) {
                 val data = run.data
                 data.position = 8
@@ -145,7 +172,8 @@ internal object RecordingMp4Fragments {
                 }
             }
             RecordingMp4Fragment(
-                base + start, base + end, firstTime ?: return null, lastEnd, firstFlags and 0x10000 == 0,
+                base + start, base + end, firstTime ?: return null, lastEnd,
+                track.track.type == C.TRACK_TYPE_AUDIO || firstFlags and 0x10000 == 0,
                 presentTrackIds.containsAll(track.restartTrackIds),
             )
         } catch (_: IndexOutOfBoundsException) {

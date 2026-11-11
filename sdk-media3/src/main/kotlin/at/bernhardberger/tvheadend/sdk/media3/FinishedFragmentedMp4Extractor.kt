@@ -13,6 +13,10 @@ import androidx.media3.extractor.PositionHolder
 import androidx.media3.extractor.SeekMap
 import androidx.media3.extractor.TrackOutput
 
+// Media3 1.11.1 may skip up to 256 KiB before each timestamp search and at its final landing.
+private const val MP4_SEARCH_SKIP_RESERVE_BYTES = 256 * 1024L
+private const val MP4_SEARCH_BYTES = 32 * 1024 * 1024L
+
 /** Probes finished fragments without exposing the muxer's stale duration or unsafe MFRA index. */
 internal class FinishedFragmentedMp4Extractor(private val delegate: Extractor) : Extractor by delegate {
     private var output: ExtractorOutput? = null
@@ -36,8 +40,10 @@ internal class FinishedFragmentedMp4Extractor(private val delegate: Extractor) :
             override fun endTracks() = output.endTracks()
             override fun seekMap(seekMap: SeekMap) {
                 if (seeker == null) {
-                    // A failed bounded fragment probe must not reinstate the muxer's stale duration.
-                    output.seekMap(if (track == null) seekMap else SeekMap.Unseekable(C.TIME_UNSET))
+                    output.seekMap(
+                        if (!seekMap.isSeekable && track?.hasUnsignedNegativeDuration == true) SeekMap.Unseekable(C.TIME_UNSET)
+                        else seekMap,
+                    )
                 }
             }
         })
@@ -128,7 +134,10 @@ internal class FinishedFragmentedMp4Extractor(private val delegate: Extractor) :
     }
 
     override fun seek(position: Long, timeUs: Long) {
-        seeker?.setSeekTargetUs(timeUs)
+        seeker = seeker?.let {
+            RecordingMp4BinarySearchSeeker(checkNotNull(track), it.seekMap.durationUs, mediaEnd)
+                .apply { setSeekTargetUs(timeUs) }
+        }
         delegate.seek(position, timeUs)
     }
 
@@ -186,22 +195,30 @@ internal class RecordingMp4BinarySearchSeeker(track: RecordingMp4Track, duration
         private var floorEndPosition = 0L
         private var ceilingTimeUs = durationUs + 1
         private var steps = 0
+        private var ceilingPosition = sizeBytes
+        private var remainingBytes = MP4_SEARCH_BYTES - 2 * MP4_SEARCH_SKIP_RESERVE_BYTES
 
         override fun onSeekFinished() {
             floorPosition = 0
             floorEndPosition = 0
             ceilingTimeUs = durationUs + 1
             steps = 0
+            ceilingPosition = sizeBytes
+            remainingBytes = MP4_SEARCH_BYTES - 2 * MP4_SEARCH_SKIP_RESERVE_BYTES
         }
 
         override fun searchForTimestamp(input: ExtractorInput, targetTimestamp: Long): TimestampSearchResult {
-            if (++steps > 64) return TimestampSearchResult.targetFoundResult(floorPosition)
+            // Charge even external repositionings conservatively; the initial reserve also covers
+            // a last partial charge and the framework's final skip back to the validated floor.
+            remainingBytes = (remainingBytes - MP4_SEARCH_SKIP_RESERVE_BYTES).coerceAtLeast(0)
+            if (++steps > 64 || remainingBytes == 0L) return TimestampSearchResult.targetFoundResult(floorPosition)
             val start = input.position
             val scanStart = maxOf(start, floorEndPosition)
             val candidate = scan(input, scanStart)
             if (candidate == null) {
-                return if (start <= floorEndPosition) TimestampSearchResult.targetFoundResult(floorPosition)
-                else TimestampSearchResult.overestimatedResult(ceilingTimeUs, start)
+                if (start <= floorEndPosition || remainingBytes == 0L) return TimestampSearchResult.targetFoundResult(floorPosition)
+                ceilingPosition = start
+                return TimestampSearchResult.overestimatedResult(ceilingTimeUs, start)
             }
             if (candidate.timeUs <= targetTimestamp) {
                 floorPosition = candidate.position
@@ -210,20 +227,29 @@ internal class RecordingMp4BinarySearchSeeker(track: RecordingMp4Track, duration
             }
             if (start <= floorEndPosition) return TimestampSearchResult.targetFoundResult(floorPosition)
             ceilingTimeUs = candidate.timeUs
+            ceilingPosition = start
             return TimestampSearchResult.overestimatedResult(candidate.timeUs, start)
         }
 
         private fun scan(input: ExtractorInput, scanStart: Long): RecordingMp4Fragment? {
-            if (scanStart >= sizeBytes || scanStart - input.position > MP4_PROBE_BYTES) return null
-            input.skipFully((scanStart - input.position).toInt())
+            val skip = scanStart - input.position
+            if (scanStart >= sizeBytes || skip > MP4_PROBE_BYTES) return null
+            if (skip > remainingBytes) {
+                remainingBytes = 0
+                return null
+            }
+            input.skipFully(skip.toInt())
+            remainingBytes -= skip
             var base = scanStart
             var retained = 0
             val overlap = MP4_FRAGMENT_BYTES + 16 // Include the following mdat's largest header.
             val bytes = ByteArray(MP4_FRAGMENT_BYTES + overlap)
-            val end = minOf(sizeBytes, scanStart + MP4_PROBE_BYTES)
+            val upperBound = ceilingPosition + minOf(sizeBytes - ceilingPosition, overlap.toLong())
+            val end = scanStart + minOf((upperBound - scanStart).coerceAtLeast(0), MP4_PROBE_BYTES.toLong(), remainingBytes)
             while (base + retained < end) {
                 val count = minOf(MP4_FRAGMENT_BYTES.toLong(), end - base - retained).toInt()
                 input.readFully(bytes, retained, count)
+                remainingBytes -= count
                 val valid = bytes.copyOf(retained + count)
                 RecordingMp4Fragments.find(valid, base, sizeBytes, track, true)?.takeIf {
                     it.timeUs in 0..durationUs

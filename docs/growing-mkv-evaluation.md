@@ -259,6 +259,12 @@ Estimates below are rough and assume that infrastructure.
 
 Risks and upgrade exposure:
 
+- **Large Clusters.** A Cluster larger than the 16 MiB search window can leave
+  the probe without an extent. Playback then continues forward without duration
+  or seeking. Tvheadend closes a Cluster at the first keyframe after 2 MB or
+  one second. With a GOP longer than one second, Cluster size is roughly bitrate
+  times GOP duration, so high bitrates and long GOPs can exceed this bound.
+
 - **Payload lookalikes.** Bounded Cluster searches check declared track numbers,
   timestamp bounds, element sizes, and following Segment boundaries. They do not
   walk every element from the Segment start. Crafted block payloads can still

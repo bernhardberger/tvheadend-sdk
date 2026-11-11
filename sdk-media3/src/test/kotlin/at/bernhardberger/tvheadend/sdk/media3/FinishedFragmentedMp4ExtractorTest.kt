@@ -16,6 +16,7 @@ import androidx.media3.extractor.SeekMap
 import androidx.media3.extractor.TrackOutput
 import androidx.media3.extractor.mp4.FragmentedMp4Extractor
 import java.io.File
+import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -97,6 +98,150 @@ class FinishedFragmentedMp4ExtractorTest {
         } finally {
             extractor.release()
         }
+    }
+
+    @Test
+    fun `fragment timestamps ignore an edit that does not cover the media timeline`() {
+        val original = finishedMp4Fixture()
+        val old = ByteBuffer.wrap(original)
+        val trakType = (4 until original.size - 8).first { old.getInt(it) == Mp4Box.TYPE_trak }
+        val trak = trakType - 4
+        val inserted = trak + old.getInt(trak)
+        val bytes = ByteArray(original.size + 36)
+        original.copyInto(bytes, 0, 0, inserted)
+        original.copyInto(bytes, inserted + 36, inserted)
+        val buffer = ByteBuffer.wrap(bytes)
+        buffer.position(inserted)
+        listOf(36, Mp4Box.TYPE_edts, 28, Mp4Box.TYPE_elst, 0, 1, 1, 1280, 0x10000).forEach(buffer::putInt)
+        buffer.putInt(trak, old.getInt(trak) + 36)
+        val moov = (4 until trak).first { old.getInt(it) == Mp4Box.TYPE_moov } - 4
+        buffer.putInt(moov, old.getInt(moov) + 36)
+        val tkhd = (trakType + 4 until inserted).first { buffer.getInt(it) == Mp4Box.TYPE_tkhd }
+        buffer.putInt(tkhd + 24, 6000)
+        var offset = 0
+        while (buffer.getInt(offset + 4) != Mp4Box.TYPE_moov) offset += buffer.getInt(offset)
+        val track = checkNotNull(RecordingMp4Fragments.track(bytes.copyOfRange(offset, offset + buffer.getInt(offset))))
+        val fragment = checkNotNull(RecordingMp4Fragments.find(bytes, 0, bytes.size.toLong(), track, false))
+        // FFprobe: the first moof's video frame has PTS 120 ms (the first two frames are in moov's mdat).
+        assertEquals(120_000L, fragment.timeUs, "A partial edit must not shift fragment timestamps")
+    }
+
+    @Test
+    fun `an interrupted late seek does not contaminate an earlier seek`() {
+        val original = finishedMp4Fixture()
+        val padded = ByteArrayOutputStream()
+        var offset = 0
+        while (offset < original.size) {
+            val box = checkNotNull(RecordingMp4Fragments.header(original, offset, original.size))
+            val bytes = original.copyOfRange(offset, box.end)
+            if (box.type == Mp4Box.TYPE_moof) {
+                val buffer = ByteBuffer.wrap(bytes)
+                for (position in 4 until bytes.size - 20) {
+                    if (buffer.getInt(position) == Mp4Box.TYPE_tfhd) {
+                        buffer.putLong(position + 12, buffer.getLong(position + 12) + padded.size() - offset)
+                    }
+                }
+            }
+            padded.write(bytes)
+            if (box.type == Mp4Box.TYPE_mdat) {
+                val free = ByteArray(128 * 1024)
+                ByteBuffer.wrap(free).putInt(free.size).putInt(Mp4Box.TYPE_free)
+                padded.write(free)
+            }
+            offset = box.end
+        }
+        val bytes = padded.toByteArray()
+        val extractor = recordingMp4Extractor()
+        val output = FragmentOutput()
+        extractor.init(output)
+        try {
+            drain(extractor, bytes)
+            val late = output.map.getSeekPoints(5_900_000L).first
+            extractor.seek(late.position, 5_900_000L)
+            drain(extractor, bytes, late.position, maximumReads = 3)
+            val early = output.map.getSeekPoints(700_000L).first
+            extractor.seek(early.position, 700_000L)
+            output.videoSamples.clear()
+            drain(extractor, bytes, early.position)
+            assertTrue(output.videoSamples.first().first <= 700_000L, "A replacement seek must not retain the old floor")
+            assertTrue(output.videoSamples.first().second and C.BUFFER_FLAG_KEY_FRAME != 0)
+        } finally {
+            extractor.release()
+        }
+    }
+
+    @Test
+    fun `healthy unknown length fragments retain the delegate duration`() {
+        val bytes = finishedMp4Fixture()
+        val extractor = recordingMp4Extractor()
+        val output = FragmentOutput()
+        extractor.init(output)
+        try {
+            drain(extractor, bytes, length = C.LENGTH_UNSET.toLong())
+            assertTrue(output.map.durationUs > 0, "A healthy header duration must pass through")
+        } finally {
+            extractor.release()
+        }
+    }
+
+    @Test
+    fun `audio only fragmented recordings have duration and can seek`() {
+        val bytes = File("src/test/resources/finished-mp4/audio-only.mp4").readBytes()
+        val extractor = recordingMp4Extractor()
+        val output = FragmentOutput()
+        extractor.init(output)
+        try {
+            drain(extractor, bytes)
+            assertTrue(output.map.durationUs in 5_900_000L..6_200_000L)
+            assertTrue(output.map.isSeekable)
+            val point = output.map.getSeekPoints(4_500_000L).first
+            extractor.seek(point.position, 4_500_000L)
+            output.audioSamples.clear()
+            drain(extractor, bytes, point.position)
+            assertTrue(output.audioSamples.first().first in 4_400_000L..4_500_000L)
+            assertTrue(output.audioSamples.first().second and C.BUFFER_FLAG_KEY_FRAME != 0)
+        } finally {
+            extractor.release()
+        }
+    }
+
+    @Test
+    fun `search without safe fragments stays within a per seek byte budget`() {
+        val bytes = finishedMp4Fixture()
+        var offset = 0
+        while (ByteBuffer.wrap(bytes).getInt(offset + 4) != Mp4Box.TYPE_moov) {
+            offset += ByteBuffer.wrap(bytes).getInt(offset)
+        }
+        val size = ByteBuffer.wrap(bytes).getInt(offset)
+        val track = checkNotNull(RecordingMp4Fragments.track(bytes.copyOfRange(offset, offset + size)))
+            .let { it.copy(restartTrackIds = it.restartTrackIds + 999) }
+        val fileSize = 128 * 1024 * 1024L
+        val seeker = RecordingMp4BinarySearchSeeker(track, 6_080_000L, fileSize)
+        var totalRead = 0L
+        fun input(position: Long): DefaultExtractorInput {
+            var cursor = position
+            return DefaultExtractorInput(DataReader { destination, start, length ->
+                val count = minOf(length.toLong(), fileSize - cursor).toInt()
+                if (count == 0) C.RESULT_END_OF_INPUT else {
+                    destination.fill(0, start, start + count)
+                    if (cursor < bytes.size) {
+                        val copy = minOf(count.toLong(), bytes.size - cursor).toInt()
+                        bytes.copyInto(destination, start, cursor.toInt(), cursor.toInt() + copy)
+                    }
+                    cursor += count
+                    totalRead += count
+                    count
+                }
+            }, position, fileSize)
+        }
+        seeker.setSeekTargetUs(5_000_000L)
+        var current = input(seeker.seekMap.getSeekPoints(5_000_000L).first.position)
+        val holder = PositionHolder()
+        while (seeker.isSeeking) {
+            if (seeker.handlePendingSeek(current, holder) == Extractor.RESULT_SEEK) current = input(holder.position)
+        }
+        assertEquals(0L, current.position, "No unsafe fragment may become the seek floor")
+        assertTrue(totalRead <= 32 * 1024 * 1024L, "A seek must have a total read budget")
     }
 
     @Test
@@ -190,6 +335,7 @@ class FinishedFragmentedMp4ExtractorTest {
         start: Long = 0,
         length: Long = bytes.size.toLong(),
         onRead: (Int) -> Unit = {},
+        maximumReads: Int = Int.MAX_VALUE,
     ) {
         fun input(position: Long): DefaultExtractorInput {
             var cursor = position.toInt()
@@ -205,7 +351,7 @@ class FinishedFragmentedMp4ExtractorTest {
         }
         var input = input(start)
         val holder = PositionHolder()
-        while (true) {
+        repeat(maximumReads) {
             when (extractor.read(input, holder)) {
                 Extractor.RESULT_CONTINUE -> Unit
                 Extractor.RESULT_SEEK -> input = input(holder.position)
@@ -217,9 +363,11 @@ class FinishedFragmentedMp4ExtractorTest {
     private class FragmentOutput : ExtractorOutput {
         lateinit var map: SeekMap
         val videoSamples = mutableListOf<Pair<Long, Int>>()
+        val audioSamples = mutableListOf<Pair<Long, Int>>()
         override fun track(id: Int, type: Int): TrackOutput = object : TrackOutput by DiscardingTrackOutput() {
             override fun sampleMetadata(timeUs: Long, flags: Int, size: Int, offset: Int, cryptoData: TrackOutput.CryptoData?) {
                 if (type == C.TRACK_TYPE_VIDEO) videoSamples += timeUs to flags
+                if (type == C.TRACK_TYPE_AUDIO) audioSamples += timeUs to flags
             }
         }
         override fun endTracks(): Unit = Unit

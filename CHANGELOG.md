@@ -173,6 +173,9 @@ Unreleased; development target.
 - Finished fragmented MP4 recordings now use fragment-derived duration and
   keyframe seeking instead of Tvheadend's short or invalid header durations
   and unsafe fragment index. Playback can reach its end after seeking.
+  Audio-only recordings also get fragment-derived duration and seeking. When
+  fragment probing cannot build a seek map, valid Media3 durations and seekable
+  maps are preserved; unsigned-negative header durations remain unknown.
 
 - In `sdk-media3`, a paused live timeshift seek now returns
   `TimeshiftCommandResult.UNAVAILABLE` when other allocations still exhaust the

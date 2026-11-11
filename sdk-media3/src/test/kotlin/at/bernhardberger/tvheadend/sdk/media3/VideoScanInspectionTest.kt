@@ -55,9 +55,11 @@ class VideoScanInspectionTest {
         val expected = extract(bytes, GrowingMatroskaContainer.createExtractor()).sampleScans.size
         val lease = ProbeLease(bytes, bytes.size / 3)
         val output = ScanCapturingOutput()
+        val callbacks = mutableListOf<SeekMap>()
         val extractor = GrowingRecordingExtractor(
             GrowingMatroskaContainer,
             lease = lease,
+            onSeekMap = callbacks::add,
             probeDispatcher = StandardTestDispatcher(testScheduler),
         )
         var cursor = 0
@@ -75,13 +77,14 @@ class VideoScanInspectionTest {
         val input = DefaultExtractorInput(reader, 0L, C.LENGTH_UNSET.toLong())
         try {
             extractor.init(output)
-            testScheduler.runCurrent()
-            assertTrue(output.maps.isNotEmpty(), "The probe must publish an extent before the initial seek")
             extractor.seek(0L, 0L)
             val holder = PositionHolder()
             while (extractor.read(input, holder) == Extractor.RESULT_CONTINUE) {
                 // Read the next complete sample from the growing source.
             }
+            testScheduler.runCurrent()
+            assertTrue(output.maps.first().durationUs > 0, "The first map must contain the probed duration")
+            assertEquals(output.maps, callbacks)
             assertTrue(output.video.formats.isNotEmpty(), "The initial seek must preserve video track initialization")
             assertEquals(expected, output.video.sampleScans.size)
             assertTrue(expected > 250)
@@ -91,6 +94,44 @@ class VideoScanInspectionTest {
             testScheduler.runCurrent()
             assertTrue(output.maps.last().isSeekable)
             assertEquals(false, output.maps.last().isEstimated)
+        } finally {
+            extractor.release()
+        }
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun `failed initial growing probe releases the estimated placeholder`() = runTest {
+        val bytes = growingMatroskaFixture()
+        val output = ScanCapturingOutput()
+        val callbacks = mutableListOf<SeekMap>()
+        val lease = ProbeLease(bytes, 0)
+        val extractor = GrowingRecordingExtractor(
+            GrowingMatroskaContainer, lease = lease,
+            onSeekMap = callbacks::add, probeDispatcher = StandardTestDispatcher(testScheduler),
+        )
+        var cursor = 0
+        val input = DefaultExtractorInput(DataReader { destination, offset, length ->
+            if (cursor == bytes.size) C.RESULT_END_OF_INPUT else {
+                val count = minOf(length, bytes.size - cursor)
+                bytes.copyInto(destination, offset, cursor, cursor + count)
+                cursor += count
+                count
+            }
+        }, 0, C.LENGTH_UNSET.toLong())
+        try {
+            extractor.init(output)
+            while (extractor.read(input, PositionHolder()) == Extractor.RESULT_CONTINUE) Unit
+            assertTrue(output.maps.isEmpty(), "Publication must wait for the first probe result")
+            testScheduler.runCurrent()
+            assertEquals(listOf(EstimatedUnseekableGrowingSeekMap), output.maps)
+            assertEquals(output.maps, callbacks)
+            lease.available = bytes.size / 2
+            testScheduler.advanceTimeBy(5_000L)
+            testScheduler.runCurrent()
+            assertTrue(output.maps.last().durationUs > 0, "Later probe samples must still update the placeholder")
+            assertTrue(output.maps.last().isEstimated)
+            assertEquals(output.maps, callbacks)
         } finally {
             extractor.release()
         }

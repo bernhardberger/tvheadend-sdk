@@ -27,3 +27,20 @@ FFmpeg alone does not reproduce those values. Another in-memory patch replaces
 one keyframe fragment's audio `traf` with an equal-size `free` box, preserving
 all sample offsets. It reproduces the stale-track restart failure without a
 second fixture or a generator script.
+
+`audio-only.mp4` contains only the generated six-second tone, using the same
+fragmentation and bitexact flags. FFmpeg 7.1 generated it with:
+
+```sh
+ffmpeg -hide_banner -loglevel error -fflags +bitexact \
+  -f lavfi -i sine=frequency=440:sample_rate=48000 \
+  -t 6 -c:a mp2 -b:a 64k -map_metadata -1 \
+  -flags:a +bitexact -bitexact \
+  -f mp4 -frag_duration 1 -ism_lookahead 0 -y audio-only.mp4
+```
+
+A second generation was byte-identical, SHA-256
+`d046ca5ab0d5071b29f5c225e7bc178457d9783b2129b0c62782cade0c6d17e0`.
+Tests use its audio fragments for duration and seeking. The video fixture also
+receives in-memory `free` padding for interrupted searches, with fragment base
+offsets adjusted, and a partial edit list for timestamp alignment checks.

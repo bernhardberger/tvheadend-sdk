@@ -1413,15 +1413,19 @@ The application retains identity matching, retry/route choice and play intent.
 playback, and `DvrRepository.changes` remain stable.
 
 Finished fragmented MP4 recordings use the last video fragments for duration,
-not Tvheadend's initial header durations. Seeking starts at an earlier video
-keyframe whose fragment also initializes every track with initial samples;
+or audio fragments for audio-only recordings, not Tvheadend's initial header
+durations. Seeking starts at an earlier video keyframe (or audio sample)
+whose fragment also initializes every track with initial samples;
 this can land more than one keyframe interval early. Tvheadend's `mfra` index
 is not used for seeking. A validated footer lets the duration probe skip that
 index. The probe starts with 1 MiB of media and doubles only when needed, up to
-16 MiB, reading only newly added bytes. Each seek scan has the same cap. If
-the probe cannot find usable final fragments, duration stays unknown and seeking is
-unavailable. A fragmented input without a known file length also stays
-forward-only with unknown duration. Growing MP4 recordings remain deferred.
+16 MiB, reading only newly added bytes. Each seek scan has the same cap and
+stops near the current search upper bound; a seek reads at most 32 MiB in total.
+If the SDK cannot build a fragment seek map, it keeps Media3's map, including
+valid durations and seekable `sidx` maps. Only an unseekable map backed by
+Tvheadend's unsigned-negative header duration is replaced with unknown duration.
+The same fallback applies without a known file length. Growing MP4 recordings
+remain deferred.
 
 The 0.27 additions `Channel.mediaKind`, `ChannelService.mediaKind`, and
 `DvrRecordingFile.streams` also require `@OptIn(ExperimentalTvheadendApi::class)`.

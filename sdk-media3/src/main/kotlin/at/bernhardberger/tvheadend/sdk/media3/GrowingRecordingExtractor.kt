@@ -61,6 +61,8 @@ internal class GrowingRecordingExtractor<E : GrowingRecordingExtent>(
     private var downstream: ExtractorOutput? = null
     private var conservativeReadPosition = 0L
     private var sentInitialMap = false
+    private var delegateMapReceived = false
+    private var firstProbeResolved = false
 
     override fun sniff(input: ExtractorInput): Boolean = delegate.sniff(input)
 
@@ -86,12 +88,8 @@ internal class GrowingRecordingExtractor<E : GrowingRecordingExtent>(
 
                 override fun seekMap(seekMap: SeekMap) {
                     synchronized(publicationLock) {
-                        if (!sentInitialMap && publishedExtent == null) {
-                            sentInitialMap = true
-                            // ProgressiveMediaSource rejects estimated updates after a definitive map.
-                            onSeekMap(EstimatedUnseekableGrowingSeekMap)
-                            output.seekMap(EstimatedUnseekableGrowingSeekMap)
-                        }
+                        delegateMapReceived = true
+                        publishInitialMapIfReady()
                     }
                 }
             },
@@ -105,6 +103,7 @@ internal class GrowingRecordingExtractor<E : GrowingRecordingExtent>(
                 while (isActive && lease.isCurrent) {
                     val next = probe.sample()
                     synchronized(publicationLock) {
+                        firstProbeResolved = true
                         val previous = extent
                         if (!released && next != null &&
                             (previous == null || container.isContinuous(previous, next))
@@ -112,11 +111,16 @@ internal class GrowingRecordingExtractor<E : GrowingRecordingExtent>(
                             extent = next
                             publishExtent()
                         }
+                        publishInitialMapIfReady()
                     }
                     if (extent?.isFinal == true) break
                     delay(5_000L)
                 }
-                synchronized(publicationLock) { publishExtent() }
+                synchronized(publicationLock) {
+                    firstProbeResolved = true
+                    publishExtent()
+                    publishInitialMapIfReady()
+                }
                 } finally {
                     probe.close()
                 }
@@ -179,6 +183,16 @@ internal class GrowingRecordingExtractor<E : GrowingRecordingExtent>(
         synchronized(publicationLock) { released = true }
         probeJob?.cancel()
         delegate.release()
+    }
+
+    private fun publishInitialMapIfReady() {
+        if (released || sentInitialMap || publishedExtent != null || !delegateMapReceived ||
+            lease != null && !firstProbeResolved
+        ) return
+        sentInitialMap = true
+        // ProgressiveMediaSource accepts later estimated updates, but not after a definitive map.
+        onSeekMap(EstimatedUnseekableGrowingSeekMap)
+        checkNotNull(downstream).seekMap(EstimatedUnseekableGrowingSeekMap)
     }
 
     private fun publishExtent() {
