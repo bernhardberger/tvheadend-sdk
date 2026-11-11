@@ -503,6 +503,8 @@ internal class ModuleBoundaryTest {
             "PlaybackTargetDisposition",
             "PlaybackTargetResult",
             "RecordingPlaybackStart",
+            "RecordingPlaybackFailure",
+            "RecordingPlaybackFailureCategory",
             "LivePlaybackOptions",
             "TvheadendPlaybackRecovery",
             "TvheadendAudioOutputProvider",

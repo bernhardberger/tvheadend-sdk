@@ -968,6 +968,19 @@ has already replaced the recording in response to it. An application that treats
 `Player.playerError` again in `onEvents`, or later on the application looper,
 and ignore the error if it has been cleared.
 
+For recording failures, observe the experimental
+`TvheadendPlaybackCoordinator.recordingPlaybackFailure` flow. Its
+`RecordingPlaybackFailure.category` groups Media3 error codes as `MALFORMED_MEDIA`,
+`UNSUPPORTED_FORMAT`, `IO`, or `OTHER`; use it to choose the application's generic
+reason. Show `detail` beside that reason: it always includes the Media3 code name
+and may include a parser or decoder message. Other errors include no message.
+The SDK removes control characters, omits URI or path-like messages, and limits
+the line to 160 characters with a truncation marker. Treat it as display-only,
+not a log message or diagnostic key. The value remains while the failed recording
+item is installed, and clears on target replacement, stop, shutdown, or item
+departure. Live errors and replaced-source errors that trigger re-preparation
+do not set it.
+
 Discover stream profiles for the same captured generation with
 `session.getStreamProfiles(currentSession)`. `StreamProfilesResult.Available`
 contains the immutable server order and its exact `originatingSession`. That

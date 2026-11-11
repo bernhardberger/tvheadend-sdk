@@ -542,6 +542,19 @@ public class TvheadendPlaybackCoordinator internal constructor(
     public val pendingRecordingRecoveryPosition: StateFlow<Duration?> = player.pendingRecordingRecoveryPosition
 
     /**
+     * Shows the installed recording's playback failure, or null.
+     *
+     * Set alongside its [at.bernhardberger.tvheadend.sdk.core.DvrPlaybackExit.ERROR] event. Keep
+     * observing it while the failed item remains installed; live errors and replaced-source
+     * errors that trigger re-preparation never set it. Target replacement, [stop], [shutdown],
+     * and departure of the installed item clear it. A retired target's late events never set it.
+     * Use [RecordingPlaybackFailure.category] for presentation and [RecordingPlaybackFailure.detail]
+     * only as a display line, not as a log message or diagnostic key.
+     */
+    @ExperimentalTvheadendApi
+    public val recordingPlaybackFailure: StateFlow<RecordingPlaybackFailure?> = player.recordingPlaybackFailure
+
+    /**
      * The video frame duration the server declared for the active target, or null.
      *
      * Use it only as a display hint, for example to choose a display refresh rate while Media3

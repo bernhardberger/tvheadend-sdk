@@ -4369,6 +4369,7 @@ private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
     override val playerCleanupPending = MutableStateFlow(false)
     override val pendingRecordingRecoveryPosition = MutableStateFlow<Duration?>(null)
     override val declaredVideoFrameDuration = MutableStateFlow<Duration?>(null)
+    override val recordingPlaybackFailure = MutableStateFlow<RecordingPlaybackFailure?>(null)
     private var active: FakeTarget? = null
     var snapshot: PlaybackPlayerSnapshot = snapshot(position = 0, duration = null)
     var retirementExit: DvrPlaybackExit = DvrPlaybackExit.ORDERLY

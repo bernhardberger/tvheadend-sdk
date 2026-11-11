@@ -42,6 +42,12 @@ Unreleased; development target.
   profile are admitted too, but Media3 cannot parse their H.264 and HEVC
   samples; see `docs/growing-mkv-evaluation.md`.
 
+- Experimental `TvheadendPlaybackCoordinator.recordingPlaybackFailure:
+  StateFlow<RecordingPlaybackFailure?>` reports the installed recording's error.
+  `RecordingPlaybackFailure.category` uses `RecordingPlaybackFailureCategory`
+  (`MALFORMED_MEDIA`, `UNSUPPORTED_FORMAT`, `IO`, `OTHER`); `detail` supplies a
+  bounded display-only Media3 code name and, when safe, a parser or decoder message.
+
 ### Changed
 
 - BREAKING: both `createTvheadendPlaybackCoordinator` factories take a trailing

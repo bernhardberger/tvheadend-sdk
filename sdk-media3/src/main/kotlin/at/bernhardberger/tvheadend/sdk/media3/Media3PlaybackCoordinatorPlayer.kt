@@ -104,6 +104,7 @@ internal interface PlaybackCoordinatorPlayer {
     val playerCleanupPending: StateFlow<Boolean>
     val pendingRecordingRecoveryPosition: StateFlow<Duration?>
     val declaredVideoFrameDuration: StateFlow<Duration?>
+    val recordingPlaybackFailure: StateFlow<RecordingPlaybackFailure?>
 
     suspend fun installLive(
         ticket: PlayerOperationTicket,
@@ -250,6 +251,9 @@ internal class Media3PlaybackCoordinatorPlayer(
     override val pendingRecordingRecoveryPosition: StateFlow<Duration?> = mutablePendingRecoveryPosition.asStateFlow()
     private val mutableDeclaredVideoFrameDuration = MutableStateFlow<Duration?>(null)
     override val declaredVideoFrameDuration: StateFlow<Duration?> = mutableDeclaredVideoFrameDuration.asStateFlow()
+    private val mutableRecordingPlaybackFailure = MutableStateFlow<RecordingPlaybackFailure?>(null)
+    override val recordingPlaybackFailure: StateFlow<RecordingPlaybackFailure?> = mutableRecordingPlaybackFailure.asStateFlow()
+    private var recordingFailureToken: PlaybackTargetToken? = null
 
     /** Looper-owned target state; the cleanup lock also fences unjoined late work after abandon. */
     private fun publishPendingRecovery() {
@@ -259,6 +263,12 @@ internal class Media3PlaybackCoordinatorPlayer(
                     it.token.isActive() && it.ownership != ItemOwnership.LOST
                 }?.pendingRecoveryPosition
             publishDeclaredVideoFrameDurationLocked()
+            if (cleanupAbandoned || active?.token !== recordingFailureToken ||
+                recordingFailureToken?.isActive() != true || recordingFailureToken?.ownsPlayerItem() != true
+            ) {
+                recordingFailureToken = null
+                mutableRecordingPlaybackFailure.value = null
+            }
         }
     }
 
@@ -706,7 +716,13 @@ internal class Media3PlaybackCoordinatorPlayer(
                 return
             }
             if (recording) {
-                val (_, snapshot) = eventTarget(token) { last -> last.copy(failed = true) } ?: return
+                val (failedTarget, snapshot) = eventTarget(token) { last -> last.copy(failed = true) } ?: return
+                synchronized(cleanupLock) {
+                    if (!cleanupAbandoned && active === failedTarget && token.isActive() && token.ownsPlayerItem()) {
+                        recordingFailureToken = token
+                        mutableRecordingPlaybackFailure.value = recordingPlaybackFailure(error)
+                    }
+                }
                 events.publish(
                     PlaybackPlayerEvent(
                         token = token,
@@ -1160,6 +1176,8 @@ internal class Media3PlaybackCoordinatorPlayer(
             mutablePlayerCleanupPending.value = false
             mutablePendingRecoveryPosition.value = null
             mutableDeclaredVideoFrameDuration.value = null
+            recordingFailureToken = null
+            mutableRecordingPlaybackFailure.value = null
         }
     }
 
