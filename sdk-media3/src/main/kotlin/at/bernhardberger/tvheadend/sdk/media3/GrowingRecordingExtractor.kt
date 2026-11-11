@@ -164,7 +164,8 @@ internal class GrowingRecordingExtractor<E : GrowingRecordingExtent>(
             container.createBinarySearchSeeker(it)
                 .apply { setSeekTargetUs(timeUs) }
         }
-        pendingSeekFallback = if (binarySeeker == null && !container.supportsObservedIndex) {
+        // Byte zero must retain the normal restart path through the container header and Tracks.
+        pendingSeekFallback = if (position > 0L && binarySeeker == null && !container.supportsObservedIndex) {
             extent?.let(container::seekFallbackPosition)
         } else null
         val parserPosition = pendingSeekFallback ?: position

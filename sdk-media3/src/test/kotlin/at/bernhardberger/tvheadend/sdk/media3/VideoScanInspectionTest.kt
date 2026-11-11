@@ -76,10 +76,13 @@ class VideoScanInspectionTest {
         try {
             extractor.init(output)
             testScheduler.runCurrent()
+            assertTrue(output.maps.isNotEmpty(), "The probe must publish an extent before the initial seek")
+            extractor.seek(0L, 0L)
             val holder = PositionHolder()
             while (extractor.read(input, holder) == Extractor.RESULT_CONTINUE) {
                 // Read the next complete sample from the growing source.
             }
+            assertTrue(output.video.formats.isNotEmpty(), "The initial seek must preserve video track initialization")
             assertEquals(expected, output.video.sampleScans.size)
             assertTrue(expected > 250)
             assertTrue(output.maps.last().isEstimated)
