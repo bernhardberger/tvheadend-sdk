@@ -132,7 +132,7 @@ class GrowingRecordingResumeExtractorTest {
         val seeks = CopyOnWriteArrayList<Long>()
         val timeouts = FakeResumeTimeouts()
         val resume = RecordingResumeStateMachine(seekTo = { seeks += it }, scheduleTimeout = timeouts::schedule)
-        val extractor = GrowingTsExtractor(delegate = DeclaredVideoTrack(MimeTypes.VIDEO_H264), lease = lease, onSeekMap = { map ->
+        val extractor = GrowingRecordingExtractor(GrowingTsContainer, delegate = DeclaredVideoTrack(MimeTypes.VIDEO_H264), lease = lease, onSeekMap = { map ->
             maps += map
             looper.execute { resume.onMediaState(true, map.durationMillis(), map.isSeekable) }
         })
@@ -176,7 +176,7 @@ class GrowingRecordingResumeExtractorTest {
             scheduleTimeout = ::schedule,
             onPendingPositionChanged = { if (it == null) settled.countDown() },
         )
-        val extractor = GrowingTsExtractor(delegate = delegate, lease = lease, onSeekMap = { map ->
+        val extractor = GrowingRecordingExtractor(GrowingTsContainer, delegate = delegate, lease = lease, onSeekMap = { map ->
             looper.execute {
                 map.durationMillis()?.let { extentMillis = it }
                 if (map.isSeekable) seekableMap = map
@@ -209,7 +209,7 @@ class GrowingRecordingResumeExtractorTest {
      * forward inside a reader instead of reopening it.
      */
     private fun seekThroughExtractor(
-        extractor: GrowingTsExtractor,
+        extractor: GrowingRecordingExtractor<GrowingTsExtent>,
         delegate: DeclaredVideoTrack,
         bytes: ByteArray,
         availableBytes: Int,

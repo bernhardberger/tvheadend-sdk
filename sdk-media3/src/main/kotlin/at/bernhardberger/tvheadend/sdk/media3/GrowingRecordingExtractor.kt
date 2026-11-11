@@ -9,7 +9,6 @@ package at.bernhardberger.tvheadend.sdk.media3
 import androidx.media3.common.C
 import androidx.media3.common.DataReader
 import androidx.media3.common.Format
-import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.ParsableByteArray
 import androidx.media3.extractor.Extractor
 import androidx.media3.extractor.BinarySearchSeeker
@@ -20,9 +19,6 @@ import androidx.media3.extractor.PositionHolder
 import androidx.media3.extractor.SeekMap
 import androidx.media3.extractor.SeekPoint
 import androidx.media3.extractor.TrackOutput
-import androidx.media3.extractor.text.SubtitleParser
-import androidx.media3.extractor.ts.TsExtractor
-import androidx.media3.extractor.ts.GrowingTsBinarySearch
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -32,23 +28,24 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
-internal fun createGrowingTsExtractorsFactory(
+internal fun <E : GrowingRecordingExtent> createGrowingRecordingExtractorsFactory(
+    container: GrowingRecordingContainer<E>,
     onSeekMap: (SeekMap) -> Unit = {},
     lease: GrowingRecordingFileLease? = null,
     probeDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ): ExtractorsFactory = ExtractorsFactory {
     arrayOf(
         FormatlessTrackFilter(
-            GrowingTsExtractor(onSeekMap = onSeekMap, lease = lease, probeDispatcher = probeDispatcher),
+            GrowingRecordingExtractor(container, onSeekMap = onSeekMap, lease = lease, probeDispatcher = probeDispatcher),
         ),
     )
 }
 
-/** Thin indexing decorator; Media3's maintained [TsExtractor] still owns all TS parsing. */
-internal class GrowingTsExtractor(
-    private val delegate: Extractor =
-        VideoScanExtractor(TsExtractor(SubtitleParser.Factory.UNSUPPORTED)),
-    private val index: GrowingTsIndex = GrowingTsIndex(),
+/** Thin indexing decorator; the container's maintained Media3 extractor owns parsing. */
+internal class GrowingRecordingExtractor<E : GrowingRecordingExtent>(
+    private val container: GrowingRecordingContainer<E>,
+    private val delegate: Extractor = container.createExtractor(),
+    private val index: GrowingRecordingIndex = GrowingRecordingIndex(container),
     private val onSeekMap: (SeekMap) -> Unit = {},
     private val lease: GrowingRecordingFileLease? = null,
     private val probeDispatcher: CoroutineDispatcher = Dispatchers.IO,
@@ -56,11 +53,11 @@ internal class GrowingTsExtractor(
     private val publicationLock = Any()
     private var probeJob: Job? = null
     private var released = false
-    @Volatile private var extent: GrowingTsExtent? = null
-    private var publishedExtent: GrowingTsExtent? = null
+    @Volatile private var extent: E? = null
+    private var publishedExtent: E? = null
     private var publishedSeekable = false
     private var binarySeeker: BinarySearchSeeker? = null
-    private val trackOutputs = ArrayList<GrowingTsTrackOutput>()
+    private val trackOutputs = ArrayList<GrowingRecordingTrackOutput>()
     private var downstream: ExtractorOutput? = null
     private var conservativeReadPosition = 0L
     private var sentInitialMap = false
@@ -74,7 +71,7 @@ internal class GrowingTsExtractor(
                 override fun track(id: Int, type: Int): TrackOutput {
                     val delegateTrack = output.track(id, type)
                     if (type == C.TRACK_TYPE_VIDEO) index.onVideoTrack(id)
-                    val indexed = GrowingTsTrackOutput(
+                    val indexed = GrowingRecordingTrackOutput(
                         delegate = delegateTrack,
                         trackId = id,
                         trackType = type,
@@ -92,8 +89,8 @@ internal class GrowingTsExtractor(
                         if (!sentInitialMap && publishedExtent == null) {
                             sentInitialMap = true
                             // ProgressiveMediaSource rejects estimated updates after a definitive map.
-                            onSeekMap(EstimatedUnseekableGrowingTsSeekMap)
-                            output.seekMap(EstimatedUnseekableGrowingTsSeekMap)
+                            onSeekMap(EstimatedUnseekableGrowingSeekMap)
+                            output.seekMap(EstimatedUnseekableGrowingSeekMap)
                         }
                     }
                 }
@@ -103,16 +100,14 @@ internal class GrowingTsExtractor(
             // Extractor init/release is the synchronous Media3 lifecycle boundary. The probe has
             // its own readers and continues while playback loading is stopped (including pause).
             probeJob = CoroutineScope(probeDispatcher).launch {
-                val probe = GrowingTsExtentProbe(lease)
+                val probe = container.createExtentProbe(lease)
                 try {
                 while (isActive && lease.isCurrent) {
                     val next = probe.sample()
                     synchronized(publicationLock) {
                         val previous = extent
                         if (!released && next != null &&
-                            (previous == null || next.firstPcr == previous.firstPcr &&
-                                next.pcrPid == previous.pcrPid && next.sizeBytes >= previous.sizeBytes &&
-                                next.durationUs >= previous.durationUs)
+                            (previous == null || container.isContinuous(previous, next))
                         ) {
                             extent = next
                             publishExtent()
@@ -141,7 +136,7 @@ internal class GrowingTsExtractor(
         val readStartPosition = input.position
         val result = delegate.read(input, seekPosition)
         if (input.position > readStartPosition) {
-            // TsExtractor reads ahead, so only the start of that input window is a safe lower bound.
+            // The inner extractor reads ahead; the input window start is a safe lower bound.
             conservativeReadPosition = readStartPosition
         }
         if (lease == null) {
@@ -157,11 +152,11 @@ internal class GrowingTsExtractor(
 
     override fun seek(position: Long, timeUs: Long) {
         binarySeeker = extent?.takeIf { index.seekingAllowed && timeUs > 0L }?.let {
-            GrowingTsBinarySearch.create(it.firstPcr, it.durationUs, it.sizeBytes, it.pcrPid, GROWING_TS_SEARCH_BYTES)
+            container.createBinarySearchSeeker(it)
                 .apply { setSeekTargetUs(timeUs) }
         }
         conservativeReadPosition = position
-        trackOutputs.forEach(GrowingTsTrackOutput::resetForSeek)
+        trackOutputs.forEach(GrowingRecordingTrackOutput::resetForSeek)
         index.onExtractorSeek()
         delegate.seek(position, timeUs)
     }
@@ -178,9 +173,7 @@ internal class GrowingTsExtractor(
         if (released || current == publishedExtent && seekable == publishedSeekable) return
         publishedExtent = current
         publishedSeekable = seekable
-        val nativeMap = GrowingTsBinarySearch.create(
-            current.firstPcr, current.durationUs, current.sizeBytes, current.pcrPid, GROWING_TS_SEARCH_BYTES,
-        ).seekMap
+        val nativeMap = container.createBinarySearchSeeker(current).seekMap
         val map = object : SeekMap by nativeMap {
             override fun isEstimated(): Boolean = !current.isFinal
             override fun isSeekable(): Boolean = seekable
@@ -191,12 +184,12 @@ internal class GrowingTsExtractor(
     }
 }
 
-private class GrowingTsTrackOutput(
+private class GrowingRecordingTrackOutput(
     private val delegate: TrackOutput,
     private val trackId: Int,
     private val trackType: Int,
     private val readPosition: () -> Long,
-    private val index: GrowingTsIndex,
+    private val index: GrowingRecordingIndex,
 ) : TrackOutput {
     private var sampleStartPosition: Long? = null
 
@@ -255,16 +248,17 @@ private class GrowingTsTrackOutput(
  * byte constant. This retains one complete observed GOP of parser and decoder pre-roll for
  * validated codecs and naturally scales with stream bitrate and GOP size.
  */
-internal class GrowingTsIndex(
-    private val maximumPoints: Int = MAXIMUM_GROWING_TS_INDEX_POINTS,
-    private val minimumMapAdvanceUs: Long = MINIMUM_GROWING_TS_MAP_ADVANCE_US,
+internal class GrowingRecordingIndex(
+    private val container: GrowingRecordingContainer<*>,
+    private val maximumPoints: Int = MAXIMUM_GROWING_RECORDING_INDEX_POINTS,
+    private val minimumMapAdvanceUs: Long = MINIMUM_GROWING_RECORDING_MAP_ADVANCE_US,
 ) {
-    private val points = ArrayList<GrowingTsIndexPoint>()
+    private val points = ArrayList<GrowingRecordingIndexPoint>()
     private var selectedVideoTrackId: Int? = null
     private var selectedVideoMimeType: String? = null
-    @Volatile private var codecState = GrowingTsCodecState.UNKNOWN
-    val seekingAllowed: Boolean get() = codecState == GrowingTsCodecState.SUPPORTED
-    private var previousKeyframe: GrowingTsKeyframe? = null
+    @Volatile private var codecState = GrowingRecordingCodecState.UNKNOWN
+    val seekingAllowed: Boolean get() = codecState == GrowingRecordingCodecState.SUPPORTED
+    private var previousKeyframe: GrowingRecordingKeyframe? = null
     private var seekablePointCount = 0
     private var publishedSeekableMap = false
     private var invalidationPending = false
@@ -272,7 +266,7 @@ internal class GrowingTsIndex(
     private var replayingAfterSeek = false
 
     init {
-        require(maximumPoints >= MINIMUM_GROWING_TS_INDEX_CAPACITY)
+        require(maximumPoints >= MINIMUM_GROWING_RECORDING_INDEX_CAPACITY)
         require(minimumMapAdvanceUs > 0L)
     }
 
@@ -280,7 +274,7 @@ internal class GrowingTsIndex(
         get() = points.size
 
     fun onVideoTrack(trackId: Int) {
-        if (codecState == GrowingTsCodecState.DENIED) return
+        if (codecState == GrowingRecordingCodecState.DENIED) return
         val selectedTrack = selectedVideoTrackId
         if (selectedTrack == null) {
             selectedVideoTrackId = trackId
@@ -291,9 +285,9 @@ internal class GrowingTsIndex(
 
     fun onVideoFormat(trackId: Int, sampleMimeType: String?) {
         onVideoTrack(trackId)
-        if (codecState == GrowingTsCodecState.DENIED || trackId != selectedVideoTrackId) return
+        if (codecState == GrowingRecordingCodecState.DENIED || trackId != selectedVideoTrackId) return
         if (sampleMimeType == null) return
-        if (sampleMimeType !in SEEK_VALIDATED_TS_VIDEO_MIME_TYPES) {
+        if (sampleMimeType !in container.seekValidatedVideoMimeTypes) {
             denySeeking()
             return
         }
@@ -303,11 +297,11 @@ internal class GrowingTsIndex(
             return
         }
         selectedVideoMimeType = sampleMimeType
-        codecState = GrowingTsCodecState.SUPPORTED
+        codecState = GrowingRecordingCodecState.SUPPORTED
     }
 
     fun onExtractorSeek() {
-        if (codecState != GrowingTsCodecState.DENIED && previousKeyframe != null) {
+        if (codecState != GrowingRecordingCodecState.DENIED && previousKeyframe != null) {
             replayingAfterSeek = true
         }
     }
@@ -319,7 +313,7 @@ internal class GrowingTsIndex(
         sourceReadPosition: Long,
     ) {
         if (
-            codecState != GrowingTsCodecState.SUPPORTED ||
+            codecState != GrowingRecordingCodecState.SUPPORTED ||
             trackId != selectedVideoTrackId ||
             timeUs < 0L ||
             samplePosition < 0L ||
@@ -327,7 +321,7 @@ internal class GrowingTsIndex(
         ) {
             return
         }
-        val alignedSamplePosition = packetAlignDown(samplePosition)
+        val alignedSamplePosition = container.alignIndexPosition(samplePosition)
         val previous = previousKeyframe
         if (
             previous != null &&
@@ -351,27 +345,27 @@ internal class GrowingTsIndex(
             return
         }
         replayingAfterSeek = false
-        if (points.isEmpty()) points += GrowingTsIndexPoint(0L, 0L)
+        if (points.isEmpty()) points += GrowingRecordingIndexPoint(0L, 0L)
         if (timeUs > points.last().timeUs) {
             if (points.size == maximumPoints) compactIndex()
-            val point = GrowingTsIndexPoint(
+            val point = GrowingRecordingIndexPoint(
                 timeUs = timeUs,
                 position = previous?.samplePosition ?: 0L,
             )
             points += point
             if (point.position > 0L) seekablePointCount += 1
         }
-        previousKeyframe = GrowingTsKeyframe(timeUs, alignedSamplePosition, sourceReadPosition)
+        previousKeyframe = GrowingRecordingKeyframe(timeUs, alignedSamplePosition, sourceReadPosition)
     }
 
     fun nextSeekMap(): SeekMap? {
         if (invalidationPending) {
             invalidationPending = false
             publishedSeekableMap = false
-            return EstimatedUnseekableGrowingTsSeekMap
+            return EstimatedUnseekableGrowingSeekMap
         }
-        if (codecState != GrowingTsCodecState.SUPPORTED) return null
-        if (seekablePointCount < MINIMUM_GROWING_TS_SEEKABLE_POINTS) return null
+        if (codecState != GrowingRecordingCodecState.SUPPORTED) return null
+        if (seekablePointCount < MINIMUM_GROWING_RECORDING_SEEKABLE_POINTS) return null
         val horizonUs = points.last().timeUs
         if (
             publishedSeekableMap &&
@@ -381,12 +375,12 @@ internal class GrowingTsIndex(
         }
         publishedSeekableMap = true
         lastPublishedHorizonUs = horizonUs
-        return GrowingTsSeekMap(points.toList())
+        return GrowingRecordingSeekMap(points.toList())
     }
 
     private fun compactIndex() {
         val lastIndex = points.lastIndex
-        val compacted = ArrayList<GrowingTsIndexPoint>(maximumPoints / 2 + 2)
+        val compacted = ArrayList<GrowingRecordingIndexPoint>(maximumPoints / 2 + 2)
         compacted += points.first()
         var index = 1
         while (index < lastIndex) {
@@ -400,8 +394,8 @@ internal class GrowingTsIndex(
     }
 
     private fun denySeeking() {
-        if (codecState == GrowingTsCodecState.DENIED) return
-        codecState = GrowingTsCodecState.DENIED
+        if (codecState == GrowingRecordingCodecState.DENIED) return
+        codecState = GrowingRecordingCodecState.DENIED
         if (publishedSeekableMap) invalidationPending = true
         points.clear()
         seekablePointCount = 0
@@ -410,8 +404,8 @@ internal class GrowingTsIndex(
     }
 }
 
-internal class GrowingTsSeekMap(
-    internal val points: List<GrowingTsIndexPoint>,
+internal class GrowingRecordingSeekMap(
+    internal val points: List<GrowingRecordingIndexPoint>,
 ) : SeekMap {
     internal val indexedHorizonUs: Long = points.last().timeUs
 
@@ -436,20 +430,20 @@ internal class GrowingTsSeekMap(
     }
 }
 
-internal data class GrowingTsIndexPoint(
+internal data class GrowingRecordingIndexPoint(
     val timeUs: Long,
     val position: Long,
 )
 
-private data class GrowingTsKeyframe(
+private data class GrowingRecordingKeyframe(
     val timeUs: Long,
     val samplePosition: Long,
     val sourceReadPosition: Long,
 )
 
-private enum class GrowingTsCodecState { UNKNOWN, SUPPORTED, DENIED }
+private enum class GrowingRecordingCodecState { UNKNOWN, SUPPORTED, DENIED }
 
-internal object EstimatedUnseekableGrowingTsSeekMap : SeekMap {
+internal object EstimatedUnseekableGrowingSeekMap : SeekMap {
     override fun isSeekable(): Boolean = false
 
     override fun getDurationUs(): Long = C.TIME_UNSET
@@ -460,18 +454,9 @@ internal object EstimatedUnseekableGrowingTsSeekMap : SeekMap {
         SeekMap.SeekPoints(SeekPoint(0L, 0L))
 }
 
-private fun GrowingTsIndexPoint.toSeekPoint(): SeekPoint = SeekPoint(timeUs, position)
+private fun GrowingRecordingIndexPoint.toSeekPoint(): SeekPoint = SeekPoint(timeUs, position)
 
-private fun packetAlignDown(position: Long): Long =
-    position / GROWING_TS_PACKET_BYTES * GROWING_TS_PACKET_BYTES
-
-internal const val GROWING_TS_PACKET_BYTES: Int = 188
-internal const val MAXIMUM_GROWING_TS_INDEX_POINTS: Int = 4_096
-internal const val MINIMUM_GROWING_TS_MAP_ADVANCE_US: Long = 5_000_000L
-private const val MINIMUM_GROWING_TS_INDEX_CAPACITY: Int = 8
-private const val MINIMUM_GROWING_TS_SEEKABLE_POINTS: Int = 3
-private val SEEK_VALIDATED_TS_VIDEO_MIME_TYPES = setOf(
-    MimeTypes.VIDEO_MPEG2,
-    MimeTypes.VIDEO_H264,
-    MimeTypes.VIDEO_H265,
-)
+internal const val MAXIMUM_GROWING_RECORDING_INDEX_POINTS: Int = 4_096
+internal const val MINIMUM_GROWING_RECORDING_MAP_ADVANCE_US: Long = 5_000_000L
+private const val MINIMUM_GROWING_RECORDING_INDEX_CAPACITY: Int = 8
+private const val MINIMUM_GROWING_RECORDING_SEEKABLE_POINTS: Int = 3

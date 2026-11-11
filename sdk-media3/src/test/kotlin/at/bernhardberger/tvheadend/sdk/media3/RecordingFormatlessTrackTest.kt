@@ -196,7 +196,7 @@ class RecordingFormatlessTrackTest {
                 VideoScanExtractorsFactory(DefaultExtractorsFactory()).createExtractors()
                     .single { it.underlyingImplementation is TsExtractor }
             },
-        { createGrowingTsExtractorsFactory().createExtractors().single() } to { GrowingTsExtractor() },
+        { createGrowingTsExtractorsFactory().createExtractors().single() } to { GrowingRecordingExtractor(GrowingTsContainer) },
     )
 
     private fun extract(create: () -> Extractor, data: ByteArray): Extraction {

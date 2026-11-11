@@ -33,18 +33,21 @@ internal fun createTvheadendGrowingRecordingDataSourceFactory(
     lease: GrowingRecordingFileLease,
     identity: RecordingMediaIdentity,
     readAheadBytes: Int = DEFAULT_RECORDING_READ_AHEAD_BYTES,
+    container: GrowingRecordingContainer<*> = GrowingTsContainer,
     onFinalEnd: () -> Unit = {},
 ): DataSource.Factory {
-    require(readAheadBytes in GROWING_TS_PACKET_BYTES..MAX_RECORDING_READ_BYTES) {
-        "Growing TS read-ahead must be within $GROWING_TS_PACKET_BYTES..$MAX_RECORDING_READ_BYTES bytes"
+    val deliveryUnitBytes = container.deliveryUnitBytes
+    require(readAheadBytes in deliveryUnitBytes..MAX_RECORDING_READ_BYTES) {
+        "Growing TS read-ahead must be within $deliveryUnitBytes..$MAX_RECORDING_READ_BYTES bytes"
     }
-    val packetAlignedCapacity = readAheadBytes - readAheadBytes % GROWING_TS_PACKET_BYTES
+    val alignedCapacity = readAheadBytes - readAheadBytes % deliveryUnitBytes
     val finalEndSignaled = AtomicBoolean()
     return DataSource.Factory {
         TvheadendGrowingRecordingDataSource(
             lease = lease,
             identity = identity,
-            packetBufferBytes = packetAlignedCapacity,
+            deliveryBufferBytes = alignedCapacity,
+            deliveryUnitBytes = deliveryUnitBytes,
             onFinalEnd = {
                 if (finalEndSignaled.compareAndSet(false, true)) onFinalEnd()
             },
@@ -59,26 +62,28 @@ internal fun createTvheadendGrowingRecordingMediaSource(
     onSeekMap: (SeekMap) -> Unit = {},
     onFinalEnd: () -> Unit = {},
     probeDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    container: GrowingRecordingContainer<*> = GrowingTsContainer,
 ): MediaSource = ProgressiveMediaSource.Factory(
-    createTvheadendGrowingRecordingDataSourceFactory(lease, identity, readAheadBytes, onFinalEnd),
-    createGrowingTsExtractorsFactory(onSeekMap, lease, probeDispatcher),
+    createTvheadendGrowingRecordingDataSourceFactory(lease, identity, readAheadBytes, container, onFinalEnd),
+    createGrowingRecordingExtractorsFactory(container, onSeekMap, lease, probeDispatcher),
 ).createMediaSource(tvheadendRecordingMediaItem(identity))
 
 /**
  * Unknown-length Media3 source over P7-F2's target-scoped growing-file continuity lease.
  *
- * A transport read may stop in the middle of a packet while Tvheadend is appending it. Those
- * bytes remain private until the complete 188-byte packet is available, so temporary file
- * boundaries never reach Media3's maintained TS parser as malformed input. Every reopen uses the
+ * A transport read may stop in the middle of a delivery unit while Tvheadend is appending it.
+ * Those bytes remain private until the complete container delivery unit is available, so temporary
+ * file boundaries never reach Media3's maintained parser as malformed input. Every reopen uses the
  * same lease, so Media3 retry and seek cannot rebind to a new generation or physical file.
  */
 private class TvheadendGrowingRecordingDataSource(
     private val lease: GrowingRecordingFileLease,
     private val identity: RecordingMediaIdentity,
-    packetBufferBytes: Int,
+    deliveryBufferBytes: Int,
+    private val deliveryUnitBytes: Int,
     private val onFinalEnd: () -> Unit,
 ) : BaseDataSource(true) {
-    private val packetBuffer = ByteArray(packetBufferBytes)
+    private val deliveryBuffer = ByteArray(deliveryBufferBytes)
     private var reader: GrowingRecordingFileReader? = null
     private var openUri: Uri? = null
     private var opened = false
@@ -101,13 +106,13 @@ private class TvheadendGrowingRecordingDataSource(
             throw TvheadendRecordingException(TvheadendFailure.FILE_UNAVAILABLE)
         }
         val openedReader = growingBlockingIo {
-            lease.open(dataSpec.position - dataSpec.position % GROWING_TS_PACKET_BYTES)
+            lease.open(dataSpec.position - dataSpec.position % deliveryUnitBytes)
         }.orThrowGrowing()
         reader = openedReader
         openUri = dataSpec.uri
         opened = true
         resetBuffer()
-        openingSkipBytes = (dataSpec.position % GROWING_TS_PACKET_BYTES).toInt()
+        openingSkipBytes = (dataSpec.position % deliveryUnitBytes).toInt()
         transferStarted(dataSpec)
         return C.LENGTH_UNSET.toLong()
     }
@@ -120,7 +125,7 @@ private class TvheadendGrowingRecordingDataSource(
         }
         val activeReader = reader
             ?: throw TvheadendRecordingException(TvheadendFailure.FILE_UNAVAILABLE)
-        if (deliveryOffset == deliveryLimit && !fillCompletePackets(activeReader)) {
+        if (deliveryOffset == deliveryLimit && !fillCompleteUnits(activeReader)) {
             return C.RESULT_END_OF_INPUT
         }
         if (openingSkipBytes != 0) {
@@ -128,7 +133,7 @@ private class TvheadendGrowingRecordingDataSource(
             openingSkipBytes = 0
         }
         val copied = minOf(length, deliveryLimit - deliveryOffset)
-        packetBuffer.copyInto(buffer, offset, deliveryOffset, deliveryOffset + copied)
+        deliveryBuffer.copyInto(buffer, offset, deliveryOffset, deliveryOffset + copied)
         deliveryOffset += copied
         bytesTransferred(copied)
         return copied
@@ -151,12 +156,12 @@ private class TvheadendGrowingRecordingDataSource(
         }
     }
 
-    private fun fillCompletePackets(activeReader: GrowingRecordingFileReader): Boolean {
-        compactPartialPacket()
+    private fun fillCompleteUnits(activeReader: GrowingRecordingFileReader): Boolean {
+        compactPartialUnit()
         while (deliveryLimit == 0) {
-            val writableBytes = packetBuffer.size - bufferedLimit
+            val writableBytes = deliveryBuffer.size - bufferedLimit
             val read = growingBlockingIo {
-                activeReader.read(packetBuffer, bufferedLimit, writableBytes)
+                activeReader.read(deliveryBuffer, bufferedLimit, writableBytes)
             }.orThrowGrowing()
             if (read == RECORDING_END_OF_INPUT) {
                 if (bufferedLimit != 0) {
@@ -169,15 +174,15 @@ private class TvheadendGrowingRecordingDataSource(
                 throw TvheadendRecordingException(TvheadendFailure.FILE_UNAVAILABLE)
             }
             bufferedLimit += read
-            deliveryLimit = bufferedLimit - bufferedLimit % GROWING_TS_PACKET_BYTES
+            deliveryLimit = bufferedLimit - bufferedLimit % deliveryUnitBytes
         }
         return true
     }
 
-    private fun compactPartialPacket() {
+    private fun compactPartialUnit() {
         val partialBytes = bufferedLimit - deliveryLimit
         if (partialBytes > 0) {
-            packetBuffer.copyInto(packetBuffer, 0, deliveryLimit, bufferedLimit)
+            deliveryBuffer.copyInto(deliveryBuffer, 0, deliveryLimit, bufferedLimit)
         }
         deliveryOffset = 0
         deliveryLimit = 0

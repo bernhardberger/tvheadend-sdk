@@ -61,7 +61,7 @@ class VideoScanInspectionTest {
 
     @Test
     fun `growing TS recording switches H264 from interlaced to progressive`() {
-        assertSwitch(extract("h264-switch.ts", GrowingTsExtractor()), interlacedSamples = 3, totalSamples = 6)
+        assertSwitch(extract("h264-switch.ts", GrowingRecordingExtractor(GrowingTsContainer)), interlacedSamples = 3, totalSamples = 6)
     }
 
     @Test

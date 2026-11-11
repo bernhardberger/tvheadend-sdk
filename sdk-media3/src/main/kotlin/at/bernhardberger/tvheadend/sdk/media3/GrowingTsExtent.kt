@@ -21,23 +21,23 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 /** A finite, packet-aligned extent of the same continuity-bound file as playback. */
 internal data class GrowingTsExtent(
-    val sizeBytes: Long,
+    override val sizeBytes: Long,
     val firstPcr: Long,
     val pcrPid: Int,
-    val durationUs: Long,
-    val isFinal: Boolean = false,
-)
+    override val durationUs: Long,
+    override val isFinal: Boolean = false,
+) : GrowingRecordingExtent
 
 // Media3's default PCR search window, rounded to complete TS packets.
 internal const val GROWING_TS_SEARCH_BYTES: Int = 600 * GROWING_TS_PACKET_BYTES
 
 /** Reads only the head and tail, never scans the recording or waits for future content. */
-internal class GrowingTsExtentProbe(private val lease: GrowingRecordingFileLease) {
+internal class GrowingTsExtentProbe(private val lease: GrowingRecordingFileLease) : GrowingRecordingExtentProbe<GrowingTsExtent> {
     private var reader: GrowingRecordingFileReader? = null
     private var origin: Pair<Int, Long>? = null
     private var previous: GrowingTsExtent? = null
 
-    suspend fun sample(): GrowingTsExtent? {
+    override suspend fun sample(): GrowingTsExtent? {
         val result = try {
             withTimeoutOrNull(5_000L) {
                 if (!lease.isCurrent) return@withTimeoutOrNull null
@@ -82,7 +82,7 @@ internal class GrowingTsExtentProbe(private val lease: GrowingRecordingFileLease
         return result
     }
 
-    suspend fun close() {
+    override suspend fun close() {
         val active = reader ?: return
         reader = null
         withContext(NonCancellable) {
