@@ -41,8 +41,9 @@ public class RecordingPlaybackFailure internal constructor(
      * messages must pass a conservative content check: letters, digits, spaces and
      * `. , ; : - _ ( ) [ ] ' " # + ! ?`, no dot between two letters or digits, and colons followed
      * by a space or message end.
-     * This mostly admits parser messages; a single-label hostname cannot be recognized by text
-     * alone. Removes control, format and line-separator characters before checking. Bounds the
+     * This mostly admits parser messages, which Media3 builds with values from the recording's
+     * bytes; IO errors never include a message. The check cannot prove text harmless: a
+     * single-label hostname or a phrase such as `password: x` in those values passes. Removes control, format and line-separator characters before checking. Bounds the
      * complete line to 160 UTF-16 code units, including `…`, without splitting a surrogate pair.
      */
     public val detail: String,

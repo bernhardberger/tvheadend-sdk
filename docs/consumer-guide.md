@@ -980,8 +980,12 @@ the code name only; other error groups include no message.
 After removing control, format and line-separator characters, the check accepts
 only letters, digits, spaces and `. , ; : - _ ( ) [ ] ' " # + ! ?`. It rejects
 dots between two letters or digits and colons not followed by a space or message end.
-In practice this mostly admits parser messages. The check is content-based: it
-cannot recognize a single-label hostname from text alone. The complete line is
+In practice this mostly admits parser messages. These messages come from Media3's
+parser and decoder code, with values read from the recording's own bytes; data
+source, network and server text appears only in `IO` errors, which carry no
+message. The check is content-based and cannot prove arbitrary text harmless: it
+cannot recognize a single-label hostname or a phrase such as `password: x` that
+recording bytes might carry into a parser message. The complete line is
 limited to 160 UTF-16 code units with a truncation marker, without splitting a
 surrogate pair. Treat it as display-only, not a log message or diagnostic key.
 

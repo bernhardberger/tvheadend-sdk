@@ -49,7 +49,8 @@ Unreleased; development target.
   bounded display-only Media3 code name. Messages appear only after a conservative
   content check, in practice mostly parser messages; decoder initialization and
   query errors carry only the code name. The check rejects dots between two letters or digits
-  but cannot recognize a single-label hostname from text alone. A replacement
+  but cannot recognize a single-label hostname or prove other text harmless;
+  messages come from Media3 parser and decoder code, never from IO errors. A replacement
   that fails before source installation preserves the still-installed failure.
 
 ### Changed
