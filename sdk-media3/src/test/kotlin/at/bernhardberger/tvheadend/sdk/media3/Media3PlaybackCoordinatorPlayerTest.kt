@@ -2623,19 +2623,41 @@ internal class Media3PlaybackCoordinatorPlayerTest {
 
     @ParameterizedTest
     @CsvSource(
-        "1000,OTHER,generic", "2004,IO,unsafe", "3001,MALFORMED_MEDIA,parser",
-        "3003,MALFORMED_MEDIA,parser", "4001,UNSUPPORTED_FORMAT,decoder", "4002,UNSUPPORTED_FORMAT,decoder",
-        "4004,UNSUPPORTED_FORMAT,decoder", "4005,UNSUPPORTED_FORMAT,decoder", "4003,OTHER,decoder",
-        "4006,OTHER,decoder", "3001,MALFORMED_MEDIA,path", "3001,MALFORMED_MEDIA,uri",
-        "3001,MALFORMED_MEDIA,long", "3001,MALFORMED_MEDIA,controls", "3001,MALFORMED_MEDIA,generic",
-        "4003,OTHER,path", "5001,OTHER,decoder",
-        "4001,UNSUPPORTED_FORMAT,decoder-init",
+        "1000,OTHER,generic,none", "2004,IO,unsafe,none", "3001,MALFORMED_MEDIA,parser,plain",
+        "3003,MALFORMED_MEDIA,parser,plain", "4001,UNSUPPORTED_FORMAT,decoder,none", "4002,UNSUPPORTED_FORMAT,decoder,none",
+        "4004,UNSUPPORTED_FORMAT,decoder,decoder", "4005,UNSUPPORTED_FORMAT,decoder,decoder", "4003,OTHER,decoder,decoder",
+        "4006,OTHER,decoder,decoder", "3001,MALFORMED_MEDIA,path,none", "3001,MALFORMED_MEDIA,uri,none",
+        "3001,MALFORMED_MEDIA,host,none", "3001,MALFORMED_MEDIA,file,none", "3001,MALFORMED_MEDIA,credential,none",
+        "3001,MALFORMED_MEDIA,ipv4,none",
+        "3001,MALFORMED_MEDIA,userinfo,none", "4003,OTHER,decoder-name,none", "4001,UNSUPPORTED_FORMAT,decoder-init,none",
+        "3001,MALFORMED_MEDIA,long,long", "3001,MALFORMED_MEDIA,surrogate,surrogate", "3001,MALFORMED_MEDIA,controls,plain",
+        "3001,MALFORMED_MEDIA,generic,none", "5001,OTHER,decoder,none",
     )
-    fun `callbacks capture explicit pause and recording terminals but not buffering`(
+    fun `recording failure maps codes and checks display message content`(
         code: Int,
         category: String,
         messageKind: String,
-    ) = runTest {
+        expectedKind: String,
+    ) {
+        val error = safeError(code, messageKind)
+        val failure = recordingPlaybackFailure(error)
+        val prefix = error.errorCodeName + ": "
+        val expected = when (expectedKind) {
+            "plain" -> prefix + "Top bit not zero"
+            "decoder" -> prefix + "Decoder rejected sample"
+            "long" -> (prefix + "x".repeat(400)).take(159) + "…"
+            "surrogate" -> prefix + "x".repeat(158 - prefix.length) + "…"
+            else -> error.errorCodeName
+        }
+        assertEquals(category, failure.category.name)
+        assertTrue(failure.detail == expected, "Only content-checked display text may be appended")
+        assertTrue(failure.detail.length <= 160, "Display detail must be bounded")
+        assertEquals("RecordingPlaybackFailure(category=$category)", failure.toString())
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["generic", "throwing"])
+    fun `callbacks capture explicit pause and recording terminals but not buffering`(messageKind: String) = runTest {
         val access = FakeCoordinatorPlaybackAccess()
         val events = PlaybackPlayerEventAccumulator()
         val player = Media3PlaybackCoordinatorPlayer(access, events) { _, _ ->
@@ -2684,50 +2706,12 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         assertSame(at.bernhardberger.tvheadend.sdk.core.DvrPlaybackExit.NATURAL_END, events.take()?.terminalExit)
 
         access.snapshot = access.snapshot.copy(failed = true)
-        val error = safeError(code, messageKind)
+        val error = safeError(PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED, messageKind)
         access.looperQueue.runOnLooper {
             listener?.onPlayerError(error)
         }
         assertSame(at.bernhardberger.tvheadend.sdk.core.DvrPlaybackExit.ERROR, events.take()?.terminalExit)
-        val failure = requireNotNull(player.recordingPlaybackFailure.value)
-        assertEquals(category, failure.category.name)
-        assertTrue(failure.detail.length <= 160, "Display detail must be bounded")
-        when {
-            messageKind == "long" -> assertTrue(failure.detail.endsWith("…"))
-            messageKind == "parser" || messageKind == "controls" ->
-                assertTrue(failure.detail.startsWith(error.errorCodeName + ": Top bit not zero"))
-            messageKind == "decoder" && code in 4000..4999 ->
-                assertEquals(error.errorCodeName + ": Decoder rejected sample", failure.detail)
-            messageKind == "decoder-init" ->
-                assertTrue(failure.detail.startsWith(error.errorCodeName + ": Decoder init failed:"))
-            else -> assertTrue(failure.detail == error.errorCodeName, "Unsafe or untyped detail must be omitted")
-        }
-        assertFalse(failure.detail.any { it.isISOControl() })
-        assertEquals("RecordingPlaybackFailure(category=$category)", failure.toString())
-        assertSame(failure, player.recordingPlaybackFailure.value)
-
-        val replacement = async {
-            player.installRecording(PlayerOperationTicket(), PlaybackTargetToken(), TestCoordinatorRecordingTarget(), RecordingPlaybackStart.START_OVER)
-        }
-        runCurrent()
-        access.looperQueue.runAll()
-        runCurrent()
-        replacement.await()
-        assertNull(player.recordingPlaybackFailure.value)
-        access.looperQueue.runOnLooper { listener?.onPlayerError(error) }
-        assertNull(player.recordingPlaybackFailure.value, "A retired listener must not restore failure detail")
-        access.looperQueue.runOnLooper { access.deliver { it.onPlayerError(error) } }
-        assertTrue(player.recordingPlaybackFailure.value != null)
-        if (messageKind == "path") {
-            access.replaceWithApplicationItem()
-            assertNull(player.recordingPlaybackFailure.value)
-        }
-        val stop = async { player.stop(PlayerOperationTicket()) }
-        runCurrent()
-        access.looperQueue.runAll()
-        runCurrent()
-        stop.await()
-        assertNull(player.recordingPlaybackFailure.value)
+        assertTrue(player.recordingPlaybackFailure.value?.detail == error.errorCodeName, "Message failures must fall back to the code name")
     }
 
     @Test
@@ -2804,6 +2788,26 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             assertSame(at.bernhardberger.tvheadend.sdk.core.DvrPlaybackExit.ERROR, events.take()?.terminalExit)
         }
 
+    @Test
+    fun `a failed replacement before source installation keeps the installed recording failure`() = runTest {
+        val (access, events, player) = installedRecording()
+        access.looperQueue.runOnLooper { access.deliver { it.onPlayerError(safeError()) } }
+        val failure = requireNotNull(player.recordingPlaybackFailure.value)
+        events.take()
+        access.failNextAddListener = true
+        val replacement = async {
+            player.installRecording(
+                PlayerOperationTicket(), PlaybackTargetToken(), TestCoordinatorRecordingTarget(), RecordingPlaybackStart.START_OVER,
+            )
+        }
+        runCurrent()
+        access.looperQueue.runAll()
+        runCurrent()
+        assertSame(PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE, replacement.await().status)
+        assertEquals(listOf("recording"), access.playlistKinds)
+        assertSame(failure, player.recordingPlaybackFailure.value, "The unchanged failed item must retain its failure")
+    }
+
     private suspend fun TestScope.installedRecording():
         Triple<FakeCoordinatorPlaybackAccess, PlaybackPlayerEventAccumulator, Media3PlaybackCoordinatorPlayer> {
         val access = FakeCoordinatorPlaybackAccess()
@@ -2831,11 +2835,24 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             "path" -> "Cannot parse C:\\private\\recording"
             "uri", "unsafe" -> unsafe
             "long" -> "x".repeat(400)
-            "controls" -> "Top\n bit\u0000 not zero"
+            "controls" -> "Top\n bit\u0000 not zero\u2028\u2029\u200e"
+            "host" -> "Invalid source recording-server.invalid"
+            "ipv4" -> "Invalid source 192.168.1.10"
+            "file" -> "file:recording.ts"
+            "credential" -> "credential=secret"
+            "userinfo" -> "user:pass@host:9981"
+            "decoder-name" -> "c2.android.avc.decoder"
+            "surrogate" -> "x".repeat(158 - (PlaybackException.getErrorCodeName(code) + ": ").length) + "\uD801\uDC00" + "x".repeat(20)
             else -> if (code in 4000..4999) "Decoder rejected sample" else "Top bit not zero"
         }
         val cause = when {
-            messageKind == "decoder-init" -> DecoderInitializationException(Format.Builder().build(), IOException(unsafe), false, -1)
+            messageKind == "throwing" -> object : Exception() {
+                override val cause: Throwable get() = throw IOException("scripted cause failure")
+            }
+            messageKind == "decoder-init" -> DecoderInitializationException(
+                Format.Builder().setId("container-id").setLabel("container-label").setLanguage("container-language").build(),
+                IOException(unsafe), false, -1,
+            )
             messageKind == "generic" || messageKind == "unsafe" -> IOException(unsafe)
             code in 3000..3999 -> ParserException.createForMalformedContainer(message, IOException(unsafe))
             else -> DecoderException(message, IOException(unsafe))
@@ -2895,6 +2912,20 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         }
         assertNull(events.take())
         assertFalse(liveToken.isActive())
+        val recordingListener = access.applicationListener
+        access.looperQueue.runOnLooper { access.deliver { it.onPlayerError(safeError()) } }
+        assertTrue(player.recordingPlaybackFailure.value != null)
+        val successorToken = PlaybackTargetToken()
+        val successor = async {
+            player.installLive(PlayerOperationTicket(), successorToken, TestCoordinatorLiveTarget(), timeshiftControls = controls(successorToken))
+        }
+        runCurrent()
+        access.looperQueue.runAll()
+        runCurrent()
+        successor.await()
+        assertNull(player.recordingPlaybackFailure.value)
+        access.looperQueue.runOnLooper { recordingListener?.onPlayerError(safeError()) }
+        assertNull(player.recordingPlaybackFailure.value)
     }
 
     @ParameterizedTest
@@ -2922,21 +2953,20 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             )
             access.deliverTimelineChange()
             val applicationReplaced = applicationAction != "own"
-            if (!applicationReplaced) {
-                access.deliver { it.onPlayerError(safeError(PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED, "parser")) }
-                assertTrue(coordinator.recordingPlaybackFailure.value != null)
-                runCurrent()
-                assertTrue(coordinator.recordingPlaybackFailure.value != null, "An error must remain visible while installed")
-            }
+            access.deliver { it.onPlayerError(safeError(PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED, "parser")) }
+            assertTrue(coordinator.recordingPlaybackFailure.value != null)
+            runCurrent()
+            assertTrue(coordinator.recordingPlaybackFailure.value != null, "An error must remain visible while installed")
             if (applicationReplaced) {
                 if (applicationAction == "clear") access.clearApplicationPlaylist() else access.replaceWithApplicationItem()
+                assertNull(coordinator.recordingPlaybackFailure.value)
                 access.snapshot = access.snapshot.copy(position = 100.seconds, playbackState = Player.STATE_ENDED)
                 val listener = access.applicationListener
                 listener?.onPlayWhenReadyChanged(false, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
                 listener?.onPlaybackStateChanged(Player.STATE_ENDED)
                 listener?.onPlayerError(PlaybackException("safe", null, PlaybackException.ERROR_CODE_UNSPECIFIED))
                 runCurrent()
-                assertTrue(target.reports.isEmpty(), "The application's item must not report recording progress")
+                assertEquals(1, target.reports.size, "The application's item must not report recording progress")
             }
             access.operations.clear()
 
@@ -3849,6 +3879,7 @@ private class FakeCoordinatorPlaybackAccess(
     var stopAction: (() -> Unit)? = null
     var failRecoveryClose = false
     var failNextRemoveListener = false
+    var failNextAddListener = false
     var prepareAction: (() -> Unit)? = null
     /** Whether the player has not prepared the current coordinator source since it was set. */
     var unprepared = false
@@ -3869,6 +3900,10 @@ private class FakeCoordinatorPlaybackAccess(
     override fun addListener(listener: Player.Listener) {
         requireApplicationLooper()
         operations += "add-listener"
+        if (failNextAddListener) {
+            failNextAddListener = false
+            throw IOException("scripted listener installation failure")
+        }
         listeners += listener
     }
 

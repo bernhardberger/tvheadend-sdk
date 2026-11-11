@@ -46,7 +46,11 @@ Unreleased; development target.
   StateFlow<RecordingPlaybackFailure?>` reports the installed recording's error.
   `RecordingPlaybackFailure.category` uses `RecordingPlaybackFailureCategory`
   (`MALFORMED_MEDIA`, `UNSUPPORTED_FORMAT`, `IO`, `OTHER`); `detail` supplies a
-  bounded display-only Media3 code name and, when safe, a parser or decoder message.
+  bounded display-only Media3 code name. Messages appear only after a conservative
+  content check, in practice mostly parser messages; decoder initialization and
+  query errors carry only the code name. The check rejects dots between two letters or digits
+  but cannot recognize a single-label hostname from text alone. A replacement
+  that fails before source installation preserves the still-installed failure.
 
 ### Changed
 

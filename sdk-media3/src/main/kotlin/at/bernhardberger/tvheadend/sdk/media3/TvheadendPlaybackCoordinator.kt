@@ -547,7 +547,9 @@ public class TvheadendPlaybackCoordinator internal constructor(
      * Set alongside its [at.bernhardberger.tvheadend.sdk.core.DvrPlaybackExit.ERROR] event. Keep
      * observing it while the failed item remains installed; live errors and replaced-source
      * errors that trigger re-preparation never set it. Target replacement, [stop], [shutdown],
-     * and departure of the installed item clear it. A retired target's late events never set it.
+     * and departure of the installed item clear it. A replacement that fails before installation
+     * restores the failure if the same failed item remains owned and current.
+     * A retired target's late events never set it.
      * Use [RecordingPlaybackFailure.category] for presentation and [RecordingPlaybackFailure.detail]
      * only as a display line, not as a log message or diagnostic key.
      */

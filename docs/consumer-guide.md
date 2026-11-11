@@ -972,14 +972,24 @@ For recording failures, observe the experimental
 `TvheadendPlaybackCoordinator.recordingPlaybackFailure` flow. Its
 `RecordingPlaybackFailure.category` groups Media3 error codes as `MALFORMED_MEDIA`,
 `UNSUPPORTED_FORMAT`, `IO`, or `OTHER`; use it to choose the application's generic
-reason. Show `detail` beside that reason: it always includes the Media3 code name
-and may include a parser or decoder message. Other errors include no message.
-The SDK removes control characters, omits URI or path-like messages, and limits
-the line to 160 characters with a truncation marker. Treat it as display-only,
-not a log message or diagnostic key. The value remains while the failed recording
-item is installed, and clears on target replacement, stop, shutdown, or item
-departure. Live errors and replaced-source errors that trigger re-preparation
-do not set it.
+reason. Show `detail` beside that reason: it always includes the Media3 code name.
+Parser messages and non-initialization decoder messages appear only when they
+pass a conservative content check. Decoder initialization and query errors carry
+the code name only; other error groups include no message.
+
+After removing control, format and line-separator characters, the check accepts
+only letters, digits, spaces and `. , ; : - _ ( ) [ ] ' " # + ! ?`. It rejects
+dots between two letters or digits and colons not followed by a space or message end.
+In practice this mostly admits parser messages. The check is content-based: it
+cannot recognize a single-label hostname from text alone. The complete line is
+limited to 160 UTF-16 code units with a truncation marker, without splitting a
+surrogate pair. Treat it as display-only, not a log message or diagnostic key.
+
+The value remains while the failed recording item is installed, and clears on
+target replacement, stop, shutdown, or item departure. A replacement that fails
+before source installation restores the failure when the same failed item
+remains owned and current. Live errors and replaced-source errors that trigger
+re-preparation do not set it.
 
 Discover stream profiles for the same captured generation with
 `session.getStreamProfiles(currentSession)`. `StreamProfilesResult.Available`

@@ -23,6 +23,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekResult
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -467,6 +468,9 @@ internal class Media3PlaybackCoordinatorPlayer(
         val previous = active
         val previousSnapshot = snapshotForReplacement(previous)
             ?: return PlaybackPlayerInstallResult(PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE)
+        val previousFailure = synchronized(cleanupLock) {
+            mutableRecordingPlaybackFailure.value.takeIf { recordingFailureToken === previous?.token }
+        }
         val observationReplacement = (previous as? InstalledPlayerTarget.Live)
             ?.timeshiftControls
             ?.beginObservationReplacement()
@@ -502,7 +506,7 @@ internal class Media3PlaybackCoordinatorPlayer(
                 retiredRecording = retirement.retiredRecording,
             )
         } catch (_: Exception) {
-            rollbackReplacementOnLooper(installed, previous, previousSnapshot, observationReplacement)
+            rollbackReplacementOnLooper(installed, previous, previousSnapshot, observationReplacement, previousFailure)
         }
     }
 
@@ -547,6 +551,9 @@ internal class Media3PlaybackCoordinatorPlayer(
         val previous = active
         val previousSnapshot = snapshotForReplacement(previous)
             ?: return PlaybackPlayerInstallResult(PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE)
+        val previousFailure = synchronized(cleanupLock) {
+            mutableRecordingPlaybackFailure.value.takeIf { recordingFailureToken === previous?.token }
+        }
         val observationReplacement = (previous as? InstalledPlayerTarget.Live)
             ?.timeshiftControls
             ?.beginObservationReplacement()
@@ -611,7 +618,7 @@ internal class Media3PlaybackCoordinatorPlayer(
                 installedRecording = accepted,
             )
         } catch (_: Exception) {
-            rollbackReplacementOnLooper(installed, previous, previousSnapshot, observationReplacement)
+            rollbackReplacementOnLooper(installed, previous, previousSnapshot, observationReplacement, previousFailure)
         }
     }
 
@@ -717,10 +724,14 @@ internal class Media3PlaybackCoordinatorPlayer(
             }
             if (recording) {
                 val (failedTarget, snapshot) = eventTarget(token) { last -> last.copy(failed = true) } ?: return
+                val failure = runCatching { recordingPlaybackFailure(error) }.getOrElse {
+                    if (it !is Exception || it is CancellationException) throw it
+                    RecordingPlaybackFailure(recordingPlaybackFailureCategory(error.errorCode), error.errorCodeName)
+                }
                 synchronized(cleanupLock) {
                     if (!cleanupAbandoned && active === failedTarget && token.isActive() && token.ownsPlayerItem()) {
                         recordingFailureToken = token
-                        mutableRecordingPlaybackFailure.value = recordingPlaybackFailure(error)
+                        mutableRecordingPlaybackFailure.value = failure
                     }
                 }
                 events.publish(
@@ -946,6 +957,7 @@ internal class Media3PlaybackCoordinatorPlayer(
         previous: InstalledPlayerTarget?,
         previousSnapshot: PlaybackPlayerSnapshot,
         observationReplacement: LiveTimeshiftControlBridge.ObservationReplacement?,
+        previousFailure: RecordingPlaybackFailure?,
     ): PlaybackPlayerInstallResult {
         if (active !== installed) {
             commitObservationReplacement(previous, observationReplacement)
@@ -974,6 +986,16 @@ internal class Media3PlaybackCoordinatorPlayer(
         }
         if (!installed.sourceInstalled) {
             rollbackObservationReplacement(restorablePrevious, observationReplacement)
+            if (previousFailure != null && describesTarget(restorablePrevious)) {
+                synchronized(cleanupLock) {
+                    if (!cleanupAbandoned && active === restorablePrevious &&
+                        restorablePrevious.token.isActive() && restorablePrevious.token.ownsPlayerItem()
+                    ) {
+                        recordingFailureToken = restorablePrevious.token
+                        mutableRecordingPlaybackFailure.value = previousFailure
+                    }
+                }
+            }
             return PlaybackPlayerInstallResult(PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE)
         }
         return try {
