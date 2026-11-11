@@ -8,6 +8,8 @@
 
 package at.bernhardberger.tvheadend.sdk.media3
 
+import at.bernhardberger.tvheadend.sdk.core.GrowingRecordingContainer
+
 import at.bernhardberger.tvheadend.sdk.core.CapabilityAccess
 import at.bernhardberger.tvheadend.sdk.core.Channel as TvheadendChannel
 import at.bernhardberger.tvheadend.sdk.core.ChannelCatalog
@@ -302,6 +304,7 @@ internal class TvheadendPlaybackCoordinatorTest {
             startedGrowing = true,
             admissionState = CoordinatorRecordingAdmission.Growing(
                 RecordingProgressCapability.SUPPORTED,
+                container = GrowingRecordingContainer.MPEG_TS,
                 resumePosition = 90.seconds,
             ),
             growingResult = RecordingFileResult.Ok(lease),
@@ -324,6 +327,7 @@ internal class TvheadendPlaybackCoordinatorTest {
 
         target.admissionState = CoordinatorRecordingAdmission.Growing(
             RecordingProgressCapability.SUPPORTED,
+            container = GrowingRecordingContainer.MPEG_TS,
         )
         assertNull(
             (admitRecordingTarget(target, RecordingPlaybackStart.RESUME) as RecordingAdmission.Growing)
@@ -350,6 +354,7 @@ internal class TvheadendPlaybackCoordinatorTest {
 
         target.admissionState = CoordinatorRecordingAdmission.Growing(
             RecordingProgressCapability.SUPPORTED,
+            container = GrowingRecordingContainer.MPEG_TS,
         )
         target.growingResult = RecordingFileResult.Failed(TvheadendFailure.CONNECTION_CHANGED)
         assertSame(
@@ -388,6 +393,7 @@ internal class TvheadendPlaybackCoordinatorTest {
             startedGrowing = true,
             admissionState = CoordinatorRecordingAdmission.Growing(
                 RecordingProgressCapability.SUPPORTED,
+                container = GrowingRecordingContainer.MPEG_TS,
             ),
             growingResult = RecordingFileResult.Ok(lease),
         )
@@ -403,6 +409,7 @@ internal class TvheadendPlaybackCoordinatorTest {
 
         target.admissionState = CoordinatorRecordingAdmission.Growing(
             RecordingProgressCapability.SUPPORTED,
+            container = GrowingRecordingContainer.MPEG_TS,
         )
         target.bindGrowingAction = { RecordingFileResult.Ok(lease) }
         lease.current = false
@@ -427,7 +434,7 @@ internal class TvheadendPlaybackCoordinatorTest {
             RecordingProgressCapability.UNSUPPORTED to RecordingAdmission.ProgressUnsupported,
         ).forEach { (capability, expected) ->
             // Core only carries a saved position with supported progress; the gate holds regardless.
-            target.admissionState = CoordinatorRecordingAdmission.Growing(capability)
+            target.admissionState = CoordinatorRecordingAdmission.Growing(capability, container = GrowingRecordingContainer.MPEG_TS)
             RecordingPlaybackStart.entries.forEach { start ->
                 assertSame(expected, admitRecordingTarget(target, start))
             }
@@ -441,6 +448,7 @@ internal class TvheadendPlaybackCoordinatorTest {
             startedGrowing = true,
             admissionState = CoordinatorRecordingAdmission.Growing(
                 RecordingProgressCapability.SUPPORTED,
+                container = GrowingRecordingContainer.MPEG_TS,
                 resumePosition = 90.seconds,
             ),
             growingResult = RecordingFileResult.Ok(lease),
@@ -455,6 +463,7 @@ internal class TvheadendPlaybackCoordinatorTest {
         assertEquals(95.seconds, resumed.resumePosition)
         target.admissionState = CoordinatorRecordingAdmission.Growing(
             RecordingProgressCapability.SUPPORTED,
+            container = GrowingRecordingContainer.MPEG_TS,
             resumePosition = 90.seconds,
         )
         val startOver = admitRecordingTarget(target, RecordingPlaybackStart.START_OVER) as RecordingAdmission.Growing
@@ -462,6 +471,7 @@ internal class TvheadendPlaybackCoordinatorTest {
 
         target.admissionState = CoordinatorRecordingAdmission.Growing(
             RecordingProgressCapability.SUPPORTED,
+            container = GrowingRecordingContainer.MPEG_TS,
             resumePosition = 90.seconds,
         )
         target.bindGrowingAction = {
@@ -541,10 +551,10 @@ internal class TvheadendPlaybackCoordinatorTest {
                 RecordingProgressCapability.UNKNOWN to RecordingAdmission.NotReady,
                 RecordingProgressCapability.UNSUPPORTED to RecordingAdmission.ProgressUnsupported,
             ).forEach { (capability, expected) ->
-                target.admissionState = CoordinatorRecordingAdmission.Growing(capability)
+                target.admissionState = CoordinatorRecordingAdmission.Growing(capability, container = GrowingRecordingContainer.MPEG_TS)
                 assertSame(expected, admitRecordingTarget(target, fallback, RecordingRecoveryRequest(95.seconds), 0.95))
             }
-            target.admissionState = CoordinatorRecordingAdmission.Growing(RecordingProgressCapability.SUPPORTED)
+            target.admissionState = CoordinatorRecordingAdmission.Growing(RecordingProgressCapability.SUPPORTED, container = GrowingRecordingContainer.MPEG_TS)
             target.bindGrowingAction = {
                 target.admissionState = completedCoordinatorAdmission(30.seconds)
                 RecordingFileResult.Ok(lease)
@@ -555,7 +565,7 @@ internal class TvheadendPlaybackCoordinatorTest {
             assertSame(lease, admitted.lease)
             assertEquals(95.seconds, admitted.resumePosition)
             assertEquals(95.seconds, admitted.recoveryPosition)
-            target.admissionState = CoordinatorRecordingAdmission.Growing(RecordingProgressCapability.SUPPORTED)
+            target.admissionState = CoordinatorRecordingAdmission.Growing(RecordingProgressCapability.SUPPORTED, container = GrowingRecordingContainer.MPEG_TS)
             val zero = admitRecordingTarget(
                 target, fallback, RecordingRecoveryRequest(Duration.ZERO), 0.95,
             ) as RecordingAdmission.Growing
@@ -4157,6 +4167,7 @@ private class CoordinatorFixture {
             admissionState = if (player.recordingAdmission is RecordingAdmission.Growing) {
                 CoordinatorRecordingAdmission.Growing(
                     RecordingProgressCapability.SUPPORTED,
+                    container = GrowingRecordingContainer.MPEG_TS,
                 )
             } else {
                 completedCoordinatorAdmission()
@@ -4169,7 +4180,7 @@ private class CoordinatorFixture {
 
     fun admitGrowing() {
         growingLease.current = true
-        player.recordingAdmission = RecordingAdmission.Growing(growingLease)
+        player.recordingAdmission = RecordingAdmission.Growing(growingLease, GrowingRecordingContainer.MPEG_TS)
     }
 
     fun liveObservation(): LivePlaybackObservation.Active =
@@ -4319,6 +4330,7 @@ private class FakeCoordinatorEnvironment {
             if (target.startedGrowing) {
                 CoordinatorRecordingAdmission.Growing(
                     RecordingProgressCapability.SUPPORTED,
+                    container = GrowingRecordingContainer.MPEG_TS,
                 )
             } else {
                 completedCoordinatorAdmission()
@@ -4341,6 +4353,7 @@ private class FakeCoordinatorEnvironment {
                 if (file?.fileId == 1L) {
                     CoordinatorRecordingAdmission.Growing(
                         RecordingProgressCapability.SUPPORTED,
+                        container = GrowingRecordingContainer.MPEG_TS,
                     )
                 } else {
                     target.growingLease?.current = false

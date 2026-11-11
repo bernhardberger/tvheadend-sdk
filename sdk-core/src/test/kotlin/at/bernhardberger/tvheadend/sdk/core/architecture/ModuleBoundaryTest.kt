@@ -45,8 +45,9 @@ internal class ModuleBoundaryTest {
             // Narrow package-private access to maintained Media3 parsing/seeking helpers.
             val maintainedReader = "sdk-media3/src/main/java/androidx/media3/extractor/ts/PrefixPreservingH264Reader.java"
             val maintainedSeeker = "sdk-media3/src/main/java/androidx/media3/extractor/ts/GrowingTsBinarySearch.java"
+            val maintainedVarint = "sdk-media3/src/main/java/androidx/media3/extractor/mkv/GrowingMatroskaVarint.java"
             assertEquals(
-                if (module == "sdk-media3") setOf(maintainedReader, maintainedSeeker) else emptySet(),
+                if (module == "sdk-media3") setOf(maintainedReader, maintainedSeeker, maintainedVarint) else emptySet(),
                 javaProductionSources,
                 "$module has an unexpected Java production source",
             )
@@ -243,6 +244,7 @@ internal class ModuleBoundaryTest {
             "Bound",
             "TargetUnavailable",
             "RecordingPlaybackAdmission",
+            "GrowingRecordingContainer",
             "Completed",
             "Growing",
             "GrowingDeferred",

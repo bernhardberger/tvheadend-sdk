@@ -16,6 +16,7 @@ import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.WrappingMediaSource
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackExit
 import at.bernhardberger.tvheadend.sdk.core.DvrProgressPolicy
+import at.bernhardberger.tvheadend.sdk.core.GrowingRecordingContainer
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionOptions
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionSeekResult
@@ -82,6 +83,7 @@ internal sealed interface RecordingAdmission {
 
     class Growing(
         val lease: GrowingRecordingFileLease,
+        val container: GrowingRecordingContainer,
         override val progressReportingSupported: Boolean = true,
         val resumePosition: Duration? = null,
         override val recoveryPosition: Duration? = null,
@@ -177,6 +179,7 @@ internal interface CoordinatorPlaybackAccess {
         lease: GrowingRecordingFileLease,
         identity: RecordingMediaIdentity,
         onFinalEnd: () -> Unit,
+        container: GrowingRecordingContainer,
     ): CoordinatorMediaSource
 
     /** Recovery reacts only while [isTargetCurrent] holds, so it never acts on an application's item. */
@@ -523,6 +526,7 @@ internal class Media3PlaybackCoordinatorPlayer(
                     access.createRecordingSource(target, mediaIdentity)
                 is RecordingAdmission.Growing -> access.createGrowingRecordingSource(
                     lease = accepted.lease,
+                    container = accepted.container,
                     identity = mediaIdentity,
                     onFinalEnd = checkNotNull(finality)::prove,
                 )
@@ -1314,9 +1318,14 @@ internal class ExoPlayerCoordinatorPlaybackAccess(
         lease: GrowingRecordingFileLease,
         identity: RecordingMediaIdentity,
         onFinalEnd: () -> Unit,
+        container: GrowingRecordingContainer,
     ): CoordinatorMediaSource = Media3CoordinatorMediaSource(
         createTvheadendGrowingRecordingMediaSource(
             lease = lease,
+            container = when (container) {
+                GrowingRecordingContainer.MPEG_TS -> GrowingTsContainer
+                GrowingRecordingContainer.MATROSKA -> GrowingMatroskaContainer
+            },
             identity = identity,
             onFinalEnd = onFinalEnd,
             probeDispatcher = workDispatcher,

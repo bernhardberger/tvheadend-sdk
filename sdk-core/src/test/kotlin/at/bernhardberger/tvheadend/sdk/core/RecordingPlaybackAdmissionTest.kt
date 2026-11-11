@@ -30,12 +30,15 @@ internal class RecordingPlaybackAdmissionTest {
         Case("recording ts", DvrEntryState.RECORDING, listOf(file("/rec/a.ts")), Outcome.GROWING),
         Case("recording error ts", DvrEntryState.RECORDING_ERROR, listOf(file("/rec/a.ts")), Outcome.GROWING),
         Case("recording upper-case ts", DvrEntryState.RECORDING, listOf(file("/rec/A.TS")), Outcome.GROWING),
-        Case("recording mkv", DvrEntryState.RECORDING, listOf(file("/rec/a.mkv")), Outcome.GROWING_DEFERRED),
+        Case("recording mkv", DvrEntryState.RECORDING, listOf(file("/rec/a.mkv")), Outcome.GROWING),
+        Case("recording upper-case mkv", DvrEntryState.RECORDING, listOf(file("/rec/A.MKV")), Outcome.GROWING),
+        Case("recording mp4", DvrEntryState.RECORDING, listOf(file("/rec/a.mp4")), Outcome.GROWING_DEFERRED),
+        Case("recording mka", DvrEntryState.RECORDING, listOf(file("/rec/a.mka")), Outcome.GROWING_DEFERRED),
         Case(
             "recording error mkv",
             DvrEntryState.RECORDING_ERROR,
             listOf(file("/rec/a.mkv")),
-            Outcome.GROWING_DEFERRED,
+            Outcome.GROWING,
         ),
         Case("recording blank path", DvrEntryState.RECORDING, listOf(file("  ")), Outcome.TARGET_UNAVAILABLE),
         Case("recording error blank path", DvrEntryState.RECORDING_ERROR, listOf(file("")), Outcome.TARGET_UNAVAILABLE),
@@ -89,6 +92,11 @@ internal class RecordingPlaybackAdmissionTest {
                 when (case.outcome) {
                     Outcome.GROWING -> {
                         val growing = admission as RecordingPlaybackAdmission.Growing
+                        assertSame(
+                            if (case.name.endsWith("mkv")) GrowingRecordingContainer.MATROSKA else GrowingRecordingContainer.MPEG_TS,
+                            growing.container,
+                            label,
+                        )
                         assertSame(capability, growing.progressCapability, label)
                         assertEquals(expectedResume(case.state, capability), growing.resumePosition, label)
                     }
@@ -135,7 +143,7 @@ internal class RecordingPlaybackAdmissionTest {
 
         listOf(
             "/rec/a.ts" to RecordingPlaybackAdmission.Growing::class,
-            "/rec/a.mkv" to RecordingPlaybackAdmission.GrowingDeferred::class,
+            "/rec/a.mkv" to RecordingPlaybackAdmission.Growing::class,
             " " to RecordingPlaybackAdmission.TargetUnavailable::class,
         ).forEach { (entryPath, expected) ->
             listOf(DvrEntryState.RECORDING, DvrEntryState.RECORDING_ERROR).forEach { state ->
@@ -149,7 +157,7 @@ internal class RecordingPlaybackAdmissionTest {
         val admission = observation.recordingPlaybackAdmission(
             entryWithPath(DvrEntryState.RECORDING, listOf(file("/rec/a.mkv")), "/rec/a.ts"),
         )
-        assertSame(RecordingPlaybackAdmission.GrowingDeferred, admission)
+        assertEquals(GrowingRecordingContainer.MATROSKA, (admission as RecordingPlaybackAdmission.Growing).container)
     }
 
     private fun entryWithPath(state: DvrEntryState, files: List<DvrRecordingFile>, path: String): DvrEntry =

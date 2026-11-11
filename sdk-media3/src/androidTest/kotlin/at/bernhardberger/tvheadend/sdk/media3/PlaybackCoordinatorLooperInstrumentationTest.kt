@@ -6,6 +6,8 @@
 
 package at.bernhardberger.tvheadend.sdk.media3
 
+import at.bernhardberger.tvheadend.sdk.core.GrowingRecordingContainer
+
 import android.os.Looper
 import androidx.media3.common.Player
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -124,6 +126,7 @@ private class MainLooperCoordinatorPlaybackAccess : CoordinatorPlaybackAccess {
         lease: GrowingRecordingFileLease,
         identity: RecordingMediaIdentity,
         onFinalEnd: () -> Unit,
+        container: GrowingRecordingContainer,
     ): CoordinatorMediaSource = error("Growing recording source is not expected")
 
     override fun createRecovery(

@@ -136,7 +136,7 @@ public sealed interface RecordingPlaybackAdmission {
     }
 
     /**
-     * An active single-file MPEG-TS target may play while Tvheadend is still appending to it.
+     * Plays an active single-file MPEG-TS or Matroska target while Tvheadend appends to it.
      * Recording entries in an error state are admitted exactly like recording ones, because Tvheadend may
      * resume writing the same file.
      *
@@ -149,12 +149,14 @@ public sealed interface RecordingPlaybackAdmission {
     public class Growing internal constructor(
         public val resumePosition: Duration?,
         public val progressCapability: RecordingProgressCapability,
+        /** Selects the growing-recording container adapter. */
+        public val container: GrowingRecordingContainer,
     ) : RecordingPlaybackAdmission {
         override fun toString(): String =
             "RecordingPlaybackAdmission.Growing(<redacted>)"
     }
 
-    /** The active recording is outside the supported single-file MPEG-TS path. */
+    /** Defers active recordings outside the single-file MPEG-TS and Matroska paths. */
     public data object GrowingDeferred : RecordingPlaybackAdmission
 
     /** The recording is not currently playable. */
@@ -337,10 +339,17 @@ internal fun DvrEntry.playbackAdmission(capability: RecordingProgressCapability)
                 ?: return RecordingPlaybackAdmission.TargetUnavailable
             if (growingPath.isBlank()) {
                 RecordingPlaybackAdmission.TargetUnavailable
-            } else if (growingPath.endsWith(".ts", ignoreCase = true)) {
+            } else if (growingPath.endsWith(".ts", ignoreCase = true) ||
+                growingPath.endsWith(".mkv", ignoreCase = true)
+            ) {
                 RecordingPlaybackAdmission.Growing(
                     resumePosition = resumePosition,
                     progressCapability = capability,
+                    container = if (growingPath.endsWith(".ts", ignoreCase = true)) {
+                        GrowingRecordingContainer.MPEG_TS
+                    } else {
+                        GrowingRecordingContainer.MATROSKA
+                    },
                 )
             } else {
                 RecordingPlaybackAdmission.GrowingDeferred

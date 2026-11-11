@@ -5,6 +5,8 @@
 
 package at.bernhardberger.tvheadend.sdk.media3
 
+import at.bernhardberger.tvheadend.sdk.core.GrowingRecordingContainer
+
 import android.os.Looper
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackExit
 import at.bernhardberger.tvheadend.sdk.core.DvrPlaybackProgress
@@ -102,6 +104,7 @@ internal sealed interface CoordinatorRecordingAdmission {
     data class Growing(
         val progressCapability: at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability,
         val resumePosition: Duration? = null,
+        val container: GrowingRecordingContainer,
     ) : CoordinatorRecordingAdmission
 
     data object GrowingDeferred : CoordinatorRecordingAdmission
@@ -118,7 +121,7 @@ private fun RecordingPlaybackAdmission.toCoordinatorAdmission(): CoordinatorReco
             progressCapability,
         )
         is RecordingPlaybackAdmission.Growing ->
-            CoordinatorRecordingAdmission.Growing(progressCapability, resumePosition)
+            CoordinatorRecordingAdmission.Growing(progressCapability, resumePosition, container)
         RecordingPlaybackAdmission.GrowingDeferred -> CoordinatorRecordingAdmission.GrowingDeferred
         RecordingPlaybackAdmission.TargetUnavailable ->
             CoordinatorRecordingAdmission.TargetUnavailable

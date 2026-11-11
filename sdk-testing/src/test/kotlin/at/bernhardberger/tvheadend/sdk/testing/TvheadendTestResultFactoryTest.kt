@@ -63,7 +63,7 @@ internal class TvheadendTestResultFactoryTest {
         )
 
         assertTrue(admission("/private/recordings/show.ts") is RecordingPlaybackAdmission.Growing)
-        assertSame(RecordingPlaybackAdmission.GrowingDeferred, admission("/private/recordings/show.mkv"))
+        assertSame(RecordingPlaybackAdmission.GrowingDeferred, admission("/private/recordings/show.mp4"))
         assertSame(RecordingPlaybackAdmission.TargetUnavailable, admission(" "))
 
         val start = Instant.fromEpochSeconds(10)

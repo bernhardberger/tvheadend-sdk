@@ -19,7 +19,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 
 /** Media3 owns TS parsing, PCR decoding, and binary-search timestamp seeking. */
-internal object GrowingTsContainer : GrowingRecordingContainer<GrowingTsExtent> {
+internal object GrowingTsContainer : GrowingContainerAdapter<GrowingTsExtent> {
     override val deliveryUnitBytes: Int = GROWING_TS_PACKET_BYTES
     override val seekValidatedVideoMimeTypes: Set<String> = setOf(
         MimeTypes.VIDEO_MPEG2,

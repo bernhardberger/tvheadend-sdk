@@ -35,6 +35,10 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionBinary
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStream
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
+import java.io.File
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
@@ -44,6 +48,51 @@ import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 
 class VideoScanInspectionTest {
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun `growing Matroska prefixes preserve all video samples and finalize the estimated map`() = runTest {
+        val bytes = File("src/test/resources/growing-matroska/synthetic.mkv").readBytes()
+        val expected = extract(bytes, GrowingMatroskaContainer.createExtractor()).sampleScans.size
+        val lease = ProbeLease(bytes, bytes.size / 3)
+        val output = ScanCapturingOutput()
+        val extractor = GrowingRecordingExtractor(
+            GrowingMatroskaContainer,
+            lease = lease,
+            probeDispatcher = StandardTestDispatcher(testScheduler),
+        )
+        var cursor = 0
+        val reader = DataReader { destination, offset, length ->
+            if (cursor == lease.available && lease.available < bytes.size) {
+                lease.available = minOf(bytes.size, lease.available + bytes.size / 3)
+            }
+            if (cursor == bytes.size) C.RESULT_END_OF_INPUT else {
+                val count = minOf(length, lease.available - cursor)
+                bytes.copyInto(destination, offset, cursor, cursor + count)
+                cursor += count
+                count
+            }
+        }
+        val input = DefaultExtractorInput(reader, 0L, C.LENGTH_UNSET.toLong())
+        try {
+            extractor.init(output)
+            testScheduler.runCurrent()
+            val holder = PositionHolder()
+            while (extractor.read(input, holder) == Extractor.RESULT_CONTINUE) {
+                // Read the next complete sample from the growing source.
+            }
+            assertEquals(expected, output.video.sampleScans.size)
+            assertTrue(expected > 250)
+            assertTrue(output.maps.last().isEstimated)
+            lease.completed = true
+            testScheduler.advanceTimeBy(5_000L)
+            testScheduler.runCurrent()
+            assertTrue(output.maps.last().isSeekable)
+            assertEquals(false, output.maps.last().isEstimated)
+        } finally {
+            extractor.release()
+        }
+    }
+
     companion object {
         @BeforeAll
         @JvmStatic
@@ -789,12 +838,13 @@ private data class OtherMetadata(val value: String) : Metadata.Entry
 
 private class ScanCapturingOutput : ExtractorOutput {
     val video = ScanCapturingTrack()
+    val maps = mutableListOf<SeekMap>()
 
     override fun track(id: Int, type: Int): TrackOutput =
         if (type == C.TRACK_TYPE_VIDEO) video else DiscardingTrackOutput()
 
     override fun endTracks(): Unit = Unit
-    override fun seekMap(seekMap: SeekMap): Unit = Unit
+    override fun seekMap(seekMap: SeekMap) { maps += seekMap }
 }
 
 private class ScanCapturingTrack : TrackOutput {

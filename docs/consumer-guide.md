@@ -1407,8 +1407,8 @@ write an earlier position. Completed recovery can remain pending beyond its
 cancellation propagates even when Player work may already have been claimed.
 The application retains identity matching, retry/route choice and play intent.
 
-`RecordingPlaybackAdmission.Growing`, `GrowingRecordingFileReader`, and
-`GrowingRecordingFileLease` require `@OptIn(ExperimentalTvheadendApi::class)` from
+`RecordingPlaybackAdmission.Growing`, `GrowingRecordingContainer`,
+`GrowingRecordingFileReader`, and `GrowingRecordingFileLease` require `@OptIn(ExperimentalTvheadendApi::class)` from
 `at.bernhardberger.tvheadend.sdk.playback`. The shared admission type, completed
 playback, and `DvrRepository.changes` remain stable.
 
@@ -1425,8 +1425,9 @@ Growing playback is deliberately bounded, and its admission gates are the same
 for `START_OVER` and `RESUME`: unknown progress support returns `NOT_READY`,
 unsupported progress returns `RECORDING_PROGRESS_UNSUPPORTED`, an active
 recording without exactly one usable file returns `TARGET_UNAVAILABLE`, and a
-file that is not `.ts` returns `GROWING_RECORDING_DEFERRED`. For an admitted
-active single-file `.ts` recording, `START_OVER` or a missing or zero saved
+file that is neither `.ts` nor `.mkv` returns `GROWING_RECORDING_DEFERRED`.
+`RecordingPlaybackAdmission.Growing.container` reports which of the two
+containers was admitted. For an admitted active single-file recording, `START_OVER` or a missing or zero saved
 position plays from the beginning. `RESUME` with a positive saved server
 position (exposed as `RecordingPlaybackAdmission.Growing.resumePosition`)
 starts at 0:00 and seeks once, as soon as the
@@ -1455,6 +1456,20 @@ Media3's PCR binary seeker resolves targets within that extent. Scheduled progra
 duration does not grant seek access. Missing file-size or usable PCR evidence keeps
 the recording forward-only, as do other MPEG-TS codecs.
 Temporary EOF does not end playback or mark the recording watched.
+
+A growing Matroska recording follows the same gates, resume rule and timeline,
+with Media3's Matroska extractor in place of the MPEG-TS one. Tvheadend writes
+no seek index until the recording closes, so the recorded extent comes from
+bounded reads of the first and last Cluster instead of PCR. A seek lands on the
+Cluster that starts at or before the target and decodes forward from there.
+Tvheadend's built-in muxer starts a Cluster about once per second, and a seek
+can land up to one Cluster span early. The playable edge trails the recorder by
+up to one Cluster as well, because Tvheadend writes each Cluster whole. A file
+whose first Cluster lies beyond the first MiB, or whose video is not MPEG-2,
+H.264, or HEVC, stays forward-only. Tvheadend's libav Matroska profile also
+writes `.mkv` and is admitted, but its H.264 and HEVC samples do not match
+their codec header, so Media3 reports a parsing error for those files whether
+they are growing or finished.
 
 ### Software audio decoding
 

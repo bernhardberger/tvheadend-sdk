@@ -6,6 +6,8 @@
 
 package at.bernhardberger.tvheadend.sdk.media3
 
+import at.bernhardberger.tvheadend.sdk.core.GrowingRecordingContainer
+
 import android.app.Instrumentation
 import android.graphics.SurfaceTexture
 import android.media.MediaFormat
@@ -645,6 +647,7 @@ private class FixtureRecordingTarget(
 
     override val admission: CoordinatorRecordingAdmission = CoordinatorRecordingAdmission.Growing(
         progressCapability = RecordingProgressCapability.SUPPORTED,
+        container = GrowingRecordingContainer.MPEG_TS,
         resumePosition = savedPosition,
     )
 

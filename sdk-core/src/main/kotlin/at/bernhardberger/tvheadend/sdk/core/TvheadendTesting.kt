@@ -252,7 +252,8 @@ public object TvheadendTestResultFactory {
     public fun growingRecordingAdmission(
         resumePosition: Duration?,
         progressCapability: RecordingProgressCapability,
-    ): RecordingPlaybackAdmission.Growing = RecordingPlaybackAdmission.Growing(resumePosition, progressCapability)
+        container: GrowingRecordingContainer = GrowingRecordingContainer.MPEG_TS,
+    ): RecordingPlaybackAdmission.Growing = RecordingPlaybackAdmission.Growing(resumePosition, progressCapability, container)
 
     /**
      * Creates a recording file whose private server path is [serverPath] (blank is allowed), so fake
@@ -409,4 +410,3 @@ public object TvheadendTestResultFactory {
         return value
     }
 }
-

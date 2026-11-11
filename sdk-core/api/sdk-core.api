@@ -2013,6 +2013,14 @@ public final class at/bernhardberger/tvheadend/sdk/core/EventId {
 	public final synthetic fun unbox-impl ()J
 }
 
+public final class at/bernhardberger/tvheadend/sdk/core/GrowingRecordingContainer : java/lang/Enum {
+	public static final field MATROSKA Lat/bernhardberger/tvheadend/sdk/core/GrowingRecordingContainer;
+	public static final field MPEG_TS Lat/bernhardberger/tvheadend/sdk/core/GrowingRecordingContainer;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lat/bernhardberger/tvheadend/sdk/core/GrowingRecordingContainer;
+	public static fun values ()[Lat/bernhardberger/tvheadend/sdk/core/GrowingRecordingContainer;
+}
+
 public final class at/bernhardberger/tvheadend/sdk/core/MetadataCachePolicy {
 	public static final field Companion Lat/bernhardberger/tvheadend/sdk/core/MetadataCachePolicy$Companion;
 	public fun equals (Ljava/lang/Object;)Z
@@ -2095,6 +2103,7 @@ public final class at/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmissi
 }
 
 public final class at/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmission$Growing : at/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmission {
+	public final fun getContainer ()Lat/bernhardberger/tvheadend/sdk/core/GrowingRecordingContainer;
 	public final fun getProgressCapability ()Lat/bernhardberger/tvheadend/sdk/core/RecordingProgressCapability;
 	public final fun getResumePosition-FghU774 ()Lkotlin/time/Duration;
 	public fun toString ()Ljava/lang/String;
@@ -2798,7 +2807,8 @@ public final class at/bernhardberger/tvheadend/sdk/core/TvheadendTestResultFacto
 	public static final fun cachedArtwork-noSgMNw (Lat/bernhardberger/tvheadend/sdk/core/ServerProfile;I)Lat/bernhardberger/tvheadend/sdk/core/CachedArtworkReference;
 	public static final fun cachedArtwork-noSgMNw (Lat/bernhardberger/tvheadend/sdk/core/SessionObservation;I)Lat/bernhardberger/tvheadend/sdk/core/CachedArtworkReference;
 	public static final fun completedRecordingAdmission-dnQKTGw (Lkotlin/time/Duration;Lat/bernhardberger/tvheadend/sdk/core/RecordingProgressCapability;)Lat/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmission$Completed;
-	public static final fun growingRecordingAdmission-dnQKTGw (Lkotlin/time/Duration;Lat/bernhardberger/tvheadend/sdk/core/RecordingProgressCapability;)Lat/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmission$Growing;
+	public static final fun growingRecordingAdmission-k1IrOU0 (Lkotlin/time/Duration;Lat/bernhardberger/tvheadend/sdk/core/RecordingProgressCapability;Lat/bernhardberger/tvheadend/sdk/core/GrowingRecordingContainer;)Lat/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmission$Growing;
+	public static synthetic fun growingRecordingAdmission-k1IrOU0$default (Lkotlin/time/Duration;Lat/bernhardberger/tvheadend/sdk/core/RecordingProgressCapability;Lat/bernhardberger/tvheadend/sdk/core/GrowingRecordingContainer;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/RecordingPlaybackAdmission$Growing;
 	public static final fun recordingFile (Ljava/lang/Long;Ljava/lang/String;Lkotlin/time/Instant;Lkotlin/time/Instant;Ljava/lang/Long;)Lat/bernhardberger/tvheadend/sdk/core/DvrRecordingFile;
 	public static synthetic fun recordingFile$default (Ljava/lang/Long;Ljava/lang/String;Lkotlin/time/Instant;Lkotlin/time/Instant;Ljava/lang/Long;ILjava/lang/Object;)Lat/bernhardberger/tvheadend/sdk/core/DvrRecordingFile;
 }

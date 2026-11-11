@@ -33,7 +33,7 @@ internal fun createTvheadendGrowingRecordingDataSourceFactory(
     lease: GrowingRecordingFileLease,
     identity: RecordingMediaIdentity,
     readAheadBytes: Int = DEFAULT_RECORDING_READ_AHEAD_BYTES,
-    container: GrowingRecordingContainer<*> = GrowingTsContainer,
+    container: GrowingContainerAdapter<*> = GrowingTsContainer,
     onFinalEnd: () -> Unit = {},
 ): DataSource.Factory {
     val deliveryUnitBytes = container.deliveryUnitBytes
@@ -62,7 +62,7 @@ internal fun createTvheadendGrowingRecordingMediaSource(
     onSeekMap: (SeekMap) -> Unit = {},
     onFinalEnd: () -> Unit = {},
     probeDispatcher: CoroutineDispatcher = Dispatchers.IO,
-    container: GrowingRecordingContainer<*> = GrowingTsContainer,
+    container: GrowingContainerAdapter<*> = GrowingTsContainer,
 ): MediaSource = ProgressiveMediaSource.Factory(
     createTvheadendGrowingRecordingDataSourceFactory(lease, identity, readAheadBytes, container, onFinalEnd),
     createGrowingRecordingExtractorsFactory(container, onSeekMap, lease, probeDispatcher),

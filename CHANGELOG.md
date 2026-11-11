@@ -30,6 +30,17 @@ Unreleased; development target.
   file, ends it, stops delivery to open readers, or retires the file, and each
   step takes effect before the call returns. The binding follows the DVR entry
   while its observations keep the same file and a size that does not shrink.
+- Growing Matroska recordings play while Tvheadend writes them, with the same
+  admission gates, seeking and resume as growing MPEG-TS. Seeks land on a
+  Cluster start at or before the target. An active `.mkv` recording is now
+  admitted as `RecordingPlaybackAdmission.Growing` instead of `GrowingDeferred`;
+  the new experimental `Growing.container` property and `GrowingRecordingContainer`
+  enum tell `MPEG_TS` from `MATROSKA`. `TvheadendTestResultFactory.growingRecordingAdmission`
+  takes a trailing `container`, default `MPEG_TS`, so compiled callers must be
+  rebuilt. Other containers, including MP4, still return
+  `GROWING_RECORDING_DEFERRED`. Recordings from Tvheadend's libav Matroska
+  profile are admitted too, but Media3 cannot parse their H.264 and HEVC
+  samples; see `docs/growing-mkv-evaluation.md`.
 
 ### Changed
 

@@ -6,8 +6,9 @@ Feasibility spike for Player issue #24: can a Tvheadend Matroska recording
 that is still being written play through the SDK's Media3 path, at least up to
 the point recorded so far? This note records the evidence behind the owner's
 2026-11-11 update of [roadmap decision 12](roadmap.md) (see
-[Recommendation for #24](#recommendation-for-24)). It schedules no
-implementation.
+[Recommendation for #24](#recommendation-for-24)) and measurements of the
+SDK adapter that followed it
+([Adapter over the real recordings](#adapter-over-the-real-recordings)).
 
 ## Answer
 
@@ -15,6 +16,7 @@ implementation.
 |---|---|
 | Forward-only play from the start to the live edge, then on to completion, built-in Matroska | **Yes.** Stock `MatroskaExtractor` and `ProgressiveMediaSource` play it unchanged when the data source has unknown length and waits at the edge. |
 | Seeking and resume in a growing Matroska file | **Yes, with a P7-style wrapper.** No parser fork and no custom `MediaPeriod` were needed. Not free: it needs a cluster index probe of its own. |
+| libav Matroska (`avmatroska` profile) | **Layout yes, video no.** Clusters are append-only like the built-in muxer's, and the SDK's extent probe and cluster seeks work on them. But H.264 and HEVC samples are written in Annex-B form under an `avcC` codec header, so Media3 fails to parse them in finished and growing files alike. See [libav Matroska](#libav-matroska-avmatroska). |
 | MP4 (Tvheadend's libav `avmp4` profile) | **Forward parsing yes, but not worth admitting for 1.0.** A test recording parses forward to its end like Matroska. But the server's bundled FFmpeg cannot record AC-3 services as MP4 at all, and Media3 reads a 49.7-day duration from the files it does write, so even a finished MP4 recording neither ends nor seeks correctly. See [MP4 test recording](#mp4-test-recording). |
 
 ## What Tvheadend writes
@@ -73,6 +75,29 @@ recording closes.
   ends as "File not created". This was reproduced on 3sat HD. Most German and
   Austrian HD services on the test server carry AC-3.
 
+### libav Matroska (`avmatroska`)
+
+- `lav_muxer_init` opens FFmpeg's `matroska` muxer on a seekable file. FFmpeg
+  6.1.1 `matroskaenc.c` buffers each cluster and writes it whole
+  (`:2861-2871`, `:2984-2996`); at close it appends Cues and fills in the
+  SeekHead, Duration and Segment size. Each cluster starts with a CRC-32
+  element before its Timecode.
+- The encoder limit from MP4 applies here too: no AC-3 or E-AC-3. DVB subtitles
+  fail as well ("Subtitle codec 0 is not supported"), so an arte HD attempt
+  ended as "File not created". A 12-minute recording of an SD service with H.264
+  and MP2 succeeded (168 MB, 697 clusters). Copies taken during recording
+  differ from the finished file only in the header bytes before the first
+  cluster.
+- **Media3 cannot read the H.264 and HEVC samples.** Tvheadend gives FFmpeg an
+  `avcC` codec header (`muxer_libav.c:131`) but converts samples from Annex-B
+  start codes to length prefixes only for MP4 (`:643-646`). FFmpeg converts
+  Matroska samples only when the codec header is itself Annex-B
+  (`matroskaenc.c:3405-3408`). The file therefore declares length-prefixed
+  samples but carries start codes, in 17,948 of the 17,997 video blocks of the
+  test recording. Stock `MatroskaExtractor` fails on the finished file with
+  `IllegalStateException: Top bit not zero`. MPEG-2 video is not converted and
+  is not affected. This is a Tvheadend defect; the SDK does not work around it.
+
 ### Other containers Tvheadend can record
 
 `muxer_create` (`muxer.c:321-345`) tries the pass-through, built-in Matroska,
@@ -83,14 +108,16 @@ audio-ES and libav muxers in turn. The file suffixes come from `muxer.c:107-140`
 | MPEG-TS pass-through | `.ts` | Default `pass` profile. Already growing-capable. |
 | Built-in Matroska | `.mkv`, audio-only `.mka` | `matroska` profile. In 1.0 scope. |
 | Built-in WebM | `.webm` | Same muxer with the WebM flag (`muxer_mkv.c:1610-1624`). Needs a transcode profile that produces WebM codecs. |
-| libav Matroska | **`.mkv`, the same suffix as built-in** | `avmatroska` profile, FFmpeg's muxer. |
+| libav Matroska | **`.mkv`, the same suffix as built-in** | `avmatroska` profile, FFmpeg's muxer. H.264/HEVC unreadable, see above. |
 | libav MP4 | `.mp4` | `avmp4` profile, tested below. |
 | MPEG-PS, audio ES (`.mpeg`, `.mp2`, `.ac3`, `.aac`, `.oga`, `.ac4`) | various | Transcode and audio-only profiles (`profile.c:2731-2741`); not examined further. |
 
 Two consequences for admission. Built-in WebM and `.mka` come from the same
-Matroska muxer, so the same file layout follows, but neither was recorded here.
-And admission by suffix cannot tell built-in from libav Matroska: both write
-`.mkv`.
+Matroska muxer, so the same file layout follows, but neither was recorded here
+and neither is admitted. And admission by suffix cannot tell built-in from
+libav Matroska: both write `.mkv`. The owner chose to admit every `.mkv` file,
+so a growing libav H.264 recording fails with the same parser error as a
+finished one.
 
 ## Media3 1.11.1 evidence
 
@@ -189,6 +216,25 @@ So stock Media3 parses a growing Tvheadend MP4 forward exactly like Matroska,
 but a usable MP4 path needs its own duration override and its own keyframe
 index, even for finished recordings.
 
+### Adapter over the real recordings
+
+The SDK's Matroska adapter probes the extent from head and tail windows and
+seeks with Media3's `BinarySearchSeeker`, landing only on validated Cluster
+starts. A temporary harness ran it over the 3sat built-in recording, with the
+header patched back to its growing shape, and over the libav recording. Both
+copies were deleted afterwards.
+
+| Case | Outcome |
+|---|---|
+| Extent probe at 20, 50 and 100 % of the file and after completion | Correct first-cluster time (0 built-in, 280 ms libav), duration and finality for both. While growing, about 36 KB read per probe sample. |
+| Seeks to 0, 10, 50, 90 and 99 % on a half and a finished extent | Always a Cluster start at or before the target, 0 to 1.43 s early. Each seek read 0.02 to 8.3 MB (built-in) or 0.13 to 1.1 MB (libav), about two to five clusters. |
+| Growing extraction of the built-in file in unaligned 7 MB steps, seek at 50 % | For a 119.66 s target the first video sample is the keyframe at 118.37 s. While growing, the map is estimated and seekable with a duration (359 s at half); at completion it is final (719.45 s). |
+| Growing extraction of the libav file | Not possible because of the Annex-B samples above. |
+
+The first version of the seeker read a fixed 32 MiB window per search step
+(33 to 134 MB per seek) and sometimes landed 3.5 to 16 s early. Incremental
+16 KiB reads and a strict floor fixed both before these numbers were taken.
+
 ## Carry-over cost and risk
 
 The SDK already has the generation-bound growth lease, the unknown-length
@@ -212,8 +258,10 @@ Risks and upgrade exposure:
   with Cues. That is stable, public behavior.
 - **No maintained element-header walker.** Media3's EBML reader and varint
   reader are package-private, and running a second full extractor would read
-  the whole recording (about 1.7 MB/s here). The cluster walker would be a small
-  bespoke parser and needs the justification AGENTS.md asks for.
+  the whole recording (about 1.7 MB/s here). The adapter reaches Media3's
+  `VarintReader` through a small bridge class in Media3's package and owns only
+  the Cluster-header check. A Media3 upgrade that changes that package-private
+  class breaks the build, not playback.
 - **Coarse seek points.** Cluster starts are up to 6 s apart, and clusters can
   reach 10 MB. Seeking stays exact through decode-forward, but a seek near the
   edge can wait for the next cluster.
@@ -223,10 +271,10 @@ Risks and upgrade exposure:
   `TIMEOUT` after 30 seconds without new bytes
   (`sdk-core` `GrowingRecordingFileReader.kt:543,577,673`).
 - **Admission by suffix.** Built-in and libav Matroska both write `.mkv`, so a
-  suffix check alone also admits `avmatroska` recordings, which were not tested.
-- **Not covered by this spike:** H.265, other channels and bitrates, Tvheadend's
-  libav Matroska profile (`avmatroska`, a different muxer), WebM, reconnect, and
-  device playback.
+  suffix check also admits `avmatroska` recordings, whose H.264 and HEVC video
+  fails to parse.
+- **Not covered:** H.265 and MPEG-2 video in Matroska, other channels and
+  bitrates, WebM, reconnect, and device playback.
 
 ## Recommendation for #24
 
@@ -246,6 +294,12 @@ record AC-3 services, and the files it does write carry a bogus duration and a
 seek index that is not keyframe-only. Those defects affect finished MP4
 recordings as well, so they belong to a separate finished-MP4 fix before any
 growing MP4 work.
+
+The libav Matroska recording, made the same evening, settled admission. The
+owner chose to admit every `.mkv` recording, not only built-in ones. libav
+Matroska files share the built-in layout, so the SDK path applies to them, but
+their H.264 and HEVC samples need a Tvheadend fix before Media3 can read them,
+finished or growing.
 
 Two points from the spike belong in the Matroska implementation's scope.
 First, the estimated seek map with a duration also stops Media3 from reporting

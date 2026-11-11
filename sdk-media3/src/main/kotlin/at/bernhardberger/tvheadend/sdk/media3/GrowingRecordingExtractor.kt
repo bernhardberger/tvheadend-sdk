@@ -29,21 +29,20 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 internal fun <E : GrowingRecordingExtent> createGrowingRecordingExtractorsFactory(
-    container: GrowingRecordingContainer<E>,
+    container: GrowingContainerAdapter<E>,
     onSeekMap: (SeekMap) -> Unit = {},
     lease: GrowingRecordingFileLease? = null,
     probeDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ): ExtractorsFactory = ExtractorsFactory {
-    arrayOf(
-        FormatlessTrackFilter(
-            GrowingRecordingExtractor(container, onSeekMap = onSeekMap, lease = lease, probeDispatcher = probeDispatcher),
-        ),
+    val extractor = GrowingRecordingExtractor(
+        container, onSeekMap = onSeekMap, lease = lease, probeDispatcher = probeDispatcher,
     )
+    arrayOf(if (container.needsFormatlessTrackFilter) FormatlessTrackFilter(extractor) else extractor)
 }
 
 /** Thin indexing decorator; the container's maintained Media3 extractor owns parsing. */
 internal class GrowingRecordingExtractor<E : GrowingRecordingExtent>(
-    private val container: GrowingRecordingContainer<E>,
+    private val container: GrowingContainerAdapter<E>,
     private val delegate: Extractor = container.createExtractor(),
     private val index: GrowingRecordingIndex = GrowingRecordingIndex(container),
     private val onSeekMap: (SeekMap) -> Unit = {},
@@ -139,7 +138,7 @@ internal class GrowingRecordingExtractor<E : GrowingRecordingExtent>(
             // The inner extractor reads ahead; the input window start is a safe lower bound.
             conservativeReadPosition = readStartPosition
         }
-        if (lease == null) {
+        if (lease == null && container.supportsObservedIndex) {
             index.nextSeekMap()?.let { map ->
                 onSeekMap(map)
                 checkNotNull(downstream).seekMap(map)
@@ -151,7 +150,9 @@ internal class GrowingRecordingExtractor<E : GrowingRecordingExtent>(
     }
 
     override fun seek(position: Long, timeUs: Long) {
-        binarySeeker = extent?.takeIf { index.seekingAllowed && timeUs > 0L }?.let {
+        binarySeeker = extent?.takeIf {
+            index.seekingAllowed && (timeUs > 0L || !container.supportsObservedIndex)
+        }?.let {
             container.createBinarySearchSeeker(it)
                 .apply { setSeekTargetUs(timeUs) }
         }
@@ -249,7 +250,7 @@ private class GrowingRecordingTrackOutput(
  * validated codecs and naturally scales with stream bitrate and GOP size.
  */
 internal class GrowingRecordingIndex(
-    private val container: GrowingRecordingContainer<*>,
+    private val container: GrowingContainerAdapter<*>,
     private val maximumPoints: Int = MAXIMUM_GROWING_RECORDING_INDEX_POINTS,
     private val minimumMapAdvanceUs: Long = MINIMUM_GROWING_RECORDING_MAP_ADVANCE_US,
 ) {

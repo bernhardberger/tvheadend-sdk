@@ -745,8 +745,8 @@ public class TvheadendPlaybackCoordinator internal constructor(
      * Growing playback, for either start mode, returns [PlaybackTargetResult.NOT_READY] while
      * progress support is unknown, [PlaybackTargetResult.RECORDING_PROGRESS_UNSUPPORTED] when it is
      * unsupported, [PlaybackTargetResult.TARGET_UNAVAILABLE] without exactly one usable recording file, and
-     * [PlaybackTargetResult.GROWING_RECORDING_DEFERRED] for a file that is not `.ts`. For an
-     * admitted active `.ts` recording, [RecordingPlaybackStart.START_OVER] or a missing or zero
+     * [PlaybackTargetResult.GROWING_RECORDING_DEFERRED] for a file outside `.ts` and `.mkv`. For an
+     * admitted active recording, [RecordingPlaybackStart.START_OVER] or a missing or zero
      * saved position plays from the beginning. [RecordingPlaybackStart.RESUME] with a positive
      * saved position starts at 0:00 and seeks once as soon as the growing timeline is seekable,
      * which takes a few seconds while the file extent is probed; a saved position within three
@@ -1194,6 +1194,7 @@ private fun admitGrowingRecording(
         ) {
             RecordingAdmission.Growing(
                 lease = lease,
+                container = initial.container,
                 progressReportingSupported = true,
                 resumePosition = recovery?.position ?: current.resumePosition.takeIf { start == RecordingPlaybackStart.RESUME },
                 recoveryPosition = recovery?.position,
@@ -1206,6 +1207,7 @@ private fun admitGrowingRecording(
             RecordingProgressCapability.UNSUPPORTED -> RecordingAdmission.ProgressUnsupported
             RecordingProgressCapability.SUPPORTED -> RecordingAdmission.Growing(
                 lease = lease,
+                container = current.container,
                 progressReportingSupported = true,
                 resumePosition = recovery?.position ?: current.resumePosition.takeIf { start == RecordingPlaybackStart.RESUME },
                 recoveryPosition = recovery?.position,

@@ -7,6 +7,8 @@
 
 package at.bernhardberger.tvheadend.sdk.media3
 
+import at.bernhardberger.tvheadend.sdk.core.GrowingRecordingContainer
+
 import androidx.media3.common.Player
 import androidx.media3.common.Timeline
 import androidx.media3.exoplayer.analytics.PlayerId
@@ -231,6 +233,7 @@ private class RealLiveSourceAccess(private val dispatcher: CoroutineDispatcher) 
         lease: GrowingRecordingFileLease,
         identity: RecordingMediaIdentity,
         onFinalEnd: () -> Unit,
+        container: GrowingRecordingContainer,
     ): CoordinatorMediaSource = error("recordings are not played here")
 
     override fun createRecovery(

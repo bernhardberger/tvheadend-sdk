@@ -11,9 +11,11 @@ import androidx.media3.extractor.Extractor
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 
 /** Container-specific parsing and seek evidence for the shared growing-recording path. */
-internal interface GrowingRecordingContainer<E : GrowingRecordingExtent> {
+internal interface GrowingContainerAdapter<E : GrowingRecordingExtent> {
     val deliveryUnitBytes: Int
     val seekValidatedVideoMimeTypes: Set<String>
+    val needsFormatlessTrackFilter: Boolean get() = true
+    val supportsObservedIndex: Boolean get() = true
     fun createExtractor(): Extractor
     fun alignIndexPosition(position: Long): Long
     fun createExtentProbe(lease: GrowingRecordingFileLease): GrowingRecordingExtentProbe<E>

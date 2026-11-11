@@ -7,6 +7,8 @@
 
 package at.bernhardberger.tvheadend.sdk.media3
 
+import at.bernhardberger.tvheadend.sdk.core.GrowingRecordingContainer
+
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.C
 import androidx.media3.common.Format
@@ -1392,7 +1394,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             val access = FakeCoordinatorPlaybackAccess()
             val events = PlaybackPlayerEventAccumulator()
             val player = Media3PlaybackCoordinatorPlayer(access, events) { _, _ ->
-                RecordingAdmission.Growing(CurrentGrowingLease, resumePosition = 8.seconds)
+                RecordingAdmission.Growing(CurrentGrowingLease, GrowingRecordingContainer.MPEG_TS, resumePosition = 8.seconds)
             }
             val token = PlaybackTargetToken()
 
@@ -1498,7 +1500,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         runTest(timeout = 30.seconds) {
             val access = FakeCoordinatorPlaybackAccess()
             val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator()) { _, _ ->
-                RecordingAdmission.Growing(CurrentGrowingLease, resumePosition = 8.seconds)
+                RecordingAdmission.Growing(CurrentGrowingLease, GrowingRecordingContainer.MPEG_TS, resumePosition = 8.seconds)
             }
             val install = async {
                 player.installRecording(
@@ -1527,7 +1529,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
     fun `growing start over installs no resume helper`() = runTest(timeout = 30.seconds) {
         val access = FakeCoordinatorPlaybackAccess()
         val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator()) { _, _ ->
-            RecordingAdmission.Growing(CurrentGrowingLease, resumePosition = null)
+            RecordingAdmission.Growing(CurrentGrowingLease, GrowingRecordingContainer.MPEG_TS, resumePosition = null)
         }
         val install = async {
             player.installRecording(
@@ -1817,7 +1819,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         val access = FakeCoordinatorPlaybackAccess(looperInitiallyCurrent = true)
         val events = PlaybackPlayerEventAccumulator()
         val player = Media3PlaybackCoordinatorPlayer(access, events) { _, _ ->
-            if (growing) RecordingAdmission.Growing(CurrentGrowingLease, resumePosition = 80.seconds)
+            if (growing) RecordingAdmission.Growing(CurrentGrowingLease, GrowingRecordingContainer.MPEG_TS, resumePosition = 80.seconds)
             else RecordingAdmission.Completed(80.seconds)
         }
         val coordinator = TvheadendPlaybackCoordinator(
@@ -3609,7 +3611,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         val player = Media3PlaybackCoordinatorPlayer(access, PlaybackPlayerEventAccumulator(), admitRecording = ::admitRecordingTarget)
         val target = TestCoordinatorRecordingTarget(
             startedGrowing = true,
-            admissionState = CoordinatorRecordingAdmission.Growing(at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability.SUPPORTED),
+            admissionState = CoordinatorRecordingAdmission.Growing(at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability.SUPPORTED, container = GrowingRecordingContainer.MPEG_TS),
             growingResult = RecordingFileResult.Ok(CurrentGrowingLease),
         )
         repeat(2) { attempt ->
@@ -3634,7 +3636,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         val previous = PlaybackTargetToken()
         val growing = TestCoordinatorRecordingTarget(
             startedGrowing = true,
-            admissionState = CoordinatorRecordingAdmission.Growing(at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability.SUPPORTED),
+            admissionState = CoordinatorRecordingAdmission.Growing(at.bernhardberger.tvheadend.sdk.core.RecordingProgressCapability.SUPPORTED, container = GrowingRecordingContainer.MPEG_TS),
             growingResult = RecordingFileResult.Ok(CurrentGrowingLease),
         )
         try {
@@ -3823,6 +3825,7 @@ private class FakeCoordinatorPlaybackAccess(
         lease: GrowingRecordingFileLease,
         identity: RecordingMediaIdentity,
         onFinalEnd: () -> Unit,
+        container: GrowingRecordingContainer,
     ): CoordinatorMediaSource {
         requireApplicationLooper()
         operations += "create-growing"
@@ -4172,7 +4175,7 @@ private class TestCoordinatorLooper(initiallyCurrent: Boolean = false) : Coordin
 }
 
 private fun growingAdmission(): RecordingAdmission.Growing {
-    return RecordingAdmission.Growing(CurrentGrowingLease)
+    return RecordingAdmission.Growing(CurrentGrowingLease, GrowingRecordingContainer.MPEG_TS)
 }
 
 private data object CurrentGrowingLease : GrowingRecordingFileLease {

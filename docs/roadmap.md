@@ -99,16 +99,18 @@ coordinator.
 
 ### Scope
 
-12. **Growing recordings are MPEG-TS and Matroska for 1.0.** Recordings
-    from Tvheadend's built-in Matroska muxer that are still being written
-    play with seeking and resume, like growing MPEG-TS. The
-    [growing Matroska evaluation](growing-mkv-evaluation.md) shows that the
-    stock Media3 extractor plays them forward to the edge and that a P7-style
-    seek wrapper works; the implementation has no release slot yet. MP4 and
-    libav Matroska recordings keep the typed `GROWING_RECORDING_DEFERRED`
-    outcome until MP4 has its own test recording and feasibility work. The
-    decision applies to the SDK and the player alike. Decided on 2026-11-11,
-    replacing the earlier MPEG-TS-only scope.
+12. **Growing recordings are MPEG-TS and Matroska for 1.0.** `.ts` and
+    `.mkv` recordings that are still being written play with seeking and
+    resume. The [growing Matroska evaluation](growing-mkv-evaluation.md) shows
+    that the stock Media3 extractor plays them forward to the edge and that a
+    P7-style seek wrapper works; the implementation has no release slot yet.
+    Every `.mkv` file is admitted, including Tvheadend's libav Matroska
+    profile, whose H.264 and HEVC samples Media3 cannot parse until Tvheadend
+    fixes them. MP4 and other containers keep the typed
+    `GROWING_RECORDING_DEFERRED` outcome; the MP4 test recording found
+    defects that also affect finished MP4 recordings. The decision applies to
+    the SDK and the player alike. Decided on 2026-11-11, replacing the earlier
+    MPEG-TS-only scope.
 13. **Raw teletext is out for 1.0.** Live subtitles already cover every
     teletext subtitle page the channel announces, because Tvheadend extracts
     them as text subtitle streams. Recordings with only teletext subtitles
@@ -142,8 +144,8 @@ connect the two:
 - The player's physical-TV reliability session also counts as SDK device
   evidence when it records the SDK version and what it covered.
 - R8 verification (0.27) precedes the player's minified release build.
-- Growing recordings are MPEG-TS and built-in Matroska, with seeking and
-  resume, for both the SDK and the player; MP4 stays deferred (decision 12).
+- Growing recordings are MPEG-TS and Matroska, with seeking and resume, for
+  both the SDK and the player; MP4 stays deferred (decision 12).
 
 ## Milestones
 

@@ -578,7 +578,7 @@ internal class PlaybackBindingTest {
     fun `recording error is admitted like an active recording`() {
         listOf(
             "/recording.ts" to RecordingPlaybackAdmission.Growing::class,
-            "/recording.mkv" to RecordingPlaybackAdmission.GrowingDeferred::class,
+            "/recording.mkv" to RecordingPlaybackAdmission.Growing::class,
             " " to RecordingPlaybackAdmission.TargetUnavailable::class,
         ).forEach { (path, expected) ->
             val fixture = BindingFixture().apply {
@@ -673,7 +673,7 @@ internal class PlaybackBindingTest {
             Case(
                 "deferred",
                 DvrEntryState.RECORDING,
-                "/recording.mkv",
+                "/recording.mp4",
                 RecordingPlaybackAdmission.GrowingDeferred::class,
             ),
             Case("completed", DvrEntryState.COMPLETED, "/recording.ts", RecordingPlaybackAdmission.Completed::class),
