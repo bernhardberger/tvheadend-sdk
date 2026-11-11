@@ -66,12 +66,11 @@ internal object RecordingMp4Fragments {
     private fun corruptDuration(trak: Mp4Box.ContainerBox?, track: Track): Boolean {
         // ISO/IEC 14496-12 TrackHeaderBox: v0 duration at 28; v1 at 36, after track_ID/reserved.
         val movie = headerDuration(trak?.getLeafBoxOfType(Mp4Box.TYPE_tkhd)?.data, 28, 36) ?: return false
-        if (movie.negative) return true
         // MediaHeaderBox: creation/modification then timescale, hence v0 at 24 and v1 at 32.
         val media = headerDuration(
             trak?.getContainerBoxOfType(Mp4Box.TYPE_mdia)?.getLeafBoxOfType(Mp4Box.TYPE_mdhd)?.data, 24, 32,
-        ) ?: return false
-        if (!media.negative) return false
+        ) ?: return movie.negative
+        if (!movie.negative && !media.negative) return false
         // Media3's scaler cannot represent unsigned 64-bit inputs. JDK arithmetic also avoids
         // overflow while comparing the two independently scaled header durations.
         val micros = BigInteger.valueOf(C.MICROS_PER_SECOND)

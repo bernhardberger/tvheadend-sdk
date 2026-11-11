@@ -172,7 +172,7 @@ class FinishedFragmentedMp4ExtractorTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = ["short", "high-bit", "high-bit-within-tolerance", "version-one"])
+    @ValueSource(strings = ["short", "high-bit", "high-bit-within-tolerance", "version-one", "matching-high-bit-tkhd-and-mdhd"])
     fun `healthy unknown length fragments retain the delegate duration`(header: String) {
         val bytes = durationFixture(header)
         val extractor = recordingMp4Extractor()
@@ -318,6 +318,11 @@ class FinishedFragmentedMp4ExtractorTest {
             else -> 0L
         }
         buffer.putInt(mdhd + 20, (2_592_000_000L + difference).toInt())
+        if (header == "matching-high-bit-tkhd-and-mdhd") {
+            val mvhd = (4 until tkhd).first { buffer.getInt(it) == Mp4Box.TYPE_mvhd }
+            buffer.putInt(mvhd + 16, 90_000)
+            buffer.putInt(tkhd + 24, 2_592_000_000L.toInt())
+        }
         if (header != "version-one") return bytes
         // FFmpeg cannot select these exact version-1 durations; widen just the two headers.
         for (typePosition in listOf(mdhd, tkhd)) {
