@@ -90,7 +90,7 @@ public class SessionGenerationTestAuthority(
     // incarnation, so its return is a new one. A DVR state without a snapshot is never current,
     // so it already retires every binding's proof. Re-checking unchanged entries keeps their
     // incarnation whenever they have a growing identity: public factories give every admitted
-    // `.ts` file its own path. An entry with a blank uuid has none, so each publication renews
+    // `.ts` or `.mkv` file its own path. An entry with a blank uuid has none, so each publication renews
     // its incarnation; the session would refuse its continuity at its own next update.
     private fun trackDvrIncarnationsLocked(observation: SessionObservation) {
         val entries = observation.dvrSnapshotForDisplay?.entries?.associateBy(DvrEntry::id) ?: return
@@ -202,7 +202,7 @@ public object TvheadendTestResultFactory {
      * Creates a growing-recording binding tied to [currentSession] whose file continuity is [lease].
      *
      * Like the session binding, it admits a recording or failed-recording entry with a single
-     * `.ts` file and keeps the target while each observation of that entry [authority] publishes
+     * `.ts` or `.mkv` file and keeps the target while each observation of that entry [authority] publishes
      * preserves the file's continuity: the entry may grow and end as a completed recording. A
      * replaced file, a shrinking size or the entry's removal ends the target for good, even when no
      * binding call saw that observation. [session] must publish through [authority].

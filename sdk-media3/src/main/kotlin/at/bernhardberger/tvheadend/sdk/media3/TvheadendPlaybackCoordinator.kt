@@ -66,7 +66,7 @@ public enum class RecordingPlaybackStart {
      * Resumes near a positive saved server position; without one, playback starts over.
      *
      * Completed recordings seek once their seek map is known and start over when progress is
-     * unknown or unsupported. Active single-file `.ts` recordings with supported progress seek once
+     * unknown or unsupported. Active single-file `.ts` and `.mkv` recordings with supported progress seek once
      * the growing timeline becomes seekable; the admission gates for active recordings are the same
      * as for [START_OVER]. See [TvheadendPlaybackCoordinator.setRecordingTarget].
      */

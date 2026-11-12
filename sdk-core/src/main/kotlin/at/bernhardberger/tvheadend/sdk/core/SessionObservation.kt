@@ -210,8 +210,9 @@ public class SessionObservation private constructor(
      *
      * Outcomes by entry state:
      * - `RECORDING` and `RECORDING_ERROR` with exactly one file: its path (or, when the file has none, the
-     *   entry's path) decides. A `.ts` suffix (case-insensitive) is [RecordingPlaybackAdmission.Growing];
-     *   any other suffix is [RecordingPlaybackAdmission.GrowingDeferred]. A missing or blank path, or any
+     *   entry's path) decides. A `.ts` or `.mkv` suffix (case-insensitive) is
+     *   [RecordingPlaybackAdmission.Growing] with the matching [GrowingRecordingContainer]; any other
+     *   suffix is [RecordingPlaybackAdmission.GrowingDeferred]. A missing or blank path, or any
      *   other number of files, is [RecordingPlaybackAdmission.TargetUnavailable].
      * - `COMPLETED`, and `COMPLETED_ERROR` or `MISSED` with at least one file and a data size not known to
      *   be zero: [RecordingPlaybackAdmission.Completed]. `MISSED` never carries a resume position.

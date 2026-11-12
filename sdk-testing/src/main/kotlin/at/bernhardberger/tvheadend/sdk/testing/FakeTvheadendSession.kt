@@ -208,7 +208,7 @@ public class FakeTvheadendSession(
     /**
      * Scripts a generation-bound growing-recording binding whose file is [recording].
      *
-     * The binding admits an entry that is still recording, with a single `.ts` file, and follows
+     * The binding admits an entry that is still recording, with a single `.ts` or `.mkv` file, and follows
      * it while each published observation keeps that file: through growth and into a completed
      * recording. It serves [recording] as the growing file, never opens a completed file, and never
      * reports progress. It never retires [recording]: a test that replaces the file or the
