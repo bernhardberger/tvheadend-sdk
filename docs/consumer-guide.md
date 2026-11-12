@@ -973,20 +973,11 @@ For recording failures, observe the experimental
 `RecordingPlaybackFailure.category` groups Media3 error codes as `MALFORMED_MEDIA`,
 `UNSUPPORTED_FORMAT`, `IO`, or `OTHER`; use it to choose the application's generic
 reason. Show `detail` beside that reason: it always includes the Media3 code name.
-Parser messages and non-initialization decoder messages appear only when they
-pass a conservative content check. Decoder initialization and query errors carry
-the code name only; other error groups include no message.
-
-After removing control, format and line-separator characters, the check accepts
-only letters, digits, spaces and `. , ; : - _ ( ) [ ] ' " # + ! ?`. It rejects
-dots between two letters or digits and colons not followed by a space or message end.
-In practice this mostly admits parser messages. These messages come from Media3's
-parser and decoder code, with values read from the recording's own bytes; data
-source, network and server text appears only in `IO` errors, which carry no
-message. The check is content-based and cannot prove arbitrary text harmless: it
-cannot recognize a single-label hostname or a phrase such as `password: x` that
-recording bytes might carry into a parser message. The complete line is
-limited to 160 UTF-16 code units with a truncation marker, without splitting a
+Parsing errors (`MALFORMED_MEDIA`) add the parser's message, which Media3 builds
+from values in the recording's bytes. All other errors carry the code name only,
+because I/O and network messages may name the server. Control and line-separator
+characters are removed, and the complete line is limited to 160 UTF-16 code units
+with a truncation marker, without splitting a
 surrogate pair. Treat it as display-only, not a log message or diagnostic key.
 
 The value remains while the failed recording item is installed, and clears on

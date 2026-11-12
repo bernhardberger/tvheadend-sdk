@@ -12,7 +12,6 @@ import at.bernhardberger.tvheadend.sdk.core.GrowingRecordingContainer
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.ParserException
 import androidx.media3.decoder.DecoderException
-import androidx.media3.exoplayer.mediacodec.MediaCodecRenderer.DecoderInitializationException
 import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.TrackGroup
@@ -2625,15 +2624,11 @@ internal class Media3PlaybackCoordinatorPlayerTest {
     @CsvSource(
         "1000,OTHER,generic,none", "2004,IO,unsafe,none", "3001,MALFORMED_MEDIA,parser,plain",
         "3003,MALFORMED_MEDIA,parser,plain", "4001,UNSUPPORTED_FORMAT,decoder,none", "4002,UNSUPPORTED_FORMAT,decoder,none",
-        "4004,UNSUPPORTED_FORMAT,decoder,decoder", "4005,UNSUPPORTED_FORMAT,decoder,decoder", "4003,OTHER,decoder,decoder",
-        "4006,OTHER,decoder,decoder", "3001,MALFORMED_MEDIA,path,none", "3001,MALFORMED_MEDIA,uri,none",
-        "3001,MALFORMED_MEDIA,host,none", "3001,MALFORMED_MEDIA,file,none", "3001,MALFORMED_MEDIA,credential,none",
-        "3001,MALFORMED_MEDIA,ipv4,none",
-        "3001,MALFORMED_MEDIA,userinfo,none", "4003,OTHER,decoder-name,none", "4001,UNSUPPORTED_FORMAT,decoder-init,none",
-        "3001,MALFORMED_MEDIA,long,long", "3001,MALFORMED_MEDIA,surrogate,surrogate", "3001,MALFORMED_MEDIA,controls,plain",
-        "3001,MALFORMED_MEDIA,generic,none", "5001,OTHER,decoder,none",
+        "4004,UNSUPPORTED_FORMAT,decoder,none", "4005,UNSUPPORTED_FORMAT,decoder,none", "4003,OTHER,decoder,none",
+        "4006,OTHER,decoder,none", "3001,MALFORMED_MEDIA,long,long", "3001,MALFORMED_MEDIA,surrogate,surrogate",
+        "3001,MALFORMED_MEDIA,controls,plain", "3001,MALFORMED_MEDIA,generic,none", "5001,OTHER,decoder,none",
     )
-    fun `recording failure maps codes and checks display message content`(
+    fun `recording failure maps codes and shows only parser messages`(
         code: Int,
         category: String,
         messageKind: String,
@@ -2644,13 +2639,12 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         val prefix = error.errorCodeName + ": "
         val expected = when (expectedKind) {
             "plain" -> prefix + "Top bit not zero"
-            "decoder" -> prefix + "Decoder rejected sample"
             "long" -> (prefix + "x".repeat(400)).take(159) + "…"
             "surrogate" -> prefix + "x".repeat(158 - prefix.length) + "…"
             else -> error.errorCodeName
         }
         assertEquals(category, failure.category.name)
-        assertTrue(failure.detail == expected, "Only content-checked display text may be appended")
+        assertTrue(failure.detail == expected, "Only parser messages may be appended")
         assertTrue(failure.detail.length <= 160, "Display detail must be bounded")
         assertEquals("RecordingPlaybackFailure(category=$category)", failure.toString())
     }
@@ -2832,16 +2826,9 @@ internal class Media3PlaybackCoordinatorPlayerTest {
     private fun safeError(code: Int = PlaybackException.ERROR_CODE_UNSPECIFIED, messageKind: String = "generic"): PlaybackException {
         val unsafe = "file /private/recording and http://user:pass@example.invalid/recording"
         val message = when (messageKind) {
-            "path" -> "Cannot parse C:\\private\\recording"
-            "uri", "unsafe" -> unsafe
+            "unsafe" -> unsafe
             "long" -> "x".repeat(400)
             "controls" -> "Top\n bit\u0000 not zero\u2028\u2029\u200e"
-            "host" -> "Invalid source recording-server.invalid"
-            "ipv4" -> "Invalid source 192.168.1.10"
-            "file" -> "file:recording.ts"
-            "credential" -> "credential=secret"
-            "userinfo" -> "user:pass@host:9981"
-            "decoder-name" -> "c2.android.avc.decoder"
             "surrogate" -> "x".repeat(158 - (PlaybackException.getErrorCodeName(code) + ": ").length) + "\uD801\uDC00" + "x".repeat(20)
             else -> if (code in 4000..4999) "Decoder rejected sample" else "Top bit not zero"
         }
@@ -2849,10 +2836,6 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             messageKind == "throwing" -> object : Exception() {
                 override val cause: Throwable get() = throw IOException("scripted cause failure")
             }
-            messageKind == "decoder-init" -> DecoderInitializationException(
-                Format.Builder().setId("container-id").setLabel("container-label").setLanguage("container-language").build(),
-                IOException(unsafe), false, -1,
-            )
             messageKind == "generic" || messageKind == "unsafe" -> IOException(unsafe)
             code in 3000..3999 -> ParserException.createForMalformedContainer(message, IOException(unsafe))
             else -> DecoderException(message, IOException(unsafe))
