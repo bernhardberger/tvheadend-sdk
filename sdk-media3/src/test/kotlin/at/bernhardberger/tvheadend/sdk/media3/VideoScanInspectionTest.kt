@@ -13,6 +13,7 @@ import androidx.media3.common.Format
 import androidx.media3.common.Metadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.ParsableByteArray
+import androidx.media3.common.util.Util
 import androidx.media3.extractor.DefaultExtractorInput
 import androidx.media3.extractor.ExtractorInput
 import androidx.media3.extractor.DefaultExtractorsFactory
@@ -24,6 +25,7 @@ import androidx.media3.extractor.PositionHolder
 import androidx.media3.extractor.SeekMap
 import androidx.media3.extractor.TrackOutput
 import androidx.media3.extractor.mkv.MatroskaExtractor
+import androidx.media3.extractor.mkv.GrowingMatroskaVarint
 import androidx.media3.extractor.mp4.FragmentedMp4Extractor
 import androidx.media3.extractor.mp4.Mp4Extractor
 import androidx.media3.extractor.text.SubtitleParser
@@ -36,6 +38,7 @@ import at.bernhardberger.tvheadend.sdk.playback.SubscriptionEvent
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStream
 import at.bernhardberger.tvheadend.sdk.playback.SubscriptionStreamType
 import java.io.File
+import java.util.HexFormat
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -51,6 +54,63 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 
 class VideoScanInspectionTest {
+    @ParameterizedTest
+    @ValueSource(strings = ["ts", "mkv"])
+    fun `a growing container's extractor emits subtitle tracks as Media3 cues`(containerName: String) {
+        val container = if (containerName == "ts") GrowingTsContainer else GrowingMatroskaContainer
+        val original = if (containerName == "ts") {
+            File("src/androidTest/assets/p7-f3/h264-synthetic.ts").readBytes()
+        } else growingMatroskaFixture()
+        val withSubtitles = if (containerName == "ts") withDvbSubtitlePmt(original) else withSubripTrack(original)
+        val baseline = ScanCapturingOutput()
+        extract(original, createGrowingRecordingExtractorsFactory(container).createExtractors().single(), baseline)
+        val output = ScanCapturingOutput()
+        extract(withSubtitles, createGrowingRecordingExtractorsFactory(container).createExtractors().single(), output)
+        assertEquals(setOf(MimeTypes.APPLICATION_MEDIA3_CUES), output.formatsByType[C.TRACK_TYPE_TEXT]?.map { it.sampleMimeType }?.toSet())
+        for (type in listOf(C.TRACK_TYPE_VIDEO, C.TRACK_TYPE_AUDIO)) {
+            val expected = requireNotNull(baseline.formatsByType[type]).map { it.sampleMimeType }.toSet()
+            assertEquals(expected, output.formatsByType[type]?.map { it.sampleMimeType }?.toSet(), "Audio and video formats must be unchanged")
+        }
+    }
+
+    private fun withDvbSubtitlePmt(original: ByteArray): ByteArray = original.copyOf().apply {
+        // The committed fixture's PMT fits in one payload-only TS packet. Keep all existing ES entries.
+        val packet = (indices step 188).first { at ->
+            this[at + 1].toInt() and 0x40 != 0 && this[at + 3].toInt() and 0x30 == 0x10 &&
+                this[at + 4] == 0.toByte() && this[at + 5] == 2.toByte()
+        }
+        val start = packet + 5
+        val size = ((this[start + 1].toInt() and 0x0f) shl 8) or (this[start + 2].toInt() and 0xff)
+        // Private PES PID 0x1ffe; descriptor 0x59: English DVB subtitles, page ids 1/1.
+        val entry = HexFormat.of().parseHex("06fffef00a5908656e671000010001")
+        val crcStart = start + 3 + size - 4
+        check(crcStart + entry.size + 4 <= packet + 188)
+        entry.copyInto(this, crcStart)
+        val newSize = size + entry.size
+        this[start + 1] = (0xb0 or (newSize shr 8)).toByte()
+        this[start + 2] = newSize.toByte()
+        val crc = Util.crc32(this, start, crcStart + entry.size, -1)
+        repeat(4) { this[crcStart + entry.size + it] = (crc ushr (24 - 8 * it)).toByte() }
+    }
+
+    private fun withSubripTrack(original: ByteArray): ByteArray {
+        // Append only a TrackEntry to existing Tracks; no subtitle samples or new binary fixture.
+        val tracks = original.indexOf(HexFormat.of().parseHex("1654ae6b"))
+        check(tracks >= 0)
+        val sizeAt = tracks + 4
+        val width = GrowingMatroskaVarint.length(original[sizeAt].toInt() and 0xff)
+        val oldSize = GrowingMatroskaVarint.value(original.copyOfRange(sizeAt, sizeAt + width), true).toInt()
+        val end = sizeAt + width + oldSize
+        val entry = HexFormat.of().parseHex("ae9ad7810373c58103838111888101868b535f544558542f55544638")
+        val result = original.copyOfRange(0, end) + entry + original.copyOfRange(end, original.size)
+        // Reuse the maintained varint decoder; only this bounded fixture's size needs encoding.
+        val newSize = oldSize + entry.size
+        check(newSize < (1 shl (7 * width)) - 1)
+        repeat(width) { result[sizeAt + it] = (newSize shr (8 * (width - 1 - it))).toByte() }
+        result[sizeAt] = (result[sizeAt].toInt() or (1 shl (8 - width))).toByte()
+        return result
+    }
+
     @OptIn(ExperimentalCoroutinesApi::class)
     @ParameterizedTest
     @ValueSource(booleans = [false, true])
@@ -749,9 +809,8 @@ class VideoScanInspectionTest {
         return extract(resource(name), extractor)
     }
 
-    private fun extract(bytes: ByteArray, extractor: Extractor): ScanCapturingTrack {
+    private fun extract(bytes: ByteArray, extractor: Extractor, output: ScanCapturingOutput = ScanCapturingOutput()): ScanCapturingTrack {
         assertTrue(extractor.sniff(input(bytes, 0L)))
-        val output = ScanCapturingOutput()
         extractor.init(output)
         try {
             drain(extractor, bytes)
@@ -909,9 +968,17 @@ private data class OtherMetadata(val value: String) : Metadata.Entry
 private class ScanCapturingOutput : ExtractorOutput {
     val video = ScanCapturingTrack()
     val maps = mutableListOf<SeekMap>()
+    val formatsByType = mutableMapOf<Int, MutableList<Format>>()
 
-    override fun track(id: Int, type: Int): TrackOutput =
-        if (type == C.TRACK_TYPE_VIDEO) video else DiscardingTrackOutput()
+    override fun track(id: Int, type: Int): TrackOutput {
+        val target = if (type == C.TRACK_TYPE_VIDEO) video else DiscardingTrackOutput()
+        return object : TrackOutput by target {
+            override fun format(format: Format) {
+                formatsByType.getOrPut(type) { mutableListOf() } += format
+                target.format(format)
+            }
+        }
+    }
 
     override fun endTracks(): Unit = Unit
     override fun seekMap(seekMap: SeekMap) { maps += seekMap }

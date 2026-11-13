@@ -178,6 +178,8 @@ Unreleased; development target.
 
 ### Fixed
 
+- Growing recordings with a selected or default subtitle track no longer fail
+  to start when Media3 supports the subtitle format.
 - Finished fragmented MP4 recordings now use fragment-derived duration and
   keyframe seeking instead of Tvheadend's short or invalid header durations
   and unsafe fragment index. Playback can reach its end after seeking.

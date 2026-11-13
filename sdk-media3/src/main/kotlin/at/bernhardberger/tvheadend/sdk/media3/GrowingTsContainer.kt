@@ -11,7 +11,7 @@ import androidx.media3.extractor.BinarySearchSeeker
 import androidx.media3.extractor.Extractor
 import androidx.media3.extractor.ExtractorsFactory
 import androidx.media3.extractor.SeekMap
-import androidx.media3.extractor.text.SubtitleParser
+import androidx.media3.extractor.text.DefaultSubtitleParserFactory
 import androidx.media3.extractor.ts.GrowingTsBinarySearch
 import androidx.media3.extractor.ts.TsExtractor
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
@@ -28,7 +28,7 @@ internal object GrowingTsContainer : GrowingContainerAdapter<GrowingTsExtent> {
     )
 
     override fun createExtractor(): Extractor =
-        VideoScanExtractor(TsExtractor(SubtitleParser.Factory.UNSUPPORTED))
+        VideoScanExtractor(TsExtractor(DefaultSubtitleParserFactory()))
 
     override fun alignIndexPosition(position: Long): Long =
         position / GROWING_TS_PACKET_BYTES * GROWING_TS_PACKET_BYTES

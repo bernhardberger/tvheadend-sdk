@@ -11,7 +11,7 @@ import androidx.media3.extractor.BinarySearchSeeker
 import androidx.media3.extractor.Extractor
 import androidx.media3.extractor.ExtractorInput
 import androidx.media3.extractor.mkv.MatroskaExtractor
-import androidx.media3.extractor.text.SubtitleParser
+import androidx.media3.extractor.text.DefaultSubtitleParserFactory
 import at.bernhardberger.tvheadend.sdk.playback.GrowingRecordingFileLease
 
 /** Keeps Matroska parsing in Media3 and seeking at validated Cluster boundaries. */
@@ -24,7 +24,7 @@ internal object GrowingMatroskaContainer : GrowingContainerAdapter<GrowingMatros
     )
 
     override fun createExtractor(): Extractor =
-        VideoScanExtractor(MatroskaExtractor(SubtitleParser.Factory.UNSUPPORTED))
+        VideoScanExtractor(MatroskaExtractor(DefaultSubtitleParserFactory()))
 
     override fun alignIndexPosition(position: Long): Long = position
 
