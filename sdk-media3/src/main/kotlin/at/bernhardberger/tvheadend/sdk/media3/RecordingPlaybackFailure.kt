@@ -5,18 +5,19 @@ package at.bernhardberger.tvheadend.sdk.media3
 
 import androidx.media3.common.ParserException
 import androidx.media3.common.PlaybackException
+import androidx.media3.exoplayer.upstream.Loader
 import at.bernhardberger.tvheadend.sdk.playback.ExperimentalTvheadendApi
 
-/** Groups recording failures by Media3 error code for application presentation. */
+/** Groups recording failures by Media3 error code and loading cause for application presentation. */
 @ExperimentalTvheadendApi
 public enum class RecordingPlaybackFailureCategory {
-    /** Identifies a media parsing error, including an unsupported container or manifest. */
+    /** Identifies media parsing errors or unexpected exceptions during loading. */
     MALFORMED_MEDIA,
 
     /** Identifies decoder initialization, decoder query, or unsupported decoding capabilities. */
     UNSUPPORTED_FORMAT,
 
-    /** Identifies an I/O or network error. */
+    /** Identifies other I/O or network errors, including loading failures caused by an [Error]. */
     IO,
 
     /** Identifies any other error, including decoding failure or reclaimed decoder resources. */
@@ -31,13 +32,16 @@ public enum class RecordingPlaybackFailureCategory {
  */
 @ExperimentalTvheadendApi
 public class RecordingPlaybackFailure internal constructor(
-    /** Groups the failure using only Media3's error code. */
+    /** Groups the failure using Media3's error code and unexpected loading cause. */
     public val category: RecordingPlaybackFailureCategory,
     /**
-     * Shows Media3's error-code name and, for parsing errors, the parser's message.
+     * Shows Media3's error-code name and a parser or unexpected loading message.
      *
-     * Media3 builds parser messages from values in the recording's bytes. Other errors, including
-     * I/O and network errors whose messages may name the server, carry only the code name.
+     * Parsing errors add the parser's message. [PlaybackException.ERROR_CODE_IO_UNSPECIFIED] with
+     * [androidx.media3.exoplayer.upstream.Loader.UnexpectedLoaderException] adds its cause's message
+     * when that cause is an [Exception], and uses [RecordingPlaybackFailureCategory.MALFORMED_MEDIA].
+     * This message comes from whatever code threw during loading; it is display-only.
+     * Other I/O and network errors carry only the code name.
      * Removes control and line-separator characters and bounds the complete line to 160 UTF-16
      * code units, including `…`, without splitting a surrogate pair.
      */
@@ -67,9 +71,20 @@ internal fun recordingPlaybackFailure(error: PlaybackException): RecordingPlayba
         generateSequence(error.cause) { it.cause }.take(MAX_RECORDING_FAILURE_CAUSES)
             .filterIsInstance<ParserException>().firstOrNull()
     } else null
-    val message = parserError?.message
+    val unexpectedCause = if (code == PlaybackException.ERROR_CODE_IO_UNSPECIFIED) {
+        generateSequence(error.cause) { it.cause }.take(MAX_RECORDING_FAILURE_CAUSES)
+            .filterIsInstance<Loader.UnexpectedLoaderException>()
+            .mapNotNull { it.cause as? Exception }.firstOrNull()
+    } else null
+    val category = if (unexpectedCause != null) {
+        RecordingPlaybackFailureCategory.MALFORMED_MEDIA
+    } else recordingPlaybackFailureCategory(code)
+    val rawMessage = if (parserError != null) {
         // Media3 1.11.1 ParserException.getMessage appends this instance's metadata suffix.
-        ?.removeSuffix(" {contentIsMalformed=${parserError.contentIsMalformed}, dataType=${parserError.dataType}}")
+        parserError.message
+            ?.removeSuffix(" {contentIsMalformed=${parserError.contentIsMalformed}, dataType=${parserError.dataType}}")
+    } else unexpectedCause?.message
+    val message = rawMessage
         ?.filterNot {
             when (Character.getType(it)) {
                 Character.FORMAT.toInt(), Character.LINE_SEPARATOR.toInt(), Character.PARAGRAPH_SEPARATOR.toInt() -> true
@@ -78,9 +93,9 @@ internal fun recordingPlaybackFailure(error: PlaybackException): RecordingPlayba
         }?.takeIf { it.isNotBlank() }
     val detail = error.errorCodeName + if (message == null) "" else ": $message"
     if (detail.length <= MAX_RECORDING_FAILURE_DETAIL_LENGTH) {
-        return RecordingPlaybackFailure(recordingPlaybackFailureCategory(code), detail)
+        return RecordingPlaybackFailure(category, detail)
     }
     var end = MAX_RECORDING_FAILURE_DETAIL_LENGTH - 1
     if (detail[end - 1].isHighSurrogate() && detail[end].isLowSurrogate()) end--
-    return RecordingPlaybackFailure(recordingPlaybackFailureCategory(code), detail.take(end) + "…")
+    return RecordingPlaybackFailure(category, detail.take(end) + "…")
 }

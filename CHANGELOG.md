@@ -47,7 +47,9 @@ Unreleased; development target.
   `RecordingPlaybackFailure.category` uses `RecordingPlaybackFailureCategory`
   (`MALFORMED_MEDIA`, `UNSUPPORTED_FORMAT`, `IO`, `OTHER`); `detail` supplies a
   bounded display-only Media3 code name, plus the parser message for parsing
-  errors; other errors carry no message. A replacement
+  errors. Unexpected loading exceptions reported as `ERROR_CODE_IO_UNSPECIFIED`
+  also use `MALFORMED_MEDIA` and show the inner exception's message; an `Error`
+  cause stays `IO` with no message. A replacement
   that fails before source installation preserves the still-installed failure.
 
 ### Changed

@@ -12,6 +12,7 @@ import at.bernhardberger.tvheadend.sdk.core.GrowingRecordingContainer
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.ParserException
 import androidx.media3.decoder.DecoderException
+import androidx.media3.exoplayer.upstream.Loader
 import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.TrackGroup
@@ -2627,8 +2628,12 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         "4004,UNSUPPORTED_FORMAT,decoder,none", "4005,UNSUPPORTED_FORMAT,decoder,none", "4003,OTHER,decoder,none",
         "4006,OTHER,decoder,none", "3001,MALFORMED_MEDIA,long,long", "3001,MALFORMED_MEDIA,surrogate,surrogate",
         "3001,MALFORMED_MEDIA,controls,plain", "3001,MALFORMED_MEDIA,generic,none", "5001,OTHER,decoder,none",
+        "2000,MALFORMED_MEDIA,loader-crash,crash", "2000,IO,loader-error,none", "2000,IO,generic,none",
+        "2004,IO,loader-crash,none", "2000,MALFORMED_MEDIA,loader-null,none", "2000,MALFORMED_MEDIA,loader-blank,none",
+        "2000,MALFORMED_MEDIA,loader-controls,plain", "2000,MALFORMED_MEDIA,loader-long,long",
+        "2000,MALFORMED_MEDIA,loader-surrogate,surrogate",
     )
-    fun `recording failure maps codes and shows only parser messages`(
+    fun `recording failure maps codes and shows parser or unexpected loading messages`(
         code: Int,
         category: String,
         messageKind: String,
@@ -2639,12 +2644,13 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         val prefix = error.errorCodeName + ": "
         val expected = when (expectedKind) {
             "plain" -> prefix + "Top bit not zero"
+            "crash" -> prefix + "Top bit not zero: -1676799656"
             "long" -> (prefix + "x".repeat(400)).take(159) + "…"
             "surrogate" -> prefix + "x".repeat(158 - prefix.length) + "…"
             else -> error.errorCodeName
         }
         assertEquals(category, failure.category.name)
-        assertTrue(failure.detail == expected, "Only parser messages may be appended")
+        assertTrue(failure.detail == expected, "Only parser or unexpected loading messages may be appended")
         assertTrue(failure.detail.length <= 160, "Display detail must be bounded")
         assertEquals("RecordingPlaybackFailure(category=$category)", failure.toString())
     }
@@ -2825,20 +2831,26 @@ internal class Media3PlaybackCoordinatorPlayerTest {
 
     private fun safeError(code: Int = PlaybackException.ERROR_CODE_UNSPECIFIED, messageKind: String = "generic"): PlaybackException {
         val unsafe = "file /private/recording and http://user:pass@example.invalid/recording"
-        val message = when (messageKind) {
+        val message = when (messageKind.removePrefix("loader-")) {
             "unsafe" -> unsafe
             "long" -> "x".repeat(400)
             "controls" -> "Top\n bit\u0000 not zero\u2028\u2029\u200e"
             "surrogate" -> "x".repeat(158 - (PlaybackException.getErrorCodeName(code) + ": ").length) + "\uD801\uDC00" + "x".repeat(20)
+            "crash" -> "Top bit not zero: -1676799656"
+            "null" -> null
+            "blank" -> " \n "
             else -> if (code in 4000..4999) "Decoder rejected sample" else "Top bit not zero"
         }
         val cause = when {
+            messageKind.startsWith("loader-") -> Loader.UnexpectedLoaderException(
+                if (messageKind == "loader-error") OutOfMemoryError("scripted allocation failure") else IllegalStateException(message),
+            )
             messageKind == "throwing" -> object : Exception() {
                 override val cause: Throwable get() = throw IOException("scripted cause failure")
             }
             messageKind == "generic" || messageKind == "unsafe" -> IOException(unsafe)
             code in 3000..3999 -> ParserException.createForMalformedContainer(message, IOException(unsafe))
-            else -> DecoderException(message, IOException(unsafe))
+            else -> DecoderException(requireNotNull(message), IOException(unsafe))
         }
         return PlaybackException(unsafe, IllegalStateException("wrapper", cause), code)
     }
