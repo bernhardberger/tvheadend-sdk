@@ -23,6 +23,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.awaitCancellation
 import org.junit.jupiter.api.Assertions.assertArrayEquals
+import org.junit.jupiter.api.Assertions.assertAll
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertSame
@@ -32,6 +33,40 @@ import org.junit.jupiter.api.Test
 
 class TvheadendGrowingRecordingDataSourceTest {
     private val identity = RecordingMediaIdentity()
+
+    @Test
+    fun `Matroska opens and delivers bytes without TS packet alignment`() {
+        val position = 193L
+        val bytes = ByteArray(197) { it.toByte() }
+        val lease = ScriptedGrowingLease(ReadStep.Bytes(bytes), ReadStep.End)
+        val source = createTvheadendGrowingRecordingDataSourceFactory(
+            lease = lease,
+            identity = identity,
+            readAheadBytes = GROWING_TS_PACKET_BYTES * 2,
+            container = GrowingMatroskaContainer,
+        ).createDataSource()
+        try {
+            source.open(recordingSpec(position = position))
+            val destination = ByteArray(bytes.size)
+            val read = source.read(destination, 0, destination.size)
+            assertAll(
+                {
+                    assertEquals(
+                        listOf(position), lease.openPositions, "Matroska must open at the exact requested byte",
+                    )
+                },
+                {
+                    assertEquals(
+                        bytes.size, read,
+                        "Matroska must deliver a non-packet-sized read unchanged",
+                    )
+                },
+                { assertArrayEquals(bytes, destination, "Matroska must not skip opening bytes") },
+            )
+        } finally {
+            source.close()
+        }
+    }
 
     @Test
     fun `open is unknown length and partial transport bytes wait for a complete TS packet`() {

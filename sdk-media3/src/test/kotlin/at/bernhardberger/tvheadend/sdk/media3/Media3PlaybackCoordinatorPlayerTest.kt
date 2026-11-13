@@ -60,6 +60,7 @@ import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.CsvSource
+import org.junit.jupiter.params.provider.EnumSource
 import org.junit.jupiter.params.provider.ValueSource
 
 internal class Media3PlaybackCoordinatorPlayerTest {
@@ -1317,11 +1318,14 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         assertFalse(access.operations.contains("release"))
     }
 
-    @Test
-    fun `growing recording uses its source without resume and forwards final EOF proof`() = runTest {
+    @ParameterizedTest
+    @EnumSource(GrowingRecordingContainer::class)
+    fun `growing recording uses its source without resume and forwards final EOF proof`(
+        container: GrowingRecordingContainer,
+    ) = runTest {
         val access = FakeCoordinatorPlaybackAccess()
         val events = PlaybackPlayerEventAccumulator()
-        val admission = growingAdmission()
+        val admission = growingAdmission(container)
         val player = Media3PlaybackCoordinatorPlayer(access, events) { _, _ -> admission }
         val token = PlaybackTargetToken()
 
@@ -1343,6 +1347,7 @@ internal class Media3PlaybackCoordinatorPlayerTest {
             access.operations,
         )
         assertSame(admission.lease, access.growingLease)
+        assertEquals(container, access.growingContainer)
         access.growingFinalEndCallback?.invoke()
         access.snapshot = access.snapshot.copy(
             position = 100.seconds,
@@ -3859,6 +3864,7 @@ private class FakeCoordinatorPlaybackAccess(
     var recoveryTargetCurrent: (() -> Boolean)? = null
     var growingFinalEndCallback: (() -> Unit)? = null
     var growingLease: GrowingRecordingFileLease? = null
+    var growingContainer: GrowingRecordingContainer? = null
     var liveOptions: SubscriptionOptions? = null
     var liveControls: LiveTimeshiftControlBridge? = null
     var snapshotAction: (() -> Unit)? = null
@@ -3941,6 +3947,7 @@ private class FakeCoordinatorPlaybackAccess(
         requireApplicationLooper()
         operations += "create-growing"
         growingLease = lease
+        growingContainer = container
         growingFinalEndCallback = onFinalEnd
         return FakeCoordinatorMediaSource("growing")
     }
@@ -4285,8 +4292,10 @@ private class TestCoordinatorLooper(initiallyCurrent: Boolean = false) : Coordin
     }
 }
 
-private fun growingAdmission(): RecordingAdmission.Growing {
-    return RecordingAdmission.Growing(CurrentGrowingLease, GrowingRecordingContainer.MPEG_TS)
+private fun growingAdmission(
+    container: GrowingRecordingContainer = GrowingRecordingContainer.MPEG_TS,
+): RecordingAdmission.Growing {
+    return RecordingAdmission.Growing(CurrentGrowingLease, container)
 }
 
 private data object CurrentGrowingLease : GrowingRecordingFileLease {
