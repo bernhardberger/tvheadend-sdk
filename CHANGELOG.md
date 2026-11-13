@@ -2,7 +2,7 @@
 
 ## [0.39.0]
 
-Unreleased; development target.
+Released 2026-11-13.
 
 ### Added
 
@@ -125,8 +125,8 @@ Unreleased; development target.
   assigning a new active id. Only the password is encrypted; associated data binds
   it to the profile id, endpoint and plaintext username. Undecryptable legacy
   credentials remain listed with null username and unavailable credentials until
-  edited or removed. Unknown or malformed formats, including unreleased format 3,
-  stay unavailable until `clearAll()`.
+  edited or removed. Unknown or malformed formats, including format 3, which never
+  shipped, stay unavailable until `clearAll()`.
 - BREAKING: a corrupted credentials file used to read as `Missing` and now reads
   as `Unavailable`. Other mutations return `Unavailable` until `clearAll()` discards
   all profiles. Apps that treated `Missing` as onboarding must offer this recovery.
