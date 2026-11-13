@@ -41,8 +41,9 @@ public class RecordingPlaybackFailure internal constructor(
      * [androidx.media3.exoplayer.upstream.Loader.UnexpectedLoaderException] adds its cause's message
      * when that cause is an [Exception], and uses [RecordingPlaybackFailureCategory.MALFORMED_MEDIA].
      * This message comes from whatever code threw during loading; it is display-only.
+     * A missing or blank message leaves the code name alone without changing the category.
      * Other I/O and network errors carry only the code name.
-     * Removes control and line-separator characters and bounds the complete line to 160 UTF-16
+     * Removes control, format and line-separator characters and bounds the complete line to 160 UTF-16
      * code units, including `…`, without splitting a surrogate pair.
      */
     public val detail: String,

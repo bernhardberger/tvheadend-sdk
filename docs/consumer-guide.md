@@ -976,10 +976,10 @@ reason. Show `detail` beside that reason: it always includes the Media3 code nam
 Parsing errors add the parser's message, which Media3 builds from values in the
 recording's bytes. `ERROR_CODE_IO_UNSPECIFIED` with an
 `UnexpectedLoaderException` caused by an `Exception` also uses `MALFORMED_MEDIA`
-and adds that inner exception's message. This message comes from whatever code
-threw during loading and is display-only. An `Error` cause, such as
+and adds that inner exception's message when it has one. This message comes from
+whatever code threw during loading and is display-only. An `Error` cause, such as
 `OutOfMemoryError`, stays `IO` with the code name only. Other I/O and network
-errors also carry only the code name. Control and line-separator
+errors also carry only the code name. Control, format and line-separator
 characters are removed, and the complete line is limited to 160 UTF-16 code units
 with a truncation marker, without splitting a
 surrogate pair. Treat it as display-only, not a log message or diagnostic key.

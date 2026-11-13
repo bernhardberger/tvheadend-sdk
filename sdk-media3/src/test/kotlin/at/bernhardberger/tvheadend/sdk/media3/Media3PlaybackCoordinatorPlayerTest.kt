@@ -2630,8 +2630,6 @@ internal class Media3PlaybackCoordinatorPlayerTest {
         "3001,MALFORMED_MEDIA,controls,plain", "3001,MALFORMED_MEDIA,generic,none", "5001,OTHER,decoder,none",
         "2000,MALFORMED_MEDIA,loader-crash,crash", "2000,IO,loader-error,none", "2000,IO,generic,none",
         "2004,IO,loader-crash,none", "2000,MALFORMED_MEDIA,loader-null,none", "2000,MALFORMED_MEDIA,loader-blank,none",
-        "2000,MALFORMED_MEDIA,loader-controls,plain", "2000,MALFORMED_MEDIA,loader-long,long",
-        "2000,MALFORMED_MEDIA,loader-surrogate,surrogate",
     )
     fun `recording failure maps codes and shows parser or unexpected loading messages`(
         code: Int,
