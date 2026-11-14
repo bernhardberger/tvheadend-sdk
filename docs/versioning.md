@@ -1,20 +1,20 @@
 # Versioning and compatibility
 
-The source is configured for the provisional `0.39.0` release under these
+The source is configured for the provisional `0.39.1` release under these
 coordinates:
 
-- `at.bernhardberger.tvheadend:sdk-android:0.39.0`
-- `at.bernhardberger.tvheadend:sdk-core:0.39.0`
-- `at.bernhardberger.tvheadend:sdk-media3:0.39.0`
-- `at.bernhardberger.tvheadend:sdk-playback:0.39.0`
-- `at.bernhardberger.tvheadend:sdk-testing:0.39.0`
+- `at.bernhardberger.tvheadend:sdk-android:0.39.1`
+- `at.bernhardberger.tvheadend:sdk-core:0.39.1`
+- `at.bernhardberger.tvheadend:sdk-media3:0.39.1`
+- `at.bernhardberger.tvheadend:sdk-playback:0.39.1`
+- `at.bernhardberger.tvheadend:sdk-testing:0.39.1`
 
 Source, local staging, and CI
-do not establish that the configured `0.39.0` coordinates are publicly available;
+do not establish that the configured `0.39.1` coordinates are publicly available;
 check Maven Central before selecting them.
 
-The baseline is `v0.38.0`. Local candidate verification may use
-`-PsdkCandidateVersion=0.39.0-<label>-SNAPSHOT`; the existing release checks
+The baseline is `v0.39.0`. Local candidate verification may use
+`-PsdkCandidateVersion=0.39.1-<label>-SNAPSHOT`; the existing release checks
 require a plain major-zero version in source. Candidate staging is not a
 publication claim. See [releasing](releasing.md).
 

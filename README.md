@@ -17,7 +17,7 @@ The SDK is split into five libraries:
 | `sdk-android` | Android | Discovery, connectivity, atomic server-profile storage, and authenticated artwork |
 | `sdk-testing` | Kotlin/JVM | Aggregate observation fakes, scripted events, and packet fixtures |
 
-The source is configured for the provisional `0.39.0` release, based on `v0.38.0`.
+The source is configured for the provisional `0.39.1` release, based on `v0.39.0`.
 The normal build never publishes. See [releasing](docs/releasing.md) for the
 publication process.
 `./gradlew clean build check stageLocalPublication` verifies the repository and
