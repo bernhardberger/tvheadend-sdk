@@ -7,9 +7,11 @@ import android.content.ContextWrapper
 import android.os.Build
 import androidx.media3.common.C
 import androidx.media3.common.Format
+import androidx.media3.common.MediaLibraryInfo
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.Clock
 import androidx.media3.decoder.DecoderInputBuffer
+import androidx.media3.exoplayer.DecoderReuseEvaluation
 import androidx.media3.exoplayer.FormatHolder
 import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.RendererConfiguration
@@ -169,6 +171,41 @@ internal class TvheadendVideoRendererTest {
         assertEquals(emptyList<Long>(), stream.rendered)
     }
 
+    @Test
+    fun `NVIDIA OMX decoder is re-created instead of reconfigured for a picture size change`() {
+        // Media3's own device workarounds read Build.MODEL, which the JVM stubs leave null.
+        MediaLibraryInfo.setEnableWorkarounds(false)
+        try {
+            assertNvidiaReuse()
+        } finally {
+            MediaLibraryInfo.setEnableWorkarounds(true)
+        }
+    }
+
+    private fun assertNvidiaReuse() {
+        data class ReuseCase(val decoder: String, val next: Format, val reused: Boolean)
+        val hd1080 = videoFormat(1920, 1080, initializationData = byteArrayOf(1))
+        listOf(
+            // An OMX.Nvidia decoder fails the port reconfiguration and outputs no frame at the new size.
+            ReuseCase("OMX.Nvidia.h264.decode", videoFormat(1280, 720, initializationData = byteArrayOf(2)), false),
+            ReuseCase("OMX.Nvidia.h264.decode", videoFormat(1920, 1080, initializationData = byteArrayOf(2)), true),
+            ReuseCase("c2.other.avc.decoder", videoFormat(1280, 720, initializationData = byteArrayOf(2)), true),
+        ).forEach { case ->
+            val renderer = enabledRenderer(RecordingPreviewStream(), tunneling = false)
+            MediaCodecVideoRenderer::class.java.getDeclaredField("codecMaxValues").apply {
+                isAccessible = true
+                set(renderer, type.declaredConstructors.single().newInstance(1920, 1088, Int.MAX_VALUE))
+            }
+
+            val evaluation = renderer.canReuse(adaptiveDecoder(case.decoder), hd1080, case.next)
+
+            assertEquals(case.reused, evaluation.result != DecoderReuseEvaluation.REUSE_RESULT_NO, case.toString())
+            if (!case.reused) {
+                assertEquals(DecoderReuseEvaluation.DISCARD_REASON_WORKAROUND, evaluation.discardReasons)
+            }
+        }
+    }
+
     private fun enabledRenderer(
         stream: SampleStream,
         tunneling: Boolean,
@@ -236,6 +273,29 @@ internal class TvheadendVideoRendererTest {
             invoke(this@queueInput, buffer)
         }
     }
+
+    private fun TvheadendVideoRenderer.canReuse(codec: MediaCodecInfo, old: Format, new: Format): DecoderReuseEvaluation =
+        MediaCodecVideoRenderer::class.java.getDeclaredMethod(
+            "canReuseCodec", MediaCodecInfo::class.java, Format::class.java, Format::class.java,
+            Boolean::class.javaPrimitiveType,
+        ).run {
+            isAccessible = true
+            invoke(this@canReuse, codec, old, new, true) as DecoderReuseEvaluation
+        }
+
+    /** A decoder that adapts to size changes; JVM stubs cannot supply the capabilities that say so. */
+    private fun adaptiveDecoder(name: String): MediaCodecInfo =
+        MediaCodecInfo.newInstance(name, MimeTypes.VIDEO_H264, MimeTypes.VIDEO_H264, null, true, false, true, false, false)
+            .also { info ->
+                MediaCodecInfo::class.java.getDeclaredField("adaptive").apply {
+                    isAccessible = true
+                    setBoolean(info, true)
+                }
+            }
+
+    private fun videoFormat(width: Int, height: Int, initializationData: ByteArray): Format =
+        Format.Builder().setSampleMimeType(MimeTypes.VIDEO_H264).setWidth(width).setHeight(height)
+            .setInitializationData(listOf(initializationData)).build()
 
     /** Android's JVM stubs answer null, but Media3 retains the application context. */
     private class ApplicationContext : ContextWrapper(null) {

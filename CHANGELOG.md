@@ -10,6 +10,14 @@ Unreleased; development target.
   request that timed out or was cancelled during a disconnect could leave the
   connection's socket open. No public SDK API changes.
 
+### Fixed
+
+- On an NVIDIA Shield, zapping to a channel with another picture size, such as
+  from 1080i to 720p, no longer stays in buffering without a picture. The video
+  renderer from `createTvheadendRenderersFactory` now releases and re-creates an
+  `OMX.Nvidia.` decoder for a new picture size instead of reconfiguring it,
+  which that decoder fails without reporting an error.
+
 ## [0.39.0]
 
 Released 2026-11-13.

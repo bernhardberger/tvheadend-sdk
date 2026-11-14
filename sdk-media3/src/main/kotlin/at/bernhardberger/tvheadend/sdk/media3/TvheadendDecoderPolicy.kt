@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.os.Handler
 import androidx.media3.decoder.DecoderInputBuffer
 import androidx.media3.common.Format
+import androidx.media3.exoplayer.DecoderReuseEvaluation
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.RenderersFactory
@@ -17,6 +18,7 @@ import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.mediacodec.MediaCodecAdapter
+import androidx.media3.exoplayer.mediacodec.MediaCodecInfo
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.video.MediaCodecVideoRenderer
 import androidx.media3.exoplayer.video.VideoRendererEventListener
@@ -75,7 +77,8 @@ public fun createTvheadendRenderersFactory(
 
 /**
  * Platform-codec video renderer that drives finite paused H.264 previews and reports rendered
- * frames to SDK live sample streams. Other streams render exactly as [MediaCodecVideoRenderer].
+ * frames to SDK live sample streams. Other streams render exactly as [MediaCodecVideoRenderer],
+ * except that an `OMX.Nvidia.` decoder is re-created rather than reconfigured for a new picture size.
  */
 internal class TvheadendVideoRenderer(
     builder: MediaCodecVideoRenderer.Builder,
@@ -166,6 +169,24 @@ internal class TvheadendVideoRenderer(
         codec?.setParameters(Bundle().apply { putInt(MediaCodec.PARAMETER_KEY_TUNNEL_PEEK, 1) })
     }
 
+    override fun canReuseCodec(
+        codecInfo: MediaCodecInfo, oldFormat: Format, newFormat: Format, isAdaptiveFormatChange: Boolean,
+    ): DecoderReuseEvaluation {
+        val evaluation = super.canReuseCodec(codecInfo, oldFormat, newFormat, isAdaptiveFormatChange)
+        // OMX.Nvidia decoders (NVIDIA Shield, Android 11) fail the output port reconfiguration for a
+        // new picture size, keep the old crop, and output no further frame. Release and re-create them.
+        val sizeChanged = oldFormat.width != newFormat.width || oldFormat.height != newFormat.height
+        if (evaluation.result == DecoderReuseEvaluation.REUSE_RESULT_NO || !sizeChanged ||
+            !codecInfo.name.startsWith(NVIDIA_OMX_DECODER_PREFIX)
+        ) {
+            return evaluation
+        }
+        return DecoderReuseEvaluation(
+            codecInfo.name, oldFormat, newFormat, DecoderReuseEvaluation.REUSE_RESULT_NO,
+            evaluation.discardReasons or DecoderReuseEvaluation.DISCARD_REASON_WORKAROUND,
+        )
+    }
+
     override fun processOutputBuffer(
         positionUs: Long, elapsedRealtimeUs: Long, codec: MediaCodecAdapter?, buffer: java.nio.ByteBuffer?,
         bufferIndex: Int, bufferFlags: Int, sampleCount: Int, bufferPresentationTimeUs: Long,
@@ -177,6 +198,10 @@ internal class TvheadendVideoRenderer(
         }
         return super.processOutputBuffer(positionUs, elapsedRealtimeUs, codec, buffer, bufferIndex,
             bufferFlags, sampleCount, bufferPresentationTimeUs, isDecodeOnlyBuffer, isLastBuffer, format)
+    }
+
+    private companion object {
+        const val NVIDIA_OMX_DECODER_PREFIX = "OMX.Nvidia."
     }
 }
 
