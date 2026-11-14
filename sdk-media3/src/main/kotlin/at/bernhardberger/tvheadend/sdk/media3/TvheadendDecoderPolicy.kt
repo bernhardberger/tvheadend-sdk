@@ -34,6 +34,8 @@ import androidx.media3.exoplayer.video.VideoRendererEventListener
  * From API 31, while paused, it also reports a key frame handed to the decoder, because some devices
  * never report a peeked frame. That report is made before the codec accepts the frame and does not
  * mean that it was decoded or drawn.
+ * An `OMX.Nvidia.` video decoder is released and re-created, rather than reconfigured, when the
+ * picture size changes.
  */
 @androidx.media3.common.util.UnstableApi
 public fun createTvheadendRenderersFactory(

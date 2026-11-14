@@ -15,8 +15,8 @@ Unreleased; development target.
 - On an NVIDIA Shield, zapping to a channel with another picture size, such as
   from 1080i to 720p, no longer stays in buffering without a picture. The video
   renderer from `createTvheadendRenderersFactory` now releases and re-creates an
-  `OMX.Nvidia.` decoder for a new picture size instead of reconfiguring it,
-  which that decoder fails without reporting an error.
+  `OMX.Nvidia.` decoder for a new picture size instead of reconfiguring it.
+  That decoder fails the reconfiguration without reporting an error.
 
 ## [0.39.0]
 

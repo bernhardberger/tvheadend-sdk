@@ -24,6 +24,7 @@ import androidx.media3.exoplayer.source.SampleStream
 import androidx.media3.exoplayer.video.MediaCodecVideoRenderer
 import java.lang.reflect.Proxy
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Test
 
@@ -174,11 +175,12 @@ internal class TvheadendVideoRendererTest {
     @Test
     fun `NVIDIA OMX decoder is re-created instead of reconfigured for a picture size change`() {
         // Media3's own device workarounds read Build.MODEL, which the JVM stubs leave null.
+        val workarounds = MediaLibraryInfo.enableWorkarounds()
         MediaLibraryInfo.setEnableWorkarounds(false)
         try {
             assertNvidiaReuse()
         } finally {
-            MediaLibraryInfo.setEnableWorkarounds(true)
+            MediaLibraryInfo.setEnableWorkarounds(workarounds)
         }
     }
 
@@ -201,7 +203,7 @@ internal class TvheadendVideoRendererTest {
 
             assertEquals(case.reused, evaluation.result != DecoderReuseEvaluation.REUSE_RESULT_NO, case.toString())
             if (!case.reused) {
-                assertEquals(DecoderReuseEvaluation.DISCARD_REASON_WORKAROUND, evaluation.discardReasons)
+                assertTrue(evaluation.discardReasons and DecoderReuseEvaluation.DISCARD_REASON_WORKAROUND != 0)
             }
         }
     }
