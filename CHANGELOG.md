@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.39.1]
+
+Unreleased; development target.
+
+### Changed
+
+- Move the protocol dependency to HTSP 1.0.0-rc.2. It fixes a race in which a
+  request that timed out or was cancelled during a disconnect could leave the
+  connection's socket open. No public SDK API changes.
+
 ## [0.39.0]
 
 Released 2026-11-13.
