@@ -555,11 +555,10 @@ public class StagedSdkConsumer(
     public suspend fun recoverRecording(
         recordingId: DvrEntryId,
         position: Duration,
-        previousDuration: Duration? = null,
     ): PlaybackTargetResult {
         val currentSession = observation.value.currentSession ?: return PlaybackTargetResult.NOT_READY
         return usePlaybackBinding(session.bindRecordingPlayback(currentSession, recordingId)) { binding ->
-            coordinator.recoverRecordingTarget(binding, position, previousDuration, RecordingPlaybackStart.RESUME)
+            coordinator.recoverRecordingTarget(binding, position, RecordingPlaybackStart.RESUME)
         }
     }
 

@@ -170,6 +170,11 @@ public class PlaybackTargetResult private constructor(
         @JvmField
         public val TARGET_UNAVAILABLE: PlaybackTargetResult = result("TARGET_UNAVAILABLE")
 
+        /** Rejects continuation when no released recording remains. */
+        @ExperimentalTvheadendApi
+        @JvmField
+        public val NOT_RELEASED: PlaybackTargetResult = result("NOT_RELEASED")
+
         /** The active recording is outside the supported single-file pass-through MPEG-TS path. */
         @JvmField
         public val GROWING_RECORDING_DEFERRED: PlaybackTargetResult = categorized(
@@ -205,6 +210,54 @@ public class PlaybackTargetResult private constructor(
             PlaybackTargetDisposition.NOT_STARTED,
             Collections.unmodifiableSet(categories.toSet()),
         )
+    }
+}
+
+/**
+ * Reports recording release and continuation retention.
+ * Compare known values and keep a fallback for future outcomes.
+ */
+@ExperimentalTvheadendApi
+public class RecordingReleaseResult private constructor(private val label: String) {
+    override fun equals(other: Any?): Boolean = other is RecordingReleaseResult && label == other.label
+
+    override fun hashCode(): Int = label.hashCode()
+
+    override fun toString(): String = label
+
+    /** Exposes known recording release outcomes. */
+    public companion object {
+        /** Retires an owned recording and keeps its continuation. */
+        @JvmField
+        public val RELEASED: RecordingReleaseResult = RecordingReleaseResult("RELEASED")
+
+        /** Retires an ended, failed or invalid-position recording without keeping a continuation. */
+        @JvmField
+        public val ENDED: RecordingReleaseResult = RecordingReleaseResult("ENDED")
+
+        /** Retires a recording after application departure without keeping a continuation. */
+        @JvmField
+        public val DEPARTED: RecordingReleaseResult = RecordingReleaseResult("DEPARTED")
+
+        /** Leaves a live target, no target, and any kept continuation unchanged. */
+        @JvmField
+        public val NOT_RECORDING: RecordingReleaseResult = RecordingReleaseResult("NOT_RECORDING")
+
+        /** Rejects release before the coordinator starts. */
+        @JvmField
+        public val NOT_RUNNING: RecordingReleaseResult = RecordingReleaseResult("NOT_RUNNING")
+
+        /** Rejects release after shutdown. */
+        @JvmField
+        public val SHUT_DOWN: RecordingReleaseResult = RecordingReleaseResult("SHUT_DOWN")
+
+        /**
+         * Reports failed Player cleanup.
+         * Keeps the continuation if an owned recording nevertheless retired orderly.
+         * Observe [TvheadendPlaybackCoordinator.playerCleanupPending] and retry SDK-owned cleanup.
+         */
+        @JvmField
+        public val PLAYER_UNAVAILABLE: RecordingReleaseResult = RecordingReleaseResult("PLAYER_UNAVAILABLE")
     }
 }
 
@@ -799,14 +852,9 @@ public class TvheadendPlaybackCoordinator internal constructor(
      * Replaces the target using a one-shot local position for this exact freshly bound recording.
      * The caller owns recording identity, lost-position capture and retry/play intent.
      *
-     * Inputs must be finite whole-millisecond durations: [position] non-negative and a supplied
-     * [previousDuration] positive. [previousDuration] must come from completed media and must be null
-     * if the lost target was growing: a growing extent would trigger the completed-recording cutoff.
-     * Zero uses [fallbackStart]. For completed recordings, a position
-     * at or beyond the configured orderly-completion fraction of a known previous duration also
-     * uses that fallback before installation. With no previous duration, recovery starts at zero
-     * and drops only the pending seek at that fraction of the new timeline, without a late fallback.
-     * A position at or beyond the installed completed media end is likewise dropped.
+     * [position] must be finite, non-negative and whole milliseconds. Zero uses [fallbackStart].
+     * Positive positions resume exactly, including near the end. A position at or beyond the
+     * installed completed media end is dropped because it cannot be sought.
      *
      * Completed local recovery works even with unknown/unsupported server progress; reporting stays
      * disabled and fallback RESUME retains its support gate. Growing recovery retains all admission
@@ -818,25 +866,60 @@ public class TvheadendPlaybackCoordinator internal constructor(
      * for completed playback). [PlaybackTargetResult.STARTED] means installed, not a seek landing.
      * Caller cancellation propagates; once Player work is claimed it may already have installed.
      *
-     * @throws IllegalArgumentException if either duration is non-finite or not whole milliseconds,
-     * [position] is negative, or a supplied [previousDuration] is not positive.
+     * @throws IllegalArgumentException if [position] is non-finite, negative or not whole milliseconds
      */
     @ExperimentalTvheadendApi
     public suspend fun recoverRecordingTarget(
         binding: PlaybackBinding.Recording,
         position: Duration,
-        previousDuration: Duration? = null,
         fallbackStart: RecordingPlaybackStart = RecordingPlaybackStart.RESUME,
     ): PlaybackTargetResult = recoverRecordingTarget(
-        BoundCoordinatorRecordingTarget(binding), position, previousDuration, fallbackStart,
+        BoundCoordinatorRecordingTarget(binding), position, fallbackStart,
     )
 
     internal suspend fun recoverRecordingTarget(
         target: CoordinatorRecordingTarget,
         position: Duration,
-        previousDuration: Duration? = null,
         fallbackStart: RecordingPlaybackStart = RecordingPlaybackStart.RESUME,
-    ): PlaybackTargetResult = setRecordingTarget(target, fallbackStart, RecordingRecoveryRequest(position, previousDuration))
+    ): PlaybackTargetResult = setRecordingTarget(target, fallbackStart, RecordingRecoveryRequest(position))
+
+    /**
+     * Retires recording resources while keeping the exact position for [continueRecordingTarget].
+     * Keeps the application-owned Player; a live target stays unchanged.
+     * Uses normal stop reporting and may mark watched past the threshold; a pending resume reports nothing.
+     * Returns RELEASED only with a continuation, ENDED for terminal or invalid-position targets,
+     * DEPARTED after ownership loss, NOT_RECORDING for live/none, or NOT_RUNNING/SHUT_DOWN.
+     * PLAYER_UNAVAILABLE reports cleanup failure but can still keep an owned continuation.
+     * Ended or failed targets retain normal terminal reporting, including watched marking.
+     */
+    @ExperimentalTvheadendApi
+    public suspend fun releaseRecordingTarget(): RecordingReleaseResult {
+        val reply = CompletableDeferred<RecordingReleaseResult>()
+        return submit(CoordinatorCommand.ReleaseRecording(PlayerOperationTicket(), reply), reply) { state ->
+            if (state == CoordinatorLifecycle.NEW) RecordingReleaseResult.NOT_RUNNING else RecordingReleaseResult.SHUT_DOWN
+        }
+    }
+
+    /**
+     * Reinstalls the released recording at its exact position without a completion cutoff.
+     * Set [androidx.media3.common.Player.playWhenReady] before calling; preparation leaves it unchanged.
+     * After reconnect, the released binding stays NOT_READY; pass a fresh [binding] for the same recording.
+     * The caller owns identity matching; null reuses the kept binding, and retries retain an updated binding.
+     * Keeps continuation only for NOT_READY, GROWING_RECORDING_DEFERRED, PLAYER_UNAVAILABLE or cancellation
+     * before installation is claimed. Claimed installation may finish despite caller cancellation.
+     * All other outcomes, target replacement, stop and shutdown discard it.
+     */
+    @ExperimentalTvheadendApi
+    public suspend fun continueRecordingTarget(
+        binding: PlaybackBinding.Recording? = null,
+    ): PlaybackTargetResult = continueRecordingTarget(binding?.let(::BoundCoordinatorRecordingTarget))
+
+    internal suspend fun continueRecordingTarget(target: CoordinatorRecordingTarget?): PlaybackTargetResult {
+        val reply = CompletableDeferred<PlaybackTargetResult>()
+        return submit(CoordinatorCommand.ContinueRecording(target, PlayerOperationTicket(), reply), reply) { state ->
+            state.targetUnavailableResult()
+        }
+    }
 
     /** Convenience seek with one client-position anchor and SDK-owned clamping. */
     public suspend fun seekTimeshiftBy(offset: Duration): TimeshiftContentSeekResult {
@@ -1115,49 +1198,40 @@ public fun createTvheadendPlaybackCoordinator(
 internal fun admitRecordingTarget(
     target: CoordinatorRecordingTarget,
     start: RecordingPlaybackStart,
-): RecordingAdmission = admitRecordingTarget(target, start, null, DvrProgressPolicy().orderlyCompletionFraction)
+): RecordingAdmission = admitRecordingTarget(target, start, null)
 
 internal class RecordingTargetStart(
     val start: RecordingPlaybackStart,
     val recovery: RecordingRecoveryRequest? = null,
-    val orderlyCompletionFraction: Double = DvrProgressPolicy().orderlyCompletionFraction,
 )
 
 internal fun admitRecordingTarget(target: CoordinatorRecordingTarget, request: RecordingTargetStart): RecordingAdmission =
-    admitRecordingTarget(target, request.start, request.recovery, request.orderlyCompletionFraction)
+    admitRecordingTarget(target, request.start, request.recovery)
 
 /** Local measurements for this exact recording; never a server bookmark or a provisional extent. */
 internal class RecordingRecoveryRequest(
     val position: Duration,
-    val previousDuration: Duration? = null,
 ) {
     init {
         require(position.isFinite() && !position.isNegative() &&
             position == position.inWholeMilliseconds.milliseconds) {
             "Recording recovery position must be a finite non-negative whole-millisecond duration"
         }
-        require(previousDuration == null || (previousDuration.isFinite() && previousDuration.isPositive() &&
-            previousDuration == previousDuration.inWholeMilliseconds.milliseconds)) {
-            "Recording recovery previous duration must be a finite positive whole-millisecond duration"
-        }
     }
 
     override fun toString(): String = "RecordingRecoveryRequest(<redacted>)"
 }
 
-/** Chooses the explicit position before installation; only an unknown old duration defers the cutoff. */
+/** Chooses the explicit position before installation. */
 internal fun admitRecordingTarget(
     target: CoordinatorRecordingTarget,
     start: RecordingPlaybackStart,
     recovery: RecordingRecoveryRequest?,
-    orderlyCompletionFraction: Double,
 ): RecordingAdmission {
     val explicit = recovery?.takeIf { it.position.isPositive() }
     return when (val initial = target.admission) {
         is CoordinatorRecordingAdmission.Completed -> {
-            val chosen = explicit?.takeUnless {
-                it.previousDuration != null && it.position >= it.previousDuration * orderlyCompletionFraction
-            }
+            val chosen = explicit
             RecordingAdmission.Completed(
                 resumePosition = chosen?.position ?: initial.resumePosition.takeIf {
                     start == RecordingPlaybackStart.RESUME &&
@@ -1165,9 +1239,6 @@ internal fun admitRecordingTarget(
                 },
                 progressReportingSupported = initial.progressCapability == RecordingProgressCapability.SUPPORTED,
                 recoveryPosition = chosen?.position,
-                lateCompletionFraction = orderlyCompletionFraction.takeIf {
-                    chosen != null && chosen.previousDuration == null
-                },
             )
         }
         is CoordinatorRecordingAdmission.Growing -> admitGrowingRecording(
@@ -1251,6 +1322,7 @@ private class CoordinatorActor(
     private val ticks = Channel<PlaybackTargetToken>(Channel.CONFLATED)
     private val exhaustions = Channel<LiveBufferExhaustion>(Channel.UNLIMITED)
     private var activeTarget: ActorTarget? = null
+    private var releasedRecording: ReleasedRecording? = null
     private var ticker: Job? = null
     private var pausedSeek: PausedSeekBuffer? = null
     private var owedPause: OwedPause? = null
@@ -1352,6 +1424,7 @@ private class CoordinatorActor(
         scope: CoroutineScope,
     ): Boolean = when (command) {
         is CoordinatorCommand.Live -> {
+            releasedRecording = null
             val token = PlaybackTargetToken()
             val timeshiftControls = LiveTimeshiftControlBridge(
                 token = token,
@@ -1479,34 +1552,79 @@ private class CoordinatorActor(
             false
         }
         is CoordinatorCommand.Recording -> {
-            val token = PlaybackTargetToken()
-            val result = player.installRecording(
-                ticket = command.ticket,
-                token = token,
-                target = command.target,
-                start = command.start,
-                recovery = command.recovery,
-                orderlyCompletionFraction = progressPolicy.orderlyCompletionFraction,
-            )
-            applyRetirement(result.retiredTarget, result.retiredRecording)
-            if (result.status == PlaybackPlayerInstallStatus.STARTED || result.status == PlaybackPlayerInstallStatus.DEPARTED) {
-                val admission = checkNotNull(result.installedRecording)
-                val target = ActorTarget.Recording(
-                    token = token,
-                    target = command.target,
-                    admission = admission,
-                )
-                activeTarget = target
-                if (admission.progressReportingSupported) startReporting(target, scope)
+            releasedRecording = null
+            installRecording(command, scope)
+            false
+        }
+        is CoordinatorCommand.ReleaseRecording -> {
+            val target = activeTarget as? ActorTarget.Recording
+            if (target == null) {
+                if (command.ticket.claim()) {
+                    command.ticket.complete()
+                    command.reply.complete(RecordingReleaseResult.NOT_RECORDING)
+                }
             } else {
-                token.retire()
+                val result = player.stop(command.ticket)
+                if (!result.cancelled) {
+                    val retired = result.retiredRecording?.takeIf { it.token === target.token }
+                    val ended = target.terminalized || retired?.exit == DvrPlaybackExit.NATURAL_END ||
+                        retired?.exit == DvrPlaybackExit.ERROR
+                    val departed = retired == null || !retired.allowWatched
+                    val keep = result.retiredTarget && !ended && !departed
+                    releasedRecording = if (keep) {
+                        val snapshot = checkNotNull(retired).snapshot
+                        val position = if (snapshot.precedesPendingResume) {
+                            checkNotNull(snapshot.pendingResumePosition)
+                        } else {
+                            snapshot.position
+                        }
+                        position.takeIf { it.isFinite() && !it.isNegative() }?.let {
+                            ReleasedRecording(target.target, it.inWholeMilliseconds.milliseconds)
+                        }
+                    } else null
+                    applyRetirement(
+                        result.retiredTarget,
+                        when {
+                            keep && releasedRecording == null -> null // Invalid measurements cannot be reported.
+                            else -> retired
+                        },
+                    )
+                    command.reply.complete(when {
+                        !result.playerAvailable -> RecordingReleaseResult.PLAYER_UNAVAILABLE
+                        ended -> RecordingReleaseResult.ENDED
+                        departed -> RecordingReleaseResult.DEPARTED
+                        releasedRecording == null -> RecordingReleaseResult.ENDED
+                        else -> RecordingReleaseResult.RELEASED
+                    })
+                }
             }
-            if (result.status != PlaybackPlayerInstallStatus.CANCELLED) {
-                command.reply.complete(result.status.toPublicTargetResult())
+            false
+        }
+        is CoordinatorCommand.ContinueRecording -> {
+            val released = releasedRecording?.let {
+                if (command.target == null) it else ReleasedRecording(command.target, it.position)
+            }
+            releasedRecording = released
+            if (released == null) {
+                if (command.ticket.claim()) {
+                    command.ticket.complete()
+                    command.reply.complete(PlaybackTargetResult.NOT_RELEASED)
+                }
+            } else {
+                val status = installRecording(
+                    CoordinatorCommand.Recording(
+                        released.target, RecordingPlaybackStart.START_OVER, RecordingRecoveryRequest(released.position),
+                        command.ticket, command.reply,
+                    ),
+                    scope,
+                )
+                // Only an attempt that installed nothing for a retryable reason keeps the continuation.
+                if (status !in RETRYABLE_CONTINUATION_STATUSES) releasedRecording = null
             }
             false
         }
         is CoordinatorCommand.Stop -> {
+            releasedRecording = null
             val result = player.stop(command.ticket)
             val finalSubscriptionIssue = applyRetirement(result.retiredTarget, result.retiredRecording)
             if (!result.cancelled) {
@@ -1522,6 +1640,7 @@ private class CoordinatorActor(
             false
         }
         is CoordinatorCommand.Shutdown -> {
+            releasedRecording = null
             val result = player.stop(command.ticket, abandonPendingCleanup = true)
             if (result.cancelled) return false
             onShutdownClaimed()
@@ -1543,6 +1662,35 @@ private class CoordinatorActor(
             true
         }
     }
+
+    private suspend fun installRecording(
+        command: CoordinatorCommand.Recording,
+        scope: CoroutineScope,
+    ): PlaybackPlayerInstallStatus {
+        val token = PlaybackTargetToken()
+        val result = player.installRecording(
+            ticket = command.ticket,
+            token = token,
+            target = command.target,
+            start = command.start,
+            recovery = command.recovery,
+        )
+        applyRetirement(result.retiredTarget, result.retiredRecording)
+        if (result.status == PlaybackPlayerInstallStatus.STARTED || result.status == PlaybackPlayerInstallStatus.DEPARTED) {
+            val admission = checkNotNull(result.installedRecording)
+            val target = ActorTarget.Recording(token, command.target, admission)
+            activeTarget = target
+            if (admission.progressReportingSupported) startReporting(target, scope)
+        } else {
+            token.retire()
+        }
+        if (result.status != PlaybackPlayerInstallStatus.CANCELLED) {
+            command.reply.complete(result.status.toPublicTargetResult())
+        }
+        return result.status
+    }
+
+    private class ReleasedRecording(val target: CoordinatorRecordingTarget, val position: Duration)
 
     /**
      * Starts refilling a paused player after an accepted seek, or returns its immediate result.
@@ -2085,6 +2233,12 @@ private class CoordinatorActor(
     private companion object {
         val PAUSED_SEEK_BUFFERING_TIMEOUT: Duration = 5.seconds
         val PAUSED_SEEK_POLL_INTERVAL: Duration = 20.milliseconds
+        val RETRYABLE_CONTINUATION_STATUSES = setOf(
+            PlaybackPlayerInstallStatus.CANCELLED,
+            PlaybackPlayerInstallStatus.NOT_READY,
+            PlaybackPlayerInstallStatus.GROWING_RECORDING_DEFERRED,
+            PlaybackPlayerInstallStatus.PLAYER_UNAVAILABLE,
+        )
     }
 
     private sealed class ActorTarget(open val token: PlaybackTargetToken) {
@@ -2170,6 +2324,17 @@ private sealed class CoordinatorCommand(
         val reply: CompletableDeferred<PlaybackStopResult>,
     ) : CoordinatorCommand(ticket)
 
+    class ReleaseRecording(
+        override val ticket: PlayerOperationTicket,
+        val reply: CompletableDeferred<RecordingReleaseResult>,
+    ) : CoordinatorCommand(ticket)
+
+    class ContinueRecording(
+        val target: CoordinatorRecordingTarget?,
+        override val ticket: PlayerOperationTicket,
+        val reply: CompletableDeferred<PlaybackTargetResult>,
+    ) : CoordinatorCommand(ticket)
+
     data class Shutdown(
         val drainTimeout: Duration,
         override val ticket: PlayerOperationTicket,
@@ -2178,7 +2343,8 @@ private sealed class CoordinatorCommand(
 
     /** Whether this command ends pending paused-seek buffering; position samples and priority changes do not. */
     val supersedesPausedSeek: Boolean
-        get() = this !is ContentPosition && this !is LivePriority
+        get() = this !is ContentPosition && this !is LivePriority &&
+            this !is ReleaseRecording && this !is ContinueRecording
 
     /** Whether this command can retire the current target, which then closes a buffering transport itself. */
     val mayRetireTarget: Boolean
@@ -2188,6 +2354,8 @@ private sealed class CoordinatorCommand(
         when (this) {
             is Live -> reply.complete(PlaybackTargetResult.SHUT_DOWN)
             is Recording -> reply.complete(PlaybackTargetResult.SHUT_DOWN)
+            is ContinueRecording -> reply.complete(PlaybackTargetResult.SHUT_DOWN)
+            is ReleaseRecording -> reply.complete(RecordingReleaseResult.SHUT_DOWN)
             is TimeshiftSeek -> reply.complete(TimeshiftCommandResult.SHUT_DOWN)
             is TimeshiftSpeed -> reply.complete(TimeshiftCommandResult.SHUT_DOWN)
             is LivePriority -> reply.complete(TimeshiftCommandResult.SHUT_DOWN)

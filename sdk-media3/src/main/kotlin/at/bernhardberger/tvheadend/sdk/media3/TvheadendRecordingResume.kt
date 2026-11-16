@@ -99,7 +99,7 @@ internal class TvheadendRecordingResume(
      * file it is clamped to [GROWING_RESUME_EDGE_MARGIN_MILLIS] before the known extent. The seek is
      * applied at most once.
      */
-    internal fun beginPlaybackTarget(resumePosition: Duration?, lateCompletionFraction: Double? = null) {
+    internal fun beginPlaybackTarget(resumePosition: Duration?) {
         requirePlayerLooper()
         check(!closed) { "Recording resume is closed" }
         check(currentTargetMatches()) {
@@ -115,7 +115,7 @@ internal class TvheadendRecordingResume(
             }
             position.inWholeMilliseconds
         }
-        stateMachine.beginPlaybackTarget(positionMillis, mode, lateCompletionFraction)
+        stateMachine.beginPlaybackTarget(positionMillis, mode)
         evaluateResume()
     }
 
@@ -238,17 +238,16 @@ internal class RecordingResumeStateMachine(
     val progressFloorMillis: Long?
         get() = pending?.takeIf { it.holdsProgress }?.positionMillis
 
-    /** The optional cutoff applies only to completed recovery with an unknown previous duration. */
+    /** Keeps the saved position until the current target can seek there. */
     fun beginPlaybackTarget(
         positionMillis: Long?,
         mode: RecordingResumeMode,
-        lateCompletionFraction: Double? = null,
     ) {
         check(!closed) { "Recording resume is closed" }
         settle(RecordingResumeOutcome.CANCELLED)
         outcome = null
         val position = positionMillis?.takeIf { it > 0L } ?: return
-        val target = PendingResume(position, mode, lateCompletionFraction)
+        val target = PendingResume(position, mode)
         pending = target
         target.timeout = scheduleTimeout(mode.timeoutMillis) {
             if (pending === target) onTimeout(target)
@@ -267,9 +266,6 @@ internal class RecordingResumeStateMachine(
         when (target.mode) {
             RecordingResumeMode.COMPLETED -> when {
                 target.positionMillis >= durationMillis -> settle(RecordingResumeOutcome.ABANDONED)
-                target.lateCompletionFraction != null &&
-                    target.positionMillis.milliseconds >= durationMillis.milliseconds * target.lateCompletionFraction ->
-                    settle(RecordingResumeOutcome.ABANDONED)
                 isSeekable -> apply(target.positionMillis)
             }
             RecordingResumeMode.GROWING -> {
@@ -320,7 +316,6 @@ internal class RecordingResumeStateMachine(
     private class PendingResume(
         val positionMillis: Long,
         val mode: RecordingResumeMode,
-        val lateCompletionFraction: Double?,
     ) {
         var timeout: AutoCloseable? = null
         var holdsProgress = true

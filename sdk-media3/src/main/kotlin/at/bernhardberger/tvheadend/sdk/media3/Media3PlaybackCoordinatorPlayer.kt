@@ -78,8 +78,6 @@ internal sealed interface RecordingAdmission {
         val resumePosition: Duration?,
         override val progressReportingSupported: Boolean = true,
         override val recoveryPosition: Duration? = null,
-        /** Unknown previous duration: abandon at this fraction of the new timeline, without fallback. */
-        val lateCompletionFraction: Double? = null,
     ) : Accepted
 
     class Growing(
@@ -121,7 +119,6 @@ internal interface PlaybackCoordinatorPlayer {
         target: CoordinatorRecordingTarget,
         start: RecordingPlaybackStart,
         recovery: RecordingRecoveryRequest? = null,
-        orderlyCompletionFraction: Double = DvrProgressPolicy().orderlyCompletionFraction,
     ): PlaybackPlayerInstallResult
 
     /**
@@ -152,7 +149,7 @@ internal interface CoordinatorRecordingResume : AutoCloseable {
     /** The pending saved position that progress reports must not undercut, or null. */
     val progressFloor: Duration?
 
-    fun beginPlaybackTarget(position: Duration?, lateCompletionFraction: Double? = null)
+    fun beginPlaybackTarget(position: Duration?)
 }
 
 internal interface CoordinatorPlaybackAccess {
@@ -315,11 +312,10 @@ internal class Media3PlaybackCoordinatorPlayer(
         target: CoordinatorRecordingTarget,
         start: RecordingPlaybackStart,
         recovery: RecordingRecoveryRequest?,
-        orderlyCompletionFraction: Double,
     ): PlaybackPlayerInstallResult = when (
         val operation = executor.execute(ticket) {
             installAfterApplicationReplacementOnLooper {
-                installRecordingOnLooper(token, target, RecordingTargetStart(start, recovery, orderlyCompletionFraction))
+                installRecordingOnLooper(token, target, RecordingTargetStart(start, recovery))
             }
         }
     ) {
@@ -586,7 +582,7 @@ internal class Media3PlaybackCoordinatorPlayer(
                             }
                         },
                     ) { describesTarget(installed) }
-                    installed.resume?.beginPlaybackTarget(resumePosition, (accepted as? RecordingAdmission.Completed)?.lateCompletionFraction)
+                    installed.resume?.beginPlaybackTarget(resumePosition)
                 }
             }
             // Resume may have applied or been abandoned synchronously. Refresh only while owned;
@@ -1403,8 +1399,8 @@ internal class ExoPlayerCoordinatorPlaybackAccess(
             override val progressFloor: Duration?
                 get() = resume.progressFloor
 
-            override fun beginPlaybackTarget(position: Duration?, lateCompletionFraction: Double?) {
-                resume.beginPlaybackTarget(position, lateCompletionFraction)
+            override fun beginPlaybackTarget(position: Duration?) {
+                resume.beginPlaybackTarget(position)
             }
 
             override fun close() {

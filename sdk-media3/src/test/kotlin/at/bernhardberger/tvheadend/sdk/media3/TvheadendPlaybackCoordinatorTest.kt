@@ -267,6 +267,7 @@ internal class TvheadendPlaybackCoordinatorTest {
             PlaybackTargetResult.STARTED to emptySet(),
             PlaybackTargetResult.DEPARTED to emptySet(),
             PlaybackTargetResult.NOT_RUNNING to setOf(PlaybackOutcomeCategory.TRANSIENT),
+            PlaybackTargetResult.NOT_RELEASED to emptySet(),
             PlaybackTargetResult.SHUT_DOWN to setOf(PlaybackOutcomeCategory.TERMINAL),
             PlaybackTargetResult.NOT_READY to setOf(PlaybackOutcomeCategory.TRANSIENT),
             PlaybackTargetResult.RECORDING_PROGRESS_UNSUPPORTED to
@@ -493,52 +494,31 @@ internal class TvheadendPlaybackCoordinatorTest {
                     admissionState = completedCoordinatorAdmission(30.seconds, capability),
                 )
                 val admitted = admitRecordingTarget(
-                    target, fallback, RecordingRecoveryRequest(40_123.milliseconds, 100.seconds), 0.95,
+                    target, fallback, RecordingRecoveryRequest(95_123.milliseconds),
                 ) as RecordingAdmission.Completed
-                assertEquals(40_123.milliseconds, admitted.resumePosition)
+                assertEquals(95_123.milliseconds, admitted.resumePosition)
                 assertEquals(admitted.resumePosition, admitted.recoveryPosition)
-                assertNull(admitted.lateCompletionFraction)
                 assertEquals(capability == RecordingProgressCapability.SUPPORTED, admitted.progressReportingSupported)
             }
         }
     }
 
     @Test
-    fun `known duration cutoff and zero recovery use the requested support-gated fallback`() {
+    fun `zero recovery uses the requested support-gated fallback`() {
         listOf(RecordingProgressCapability.SUPPORTED, RecordingProgressCapability.UNKNOWN,
             RecordingProgressCapability.UNSUPPORTED).forEach { capability ->
             RecordingPlaybackStart.entries.forEach { fallback ->
                 val target = TestCoordinatorRecordingTarget(
                     admissionState = completedCoordinatorAdmission(30.seconds, capability),
                 )
-                listOf(Duration.ZERO, 95.seconds, 96.seconds).forEach { position ->
                     val admitted = admitRecordingTarget(
-                        target, fallback, RecordingRecoveryRequest(position, 100.seconds), 0.95,
+                        target, fallback, RecordingRecoveryRequest(Duration.ZERO),
                     ) as RecordingAdmission.Completed
                     assertEquals(30.seconds.takeIf {
                         fallback == RecordingPlaybackStart.RESUME && capability == RecordingProgressCapability.SUPPORTED
                     }, admitted.resumePosition)
                     assertNull(admitted.recoveryPosition)
-                    assertNull(admitted.lateCompletionFraction)
-                }
-                val below = admitRecordingTarget(
-                    target, fallback, RecordingRecoveryRequest(94_999.milliseconds, 100.seconds), 0.95,
-                ) as RecordingAdmission.Completed
-                assertEquals(94_999.milliseconds, below.resumePosition)
             }
-        }
-    }
-
-    @Test
-    fun `unknown duration recovery defers cutoff without selecting a server fallback`() {
-        RecordingPlaybackStart.entries.forEach { fallback ->
-            val admitted = admitRecordingTarget(
-                TestCoordinatorRecordingTarget(admissionState = completedCoordinatorAdmission(30.seconds)),
-                fallback, RecordingRecoveryRequest(95.seconds), 0.95,
-            ) as RecordingAdmission.Completed
-            assertEquals(95.seconds, admitted.resumePosition)
-            assertEquals(95.seconds, admitted.recoveryPosition)
-            assertEquals(0.95, admitted.lateCompletionFraction)
         }
     }
 
@@ -552,7 +532,7 @@ internal class TvheadendPlaybackCoordinatorTest {
                 RecordingProgressCapability.UNSUPPORTED to RecordingAdmission.ProgressUnsupported,
             ).forEach { (capability, expected) ->
                 target.admissionState = CoordinatorRecordingAdmission.Growing(capability, container = GrowingRecordingContainer.MPEG_TS)
-                assertSame(expected, admitRecordingTarget(target, fallback, RecordingRecoveryRequest(95.seconds), 0.95))
+                assertSame(expected, admitRecordingTarget(target, fallback, RecordingRecoveryRequest(95.seconds)))
             }
             target.admissionState = CoordinatorRecordingAdmission.Growing(RecordingProgressCapability.SUPPORTED, container = GrowingRecordingContainer.MPEG_TS)
             target.bindGrowingAction = {
@@ -560,14 +540,14 @@ internal class TvheadendPlaybackCoordinatorTest {
                 RecordingFileResult.Ok(lease)
             }
             val admitted = admitRecordingTarget(
-                target, fallback, RecordingRecoveryRequest(95.seconds, 100.seconds), 0.95,
+                target, fallback, RecordingRecoveryRequest(95.seconds),
             ) as RecordingAdmission.Growing
             assertSame(lease, admitted.lease)
             assertEquals(95.seconds, admitted.resumePosition)
             assertEquals(95.seconds, admitted.recoveryPosition)
             target.admissionState = CoordinatorRecordingAdmission.Growing(RecordingProgressCapability.SUPPORTED, container = GrowingRecordingContainer.MPEG_TS)
             val zero = admitRecordingTarget(
-                target, fallback, RecordingRecoveryRequest(Duration.ZERO), 0.95,
+                target, fallback, RecordingRecoveryRequest(Duration.ZERO),
             ) as RecordingAdmission.Growing
             assertEquals(30.seconds.takeIf { fallback == RecordingPlaybackStart.RESUME }, zero.resumePosition)
             assertNull(zero.recoveryPosition)
@@ -578,9 +558,7 @@ internal class TvheadendPlaybackCoordinatorTest {
     fun `recovery measurements reject invalid durations without rendering them`() {
         listOf((-1).milliseconds, Duration.INFINITE, 0.5.milliseconds).forEach { invalid ->
             assertThrows(IllegalArgumentException::class.java) { RecordingRecoveryRequest(invalid) }
-            assertThrows(IllegalArgumentException::class.java) { RecordingRecoveryRequest(1.seconds, invalid) }
         }
-        assertThrows(IllegalArgumentException::class.java) { RecordingRecoveryRequest(1.seconds, Duration.ZERO) }
         assertEquals("RecordingRecoveryRequest(<redacted>)", RecordingRecoveryRequest(1.seconds).toString())
     }
 
@@ -1755,7 +1733,7 @@ internal class TvheadendPlaybackCoordinatorTest {
     fun `paused seek confirmation tells how the post-seek picture was confirmed`() = runTest {
         val key = PausedSeekConfirmation.KEY_FRAME_QUEUED
         val frame = PausedSeekConfirmation.FRAME_RENDERED
-        for (case in listOf("handoff", "render", "upgrade", "play", "resume", "next-seek", "stale", "audio")) {
+        for (case in listOf("handoff", "render", "upgrade", "play", "resume", "next-seek", "stale", "audio", "release", "continue")) {
             val fixture = CoordinatorFixture()
             val owner = launch(start = CoroutineStart.UNDISPATCHED) { fixture.coordinator.run() }
             try {
@@ -1795,6 +1773,12 @@ internal class TvheadendPlaybackCoordinatorTest {
                     else -> key
                 }, seen, case)
                 when (case) {
+                    "release", "continue" -> {
+                        if (case == "release") assertSame(RecordingReleaseResult.NOT_RECORDING,
+                            fixture.coordinator.releaseRecordingTarget())
+                        else assertSame(PlaybackTargetResult.NOT_RELEASED, fixture.coordinator.continueRecordingTarget())
+                        assertSame(seen, confirmation.value, case)
+                    }
                     "upgrade" -> {
                         fixture.player.renderedFirstFrame(frame)
                         assertSame(frame, confirmation.value, case)
@@ -4191,6 +4175,9 @@ private class TestCoordinatorHarness(
     private val delegate: TvheadendPlaybackCoordinator,
     private val recordingTarget: (Long) -> NumberedRecordingTarget,
 ) {
+    suspend fun releaseRecordingTarget(): RecordingReleaseResult = delegate.releaseRecordingTarget()
+
+    suspend fun continueRecordingTarget(): PlaybackTargetResult = delegate.continueRecordingTarget()
     val timeshiftState = delegate.timeshiftState
     val subscriptionIssue = delegate.subscriptionIssue
     val liveDiagnostics = delegate.liveDiagnostics
@@ -4443,7 +4430,6 @@ private class FakePlaybackCoordinatorPlayer : PlaybackCoordinatorPlayer {
         target: CoordinatorRecordingTarget,
         start: RecordingPlaybackStart,
         recovery: RecordingRecoveryRequest?,
-        orderlyCompletionFraction: Double,
     ): PlaybackPlayerInstallResult {
         if (!ticket.claim()) return PlaybackPlayerInstallResult(PlaybackPlayerInstallStatus.CANCELLED)
         val retirement = retire()

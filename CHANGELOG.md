@@ -1,5 +1,24 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Experimental `releaseRecordingTarget()` and `continueRecordingTarget()` retire
+  recording player resources and continue the same target at its retained position.
+  Release uses normal stop reporting: a completed recording released past the
+  watched threshold is marked watched, a growing one is not, and a pending
+  resume reports nothing.
+  Ended targets retain normal watched reporting. Continuation accepts a fresh
+  same-recording binding after reconnect and keeps it only on retryable failure
+  or cancellation before installation is claimed; claimed installation may finish.
+
+### Changed
+
+- **BREAKING:** Remove `previousDuration` from experimental
+  `recoverRecordingTarget()`. Recovery no longer restarts recordings near their
+  end; only a position at or beyond the completed duration is abandoned.
+
 ## [0.39.1]
 
 Released 2026-11-14.

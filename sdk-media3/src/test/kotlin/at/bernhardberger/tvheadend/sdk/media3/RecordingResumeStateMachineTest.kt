@@ -34,17 +34,17 @@ internal class RecordingResumeStateMachineTest {
     }
 
     @Test
-    fun `completed resume after the backstop preserves the saved milliseconds below any cutoff`() {
+    fun `completed resume after the backstop preserves the saved milliseconds near the end`() {
         val cases = listOf(
-            Triple(180_000L, 3_600_000L, null),
-            Triple(94_999L, 100_000L, 0.95),
+            180_000L to 3_600_000L,
+            95_123L to 100_000L,
         )
-        cases.forEach { (position, duration, cutoff) ->
+        cases.forEach { (position, duration) ->
             val seeks = mutableListOf<Long>()
             val timeouts = FakeResumeTimeouts()
             val resume = RecordingResumeStateMachine(seeks::add, timeouts::schedule)
-            val label = "position=$position cutoff=$cutoff"
-            resume.beginPlaybackTarget(position, RecordingResumeMode.COMPLETED, lateCompletionFraction = cutoff)
+            val label = "position=$position"
+            resume.beginPlaybackTarget(position, RecordingResumeMode.COMPLETED)
             resume.onMediaState(targetMatches = true, durationMillis = duration, isSeekable = false)
             assertEquals(position, resume.progressFloorMillis, label)
 
@@ -208,18 +208,18 @@ internal class RecordingResumeStateMachineTest {
     }
 
     @Test
-    fun `unknown duration completed recovery drops at exact cutoff even before seekability`() {
-        listOf(95_000L, 95_001L, 100_000L).forEach { position ->
-            resume.beginPlaybackTarget(position, RecordingResumeMode.COMPLETED, lateCompletionFraction = 0.95)
+    fun `near-end completed recovery waits for seekability then resumes exactly`() {
+        listOf(95_000L, 95_001L).forEach { position ->
+            resume.beginPlaybackTarget(position, RecordingResumeMode.COMPLETED)
             resume.onMediaState(true, null, false)
             assertEquals(position, resume.pendingPositionMillis)
             resume.onMediaState(true, 100_000, false)
-            assertEquals(RecordingResumeOutcome.ABANDONED, resume.outcome)
-            assertNull(resume.pendingPositionMillis)
-            assertNull(resume.progressFloorMillis)
+            assertNull(resume.outcome)
+            assertEquals(position, resume.pendingPositionMillis)
+            assertEquals(position, resume.progressFloorMillis)
             resume.onMediaState(true, 100_000, true)
         }
-        assertEquals(emptyList<Long>(), seeks)
+        assertEquals(listOf(95_000L, 95_001L), seeks)
     }
 
     @Test
@@ -234,12 +234,12 @@ internal class RecordingResumeStateMachineTest {
     }
 
     @Test
-    fun `late cutoff recovery cannot survive viewer seek replacement or close`() {
-        resume.beginPlaybackTarget(95_000, RecordingResumeMode.COMPLETED, 0.95)
+    fun `pending recovery cannot survive viewer seek replacement or close`() {
+        resume.beginPlaybackTarget(95_000, RecordingResumeMode.COMPLETED)
         val oldTimeout = timeouts.pending.last()
         resume.onViewerSeek()
         assertNull(resume.pendingPositionMillis)
-        resume.beginPlaybackTarget(80_123, RecordingResumeMode.COMPLETED, 0.95)
+        resume.beginPlaybackTarget(80_123, RecordingResumeMode.COMPLETED)
         oldTimeout.action()
         assertEquals(80_123L, resume.progressFloorMillis)
         resume.onMediaState(false, 10_000, true)

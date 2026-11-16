@@ -1397,22 +1397,15 @@ using a local measurement for that same recording:
 coordinator.recoverRecordingTarget(
     binding = binding,
     position = lostPosition,
-    previousDuration = lostDuration, // null if unknown or the lost target was growing
     fallbackStart = RecordingPlaybackStart.RESUME,
 )
 ```
 
-Positions must be finite, non-negative whole milliseconds; a supplied previous
-duration must be finite, positive whole milliseconds. Zero uses `fallbackStart`.
-`previousDuration` must come from completed media and must be `null` if the lost
-target was growing. Passing a growing extent would trigger the completed-recording
-cutoff if the freshly bound recording is now completed.
-For completed media with a known previous duration, a position at or beyond
-`DvrProgressPolicy.orderlyCompletionFraction` of that duration uses the fallback
-before installation. With unknown duration, playback starts at zero; reaching
-that cutoff on the new timeline drops only the pending seek, without a late
-bookmark seek. A pending position at or beyond the completed media end is dropped
-in either case. Explicit completed recovery works without server progress
+Positions must be finite, non-negative whole milliseconds. Zero uses `fallbackStart`.
+Recovery keeps a positive local position even near the end; the orderly-completion
+threshold does not restart playback. A pending position at or beyond the completed
+media end is dropped instead of seeking outside the recording.
+Explicit completed recovery works without server progress
 support, but reporting stays disabled and fallback `RESUME` retains its support
 gate. Growing recovery retains all admission gates and the 3 s / 20 s rule below,
 even if the recording completes during admission; no completion cutoff applies
@@ -1428,6 +1421,41 @@ write an earlier position. Completed recovery can remain pending beyond its
 60-second progress hold. `STARTED` means installed, not seek completed, and caller
 cancellation propagates even when Player work may already have been claimed.
 The application retains identity matching, retry/route choice and play intent.
+
+### Release and continue a recording
+
+With the same opt-in, call `coordinator.releaseRecordingTarget()` to retire a
+recording's source and player resources while retaining its target and position.
+The application keeps its Player instance; live playback is not stopped.
+Release uses normal stop reporting: a completed recording released past the
+watched threshold is marked watched, a growing one never is, and a pending resume
+reports nothing. Each such release counts as a play, so releasing again past the
+threshold, or finishing after continuing, raises the server's play count again.
+An ended or failed target uses normal terminal reporting, which may mark watched.
+An ended, failed, departed or invalid-position target keeps no continuation.
+
+On return, set `player.playWhenReady` to the application's desired value, then
+call `coordinator.continueRecordingTarget()`. Preparation leaves that value alone.
+Continuation rechecks admission and seeks to the retained position without a
+completion threshold, including when a growing recording completed while released.
+Growing playback still uses its normal capability gates and edge clamp.
+`pendingRecordingRecoveryPosition` exposes the owed position until the seek is
+issued. `STARTED` confirms installation, not seek completion.
+
+After reconnect, the old released binding stays `NOT_READY`. Pass a fresh binding
+for the **same recording** to `continueRecordingTarget(binding)`; the application
+owns identity matching, as with recovery. Null reuses the kept binding. If a
+retryable failure occurs, the fresh binding remains the one used for retry.
+
+Only `NOT_READY`, `GROWING_RECORDING_DEFERRED`, `PLAYER_UNAVAILABLE` and cancellation
+before installation is claimed retain the continuation. Claimed installation may
+finish despite caller cancellation. Every other outcome, including `STARTED`,
+`DEPARTED`, `TARGET_UNAVAILABLE` and `RECORDING_PROGRESS_UNSUPPORTED`, discards it.
+`PLAYER_UNAVAILABLE` on release can still retain it if retirement succeeded;
+observe `playerCleanupPending` before retrying cleanup. Target replacement,
+`stop()` and shutdown discard it. With no retained continuation, continue returns
+`PlaybackTargetResult.NOT_RELEASED`; after shutdown it returns `SHUT_DOWN`.
+Compare known `RecordingReleaseResult` values and keep a fallback for future ones.
 
 `RecordingPlaybackAdmission.Growing`, `GrowingRecordingContainer`,
 `GrowingRecordingFileReader`, and `GrowingRecordingFileLease` require `@OptIn(ExperimentalTvheadendApi::class)` from
