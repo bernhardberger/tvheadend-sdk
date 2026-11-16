@@ -26,7 +26,10 @@ class TimeshiftFixtureConsumerTest {
         val previewMapping = previewHistory.wallClockMapping as TimeshiftWallClockMapping.Estimate
         val selected = previewHistory.select(50.seconds)!!
         assertEquals(now - 60.seconds, previewMapping.estimate(sample.target))
-        fixture.updateHistory(20.seconds, 110.seconds, serverPaused = true, estimatedLiveEdgeTime = now + 12.seconds)
+        fixture.updateHistory(
+            20.seconds, 110.seconds, serverPaused = true, estimatedLiveEdgeTime = now + 12.seconds, bufferFull = true,
+        )
+        assertEquals(true, (fixture.state.value as LiveTimeshiftState.Available).bufferFull)
         assertEquals(now - 50.seconds, previewMapping.estimate(selected))
         fixture.seek(selected) {
             assertEquals(50.seconds, it.position)

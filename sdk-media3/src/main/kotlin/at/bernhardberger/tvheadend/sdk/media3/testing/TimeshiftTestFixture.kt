@@ -50,6 +50,7 @@ public class TimeshiftTestFixture(public val grantedPeriod: Duration) {
         readerBehindLive: Duration? = null,
         serverPaused: Boolean? = null,
         estimatedLiveEdgeTime: kotlin.time.Instant? = null,
+        bufferFull: Boolean? = null,
     ): Unit = synchronized(lock) {
         require(start == null || start.isFinite())
         require(end == null || end.isFinite())
@@ -71,6 +72,7 @@ public class TimeshiftTestFixture(public val grantedPeriod: Duration) {
                     subscriptionOwner,
                 )
             } else null,
+            bufferFull = bufferFull,
         )
     }
 

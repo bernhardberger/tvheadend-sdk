@@ -12,6 +12,10 @@
   Ended targets retain normal watched reporting. Continuation accepts a fresh
   same-recording binding after reconnect and keeps it only on retryable failure
   or cancellation before installation is claimed; claimed installation may finish.
+- Add `LiveTimeshiftState.Available.bufferFull` in `sdk-media3`, the server's
+  report that the timeshift buffer is full or can no longer be written, so it
+  stores nothing newer. It is null until a status event arrives. `TimeshiftTestFixture.updateHistory` takes a
+  matching `bufferFull` parameter.
 
 ### Changed
 

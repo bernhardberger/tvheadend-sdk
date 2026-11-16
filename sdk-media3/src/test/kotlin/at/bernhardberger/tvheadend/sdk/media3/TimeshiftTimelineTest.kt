@@ -69,8 +69,10 @@ class TimeshiftTimelineTest {
         val bridge = LiveTimeshiftControlBridge(PlaybackTargetToken()) { state = it }
         val attachment = bridge.newAttachment()
         attachment.bind(FakeTimeshiftSubscription(120.seconds))
+        assertNull((state as LiveTimeshiftState.Available).bufferFull)
         val now = kotlin.time.Instant.fromEpochSeconds(1_000)
         attachment.accept(SubscriptionEvent.Timeshift(0, 0, 0, 100_000_000, 100, now))
+        assertEquals(false, (state as LiveTimeshiftState.Available).bufferFull)
         val history = (state as LiveTimeshiftState.Available).timeline!!
         val mapping = history.wallClockMapping as TimeshiftWallClockMapping.Estimate
         val selected = history.select(40.seconds)!!
@@ -84,7 +86,9 @@ class TimeshiftTimelineTest {
         )
         repeat(100_000) { attachment.accept(packet) }
         assertSame(mapping, attachment.timeline()!!.wallClockMapping)
-        attachment.accept(SubscriptionEvent.Timeshift(0, 10_000_000, 0, 110_000_000, 0, now + 12.seconds))
+        // Status carries the server's full flag.
+        attachment.accept(SubscriptionEvent.Timeshift(1, 10_000_000, 0, 110_000_000, 0, now + 12.seconds))
+        assertEquals(true, (state as LiveTimeshiftState.Available).bufferFull)
         val sample = bridge.playbackPosition(attachment, 0.seconds) as TimeshiftPlaybackPosition.Estimate
         assertSame(attachment.timeline()!!.wallClockMapping, sample.timeline!!.wallClockMapping)
         assertEquals(now - 60.seconds, mapping.estimate(selected))

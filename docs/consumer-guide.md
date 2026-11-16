@@ -1010,6 +1010,19 @@ The grant is capacity, not proof of available history. The optional `timeline`
 contains only the latest valid observed absolute `start` and `end`; it does not
 advance with the local clock or expand to fill the grant.
 
+`bufferFull` is the server's own report that its timeshift buffer is full or
+can no longer be written; from then on it stores nothing newer than what it
+already holds. The server's size limit can fill the buffer before the granted
+period elapses, so do not derive this from `bufferedDuration`. No SDK command
+clears the flag: `returnToLive()` seeks near the live edge instead of switching
+the server back to live, so the flag stays `true` for the rest of the
+subscription. While the stream is paused with `pauseTimeshift()`, the server
+keeps sending status about once a second, so the field keeps updating, also in
+the background as long as the app process and server connection stay alive.
+Pausing only the player leaves the server delivering live media; once the
+client sample queues fill, the live item fails and `timeshiftState` becomes
+`LiveTimeshiftState.Unavailable`.
+
 For content-stable selection, retain `timeline.select(position)` and pass that
 opaque `TimeshiftContentTarget` to `seekTimeshift(target)`. Its `position` remains
 the same absolute stream coordinate as the live edge advances. Do not retain a

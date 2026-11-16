@@ -43,6 +43,13 @@ public sealed interface LiveTimeshiftState {
         public val timeline: TimeshiftTimeline? = null,
         /** Requested presentation intent; transport may run temporarily to buffer a paused seek. */
         public val playbackPaused: Boolean? = serverPaused,
+        /**
+         * Whether the server reported its buffer as full or unable to write, so it stores nothing
+         * newer. The server's size limit can fill it before [grantedPeriod] elapses. No SDK command clears it, including
+         * a return to live, so it stays true for the rest of the subscription. Null until a status
+         * event arrives.
+         */
+        public val bufferFull: Boolean? = null,
     ) : LiveTimeshiftState
 }
 
@@ -1183,6 +1190,7 @@ internal class LiveTimeshiftControlBridge(
                         NORMAL_SPEED -> false
                         else -> null
                     },
+                    bufferFull = latestStatus?.let { it.full != 0L },
                 )
             } ?: LiveTimeshiftState.Unavailable
         }
