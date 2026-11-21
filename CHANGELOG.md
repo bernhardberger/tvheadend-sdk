@@ -1,5 +1,22 @@
 # Changelog
 
+## [Unreleased]
+
+Unreleased; development target.
+
+### Fixed
+
+- A finished MPEG-TS recording whose first PCR lies more than 112,800 bytes
+  into the file, such as a remux that starts with a long run of data-stream
+  packets, can now seek. Media3's TS extractor searches only that many bytes
+  at each end for the PCRs that give the duration, so it found none and
+  refused every seek. When that search finds no duration, recording playback
+  repeats it once or twice with a larger, bounded window. The recording
+  becomes seekable when that search finds PCRs at both ends; otherwise it
+  stays unseekable as before, after up to about 7 MB of extra extractor reads.
+  Recordings timed by the default search are read as before. Live and growing
+  recordings are unchanged. No public API changes.
+
 ## [0.40.0]
 
 Released 2026-11-17.

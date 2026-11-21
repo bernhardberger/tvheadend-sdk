@@ -73,26 +73,6 @@ class VideoScanInspectionTest {
         }
     }
 
-    private fun withDvbSubtitlePmt(original: ByteArray): ByteArray = original.copyOf().apply {
-        // The committed fixture's PMT fits in one payload-only TS packet. Keep all existing ES entries.
-        val packet = (indices step 188).first { at ->
-            this[at + 1].toInt() and 0x40 != 0 && this[at + 3].toInt() and 0x30 == 0x10 &&
-                this[at + 4] == 0.toByte() && this[at + 5] == 2.toByte()
-        }
-        val start = packet + 5
-        val size = ((this[start + 1].toInt() and 0x0f) shl 8) or (this[start + 2].toInt() and 0xff)
-        // Private PES PID 0x1ffe; descriptor 0x59: English DVB subtitles, page ids 1/1.
-        val entry = HexFormat.of().parseHex("06fffef00a5908656e671000010001")
-        val crcStart = start + 3 + size - 4
-        check(crcStart + entry.size + 4 <= packet + 188)
-        entry.copyInto(this, crcStart)
-        val newSize = size + entry.size
-        this[start + 1] = (0xb0 or (newSize shr 8)).toByte()
-        this[start + 2] = newSize.toByte()
-        val crc = Util.crc32(this, start, crcStart + entry.size, -1)
-        repeat(4) { this[crcStart + entry.size + it] = (crc ushr (24 - 8 * it)).toByte() }
-    }
-
     private fun withSubripTrack(original: ByteArray): ByteArray {
         // Append only a TrackEntry to existing Tracks; no subtitle samples or new binary fixture.
         val tracks = original.indexOf(HexFormat.of().parseHex("1654ae6b"))
@@ -1025,4 +1005,28 @@ private class BytesBinary(private val bytes: ByteArray) : SubscriptionBinary {
         bytes.copyInto(destination, destinationOffset)
         return bytes.size
     }
+}
+
+/** The offset of [ts]'s first TS packet that starts a program map section in its payload. */
+internal fun firstPmtPacket(ts: ByteArray): Int = (ts.indices step 188).first { at ->
+    ts[at + 1].toInt() and 0x40 != 0 && ts[at + 3].toInt() and 0x30 == 0x10 &&
+        ts[at + 4] == 0.toByte() && ts[at + 5] == 2.toByte()
+}
+
+/** [original] with English DVB subtitles added to its program map. */
+internal fun withDvbSubtitlePmt(original: ByteArray): ByteArray = original.copyOf().apply {
+    // The committed fixture's PMT fits in one payload-only TS packet. Keep all existing ES entries.
+    val packet = firstPmtPacket(this)
+    val start = packet + 5
+    val size = ((this[start + 1].toInt() and 0x0f) shl 8) or (this[start + 2].toInt() and 0xff)
+    // Private PES PID 0x1ffe; descriptor 0x59: English DVB subtitles, page ids 1/1.
+    val entry = HexFormat.of().parseHex("06fffef00a5908656e671000010001")
+    val crcStart = start + 3 + size - 4
+    check(crcStart + entry.size + 4 <= packet + 188)
+    entry.copyInto(this, crcStart)
+    val newSize = size + entry.size
+    this[start + 1] = (0xb0 or (newSize shr 8)).toByte()
+    this[start + 2] = newSize.toByte()
+    val crc = Util.crc32(this, start, crcStart + entry.size, -1)
+    repeat(4) { this[crcStart + entry.size + it] = (crc ushr (24 - 8 * it)).toByte() }
 }

@@ -34,9 +34,10 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * Recording playback with a program map that announces a stream which never carries data, as
- * broadcasters do for audio description. Media3's TS extractor needs the Android runtime, so
- * this runs on Robolectric, unlike the plain JVM recording data source tests.
+ * Recording playback of finished recordings Media3 does not handle alone: a program map that
+ * announces a stream which never carries data, as broadcasters do for audio description, and
+ * recordings Media3 cannot time from its default search. Media3's TS extractor needs the Android
+ * runtime, so this runs on Robolectric, unlike the plain JVM recording data source tests.
  */
 private typealias Step = (ExtractorOutput) -> Unit
 
@@ -45,19 +46,52 @@ private typealias Step = (ExtractorOutput) -> Unit
 @Config(sdk = [34])
 class RecordingFormatlessTrackTest {
     @Test
-    fun `a finished fragmented MP4 with invalid header durations seeks and reaches ended`() {
-        val player = TestExoPlayerBuilder(ApplicationProvider.getApplicationContext()).build()
-        try {
-            player.setMediaSource(createTvheadendRecordingMediaSource(FakeRecordingTransport(finishedMp4Fixture(true)), RecordingMediaIdentity()))
-            player.prepare()
-            TestPlayerRunHelper.run(player).untilState(Player.STATE_READY)
-            assertTrue(player.isCurrentMediaItemSeekable)
-            assertTrue(player.duration in 5_900L..6_200L)
-            player.seekTo(4_500L)
-            player.play()
-            TestPlayerRunHelper.run(player).untilState(Player.STATE_ENDED)
-        } finally {
-            player.release()
+    fun `a finished recording Media3 cannot time from its default search seeks and reaches ended`() {
+        // A fragmented MP4 with invalid header durations, and a TS whose first PCR follows a long lead-in.
+        listOf(
+            Triple(finishedMp4Fixture(true), 5_900L..6_200L, 4_500L),
+            Triple(withLeadIn(LATE_PCR_LEAD_IN), 2_900L..3_000L, 2_000L),
+        ).forEach { (recording, duration, seekTo) ->
+            val player = TestExoPlayerBuilder(ApplicationProvider.getApplicationContext()).build()
+            try {
+                player.setMediaSource(createTvheadendRecordingMediaSource(FakeRecordingTransport(recording), RecordingMediaIdentity()))
+                player.prepare()
+                TestPlayerRunHelper.run(player).untilState(Player.STATE_READY)
+                assertTrue(player.isCurrentMediaItemSeekable)
+                assertTrue(player.duration in duration)
+                player.seekTo(seekTo)
+                TestPlayerRunHelper.run(player).untilPendingCommandsAreFullyHandled()
+                // Media3 resolves a seek it cannot perform to the start once the playback thread handles it.
+                assertTrue(player.currentPosition >= seekTo)
+                player.play()
+                TestPlayerRunHelper.run(player).untilState(Player.STATE_ENDED)
+            } finally {
+                player.release()
+            }
+        }
+    }
+
+    @Test
+    fun `a TS Media3 cannot time from its default search retries only within the bounded windows`() {
+        val plain = { recordingTsExtractor(TsExtractor.DEFAULT_TIMESTAMP_SEARCH_BYTES) }
+        // Without the track filter, so the strict track outputs also see a subtitle track that carries no data.
+        val retrying = { TsDurationRetryExtractor(plain(), ::recordingTsExtractor) }
+        val timed = extract(plain, fixture())
+        val largest = RECORDING_TS_DURATION_RETRY_WINDOWS.last()
+        // Input, whether the retrying extractor times it, and whether it reads the input again for that.
+        listOf(
+            Triple(fixture(), true, false),
+            Triple(withDvbSubtitlePmt(withLeadIn(LATE_PCR_LEAD_IN)), true, true),
+            Triple(withLeadIn(largest + LATE_PCR_LEAD_IN), false, true),
+            Triple(withLeadIn(largest + LATE_PCR_LEAD_IN, beforeTables = true), false, false),
+        ).forEach { (input, seekable, rereads) ->
+            val reference = extract(plain, input)
+            val retried = extract(retrying, input)
+
+            assertEquals(seekable, retried.seekMap?.isSeekable)
+            if (seekable) assertEquals(timed.seekMap?.durationUs, retried.seekMap?.durationUs)
+            assertEquals(rereads, retried.restarts > reference.restarts)
+            assertEquals(reference.tracks, retried.tracks)
         }
     }
 
@@ -81,8 +115,9 @@ class RecordingFormatlessTrackTest {
 
     @Test
     fun `an announced stream that carries no data is left out a bounded time into the recording`() {
-        val input = silentAudioDescription()
-        recordingExtractors().forEach { (filtered, plain) ->
+        // Also with a lead-in that makes the completed recording extractor retry its duration read.
+        val inputs = listOf(silentAudioDescription(), withLeadIn(LATE_PCR_LEAD_IN, original = silentAudioDescription()))
+        for (input in inputs) recordingExtractors().forEach { (filtered, plain) ->
             val left = extract(filtered, input)
             val reference = extract(plain, input)
 
@@ -222,20 +257,25 @@ class RecordingFormatlessTrackTest {
         val output = CapturingOutput { input.position }
         extractor.init(output)
         val position = PositionHolder()
+        var restarts = 0
         while (true) {
             when (extractor.read(input, position)) {
                 Extractor.RESULT_END_OF_INPUT -> break
-                Extractor.RESULT_SEEK -> input.setPosition(position.position.toInt())
+                Extractor.RESULT_SEEK -> {
+                    if (position.position == 0L) restarts++
+                    input.setPosition(position.position.toInt())
+                }
             }
         }
         extractor.release()
-        return Extraction(output.tracks.map { it.capture() }, output.tracksEndedAt)
+        return Extraction(output.tracks.map { it.capture() }, output.tracksEndedAt, output.seekMap, restarts)
     }
 
     private class CapturingOutput(private val position: () -> Long) : ExtractorOutput {
         val tracks = ArrayList<Pair<Int, FakeTrackOutput>>()
         var tracksEndedAt = Long.MAX_VALUE
         var tracksAtEnd: List<Int>? = null
+        var seekMap: SeekMap? = null
 
         override fun track(id: Int, type: Int): TrackOutput =
             tracks.firstOrNull { it.first == id }?.second
@@ -246,7 +286,9 @@ class RecordingFormatlessTrackTest {
             if (tracksAtEnd == null) tracksAtEnd = tracks.map { it.first }
         }
 
-        override fun seekMap(seekMap: SeekMap) = Unit
+        override fun seekMap(seekMap: SeekMap) {
+            this.seekMap = seekMap
+        }
     }
 
     /** Runs one step against its output per read and never reaches the end of its input. */
@@ -274,7 +316,12 @@ class RecordingFormatlessTrackTest {
 
     private fun bytes(size: Int) = ParsableByteArray(ByteArray(size))
 
-    private data class Extraction(val tracks: List<CapturedTrack>, val tracksEndedAt: Long)
+    private data class Extraction(
+        val tracks: List<CapturedTrack>,
+        val tracksEndedAt: Long,
+        val seekMap: SeekMap?,
+        val restarts: Int,
+    )
 
     private data class CapturedTrack(val id: Int, val format: String?, val samples: String)
 
@@ -291,6 +338,19 @@ class RecordingFormatlessTrackTest {
             .toByteArray()
     }
 
+    /** [original] with [bytes] of null packets after its program map, or before its first packet. */
+    private fun withLeadIn(bytes: Int, beforeTables: Boolean = false, original: ByteArray = fixture()): ByteArray {
+        val nullPacket = ByteArray(TS_PACKET_BYTES) { 0xff.toByte() }.apply {
+            this[0] = 0x47
+            this[1] = 0x1f
+            this[2] = 0xff.toByte()
+            this[3] = 0x10
+        }
+        val leadIn = ByteArray(bytes / TS_PACKET_BYTES * TS_PACKET_BYTES) { index -> nullPacket[index % TS_PACKET_BYTES] }
+        val at = if (beforeTables) 0 else firstPmtPacket(original) + TS_PACKET_BYTES
+        return original.copyOfRange(0, at) + leadIn + original.copyOfRange(at, original.size)
+    }
+
     private companion object {
         const val VIDEO_ID = 1
         const val AUDIO_ID = 2
@@ -300,5 +360,8 @@ class RecordingFormatlessTrackTest {
         const val FIXTURE = "/latm-audio-description/two-latm-audio.ts"
         const val TS_PACKET_BYTES = 188
         const val AUDIO_DESCRIPTION_PID = 0x103
+
+        /** Puts the first PCR beyond Media3's default timestamp search window. */
+        const val LATE_PCR_LEAD_IN = TsExtractor.DEFAULT_TIMESTAMP_SEARCH_BYTES + 100 * TS_PACKET_BYTES
     }
 }

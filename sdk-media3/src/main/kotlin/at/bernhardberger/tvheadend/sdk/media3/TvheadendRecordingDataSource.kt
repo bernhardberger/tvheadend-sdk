@@ -107,7 +107,8 @@ internal fun createTvheadendRecordingMediaSource(
 /**
  * Inspects Media3's extractors and repairs finished fragmented MP4 timelines and seeks.
  *
- * Each transport stream extractor uses [FormatlessTrackFilter] so an empty stream cannot hold preparation.
+ * Each transport stream extractor uses [FormatlessTrackFilter] so an empty stream cannot hold preparation,
+ * and [TsDurationRetryExtractor] so a long lead-in before the first PCR does not leave it unseekable.
  */
 internal fun createRecordingExtractorsFactory(): ExtractorsFactory {
     val defaults = VideoScanExtractorsFactory(DefaultExtractorsFactory())
@@ -123,7 +124,7 @@ private fun Array<Extractor>.recordingAdapters(): Array<Extractor> =
     Array(size) { index ->
         this[index].let { extractor ->
             when (extractor.underlyingImplementation) {
-                is TsExtractor -> FormatlessTrackFilter(extractor)
+                is TsExtractor -> FormatlessTrackFilter(TsDurationRetryExtractor(extractor, ::recordingTsExtractor))
                 // The default factory unconditionally enables MFRA; create the maintained parser without that flag.
                 is FragmentedMp4Extractor -> FinishedFragmentedMp4Extractor(
                     VideoScanExtractor(
@@ -138,6 +139,12 @@ private fun Array<Extractor>.recordingAdapters(): Array<Extractor> =
             }
         }
     }
+
+/** The recording TS extractor as the default factory configures it, apart from its timestamp search window. */
+internal fun recordingTsExtractor(timestampSearchBytes: Int): Extractor =
+    VideoScanExtractorsFactory(DefaultExtractorsFactory().setTsExtractorTimestampSearchBytes(timestampSearchBytes))
+        .createExtractors()
+        .single { it.underlyingImplementation is TsExtractor }
 
 /**
  * Media3 data source that pulls one recording over the SDK's suspend recording transport.
