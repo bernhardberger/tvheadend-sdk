@@ -1,8 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [0.40.2]
 
-Unreleased; development target.
+Released 2026-11-22.
 
 ### Fixed
 
