@@ -1,5 +1,23 @@
 # Changelog
 
+## [Unreleased]
+
+Unreleased; development target.
+
+### Fixed
+
+- MPEG-TS recordings, finished and growing, now give an audio track the role
+  flags and language live playback gives it when the broadcaster marks it in
+  the DVB supplementary audio descriptor. Media3's TS extractor reads only the
+  ISO 639 descriptor, so audio description marked solely that way, as ORF
+  does, looked like an ordinary track and could be selected by default. As in
+  Tvheadend, audio description and spoken subtitles set
+  `C.ROLE_FLAG_DESCRIBES_VIDEO`, clear audio sets
+  `C.ROLE_FLAG_ENHANCED_DIALOG_INTELLIGIBILITY`, and the descriptor's language
+  replaces the ISO 639 one; a well-formed code Tvheadend does not know is
+  kept as broadcast. Streams without a readable descriptor are unchanged. No
+  public API changes.
+
 ## [0.40.1]
 
 Released 2026-11-21.

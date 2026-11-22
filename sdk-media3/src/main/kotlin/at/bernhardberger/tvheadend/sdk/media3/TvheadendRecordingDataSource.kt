@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Looper
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.util.TimestampAdjuster
 import androidx.media3.datasource.BaseDataSource
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
@@ -109,6 +110,7 @@ internal fun createTvheadendRecordingMediaSource(
  *
  * Each transport stream extractor uses [FormatlessTrackFilter] so an empty stream cannot hold preparation,
  * and [TsDurationRetryExtractor] so a long lead-in before the first PCR does not leave it unseekable.
+ * [recordingTsExtractor] replaces the default factory's TS extractor, whose payload readers cannot be changed there.
  */
 internal fun createRecordingExtractorsFactory(): ExtractorsFactory {
     val defaults = VideoScanExtractorsFactory(DefaultExtractorsFactory())
@@ -124,7 +126,7 @@ private fun Array<Extractor>.recordingAdapters(): Array<Extractor> =
     Array(size) { index ->
         this[index].let { extractor ->
             when (extractor.underlyingImplementation) {
-                is TsExtractor -> FormatlessTrackFilter(TsDurationRetryExtractor(extractor, ::recordingTsExtractor))
+                is TsExtractor -> FormatlessTrackFilter(TsDurationRetryExtractor(recordingTsExtractor(), ::recordingTsExtractor))
                 // The default factory unconditionally enables MFRA; create the maintained parser without that flag.
                 is FragmentedMp4Extractor -> FinishedFragmentedMp4Extractor(
                     VideoScanExtractor(
@@ -140,11 +142,22 @@ private fun Array<Extractor>.recordingAdapters(): Array<Extractor> =
         }
     }
 
-/** The recording TS extractor as the default factory configures it, apart from its timestamp search window. */
-internal fun recordingTsExtractor(timestampSearchBytes: Int): Extractor =
-    VideoScanExtractorsFactory(DefaultExtractorsFactory().setTsExtractorTimestampSearchBytes(timestampSearchBytes))
-        .createExtractors()
-        .single { it.underlyingImplementation is TsExtractor }
+/**
+ * The TS extractor of finished and growing recordings. It matches the default factory's, apart from
+ * its timestamp search window and the audio roles [SupplementaryAudioPayloadReaderFactory] adds.
+ */
+internal fun recordingTsExtractor(
+    timestampSearchBytes: Int = TsExtractor.DEFAULT_TIMESTAMP_SEARCH_BYTES,
+): Extractor = VideoScanExtractor(
+    TsExtractor(
+        TsExtractor.MODE_SINGLE_PMT,
+        /* extractorFlags = */ 0,
+        DefaultSubtitleParserFactory(),
+        TimestampAdjuster(0),
+        SupplementaryAudioPayloadReaderFactory(),
+        timestampSearchBytes,
+    ),
+)
 
 /**
  * Media3 data source that pulls one recording over the SDK's suspend recording transport.

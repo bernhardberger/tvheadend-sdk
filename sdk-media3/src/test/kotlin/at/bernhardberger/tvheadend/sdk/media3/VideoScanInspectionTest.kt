@@ -1014,19 +1014,30 @@ internal fun firstPmtPacket(ts: ByteArray): Int = (ts.indices step 188).first { 
 }
 
 /** [original] with English DVB subtitles added to its program map. */
-internal fun withDvbSubtitlePmt(original: ByteArray): ByteArray = original.copyOf().apply {
-    // The committed fixture's PMT fits in one payload-only TS packet. Keep all existing ES entries.
+internal fun withDvbSubtitlePmt(original: ByteArray): ByteArray {
+    val start = firstPmtPacket(original) + 5
+    val size = ((original[start + 1].toInt() and 0x0f) shl 8) or (original[start + 2].toInt() and 0xff)
+    val streams = HexFormat.of().formatHex(original, start + PMT_HEADER_BYTES, start + 3 + size - 4)
+    // Private PES PID 0x1ffe; descriptor 0x59: English DVB subtitles, page ids 1/1.
+    return withPmtStreams(original, streams + "06fffef00a5908656e671000010001")
+}
+
+/** [original] with the stream entries of its program map replaced by [streams], in hex. */
+internal fun withPmtStreams(original: ByteArray, streams: String): ByteArray = original.copyOf().apply {
+    // The committed fixtures' PMTs fit in one payload-only TS packet and carry no program descriptors.
     val packet = firstPmtPacket(this)
     val start = packet + 5
-    val size = ((this[start + 1].toInt() and 0x0f) shl 8) or (this[start + 2].toInt() and 0xff)
-    // Private PES PID 0x1ffe; descriptor 0x59: English DVB subtitles, page ids 1/1.
-    val entry = HexFormat.of().parseHex("06fffef00a5908656e671000010001")
-    val crcStart = start + 3 + size - 4
-    check(crcStart + entry.size + 4 <= packet + 188)
-    entry.copyInto(this, crcStart)
-    val newSize = size + entry.size
+    val entries = HexFormat.of().parseHex(streams)
+    val crcStart = start + PMT_HEADER_BYTES + entries.size
+    check(crcStart + 4 <= packet + 188)
+    entries.copyInto(this, start + PMT_HEADER_BYTES)
+    val newSize = PMT_HEADER_BYTES - 3 + entries.size + 4
     this[start + 1] = (0xb0 or (newSize shr 8)).toByte()
     this[start + 2] = newSize.toByte()
-    val crc = Util.crc32(this, start, crcStart + entry.size, -1)
-    repeat(4) { this[crcStart + entry.size + it] = (crc ushr (24 - 8 * it)).toByte() }
+    val crc = Util.crc32(this, start, crcStart, -1)
+    repeat(4) { this[crcStart + it] = (crc ushr (24 - 8 * it)).toByte() }
+    fill(0xff.toByte(), crcStart + 4, packet + 188)
 }
+
+/** A program map section up to its stream entries, without program descriptors. */
+private const val PMT_HEADER_BYTES = 12

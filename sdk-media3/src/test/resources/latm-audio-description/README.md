@@ -9,7 +9,8 @@ It carries H.264 video on PID 0x101, main LATM AAC audio on PID 0x102, and a
 second LATM AAC stream on PID 0x103 marked as visual-impaired and dependent, as
 broadcasters announce audio description. `RecordingFormatlessTrackTest` drops
 every PID 0x103 packet in memory, which leaves a program map that announces an
-audio description stream that never carries data.
+audio description stream that never carries data, or replaces the descriptors
+of both audio streams in that map.
 
 Generation used Debian FFmpeg `7.1.5-0+deb13u1`:
 

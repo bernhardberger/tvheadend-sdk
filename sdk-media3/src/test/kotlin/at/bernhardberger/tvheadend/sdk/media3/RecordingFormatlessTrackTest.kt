@@ -35,9 +35,10 @@ import org.robolectric.annotation.Config
 
 /**
  * Recording playback of finished recordings Media3 does not handle alone: a program map that
- * announces a stream which never carries data, as broadcasters do for audio description, and
- * recordings Media3 cannot time from its default search. Media3's TS extractor needs the Android
- * runtime, so this runs on Robolectric, unlike the plain JVM recording data source tests.
+ * announces a stream which never carries data, as broadcasters do for audio description, audio
+ * roles in a descriptor Media3 does not read, and recordings Media3 cannot time from its default
+ * search. Media3's TS extractor needs the Android runtime, so this runs on Robolectric, unlike the
+ * plain JVM recording data source tests.
  */
 private typealias Step = (ExtractorOutput) -> Unit
 
@@ -121,8 +122,8 @@ class RecordingFormatlessTrackTest {
             val left = extract(filtered, input)
             val reference = extract(plain, input)
 
-            assertTrue(reference.tracks.any { it.format == null })
-            assertEquals(reference.tracks.filter { it.format != null }, left.tracks)
+            assertTrue(reference.tracks.any { it.lastFormat == null })
+            assertEquals(reference.tracks.filter { it.lastFormat != null }, left.tracks)
             // Running recordings may never reach the end of input, so the bound is media time.
             assertTrue(left.tracksEndedAt < input.size)
         }
@@ -130,12 +131,78 @@ class RecordingFormatlessTrackTest {
 
     @Test
     fun `a stream whose every track gets a format is extracted unchanged`() {
-        val input = fixture()
-        recordingExtractors().forEach { (filtered, plain) ->
-            val reference = extract(plain, input)
+        // Descriptors of an audio stream, none of them a readable supplementary audio descriptor.
+        val unreadable = listOf(
+            "",
+            "0a04716b7303", // ISO 639 only, with a language live playback reports differently.
+            "0a0464657500 7f050487646575", // Another extension descriptor.
+            "0a0464657500 7f00",
+            "0a0464657500 7f0106",
+            "0a0464657500 7f060687", // Longer than the descriptor loop.
+            "0a0464657500 7f",
+        )
+        // The stream under test comes first, so that a bad length runs into the next stream's entry.
+        val inputs = listOf(fixture()) + unreadable.map { withAudioDescriptors(it, "0a0464657500") }
+        inputs.forEachIndexed { index, input ->
+            recordingExtractors().forEach { (filtered, plain) ->
+                val reference = extract(plain, input)
 
-            assertEquals(3, reference.tracks.size)
-            assertEquals(reference.tracks, extract(filtered, input).tracks)
+                assertEquals("$index", 3, reference.tracks.size)
+                assertEquals("$index", reference.tracks, extract(filtered, input).tracks)
+            }
+        }
+    }
+
+    @Test
+    fun `a supplementary audio descriptor gives recorded audio its live role and language`() {
+        // Descriptors of the second audio stream, with the role flags and language live playback reports for them.
+        listOf(
+            Triple("0a04656e6700 7f050687646575", C.ROLE_FLAG_DESCRIBES_VIDEO, "de"),
+            Triple("7f050607646575 0a04656e6700", C.ROLE_FLAG_DESCRIBES_VIDEO, "de"), // mix_type 0, before ISO 639.
+            Triple("0a0464657500 7f02068e", C.ROLE_FLAG_DESCRIBES_VIDEO, "de"), // Spoken subtitles, no language.
+            Triple("0a04716b7302 7f05068b646575", C.ROLE_FLAG_ENHANCED_DIALOG_INTELLIGIBILITY, "de"), // Clear audio.
+            Triple("0a0464657503 7f02068a", C.ROLE_FLAG_ENHANCED_DIALOG_INTELLIGIBILITY, "de"), // Replaces ISO 639's 3.
+            Triple("0a0464657503 7f020682", C.ROLE_FLAG_DESCRIBES_VIDEO, "de"), // Main audio keeps ISO 639's 3.
+            Triple("0a0464657500 7f020692", 0, "de"), // A reserved editorial classification.
+            Triple("0a04716b7300 7f020686", C.ROLE_FLAG_DESCRIBES_VIDEO, "qaa"),
+            Triple("0a0400656e00 7f020686", C.ROLE_FLAG_DESCRIBES_VIDEO, C.LANGUAGE_UNDETERMINED), // Media3 trims to "en".
+            Triple("0a0464657500 7f040687656e", C.ROLE_FLAG_DESCRIBES_VIDEO, "de"), // A truncated language code.
+            Triple("0a0464657500 7f050687000000", C.ROLE_FLAG_DESCRIBES_VIDEO, C.LANGUAGE_UNDETERMINED),
+            Triple("7f050687656e67 7f02068a", C.ROLE_FLAG_ENHANCED_DIALOG_INTELLIGIBILITY, "en"),
+            Triple("7f020686", C.ROLE_FLAG_DESCRIBES_VIDEO, null),
+        ).forEachIndexed { index, (descriptors, roleFlags, language) ->
+            val described = withAudioDescriptors("0a0464657500", descriptors)
+            // One of them also with a lead-in that makes the completed recording extractor retry its duration read.
+            val retried = if (index == 0) withLeadIn(LATE_PCR_LEAD_IN, original = described) else null
+            for (input in listOfNotNull(described, retried)) {
+                recordingExtractors().forEach { (recording, _) ->
+                    val formats = extract(recording, input).tracks.associate { it.id to checkNotNull(it.lastFormat) }
+                    val second = formats.getValue(AUDIO_DESCRIPTION_PID)
+
+                    assertEquals(descriptors, roleFlags to language, second.roleFlags to second.language)
+                    assertEquals(0 to "de", formats.getValue(MAIN_AUDIO_PID).let { it.roleFlags to it.language })
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `default track selection plays the normal track instead of audio description`() {
+        val player = TestExoPlayerBuilder(ApplicationProvider.getApplicationContext()).build()
+        try {
+            // Audio description comes first, where equal tracks would make it the default.
+            val recording = withAudioDescriptors("0a0464657500 7f050687646575", "0a0464657500")
+            player.setMediaSource(createTvheadendRecordingMediaSource(FakeRecordingTransport(recording), RecordingMediaIdentity()))
+            player.prepare()
+            TestPlayerRunHelper.run(player).untilState(Player.STATE_READY)
+
+            val audio = player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
+            assertEquals(
+                mapOf(C.ROLE_FLAG_DESCRIBES_VIDEO to false, 0 to true),
+                audio.associate { it.getTrackFormat(0).roleFlags to it.isSelected },
+            )
+        } finally {
+            player.release()
         }
     }
 
@@ -244,12 +311,13 @@ class RecordingFormatlessTrackTest {
     /** The completed and the growing recording extractor, each with the extractor it decorates. */
     private fun recordingExtractors(): List<Pair<() -> Extractor, () -> Extractor>> = listOf(
         { createRecordingExtractorsFactory().createExtractors().single { it.underlyingImplementation is TsExtractor } } to
-            {
-                VideoScanExtractorsFactory(DefaultExtractorsFactory()).createExtractors()
-                    .single { it.underlyingImplementation is TsExtractor }
-            },
-        { createGrowingTsExtractorsFactory().createExtractors().single() } to { GrowingRecordingExtractor(GrowingTsContainer) },
+            ::defaultTsExtractor,
+        { createGrowingTsExtractorsFactory().createExtractors().single() } to
+            { GrowingRecordingExtractor(GrowingTsContainer, delegate = defaultTsExtractor()) },
     )
+
+    private fun defaultTsExtractor(): Extractor = VideoScanExtractorsFactory(DefaultExtractorsFactory()).createExtractors()
+        .single { it.underlyingImplementation is TsExtractor }
 
     private fun extract(create: () -> Extractor, data: ByteArray): Extraction {
         val extractor = create()
@@ -323,10 +391,10 @@ class RecordingFormatlessTrackTest {
         val restarts: Int,
     )
 
-    private data class CapturedTrack(val id: Int, val format: String?, val samples: String)
+    private data class CapturedTrack(val id: Int, val lastFormat: Format?, val samples: String)
 
     private fun Pair<Int, FakeTrackOutput>.capture(): CapturedTrack =
-        CapturedTrack(first, second.lastFormat?.toString(), Dumper().add(second).toString())
+        CapturedTrack(first, second.lastFormat, Dumper().add(second).toString())
 
     private fun fixture(): ByteArray = checkNotNull(javaClass.getResourceAsStream(FIXTURE)).use { it.readBytes() }
 
@@ -336,6 +404,17 @@ class RecordingFormatlessTrackTest {
         return packets.filterNot { packet -> (packet[1].toInt() and 0x1f shl 8 or (packet[2].toInt() and 0xff)) == AUDIO_DESCRIPTION_PID }
             .flatten()
             .toByteArray()
+    }
+
+    /** The fixture with the given PMT descriptors, in hex, for its two audio streams. */
+    private fun withAudioDescriptors(first: String, second: String): ByteArray {
+        fun entry(pid: Int, descriptors: String): String = descriptors.filterNot(Char::isWhitespace).let { hex ->
+            "%02x%04x%04x".format(TsExtractor.TS_STREAM_TYPE_AAC_LATM, 0xe000 or pid, 0xf000 or hex.length / 2) + hex
+        }
+        return withPmtStreams(
+            fixture(),
+            "1be101f000" + entry(MAIN_AUDIO_PID, first) + entry(AUDIO_DESCRIPTION_PID, second),
+        )
     }
 
     /** [original] with [bytes] of null packets after its program map, or before its first packet. */
@@ -359,6 +438,7 @@ class RecordingFormatlessTrackTest {
         val AUDIO: Format = Format.Builder().setSampleMimeType(MimeTypes.AUDIO_AAC).build()
         const val FIXTURE = "/latm-audio-description/two-latm-audio.ts"
         const val TS_PACKET_BYTES = 188
+        const val MAIN_AUDIO_PID = 0x102
         const val AUDIO_DESCRIPTION_PID = 0x103
 
         /** Puts the first PCR beyond Media3's default timestamp search window. */
